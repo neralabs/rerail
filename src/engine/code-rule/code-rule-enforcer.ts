@@ -517,11 +517,16 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #readyModes = new Map<number, AuditMode>();
   readonly #readyViolations = new Map<number, Map<string, CodeRuleViolation[]>>();
   /**
-   * The findings each source last reported in its own slot, or a steer-mode touched-files audit last steered for it,
-   * with the revision and mode it reported them at: what a repackaged source's new findings are compared with, and what
-   * steers again a source whose queued steer a revision of another source dropped (`#steerAgain`).
+   * The findings each source last reported in its own slot, with the revision and mode it reported them at: what a
+   * repackaged source's new findings are compared with, and what steers again a source whose queued steer a revision
+   * of another source dropped (`#steerAgain`).
    */
   readonly #sourceFindings = new Map<string, { revision: number; mode: AuditMode; violations: CodeRuleViolation[] }>();
+  /**
+   * The whole-file findings a steer-mode touched-files audit last steered for each source, newer than what the source
+   * reported in its own slot: read only by `#steerAgain`, never compared with a source's own-line findings.
+   */
+  readonly #auditFindings = new Map<string, { revision: number; mode: AuditMode; violations: CodeRuleViolation[] }>();
   #spoolDirectory: string | undefined;
   #spoolSequence = 0;
   readonly #spoolRemovals = new Set<Promise<void>>();
@@ -1068,6 +1073,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       if ((this.#versions.get(source) ?? 0) < stored.revision) this.#versions.set(source, stored.revision);
     for (const [slot, violations] of [[path, own] as const, ...reported]) {
       readyViolations.set(slot, violations);
+      // What the source reports now supersedes what an audit steered for it before.
+      this.#auditFindings.delete(slot);
       if (slot === path && edit.deleted) this.#sourceFindings.delete(slot);
       else this.#sourceFindings.set(slot, { revision: stored.revision, mode: stored.mode, violations });
     }
@@ -1081,13 +1088,17 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (this.#pending.size === 0) await this.#publishReady();
   }
 
-  /** Publishes again, at the revision each reported them, the findings of `sources` (paths as the session sees them). */
+  /**
+   * Publishes again, at the revision each reported them, the findings of `sources` (paths as the session sees them):
+   * what a touched-files audit steered for a source, else what the source last reported in its own slot.
+   */
   async #steerAgain(sources: readonly string[]): Promise<void> {
     if (sources.length === 0) return;
     const wanted = new Set(sources);
     const byRevision = new Map<number, { mode: AuditMode; sources: string[]; violations: CodeRuleViolation[] }>();
-    for (const [source, findings] of this.#sourceFindings) {
+    for (const source of new Set([...this.#auditFindings.keys(), ...this.#sourceFindings.keys()])) {
       if (!wanted.has(this.#presentPath(source))) continue;
+      const findings = this.#auditFindings.get(source) ?? this.#sourceFindings.get(source)!;
       const group = byRevision.get(findings.revision) ?? { mode: findings.mode, sources: [], violations: [] };
       group.sources.push(source);
       group.violations.push(...findings.violations);
@@ -1369,7 +1380,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (scope === "touched-files" && mode === "steer")
       for (const path of sourcePaths)
         if ((this.#versions.get(path) ?? 0) <= revision)
-          this.#sourceFindings.set(path, {
+          this.#auditFindings.set(path, {
             revision,
             mode,
             violations: result.violations.filter((violation) => violation.path === path),

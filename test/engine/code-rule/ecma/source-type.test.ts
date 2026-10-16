@@ -488,6 +488,33 @@ describe("a package.json edit alone", () => {
     }
   });
 
+  it("in ai-output scope compares a repackaged source with its own lines' findings, not what a touched-files audit steered for the whole file", async () => {
+    const before = "const a = require('a');\n";
+    const after = `${before}const b = require('b');\n`;
+    const sources: Sources = { "package.json": '{ "type": "commonjs" }\n', "lib/plain.js": after };
+    const root = await repository(false, sources);
+    const { edit, steers, revisions, enforcer, close } = await enforcerFor(root, CODE_RULE, sources, "ai-output");
+    try {
+      // The edit generated only the second line: the first line's require is not its own.
+      expect(await edit([{ path: "lib/plain.js", language: "javascript", previousText: before, generatedText: after }])).toEqual({
+        "lib/plain.js PROGRAM": 1,
+        "lib/plain.js REQUIRE": 1,
+      });
+      // A touched-files audit steers every require in the file.
+      await enforcer.audit("package-facts", { scope: "touched-files", mode: "steer", paths: ["lib/plain.js"] });
+      expect(steers.map(steer => [steer.revision, steer.scope])).toEqual([[1, ["lib/plain.js"]], [1, ["lib/plain.js"]]]);
+      // A dependency the rules ignore repackages the source; its own lines' findings are unchanged, so nothing is
+      // revised and both steers stand.
+      const manifest = '{ "type": "commonjs", "dependencies": { "left-pad": "1" } }\n';
+      await writeFile(join(root, "package.json"), manifest);
+      expect(await edit([{ path: "package.json", language: "json", generatedText: manifest }])).toEqual({});
+      expect(revisions).toEqual([]);
+      expect(steers).toHaveLength(2);
+    } finally {
+      await close();
+    }
+  });
+
   it("in ai-output scope reports again a repackaged source whose findings changed, so its stale steer is dropped", async () => {
     const sources: Sources = { "package.json": '{ "type": "commonjs" }\n', "lib/plain.js": "module.exports = require('x');\n" };
     const root = await repository(false, sources);
