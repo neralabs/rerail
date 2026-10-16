@@ -4,7 +4,7 @@
  * quadratic, and both rules ran out of their utility budget on OpenMausBot's 14,000-line `server/index.test.ts`
  * (reporting nothing for the file). They now skip those branches where no program that runs could reach them.
  */
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -53,6 +53,8 @@ describe("the node pack's n/prefer-promises ports at scale", () => {
       codeRuleSchema.parse(JSON.parse(await readFile(join(pack, "rules", `${id}.json`), "utf8")))));
     const root = await mkdtemp(join(tmpdir(), "rerail-node-scale-"));
     directories.push(root);
+    // The planted calls read `require`, which the ports reach only in a CommonJS file (packs/node/README.md).
+    await writeFile(join(root, "package.json"), '{ "type": "commonjs" }\n');
     const enforcer = new NativeCodeRuleEnforcer(testCodeRuleCatalog(rules), {
       workspaceRoot: root, scope: "touched-files", mode: "log", steerDelivery: { async requestSteer() {} },
     });
