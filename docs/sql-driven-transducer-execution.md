@@ -1,6 +1,38 @@
 # SQL-driven transducer execution
 
-Status: Rerail includes the restored SQLite rule engine. The matcher remains the default engine. Set `RERAIL_CODE_RULE_ENGINE=sqlite` to select SQLite for workspace regex and AST clauses.
+Status: Rerail includes the restored SQLite rule engine and the terminal virtual table.
+The current production route does not yet use the required virtual-table shape.
+The matcher remains the default engine.
+
+## Design decision
+
+SQLite drives all production rule execution.
+The host registers an inert batch descriptor and executes one SQL statement.
+The host must not execute terminals, relations, or semantic producers before that statement.
+
+The SQL statement reads one eponymous virtual table.
+The first `xFilter` call executes the complete sparse batch on demand.
+That call materializes ordered match, capture, and completion rows in the batch.
+The cursor then exposes those rows to SQLite.
+SQLite extracts violations from the relation in the same statement.
+
+The required boundary is:
+
+```text
+workspace files + verified programs + sparse task grid
+  -> register inert batch descriptor
+  -> execute one SQL statement
+    -> rerail_matches(:batch) xFilter
+      -> execute every demanded file/program task as one batch
+      -> evaluate structural and semantic relations in the batch executor
+      -> materialize ordered match, capture, and completion rows once
+    -> SQLite joins, groups, checks completion, and extracts violations
+  -> publish the final SQL rows
+```
+
+This design is not a pre-execution pipeline.
+Rust does no rule work before SQLite asks for the virtual table.
+SQLite owns demand, execution lifetime, relational composition, and result extraction.
 
 ## Run Rerail with SQLite
 
@@ -84,15 +116,38 @@ The tape delete trigger removes the FTS document with the tape.
 
 `rerail_matches(batch)` is an eponymous-only SQLite virtual table.
 The hidden `batch` column is required by `xBestIndex`.
-A batch stays in Rust and contains its terminals and file versions.
+A batch stays in Rust and contains verified programs, file tapes, limits, and a sparse task grid.
 JavaScript does not receive the batch token, tape identifiers, or SQL connection.
 
-SQLite calls `xFilter` with one batch token and the terminal's `program_index`.
-The cursor executes that terminal once over every file of the batch.
-A `OnceLock` keeps the terminal rows for later scans of the same batch.
-A query that references the relation twice does not execute the terminal twice.
-Without a `program_index` constraint, the table fails in production.
-Only a test batch of transducer programs reads every file/program pair through `execute_batch()`.
+Batch registration stores data only.
+It does not run anchor selection, a matcher, a relation, or a semantic producer.
+The sparse task grid identifies the valid file/program pairs and their selected roots.
+
+The target `xBestIndex` contract requires one equality constraint on `batch`.
+A `program_index` constraint must not divide execution into one call per program.
+A file constraint must not divide execution into one call per file.
+The batch executor can use both constraints as filters only when one execution still owns the full demanded task set.
+
+SQLite calls `xFilter` when the SQL plan first reads `rerail_matches(:batch)`.
+The cursor calls the selected packed backend once for the sparse batch.
+The backend evaluates complete relation programs, including navigation, captures, alternatives, and semantic operations.
+A `OnceLock` stores the normalized output relation and its failure state.
+A later scan of the same batch reads the stored relation and does not execute it again.
+
+The SQL query must use one materialized CTE for this relation.
+This rule prevents SQLite aliases or nested loops from opening independent executions:
+
+```sql
+WITH terminal AS MATERIALIZED (
+  SELECT *
+  FROM rerail_matches(:batch)
+)
+SELECT ...
+FROM terminal;
+```
+
+The cursor performs result extraction from the stored typed rows.
+It does not call a matcher from `xNext` or `xColumn`.
 
 The relation contains these columns:
 
@@ -122,9 +177,7 @@ A query can join terminal rows with rule metadata and application facts:
 
 ```sql
 WITH terminal AS MATERIALIZED (
-  SELECT m.*
-  FROM (SELECT DISTINCT program_index FROM rule_programs) p
-  JOIN rerail_matches(:batch) m ON m.program_index = p.program_index
+  SELECT * FROM rerail_matches(:batch)
 ), complete_pairs AS (
   SELECT file_index, program_index,
          min(complete) AS complete
@@ -155,31 +208,159 @@ SQL can then implement these higher-level operations:
 - Stable output order with explicit logical keys.
 
 SQL scalar functions are suitable for pure operations on one value.
-Examples include hash comparison, small posting decoding, collation, and violation formatting.
-A scalar function must not run one matcher for each file or rule row.
-That design recreates the nested execution loop.
+Examples include hash comparison, collation, and violation formatting.
+A scalar function must not run a matcher, walk a tree, extend an environment, or enter another SQL statement.
 
-Use virtual tables for batched terminal work and posting expansion.
-A future `rerail_postings(batch)` table can expose decoded preorder lists.
-A future Metal-backed `rerail_matches(batch)` cursor can select the prepared GPU backend.
-The SQL schema and query do not change when the backend changes.
+`rerail_nodes`, `rerail_facts`, and the `tq_*` callback family are not production execution boundaries.
+They remain historical reference machinery until the virtual-table cutover removes them.
+The packed relation program must contain the semantics that those callbacks currently implement.
+
+Use the virtual table for batched relation execution and typed output extraction.
+The virtual table selects the CPU, CPU-JIT, Metal, or Metal-JIT backend inside `xFilter`.
+The SQL schema and outer query do not change when the backend changes.
 
 ## Execution phases
 
-Each phase uses one bulk operation:
+The host performs only setup and publication:
 
-1. SQL kind presence decides which stored tapes need decoding.
-2. One GPU dispatch finds exact roots for all file/program pairs.
-3. `rerail_matches(batch)` exposes matches and completion rows to SQL.
-4. SQL joins terminal rows and creates higher-level violations.
+1. The host registers files, verified programs, roots, limits, and the sparse task grid.
+2. The host starts one SQL statement with the batch token.
+3. SQLite opens `rerail_matches(:batch)` when the query needs terminal rows.
+4. `xFilter` executes and materializes the sparse batch once.
+5. SQLite composes rules and extracts ordered violations from the virtual-table rows.
+6. The host publishes the rows that the SQL statement returns.
 
-For exact literals, the GPU anchor kernel proves the complete terminal predicate.
-The runtime emits terminal rows directly and omits a second terminal dispatch.
-Structural programs still need terminal verification.
+The virtual table can partition an internal dispatch only for a hard backend limit.
+The partition does not create another SQL statement or another virtual-table execution.
+The batch records the limit and the partition count.
 
-A dispatch loop is valid only when a hard device limit requires partitioning.
-The runtime must record that limit and the number of partitions.
-It must not split work to hide contention or setup costs.
+## Execution ownership
+
+The SQL statement owns these actions:
+
+- Demand for the terminal relation.
+- The first and only batch execution.
+- Completion and absence checks.
+- Cross-program and cross-file joins.
+- Counts, thresholds, alternatives, and stable result order.
+- Final violation extraction.
+
+The packed backend owns these actions inside `xFilter`:
+
+- Structural relation execution.
+- Ordered matcher control flow.
+- Capture state and rollback.
+- Semantic operations declared by the verified program.
+- Per-task limits and completion status.
+- Materialization of typed output rows.
+
+The host owns registration, cancellation, publication, and batch release.
+It does not schedule clauses or file groups.
+
+## Prohibited shapes
+
+The production path must not contain these shapes:
+
+- A host loop that calls one SQL statement for each clause.
+- A host loop that calls one SQL statement for each compatibility group.
+- A virtual-table scan for each file, root, program, or outer SQL row.
+- A scalar callback that executes a matcher or relation.
+- A scalar callback that enters SQLite recursively.
+- A pre-execution stage that materializes match or fact relations before SQL asks for them.
+- A fallback from an unsupported packed operation to the callback engine.
+
+## Cutover sequence
+
+1. Restore the all-program production access path in `rerail_matches(batch)`.
+2. Make one `OnceLock` own all rows and status for the sparse batch.
+3. Route one SQL statement through one materialized terminal CTE.
+4. Lower complete Rerail AST relations into verified packed programs.
+5. Add missing semantic operations to the program and every selected backend.
+6. Move `violation.each` alternatives into one ordered batch output.
+7. Remove clause scheduling from `workspace/evaluate.rs`.
+8. Reject any production plan that references `tq_*`, `rerail_nodes`, or `rerail_facts`.
+
+Each step must preserve matcher parity.
+The cutover is complete only when a full workspace apply causes one virtual-table execution per backend batch.
+
+## Batch descriptor
+
+The batch descriptor is immutable after registration.
+It contains these values:
+
+- The catalog generation and grammar identities.
+- Verified packed programs.
+- Source and tape handles for all files.
+- A sparse file/program task grid.
+- Ordered candidate roots for each task.
+- Per-file and per-task budgets and deadlines.
+- The selected backend and its hard dispatch limits.
+- One lazy output cell for rows or a batch failure.
+
+The sparse grid replaces compatibility-group scheduling.
+A missing pair means that SQL eligibility rejected that task before registration.
+A present pair retains its own limits, selected roots, and deterministic order key.
+
+Registration can parse, restore, and verify immutable inputs.
+Registration must not evaluate a rule or produce a match, capture, fact, or violation.
+
+## Virtual-table state
+
+A registered batch has these states:
+
+```text
+registered -> executing -> materialized
+                       \-> failed
+registered -----------------> released
+materialized ---------------> released
+failed ---------------------> released
+```
+
+Only `xFilter` can change `registered` to `executing`.
+One lazy cell serializes concurrent first access.
+The executor does not hold the registry mutex while it runs.
+
+Cancellation produces incomplete status rows for affected tasks.
+A panic or backend error produces a stored batch failure.
+A later scan observes the same rows or failure.
+It never starts a second execution.
+
+The cursor owns an `Arc` to the materialized rows.
+Batch release removes the registry entry after the SQL statement closes its cursors.
+
+## Row and order contract
+
+The existing 13-column relation remains the boundary.
+No new persistent schema is required for this cutover.
+
+`(file_index, program_index)` identifies one task.
+`match_index` orders matches within that task.
+`capture_index` orders captures within one match.
+`output_label` identifies the program output path.
+
+Every task emits at least one row.
+A complete negative task emits one status row with a null `match_index`.
+An incomplete task emits `complete=0` and an `error_code`.
+SQL cannot infer absence without a complete status row.
+
+The final SQL order uses explicit catalog, file, program, match, output, and capture keys.
+Backend completion order cannot affect the final order.
+
+## Validation gates
+
+The cutover must meet these execution gates:
+
+- One outer SQL statement drives one workspace evaluation phase.
+- Each backend batch records exactly one virtual-table execution.
+- A second scan of the materialized CTE records no execution.
+- Production records zero `tq_*` matcher callbacks.
+- Production records zero `rerail_nodes` relation walks.
+- Production records zero lazy `rerail_facts` builds.
+- Registration records zero match, capture, fact, and violation rows.
+- Every sparse task records complete output or an explicit incomplete status.
+- The matcher and SQLite paths return identical ordered results and failures.
+
+The benchmark must report virtual-table filters, batch executions, tasks, outputs, completion rows, partitions, time, and peak memory.
 
 ## Correctness boundaries
 

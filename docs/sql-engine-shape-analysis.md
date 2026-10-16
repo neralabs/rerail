@@ -3,7 +3,12 @@
 ## Purpose
 
 This document identifies the costly shape of the restored SQLite rule engine.
-It also defines the changes that can remove each cost.
+It records measurements of the callback engine.
+It does not define the target execution architecture.
+
+`sql-driven-transducer-execution.md` defines the target architecture.
+SQLite drives one demand-triggered batch virtual table and extracts its results.
+No pre-execution stage produces match relations before SQLite asks for them.
 
 The historical run establishes the performance baseline.
 See `benchmark/history/ner-1562-historical-sql-reproduction-2026-10-16.md`.
@@ -58,7 +63,7 @@ It also created 100.5 million environments and built 7.23 million semantic-fact 
 The counter overhead increased wall time by 27 percent, so it is not the runtime result.
 
 Repeated node walks and scalar callbacks are now the measured primary bottleneck.
-Bulk structural relations are the next correction boundary.
+The next boundary is one SQL-driven, demand-triggered virtual-table execution for the full sparse batch.
 See `benchmark/history/ner-1562-sql-batching-milestones-2026-10-16.md`.
 
 ## Current execution topology
@@ -123,9 +128,10 @@ A callback obtains the batch, reads an environment handle, and runs Rust logic.
 SQLite sees only a scalar function with an integer result.
 It cannot reorder, combine, or index that hidden work.
 
-**Correction:** Produce terminal matches and semantic facts in bulk.
-Expose the results as typed rows with explicit completion records.
-Use SQL only for relational composition over those rows.
+**Correction:** Lower the complete relation into a verified packed program.
+SQLite starts one batch execution through `rerail_matches(batch)` when `xFilter` runs.
+The virtual table materializes typed rows and completion records on demand.
+SQLite then composes and extracts the final results.
 
 A scalar function remains valid for a small, pure operation on one value.
 It must not run a matcher, a tree walk, or a semantic producer.
@@ -141,15 +147,10 @@ Correlated subqueries repeat that operation for candidate roots and nested terms
 The engine has local mitigations for same-key siblings and capture-free structures.
 Those mitigations do not change the correlated execution shape.
 
-**Correction:** Give SQL prepared node topology or prepared relation rows.
-Compare two physical forms before selection:
-
-1. Sorted rows in generation-scoped temporary tables.
-2. Read-only virtual tables over immutable packed arrays.
-
-Both forms must support file, node, parent, subtree, kind, field, and order constraints.
-A cursor must enumerate prepared records only.
-It must not run a matcher.
+**Correction:** Move relation navigation into the verified packed program.
+The batch executor reads immutable tape topology inside the virtual-table `xFilter` call.
+The cursor exposes only completed relation outputs and status rows.
+SQLite must not schedule one node walk through a correlated virtual-table scan.
 
 **Gate:** Record `xFilter`, `xNext`, and `xColumn` calls by table.
 Record the number of nodes in each logical walk.
@@ -200,12 +201,10 @@ This design mixes fact production with SQL plan execution.
 Environment-dependent keys can multiply the same semantic analysis.
 SQLite also cannot schedule the producer as one batch operation.
 
-**Correction:** Split semantic evaluation into two parts.
-A bulk producer emits typed facts and one status row for each requested unit.
-The SQL plan evaluates user sub-rules over those facts.
-
-Environment-independent facts must be shared across clauses.
-Environment-dependent requests must be grouped into one input relation for a bulk operator.
+**Correction:** Add semantic operations to the verified packed program and its selected backend.
+The on-demand batch execution produces semantic outputs and status with structural outputs.
+SQLite triggers this work through `rerail_matches(batch)` and consumes its typed rows.
+No host pre-execution stage can produce these facts.
 
 **Gate:** Record producer calls, distinct producer keys, output rows, cache hits, and producer time.
 
