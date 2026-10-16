@@ -18,6 +18,8 @@
 
 ## Release
 - [release-plan.md](release-plan.md): the current release checklist: packs on npm, install from scratch, recommended packs
+- [publishing-a-new-pack.md](publishing-a-new-pack.md): runbook for a pack's first publish to npm and its trusted
+  publisher
 
 ## Repository
 - [repository-structure.md](repository-structure.md): the layout rules and the structure gate
