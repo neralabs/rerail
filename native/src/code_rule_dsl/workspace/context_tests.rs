@@ -1311,53 +1311,420 @@ fn restored_budget_rows_keep_their_rerail_ignore_marks() {
     }
 }
 
+/// A file's clauses share a work ceiling: once the clauses before it spent it, a clause fails as
+/// a coverage gap (`FILE_CLAUSE_WORK_EXCEEDED`) instead of running, so a file's total work is
+/// bounded however many clauses run on it. That failure is the other clauses' doing, not the
+/// clause's verdict on the content: the workspace keeps it, the store never does, and a later
+/// workspace evaluates the clause again.
 #[test]
-fn transient_timeouts_are_retried_and_never_persisted() {
+fn a_file_s_clauses_share_a_work_ceiling_whose_failures_are_never_stored() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("clause-ceiling");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let print = |id: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "PY", "message": "print" },
+            "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
+        })
+    };
+    let code_rule = compile(
+        "clause-ceiling",
+        json!([print("a"), print("b"), print("c")]),
+    );
+    let file = json!([{ "path": "ceiling.py", "language": "python", "source": "print(1)\n" }]);
+    let workspace = stored_workspace(&store, "/clause-ceiling", &code_rule);
+    // Every clause polls its allowance at least once: one unit is spent by the first.
+    TEST_CLAUSE_WORK_CEILING.set(Some(1));
+    let capped = apply_json(&workspace, 1, file.clone());
+    TEST_CLAUSE_WORK_CEILING.set(None);
+    let failures = capped["evaluation"]["failures"].as_array().unwrap().clone();
+    assert!(
+        failures
+            .iter()
+            .all(|failure| failure["message"] == FILE_CLAUSE_WORK_EXCEEDED),
+        "{capped}"
+    );
+    assert!(
+        failures.iter().any(|failure| failure["clauseId"] == "c"),
+        "the last clause finds the ceiling spent: {capped}"
+    );
+    assert_eq!(
+        failures.len() + located(&capped["evaluation"]["violations"]).len(),
+        3,
+        "{capped}"
+    );
+    {
+        let state = workspace.state.lock().unwrap();
+        let file = &state.files["ceiling.py"];
+        assert!(!file.transient_failure);
+        assert_eq!(file.unstored.len(), failures.len());
+    }
+    // The same content, in the same workspace, is not evaluated again.
+    let again = apply_json(&workspace, 2, file.clone());
+    assert_eq!(
+        again["evaluation"]["failures"],
+        capped["evaluation"]["failures"]
+    );
+    workspace.close();
+
+    let restarted = stored_workspace(&store, "/clause-ceiling", &code_rule);
+    let warm = apply_json(&restarted, 1, file);
+    assert_eq!(
+        restored_results(&restarted),
+        3 - failures.len(),
+        "only the clauses that ran are restored: {warm}"
+    );
+    assert_eq!(warm["evaluation"]["failures"], json!([]), "{warm}");
+    assert_eq!(
+        located(&warm["evaluation"]["violations"]).len(),
+        3,
+        "{warm}"
+    );
+    restarted.close();
+}
+
+/// A clause whose required text the file lacks matches nothing and costs nothing: it answers even
+/// after the clauses before it spent the file's clause-work ceiling, instead of failing.
+#[test]
+fn a_clause_with_nothing_to_match_answers_past_the_ceiling() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let clause = |id: &str, call: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "PY", "message": "call" },
+            "forbid": { "ast": { "language": "python", "rule": { "pattern": format!("{call}($A)") } } }
+        })
+    };
+    let code_rule = compile(
+        "nothing-to-match",
+        json!([
+            clause("print", "print"),
+            clause("absent", "never_called_anywhere")
+        ]),
+    );
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    TEST_CLAUSE_WORK_CEILING.set(Some(1));
+    let applied = apply_json(
+        &workspace,
+        1,
+        json!([{ "path": "needle.py", "language": "python", "source": "print(1)\n" }]),
+    );
+    TEST_CLAUSE_WORK_CEILING.set(None);
+    let failed = applied["evaluation"]["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|failure| failure["clauseId"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(!failed.contains(&"absent".to_owned()), "{applied}");
+    workspace.close();
+}
+
+/// Running out of work in a pass over some of a file's clauses is no verdict on the content: run
+/// with the others, the clauses before it would have left tables and verdicts built. Clause `b` is
+/// evaluated alone (`a`'s result is restored) and runs out: that failure is never stored, and a
+/// later workspace evaluates `b` again.
+#[test]
+fn running_out_of_work_in_a_pass_over_some_clauses_is_never_stored() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("partial-pass");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    // `a`, a regex clause with one match, polls its allowance once, before `b` runs.
+    let code_rule = compile(
+        "partial-pass",
+        json!([
+            {
+                "id": "a", "violation": { "anchor": "witness.span", "code": "PY", "message": "print" },
+                "forbid": { "regex": { "source": "file.content", "pattern": "print" } }
+            },
+            {
+                "id": "b", "violation": { "anchor": "witness.span", "code": "PY", "message": "print" },
+                "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
+            }
+        ]),
+    );
+    let file = json!([{ "path": "partial.py", "language": "python", "source": "print(1)\n" }]);
+    // `a` runs and is stored; the ceiling stops `b`, which is not.
+    let first = stored_workspace(&store, "/partial-pass", &code_rule);
+    TEST_CLAUSE_WORK_CEILING.set(Some(1));
+    let capped = apply_json(&first, 1, file.clone());
+    TEST_CLAUSE_WORK_CEILING.set(None);
+    assert_eq!(
+        capped["evaluation"]["failures"][0]["message"], FILE_CLAUSE_WORK_EXCEEDED,
+        "{capped}"
+    );
+    first.close();
+    // `a` is restored; `b`, evaluated alone, runs out of its allowance.
+    let partial = stored_workspace(&store, "/partial-pass", &code_rule);
+    TEST_CLAUSE_WORK_BUDGET.set(Some(0));
+    let ran_out = apply_json(&partial, 1, file.clone());
+    TEST_CLAUSE_WORK_BUDGET.set(None);
+    assert_eq!(restored_results(&partial), 1, "{ran_out}");
+    assert_eq!(
+        ran_out["evaluation"]["failures"][0]["clauseId"], "b",
+        "{ran_out}"
+    );
+    partial.close();
+    let later = stored_workspace(&store, "/partial-pass", &code_rule);
+    let warm = apply_json(&later, 1, file);
+    assert_eq!(warm["evaluation"]["failures"], json!([]), "{warm}");
+    assert_eq!(
+        located(&warm["evaluation"]["violations"]).len(),
+        2,
+        "{warm}"
+    );
+    later.close();
+}
+
+/// A clause that fails a file for its syntax (unsound under errors) fails it whatever ran before
+/// it: that failure is the content's verdict, stored and restored like any other.
+#[test]
+fn a_syntax_failure_is_stored_and_restored() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("syntax-stored");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let code_rule = compile(
+        "syntax-stored",
+        json!([{
+            "id": "unsound", "violation": { "anchor": "witness.span", "code": "U", "message": "u" },
+            "forbid": { "ast": { "language": "python", "rule": {
+                "kind": "call", "not": { "follows": { "kind": "import_statement", "stopBy": "end" } } } } }
+        }]),
+    );
+    let file =
+        json!([{ "path": "broken.py", "language": "python", "source": "print(3)\ndef (:\n" }]);
+    let workspace = stored_workspace(&store, "/syntax-stored", &code_rule);
+    let cold = apply_json(&workspace, 1, file.clone());
+    assert_eq!(
+        cold["evaluation"]["failures"][0]["code"], "source-incomplete",
+        "{cold}"
+    );
+    assert!(
+        workspace.state.lock().unwrap().files["broken.py"]
+            .unstored
+            .is_empty()
+    );
+    workspace.close();
+    let restarted = stored_workspace(&store, "/syntax-stored", &code_rule);
+    let warm = apply_json(&restarted, 1, file);
+    assert_eq!(restored_results(&restarted), 1, "{warm}");
+    assert_eq!(
+        warm["evaluation"]["failures"], cold["evaluation"]["failures"],
+        "{warm}"
+    );
+    restarted.close();
+}
+
+/// A file whose shared work (its parse, its tape's restore) runs out keeps no result: how much of
+/// that work an evaluation does depends on what an earlier one stored (a stored tape skips the
+/// parse), so the failure is not the content's verdict. It is transient: evaluated again by the
+/// next apply, never stored.
+#[test]
+fn a_file_whose_shared_work_runs_out_is_evaluated_again() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("deadline");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
-    let code_rule = compile(
-        "deadline",
-        json!([{
-            "id": "print", "violation": { "anchor": "witness.span", "code": "PY",
-                "message": "print" },
-            "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
-        }]),
-    );
+    let print = |id: &str| {
+        compile(
+            id,
+            json!([{
+                "id": id, "violation": { "anchor": "witness.span", "code": "PY",
+                    "message": "print" },
+                "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
+            }]),
+        )
+    };
     let file = json!([{ "path": "slow.py", "language": "python", "source": "print(1)\n" }]);
+    let printed = vec![("slow.py".to_owned(), "print".to_owned(), 0)];
 
-    let workspace = stored_workspace(&store, "/deadline", &code_rule);
+    // The parse runs out.
+    let workspace = stored_workspace(&store, "/deadline", &print("print"));
     TEST_FILE_WORK_BUDGET.set(Some(0));
-    let timed_out = apply_json(&workspace, 1, file.clone());
+    let ran_out = apply_json(&workspace, 1, file.clone());
     TEST_FILE_WORK_BUDGET.set(None);
-    assert_eq!(timed_out["evaluation"]["violations"], json!([]));
+    assert_eq!(ran_out["evaluation"]["violations"], json!([]));
     assert_eq!(
-        timed_out["evaluation"]["failures"][0]["code"],
-        "budget-exceeded"
+        ran_out["evaluation"]["failures"][0]["code"], "file-budget-exceeded",
+        "{ran_out}"
     );
-
-    let retried = apply_json(&workspace, 2, file.clone());
+    assert!(workspace.state.lock().unwrap().files["slow.py"].transient_failure);
+    let again = apply_json(&workspace, 2, file.clone());
     assert_eq!(
-        located(&retried["evaluation"]["violations"]),
-        vec![("slow.py".to_owned(), "print".to_owned(), 0)],
-        "an unchanged file whose evaluation timed out is evaluated again"
+        located(&again["evaluation"]["violations"]),
+        printed,
+        "{again}"
     );
-    assert_eq!(retried["evaluation"]["failures"], json!([]));
     workspace.close();
 
-    let timed_out_again = stored_workspace(&store, "/deadline-restart", &code_rule);
+    // Another rule set reads the file's stored tape: its restore runs out instead.
+    let other = print("other");
+    let restoring = stored_workspace(&store, "/deadline-restore", &other);
     TEST_FILE_WORK_BUDGET.set(Some(0));
-    apply_json(&timed_out_again, 1, file.clone());
+    let ran_out = apply_json(&restoring, 1, file.clone());
     TEST_FILE_WORK_BUDGET.set(None);
-    timed_out_again.close();
-    let restarted = stored_workspace(&store, "/deadline-restart", &code_rule);
+    assert_eq!(
+        ran_out["evaluation"]["failures"][0]["message"], "file tape restoration failed",
+        "{ran_out}"
+    );
+    assert!(restoring.state.lock().unwrap().files["slow.py"].transient_failure);
+    restoring.close();
+    let restarted = stored_workspace(&store, "/deadline-restore", &other);
     let warm = apply_json(&restarted, 1, file);
+    assert_eq!(warm["evaluation"]["failures"], json!([]), "{warm}");
     assert_eq!(
         located(&warm["evaluation"]["violations"]),
-        vec![("slow.py".to_owned(), "print".to_owned(), 0)],
-        "a timed-out result is never restored as the content's verdict"
+        vec![("slow.py".to_owned(), "other".to_owned(), 0)],
+        "{warm}"
     );
     restarted.close();
+}
+
+/// A clause that runs out of work fails alone: the clauses before it keep their violations, and
+/// the clauses after it still run under allowances of their own. Running out of its own allowance
+/// depends on the content alone, so the result is the content's verdict: persisted, and restored
+/// by a later workspace instead of paid for again. Before, one shared file budget failed every
+/// clause of the file, dropped the violations of those that had finished, and was re-run on every
+/// apply.
+#[test]
+fn a_clause_that_runs_out_of_work_fails_alone() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("clause-allowance");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let print = |id: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "PY", "message": "print" },
+            "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
+        })
+    };
+    // Every element reads each one before it: quadratic in the list, with no text to rule a
+    // file out.
+    let costly = json!({
+        "id": "costly", "violation": { "anchor": "witness.span", "code": "SLOW", "message": "slow" },
+        "forbid": { "ast": { "language": "python", "rule": {
+            "kind": "integer", "follows": { "stopBy": "end", "regex": "^[a-z]{40}$" } } } }
+    });
+    let code_rule = compile(
+        "clause-allowance",
+        json!([print("before"), costly, print("after")]),
+    );
+    let numbers = (0..3_000)
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let file = json!([{ "path": "big.py", "language": "python",
+        "source": format!("print(1)\nx = [{numbers}]\n") }]);
+    let workspace = stored_workspace(&store, "/clause-allowance", &code_rule);
+    TEST_CLAUSE_WORK_BUDGET.set(Some(20));
+    let evaluated = apply_json(&workspace, 1, file.clone());
+    TEST_CLAUSE_WORK_BUDGET.set(None);
+    let clauses = |values: &Value| {
+        let mut clauses = values
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value["clauseId"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        clauses.sort();
+        clauses
+    };
+    assert_eq!(
+        clauses(&evaluated["evaluation"]["violations"]),
+        ["after", "before"],
+        "{evaluated}"
+    );
+    let failures = evaluated["evaluation"]["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{evaluated}");
+    assert_eq!(
+        [
+            &failures[0]["clauseId"],
+            &failures[0]["code"],
+            &failures[0]["message"],
+            &failures[0]["path"]
+        ],
+        [
+            &json!("costly"),
+            &json!("budget-exceeded"),
+            &json!(CLAUSE_WORK_BUDGET_EXCEEDED),
+            &json!("big.py")
+        ],
+    );
+    assert!(
+        !workspace.state.lock().unwrap().files["big.py"].transient_failure,
+        "running out of work is the content's verdict, not a transient failure"
+    );
+    workspace.close();
+
+    // A later workspace, under the full allowance, reads every clause's stored result back,
+    // the costly clause's failure included, instead of evaluating the file again.
+    let restarted = stored_workspace(&store, "/clause-allowance", &code_rule);
+    let warm = apply_json(&restarted, 1, file);
+    assert_eq!(restored_results(&restarted), 3, "{warm}");
+    assert_eq!(
+        warm["evaluation"]["failures"], evaluated["evaluation"]["failures"],
+        "{warm}"
+    );
+    restarted.close();
+}
+
+/// A utility verdict a clause computed while its allowance ran out is not remembered for the
+/// clauses after it: the second clause reads the same utility at the same node and either finds
+/// its violation or fails, never reports nothing. Both share a `define`'s utility, so a verdict
+/// one remembers the other reads.
+#[test]
+fn a_verdict_cut_short_by_a_spent_allowance_is_not_remembered_for_later_clauses() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("clause-allowance-memo");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    // A double negation of the utility: the anchor plan selects by `kind` alone, so a clause's
+    // allowance is spent matching the utility, not selecting its roots.
+    let reads = |id: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "LATE", "message": "late" },
+            "forbid": { "ast": { "language": "python", "rule": {
+                "kind": "list", "not": { "not": { "matches": "late" } } } } }
+        })
+    };
+    // A list holding a five-digit number, which only its 10,000th element is: no literal to
+    // search for, so the walk reads the elements one by one.
+    let shared = json!({ "id": "shared", "define": { "language": "python", "utils": {
+        "late": { "kind": "list", "has": { "stopBy": "end", "kind": "integer", "regex": "^[0-9]{5}$" } }
+    } } });
+    let code_rule = compile(
+        "clause-allowance-memo",
+        json!([shared, reads("first"), reads("second")]),
+    );
+    let numbers = (0..10_001)
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let file = json!([{ "path": "late.py", "language": "python", "source": format!("x = [{numbers}]\n") }]);
+    let workspace = stored_workspace(&store, "/clause-allowance-memo", &code_rule);
+    TEST_CLAUSE_WORK_BUDGET.set(Some(5));
+    let evaluated = apply_json(&workspace, 1, file);
+    TEST_CLAUSE_WORK_BUDGET.set(None);
+    let named = |list: &Value| {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["clauseId"] == "second")
+            .count()
+    };
+    assert_eq!(
+        evaluated["evaluation"]["failures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["clauseId"] == "first")
+            .count(),
+        1,
+        "the first clause runs out: {evaluated}"
+    );
+    assert_eq!(
+        named(&evaluated["evaluation"]["violations"]) + named(&evaluated["evaluation"]["failures"]),
+        1,
+        "the second clause reports its violation or fails, never nothing: {evaluated}"
+    );
+    workspace.close();
 }
 
 #[test]
@@ -1397,6 +1764,197 @@ fn an_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
         "the finished evaluation was persisted and is restored"
     );
     restarted.close();
+}
+
+/// A wall-clock deadline (the inline fast path's budget) passes after the first clause's last
+/// poll: the second clause is skipped, and the evaluation must be known cut short (`observed`,
+/// which makes the inline path decline its result) and transient, so that the background apply
+/// evaluates the content again. Before, the check between clauses read the clock without
+/// recording what it found, so the cut-short result read as complete.
+#[test]
+fn an_evaluation_whose_deadline_passes_between_clauses_is_known_cut_short() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let print = |id: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "PY", "message": "print" },
+            "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
+        })
+    };
+    let code_rule = compile("inline-deadline", json!([print("first"), print("second")]));
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let closed = StdArc::clone(&workspace.closed);
+    let mut state = workspace.state.lock().unwrap();
+    let WorkspaceState {
+        code_rules,
+        candidate_sets,
+        grammars,
+        ..
+    } = &mut *state;
+    let mut file = super::ingest::make_file(
+        FileInput {
+            path: "late.py".into(),
+            language: "python".into(),
+            source: StdArc::new("print(1)\n".to_owned()),
+            module: None,
+        },
+        1,
+        code_rules,
+        candidate_sets,
+    );
+    let budget =
+        crate::code_rule_dsl::budget::MatchBudget::until(&closed, Duration::from_secs(600));
+    TEST_DEADLINE_PASSES_AT.set(Some("clause-done"));
+    super::evaluate::evaluate_file(
+        &mut file, code_rules, grammars, &closed, false, &budget, &mut None,
+    )
+    .unwrap();
+    TEST_DEADLINE_PASSES_AT.set(None);
+    assert_eq!(
+        file.failures.len(),
+        1,
+        "the second clause was skipped: {:?}",
+        file.failures
+    );
+    assert!(
+        budget.observed(),
+        "the cut-short evaluation reads as complete"
+    );
+    assert!(file.transient_failure, "the cut-short evaluation is kept");
+    drop(state);
+    workspace.close();
+}
+
+/// The file's budget is spent before a clause whose required text the file lacks: that clause
+/// matches nothing and costs nothing, so it answers instead of failing for the file's work.
+#[test]
+fn a_clause_with_nothing_to_match_answers_past_the_file_budget() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let clause = |id: &str, call: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "PY", "message": "call" },
+            "forbid": { "ast": { "language": "python", "rule": { "pattern": format!("{call}($A)") } } }
+        })
+    };
+    let code_rule = compile(
+        "nothing-to-match-late",
+        json!([
+            clause("print", "print"),
+            clause("absent", "never_called_anywhere")
+        ]),
+    );
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let closed = StdArc::clone(&workspace.closed);
+    let mut state = workspace.state.lock().unwrap();
+    let WorkspaceState {
+        code_rules,
+        candidate_sets,
+        grammars,
+        ..
+    } = &mut *state;
+    let mut file = super::ingest::make_file(
+        FileInput {
+            path: "late.py".into(),
+            language: "python".into(),
+            source: StdArc::new("print(1)\n".to_owned()),
+            module: None,
+        },
+        1,
+        code_rules,
+        candidate_sets,
+    );
+    let budget =
+        crate::code_rule_dsl::budget::MatchBudget::until(&closed, Duration::from_secs(600));
+    TEST_DEADLINE_PASSES_AT.set(Some("clause-done"));
+    super::evaluate::evaluate_file(
+        &mut file, code_rules, grammars, &closed, false, &budget, &mut None,
+    )
+    .unwrap();
+    TEST_DEADLINE_PASSES_AT.set(None);
+    assert!(file.failures.is_empty(), "{:?}", file.failures);
+    drop(state);
+    workspace.close();
+}
+
+/// Two clauses read the same lazily built per-file table (`file_table` / `file_php_names`). The
+/// first runs out of its own allowance while building it: that is no verdict on the table, so
+/// the second, under an allowance of its own, builds it again and reports its violation.
+fn a_table_build_cut_short_by_one_allowance_is_built_again(
+    language: &str,
+    path: &str,
+    source: String,
+    rule: Value,
+) {
+    let clause = |id: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "R", "message": "r" },
+            "forbid": { "ast": { "language": language, "rule": rule } }
+        })
+    };
+    let code_rule = compile("table-rebuild", json!([clause("first"), clause("second")]));
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    // Enough for the first clause to reach the build, not to finish it.
+    TEST_NEXT_CLAUSE_WORK_BUDGET.set(Some(8));
+    let applied = apply_json(
+        &workspace,
+        1,
+        json!([{ "path": path, "language": language, "source": source }]),
+    );
+    TEST_NEXT_CLAUSE_WORK_BUDGET.set(None);
+    let of = |list: &Value, clause: &str| {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["clauseId"] == clause)
+            .count()
+    };
+    let first = applied["evaluation"]["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["clauseId"] == "first")
+        .map(|item| item["message"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        first,
+        [json!(UtilLimit::Scope.message())],
+        "the first clause runs out building the table: {applied}"
+    );
+    assert_eq!(
+        (
+            of(&applied["evaluation"]["violations"], "second"),
+            of(&applied["evaluation"]["failures"], "second")
+        ),
+        (1, 0),
+        "the second clause builds the table again: {applied}"
+    );
+    workspace.close();
+}
+
+#[test]
+fn a_scope_table_cut_short_by_one_allowance_is_built_again() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    // Thousands of statements for the build to walk, and one identifier for the clauses to read.
+    a_table_build_cut_short_by_one_allowance_is_built_again(
+        "python",
+        "table.py",
+        format!("{}print(1)\n", "1\n".repeat(5_000)),
+        json!({ "kind": "identifier", "regex": "^print$", "resolves": { "global": ["print"] } }),
+    );
+}
+
+#[test]
+fn php_names_cut_short_by_one_allowance_are_built_again() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    a_table_build_cut_short_by_one_allowance_is_built_again(
+        "php",
+        "names.php",
+        format!("<?php\n{}random_int(1, 2);\n", "1;\n".repeat(5_000)),
+        json!({ "kind": "function_call_expression",
+            "has": { "field": "function", "resolves": { "import": ["random_int"] } } }),
+    );
 }
 
 #[test]
@@ -1721,7 +2279,11 @@ fn selector_index_misses_keep_input_budget_failures() {
     let fresh = apply_json(&unstored, 1, files);
     unstored.close();
     assert_eq!(
-        applied["evaluation"]["failures"][0]["message"], "file input budget exceeded",
+        [
+            &applied["evaluation"]["failures"][0]["code"],
+            &applied["evaluation"]["failures"][0]["message"]
+        ],
+        [&json!("input-limit"), &json!("file input budget exceeded")],
         "{applied}"
     );
     assert_eq!(

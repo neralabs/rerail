@@ -12,6 +12,20 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// The failure code of an output cap: a clause found more witnesses (or regex matches) than
+/// `maxWitnesses` lets it report. Apart from `budget-exceeded`, which is running out of work: the
+/// clause did read the file, so the file is not blind and the failure is not a coverage gap.
+pub(super) const WITNESS_LIMIT: &str = "witness-limit";
+/// The failure code of a clause the file's work stopped, not its own: the file's shared work
+/// (parsing, its tape, its anchor index) ran out before the clause ran, or the clauses before it
+/// spent the file's clause-work ceiling. Apart from `budget-exceeded` (the clause ran out of its
+/// own allowance): it depends on the other rules, so no rule is told to simplify itself for it.
+pub(super) const FILE_BUDGET_EXCEEDED: &str = "file-budget-exceeded";
+/// The failure code of a clause skipped because the file is past the rule's input limits
+/// (`maxSourceBytes`, or `maxFiles` of 0): it never ran on the file, and a rule's configured limit
+/// is no work it ran out of, so this fails the audit and is no coverage gap.
+pub(super) const INPUT_LIMIT: &str = "input-limit";
+
 #[derive(Clone)]
 pub(super) struct Limits {
     pub(super) max_ast_pattern_bytes: usize,
@@ -19,7 +33,21 @@ pub(super) struct Limits {
     pub(super) max_regex_pattern_bytes: usize,
     pub(super) max_source_bytes: usize,
     pub(super) max_visited_nodes: usize,
+    /// `maxVisitsPerNode` (optional, 0 without it): in the indexed workspace a file's node and
+    /// utility visits are allowed this many per node of the file when that is more than
+    /// `max_visited_nodes`, so a rule that reads each node a bounded number of times finishes on
+    /// a file of any size (`visits_for`).
+    pub(super) max_visits_per_node: usize,
     pub(super) max_witnesses: usize,
+}
+
+impl Limits {
+    /// The node and utility visits a file of `nodes` nodes allows: `max_visited_nodes`, or
+    /// `max_visits_per_node` per node where that is more.
+    pub(super) fn visits_for(&self, nodes: usize) -> usize {
+        self.max_visited_nodes
+            .max(nodes.saturating_mul(self.max_visits_per_node))
+    }
 }
 
 #[derive(Clone)]

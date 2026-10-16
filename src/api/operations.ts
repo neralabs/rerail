@@ -3,7 +3,7 @@ import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
-import type { AuditFailure } from "../engine/audit/audit.js";
+import { AUDIT_BLIND_REASONS, AUDIT_FAILURE_CODES, type AuditFailure } from "../engine/audit/audit.js";
 import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
@@ -68,16 +68,21 @@ const codeRuleViolationSchema: z.ZodType<CodeRuleViolation> = z.object({
 const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
   ruleId: z.string().exactOptional(),
   clauseId: z.string(),
-  code: z.enum(["budget-exceeded", "missing-capability", "source-incomplete", "source-partial", "adapter-error"]),
+  code: z.enum(AUDIT_FAILURE_CODES),
   message: z.string(),
   path: z.string().optional(),
   stage: z.enum(["read", "parse", "evaluate", "scan", "scope", "persistence"]).optional(),
+  blind: z.enum(AUDIT_BLIND_REASONS).optional(),
 }).strict();
 
 export const auditRecordSchema = createSelectSchema(audits).extend({
   paths: z.array(z.string()),
   violations: z.array(codeRuleViolationSchema),
   failures: z.array(auditFailureSchema),
+  failureCount: z.number().int().nonnegative().describe("Every failure the audit had: those `failures` lists, and those it leaves out."),
+  unlistedFailureCount: z.number().int().nonnegative().describe("Failures past the listed ones (at most 20 besides blind files, scan stops and one per rule that ran out of work)."),
+  blindFiles: z.array(z.string()),
+  blindFileCount: z.number().int().nonnegative(),
   catalogRevision: z.string().nullable(),
   ruleRevisions: z.array(z.object({ ruleId: z.string(), revision: z.number().int() }).strict()),
 });
@@ -113,7 +118,8 @@ const repositoryAuditSummarySchema = z.object({
     catalogRevision: z.string().nullable(),
     ruleRevisionCount: z.number().int().nonnegative(),
     violationCount: z.number().int().nonnegative(),
-    failureCount: z.number().int().nonnegative(),
+    failureCount: z.number().int().nonnegative().describe("Every failure the audit had, listed or not."),
+    unlistedFailureCount: z.number().int().nonnegative(),
   }).strict().nullable(),
 }).strict();
 const repositoryAuditEntryQuerySchema = z.object({

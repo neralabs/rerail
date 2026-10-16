@@ -146,7 +146,8 @@ function installFixture(home) {
   symlinkSync(join(rerailHome, "current"), join(home, ".omp", "agent", "extensions", "rerail"));
   writeJson(join(home, ".pi", "agent", "settings.json"), { packages: [join(rerailHome, "current"), "npm:other"], theme: "dark" });
   mkdirSync(join(home, ".claude", "commands"), { recursive: true });
-  for (const name of ["rerail.md", "rerail-ui.md"]) writeFileSync(join(home, ".claude", "commands", name), `Run ${cli} ${name}\n`);
+  // `rerail-ui.md` is the name `rerail-manage.md` had before it was renamed; nuke backs up both.
+  for (const name of ["rerail.md", "rerail-manage.md", "rerail-ui.md"]) writeFileSync(join(home, ".claude", "commands", name), `Run ${cli} ${name}\n`);
   for (const name of ["rerail-rules.md", "rerail.md.bak"]) writeFileSync(join(home, ".claude", "commands", name), name);
   writeFileSync(join(home, ".claude", "commands", "rerail-session.md"), "someone else's command\n");
   mkdirSync(join(home, ".cursor", "commands"), { recursive: true });
@@ -265,7 +266,7 @@ test("nuke --yes without a working launcher removes every Rerail trace itself, b
     assert.deepEqual(readJson(join(home, ".pi", "agent", "settings.json")), { packages: ["npm:other"], theme: "dark" });
     assert.ok(!existsSync(join(home, ".omp", "agent", "extensions", "rerail")));
 
-    assert.deepEqual(readdirSync(join(backup, "claude-commands")).sort(), ["rerail-ui.md", "rerail.md"]);
+    assert.deepEqual(readdirSync(join(backup, "claude-commands")).sort(), ["rerail-manage.md", "rerail-ui.md", "rerail.md"]);
     assert.deepEqual(readdirSync(join(home, ".claude", "commands")).sort(), ["rerail-rules.md", "rerail-session.md", "rerail.md.bak"], "commands that are not Rerail's stay");
     assert.deepEqual(readdirSync(join(backup, "cursor-commands")), ["rerail-start.md"]);
     assert.match(readFileSync(join(backup, "codex-skill-rerail", "SKILL.md"), "utf8"), /Managed by @neralabs\/rerail/u);

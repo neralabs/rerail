@@ -150,4 +150,72 @@ describe("SQLite audit persistence", () => {
     expect(reader.list()).toEqual({ audits: [], total: 0 });
     reader.close();
   });
+
+  it("reads, read-only, a database only an earlier build wrote, which has no unlisted-failure table", async () => {
+    const path = await temporaryDatabase();
+    const store = new SqliteAuditStore(path);
+    const auditId = store.start(input);
+    store.finish(auditId, { status: "failed", failures: [{ clauseId: "c", code: "adapter-error", message: "m" }] });
+    store.close();
+    recordRepositoryAudit(path, input.workspaceRoot, auditId);
+    const earlier = new Database(path);
+    earlier.exec("DROP TABLE audit_unlisted_failures");
+    earlier.close();
+    const reader = new SqliteAuditReader(path);
+    const counts = { failureCount: 1, unlistedFailureCount: 0 };
+    expect(reader.get(auditId)).toMatchObject(counts);
+    expect(reader.list().audits).toEqual([expect.objectContaining(counts)]);
+    expect(reader.latestSummary("session-a")).toMatchObject(counts);
+    expect(reader.listRepositoryAudits()).toMatchObject({ total: 1, repositories: [{ audit: counts }] });
+    reader.close();
+  });
+
+  it("keeps a running audit's unlisted count with its progress, and replaces it when the audit finishes", async () => {
+    const path = await temporaryDatabase();
+    const store = new SqliteAuditStore(path);
+    const failures = [{ clauseId: "c", code: "adapter-error" as const, message: "m" }];
+    const auditId = store.start(input);
+    store.progress(auditId, { violations: [], failures, unlistedFailureCount: 30 });
+    expect(store.get(auditId)).toMatchObject({ status: "running", failureCount: 31, unlistedFailureCount: 30 });
+    store.progress(auditId, { violations: [], failures, unlistedFailureCount: 45 });
+    expect(store.get(auditId)).toMatchObject({ failureCount: 46, unlistedFailureCount: 45 });
+    store.finish(auditId, { status: "failed", failures });
+    expect(store.get(auditId)).toMatchObject({ status: "failed", failureCount: 1, unlistedFailureCount: 0 });
+    const interrupted = store.start(input);
+    store.progress(interrupted, { violations: [], failures, unlistedFailureCount: 9 });
+    store.interrupt("session-a");
+    expect(store.get(interrupted)).toMatchObject({ status: "interrupted", failureCount: 10, unlistedFailureCount: 9 });
+    store.close();
+  });
+
+  it("counts each audit's own unlisted failures, never another audit's", async () => {
+    const path = await temporaryDatabase();
+    const store = new SqliteAuditStore(path);
+    const failures = [{ clauseId: "c", code: "adapter-error" as const, message: "m" }];
+    const many = store.start({ ...input, sessionId: "many", workspaceRoot: "/many" });
+    store.finish(many, { status: "failed", failures, unlistedFailureCount: 30 });
+    const listed = store.start({ ...input, sessionId: "listed", workspaceRoot: "/listed" });
+    store.finish(listed, { status: "failed", failures: [...failures, ...failures, ...failures] });
+    recordRepositoryAudit(path, "/many", many);
+    recordRepositoryAudit(path, "/listed", listed);
+    for (const reader of [store, new SqliteAuditReader(path)]) {
+      expect(reader.get(many)).toMatchObject({ failureCount: 31, unlistedFailureCount: 30 });
+      expect(reader.get(listed)).toMatchObject({ failureCount: 3, unlistedFailureCount: 0 });
+      expect(reader.list().audits.map(({ auditId, failureCount }) => [auditId, failureCount]).sort())
+        .toEqual([[listed, 3], [many, 31]].sort());
+      expect(reader.latestSummary("many")).toMatchObject({ failureCount: 31, unlistedFailureCount: 30 });
+      expect(reader.latestSummary("listed")).toMatchObject({ failureCount: 3, unlistedFailureCount: 0 });
+      expect(reader.listRepositoryAudits().repositories.map(({ workspaceRoot, audit }) =>
+        [workspaceRoot, audit?.failureCount, audit?.unlistedFailureCount])).toEqual([["/listed", 3, 0], ["/many", 31, 30]]);
+    }
+    store.close();
+  });
 });
+
+/** Records `auditId` as `workspaceRoot`'s repository audit, as the audit control does. */
+function recordRepositoryAudit(path: string, workspaceRoot: string, auditId: string): void {
+  const database = new Database(path);
+  database.prepare(`INSERT INTO repository_audits (workspace_root, session_id, audit_id, status, started_at)
+    VALUES (?, 'session-a', ?, 'failed', 1)`).run(workspaceRoot, auditId);
+  database.close();
+}

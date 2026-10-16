@@ -121,7 +121,7 @@ function usage(): string {
     "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
     "  rerail daemon stop",
     "  rerail session [<host> [<session-id>]] [--open]",
-    "  rerail ui [--print]",
+    "  rerail manage [--print]",
     "  rerail seed",
     "  rerail reset",
     "  rerail rules export [--output <rules.json>]",
@@ -229,8 +229,8 @@ function runSeedCommand(args: readonly string[]): number {
 }
 
 /** The rules page of the daemon serving this checkout; `--print` only reports the URL. */
-async function runUiCommand(args: readonly string[]): Promise<number> {
-  const { flags } = parseArguments(args, { flags: ["--print"], options: [] }, argument => `Unknown ui option: ${argument}\n\n${usage()}`);
+async function runManageCommand(args: readonly string[]): Promise<number> {
+  const { flags } = parseArguments(args, { flags: ["--print"], options: [] }, argument => `Unknown manage option: ${argument}\n\n${usage()}`);
   const page = await readRulesDashboard({ cwd: claudeWorkspace(process.cwd()) });
   if (page.url === null) {
     process.stdout.write(`Rerail is not running for this checkout (${page.reason}). Check rerail status, or start the daemon with rerail daemon start --open.\n`);
@@ -360,7 +360,7 @@ async function runDaemonCommand(command: string, args: readonly string[], home: 
     throw new Error(`Usage: rerail daemon start [options] | rerail daemon stop\n\n${usage()}`);
   }
   if (command === "status") return await runStatusCommand(home);
-  if (command === "ui") return await runUiCommand(args);
+  if (command === "manage") return await runManageCommand(args);
   return undefined;
 }
 
@@ -476,7 +476,7 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
   // `seed`, `rules`, `show-me` and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
-  if (["setup", "install", "start", "stop", "state", "status", "session", "ui", "seed", "rules", "show-me", "reset"].includes(command ?? "")) return true;
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset"].includes(command ?? "")) return true;
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
 }

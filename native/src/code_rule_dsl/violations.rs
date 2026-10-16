@@ -1886,7 +1886,7 @@ mod each_limit_tests {
         assert_eq!(node_group_enumerations(), 2, "{result}");
         assert_eq!(result["metrics"]["witnesses"], 2, "{result}");
         assert_eq!(result["violations"], json!([]), "{result}");
-        assert_eq!(result["failures"][0]["code"], "budget-exceeded", "{result}");
+        assert_eq!(result["failures"][0]["code"], "witness-limit", "{result}");
     }
 
     /// A violation whose `suppress` a comment may answer reads past suppressed witnesses, yet
@@ -1901,7 +1901,7 @@ mod each_limit_tests {
         assert_eq!(node_group_enumerations(), 2, "{result}");
         assert_eq!(result["metrics"]["witnesses"], 2, "{result}");
         assert_eq!(result["violations"], json!([]), "{result}");
-        assert_eq!(result["failures"][0]["code"], "budget-exceeded", "{result}");
+        assert_eq!(result["failures"][0]["code"], "witness-limit", "{result}");
     }
 
     /// A binding a comment suppresses spends none of the one-witness allowance: the enumeration

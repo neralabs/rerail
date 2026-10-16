@@ -338,8 +338,8 @@ mod tests {
                     { "code": "source-incomplete", "count": 1, "paths": ["d.py"] },
                 ] },
                 { "clauseId": "failed", "status": "failed", "reasons": [
-                    { "code": "budget-exceeded", "count": 1, "paths": [] },
                     { "code": "source-partial", "count": 4, "paths": paths },
+                    { "code": "witness-limit", "count": 1, "paths": [] },
                 ] },
             ]),
             "{result}"

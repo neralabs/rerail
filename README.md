@@ -230,7 +230,7 @@ Prerequisites:
 
 `setup` installs the package under `~/.rerail/versions/<version>` and points `~/.rerail/current` and the launcher `~/.rerail/bin/rerail` (`rerail.cmd` on Windows) at it; add `~/.rerail/bin` to `PATH`. `rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--port <n>] [--json] [--relay]` takes the answers above as arguments; `rerail install --agents <list> [--dry-run]` connects coding agents without setting anything up. `rerail update` shells out to `npm` and uses the same `~/.npmrc`. `rerail install --remove` takes Rerail out of every coding agent, stops the daemon, and moves `rerail.sqlite` into a dated backup so rules and history are kept. [Installing Rerail](docs/installation.md) describes every set-up step, what it writes, how to remove Rerail, and the managed-installation layout.
 
-Rerail is off in every repository until it is started there. Every coding agent gets one command set: `/rerail` (what Rerail is doing here, and every command), `/rerail-ui` (open the dashboard), `/rerail-create` (create a rule in your own words), `/rerail-start`, `/rerail-stop`, `/rerail-update` (install the newest version), `/rerail-rage-quit` (remove Rerail from this computer; rules and history are kept in a backup), and `/rerail-show-me` (see Rerail catch and fix a broken rule in this repo, then clean up). `/rerail-start` starts Rerail in the current checkout and the worktrees that follow it (from the main checkout, every linked worktree without its own setting) and `/rerail-stop` stops them, immediately detaching the active runtime. OMP and Pi register these commands natively. Claude Code and Cursor receive user-level command files in `~/.claude/commands/` and `~/.cursor/commands/` during `rerail install` (and `rerail setup`), removed by `rerail install --remove`. Codex receives one skill per command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-ui`, `$rerail-start`, and so on. Registration also removes the `/rerail-session` command file an earlier version wrote, when it is Rerail's own. Restart the coding agent after installing or rebuilding to refresh command registration. Settings, audits, status, update checks, rollback, and reset are CLI commands (`rerail settings`, `rerail scan`, `rerail status`, `rerail update check`, `rerail update rollback`, `rerail reset`). See [Scan and settings controls](#scan-and-settings-controls) for targeting and coding-agent differences.
+Rerail is off in every repository until it is started there. Every coding agent gets one command set: `/rerail` (what Rerail is doing here, and every command), `/rerail-manage` (open the dashboard), `/rerail-create` (create a rule in your own words), `/rerail-start`, `/rerail-stop`, `/rerail-update` (install the newest version), `/rerail-uninstall` (remove Rerail from this computer; rules and history are kept in a backup), `/rerail-help` (the same as `/rerail`: a list of commands), and `/rerail-show-me` (see Rerail catch and fix a broken rule in this repo, then clean up). `/rerail-start` starts Rerail in the current checkout and the worktrees that follow it (from the main checkout, every linked worktree without its own setting) and `/rerail-stop` stops them, immediately detaching the active runtime. OMP and Pi register these commands natively. Claude Code and Cursor receive user-level command files in `~/.claude/commands/` and `~/.cursor/commands/` during `rerail install` (and `rerail setup`), removed by `rerail install --remove`. Codex receives one skill per command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-manage`, `$rerail-start`, and so on. Registration also removes the command files and skills earlier versions wrote under names no longer used (`/rerail-session`, and `/rerail-ui` and `/rerail-rage-quit` before they became `/rerail-manage` and `/rerail-uninstall`), when they are Rerail's own. `rerail update` does not rewrite them: run `rerail install` after updating to pick up renamed or new commands. Restart the coding agent after installing or rebuilding to refresh command registration. Settings, audits, status, update checks, rollback, and reset are CLI commands (`rerail settings`, `rerail scan`, `rerail status`, `rerail update check`, `rerail update rollback`, `rerail reset`). See [Scan and settings controls](#scan-and-settings-controls) for targeting and coding-agent differences.
 
 Supported native targets:
 
@@ -310,7 +310,7 @@ rerail start                   # start Rerail in this checkout and the checkouts
 rerail stop [<host> [<session-id>]]   # stop Rerail in this checkout and the checkouts inside it (--repository: every checkout); leave the shared daemon running. A coding agent's host sets the reply's command sigil, and its session (rerail stop codex: CODEX_THREAD_ID) makes the reply name the rules that steered it
 rerail state                   # prints started, stopped, or not-set-up for this checkout
 rerail status                  # whether Rerail is on here, then the daemon; exit 3 when the daemon is not running
-rerail ui [--print]            # prints the rules page URL and opens it; --print only prints
+rerail manage [--print]        # prints the rules page URL and opens it; --print only prints
 rerail session [<host> <session-id>] [--open]   # this session's status line and page URL; --open opens it
 rerail daemon stop             # graceful stop where supported; forced termination after 10 s
 ```
@@ -366,7 +366,7 @@ The daemon binds `127.0.0.1` by default (`--port` and `--host` override). `--hos
 
 Being on loopback is not by itself the write authorization. A page on another site can resolve its own name to `127.0.0.1` (DNS rebinding) and reach the socket, so every request is first checked against the `Host` header the browser sent: it must name `127.0.0.1`, `localhost`, or `[::1]` on any port (a container port mapping or reverse proxy presents a port the daemon never bound), the literal address the daemon was bound to with `--host` (an IP literal cannot arrive by rebinding, and the daemon's own state URL dials it), or a hostname given with `--public-host <name,...>`. Anything else — including the private `/native/*` bridge, `/mcp`, `/healthz`, and the page — is answered `421 { "error": "host-not-allowed" }` before any route runs. On top of that, an `/api` write carrying an `Origin` is accepted only when that origin is one of the same hostnames on the port the request was addressed to (`403 api-origin-forbidden` otherwise); Rerail's own processes send no `Origin`. The page is served with `X-Content-Type-Options: nosniff`, and its HTML with `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`, so no other site can frame it.
 
-The daemon's pid, port, and database path live in `~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) and its output in `daemon.log` beside it. `rerail daemon start` reuses a daemon that is already running and reports where it is; a state file left by a crash or reboot is detected and cleared. `stop`, `status`, and `ui` always run from the launcher you invoked rather than re-executing the managed version, so they keep working while an update is in flight.
+The daemon's pid, port, and database path live in `~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) and its output in `daemon.log` beside it. `rerail daemon start` reuses a daemon that is already running and reports where it is; a state file left by a crash or reboot is detected and cleared. `stop`, `status`, and `manage` always run from the launcher you invoked rather than re-executing the managed version, so they keep working while an update is in flight.
 
 `daemon.json` also records `kernelSocketPath` (a Unix socket or Windows named pipe). Hooks reuse this service by default; `RERAIL_ENGINE_SOCKET` selects an explicitly managed endpoint. `RERAIL_AUTOSTART=0` prevents automatic daemon creation and requires an existing daemon or explicit endpoint for command hooks.
 
@@ -399,12 +399,13 @@ OMP and Pi expose the commands natively, with descriptions in slash completion. 
 | Command            | Interaction                                                                                                                        |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `/rerail`          | Show whether Rerail is on in this repository, its rule count, how often it steered this session, the session's dashboard link, and every command. Rendered by `rerail session`; Cursor gets the repository-level form. |
-| `/rerail-ui`       | Open the dashboard's rules page for this repository and checkout (the same link the footer's rule count carries).                 |
+| `/rerail-manage`   | Open the dashboard's rules page for this repository and checkout (the same link the footer's rule count carries).                 |
 | `/rerail-create`   | Create a rule in your own words, or with no words get suggestions from this repository's sessions (`rerail rules evidence`) and written standards: the coding agent follows the package's `skills/rerail-create` skill, drafts the rule, tests it with `rerail rules test <draft.json>`, reads it back, and adds it with `rerail rules add <draft.json>` only after you say yes: the rule goes into your library and is added to this repository (setting it up with that rule when it is not set up yet). It also tunes a rule that misfires. See [docs/writing-rules.md](docs/writing-rules.md). |
 | `/rerail-start`    | Start Rerail in this checkout and the worktrees inside it and attach it to the current session; in a repository that is not set up it first runs set-up's questions there (OMP and Pi ask through their own picker; Claude Code and Cursor relay the questions as text). |
 | `/rerail-stop`     | Stop recording, evaluation, steering, and daemon autostart in this checkout and the worktrees inside it. The shared daemon stays available to others. |
 | `/rerail-update`   | Install the newest Rerail version.                                                                                                 |
-| `/rerail-rage-quit` | Remove Rerail from this computer (`rerail install --remove`); rules and history are kept in a backup. Asks first: OMP and Pi use a native selector, and Claude Code does not pre-approve the removal. |
+| `/rerail-uninstall` | Remove Rerail from this computer (`rerail install --remove`); rules and history are kept in a backup. Asks first: OMP and Pi use a native selector, and Claude Code does not pre-approve the removal. |
+| `/rerail-help`     | The same as `/rerail`: whether Rerail is on here, then a list of commands.                                                         |
 | `/rerail-show-me`  | A demo on this repository, under a minute: `rerail show-me` adds the demo rule `local:rerail-show-me`, scoped to one file, `rerail-show-me.js`; the coding agent writes that file breaking the rule, is steered, fixes it, and `rerail show-me --cleanup` deletes the file and takes the rule out of this repository, leaving it to a demo running in another until that one cleans up. Rerail must be on and the repository set up; the demo never starts or sets one up, and never touches a `rerail-show-me.js` or a `local:rerail-show-me` rule it did not write. The steer stays in the dashboard's activity, as for any rule. |
 
 A rule draft for `/rerail-create` is `{ kind, rule, cases: { caught: [...], passed: [...] } }`. `rerail rules test` validates it and runs its cases plus a pass over the repository without writing anything; a case whose file some clause could not check (it did not parse, say) is marked `not checked (<reason>)`, never passed, and the repository pass lists the files the rule could not check. `rerail rules add` stores it in your library and adds it, on, to this repository (the whole repository, or the draft's `folder`), setting a repository that is not set up up with just that rule; it refuses to replace a rule shipped by Rerail.
@@ -491,11 +492,47 @@ changed files when the request is made; an empty diff is a failed request rather
 than a silent full-repository scan. Automatic AI-output evaluation continues to
 use captured preimages and changed ranges.
 Full-repository work is guarded by a five-minute execution budget, a
-100,000-file or 512 MiB aggregate source ceiling, 32-file/1 MiB native batches,
-and a 20-failure reporting limit. Individual files may use the policy engine's
-32 MB source allowance and 500 ms AST work window. A scan that reaches a
-guardrail fails explicitly with one summary failure instead of continuing to
-consume host resources or flooding Diagnostics.
+100,000-file or 512 MiB aggregate source ceiling, and 32-file/1 MiB native
+batches; a scan that reaches one of these fails explicitly with one summary
+failure, always listed, instead of continuing to consume host resources.
+Failures to read a file never stop a scan, and at most 20 of them (and of other
+per-file failures) are listed; the audit record and the session summary keep
+the total (`failureCount`, of which `unlistedFailureCount` are not listed), and
+the session footer says `audit failed (N failures)`. Individual files may use
+the policy engine's 32 MB source allowance.
+No per-file limit is a fixed cut-off for a large file. Each file's shared work
+(parsing, its tape and anchor index) and each clause's own work allowance grow
+with the file's size, and a clause may visit `maxVisitedNodes` nodes or 16 per
+node of the file (`maxVisitsPerNode`), whichever is more. Each clause runs
+under its own allowance, so a costly rule fails alone and never takes the
+other rules' findings on that file with it. In one evaluation of a file, its
+clauses together may spend eight allowances; a clause that finds that ceiling
+spent fails without running. A rule running out of its own allowance in an
+evaluation of all of a file's rules depends on its content and the rules alone,
+so the result is stored and a later scan reads it back instead of paying for it
+again. A failure that depends on what else ran is not stored, and the next scan
+evaluates the file or rule again: the file's shared work running out (how much
+of it a scan does depends on what an earlier one stored), the ceiling, or
+running out in an evaluation of some of its rules.
+
+A rule that still runs out of work on a file is a **coverage gap**, not an
+execution failure: its failure says what would let it finish (simplify the
+rule, or exclude generated or vendored files from its scope), the failure list
+keeps one failure of every such rule past its cap, and the session footer
+counts the rules that ran out of work. A rule the file's work stopped (its
+shared work or the ceiling; code `file-budget-exceeded`) is a gap too, advised
+to exclude or split the file, and is not counted as a rule that ran out. A file
+every rule failed on is a **blind file**: it is listed once, as one failure
+marked `blind`, never cut from the list, and the audit record reports
+`blindFiles` and `blindFileCount`. A file blind for its work (`budget`) is a
+gap; one blind for its syntax (`syntax`) is a file read in part, as a rule kept
+out by syntax errors is: a repository audit lists it and completes, a
+touched-files scan fails on it. A scan whose only failures are gaps completes,
+`rerail scan` exits `0`, and the session footer says how many files were not
+checked, how many rules ran out of work and how many the file's work stopped
+instead of "audit failed". A rule that finds more than `maxWitnesses` on a file
+(`witness-limit`) did read it, and a file past a rule's input limits
+(`input-limit`) was never read by it: neither is a gap, and both fail the audit.
 
 The Diagnostics screen keeps one-shot requests and their results separate from
 ongoing settings and transcripts. A completed scan with no violations is a

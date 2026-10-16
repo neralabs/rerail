@@ -477,6 +477,21 @@ export const auditRuleSetUses = sqliteTable(
 /** The derived audit history keyed by session: the triggers on `audits` clear it along with the audits it came from. */
 export const DERIVED_AUDIT_HISTORY_TABLES = [auditViolations, ruleViolationRollup, auditRuleSetUses] as const;
 
+/**
+ * How many failures an audit had beyond those `audits.failures_json` lists, which holds at most 20 per-file failures
+ * besides those always listed; a row only for an audit that had more. A table of its own rather than a column of
+ * `audits`: the DDL creates it in a database an earlier build made, which keeps its `audits` table as it was.
+ */
+export const auditUnlistedFailures = sqliteTable(
+  "audit_unlisted_failures",
+  {
+    auditId: text("audit_id")
+      .primaryKey()
+      .references(() => audits.auditId, { onDelete: "cascade" }),
+    count: integer("count").notNull(),
+  },
+  table => [check("audit_unlisted_failures_count", sql`${table.count} > 0`)],
+);
 export const auditSettings = sqliteTable("audit_settings", {
   workspaceRoot: text("workspace_root").primaryKey(),
   settings: text("settings_json", { mode: "json" }).$type<{ scope: AuditScope; mode: AuditMode }>().notNull(),
@@ -555,7 +570,7 @@ export function sessionsOfRepository(repositoryIds: string | readonly string[], 
 
 /**
  * Session history `rerail reset` deletes for every session of the repository, running or not.
- * `audit_result_pages` cascades with `audits`; `sessions` and `policy_session_owners`
+ * `audit_result_pages` and `audit_unlisted_failures` cascade with `audits`; `sessions` and `policy_session_owners`
  * lose only ended sessions, so running ones keep recording.
  */
 export const SESSION_HISTORY_TABLES = [events, workLinks, audits, auditRequests, repositoryAudits] as const;

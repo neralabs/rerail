@@ -269,7 +269,21 @@ describe("Rerail daemon", () => {
         mode: "block", message: "x".repeat(2 * 1024 * 1024),
         path: "source.ts", captures: {}, variables: {},
       }],
-      failures: [{ clauseId: "scan", code: "budget-exceeded", message: "scan exceeded its budget", stage: "scan" }],
+      failures: [
+        { clauseId: "scan", code: "budget-exceeded", message: "scan exceeded its budget", stage: "scan" },
+        { clauseId: "source", code: "budget-exceeded", message: "Source exceeds the per-file byte budget", path: "big.ts", stage: "read" },
+        // A file blind for its syntax fails the audit; one blind for its work is a gap.
+        { clauseId: "file", code: "source-incomplete", message: "file has syntax errors", path: "broken.ts", stage: "evaluate", blind: "syntax" },
+        { clauseId: "file", code: "budget-exceeded", message: "file parsing time budget exceeded", path: "huge.ts", stage: "evaluate", blind: "budget" },
+        // A rule that ran out of its own work is a gap, counted per rule.
+        { ruleId: "slow", clauseId: "c", code: "budget-exceeded", message: "clause work budget exceeded", path: "a.ts", stage: "evaluate" },
+        { ruleId: "slow", clauseId: "c", code: "budget-exceeded", message: "clause work budget exceeded", path: "b.ts", stage: "evaluate" },
+        // A rule the file's work stopped is a gap, but did not run out itself.
+        { ruleId: "late", clauseId: "c", code: "file-budget-exceeded", message: "file clause work budget exceeded", path: "a.ts", stage: "evaluate" },
+        { ruleId: "late", clauseId: "c", code: "file-budget-exceeded", message: "file AST work budget exceeded", path: "b.ts", stage: "evaluate" },
+      ],
+      // The list holds eight of the run's failures; it had 140 more.
+      unlistedFailureCount: 140,
     });
     audits.close();
     const daemon = await start();
@@ -284,7 +298,8 @@ describe("Rerail daemon", () => {
     });
     expect(compact.context?.session).toEqual((await getJson(daemon, "/api/sessions/large-run")).body);
     expect(compact.context?.session?.audit).toEqual({
-      workspaceRoot: root, scope: "repository", mode: "log", status: "failed", violationCount: 1, failureCount: 1,
+      workspaceRoot: root, scope: "repository", mode: "log", status: "failed", violationCount: 1, failureCount: 148,
+      unlistedFailureCount: 140, blindFileCount: 2, gapCount: 5, outOfWorkRuleCount: 1, fileWorkStoppedRuleCount: 1,
     });
     for (const mismatch of [{ host: "claude-code" }, { repository: tmpdir() }, { sessionId: "missing" }]) {
       const wrong = new URLSearchParams({ repository: root, host: "omp", sessionId: "large-run", ...mismatch });
@@ -552,6 +567,8 @@ describe("Rerail daemon", () => {
         path: "generated/client.ts",
         stage: "read",
       }],
+      // The run had 30 more failures than it lists; the repository listing counts them.
+      unlistedFailureCount: 30,
     });
     controls.finishRepositoryAudit("repo-a-session", "/workspace/repo-a", repositoryAuditId, "failed", "Source exceeds the per-file byte budget");
     const historicalAuditId = audits.start({
@@ -603,7 +620,8 @@ describe("Rerail daemon", () => {
               catalogRevision: "catalog-a",
               ruleRevisionCount: 1,
               violationCount: 2,
-              failureCount: 1,
+              failureCount: 31,
+              unlistedFailureCount: 30,
             },
           },
           {

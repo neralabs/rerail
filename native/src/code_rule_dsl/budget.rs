@@ -4,10 +4,22 @@
 //!
 //! A file's and a global clause's budget is work, not time: each poll spends one unit of a fixed
 //! allowance, and every poll site polls once per bounded amount of work (every 1,024 matcher
-//! calls, every 256 nodes of a walk or posting build, every 1,024 cross-file rows, once per regex
-//! match), so whether an evaluation runs out depends on its input alone, not on the machine's
-//! load. Only the inline fast path, whose miss falls back to a background evaluation, keeps a
-//! wall-clock deadline.
+//! calls, every 256 steps of a walk, posting build or anchor selection, every 1,024 cross-file
+//! rows, once per regex match), so whether an evaluation runs out depends on its input alone, not
+//! on the machine's load. Only the inline fast path, whose miss falls back to a background
+//! evaluation, keeps a wall-clock deadline.
+//!
+//! A file's budget covers the work every clause shares (parsing, the tape, the anchor index);
+//! each clause then runs under an allowance of its own (`with_allowance`), so one clause's
+//! matching never spends another's. Lazily built per-file tables (scope tables, PHP names, anchor
+//! text) are the exception: the first clause that needs one builds it under its own allowance,
+//! and the clauses after it read it for free, so the work a clause spends depends on the clauses
+//! run before it in the same pass. Over all of a file's clauses, from nothing built, that is fixed
+//! by the content and the catalog (`workspace::evaluate` stores only such passes' exhaustion). A
+//! ceiling on the allowances a file's clauses spend together bounds its total work
+//! (`workspace::ClauseWork`). Running out of work is the input's verdict; only the workspace
+//! closing or a wall-clock deadline (`MatchBudget::interrupted`) cuts an evaluation short in a
+//! way that is not.
 
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
@@ -15,8 +27,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Matcher calls between two polls; a budget is noticed spent at most this many calls late.
-/// `FILE_WORK_BUDGET` is calibrated at this interval.
+/// `CLAUSE_WORK_BUDGET` is calibrated at this interval.
 const BUDGET_CHECK_INTERVAL: u32 = 1024;
+
+/// Steps of a loop between two polls, for `step_budget_exhausted`.
+const STEP_CHECK_INTERVAL: u32 = 256;
 
 thread_local! {
     static MATCH_BUDGET: RefCell<Option<MatchDeadline>> = const { RefCell::new(None) };
@@ -26,6 +41,8 @@ thread_local! {
     /// Matcher calls until the next poll; reset when a budget starts, so an evaluation polls at
     /// the same calls whatever the thread evaluated before.
     static BUDGET_COUNTDOWN: Cell<u32> = const { Cell::new(0) };
+    /// Loop steps until the next poll (`step_budget_exhausted`); reset as `BUDGET_COUNTDOWN` is.
+    static STEP_COUNTDOWN: Cell<u32> = const { Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -104,6 +121,77 @@ pub(super) fn matcher_call_budget_exhausted() -> bool {
     false
 }
 
+/// `matcher_budget_exhausted` for one step of a loop: polls every `STEP_CHECK_INTERVAL` steps
+/// counted across calls, so many short loops spend what one long loop of their steps does.
+pub(super) fn step_budget_exhausted() -> bool {
+    let countdown = STEP_COUNTDOWN.get();
+    if countdown > 0 {
+        STEP_COUNTDOWN.set(countdown - 1);
+        return false;
+    }
+    if matcher_budget_exhausted() {
+        return true;
+    }
+    STEP_COUNTDOWN.set(STEP_CHECK_INTERVAL - 1);
+    false
+}
+
+/// What an allowance run inside this thread's budget used (`with_allowance`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Allowance {
+    /// Whether a poll found the allowance exhausted (or the workspace closed, or the clock passed).
+    pub(super) exhausted: bool,
+    /// The units its polls spent, at most its size.
+    pub(super) spent: u64,
+}
+
+/// Runs `run` under an allowance of `units` polls of its own, inside this thread's budget: the
+/// allowance is spent and runs out on its own, while the workspace's closing and a wall-clock
+/// deadline still end it. Under a wall-clock budget (the inline fast path) the allowance is that
+/// deadline alone. Returns `run`'s result and what the allowance used. Without a budget, `run`
+/// runs unbounded.
+pub(super) fn with_allowance<T>(units: u64, run: impl FnOnce() -> T) -> (T, Allowance) {
+    let Some(outer) = MATCH_BUDGET.with_borrow(Option::clone) else {
+        return (
+            run(),
+            Allowance {
+                exhausted: false,
+                spent: 0,
+            },
+        );
+    };
+    let limit = match outer.limit {
+        Limit::Work(_) => Limit::Work(units),
+        until @ Limit::Until(_) => until,
+    };
+    let allowance = MatchDeadline {
+        nested: Arc::clone(&outer.nested),
+        interrupted_seen: Arc::clone(&outer.interrupted_seen),
+        ..MatchDeadline::new(&outer.closed, limit)
+    };
+    /// Reinstates the enclosing budget and its poll countdowns, however `run` ends.
+    struct Restore(Option<MatchDeadline>, u32, u32);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            MATCH_BUDGET.set(self.0.take());
+            BUDGET_COUNTDOWN.set(self.1);
+            STEP_COUNTDOWN.set(self.2);
+        }
+    }
+    let _restore = Restore(
+        MATCH_BUDGET.replace(Some(allowance.clone())),
+        BUDGET_COUNTDOWN.replace(0),
+        STEP_COUNTDOWN.replace(0),
+    );
+    let result = run();
+    let exhausted = allowance.observed();
+    if exhausted {
+        allowance.nested.store(true, Ordering::Relaxed);
+    }
+    let spent = allowance.work.load(Ordering::Relaxed).min(units);
+    (result, Allowance { exhausted, spent })
+}
+
 /// What a budget allows.
 #[derive(Clone, Copy)]
 enum Limit {
@@ -122,6 +210,11 @@ pub(super) struct MatchDeadline {
     work: Arc<AtomicU64>,
     closed: Arc<AtomicBool>,
     spent: Arc<AtomicBool>,
+    /// Whether an allowance run inside this budget (`with_allowance`) ran out; shared with them.
+    nested: Arc<AtomicBool>,
+    /// Whether a poll of this budget or an allowance inside it found the workspace closed or the
+    /// wall-clock deadline passed (`MatchBudget::interrupted`); shared with them.
+    interrupted_seen: Arc<AtomicBool>,
     /// Writes of `spent`, shared by every clone.
     #[cfg(test)]
     spent_stores: Arc<std::sync::atomic::AtomicUsize>,
@@ -134,24 +227,30 @@ impl MatchDeadline {
             work: Arc::default(),
             closed: Arc::clone(closed),
             spent: Arc::new(AtomicBool::new(false)),
+            nested: Arc::default(),
+            interrupted_seen: Arc::default(),
             #[cfg(test)]
             spent_stores: Arc::default(),
         }
     }
 
     /// Spends a unit of work (or reads the clock) unless exhaustion was already observed, and
-    /// records exhaustion when it is.
+    /// records exhaustion when it is, and whether closing or the clock caused it.
     pub(super) fn exhausted(&self) -> bool {
         if self.observed() {
             return true;
         }
-        let open = !self.closed.load(Ordering::Relaxed)
+        let closed = self.closed.load(Ordering::Relaxed);
+        let open = !closed
             && match self.limit {
                 Limit::Work(limit) => self.work.fetch_add(1, Ordering::Relaxed) < limit,
                 Limit::Until(deadline) => Instant::now() < deadline,
             };
         if open {
             return false;
+        }
+        if closed || matches!(self.limit, Limit::Until(_)) {
+            self.interrupted_seen.store(true, Ordering::Relaxed);
         }
         self.spent.store(true, Ordering::Relaxed);
         #[cfg(test)]
@@ -185,12 +284,27 @@ impl MatchBudget {
     fn install(deadline: MatchDeadline) -> Self {
         MATCH_BUDGET.with(|budget| *budget.borrow_mut() = Some(deadline.clone()));
         BUDGET_COUNTDOWN.set(0);
+        STEP_COUNTDOWN.set(0);
         Self { deadline }
     }
 
-    /// Whether a poll found the budget exhausted: an evaluation that finished without one is
-    /// complete.
+    /// Whether a poll found the budget, or an allowance run inside it, exhausted: an evaluation
+    /// that finished without one is complete.
     pub(super) fn observed(&self) -> bool {
+        self.deadline.observed() || self.deadline.nested.load(Ordering::Relaxed)
+    }
+
+    /// Whether a poll found the workspace closed or the wall-clock deadline passed: what cut the
+    /// evaluation short depends on when it ran, not on the file, so it is not the file's verdict.
+    pub(super) fn interrupted(&self) -> bool {
+        self.deadline.interrupted_seen.load(Ordering::Relaxed)
+    }
+
+    /// Whether the file's own budget, which its shared work spends (parsing, the tape, the anchor
+    /// index, the call summary), was found spent; an allowance running out inside it is not. How
+    /// much shared work an evaluation does depends on what an earlier one stored (a stored tape
+    /// skips the parse), so running out of it is not the file's verdict either.
+    pub(super) fn shared_spent(&self) -> bool {
         self.deadline.observed()
     }
 
@@ -259,5 +373,67 @@ mod tests {
             "the sixth poll, on either clone, spends past it"
         );
         assert!(budget.observed() && budget.exhausted());
+    }
+
+    #[test]
+    fn an_allowance_runs_out_on_its_own_and_leaves_the_file_budget_unspent() {
+        let closed = Arc::new(AtomicBool::new(false));
+        let file = MatchBudget::work(&closed, 3);
+        let ((), costly) = with_allowance(10, || while !matcher_budget_exhausted() {});
+        assert_eq!(
+            costly,
+            Allowance {
+                exhausted: true,
+                spent: 10
+            },
+            "the costly allowance ran out, having spent all of it"
+        );
+        assert_eq!(file.spent(), 0, "an allowance's polls are its own");
+        assert!(
+            !matcher_budget_observed(),
+            "the file budget is reinstated unspent"
+        );
+        let ((), cheap) = with_allowance(10, || {
+            for _ in 0..5 {
+                assert!(!matcher_budget_exhausted());
+            }
+        });
+        assert_eq!(
+            cheap,
+            Allowance {
+                exhausted: false,
+                spent: 5
+            },
+            "a later allowance starts whole"
+        );
+        assert!(
+            file.observed(),
+            "the file reports that one of its allowances ran out"
+        );
+        assert!(
+            !file.interrupted(),
+            "running out of work is no interruption"
+        );
+        closed.store(true, Ordering::Relaxed);
+        let (_, after_close) = with_allowance(10, matcher_budget_exhausted);
+        assert!(
+            after_close.exhausted,
+            "closing the workspace ends every allowance"
+        );
+        assert!(file.interrupted(), "and the file sees it interrupted");
+    }
+
+    #[test]
+    fn step_polls_count_steps_across_calls() {
+        let budget = MatchBudget::work(&Arc::new(AtomicBool::new(false)), u64::MAX);
+        for _ in 0..1_000 {
+            // A loop of one step per call, as a per-root helper runs.
+            assert!(!step_budget_exhausted());
+        }
+        assert_eq!(
+            budget.spent(),
+            4,
+            "1,000 steps poll once per 256, not once per call"
+        );
     }
 }

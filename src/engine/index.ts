@@ -106,6 +106,7 @@ export {
   auditRuleSetRules,
   auditRuleSets,
   auditRuleSetUses,
+  auditUnlistedFailures,
   audits,
   auditViolations,
   auditSettings,

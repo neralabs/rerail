@@ -13,10 +13,12 @@ import { BACKUP_PREFIX, BACKUP_RERAIL_HOME, launcherPath, loadSqlite, processAli
 /** The coding agents `rerail install` registers with, and the config directory whose presence selects each. */
 export const HARNESS_CONFIG_DIRS = { omp: join(".omp", "agent"), pi: join(".pi", "agent"), "claude-code": ".claude", codex: ".codex", cursor: ".cursor" };
 /** The Rerail command set (`src/harness/rerail-commands.ts`): command files for Claude Code and Cursor, skills for Codex. */
-export const RERAIL_COMMAND_NAMES = ["rerail", "rerail-ui", "rerail-create", "rerail-start", "rerail-stop", "rerail-update", "rerail-rage-quit", "rerail-show-me"];
+export const RERAIL_COMMAND_NAMES = ["rerail", "rerail-manage", "rerail-create", "rerail-start", "rerail-stop", "rerail-update", "rerail-uninstall", "rerail-help", "rerail-show-me"];
+/** Plus the names earlier versions wrote before `rerail-ui` and `rerail-rage-quit` were renamed. */
+const INSTALLED_COMMAND_NAMES = [...RERAIL_COMMAND_NAMES, "rerail-ui", "rerail-rage-quit"];
 /** Plus `/rerail-session`, which an earlier version wrote. */
-export const CLAUDE_COMMANDS = [...RERAIL_COMMAND_NAMES.map(name => `${name}.md`), "rerail-session.md"];
-export const CURSOR_COMMANDS = RERAIL_COMMAND_NAMES.map(name => `${name}.md`);
+export const CLAUDE_COMMANDS = [...INSTALLED_COMMAND_NAMES.map(name => `${name}.md`), "rerail-session.md"];
+export const CURSOR_COMMANDS = INSTALLED_COMMAND_NAMES.map(name => `${name}.md`);
 export const CLAUDE_PLUGIN = "rerail@rerail-dev";
 export const CLAUDE_MARKETPLACE = "rerail-dev";
 export const MCP_SERVER = "rerail";
@@ -356,7 +358,7 @@ function commandSteps({ home, backupRoot, matches }) {
   const moves = [
     ...CLAUDE_COMMANDS.map(name => [join(home, ".claude", "commands", name), join(backupRoot, "claude-commands", name)]),
     ...CURSOR_COMMANDS.map(name => [join(home, ".cursor", "commands", name), join(backupRoot, "cursor-commands", name)]),
-    ...RERAIL_COMMAND_NAMES.map(name => [join(home, ".codex", "skills", name), join(backupRoot, `codex-skill-${name}`)]),
+    ...INSTALLED_COMMAND_NAMES.map(name => [join(home, ".codex", "skills", name), join(backupRoot, `codex-skill-${name}`)]),
   ];
   return moves
     .filter(([source]) => referencesRerailHome(source, matches))

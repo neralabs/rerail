@@ -459,7 +459,7 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
         databasePath: () => options.databasePath === undefined
           ? undefined
           : resolve(currentContext?.cwd ?? process.cwd(), options.databasePath),
-        // Rage-quit retires this session's runtime before removing Rerail; reattach rebuilds it if the removal fails.
+        // Uninstall retires this session's runtime before removing Rerail; reattach rebuilds it if the removal fails.
         detach: async () => {
           presentation.stop();
           await closeRuntime();

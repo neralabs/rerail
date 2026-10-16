@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-prefer-promises-fs",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/prefer-promises/fs: calls of the fs module's callback API (access, copyFile, open, rename, truncate, rmdir, mkdir, readdir, readlink, symlink, lstat, stat, link, unlink, chmod, lchmod, lchown, chown, utimes, realpath, mkdtemp, writeFile, appendFile, readFile, cp, glob, lutimes, opendir, rm, statfs) as ReferenceTracker (legacy mode) finds them: members of `require('fs')`/`require('node:fs')` (global require), `process.getBuiltinModule(\u2026)` (global process), ESM default/namespace imports and constant aliases, destructured properties and import specifiers. Divergence (NER-1834): `watch` is not reported, because `fs.promises.watch` returns an async iterator of change events rather than an FSWatcher and is not a drop-in replacement.",
+  "description": "eslint-plugin-n 18.4.1 n/prefer-promises/fs: calls of the fs module's callback API (access, copyFile, open, rename, truncate, rmdir, mkdir, readdir, readlink, symlink, lstat, stat, link, unlink, chmod, lchmod, lchown, chown, utimes, realpath, mkdtemp, writeFile, appendFile, readFile, cp, glob, lutimes, opendir, rm, statfs) as ReferenceTracker (legacy mode) finds them: members of `require('fs')`/`require('node:fs')` (global require), `process.getBuiltinModule(\u2026)` (global process), ESM default/namespace imports and constant aliases, destructured properties and import specifiers. Unlike ReferenceTracker, it does not follow assignments to imported or `const` bindings, which throw when they run. Divergence (NER-1834): `watch` is not reported, because `fs.promises.watch` returns an async iterator of change events rather than an FSWatcher and is not a drop-in replacement.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -30,6 +30,29 @@
             }
           },
           "utils": {
+            "file-names-module": {
+              "kind": "program",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "template_string",
+                    "not": {
+                      "has": {
+                        "kind": "template_substitution"
+                      }
+                    }
+                  }
+                ],
+                "regex": "fs|\\\\",
+                "value": {
+                  "regex": "^(?:node:)?fs$"
+                }
+              }
+            },
             "require-callee": {
               "any": [
                 {
@@ -170,6 +193,36 @@
                 },
                 {
                   "kind": "identifier",
+                  "all": [
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "form": "import"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "variable_declarator",
+                              "has": {
+                                "field": "name",
+                                "kind": "identifier"
+                              },
+                              "inside": {
+                                "kind": "lexical_declaration",
+                                "regex": "^const\\b"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
                   "resolves": {
                     "binding": {
                       "occurrence": {
@@ -324,6 +377,36 @@
                 },
                 {
                   "kind": "identifier",
+                  "all": [
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "form": "import"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "variable_declarator",
+                              "has": {
+                                "field": "name",
+                                "kind": "identifier"
+                              },
+                              "inside": {
+                                "kind": "lexical_declaration",
+                                "regex": "^const\\b"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
                   "resolves": {
                     "binding": {
                       "occurrence": {
@@ -535,6 +618,10 @@
           },
           "rule": {
             "kind": "call_expression",
+            "inside": {
+              "stopBy": "end",
+              "matches": "file-names-module"
+            },
             "not": {
               "has": {
                 "field": "arguments",
