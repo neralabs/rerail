@@ -357,7 +357,7 @@ describe("a package.json edit alone", () => {
     }
   });
 
-  it("lets a source's own later edit in the same batch replace the findings a manifest edit gave it", async () => {
+  it("leaves a source with its own later edit in the same batch to that edit, not the manifest edit before it", async () => {
     const sources: Sources = { "package.json": '{ "type": "module" }\n', "lib/plain.js": "module.exports = require('x');\n" };
     const root = await repository(false, sources);
     const { edit, steers, revisions, close } = await enforcerFor(root, CODE_RULE, sources);
@@ -365,8 +365,8 @@ describe("a package.json edit alone", () => {
       expect(await edit([{ path: "lib/plain.js", language: "javascript", generatedText: sources["lib/plain.js"]! }])).toEqual({
         "lib/plain.js PROGRAM": 1,
       });
-      // One batch: the manifest turns CommonJS, which gives the applied source a require finding, then the source drops
-      // its require. The steer published for the batch speaks for the source as it ends.
+      // One batch: the manifest turns CommonJS, then the source drops its require. The manifest edit leaves the source to
+      // its own queued edit, which reads the new facts: the steer published for the batch speaks for the source as it ends.
       await writeFile(join(root, "package.json"), '{ "type": "commonjs" }\n');
       await writeFile(join(root, "lib/plain.js"), "export {};\n");
       steers.length = 0;
@@ -378,8 +378,8 @@ describe("a package.json edit alone", () => {
       expect(steers.map(steer => steer.content).join("\n")).toContain("program");
       expect(steers.map(steer => steer.content).join("\n")).not.toContain("CommonJS require");
       expect(steers.flatMap(steer => steer.scope)).toContain("lib/plain.js");
-      // The manifest's refresh of the source is a revision of it, so an earlier steer for it is stale.
-      expect(revisions).toContainEqual({ revision: 2, paths: ["lib/plain.js"] });
+      // The manifest's edit did not refresh the source, so it revised none.
+      expect(revisions).toEqual([]);
     } finally {
       await close();
     }
@@ -536,6 +536,87 @@ describe("a package.json edit alone", () => {
         [2, ["b/b.js", "b/package.json"], false],
       ]);
     } finally {
+      await close();
+    }
+  });
+
+  it("steers again, with what the audit found, the other sources of a touched-files audit's steer a manifest edit revised", async () => {
+    const sources: Sources = {
+      "a/package.json": '{ "type": "commonjs" }\n',
+      "a/a.js": "export {};\n",
+      "a/c.js": "exports.c = 1;\n",
+      "b/package.json": '{ "type": "commonjs" }\n',
+      "b/b.js": "module.exports = require('x');\n",
+    };
+    const root = await repository(false, sources);
+    const { edit, steers, revisions, enforcer, close } = await enforcerFor(root, CODE_RULE, sources);
+    try {
+      // An edit gave a/a.js a require that its file on disk no longer has: those findings are older than the audit's.
+      expect(await edit([
+        { path: "a/a.js", language: "javascript", generatedText: "module.exports = require('x');\n" },
+        { path: "b/b.js", language: "javascript", generatedText: sources["b/b.js"]! },
+      ])).toEqual({ "a/a.js PROGRAM": 1, "a/a.js REQUIRE": 1, "b/b.js PROGRAM": 1, "b/b.js REQUIRE": 1 });
+      steers.length = 0;
+      // A steer-mode touched-files audit queues one steer for the three files it read, a/c.js never edited.
+      await enforcer.audit("package-facts", { scope: "touched-files", mode: "steer", paths: ["a/a.js", "a/c.js", "b/b.js"] });
+      expect(steers.map(steer => [steer.revision, steer.scope])).toEqual([[1, ["a/a.js", "a/c.js", "b/b.js"]]]);
+      // b's manifest revises b/b.js, which drops the audit's steer: a/a.js and a/c.js are steered again with the audit's
+      // findings, not a/a.js's older require.
+      await writeFile(join(root, "b/package.json"), '{ "type": "module" }\n');
+      expect(await edit([{ path: "b/package.json", language: "json", generatedText: '{ "type": "module" }\n' }])).toEqual({
+        "b/b.js PROGRAM": 1,
+      });
+      expect(revisions).toEqual([{ revision: 2, paths: ["b/b.js"] }]);
+      expect(steers.map(steer => [steer.revision, steer.scope, steer.content.includes("CommonJS require")])).toEqual([
+        [1, ["a/a.js", "a/c.js"], false],
+        [2, ["b/b.js", "b/package.json"], false],
+      ]);
+    } finally {
+      await close();
+    }
+  });
+
+  it("leaves a source whose own edit is still queued to that edit when a manifest edit queued after it runs first", async () => {
+    const sources: Sources = { "package.json": '{ "type": "module" }\n', "lib/plain.js": "module.exports = require('x');\n" };
+    const root = await repository(false, sources);
+    const { edit, steers, revisions, enforcer, close } = await enforcerFor(root, CODE_RULE, sources);
+    const prototype = loadNativeBinding().CodeRuleDslWorkspace.prototype;
+    const applyBufferAsync = prototype.applyBufferAsync;
+    const send = (revision: number, edit: CodeRuleEdit) =>
+      enforcer.auditGeneratedEdits("package-facts", { revision, checkpoints: ["edit"], edits: [edit] });
+    const manifest = '{ "type": "commonjs" }\n';
+    try {
+      expect(await edit([{ path: "lib/plain.js", language: "javascript", generatedText: sources["lib/plain.js"]! }])).toEqual({
+        "lib/plain.js PROGRAM": 1,
+      });
+      steers.length = 0;
+      // Revision 2 turns the package CommonJS and is held in flight while revisions 3 (the manifest), 4 (the source,
+      // which drops its require) and 5 (the manifest again) queue. Revision 5 takes revision 3's place, ahead of 4.
+      let release!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      let started!: () => void;
+      const applying = new Promise<void>(resolve => { started = resolve; });
+      vi.spyOn(prototype, "applyBufferAsync").mockImplementationOnce(async function (this: unknown, ...args: unknown[]) {
+        started();
+        await held;
+        return Reflect.apply(applyBufferAsync, this, args);
+      });
+      await writeFile(join(root, "package.json"), manifest);
+      await send(2, { path: "package.json", language: "json", generatedText: manifest });
+      await applying;
+      await send(3, { path: "package.json", language: "json", generatedText: manifest });
+      await writeFile(join(root, "lib/plain.js"), "exports.a = 1;\n");
+      await send(4, { path: "lib/plain.js", language: "javascript", generatedText: "exports.a = 1;\n" });
+      await send(5, { path: "package.json", language: "json", generatedText: manifest });
+      release();
+      await enforcer.settle();
+      // Revision 5 does not send the source's older text; revision 4 applies its new text under the CommonJS package.
+      expect(steers.map(steer => [steer.revision, steer.scope, steer.content.includes("CommonJS require")])).toEqual([
+        [4, ["lib/plain.js"], false],
+      ]);
+      expect(revisions).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
       await close();
     }
   });

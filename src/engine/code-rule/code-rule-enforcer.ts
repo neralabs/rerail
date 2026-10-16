@@ -63,7 +63,7 @@ const AUDIT_CHUNK_BYTES = 1024 * 1024;
 const AUDIT_MAX_DURATION_MS = 5 * 60_000;
 const AUDIT_MAX_FILES = 100_000;
 const AUDIT_MAX_FAILURES = 20;
-/** The recorded `package` facts of a source a superseded evaluation repackaged: equal to no facts' JSON. */
+/** The recorded `package` facts of a source a superseded evaluation repackaged: never equal to any facts' JSON, so the source is resent. */
 const UNREPORTED_FACTS = "\0unreported";
 const AUDIT_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
 export const IGNORED_DIRECTORIES = new Set([
@@ -517,9 +517,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #readyModes = new Map<number, AuditMode>();
   readonly #readyViolations = new Map<number, Map<string, CodeRuleViolation[]>>();
   /**
-   * The findings each source last reported in its own slot, with the revision and mode it reported them at: what a
-   * repackaged source's new findings are compared with, and what steers again a source whose queued steer a revision of
-   * another source dropped (`#steerAgain`).
+   * The findings each source last reported in its own slot, or a steer-mode touched-files audit last steered for it,
+   * with the revision and mode it reported them at: what a repackaged source's new findings are compared with, and what
+   * steers again a source whose queued steer a revision of another source dropped (`#steerAgain`).
    */
   readonly #sourceFindings = new Map<string, { revision: number; mode: AuditMode; violations: CodeRuleViolation[] }>();
   #spoolDirectory: string | undefined;
@@ -1364,6 +1364,16 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       this.#responseMode = mode;
       this.#evaluation = { ...result, failures: allFailures };
     }
+    // A touched-files steer speaks for each of its sources: a revision of one drops it whole, so each source's findings
+    // are recorded for `#steerAgain` to steer the others again. A source a later revision reached keeps what it reported.
+    if (scope === "touched-files" && mode === "steer")
+      for (const path of sourcePaths)
+        if ((this.#versions.get(path) ?? 0) <= revision)
+          this.#sourceFindings.set(path, {
+            revision,
+            mode,
+            violations: result.violations.filter((violation) => violation.path === path),
+          });
     await this.#publish(revision, scope === "repository" ? [] : sourcePaths, result.violations, mode, generatedEdit);
     return { resultPagesMilliseconds, violations: streamed.violationCount, failures: unboundedFailures.length, status };
   }
@@ -1566,11 +1576,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * Applies `edit` with the facts its file has on disk now. As the workspace keeps the `package` a host sent rather
    * than derive one from a `package.json` it holds, an edit of a `package.json` or a `tsconfig.json`-style project
    * configuration (created, changed or deleted) sends again each source applied below it whose family reads manifests
-   * and whose `package` that changes; `repackaged` holds their applied edits. Where a code rule reads Next server module
-   * graphs, an edit of a source in a package naming `next` does the same for the package's sources, whose membership
-   * (`package.serverGraph`) the edit may change. A source's facts depend on its path and disk only (with the edit's text
-   * standing in for its file's), so only a source whose facts changed is read back. One facts cache serves the call, so
-   * each package's graph is walked once.
+   * and whose `package` that changes, but one whose own edit is still queued; `repackaged` holds their applied edits.
+   * Where a code rule reads Next server module graphs, an edit of a source in a package naming `next` does the same for
+   * the package's sources, whose membership (`package.serverGraph`) the edit may change. A source's facts depend on its
+   * path and disk only (with the edit's text standing in for its file's), so only a source whose facts changed is read
+   * back. One facts cache serves the call, so each package's graph is walked once.
    *
    * `pass` is the facts cache a workspace replacement shares while it applies every applied source again: graphs read
    * on disk once for the whole pass, every source gets its facts from it so none needs sending again, and global
@@ -1614,7 +1624,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (directory !== undefined)
       for (const [path, sent] of packages) {
         const stored = this.#applied.get(path);
-        if (stored === undefined || path === edit.path || (directory !== "" && !path.startsWith(`${directory}/`))) continue;
+        // A source whose own edit is still queued applies with the facts then on disk; resending its older text now would
+        // report that text's findings and supersede the edit.
+        if (
+          stored === undefined ||
+          path === edit.path ||
+          this.#pending.has(path) ||
+          (directory !== "" && !path.startsWith(`${directory}/`))
+        )
+          continue;
         const facts = await sourceFileFacts(root, path, stored.language, cache, serverGraph, overlay);
         if (JSON.stringify(facts.package ?? null) === sent) continue;
         const applied = await this.#load(stored);
