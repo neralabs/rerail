@@ -193,7 +193,7 @@ jobs:
         env:
           FIRST: ${{ needs.plan.outputs.first }}
         run: |
-          echo "::error::Never published, so not published by this run: ${FIRST}. Publish each by hand and configure its trusted publisher (docs/pack-format.md, \"Publishing a new pack\")."
+          echo "::error::Never published, so not published by this run: ${FIRST}. Publish each by hand and configure its trusted publisher (docs/publishing-a-new-pack.md)."
           exit 1
 
   promote:
