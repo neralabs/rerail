@@ -483,7 +483,7 @@ fn blade_calls_reach_workspace_definitions() {
     });
     let output: Json = serde_json::from_str(
         &compiled
-            .evaluate(snapshot.to_string(), "report".to_owned())
+            .evaluate(snapshot.to_string(), "report".to_owned(), None)
             .expect("evaluation succeeds"),
     )
     .expect("JSON");

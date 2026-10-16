@@ -360,7 +360,7 @@ fn scenario(
             "facts": [], "files": whole });
         let stateless: Value = serde_json::from_str(
             &code_rule
-                .evaluate(snapshot.to_string(), "report".into())
+                .evaluate(snapshot.to_string(), "report".into(), None)
                 .unwrap(),
         )
         .unwrap();
@@ -1495,7 +1495,7 @@ fn e11_a_blade_call_reaches_a_conditionally_declared_php_helper() {
         "files": [php_file("app/helpers.php", CONDITIONAL_HELPERS), blade(TEMPLATE)] });
     let stateless: Value = serde_json::from_str(
         &templates_only
-            .evaluate(snapshot.to_string(), "report".into())
+            .evaluate(snapshot.to_string(), "report".into(), None)
             .unwrap(),
     )
     .unwrap();
@@ -1565,7 +1565,7 @@ fn e10_a_calls_pass_keeps_the_other_clauses_partial_on_a_broken_file() {
             "facts": [], "files": files });
         serde_json::from_str(
             &code_rule
-                .evaluate(snapshot.to_string(), "report".into())
+                .evaluate(snapshot.to_string(), "report".into(), None)
                 .unwrap(),
         )
         .unwrap()

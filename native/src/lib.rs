@@ -106,11 +106,17 @@ pub struct Health {
     pub engine_version: String,
 }
 
+/// The benchmark-only `unbounded-work` build says so, so a benchmark can prove what it ran.
+#[cfg(not(feature = "unbounded-work"))]
+const ENGINE_VERSION: &str = "1";
+#[cfg(feature = "unbounded-work")]
+const ENGINE_VERSION: &str = "1+unbounded-work";
+
 #[napi]
 pub fn health() -> Health {
     Health {
         ok: true,
-        engine_version: "1".to_owned(),
+        engine_version: ENGINE_VERSION.to_owned(),
     }
 }
 

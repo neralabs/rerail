@@ -11,6 +11,7 @@ import { IGNORED_DIRECTORIES, languageFor } from "../engine/code-rule/code-rule-
 import {
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,
+  type CodeRuleDslEngine,
   type NativeBinding,
   type NativeCompiledCodeRuleDsl,
 } from "../engine/native/native.js";
@@ -211,8 +212,20 @@ const evaluationSchema = z.object({
 });
 type Evaluation = z.infer<typeof evaluationSchema>["evaluation"];
 
-/** Violations and failures of `compiled` over `files`, in a private workspace with no content store attached. */
-async function evaluate(binding: NativeBinding, compiled: NativeCompiledCodeRuleDsl, files: readonly SourceFile[]): Promise<Evaluation> {
+/**
+ * Violations and failures of `compiled` over `files`: with the native engine, in a private workspace with no content
+ * store attached; with the SQL engine (`--engine sql`), in the stateless evaluator that engine runs in.
+ */
+async function evaluate(
+  binding: NativeBinding,
+  compiled: NativeCompiledCodeRuleDsl,
+  files: readonly SourceFile[],
+  engine: CodeRuleDslEngine,
+): Promise<Evaluation> {
+  if (engine === "sql") {
+    const snapshot = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files });
+    return evaluationSchema.shape.evaluation.parse(JSON.parse(compiled.evaluate(snapshot, "report", engine)));
+  }
   const workspace = new binding.CodeRuleDslWorkspace();
   try {
     workspace.addCodeRule(compiled);
@@ -251,6 +264,7 @@ async function policyCaseResult(
   compiled: NativeCompiledCodeRuleDsl,
   root: string,
   { expected, sample }: { expected: Expectation; sample: CodeRuleCase },
+  engine: CodeRuleDslEngine,
 ): Promise<RuleDraftCaseResult> {
   const language = languageFor(sample.path);
   let caught = false;
@@ -259,7 +273,7 @@ async function policyCaseResult(
   else if (!compiled.inScope(sample.path)) note = " (outside the files this rule covers)";
   else {
     const file = { path: sample.path, language, source: sample.content, ...moduleFor(binding, root, sample.path, language) };
-    const evaluation = await evaluate(binding, compiled, [file]);
+    const evaluation = await evaluate(binding, compiled, [file], engine);
     caught = evaluation.violations.some(violation => violation.path === undefined || violation.path === sample.path);
     // A violation stands whatever else failed; without one, a clause that could not check the file decides nothing.
     const unchecked = caught ? undefined : uncheckedPlaces(evaluation.failures);
@@ -324,10 +338,11 @@ async function repositoryPass(
   binding: NativeBinding,
   compiled: NativeCompiledCodeRuleDsl,
   root: string,
+  engine: CodeRuleDslEngine,
 ): Promise<NonNullable<RuleDraftReport["repository"]>> {
   const files = await repositoryFiles(binding, compiled, root);
   const sources = new Map(files.map(file => [file.path, file.source]));
-  const evaluation = await evaluate(binding, compiled, files);
+  const evaluation = await evaluate(binding, compiled, files, engine);
   const located = evaluation.violations
     .map(violation => ({
       path: violation.path ?? "",
@@ -373,9 +388,10 @@ function conversationCaseResults(rule: ConversationRule, cases: ReadonlyArray<{ 
 
 /**
  * Try a draft without storing it: validate it as storing would, run its cases, and for a policy rule count its
- * matches across `repo`'s files. Nothing is written to the catalog or the content store.
+ * matches across `repo`'s files. Nothing is written to the catalog or the content store. `engine` selects how AST
+ * clauses are matched (`sql`: the set-based engine under evaluation).
  */
-export async function testRuleDraft(draft: RuleDraft, repo: string): Promise<RuleDraftReport> {
+export async function testRuleDraft(draft: RuleDraft, repo: string, engine: CodeRuleDslEngine = "native"): Promise<RuleDraftReport> {
   if (draft.kind === "conversation") {
     const cases = conversationCaseResults(draft.rule, draft.cases);
     return { ok: cases.every(result => result.ok), valid: true, cases, repository: null };
@@ -383,15 +399,15 @@ export async function testRuleDraft(draft: RuleDraft, repo: string): Promise<Rul
   const { binding, compiled } = compileCodeRule(draft.rule);
   const root = repositoryIdentityLocation(repo).workspaceRoot;
   const cases: RuleDraftCaseResult[] = [];
-  for (const entry of draft.cases) cases.push(await policyCaseResult(binding, compiled, root, entry));
-  const repository = await repositoryPass(binding, compiled, root);
+  for (const entry of draft.cases) cases.push(await policyCaseResult(binding, compiled, root, entry, engine));
+  const repository = await repositoryPass(binding, compiled, root, engine);
   return { ok: cases.every(result => result.ok), valid: true, cases, repository };
 }
 
 /** `testRuleDraft` for a draft file; an unreadable or invalid draft is reported, not thrown. */
-export async function testRuleDraftFile(file: string, repo: string): Promise<RuleDraftReport> {
+export async function testRuleDraftFile(file: string, repo: string, engine: CodeRuleDslEngine = "native"): Promise<RuleDraftReport> {
   try {
-    return await testRuleDraft(readRuleDraft(file), repo);
+    return await testRuleDraft(readRuleDraft(file), repo, engine);
   } catch (error) {
     if (!(error instanceof RuleDraftError)) throw error;
     return { ok: false, valid: false, error: error.message, cases: [], repository: null };
@@ -481,15 +497,21 @@ export interface RuleDraftCommandIo {
   stderr?: { write(text: string): unknown };
 }
 
-function draftArguments(action: "test" | "add", args: readonly string[], usage: () => string): { file: string; repo: string; json: boolean } {
+function draftArguments(
+  action: "test" | "add",
+  args: readonly string[],
+  usage: () => string,
+): { file: string; repo: string; json: boolean; engine: CodeRuleDslEngine } {
   const file = args[0];
   if (file === undefined || file.startsWith("--")) throw new Error(`rules ${action} needs a draft file\n\n${usage()}`);
   const parsed = parseArguments(
     args.slice(1),
-    { flags: action === "test" ? ["--json"] : [], options: ["--repo"] },
+    { flags: action === "test" ? ["--json"] : [], options: action === "test" ? ["--repo", "--engine"] : ["--repo"] },
     argument => `Unknown rules ${action} option: ${argument}\n\n${usage()}`,
   );
-  return { file, repo: resolve(parsed.options.get("--repo") ?? process.cwd()), json: parsed.flags.has("--json") };
+  const engine = parsed.options.get("--engine") ?? "native";
+  if (engine !== "native" && engine !== "sql") throw new Error(`rules test --engine must be native or sql\n\n${usage()}`);
+  return { file, repo: resolve(parsed.options.get("--repo") ?? process.cwd()), json: parsed.flags.has("--json"), engine };
 }
 
 /** `rerail rules test <draft.json>` and `rerail rules add <draft.json>`. */
@@ -500,9 +522,9 @@ export async function runRuleDraftCommand(
   io: RuleDraftCommandIo = {},
 ): Promise<number> {
   const stdout = io.stdout ?? process.stdout;
-  const { file, repo, json } = draftArguments(action, args, usage);
+  const { file, repo, json, engine } = draftArguments(action, args, usage);
   if (action === "test") {
-    const report = await testRuleDraftFile(file, repo);
+    const report = await testRuleDraftFile(file, repo, engine);
     stdout.write(`${json ? JSON.stringify(report) : formatRuleDraftReport(report)}\n`);
     return report.ok ? 0 : 1;
   }

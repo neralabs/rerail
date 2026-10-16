@@ -126,7 +126,7 @@ function usage(): string {
     "  rerail reset",
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json>",
-    "  rerail rules test <draft.json> [--repo <dir>] [--json]",
+    "  rerail rules test <draft.json> [--repo <dir>] [--json] [--engine native|sql]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail show-me [--cleanup] [--repo <dir>] [--json]",

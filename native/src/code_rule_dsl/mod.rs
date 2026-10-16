@@ -20,6 +20,7 @@ mod profile;
 mod query;
 mod scope;
 mod soundness;
+mod sql;
 mod suppress;
 mod tape;
 #[cfg(test)]
@@ -56,7 +57,7 @@ macro_rules! oracle {
 pub(crate) use oracle;
 
 use compile::{compile_document, parse_capabilities, parse_document};
-use eval::{evaluate_code_rule, evaluation_json, parse_snapshot, violation_ids};
+use eval::{Engine, evaluate_code_rule, evaluation_json, parse_snapshot, violation_ids};
 use json::{canonicalize_value, hex_digest, invalid, json_error, required_str, required_u64};
 use model::{CompiledCodeRule, Snapshot};
 use napi::Result;
@@ -146,10 +147,20 @@ impl CompiledCodeRuleDsl {
         self.inner.required_capabilities.clone()
     }
 
+    /// Evaluates the code rule over a snapshot. `engine` selects how AST clauses are matched:
+    /// `native` (the default) or `sql`, the set-based engine under evaluation.
     #[napi]
-    pub fn evaluate(&self, snapshot_json: String, mode: String) -> Result<String> {
+    pub fn evaluate(
+        &self,
+        snapshot_json: String,
+        mode: String,
+        engine: Option<String>,
+    ) -> Result<String> {
+        let engine = engine
+            .as_deref()
+            .map_or(Ok(Engine::Native), Engine::parse)?;
         let snapshot = parse_snapshot(&snapshot_json)?;
-        let evaluation = evaluate_code_rule(&self.inner, &snapshot, &mode)?;
+        let evaluation = evaluate_code_rule(&self.inner, &snapshot, &mode, engine)?;
         serde_json::to_string(&evaluation_json(evaluation, None, &[], &[])).map_err(json_error)
     }
 
@@ -174,7 +185,8 @@ pub struct CodeRuleDslEditor {
 impl CodeRuleDslEditor {
     #[napi]
     pub fn evaluate(&mut self, mode: String) -> Result<String> {
-        let evaluation = evaluate_code_rule(&self.code_rule, &self.snapshot, &mode)?;
+        let evaluation =
+            evaluate_code_rule(&self.code_rule, &self.snapshot, &mode, Engine::Native)?;
         let current = violation_ids(&evaluation.violations);
         let added = current
             .difference(&self.previous_ids)

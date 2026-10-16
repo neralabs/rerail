@@ -80,6 +80,8 @@ export interface NativeConversationEngineConstructor {
 }
 export type CodeRuleDslSourceFormat = "json" | "yaml";
 export type CodeRuleDslEvaluationMode = "decision" | "report";
+/** The engine that matches AST clauses in a stateless evaluation: the native matcher, or the set-based SQL engine. */
+export type CodeRuleDslEngine = "native" | "sql";
 
 export interface NativeCompiledCodeRuleDsl {
   canonicalJson(): string;
@@ -87,7 +89,7 @@ export interface NativeCompiledCodeRuleDsl {
   inScope(path: string): boolean;
   digest(): string;
   requiredCapabilitiesJson(): string;
-  evaluate(snapshotJson: string, mode: CodeRuleDslEvaluationMode): string;
+  evaluate(snapshotJson: string, mode: CodeRuleDslEvaluationMode, engine?: CodeRuleDslEngine): string;
   openEditor(snapshotJson: string): NativeCodeRuleDslEditor;
 }
 

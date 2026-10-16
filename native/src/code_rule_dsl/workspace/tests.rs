@@ -358,7 +358,7 @@ fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
             "facts": [], "files": [file(source)] });
         serde_json::from_str(
             &compiled
-                .evaluate(input.to_string(), "report".into())
+                .evaluate(input.to_string(), "report".into(), None)
                 .unwrap(),
         )
         .unwrap()
@@ -591,6 +591,7 @@ fn deferred_global_flush_uses_complete_taped_evidence() {
                 })
                 .to_string(),
                 "report".into(),
+                None,
             )
             .unwrap(),
     )
@@ -1300,9 +1301,10 @@ fn cached_tape_rejects_revision_source_and_grammar_mismatch_without_stale_violat
             &compiled
                 .evaluate(
                     json!({ "format": "rerail.repository-snapshot/v1", "revision": 0,
-                        "facts": [], "files": [repaired.clone(), stable.clone(), donor.clone()] })
+                "facts": [], "files": [repaired.clone(), stable.clone(), donor.clone()] })
                     .to_string(),
                     "report".into(),
+                    None,
                 )
                 .unwrap(),
         )
@@ -1595,7 +1597,7 @@ fn apply_revisions(clauses: Vec<Value>, revisions: Vec<Value>) -> Vec<Value> {
 fn stateless(clauses: Vec<Value>, files: Value) -> Value {
     let snapshot = json!({ "format": "rerail.repository-snapshot/v1", "revision": 0, "facts": [], "files": files });
     let output = compile_clauses(clauses)
-        .evaluate(snapshot.to_string(), "report".to_owned())
+        .evaluate(snapshot.to_string(), "report".to_owned(), None)
         .expect("evaluates");
     serde_json::from_str(&output).expect("result is JSON")
 }
@@ -1932,7 +1934,7 @@ fn sibling_selection_matches_the_matcher_around_zero_width_nodes() {
             let snapshot = json!({ "format": "rerail.repository-snapshot/v1", "revision": 0, "facts": [], "files": files });
             let stateless: Value = serde_json::from_str(
                 &compiled
-                    .evaluate(snapshot.to_string(), "report".to_owned())
+                    .evaluate(snapshot.to_string(), "report".to_owned(), None)
                     .expect("evaluates"),
             )
             .expect("result is JSON");
@@ -2245,7 +2247,7 @@ fn regex_group_transform_limit_is_local_to_its_clause_in_native_and_workspace_ev
     });
     let native: Value = serde_json::from_str(
         &compiled
-            .evaluate(snapshot.to_string(), "report".into())
+            .evaluate(snapshot.to_string(), "report".into(), None)
             .unwrap(),
     )
     .unwrap();
@@ -2314,7 +2316,7 @@ fn matching_stops_after_decision_or_witness_budget_in_native_and_workspace() {
 
     crate::code_rule_dsl::matcher::reset_roots_matched();
     compiled
-        .evaluate(snapshot.to_string(), "decision".into())
+        .evaluate(snapshot.to_string(), "decision".into(), None)
         .unwrap();
     assert!(
         crate::code_rule_dsl::matcher::roots_matched() <= 1,
@@ -2323,7 +2325,7 @@ fn matching_stops_after_decision_or_witness_budget_in_native_and_workspace() {
 
     crate::code_rule_dsl::matcher::reset_roots_matched();
     compiled
-        .evaluate(snapshot.to_string(), "report".into())
+        .evaluate(snapshot.to_string(), "report".into(), None)
         .unwrap();
     assert!(
         crate::code_rule_dsl::matcher::roots_matched() <= 3,
@@ -2385,7 +2387,7 @@ fn suppressible_each_stops_at_the_witness_overflow_in_native_and_workspace() {
     crate::code_rule_dsl::violations::reset_node_group_enumerations();
     let native: Value = serde_json::from_str(
         &compiled
-            .evaluate(snapshot.to_string(), "report".into())
+            .evaluate(snapshot.to_string(), "report".into(), None)
             .unwrap(),
     )
     .unwrap();
@@ -2459,7 +2461,7 @@ fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
     crate::code_rule_dsl::matcher::reset_roots_matched();
     let native: Value = serde_json::from_str(
         &compiled
-            .evaluate(snapshot.to_string(), "report".into())
+            .evaluate(snapshot.to_string(), "report".into(), None)
             .unwrap(),
     )
     .unwrap();
@@ -2606,7 +2608,7 @@ fn select_when_exists_leaf_decides_at_first_witness_in_native_and_workspace() {
         });
         let native: Value = serde_json::from_str(
             &compiled
-                .evaluate(snapshot.to_string(), "report".into())
+                .evaluate(snapshot.to_string(), "report".into(), None)
                 .unwrap(),
         )
         .unwrap();

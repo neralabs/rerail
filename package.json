@@ -76,6 +76,7 @@
     "build:ui": "node scripts/build/copy-ui.mjs",
     "ensure:sqlite": "node scripts/build/ensure-sqlite.mjs",
     "build:native": "node scripts/build/require-cargo.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
+    "build:native:unbounded-work": "node scripts/build/require-cargo.mjs && napi build --platform --release --features unbounded-work --manifest-path native/Cargo.toml --output-dir target/unbounded-work",
     "build:ts": "tsc -p tsconfig.build.json && esbuild src/presentation/session-presentation.ts --bundle --platform=node --format=esm --outfile=dist/presentation/session-presentation.js",
     "build:omp": "esbuild src/hosts/omp/default-extension.ts --bundle --platform=node --target=node24 --format=esm --external:better-sqlite3 --external:drizzle-orm --outfile=dist/hosts/omp/default-extension.js",
     "build:test-host": "esbuild integration/support/omp-host-extension.ts --bundle --packages=external --platform=node --target=node24 --format=esm --outfile=node_modules/.cache/rerail/omp-host.mjs",

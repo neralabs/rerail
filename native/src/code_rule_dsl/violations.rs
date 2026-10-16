@@ -1133,7 +1133,7 @@ mod tests {
             "revision": 0,
         });
         let output = compiled
-            .evaluate(snapshot.to_string(), "report".to_owned())
+            .evaluate(snapshot.to_string(), "report".to_owned(), None)
             .expect("evaluation succeeds");
         let result: Value = serde_json::from_str(&output).expect("JSON");
         assert_eq!(result["failures"], json!([]), "{result}");
@@ -1852,6 +1852,7 @@ mod each_limit_tests {
                 })
                 .to_string(),
                 "report".to_owned(),
+                None,
             )
             .expect("evaluation succeeds");
         serde_json::from_str(&output).expect("evaluation JSON")

@@ -311,18 +311,36 @@ pub(crate) fn evaluate_query(
     partial: &mut BTreeMap<String, String>,
     violation: Option<&ViolationSpec>,
     util_limit: &mut Option<(String, UtilLimit)>,
+    engine: Engine,
 ) -> Result<std::result::Result<Vec<Witness>, Incomplete>> {
+    let sql = match (engine, query) {
+        (Engine::Native, _) | (Engine::Sql, Query::Regex { .. }) => None,
+        (Engine::Sql, Query::SelectWhen { .. }) => {
+            return Err(invalid(
+                crate::code_rule_dsl::sql::SqlError::unsupported("select_when").to_string(),
+            ));
+        }
+        (Engine::Sql, Query::Ast { matchers, .. }) => {
+            if violation.is_some_and(|violation| violation.each.is_some()) {
+                return Err(invalid(
+                    crate::code_rule_dsl::sql::SqlError::unsupported("violation.each").to_string(),
+                ));
+            }
+            Some(SqlFiles::evaluate(matchers, snapshot, scope)?)
+        }
+    };
     let leaf = Leaf {
         snapshot,
         scope,
         limits,
+        sql: sql.as_ref(),
     };
     if let Query::SelectWhen { .. } = query {
         return leaf.select_when(query, metrics, decision, partial, violation, util_limit);
     }
     let mut witnesses = Vec::new();
-    for file in &snapshot.files {
-        match leaf.file(query, file, metrics, decision, violation, util_limit)? {
+    for (index, file) in snapshot.files.iter().enumerate() {
+        match leaf.file(query, index, file, metrics, decision, violation, util_limit)? {
             FileStep::Skipped => {}
             FileStep::Failed(unread) => {
                 return Ok(Err(Incomplete {
@@ -348,6 +366,107 @@ pub(crate) fn evaluate_query(
     Ok(Ok(witnesses))
 }
 
+/// Which engine matches a query's AST clauses in the stateless evaluator: the native grammar
+/// matcher (production, and the parity oracle), or the set-based SQL engine (`sql`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Engine {
+    #[default]
+    Native,
+    Sql,
+}
+
+impl Engine {
+    /// `native` or `sql`.
+    pub(crate) fn parse(name: &str) -> Result<Self> {
+        match name {
+            "native" => Ok(Self::Native),
+            "sql" => Ok(Self::Sql),
+            other => Err(invalid(format!(
+                "unsupported engine `{other}`; expected \"native\" or \"sql\""
+            ))),
+        }
+    }
+}
+
+/// An AST query's matches from the SQL engine, for every snapshot file it reads, by snapshot
+/// index: the file's tape and line table and its matching roots in order, or the error reading
+/// the file raised (reported when the evaluation reaches the file, as the native path does).
+struct SqlFiles {
+    files: Vec<Option<std::result::Result<SqlFile, String>>>,
+}
+
+struct SqlFile {
+    doc: crate::code_rule_dsl::tape::TapeDoc,
+    lines: Arc<LineTable>,
+    matches: Vec<crate::code_rule_dsl::sql::SqlMatch>,
+}
+
+impl SqlFiles {
+    /// Runs the query's grammar matchers over every file of the snapshot in the code rule's
+    /// scope as one batch: one statement per grammar matcher that reads a file.
+    fn evaluate(
+        matchers: &[GrammarMatcher],
+        snapshot: &Snapshot,
+        scope: &CodeRuleScope,
+    ) -> Result<Self> {
+        let mut used: Vec<usize> = Vec::new();
+        let mut inputs = Vec::new();
+        // Per snapshot file: its batch input and line table, or why it could not be read.
+        type Read = Option<std::result::Result<(usize, Arc<LineTable>), String>>;
+        let mut read: Vec<Read> = Vec::with_capacity(snapshot.files.len());
+        for file in &snapshot.files {
+            let grammar = scope
+                .matches(&file.path)
+                .then(|| grammar_matcher(matchers, file))
+                .flatten();
+            let Some(grammar) = grammar else {
+                read.push(None);
+                continue;
+            };
+            let matcher = matchers
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, grammar))
+                .expect("a grammar matcher of the query");
+            let statement = match used.iter().position(|&used| used == matcher) {
+                Some(statement) => statement,
+                None => {
+                    used.push(matcher);
+                    used.len() - 1
+                }
+            };
+            read.push(Some(match file_tape(grammar.language, file) {
+                Ok((doc, lines)) => {
+                    inputs.push((doc, Some(statement)));
+                    Ok((inputs.len() - 1, lines))
+                }
+                Err(error) => Err(error.reason.clone()),
+            }));
+        }
+        let grammars: Vec<&GrammarMatcher> = used.iter().map(|&index| &matchers[index]).collect();
+        let compiled = crate::code_rule_dsl::sql::compile(&grammars)
+            .map_err(|error| invalid(error.to_string()))?;
+        let docs: Vec<_> = inputs.iter().map(|(doc, _)| doc.clone()).collect();
+        let mut matches = compiled
+            .run(inputs)
+            .map_err(|error| invalid(error.to_string()))?
+            .into_iter();
+        let mut docs = docs.into_iter();
+        let files = read
+            .into_iter()
+            .map(|entry| {
+                entry.map(|entry| {
+                    entry.map(|(_, lines)| SqlFile {
+                        doc: docs.next().expect("a tape per input"),
+                        lines,
+                        matches: matches.next().expect("matches per input"),
+                    })
+                })
+            })
+            .collect();
+        Ok(Self { files })
+    }
+}
+
 /// What one file contributes to a regex or AST query.
 enum FileStep {
     /// The query does not read the file: it is outside the scope, or no grammar of it applies.
@@ -365,19 +484,23 @@ enum FileStep {
     Failed(Option<String>),
 }
 
-/// Where a query's leaves read: the snapshot's files in the code rule's scope.
+/// Where a query's leaves read: the snapshot's files in the code rule's scope, and the SQL
+/// engine's matches where it matches the query (`Engine::Sql`).
 #[derive(Clone, Copy)]
 struct Leaf<'a> {
     snapshot: &'a Snapshot,
     scope: &'a CodeRuleScope,
     limits: &'a Limits,
+    sql: Option<&'a SqlFiles>,
 }
 
 impl<'a> Leaf<'a> {
-    /// One file of a regex or AST `query`.
+    /// One file of a regex or AST `query`, the snapshot's file `index`.
+    #[allow(clippy::too_many_arguments)]
     fn file(
         self,
         query: &Query,
+        index: usize,
         file: &FileInput,
         metrics: &mut Metrics,
         decision: bool,
@@ -450,7 +573,21 @@ impl<'a> Leaf<'a> {
                 let Some(grammar) = grammar_matcher(matchers, file) else {
                     return Ok(FileStep::Skipped);
                 };
-                let (doc, lines) = file_tape(grammar.language, file)?;
+                let (doc, lines, matches) = match self.sql {
+                    None => {
+                        let (doc, lines) = file_tape(grammar.language, file)?;
+                        (doc, lines, None)
+                    }
+                    Some(sql) => match &sql.files[index] {
+                        Some(Ok(read)) => (
+                            read.doc.clone(),
+                            Arc::clone(&read.lines),
+                            Some(read.matches.as_slice()),
+                        ),
+                        Some(Err(reason)) => return Err(invalid(reason.clone())),
+                        None => unreachable!("the SQL batch reads every file the query reads"),
+                    },
+                };
                 // From the tape: a Blade file's embedded PHP is part of it (`blade::view`); a
                 // program apart from its host reads only its own (`SyntaxErrors::of_doc`).
                 let errors = SyntaxErrors::of_doc(&doc);
@@ -484,6 +621,7 @@ impl<'a> Leaf<'a> {
                     self.scope.honours_suppressions_at(&file.path),
                     &mut util_work,
                     &mut witnesses,
+                    matches,
                 )? {
                     FileOutcome::Continue | FileOutcome::Stopped => false,
                     FileOutcome::Decided => true,
@@ -598,6 +736,7 @@ impl Leaves for SnapshotLeaves<'_, '_> {
             let (metrics, util_limit) = &mut *work;
             let step = self.leaf.file(
                 spec.id,
+                file,
                 input,
                 metrics,
                 spec.decision,
@@ -695,7 +834,8 @@ pub(super) fn file_tape(
 /// Evaluates one file with its grammar matcher on the file's tape: nodes count towards
 /// `maxVisitedNodes` in preorder, witnesses in syntax-error regions are dropped, and so are
 /// suppressed ones when `honour_suppressions`, and those a `rerail-ignore` names the code rule
-/// over always; the witness budget ends the file.
+/// over always; the witness budget ends the file. With `sql`, the SQL engine's matches of the
+/// file (roots in preorder) are rendered in place of the native matcher's.
 #[allow(clippy::too_many_arguments)]
 fn evaluate_file_clause(
     grammar: &GrammarMatcher,
@@ -710,109 +850,116 @@ fn evaluate_file_clause(
     honour_suppressions: bool,
     util_work: &mut usize,
     witnesses: &mut Vec<Witness>,
+    sql: Option<&[crate::code_rule_dsl::sql::SqlMatch]>,
 ) -> Result<FileOutcome> {
     use crate::code_rule_dsl::json::invalid;
     use crate::code_rule_dsl::matcher::{Stopped, enumerate, node_at, run_clause, with_file_memo};
     let count = doc.transducer_len();
     let target = ast_grep_core::AstGrep::doc(doc);
     let visited = metrics.visited_nodes;
+    let bound = limits.max_visited_nodes.saturating_sub(visited);
     let each = violation.and_then(|violation| violation.each.as_deref());
     let mut outcome = FileOutcome::Continue;
-    let result = with_file_memo(&target, || {
-        let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
-        run_clause(
-            &target,
-            grammar,
-            None,
-            limits.max_visited_nodes.saturating_sub(visited),
-            util_work,
-            |node, first, work| {
-                // One binding of the match: false ends the clause. A suppressed witness spends
-                // none of the violation's allowance, so the enumeration, and a regex capture's
-                // groups, go on past suppressed ones until the reported ones overflow it.
-                let mut visit = |env, work: &mut usize| {
-                    let mut matched = NodeMatch::new(node_at(&target, node), env);
-                    if let Some(transform) = &grammar.transform {
-                        crate::code_rule_dsl::matcher::begin_clause(grammar, *work);
-                        if transform.apply(matched.get_env_mut()).is_err() {
-                            *work = crate::code_rule_dsl::matcher::end_clause().0;
-                            outcome = FileOutcome::Limit(UtilLimit::Work);
-                            return Ok(false);
-                        }
-                        *work = crate::code_rule_dsl::matcher::end_clause().0;
-                    }
-                    if errors.overlaps(&matched.get_node().range()) {
-                        return Ok(true);
-                    }
-                    let matched_node = matched.get_node();
-                    let keep = |witness: &mut Witness| {
-                        if honour_suppressions
-                            && violations::suppresses(violation, matched_node, witness)
-                        {
-                            return false;
-                        }
-                        if violations::rerail_ignores(violation, matched_node, witness) {
-                            if !violation.is_some_and(|violation| violation.ignore_marks) {
-                                return false;
-                            }
-                            witness.ignored = true;
-                        }
-                        true
-                    };
-                    let span = |start, end| lines.span(start, end);
-                    let found = match violation.filter(|_| each.is_some()) {
-                        Some(violation) => witnesses_from_match(
-                            file,
-                            &matched,
-                            grammar.language,
-                            violation,
-                            (limits.max_witnesses + 1).saturating_sub(metrics.witnesses),
-                            || false,
-                            span,
-                            keep,
-                        ),
-                        None => {
-                            witness_from_match(file, &matched, grammar.language, violation, span)
-                                .map(|mut witness| {
-                                    if keep(&mut witness) {
-                                        vec![witness]
-                                    } else {
-                                        Vec::new()
-                                    }
-                                })
-                        }
-                    };
-                    let found = match found {
-                        Ok(found) => found,
-                        Err(WitnessError::TransformLimit) => {
-                            outcome = FileOutcome::Limit(UtilLimit::Work);
-                            return Ok(false);
-                        }
-                    };
-                    for witness in found {
-                        metrics.witnesses += 1;
-                        if metrics.witnesses > limits.max_witnesses {
-                            metrics.visited_nodes = visited + node as usize + 1;
-                            outcome = FileOutcome::Stopped;
-                            return Ok(false);
-                        }
-                        witnesses.push(witness);
-                        if decision {
-                            metrics.visited_nodes = visited + node as usize + 1;
-                            outcome = FileOutcome::Decided;
-                            return Ok(false);
-                        }
-                    }
-                    Ok(true)
-                };
-                match each {
-                    Some(name) => enumerate(&target, grammar, node, first, work, name, visit),
-                    None => visit(first, work),
+    let mut on_root = |node: u32, first, work: &mut usize| {
+        // One binding of the match: false ends the clause. A suppressed witness spends
+        // none of the violation's allowance, so the enumeration, and a regex capture's
+        // groups, go on past suppressed ones until the reported ones overflow it.
+        let mut visit = |env, work: &mut usize| {
+            let mut matched = NodeMatch::new(node_at(&target, node), env);
+            if let Some(transform) = &grammar.transform {
+                crate::code_rule_dsl::matcher::begin_clause(grammar, *work);
+                if transform.apply(matched.get_env_mut()).is_err() {
+                    *work = crate::code_rule_dsl::matcher::end_clause().0;
+                    outcome = FileOutcome::Limit(UtilLimit::Work);
+                    return Ok(false);
                 }
-            },
-        )
-        .and_then(|result| result)
-    });
+                *work = crate::code_rule_dsl::matcher::end_clause().0;
+            }
+            if errors.overlaps(&matched.get_node().range()) {
+                return Ok(true);
+            }
+            let matched_node = matched.get_node();
+            let keep = |witness: &mut Witness| {
+                if honour_suppressions && violations::suppresses(violation, matched_node, witness) {
+                    return false;
+                }
+                if violations::rerail_ignores(violation, matched_node, witness) {
+                    if !violation.is_some_and(|violation| violation.ignore_marks) {
+                        return false;
+                    }
+                    witness.ignored = true;
+                }
+                true
+            };
+            let span = |start, end| lines.span(start, end);
+            let found = match violation.filter(|_| each.is_some()) {
+                Some(violation) => witnesses_from_match(
+                    file,
+                    &matched,
+                    grammar.language,
+                    violation,
+                    (limits.max_witnesses + 1).saturating_sub(metrics.witnesses),
+                    || false,
+                    span,
+                    keep,
+                ),
+                None => witness_from_match(file, &matched, grammar.language, violation, span).map(
+                    |mut witness| {
+                        if keep(&mut witness) {
+                            vec![witness]
+                        } else {
+                            Vec::new()
+                        }
+                    },
+                ),
+            };
+            let found = match found {
+                Ok(found) => found,
+                Err(WitnessError::TransformLimit) => {
+                    outcome = FileOutcome::Limit(UtilLimit::Work);
+                    return Ok(false);
+                }
+            };
+            for witness in found {
+                metrics.witnesses += 1;
+                if metrics.witnesses > limits.max_witnesses {
+                    metrics.visited_nodes = visited + node as usize + 1;
+                    outcome = FileOutcome::Stopped;
+                    return Ok(false);
+                }
+                witnesses.push(witness);
+                if decision {
+                    metrics.visited_nodes = visited + node as usize + 1;
+                    outcome = FileOutcome::Decided;
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        };
+        match each {
+            Some(name) => enumerate(&target, grammar, node, first, work, name, visit),
+            None => visit(first, work),
+        }
+    };
+    let result = match sql {
+        None => with_file_memo(&target, || {
+            let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
+            run_clause(&target, grammar, None, bound, util_work, &mut on_root)
+                .and_then(|result| result)
+        }),
+        Some(matches) => (|| {
+            for found in matches
+                .iter()
+                .take_while(|found| (found.root as usize) < bound)
+            {
+                let env = crate::code_rule_dsl::sql::environment(&target, found);
+                if !on_root(found.root, env, util_work)? {
+                    break;
+                }
+            }
+            Ok(())
+        })(),
+    };
     match result {
         Ok(()) => {}
         Err(Stopped::Limit(limit)) => return Ok(FileOutcome::Limit(limit)),

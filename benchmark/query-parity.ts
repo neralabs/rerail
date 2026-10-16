@@ -202,14 +202,16 @@ function summarize(applicable: readonly RuleDocument[], raw: unknown): Summary {
     rawFindingSha256: sha256(JSON.stringify(evaluation.violations)),
   };
 }
-function statelessEvaluation(files: SourceFile[], applicable: Array<{ source: string; codeRule: { inScope(path: string): boolean; evaluate(input: string, mode: string): string } }>, mode: "stateless" | "stateless-per-file"): unknown {
+function statelessEvaluation(files: SourceFile[], applicable: Array<{ source: string; codeRule: { inScope(path: string): boolean; evaluate(input: string, mode: string, engine?: string): string } }>, mode: "stateless" | "stateless-per-file"): unknown {
   const evaluations: Array<{ policyId: string; evaluation: z.infer<typeof evaluationSchema> }> = [];
   const inputs = mode === "stateless-per-file" ? files.map(file => [file]) : [files];
+  // The engine that matches AST clauses: native (the default) or sql, the set-based engine.
+  const engine = process.env.RERAIL_QUERY_PARITY_ENGINE || undefined;
   for (const snapshotFiles of inputs) {
     const input = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: snapshotFiles });
     for (const entry of applicable) {
       if (mode === "stateless-per-file" && !entry.codeRule.inScope(snapshotFiles[0]!.path)) continue;
-      evaluations.push({ policyId: z.object({ id: z.string() }).parse(JSON.parse(entry.source)).id, evaluation: evaluationSchema.parse(JSON.parse(entry.codeRule.evaluate(input, "report"))) });
+      evaluations.push({ policyId: z.object({ id: z.string() }).parse(JSON.parse(entry.source)).id, evaluation: evaluationSchema.parse(JSON.parse(entry.codeRule.evaluate(input, "report", engine))) });
     }
   }
   return {
@@ -457,7 +459,8 @@ function usage() {
     `  --workload            any of ${workloads.join(", ")} (default: all)`,
     "  --output              also write DIR/report.json",
     "",
-    "A side may pick its own evaluator with RERAIL_QUERY_PARITY_EVALUATE=stateless|stateless-per-file in its ENV list.",
+    "A side may pick its own evaluator with RERAIL_QUERY_PARITY_EVALUATE=stateless|stateless-per-file in its ENV list,",
+    "and, for the stateless evaluators, the AST engine with RERAIL_QUERY_PARITY_ENGINE=native|sql.",
   ].join("\n");
 }
 async function main() {

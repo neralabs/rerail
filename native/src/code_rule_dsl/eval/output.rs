@@ -291,7 +291,7 @@ mod tests {
             "facts": [], "files": files, "format": "rerail.repository-snapshot/v1", "revision": 0,
         });
         let output = compiled
-            .evaluate(snapshot.to_string(), "report".to_owned())
+            .evaluate(snapshot.to_string(), "report".to_owned(), None)
             .expect("evaluation succeeds");
         serde_json::from_str(&output).expect("evaluation is JSON")
     }

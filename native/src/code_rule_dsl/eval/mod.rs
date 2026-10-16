@@ -14,7 +14,7 @@ pub(super) use output::{
     violation_ids,
 };
 pub(super) use query::{
-    WitnessError, evaluate_query, file_language, grammar_matcher, witness_from_match,
+    Engine, WitnessError, evaluate_query, file_language, grammar_matcher, witness_from_match,
     witnesses_from_match,
 };
 #[cfg(test)]
@@ -63,13 +63,15 @@ pub(super) fn parse_snapshot(source: &str) -> Result<Snapshot> {
     Ok(Snapshot { revision, files })
 }
 
-/// Evaluates `code_rule`, its grammar matchers matched natively (`matcher::run_clause`).
+/// Evaluates `code_rule`, its grammar matchers matched by `engine`: natively
+/// (`matcher::run_clause`), or by the SQL engine.
 pub(super) fn evaluate_code_rule(
     code_rule: &CompiledCodeRule,
     snapshot: &Snapshot,
     mode: &str,
+    engine: Engine,
 ) -> Result<Evaluation> {
-    evaluate_clauses(code_rule, snapshot, mode, &code_rule.clauses)
+    evaluate_clauses(code_rule, snapshot, mode, &code_rule.clauses, engine)
 }
 
 pub(super) fn evaluate_clauses(
@@ -77,6 +79,7 @@ pub(super) fn evaluate_clauses(
     snapshot: &Snapshot,
     mode: &str,
     clauses: &[CompiledClause],
+    engine: Engine,
 ) -> Result<Evaluation> {
     if mode != "decision" && mode != "report" {
         return Err(invalid(format!("unsupported evaluation mode `{mode}`")));
@@ -128,6 +131,7 @@ pub(super) fn evaluate_clauses(
                     &mut partial,
                     Some(&clause.violation),
                     &mut util_limit,
+                    engine,
                 )?;
                 if let Some((path, limit)) = util_limit {
                     evaluation.failures.push(failure(
@@ -294,6 +298,7 @@ fn stateless_rows(
             &mut partial,
             Some(&violation),
             &mut util_limit,
+            Engine::Native,
         )?;
         metrics.visited_nodes += file_metrics.visited_nodes;
         match witnesses {
@@ -413,6 +418,7 @@ fn stateless_calls(
                 &mut partial,
                 None,
                 &mut util_limit,
+                Engine::Native,
             )?;
             metrics.visited_nodes = seed_metrics.visited_nodes;
             let starts = match witnesses {

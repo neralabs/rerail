@@ -392,7 +392,7 @@ fn a_reaches_sink(source: &str) -> Option<bool> {
         });
         let output: Value = serde_json::from_str(
             &compiled
-                .evaluate(snapshot.to_string(), "report".to_owned())
+                .evaluate(snapshot.to_string(), "report".to_owned(), None)
                 .expect("evaluation succeeds"),
         )
         .expect("evaluation is JSON");

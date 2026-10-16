@@ -51,7 +51,12 @@ type CandidateSets =
 /// work. Each clause has its own (`budget::with_allowance`), so a clause that runs out fails
 /// alone. What it spends can still depend on the clauses before it: a per-file table (scope
 /// tables, PHP names, anchor text) is built under the allowance of the first clause that needs it.
+#[cfg(not(feature = "unbounded-work"))]
 const CLAUSE_WORK_BUDGET: u64 = 50_000;
+/// The `unbounded-work` benchmark build: an allowance no evaluation reaches, kept small enough that
+/// `clause_work_ceiling`'s sum and product cannot overflow.
+#[cfg(feature = "unbounded-work")]
+const CLAUSE_WORK_BUDGET: u64 = u64::MAX / 32;
 /// Source bytes per budget poll a file's work may spend beyond `CLAUSE_WORK_BUDGET`, both the work
 /// every clause shares (parsing, the tape and the anchor index) and each clause's own: work grows
 /// with the file, so its allowance does, rather than cutting a large file off at a fixed point.

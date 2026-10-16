@@ -1502,7 +1502,6 @@ impl TapeDoc {
         )
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_field(&self, node: u32) -> u16 {
         self.data[node as usize].field
     }

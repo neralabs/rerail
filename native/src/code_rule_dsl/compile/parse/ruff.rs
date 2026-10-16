@@ -135,7 +135,7 @@ fn ranges_in(
     }
     let snapshot = json!({ "facts": [], "files": [file], "format": "rerail.repository-snapshot/v1", "revision": 0 });
     let output = compiled
-        .evaluate(snapshot.to_string(), "report".to_owned())
+        .evaluate(snapshot.to_string(), "report".to_owned(), None)
         .expect("evaluation succeeds");
     let result: Value = serde_json::from_str(&output).expect("evaluation is JSON");
     let mut ranges: Vec<[u64; 2]> = result["violations"]

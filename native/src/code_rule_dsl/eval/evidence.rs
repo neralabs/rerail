@@ -349,6 +349,7 @@ mod tests {
                 })
                 .to_string(),
                 "report".to_owned(),
+                None,
             )
             .expect("evaluation succeeds");
         serde_json::from_str(&output).expect("evaluation JSON")

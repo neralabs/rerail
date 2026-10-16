@@ -57,3 +57,7 @@ rerail-language-conformance *args:
 # Compare a reference native query-engine addon with this checkout's addon (RERAIL_QUERY_PARITY_REFERENCE_ADDON=/absolute/reference.node, or pass both sides).
 rerail-query-parity *args:
     @node --import tsx benchmark/query-parity.ts {{ args }}
+
+# The nera-data-layer benchmark: whole-tree | profile | conformance --corpus <nera-data-layer> --policies <ported rules> [--addon <addon>] (benchmark/README.md).
+rerail-data-layer *args:
+    @node --import tsx benchmark/data-layer/data-layer.ts {{ args }}

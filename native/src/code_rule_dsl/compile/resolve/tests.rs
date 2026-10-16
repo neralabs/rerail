@@ -1355,7 +1355,7 @@ fn evaluate_module_value(
     }
     let snapshot = json!({ "facts": [], "files": [file], "format": "rerail.repository-snapshot/v1", "revision": 0 });
     let output = compiled
-        .evaluate(snapshot.to_string(), "report".to_owned())
+        .evaluate(snapshot.to_string(), "report".to_owned(), None)
         .expect("evaluation succeeds");
     serde_json::from_str(&output).expect("evaluation is JSON")
 }
@@ -1788,7 +1788,7 @@ fn dotted_directory_and_file_names_keep_their_segments() {
             json!({ "language": "python", "path": "a.py", "source": "b\n", "module": module });
         let snapshot = json!({ "facts": [], "files": [file], "revision": 0 });
         let error = rule
-            .evaluate(snapshot.to_string(), "report".to_owned())
+            .evaluate(snapshot.to_string(), "report".to_owned(), None)
             .expect_err("rejected");
         assert_eq!(
             error.reason,
@@ -1867,7 +1867,7 @@ fn malformed_module_paths_are_rejected() {
             json!({ "language": "python", "path": "a.py", "source": "b\n", "module": module });
         let snapshot = json!({ "facts": [], "files": [file], "revision": 0 });
         let error = rule
-            .evaluate(snapshot.to_string(), "report".to_owned())
+            .evaluate(snapshot.to_string(), "report".to_owned(), None)
             .expect_err("rejected");
         assert_eq!(
             error.reason,

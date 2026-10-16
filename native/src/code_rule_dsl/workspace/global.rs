@@ -369,8 +369,13 @@ pub(super) fn evaluate_global(
             evaluation.metrics.witnesses += result.metrics.witnesses;
         } else {
             // Every other kind has a plan (`add_code_rule`): an `llm` clause, which matches nothing.
-            let mut result =
-                evaluate_clauses(code_rule, snapshot, "report", std::slice::from_ref(clause))?;
+            let mut result = evaluate_clauses(
+                code_rule,
+                snapshot,
+                "report",
+                std::slice::from_ref(clause),
+                crate::code_rule_dsl::eval::Engine::Native,
+            )?;
             evaluation.violations.append(&mut result.violations);
             evaluation.failures.append(&mut result.failures);
             evaluation.metrics.witnesses += result.metrics.witnesses;
