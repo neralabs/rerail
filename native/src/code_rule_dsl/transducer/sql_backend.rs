@@ -66,6 +66,7 @@ thread_local! {
 /// The source allocations text batches registered on this thread since the last call read, in
 /// registration order; the call forgets them.
 #[cfg(test)]
+#[allow(dead_code, reason = "retained for SQL allocation profiling")]
 pub(in crate::code_rule_dsl) fn take_text_batch_sources() -> Vec<*const String> {
     TEXT_BATCH_SOURCES.take()
 }
@@ -92,6 +93,7 @@ struct MatchRow {
 /// byte spans in match order.
 pub(in crate::code_rule_dsl) enum Terminal {
     #[cfg(test)]
+    #[allow(dead_code, reason = "retained for direct virtual-table tests")]
     Program(Program),
     /// An ast-grep pattern of one grammar, matched at every node of a kind it can match (all nodes
     /// when it can match any kind), in a fresh environment. Captures are its named metavariables.
@@ -796,6 +798,7 @@ pub(in crate::code_rule_dsl) struct BatchCounters {
 
 impl MatchRegistry {
     #[cfg(test)]
+    #[allow(dead_code, reason = "retained for direct virtual-table tests")]
     pub(super) fn register_batch(&self, programs: &[Program], files: &[TapeDoc]) -> i64 {
         let files = files
             .iter()
@@ -860,6 +863,7 @@ impl MatchRegistry {
     }
 
     #[cfg(test)]
+    #[allow(dead_code, reason = "retained for SQL execution-count profiling")]
     pub(super) fn execution_count(&self, token: i64) -> Option<usize> {
         self.batch(token)
             .map(|batch| batch.executions.load(Ordering::Relaxed))

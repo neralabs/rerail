@@ -34,8 +34,6 @@ use crate::code_rule_dsl::transducer::sql_backend::{
     BatchFile, MatchRegistry, Terminal, TextSource, register_module,
 };
 pub(super) use catalog::{Catalog, CatalogBuilder};
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use compile::set_same_key_off;
 pub(super) use compile::{ClausePlan, compile_clause};
 pub(super) use env::Env;
 use env::EnvArena;
@@ -47,19 +45,18 @@ type UtilityMemoKey = (i64, i64, i64, i64, u32);
 type UtilityMemoValue = (Option<i64>, usize);
 type SiblingKey = (i64, u32, Option<i64>);
 #[cfg(test)]
-pub(in crate::code_rule_dsl) use functions::{named_sibling_visits, reset_named_sibling_visits};
-
-#[cfg(test)]
 thread_local! {
     static ROWS_STEPPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
+#[allow(dead_code, reason = "retained for SQL profiling assertions")]
 pub(super) fn reset_rows_stepped() {
     ROWS_STEPPED.with(|rows| rows.set(0));
 }
 
 #[cfg(test)]
+#[allow(dead_code, reason = "retained for SQL profiling assertions")]
 pub(super) fn rows_stepped() -> usize {
     ROWS_STEPPED.with(std::cell::Cell::get)
 }
@@ -129,6 +126,7 @@ impl QueryConnection {
 
     /// Registers a batch; statements address it by the returned token. Its terminals poll the
     /// deadline of this thread's budget, on whatever thread they run.
+    #[allow(dead_code, reason = "used by the restored SQL test harness")]
     pub(super) fn register(
         &self,
         terminals: Arc<Vec<Terminal>>,

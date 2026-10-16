@@ -517,12 +517,14 @@ thread_local! {
 }
 
 #[cfg(test)]
+#[allow(dead_code, reason = "retained for SQL traversal profiling")]
 pub(in crate::code_rule_dsl) fn reset_named_sibling_visits() {
     NAMED_SIBLING_VISITS.set(0);
 }
 
 /// Named children `nthChild` listed on this thread.
 #[cfg(test)]
+#[allow(dead_code, reason = "retained for SQL traversal profiling")]
 pub(in crate::code_rule_dsl) fn named_sibling_visits() -> usize {
     NAMED_SIBLING_VISITS.get()
 }

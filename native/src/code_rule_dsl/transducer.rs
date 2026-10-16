@@ -40,6 +40,10 @@ const MAX_STEPS_PER_PATH: usize = 1 << 20;
 
 /// A `TEXT` test.
 #[derive(Clone)]
+#[allow(
+    dead_code,
+    reason = "literal and prefix predicates support restored and benchmark backends"
+)]
 pub(super) enum TextPredicate {
     Equal(u16),
     Prefix(u16),
@@ -79,6 +83,10 @@ pub(super) struct Output {
 }
 
 #[derive(Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "restored and benchmark backends share this error contract"
+)]
 pub(super) enum Error {
     InvalidOpcode(usize),
     InvalidMode(usize),
@@ -114,6 +122,7 @@ pub(super) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
 impl Program {
     /// Compiles the exact root-terminal subset of ast-grep patterns. Structural patterns and
     /// metavariables are rejected rather than delegated to ast-grep inside the transducer.
+    #[allow(dead_code, reason = "retained for restored and benchmark backends")]
     pub(super) fn compile_ast_grep_literal(pattern: &Pattern) -> Result<Self, Error> {
         if !matches!(pattern.strictness, MatchStrictness::Smart) {
             return Err(Error::UnsupportedPattern);
@@ -339,6 +348,7 @@ impl Program {
         }
     }
 
+    #[allow(dead_code, reason = "retained for restored and benchmark backends")]
     pub(super) fn execute(&self, tape: &TapeDoc) -> Result<Vec<Output>, Error> {
         self.execute_roots(tape, 0..tape.transducer_len() as u32)
     }

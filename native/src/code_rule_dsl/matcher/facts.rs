@@ -190,6 +190,7 @@ pub(crate) fn test_predicate<'t, D: Doc>(
 /// `test_predicate` for a term that reads no position, in a check that is three-valued (`three`)
 /// or not.
 #[cfg(test)]
+#[allow(dead_code, reason = "retained for focused matcher parity tests")]
 pub(super) fn predicate_verdict<'t, D: Doc>(
     term: &AstMatcher,
     node: Node<'t, D>,
