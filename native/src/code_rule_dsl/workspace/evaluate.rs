@@ -437,65 +437,86 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                     .push(job_index);
             }
         }
-        for batch_jobs in groups.into_values() {
-            let batch_files = batch_jobs
-                .iter()
-                .map(|&job_index| {
-                    let job = &pending[job_index];
-                    let prepared = job
-                        .prepared
-                        .as_ref()
-                        .and_then(|prepared| prepared.ast.as_ref())
-                        .expect("batched AST file");
-                    let _budget = MatchBudget::resume(job.deadline.clone());
-                    crate::code_rule_dsl::transducer::sql_backend::BatchFile::new(
-                        prepared.doc.clone(),
-                        Arc::from(job.file.input.path.as_str()),
-                        Arc::from(job.file.input.language.as_str()),
-                        None,
-                    )
-                    .bounded(prepared.max_nodes)
-                })
-                .collect();
-            let outcome = sql.with_files(batch_files, |batch| {
-                #[cfg(feature = "code-rule-profile")]
-                let _worker_profile = profile::WorkerProfile::start();
-                #[cfg(feature = "code-rule-profile")]
-                let _dispatch_timer = profile::PhaseTimer::start(profile::Phase::Dispatch);
-                execute_prepared_ast_batch(
-                    &mut pending,
-                    &batch_jobs,
-                    context.code_rules,
-                    sql,
-                    batch,
-                );
-                for &job_index in &batch_jobs {
-                    let job = &mut pending[job_index];
-                    job.restored = job
-                        .prepared
-                        .as_ref()
-                        .and_then(|prepared| prepared.ast.as_ref())
-                        .map(|prepared| prepared.doc.clone());
-                }
-                let counters = batch.execution_counters();
-                record_query_counters(
-                    &mut pending[batch_jobs[0]].metrics,
-                    counters,
-                    batch_jobs.len(),
-                );
-            });
-            if outcome.is_err() {
-                for job_index in batch_jobs {
-                    let job = &mut pending[job_index];
-                    for &id in &job.file.candidates.ast {
-                        job.file
-                            .failures
-                            .entry(id)
-                            .or_insert(("adapter-error", "query engine unavailable"));
+        let mut slots = pending.into_iter().map(Some).collect::<Vec<_>>();
+        let grouped = groups
+            .into_values()
+            .map(|indices| {
+                let jobs = indices
+                    .iter()
+                    .map(|&index| slots[index].take().expect("grouped SQLite job"))
+                    .collect::<Vec<_>>();
+                (indices, jobs)
+            })
+            .collect::<Vec<_>>();
+        let evaluated_groups = WORK_POOL.install(|| {
+            grouped
+                .into_par_iter()
+                .map(|(indices, mut jobs)| {
+                    let batch_files = jobs
+                        .iter()
+                        .map(|job| {
+                            let prepared = job
+                                .prepared
+                                .as_ref()
+                                .and_then(|prepared| prepared.ast.as_ref())
+                                .expect("batched AST file");
+                            let _budget = MatchBudget::resume(job.deadline.clone());
+                            crate::code_rule_dsl::transducer::sql_backend::BatchFile::new(
+                                prepared.doc.clone(),
+                                Arc::from(job.file.input.path.as_str()),
+                                Arc::from(job.file.input.language.as_str()),
+                                None,
+                            )
+                            .bounded(prepared.max_nodes)
+                        })
+                        .collect();
+                    let local_indices = (0..jobs.len()).collect::<Vec<_>>();
+                    let outcome = sql.with_files(batch_files, |batch| {
+                        #[cfg(feature = "code-rule-profile")]
+                        let _worker_profile = profile::WorkerProfile::start();
+                        #[cfg(feature = "code-rule-profile")]
+                        let _dispatch_timer = profile::PhaseTimer::start(profile::Phase::Dispatch);
+                        execute_prepared_ast_batch(
+                            &mut jobs,
+                            &local_indices,
+                            context.code_rules,
+                            sql,
+                            batch,
+                        );
+                        for job in &mut jobs {
+                            job.restored = job
+                                .prepared
+                                .as_ref()
+                                .and_then(|prepared| prepared.ast.as_ref())
+                                .map(|prepared| prepared.doc.clone());
+                        }
+                        let counters = batch.execution_counters();
+                        let file_count = jobs.len();
+                        record_query_counters(&mut jobs[0].metrics, counters, file_count);
+                    });
+                    if outcome.is_err() {
+                        for job in &mut jobs {
+                            for &id in &job.file.candidates.ast {
+                                job.file
+                                    .failures
+                                    .entry(id)
+                                    .or_insert(("adapter-error", "query engine unavailable"));
+                            }
+                        }
                     }
-                }
+                    (indices, jobs)
+                })
+                .collect::<Vec<_>>()
+        });
+        for (indices, jobs) in evaluated_groups {
+            for (index, job) in indices.into_iter().zip(jobs) {
+                slots[index] = Some(job);
             }
         }
+        let pending = slots
+            .into_iter()
+            .map(|job| job.expect("SQLite job restored to its input order"))
+            .collect::<Vec<_>>();
 
         pending
             .into_iter()
