@@ -25,7 +25,7 @@ use super::{
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::evidence::Side;
-use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
+use crate::code_rule_dsl::eval::{Engine, evaluation_json, overflow_evaluation};
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::model::{ClauseKind, CodeRuleScope, Evaluation, Metrics, Snapshot};
 use crate::code_rule_dsl::placement::parse_placement;
@@ -61,12 +61,53 @@ impl Default for CodeRuleDslWorkspace {
     }
 }
 
+/// A workspace's options (`new CodeRuleDslWorkspace(options?)`).
+#[napi(object)]
+pub struct WorkspaceOptions {
+    /// Which engine matches the workspace's AST clauses: `native` (the default) or `sql`.
+    pub engine: Option<String>,
+    /// Files per batch on the SQL engine (default 64).
+    pub sql_batch_size: Option<u32>,
+}
+
 #[napi]
 impl CodeRuleDslWorkspace {
-    #[napi(constructor)]
+    /// A workspace on the native engine; in tests, on the engine `RERAIL_TEST_WORKSPACE_ENGINE`
+    /// names (and `RERAIL_TEST_WORKSPACE_SQL_BATCH` files per SQL batch), so the workspace tests
+    /// run on either engine.
     pub fn new() -> Self {
+        #[cfg(test)]
+        let options = super::sql::EngineOptions::parse(
+            std::env::var("RERAIL_TEST_WORKSPACE_ENGINE")
+                .ok()
+                .as_deref(),
+            std::env::var("RERAIL_TEST_WORKSPACE_SQL_BATCH")
+                .ok()
+                .and_then(|size| size.parse().ok()),
+        )
+        .expect("RERAIL_TEST_WORKSPACE_ENGINE is native or sql");
+        #[cfg(not(test))]
+        let options = super::sql::EngineOptions::default();
+        Self::with_engine(options)
+    }
+
+    /// A workspace whose AST clauses `options` says which engine matches.
+    #[napi(constructor)]
+    pub fn with_options(options: Option<WorkspaceOptions>) -> Result<Self> {
+        let options = options.unwrap_or(WorkspaceOptions {
+            engine: None,
+            sql_batch_size: None,
+        });
+        Ok(Self::with_engine(super::sql::EngineOptions::parse(
+            options.engine.as_deref(),
+            options.sql_batch_size,
+        )?))
+    }
+
+    fn with_engine(engine: super::sql::EngineOptions) -> Self {
         let state = WorkspaceState {
             instance: WORKSPACE_INSTANCES.fetch_add(1, Ordering::Relaxed),
+            engine,
             ..WorkspaceState::default()
         };
         Self {
@@ -74,6 +115,21 @@ impl CodeRuleDslWorkspace {
             scopes: Mutex::new(Vec::new()),
             closed: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// The engine that matches the workspace's AST clauses, as JSON: on SQL, its clauses, those it
+    /// refuses and why, how many ran, and what its statements did.
+    #[napi]
+    pub fn engine_report(&self) -> Result<String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| invalid("policy workspace is unavailable"))?;
+        let report = match super::sql::engine_of(&mut state) {
+            Some(sql) => sql.report(),
+            None => json!({ "engine": "native" }),
+        };
+        serde_json::to_string(&report).map_err(json_error)
     }
 
     /// Attaches the content store file at `store_path` to the Git repository containing `root`.
@@ -265,7 +321,8 @@ impl CodeRuleDslWorkspace {
         };
         check_closed(&self.closed)?;
         let request: Request = serde_json::from_str(&request_json).map_err(json_error)?;
-        if !is_cheap(&state, &request) {
+        // The SQL engine matches in batches: its workspace leaves every apply to `applyAsync`.
+        if !is_cheap(&state, &request) || state.engine.engine == Engine::Sql {
             return Ok(None);
         }
         // The fast path has no parser, global queries, unbounded corpus or lock wait.
@@ -817,6 +874,7 @@ impl WorkspaceApplyTask {
         }
         let code_rules = state.code_rules.clone();
         let storage = state.storage.clone();
+        let sql = super::sql::engine_of(&mut state);
         let producer_batch =
             CrossFileScheduler::prepare(&mut state, &mut jobs, &code_rules, deferred);
         let context = JobContext {
@@ -824,6 +882,7 @@ impl WorkspaceApplyTask {
             storage: storage.as_ref(),
             closed: &self.closed,
             summarize: CrossFileScheduler::summarizes(&producer_batch),
+            sql: sql.as_deref(),
         };
         let mut evaluation_error = None;
         let phase_a = match run_jobs(&mut jobs, &context) {
