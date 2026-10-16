@@ -218,6 +218,7 @@ pub(super) fn make_file(
         transient_failure: false,
         unpublished: false,
         results_only: false,
+        unstored: HashSet::new(),
         candidates,
         witnesses: Default::default(),
         failures: BTreeMap::new(),

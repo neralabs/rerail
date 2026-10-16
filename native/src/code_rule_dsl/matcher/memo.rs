@@ -528,7 +528,8 @@ impl Started {
 
 /// Remembers a computed verdict under `key`: what it bound of the names `keep` holds, the steps it
 /// spent and the levels it went down, for the clause in progress alone where it read that clause's
-/// state; nothing where it hit a limit or began a clause of its own.
+/// state; nothing where it hit a limit, began a clause of its own, or ran while the budget was
+/// spent (a clause's allowance runs out on its own, and the clauses after it read this memo).
 #[inline(never)]
 fn remember_verdict(
     mut key: Box<Key>,
@@ -539,7 +540,7 @@ fn remember_verdict(
 ) {
     let peak = swap_util_peak(0);
     swap_util_peak(started.outer.max(peak));
-    if util_limit_hit() || clauses_begun() != started.clauses {
+    if util_limit_hit() || clauses_begun() != started.clauses || budget::matcher_budget_observed() {
         return;
     }
     let verdict = if matched {
@@ -621,7 +622,9 @@ pub(super) fn answer(term: usize, node: usize, three: bool) -> Option<Truth> {
     MEMO.with_borrow(|memo| memo.answers.get(&(term, node, three)).copied())
 }
 
-/// Remembers a node-local relation's answers at the evaluated file's nodes (`answer`).
+/// Remembers a node-local relation's answers at the evaluated file's nodes (`answer`). No answer
+/// computed under a spent budget reaches it: `relation::verdict` refuses to answer once a poll has
+/// found the budget spent, and a walk with a refused verdict remembers nothing.
 pub(super) fn remember_answers(term: usize, three: bool, answers: &[(usize, Truth)]) {
     if answers.is_empty() {
         return;

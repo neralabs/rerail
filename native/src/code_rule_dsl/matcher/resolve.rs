@@ -1552,12 +1552,15 @@ fn file_php_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Optio
                     (names, false)
                 }
                 Err(error) => {
+                    // A deadline is the clause's own allowance running out: a later clause, with
+                    // an allowance of its own, builds the names again.
                     let within = match error {
-                        BuildError::Budget => steps,
-                        BuildError::Depth | BuildError::Deadline => usize::MAX,
+                        BuildError::Budget => Some(steps),
+                        BuildError::Depth => Some(usize::MAX),
+                        BuildError::Deadline => None,
                     };
                     FILE_SCOPES.with_borrow_mut(|slot| {
-                        if let Some(slot) = slot {
+                        if let (Some(slot), Some(within)) = (slot, within) {
                             slot.php_names_failed_within = slot.php_names_failed_within.max(within);
                         }
                     });
@@ -1694,12 +1697,15 @@ pub(super) fn file_table<D: Doc>(
                     (table, false)
                 }
                 Err(error) => {
+                    // A deadline is the clause's own allowance running out: a later clause, with
+                    // an allowance of its own, builds the table again.
                     let within = match error {
-                        BuildError::Budget => steps,
-                        BuildError::Depth | BuildError::Deadline => usize::MAX,
+                        BuildError::Budget => Some(steps),
+                        BuildError::Depth => Some(usize::MAX),
+                        BuildError::Deadline => None,
                     };
                     FILE_SCOPES.with_borrow_mut(|slot| {
-                        if let Some(slot) = slot {
+                        if let (Some(slot), Some(within)) = (slot, within) {
                             slot.failed_within = slot.failed_within.max(within);
                         }
                     });

@@ -256,12 +256,15 @@ rules, so its first release is `0.1.1`.
 
 ### Release
 
-`.github/workflows/release-packs.yml` releases the packs; core's `v*` release (`release.yml`) is separate.
+`.github/workflows/version-packs.yml` versions the packs and `.github/workflows/release-packs.yml` releases them;
+core's `v*` release (`release.yml`) is separate.
 
-1. **Version.** On each push to `main` with changesets pending, the workflow opens or updates the **Version packs**
-   pull request (opened by the `neralabs-ci` app, so CI runs on it). It runs `npm run version:packs`: `changeset
-   version`, then `scripts/release/sync-pack-lockfile.mjs`, which records the new versions in `package-lock.json`.
-   Review it like any pull request; merging it is the release.
+1. **Version.** On each push to `main` with changesets pending, `version-packs.yml` opens or updates the **Version
+   packs** pull request (opened by the `neralabs-ci` app, so CI runs on it). It runs `npm run version:packs`:
+   `changeset version`, then `scripts/release/sync-pack-lockfile.mjs`, which records the new versions in
+   `package-lock.json`. Review it like any pull request; merging it is the release. A newer push to `main` cancels an
+   older run. CI runs only its licence and lint jobs on it, since `release-packs.yml` validates and packs every pack
+   on it and `main` runs everything once it is merged.
 2. **Publish.** On each push to `main`, every pack whose `package.json` version has no git tag
    `@neralabs/rerail-pack-<id>@<version>` goes through the publish gate and is published:
    - the whole pack validation for that pack (`test/engine/catalog/packs.test.ts`, every check and every rule), so a

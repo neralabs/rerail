@@ -203,9 +203,23 @@ def pattern_from(value_util):
 
 # ---- module references (ReferenceTracker, legacy mode) ---------------------------------------------------------------
 
-def module_utils(rx):
+# An aliasing branch below reads every occurrence of a binding, once per reference it tests: quadratic in a file that
+# references an imported or const function thousands of times. No running program reassigns an import or a const, so
+# for the n/prefer-promises ports, which read every call, those bindings skip the branch.
+NOT_REASSIGNABLE = [{"not": {"resolves": {"binding": {"form": "import"}}}},
+                    {"not": {"resolves": {"binding": {"site": {"kind": "variable_declarator", "has": {"field": "name", "kind": "identifier"},
+                                                               "inside": {"kind": "lexical_declaration", "regex": "^const\\b"}}}}}}]
+
+
+def occurrence_branch(occurrence, guarded):
+    """An identifier whose binding has an `occurrence`; `guarded` skips bindings no running program reassigns."""
+    return {"kind": "identifier", **({"all": NOT_REASSIGNABLE} if guarded else {}), "resolves": {"binding": {"occurrence": occurrence}}}
+
+
+def module_utils(rx, guarded=False):
     """module-call: require(M) with the global require or process.getBuiltinModule(M) with the global process;
-    module-value: that call or a constant alias, an ESM default/namespace import (and its .default)."""
+    module-value: that call or a constant alias, an ESM default/namespace import (and its .default). `guarded`: see
+    `NOT_REASSIGNABLE`."""
     return {
         "require-callee": {"any": [{"kind": "identifier", "regex": "^require$", "resolves": {"global": ["require"]}},
                                    {"kind": "parenthesized_expression", "has": {"matches": "require-callee"}}]},
@@ -218,7 +232,7 @@ def module_utils(rx):
                                  {"kind": "parenthesized_expression", "has": {"matches": "module-value"}},
                                  {"kind": "assignment_expression", "has": {"field": "right", "matches": "module-value"}},
                                  {"kind": "identifier", "resolves": {"binding": {"destructuredValue": False, "value": {"matches": "module-value"}}}},
-                                 {"kind": "identifier", "resolves": {"binding": {"occurrence": {"inside": {"kind": "assignment_expression", "field": "left", "has": {"field": "right", "matches": "module-value"}}}}}},
+                                 occurrence_branch({"inside": {"kind": "assignment_expression", "field": "left", "has": {"field": "right", "matches": "module-value"}}}, guarded),
                                  {"matches": "esm-ref"},
                                  {"kind": "member_expression", "all": [{"has": {"field": "object", "matches": "esm-ref"}}, {"has": {"field": "property", "kind": "property_identifier", "regex": "^default$"}}]}]},
         "esm-source": {"kind": "string", "has": {"kind": "string_fragment", "regex": rx}},
@@ -280,17 +294,17 @@ def prefer_global_docs():
     return docs
 
 
-def fn_utils(rx_mod, rx_fn):
+def fn_utils(rx_mod, rx_fn, guarded=False):
     """fn-value: a value naming member rx_fn of the module: a member, a constant alias, a destructured property or an
-    import specifier."""
-    utils = module_utils(rx_mod)
+    import specifier. `guarded`: see `NOT_REASSIGNABLE`."""
+    utils = module_utils(rx_mod, guarded)
     utils["fn-value"] = {"any": [member_object_first("module-value", rx_fn),
                                  {"kind": "parenthesized_expression", "has": {"matches": "fn-value"}},
                                  {"kind": "identifier", "resolves": {"binding": {"destructuredValue": False, "value": {"matches": "fn-value"}}}},
-                                 {"kind": "identifier", "resolves": {"binding": {"occurrence": {"any": [
+                                 occurrence_branch({"any": [
                                      {"kind": "shorthand_property_identifier_pattern", "regex": rx_fn, "inside": pattern_from("module-value")},
                                      {"kind": "identifier", "inside": {"kind": "pair_pattern", "field": "value", "has": {"field": "key", **key_named(rx_fn)}, "inside": pattern_from("module-value")}},
-                                     {"kind": "identifier", "inside": {"kind": "object_assignment_pattern", "has": {"field": "left", "kind": "shorthand_property_identifier_pattern", "regex": rx_fn}, "inside": pattern_from("module-value")}}]}}}},
+                                     {"kind": "identifier", "inside": {"kind": "object_assignment_pattern", "has": {"field": "left", "kind": "shorthand_property_identifier_pattern", "regex": rx_fn}, "inside": pattern_from("module-value")}}]}, guarded),
                                  {"kind": "identifier", "resolves": {"binding": {"site": {"kind": "import_specifier", "has": {"field": "name", "regex": rx_fn},
                                                                                           "inside": {"stopBy": "end", "kind": "import_statement", "has": {"field": "source", "matches": "esm-source"}}}}}}]}
     return utils
@@ -306,17 +320,29 @@ def plain_alt(names):
     return "^(?:" + "|".join(names) + ")$"
 
 
+def promises_utils(mod, rx_fn):
+    """`fn_utils` for an n/prefer-promises port, guarded, with file-names-module: a file holding a string naming the
+    module, which every call the port reports needs (a needle, `mod` or an escape, anchors the walk)."""
+    return {"file-names-module": {"kind": "program", "has": {
+        "stopBy": "end", "any": [{"kind": "string"}, {"kind": "template_string", "not": {"has": {"kind": "template_substitution"}}}],
+        "regex": f"{mod}|\\\\", "value": {"regex": f"^(?:node:)?{mod}$"}}},
+        **fn_utils(f"^(?:node:)?{mod}$", rx_fn, guarded=True)}
+
+
+IN_FILE_NAMING_MODULE = {"inside": {"stopBy": "end", "matches": "file-names-module"}}
+
+
 def prefer_promises_docs():
     docs = []
     for mod, calls, constructs in (("fs", FS_FNS, []), ("dns", DNS_CALL, ["Resolver"])):
-        checks = [{"id": "call", "ast": {"languageOptions": NODE_LO, "utils": fn_utils(f"^(?:node:)?{mod}$", plain_alt(calls)),
-                                         "rule": {"kind": "call_expression", **NOT_TAGGED, "has": {"field": "function", "matches": "fn-value"}}}, "message": f"Use '{mod}.promises.<name>()' instead."}]
+        checks = [{"id": "call", "ast": {"languageOptions": NODE_LO, "utils": promises_utils(mod, plain_alt(calls)),
+                                         "rule": {"kind": "call_expression", **IN_FILE_NAMING_MODULE, **NOT_TAGGED, "has": {"field": "function", "matches": "fn-value"}}}, "message": f"Use '{mod}.promises.<name>()' instead."}]
         if constructs:
-            checks.append({"id": "construct", "ast": {"languageOptions": NODE_LO, "utils": fn_utils(f"^(?:node:)?{mod}$", plain_alt(constructs)),
-                                                      "rule": {"kind": "new_expression", "has": {"field": "constructor", "matches": "fn-value"}}}, "message": f"Use 'new {mod}.promises.<name>()' instead."})
+            checks.append({"id": "construct", "ast": {"languageOptions": NODE_LO, "utils": promises_utils(mod, plain_alt(constructs)),
+                                                      "rule": {"kind": "new_expression", **IN_FILE_NAMING_MODULE, "has": {"field": "constructor", "matches": "fn-value"}}}, "message": f"Use 'new {mod}.promises.<name>()' instead."})
         description = (f"eslint-plugin-n 18.4.1 n/prefer-promises/{mod}: calls of the {mod} module's callback API ({', '.join(calls)}"
                        + (f"; construction of {', '.join(constructs)}" if constructs else "")
-                       + f") as ReferenceTracker (legacy mode) finds them: members of `require('{mod}')`/`require('node:{mod}')` (global require), `process.getBuiltinModule(…)` (global process), ESM default/namespace imports and constant aliases, destructured properties and import specifiers.")
+                       + f") as ReferenceTracker (legacy mode) finds them: members of `require('{mod}')`/`require('node:{mod}')` (global require), `process.getBuiltinModule(…)` (global process), ESM default/namespace imports and constant aliases, destructured properties and import specifiers. Unlike ReferenceTracker, it does not follow assignments to imported or `const` bindings, which throw when they run.")
         if mod == "fs":
             description += (" Divergence (NER-1834): `watch` is not reported, because `fs.promises.watch` returns an async iterator of change"
                             " events rather than an FSWatcher and is not a drop-in replacement.")

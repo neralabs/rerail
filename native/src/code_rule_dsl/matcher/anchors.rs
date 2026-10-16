@@ -891,14 +891,12 @@ where
         // union is the postings side by side, sorted.
         let mut result = Vec::new();
         let mut errors = false;
-        let mut steps = 0;
         for &kind in kinds {
             if kind_utils::is_error_kind(kind) && std::mem::replace(&mut errors, true) {
                 continue;
             }
             for &ordinal in self.kind_posting(kind) {
-                check_budget(steps)?;
-                steps += 1;
+                check_budget()?;
                 result.push(ordinal);
             }
         }
@@ -1007,7 +1005,7 @@ where
         scope: Selection<'index>,
         memo: &mut UtilitySelections<'index>,
     ) -> Result<Selection<'index>, ()> {
-        check_budget(0)?;
+        check_budget()?;
         let scope = self.within_root_kinds(scope, plan, memo)?;
         if scope.is_empty() {
             return Ok(scope);
@@ -1113,8 +1111,8 @@ where
         mut keep: impl FnMut(usize) -> bool,
     ) -> Result<Selection<'index>, ()> {
         let mut selected = Vec::new();
-        for (step, ordinal) in scope.ordinals(self.len()).enumerate() {
-            check_budget(step)?;
+        for ordinal in scope.ordinals(self.len()) {
+            check_budget()?;
             if keep(ordinal) {
                 selected.push(ordinal);
             }
@@ -1133,8 +1131,8 @@ where
         probe: &TextProbe,
     ) -> Result<Selection<'index>, ()> {
         let mut counts = HashMap::<u16, usize>::default();
-        for (step, ordinal) in scope.ordinals(self.len()).enumerate() {
-            check_budget(step)?;
+        for ordinal in scope.ordinals(self.len()) {
+            check_budget()?;
             #[cfg(test)]
             record_walk(Walk::AnchorTextNode);
             *counts.entry(self.kind(ordinal)).or_default() += 1;
@@ -1174,8 +1172,8 @@ where
             selected.extend(matches);
         }
         if !direct.is_empty() {
-            for (step, ordinal) in scope.ordinals(self.len()).enumerate() {
-                check_budget(step)?;
+            for ordinal in scope.ordinals(self.len()) {
+                check_budget()?;
                 if direct.contains(&self.kind(ordinal)) {
                     let text = &self.source[self.entries[ordinal].node.range()];
                     if probe.allows(text) && regex.is_match(text) {
@@ -1196,10 +1194,8 @@ where
         probe: &TextProbe,
     ) -> Result<Vec<usize>, ()> {
         let mut result = Vec::new();
-        let mut steps = 0;
         let mut visit_term = |text: &str, posting: &[usize]| -> Result<(), ()> {
-            check_budget(steps)?;
-            steps += 1;
+            check_budget()?;
             if probe.allows(text) && regex.is_match(text) {
                 result.extend_from_slice(posting);
             }
@@ -1220,8 +1216,7 @@ where
             }
         }
         let mut visit_residue = |ordinal: usize| -> Result<(), ()> {
-            check_budget(steps)?;
-            steps += 1;
+            check_budget()?;
             let text = &self.source[self.entries[ordinal].node.range()];
             if probe.allows(text) && regex.is_match(text) {
                 result.push(ordinal);
@@ -1255,8 +1250,8 @@ where
         required: &[Requirement],
     ) -> Result<Selection<'index>, ()> {
         let mut postings = Vec::with_capacity(required.len());
-        for (step, requirement) in required.iter().enumerate() {
-            check_budget(step)?;
+        for requirement in required {
+            check_budget()?;
             let posting = self.posting(&requirement.value);
             if posting.is_empty() {
                 return Ok(Selection::empty());
@@ -1277,12 +1272,10 @@ where
         let probe_cost = scope.len(self.len()).saturating_mul(required.len());
         if climb_cost <= probe_cost {
             let mut roots = Vec::new();
-            let mut steps = 0;
             for &anchor in postings[seed] {
                 let mut current = Some(anchor);
                 for kind in &requirement.parents {
-                    check_budget(steps)?;
-                    steps += 1;
+                    check_budget()?;
                     current = current.and_then(|ordinal| {
                         self.entries[ordinal].parent.map(|parent| parent.get() - 1)
                     });
@@ -1302,9 +1295,9 @@ where
             scope = combine(scope, Selection::Roots(Cow::Owned(roots)), true)?;
         }
         let mut selected = Vec::new();
-        for (step, ordinal) in scope.ordinals(self.len()).enumerate() {
-            check_budget(step)?;
-            if contains_requirements(ordinal, self.entries[ordinal].subtree_end, &postings)? {
+        for ordinal in scope.ordinals(self.len()) {
+            check_budget()?;
+            if contains_requirements(ordinal, self.entries[ordinal].subtree_end, &postings) {
                 selected.push(ordinal);
             }
         }
@@ -1329,9 +1322,8 @@ where
         let inner_scope = match direction {
             Direction::Has if !recursive => {
                 let mut children = Vec::new();
-                let mut steps = 0;
                 for parent in scope.ordinals(self.len()) {
-                    self.push_children(parent, &mut children, &mut steps)?;
+                    self.push_children(parent, &mut children)?;
                 }
                 children.sort_unstable();
                 children.dedup();
@@ -1339,8 +1331,8 @@ where
             }
             Direction::Inside if !recursive && !matches!(scope, Selection::All) => {
                 let mut parents = Vec::new();
-                for (step, ordinal) in scope.ordinals(self.len()).enumerate() {
-                    check_budget(step)?;
+                for ordinal in scope.ordinals(self.len()) {
+                    check_budget()?;
                     if let Some(parent) = self.entries[ordinal].parent {
                         parents.push(parent.get() - 1);
                     }
@@ -1363,12 +1355,10 @@ where
                 let mut roots = Vec::new();
                 // Ancestors already walked, by ordinal.
                 let mut seen = vec![0_u64; self.len().div_ceil(64)];
-                let mut steps = 0;
                 for child in matches.ordinals(self.len()) {
                     let mut current = self.entries[child].parent;
                     while let Some(parent) = current {
-                        check_budget(steps)?;
-                        steps += 1;
+                        check_budget()?;
                         let parent = parent.get() - 1;
                         let (word, bit) = (parent / 64, 1_u64 << (parent % 64));
                         if seen[word] & bit != 0 {
@@ -1390,9 +1380,8 @@ where
             // Every node is the child of a matched parent: list the matched parents' children.
             Direction::Inside if !recursive && matches!(scope, Selection::All) => {
                 let mut children = Vec::new();
-                let mut steps = 0;
                 for parent in matches.ordinals(self.len()) {
-                    self.push_children(parent, &mut children, &mut steps)?;
+                    self.push_children(parent, &mut children)?;
                 }
                 children.sort_unstable();
                 Ok(Selection::Roots(Cow::Owned(children)))
@@ -1406,8 +1395,8 @@ where
                 // Merge nested ancestor intervals. A root cannot be its own
                 // ancestor, hence start + 1 even for zero-width syntax nodes.
                 let mut ranges: Vec<(usize, usize)> = Vec::new();
-                for (step, ordinal) in matches.ordinals(self.len()).enumerate() {
-                    check_budget(step)?;
+                for ordinal in matches.ordinals(self.len()) {
+                    check_budget()?;
                     let end = self.entries[ordinal].subtree_end;
                     if let Some(previous) = ranges.last_mut()
                         && ordinal < previous.1
@@ -1432,16 +1421,10 @@ where
     }
 
     /// Appends `parent`'s children, in order, to `children`.
-    fn push_children(
-        &self,
-        parent: usize,
-        children: &mut Vec<usize>,
-        steps: &mut usize,
-    ) -> Result<(), ()> {
+    fn push_children(&self, parent: usize, children: &mut Vec<usize>) -> Result<(), ()> {
         let mut child = parent + 1;
         while child < self.entries[parent].subtree_end {
-            check_budget(*steps)?;
-            *steps += 1;
+            check_budget()?;
             children.push(child);
             child = self.entries[child].subtree_end;
         }
@@ -1454,8 +1437,8 @@ where
     /// alone, not among every node of the file: what it selects elsewhere no root reads.
     fn sibling_scope(&self, scope: &Selection<'_>) -> Result<Selection<'static>, ()> {
         let mut containers = Vec::new();
-        for (step, ordinal) in scope.ordinals(self.len()).enumerate() {
-            check_budget(step)?;
+        for ordinal in scope.ordinals(self.len()) {
+            check_budget()?;
             containers.push(
                 self.entries[ordinal]
                     .parent
@@ -1465,9 +1448,8 @@ where
         containers.sort_unstable();
         containers.dedup();
         let mut siblings = Vec::new();
-        let mut steps = 0;
         for container in containers {
-            self.push_children(container, &mut siblings, &mut steps)?;
+            self.push_children(container, &mut siblings)?;
         }
         // A container nested in another lists its children inside the outer one's.
         siblings.sort_unstable();
@@ -1486,8 +1468,8 @@ where
     ) -> Result<Selection<'index>, ()> {
         let mut extreme = HashMap::<usize, usize>::default();
         if every {
-            for (step, matched) in matches.ordinals(self.len()).enumerate() {
-                check_budget(step)?;
+            for matched in matches.ordinals(self.len()) {
+                check_budget()?;
                 if let Some(parent) = self.entries[matched].parent {
                     extreme
                         .entry(parent.get() - 1)
@@ -1502,19 +1484,16 @@ where
                 }
             }
         }
-        let mut steps = 0;
         let mut runs = HashMap::default();
         self.filter(scope, |ordinal| {
             let entry = &self.entries[ordinal];
             let Some(parent) = entry.parent.map(|parent| parent.get() - 1) else {
-                return self.walked_siblings_match(
-                    ordinal, ordinal, matches, following, every, &mut steps, &mut runs,
-                );
+                return self
+                    .walked_siblings_match(ordinal, ordinal, matches, following, every, &mut runs);
             };
             if self.walked_siblings {
-                return self.walked_siblings_match(
-                    ordinal, parent, matches, following, every, &mut steps, &mut runs,
-                );
+                return self
+                    .walked_siblings_match(ordinal, parent, matches, following, every, &mut runs);
             }
             if every {
                 extreme.get(&parent).is_some_and(|&matched| {
@@ -1543,7 +1522,6 @@ where
     // from the first that ends after the node's start byte (`goto_first_child_for_byte`), so each
     // node reads its answer from that parent's matched-children counts (`runs`), built once:
     // linear in the siblings, not quadratic.
-    #[allow(clippy::too_many_arguments)]
     fn walked_siblings_match(
         &self,
         ordinal: usize,
@@ -1551,7 +1529,6 @@ where
         matches: &Selection<'_>,
         following: bool,
         every: bool,
-        steps: &mut usize,
         runs: &mut HashMap<(usize, usize), Option<SiblingRun>>,
     ) -> bool {
         let ordinals = self.ordinals_by_node_id();
@@ -1576,9 +1553,8 @@ where
                     for child in walked_parent.children() {
                         #[cfg(test)]
                         record_walk(Walk::AnchorSibling);
-                        *steps += 1;
                         // Budget exhaustion makes the whole selection fall back to root kinds.
-                        check_budget(*steps).ok()?;
+                        check_budget().ok()?;
                         let before = *run.matched_before.last().expect("a count");
                         let end = run.ends.last().copied().unwrap_or_default();
                         run.ends.push(end.max(child.range().end));
@@ -1606,9 +1582,8 @@ where
         walked.is_some_and(|sibling| {
             #[cfg(test)]
             record_walk(Walk::AnchorSibling);
-            *steps += 1;
             // Budget exhaustion makes the whole selection fall back to root kinds.
-            check_budget(*steps).is_err() || matched_child(sibling.node_id())
+            check_budget().is_err() || matched_child(sibling.node_id())
         })
     }
 
@@ -1647,8 +1622,8 @@ fn is_subset(inner: &Selection<'_>, outer: &Selection<'_>) -> Result<bool, ()> {
         return Ok(true);
     }
     let mut outer = outer.iter().copied().peekable();
-    for (step, &ordinal) in inner.iter().enumerate() {
-        check_budget(step)?;
+    for &ordinal in inner.iter() {
+        check_budget()?;
         while outer.next_if(|&candidate| candidate < ordinal).is_some() {}
         if outer.next_if_eq(&ordinal).is_none() {
             return Ok(false);
@@ -1664,19 +1639,19 @@ fn copy_selection<'index>(selection: &Selection<'index>) -> Selection<'index> {
     }
 }
 
-fn contains_requirements(start: usize, end: usize, postings: &[&[usize]]) -> Result<bool, ()> {
-    for (step, posting) in postings.iter().enumerate() {
-        check_budget(step)?;
+/// Whether the subtree `start..end` holds a node of every posting. The caller polls once per
+/// subtree; the postings are the plan's few requirements.
+fn contains_requirements(start: usize, end: usize, postings: &[&[usize]]) -> bool {
+    postings.iter().all(|posting| {
         let offset = posting.partition_point(|ordinal| *ordinal < start);
-        if posting.get(offset).is_none_or(|ordinal| *ordinal >= end) {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+        posting.get(offset).is_some_and(|ordinal| *ordinal < end)
+    })
 }
 
-fn check_budget(step: usize) -> Result<(), ()> {
-    if step & 255 == 0 && budget::matcher_budget_exhausted() {
+/// One step of a selection loop: polls the budget once per 256 steps of all selection loops
+/// together, so a loop run once per root spends what one loop over every root would.
+fn check_budget() -> Result<(), ()> {
+    if budget::step_budget_exhausted() {
         Err(())
     } else {
         Ok(())
@@ -1723,8 +1698,8 @@ fn combine<'index>(
         if small.len().saturating_mul(SEARCHED_INTERSECTION) < large.len() {
             let mut result = Vec::with_capacity(small.len());
             let mut rest: &[usize] = large;
-            for (step, &ordinal) in small.iter().enumerate() {
-                check_budget(step)?;
+            for &ordinal in small.iter() {
+                check_budget()?;
                 rest = &rest[rest.partition_point(|&candidate| candidate < ordinal)..];
                 if rest.first() == Some(&ordinal) {
                     result.push(ordinal);
@@ -1738,10 +1713,9 @@ fn combine<'index>(
     } else {
         left.len() + right.len()
     });
-    let (mut a, mut b, mut steps) = (0, 0, 0);
+    let (mut a, mut b) = (0, 0);
     while a < left.len() && b < right.len() {
-        check_budget(steps)?;
-        steps += 1;
+        check_budget()?;
         match left[a].cmp(&right[b]) {
             std::cmp::Ordering::Equal => {
                 result.push(left[a]);
@@ -1764,7 +1738,7 @@ fn combine<'index>(
     }
     if !intersection {
         for &ordinal in left[a..].iter().chain(&right[b..]) {
-            check_budget(result.len())?;
+            check_budget()?;
             result.push(ordinal);
         }
     }

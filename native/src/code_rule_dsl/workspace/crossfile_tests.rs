@@ -891,6 +891,129 @@ fn e4_results_of_consumers_gone_quiet_are_readable_after_eviction() {
     }
 }
 
+/// An evicted file's consumers are evaluated again when a file they read changes, on a file
+/// rebuilt for them alone. A consumer that runs out of work there keeps the file resident (its
+/// failure is not stored), and the file keeps its other clauses' stored results: `api.py`'s local
+/// violation is still reported, in the apply's result and in a later page. Where the store cannot
+/// be read, the clauses it would have answered fail instead of vanishing, and the next apply that
+/// sends the file evaluates it in full.
+#[test]
+fn an_evicted_file_kept_for_a_consumer_that_ran_out_keeps_its_other_results() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("e4-evicted-consumer");
+    let store = StdArc::new(ContentStore::open(&directory.0.join("content.sqlite")).unwrap());
+    let code_rule = compile(
+        "e4-evicted-consumer",
+        json!([
+            {
+                "id": "consumer",
+                "violation": violation("E4", "an async function reaches blocking I/O"),
+                "forbid": { "ast": { "language": "python", "rule": {
+                    "kind": "function_definition",
+                    "regex": "^async ",
+                    "has": {
+                        "stopBy": { "kind": "function_definition" },
+                        "kind": "call",
+                        "not": { "inside": { "kind": "await" } },
+                        "calls": reaches_sleep()
+                    }
+                } } }
+            },
+            {
+                "id": "local",
+                "violation": violation("LOCAL", "a handler"),
+                "forbid": { "regex": { "source": "file.content", "pattern": "handler" } }
+            }
+        ]),
+    );
+    for read_fails in [false, true] {
+        let workspace = stored_workspace(
+            &store,
+            &format!("/e4-evicted-consumer-{read_fails}"),
+            &code_rule,
+        );
+        let tree = [
+            module_file("app/__init__.py", ""),
+            module_file("app/api.py", API),
+            module_file("app/services/__init__.py", SERVICES),
+            module_file("app/services/impl.py", IMPL),
+            module_file("app/util.py", IDLE),
+        ];
+        let before = outcome(&apply(&workspace, 1, &tree, &[]));
+        // `handler` in `async def handler():`.
+        let local = ("app/api.py".to_owned(), 42, None);
+        let unread = ("adapter-error".to_owned(), "app/api.py".to_owned());
+        assert!(before.violations.contains(&local), "{before:?}");
+        assert!(workspace.evict_inactive().unwrap());
+        // The sink comes, three files away: `api.py`'s consumer is evaluated again, and in its
+        // consumers' pass it runs out at once.
+        TEST_CONSUMER_CLAUSE_WORK_BUDGET.set(Some(0));
+        TEST_EVICTED_READ_FAILURE.set(read_fails);
+        let response = apply_response(&workspace, 2, &[module_file("app/util.py", SLEEPS)], &[]);
+        TEST_EVICTED_READ_FAILURE.set(false);
+        TEST_CONSUMER_CLAUSE_WORK_BUDGET.set(None);
+        let applied = merged(&before, &response);
+        assert!(
+            applied
+                .failures
+                .contains(&("budget-exceeded".to_owned(), "app/api.py".to_owned())),
+            "the consumer ran out on api.py: {applied:?}"
+        );
+        let page = super::tests::result_page(&workspace, 0, 64 * 1024 * 1024)
+            .map(|page| outcome(&serde_json::from_str(&page).unwrap()))
+            .unwrap();
+        for (seen, case) in [(&applied, "apply"), (&page, "page")] {
+            assert_eq!(
+                (
+                    seen.violations.contains(&local),
+                    seen.failures.contains(&unread)
+                ),
+                (!read_fails, read_fails),
+                "read fails: {read_fails}, {case}: {seen:?}"
+            );
+        }
+        if read_fails {
+            let resent = merged(
+                &applied,
+                &apply_response(&workspace, 3, &[module_file("app/api.py", API)], &[]),
+            );
+            assert!(resent.violations.contains(&local), "resent: {resent:?}");
+            assert!(!resent.failures.contains(&unread), "resent: {resent:?}");
+        }
+        workspace.close();
+    }
+}
+
+/// A file whose shared work ran out has an opaque call summary, this workspace's alone: it is
+/// never stored, so a later workspace extracts the summary again and a consumer reading through
+/// the file reports its violation.
+#[test]
+fn a_call_summary_cut_short_is_extracted_again() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("e4-opaque-summary");
+    let store = StdArc::new(ContentStore::open(&directory.0.join("content.sqlite")).unwrap());
+    let code_rule = async_blocking_code_rule();
+    let first = stored_workspace(&store, "/e4-opaque-summary", &code_rule);
+    TEST_FILE_WORK_BUDGET.set(Some(0));
+    apply(&first, 1, &[module_file("app/util.py", SLEEPS)], &[]);
+    TEST_FILE_WORK_BUDGET.set(None);
+    first.close();
+    let later = stored_workspace(&store, "/e4-opaque-summary", &code_rule);
+    let tree = [
+        module_file("app/__init__.py", ""),
+        module_file("app/api.py", API),
+        module_file("app/services/__init__.py", SERVICES),
+        module_file("app/services/impl.py", IMPL),
+        module_file("app/util.py", SLEEPS),
+    ];
+    assert_eq!(
+        outcome(&apply(&later, 1, &tree, &[])),
+        found(&[("app/api.py", 32, None)], &[]),
+        "the sink's summary is extracted again"
+    );
+    later.close();
+}
+
 /// A consumer restamped while another writer holds the store past the write deadline keeps its
 /// new results through eviction: the store holds its source and its earlier results, not these,
 /// so it stays resident until the next apply that publishes stores them.

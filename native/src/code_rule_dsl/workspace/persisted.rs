@@ -9,7 +9,7 @@ use super::documents;
 use super::evaluate::candidate_grammar;
 use super::ingest::candidate_dispatch;
 use super::storage::{StorageContext, unix_seconds};
-use super::{ClauseId, FileState, LocalFailure};
+use super::{CLAUSE_WORK_BUDGET_EXCEEDED, ClauseId, FileState, LocalFailure};
 use crate::WORK_POOL;
 use crate::code_rule_dsl::eval::file_language;
 use crate::code_rule_dsl::json::{invalid, json_error};
@@ -137,8 +137,14 @@ pub(super) fn encode_local_result(
 /// The static failure a stored failure names: every failure file evaluation records, including
 /// each engine limit. Anything else (another build's vocabulary) is a cache miss, not an error.
 fn persisted_failure(code: &str, message: &str) -> Option<LocalFailure> {
-    const CODES: [&str; 3] = ["budget-exceeded", "adapter-error", "source-incomplete"];
-    const MESSAGES: [&str; 12] = [
+    const CODES: [&str; 5] = [
+        "budget-exceeded",
+        crate::code_rule_dsl::model::WITNESS_LIMIT,
+        crate::code_rule_dsl::model::INPUT_LIMIT,
+        "adapter-error",
+        "source-incomplete",
+    ];
+    const MESSAGES: [&str; 13] = [
         "file input budget exceeded",
         "file match budget exceeded",
         "file line index could not be built",
@@ -151,6 +157,7 @@ fn persisted_failure(code: &str, message: &str) -> Option<LocalFailure> {
         "file tape restoration failed",
         "file witness budget exceeded",
         "file AST work budget exceeded",
+        CLAUSE_WORK_BUDGET_EXCEEDED,
     ];
     let code = CODES.into_iter().find(|known| *known == code)?;
     let message = MESSAGES
@@ -593,7 +600,11 @@ pub(super) fn persist_files(
                 let stamped = CrossFileScheduler::stamped_context(file, context);
                 let mut local_results = local_result_ids
                     .iter()
-                    .filter(|id| !file.transient_failure && !file.restored_result_ids.contains(id))
+                    .filter(|id| {
+                        !file.transient_failure
+                            && !file.restored_result_ids.contains(id)
+                            && !file.unstored.contains(id)
+                    })
                     .filter_map(|id| {
                         let context = if consumers.contains_key(id) {
                             stamped?
