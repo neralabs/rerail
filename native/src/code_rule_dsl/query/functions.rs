@@ -88,6 +88,7 @@ fn batch(context: &Context<'_>, registry: &MatchRegistry) -> SqlResult<Arc<Batch
         *current = Some((owner, token, Arc::clone(&view)));
         Ok(view)
     })?;
+    #[cfg(feature = "code-rule-profile")]
     if let Some(state) = batch_state(&view) {
         state
             .scalar_callbacks

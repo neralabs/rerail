@@ -100,11 +100,13 @@ fn facts(
         .expect("facts cache mutex poisoned")
         .get(&key)
     {
+        #[cfg(feature = "code-rule-profile")]
         state
             .fact_hits
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return Ok(Arc::clone(found));
     }
+    #[cfg(feature = "code-rule-profile")]
     state
         .fact_builds
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

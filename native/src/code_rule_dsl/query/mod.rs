@@ -77,9 +77,13 @@ pub(super) struct BatchState {
     envs: EnvArena,
     statement_executions: std::sync::atomic::AtomicUsize,
     rows: std::sync::atomic::AtomicUsize,
+    #[cfg(feature = "code-rule-profile")]
     scalar_callbacks: std::sync::atomic::AtomicUsize,
+    #[cfg(feature = "code-rule-profile")]
     node_rows: std::sync::atomic::AtomicUsize,
+    #[cfg(feature = "code-rule-profile")]
     fact_builds: std::sync::atomic::AtomicUsize,
+    #[cfg(feature = "code-rule-profile")]
     fact_hits: std::sync::atomic::AtomicUsize,
     text_rows: std::sync::Mutex<foldhash::HashMap<usize, Arc<Vec<TextRows>>>>,
     /// Recursive utility verdicts are pure for a fixed node, environment and recursion depth.
@@ -180,9 +184,13 @@ impl QueryConnection {
             envs: EnvArena::default(),
             statement_executions: std::sync::atomic::AtomicUsize::new(0),
             rows: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(feature = "code-rule-profile")]
             scalar_callbacks: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(feature = "code-rule-profile")]
             node_rows: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(feature = "code-rule-profile")]
             fact_builds: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(feature = "code-rule-profile")]
             fact_hits: std::sync::atomic::AtomicUsize::new(0),
             text_rows: std::sync::Mutex::default(),
             util_memo: std::sync::Mutex::default(),
@@ -248,11 +256,47 @@ impl QueryBatch<'_> {
         QueryCounters {
             statements: self.state.statement_executions.load(Ordering::Relaxed),
             rows: self.state.rows.load(Ordering::Relaxed),
-            scalar_callbacks: self.state.scalar_callbacks.load(Ordering::Relaxed),
-            node_rows: self.state.node_rows.load(Ordering::Relaxed),
+            scalar_callbacks: {
+                #[cfg(feature = "code-rule-profile")]
+                {
+                    self.state.scalar_callbacks.load(Ordering::Relaxed)
+                }
+                #[cfg(not(feature = "code-rule-profile"))]
+                {
+                    0
+                }
+            },
+            node_rows: {
+                #[cfg(feature = "code-rule-profile")]
+                {
+                    self.state.node_rows.load(Ordering::Relaxed)
+                }
+                #[cfg(not(feature = "code-rule-profile"))]
+                {
+                    0
+                }
+            },
             environments: self.state.envs.len(),
-            fact_builds: self.state.fact_builds.load(Ordering::Relaxed),
-            fact_hits: self.state.fact_hits.load(Ordering::Relaxed),
+            fact_builds: {
+                #[cfg(feature = "code-rule-profile")]
+                {
+                    self.state.fact_builds.load(Ordering::Relaxed)
+                }
+                #[cfg(not(feature = "code-rule-profile"))]
+                {
+                    0
+                }
+            },
+            fact_hits: {
+                #[cfg(feature = "code-rule-profile")]
+                {
+                    self.state.fact_hits.load(Ordering::Relaxed)
+                }
+                #[cfg(not(feature = "code-rule-profile"))]
+                {
+                    0
+                }
+            },
             terminal_executions,
             virtual_table_filters,
         }

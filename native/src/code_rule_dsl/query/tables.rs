@@ -962,6 +962,7 @@ impl NodesCursor<'_> {
                 }
             }
         }
+        #[cfg(feature = "code-rule-profile")]
         if self.current.is_some()
             && let Some(state) = self.view.as_ref().and_then(batch_state)
         {
