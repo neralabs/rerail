@@ -26,11 +26,13 @@ pub(crate) use format_args::{FormatArgFeature, FormatArgRules};
 pub(crate) use rust::Rust;
 pub(crate) use scope::{ScopeFeature, ScopeRules};
 pub(crate) use sql::Sql;
-pub(crate) use syntax::{SyntaxFeature, SyntaxRules};
+pub(crate) use syntax::{QueryWhen, SyntaxFeature, SyntaxRules};
 pub(crate) use value::{ValueFeature, ValueRules};
 pub(crate) use vue::Vue;
 
-use super::{Family, GrammarDialect, language_not_supported};
+use super::{
+    Family, GrammarDialect, PackageType, SourceType, is_declaration_file, language_not_supported,
+};
 use crate::code_rule_dsl::identifier::python_name;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
@@ -121,6 +123,12 @@ pub(crate) trait Adapter: 'static {
     /// Whether the family names a file's module from the package markers around it (Python's
     /// `__init__.py`): a file without a host module gets the markers' module.
     const PACKAGES: bool;
+    /// Whether the family's files read their nearest `package.json`: its `type` decides an ECMA
+    /// file's module system (`packageType`, `SourceType::of_file`).
+    const PACKAGE_MANIFESTS: bool;
+    /// Whether an ast query's `file` may ask for the file's JSX runtime (`jsxRuntime`: its
+    /// pragmas, imports and manifest's dependencies).
+    const JSX_RUNTIMES: bool;
     /// Whether an ast query's `file` may ask for declaration files (`declaration`,
     /// typescript-eslint's `.d.ts` predicate). Python has stubs instead and refuses it.
     const DECLARATION_FILES: bool;
@@ -150,6 +158,13 @@ pub(crate) trait Adapter: 'static {
         anchored: Range<usize>,
         witness: (usize, usize),
     ) -> bool;
+    /// The module system of the file at `path` whose nearest `package.json` has `package` as
+    /// its type (`None`: no manifest), for a query that leaves `sourceType` to the file; `None`
+    /// where the file's syntax decides (`has_module_syntax`). A family without module systems
+    /// reads every file as a module, the `sourceType` its queries default to.
+    fn source_type(_path: &str, _package: Option<PackageType>) -> Option<SourceType> {
+        Some(SourceType::Module)
+    }
 }
 
 impl Adapter for Python {
@@ -157,6 +172,8 @@ impl Adapter for Python {
     const LABEL: &'static str = "python";
     const TERMINATORS: Terminators = Terminators::Newlines;
     const PACKAGES: bool = true;
+    const PACKAGE_MANIFESTS: bool = false;
+    const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
     type Scope = Self;
     type Value = Self;
@@ -205,6 +222,8 @@ impl Adapter for Ecma {
     const LABEL: &'static str = "typescript";
     const TERMINATORS: Terminators = Terminators::Eslint;
     const PACKAGES: bool = false;
+    const PACKAGE_MANIFESTS: bool = true;
+    const JSX_RUNTIMES: bool = true;
     const DECLARATION_FILES: bool = true;
     type Scope = Self;
     type Value = Self;
@@ -249,6 +268,25 @@ impl Adapter for Ecma {
             suppressions.suppresses(rules, anchored.clone())
         })
     }
+
+    /// `.cjs` and `.cts` (`.d.cts` declarations included) are CommonJS; `.mjs`, `.mts`, `.tsx`
+    /// and other declaration files modules. A `.js`, `.jsx` or `.ts` file follows its package's
+    /// `type`, as Node reads `.ts` files the same way as `.js` ones (type stripping), and is a
+    /// module without a manifest (ESLint's default config, which upstream fixtures assume); where
+    /// the manifest sets no valid `type`, Node's syntax detection decides.
+    fn source_type(path: &str, package: Option<PackageType>) -> Option<SourceType> {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        match name.rsplit_once('.').map(|(_, extension)| extension) {
+            Some("cjs" | "cts") => Some(SourceType::CommonJs),
+            Some("ts") if is_declaration_file(name) => Some(SourceType::Module),
+            Some("js" | "jsx" | "ts") => match package {
+                None | Some(PackageType::Module) => Some(SourceType::Module),
+                Some(PackageType::CommonJs) => Some(SourceType::CommonJs),
+                Some(PackageType::Unset) => None,
+            },
+            _ => Some(SourceType::Module),
+        }
+    }
 }
 
 impl Adapter for Php {
@@ -256,6 +294,8 @@ impl Adapter for Php {
     const LABEL: &'static str = "php";
     const TERMINATORS: Terminators = Terminators::Newlines;
     const PACKAGES: bool = false;
+    const PACKAGE_MANIFESTS: bool = false;
+    const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = true;
     type Scope = Self;
     type Value = Self;
@@ -306,6 +346,8 @@ impl Adapter for Blade {
     const LABEL: &'static str = "blade";
     const TERMINATORS: Terminators = Terminators::Newlines;
     const PACKAGES: bool = false;
+    const PACKAGE_MANIFESTS: bool = false;
+    const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = true;
     type Scope = Self;
     type Value = Self;
@@ -347,6 +389,21 @@ pub(crate) fn module_path(label: &str, file: &Path) -> Option<serde_json::Value>
     with_adapter!(Family::of(dialect), A => A::module_path(file))
 }
 
+/// The module system of the file at `path` in the dialect labelled `label`
+/// (`Adapter::source_type`); a module for a label no dialect has.
+pub(crate) fn source_type(
+    label: &str,
+    path: &str,
+    package: Option<PackageType>,
+) -> Option<SourceType> {
+    match super::dialect_by_label(label) {
+        Some(dialect) => {
+            with_adapter!(Family::of(dialect), A => A::source_type(path, package))
+        }
+        None => Some(SourceType::Module),
+    }
+}
+
 /// Whether files of the dialect labelled `label` take their module from package markers
 /// (`Adapter::PACKAGES`); `false` for a label no dialect has.
 pub(crate) fn packages(label: &str) -> bool {
@@ -371,6 +428,13 @@ pub(crate) fn ast_grep(dialect: GrammarDialect, source: &str) -> AstGrep<StrDoc<
             AstGrep::doc(doc)
         }
     }
+}
+
+/// Whether files of the dialect labelled `label` read their nearest `package.json`
+/// (`Adapter::PACKAGE_MANIFESTS`); `false` for a label no dialect has.
+pub(crate) fn package_manifests(label: &str) -> bool {
+    super::dialect_by_label(label)
+        .is_some_and(|dialect| with_adapter!(Family::of(dialect), A => A::PACKAGE_MANIFESTS))
 }
 
 /// Why a family refuses a DSL feature, with the message the refusal reports.

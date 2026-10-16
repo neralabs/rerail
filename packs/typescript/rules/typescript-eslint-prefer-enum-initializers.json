@@ -1,10 +1,10 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-prefer-enum-initializers",
-  "revision": 3,
+  "revision": 4,
   "mode": "steer",
   "description": "Port of typescript-eslint's `prefer-enum-initializers` rule (https://typescript-eslint.io/rules/prefer-enum-initializers). Flags enum members without an initializer.",
-  "scope": { "include": ["**/*"], "exclude": [] },
+  "scope": { "include": ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"], "exclude": [] },
   "clauses": [
     {
       "id": "enum-member-without-initializer",

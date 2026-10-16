@@ -28,6 +28,7 @@ use super::scope::ScopeTable;
 use super::tape;
 use super::violations::Witness;
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::package_manifest::Manifest;
 use crate::content_store::StoredFile;
 use global::{Partition, QueryPlan};
 use napi::Result;
@@ -409,6 +410,21 @@ struct WorkspaceState {
     files: BTreeMap<String, FileState>,
     /// Directories containing a current Python package marker.
     package_directories: BTreeSet<String>,
+    /// The `package.json` entries requests sent, by directory: the manifests an ECMA file the
+    /// host sent no `package` for reads (`refresh_manifest_context`).
+    manifests: BTreeMap<String, Arc<Manifest>>,
+    /// The `tsconfig.json`-style configuration texts requests sent, by path: the import aliases
+    /// and `jsxImportSource` of those manifests (`refresh_manifest_context`).
+    module_configs: BTreeMap<String, Arc<String>>,
+    /// The manifest directories whose server graph the workspace derives for files the host sent
+    /// no `package` for: requests that change what the graph reads refresh them
+    /// (`refresh_server_graphs`).
+    server_graph_directories: BTreeSet<String>,
+    /// What server graphs read of the files requests sent without a host `package`, by path:
+    /// an ECMA source's summary, or `None` for another file, which only marks its folder present.
+    /// Kept whatever the code rules' scopes, since a source outside them still moves others in or
+    /// out of a graph (`refresh_server_graphs`).
+    graph_entries: BTreeMap<String, Option<crate::code_rule_dsl::module_graph::Summary>>,
     dirty_files: BTreeSet<String>,
     grammars: BTreeMap<String, Arc<tape::Grammar>>,
     storage: Option<StorageContext>,

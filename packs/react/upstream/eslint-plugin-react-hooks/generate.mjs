@@ -14,7 +14,8 @@
 //    distinct cases in the order first captured; the license table names the run and index). A case some Babel run
 //    reads is JSX, one only the @typescript-eslint runs read is TSX, and one only hermes-eslint reads (Flow component
 //    and hook syntax) is dropped.
-// 3. Runs the pinned plugins (common.mjs `config`) over every fixture file and each corpus.
+// 3. Writes Rerail's own cases (common.mjs `AUTHORED`) beside them and lists them in UPSTREAM.md. Runs the pinned
+//    plugins (common.mjs `config`) over every fixture file and each corpus.
 // 4. Writes ../../licenses/react/UPSTREAM.md and LICENSE.
 import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";

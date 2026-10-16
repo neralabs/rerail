@@ -687,17 +687,31 @@ const moduleRegex = z
   .object({ regex: nonEmptyString.optional(), notRegex: nonEmptyString.optional() })
   .strict()
   .refine(condition => condition.regex !== undefined || condition.notRegex !== undefined, "Set regex, notRegex or both.");
+const packageConditionSchema = z
+  .object({
+    bin: z.boolean().optional(),
+    nodeVersion: z.object({ subsetOf: nonEmptyString }).strict().optional(),
+    dependsOn: z.array(nonEmptyString).min(1).optional(),
+    path: moduleRegex.optional(),
+    serverGraph: z.boolean().optional(),
+  })
+  .strict()
+  .refine(condition => Object.values(condition).some(value => value !== undefined), "Set bin, nodeVersion, dependsOn, path or serverGraph.");
 export const codeRuleFileConditionSchema = z
   .object({
     path: moduleRegex.optional(),
     declaration: z.boolean().optional(),
     module: moduleRegex.optional(),
     moduleName: moduleRegex.optional(),
-    package: moduleRegex.optional(),
+    package: z.union([moduleRegex, packageConditionSchema]).optional(),
     inPackage: z.boolean().optional(),
+    jsxRuntime: z.array(z.enum(["react", "other", "unknown"])).min(1).optional(),
   })
   .strict()
-  .refine(file => Object.values(file).some(value => value !== undefined), "Set path, declaration, module, moduleName, package or inPackage.") as unknown as z.ZodType<CodeRuleDslFileCondition>;
+  .refine(
+    file => Object.values(file).some(value => value !== undefined),
+    "Set path, declaration, module, moduleName, package, inPackage or jsxRuntime.",
+  ) as unknown as z.ZodType<CodeRuleDslFileCondition>;
 export const codeRuleLanguageOptionsSchema = z
   .object({
     ecmaVersion: z
@@ -1144,6 +1158,7 @@ function checkTransformValue(name: string, transform: Record<string, CodeRuleDsl
     context.addIssue({ code: "custom", path: ["transform", name], message: "A transform variable is text; read the value of a capture." });
   }
 }
+
 
 export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
   z

@@ -133,7 +133,8 @@ export type UpstreamFinding = z.infer<typeof findingSchema>;
 
 /**
  * One analysis unit, evaluated in its own workspace as the upstream rule test analyses it: a file, or several files
- * analysed together (a cross-file fixture).
+ * analysed together (a cross-file fixture). A `package.json` in a unit is no source: it gives the unit's ECMA sources
+ * their nearest manifest.
  */
 const unitSchema = z.union([nonEmpty, z.array(nonEmpty).min(1)]);
 

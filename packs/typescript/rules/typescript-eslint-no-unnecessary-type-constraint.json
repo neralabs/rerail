@@ -1,12 +1,15 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-no-unnecessary-type-constraint",
-  "revision": 3,
+  "revision": 4,
   "mode": "steer",
   "description": "Port of typescript-eslint's `no-unnecessary-type-constraint` (https://typescript-eslint.io/rules/no-unnecessary-type-constraint). Flags type parameters constrained to `any` or `unknown`.",
   "scope": {
     "include": [
-      "**/*"
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
     ],
     "exclude": []
   },
