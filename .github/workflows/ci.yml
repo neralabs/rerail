@@ -380,8 +380,10 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
           results="$RUNNER_TEMP/rerail-harness-smoke"
           mkdir -p "$results"
+          # The proof is Rerail's steer path, not the model's reasoning: at OMP's default thinking level gpt-5 spends two
+          # to three minutes of the 180 s budget on a one-file write, and the runs that go over it fail on every branch.
           node --import tsx scripts/host/host-lifecycle.ts omp -- \
-            --provider azure --model "$RERAIL_SMOKE_OMP_MODEL" > "$results/omp.log" 2>&1 &
+            --provider azure --model "$RERAIL_SMOKE_OMP_MODEL" --thinking low > "$results/omp.log" 2>&1 &
           omp_pid=$!
           node --import tsx scripts/host/host-lifecycle.ts pi -- \
             --provider azure --model "$RERAIL_SMOKE_PI_MODEL" > "$results/pi.log" 2>&1 &
