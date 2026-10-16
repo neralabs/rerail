@@ -28,8 +28,8 @@ The gates and the recorder's adapters are adapted, not copied, from nera-rule-va
 `e8727c77d0464bd33b1890e56dcf322119911a34`, plus two commits made on its `dbf1a0cdf733b6b6da0ed709b644afbe715ae9b4`,
 `690f7223f7d62d23cb2c1cdfc2e910969b18d1e5` (Gate 6 skips type-checked rules, and a file that changed is a new golden)
 and `77c266a2545c3fb39c4f9707c0c1c95f20d82cf2` (a golden the engine could not fully read is an engine gap; here the
-blocking `engine-reads-goldens`). Those two are not in NRV's GitHub repository, so they resolve only in the clone they
-were made in; until they are pushed, NRV `main` is the nearest public base.
+blocking `engine-reads-goldens`). Both are in NRV's GitHub repository: `690f722` on branch `claude/ner-1762-gate-harness`
+and `77c266a` on branch `ner-1762-engine-gaps`.
 
 | NRV `src/validation/` | Here |
 | --- | --- |
