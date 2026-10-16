@@ -13,4 +13,4 @@ mod terminals;
 #[cfg(test)]
 mod tests;
 
-pub(super) use exec::{SqlError, SqlMatch, compile, environment};
+pub(super) use exec::{FileContext, SqlError, SqlMatch, compile, environment};

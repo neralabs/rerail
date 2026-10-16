@@ -1,7 +1,8 @@
 //! Native terminals behind virtual tables, each evaluated once per batch (`pattern`) or once per
-//! statement over its whole input set (`pattern`'s env-input variant, `text_match`). SQL never
-//! calls one per row.
+//! statement over its whole input set (`pattern`'s env-input variant, `text_match`, `fact`). SQL
+//! never calls one per row.
 
+mod fact;
 mod pattern;
 mod text;
 
@@ -9,6 +10,7 @@ use super::plan::SlotKind;
 use crate::code_rule_dsl::language::GrammarDialect;
 use ast_grep_core::matcher::{Pattern, PatternNode};
 use ast_grep_core::meta_var::MetaVariable;
+pub(super) use fact::{BatchScopes, FACT_COLUMNS, FactTable, FactTerm, Leaf, Verdicts};
 pub(super) use pattern::{PatternRow, PatternTable, fresh_rows};
 use regex::Regex;
 pub(super) use text::TextTable;
@@ -20,6 +22,8 @@ pub(super) const PATTERN_COLUMNS: usize = 32;
 pub(super) enum Terminal {
     Pattern(PatternTerm),
     Regex(Regex),
+    /// An input-set terminal's three-valued verdicts (`fact`).
+    Fact(FactTerm),
 }
 
 /// A `pattern` term: its captures in column order (single ones one column, lists four), the
@@ -90,6 +94,9 @@ pub(super) mod calls {
         pub(in crate::code_rule_dsl::sql) static PATTERN_FILTERS: Cell<usize> = const { Cell::new(0) };
         pub(in crate::code_rule_dsl::sql) static FRESH_MATCHES: Cell<usize> = const { Cell::new(0) };
         pub(in crate::code_rule_dsl::sql) static TEXT_FILTERS: Cell<usize> = const { Cell::new(0) };
+        pub(in crate::code_rule_dsl::sql) static FACT_FILTERS: Cell<usize> = const { Cell::new(0) };
+        /// Keys a fact terminal answered unknown: what shows a three-valued case reached one.
+        pub(in crate::code_rule_dsl::sql) static UNKNOWN_VERDICTS: Cell<usize> = const { Cell::new(0) };
     }
 
     pub(in crate::code_rule_dsl::sql) fn note(

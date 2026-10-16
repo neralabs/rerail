@@ -5,6 +5,31 @@
 //! operator maps each input row to at most one output row with the same `k`, `file` and `node`,
 //! its slots updated with what the operator bound: the native matcher keeps one environment per
 //! root and never backtracks, so this is exactly its semantics as set operations.
+//!
+//! # Three-valued frames
+//!
+//! A clause the matcher runs three-valued (`GrammarMatcher::three_valued`) lowers under
+//! `Op::Unknowable`, and every frame of its statement, and of the stages it lowers, carries more
+//! columns after its slots: `unk` (0 or 1), then `wh0…whN`, the withheld-capture mask (62 bits a
+//! column; no column where no `all` can withhold). Two-valued clauses have none of them and emit
+//! exactly what they did before. Every operator keeps this contract, and so must every terminal
+//! that reports an unknown verdict:
+//!
+//! - The output row of an operator is its verdict on the input row with the same `k`: no row is
+//!   false; `unk = 0` is true, the slots holding what it bound; `unk = 1` is unknown, the slots
+//!   holding what the matcher leaves on an unknown answer, which is the input row's bindings.
+//! - An operator ignores the `unk` and `wh` of its input: they belong to the `all` whose pipeline
+//!   the row is in. A row an operator emits as true has `wh = 0`.
+//! - `Op::AllOpen` threads its own verdict through its frames in `unk` and the names it withholds
+//!   in `wh`. Past an unknown term, a term whose mention mask meets `wh` passes the row on as it is
+//!   and ORs its bind mask into `wh`; an unknown term that may bind ORs in its bind mask
+//!   (`match_all`; the masks are `CaptureAnalysis`'s, one bit per capture name of the scope). The
+//!   `all` is unknown where a term was, with its input's bindings.
+//! - A terminal returns verdicts through `Op::Fact`: for each distinct input key, no row (false)
+//!   or one row with its `unk` and the bindings it adds (`terminals::Verdicts`).
+//! - A stage stores the nodes its rule is true or unknown at, with `unk`. A stop rule unknown at a
+//!   node stops the walk there and leaves the relation open (`Search`'s `open`).
+//! - A clause's matching roots are its output rows with `unk = 0`.
 
 use std::fmt;
 
@@ -116,6 +141,38 @@ pub(super) struct CallReturn {
     pub(super) params: Vec<SlotId>,
 }
 
+/// A withheld-capture mask: one word per `wh` column, 62 bits each.
+pub(super) type Mask = Vec<i64>;
+
+/// The bits of `bits` (capture indices of the statement's withholding) as a mask of `words`.
+pub(super) fn mask(bits: impl IntoIterator<Item = usize>, words: usize) -> Mask {
+    let mut mask = vec![0; words];
+    for bit in bits {
+        mask[bit / MASK_BITS] |= 1 << (bit % MASK_BITS);
+    }
+    mask
+}
+
+/// The bits one `wh` column holds.
+pub(super) const MASK_BITS: usize = 62;
+
+/// One term of a three-valued `all`, with what `match_all` reads of it to withhold.
+#[derive(Debug)]
+pub(super) struct AllTerm {
+    pub(super) op: Op,
+    /// The captures it mentions (`CaptureAnalysis::mentions`): past an unknown term that may bind
+    /// one of them, it is withheld.
+    pub(super) mentions: Mask,
+    /// The captures it binds (`CaptureAnalysis::binds`): withheld from the terms after it where
+    /// it is withheld, or where it is unknown and `withholds`.
+    pub(super) binds: Mask,
+    /// Whether its unknown verdict withholds `binds` (`!AstMatcher::binds_nothing`).
+    pub(super) withholds: bool,
+    /// Whether a row can reach it with a capture it mentions withheld; where none can, its rows
+    /// are not split.
+    pub(super) checked: bool,
+}
+
 #[derive(Debug)]
 pub(super) enum Op {
     /// `node.kind IN (…)`.
@@ -171,6 +228,39 @@ pub(super) enum Op {
         rule: Box<Op>,
         constraints: Vec<(SlotId, Op)>,
     },
+    /// The root of a three-valued statement (the module doc's contract): frames carry `unk` and
+    /// `masks` withheld-mask columns; `open` lists the stop-rule stages whose verdict may be
+    /// unknown.
+    Unknowable {
+        op: Box<Op>,
+        masks: usize,
+        open: Vec<usize>,
+    },
+    /// A three-valued `all`: its terms in order, withholding as `match_all` does.
+    AllOpen(Vec<AllTerm>),
+    /// A three-valued `any`: each branch from the input bindings, the first true one wins. A
+    /// branch whose verdict is unknown ends the search unknown where it may bind (the `bool`,
+    /// `relation::may_bind`); otherwise later branches still decide.
+    AnyOpen(Vec<(Op, bool)>),
+    /// A three-valued relation (`relation::Search`): the first candidate in walk order that is
+    /// true binds. An unknown candidate ends the search unknown where it is `strict` (its rule may
+    /// bind); otherwise the search goes on, and is unknown where nothing matched. `binds` where the
+    /// sub-rule may bind slots.
+    Search {
+        walk: Walk,
+        sub: Box<Op>,
+        binds: bool,
+        strict: bool,
+    },
+    /// An input-set terminal's verdicts (`terminals::Verdicts`): each distinct key of the frame,
+    /// `(file, node if at_node, bindings of reads)`, is evaluated once natively; the terminal
+    /// returns the keys that are true or unknown, with the values it binds into `binds`.
+    Fact {
+        term: usize,
+        reads: Vec<SlotId>,
+        at_node: bool,
+        binds: Vec<SlotId>,
+    },
 }
 
 impl Op {
@@ -178,6 +268,11 @@ impl Op {
     pub(super) fn binds(&self) -> bool {
         match self {
             Self::Kinds(_) | Self::Regex(_) | Self::Never | Self::Not(_) | Self::Stage(_) => false,
+            Self::Unknowable { op, .. } => op.binds(),
+            Self::AllOpen(terms) => terms.iter().any(|term| term.op.binds()),
+            Self::AnyOpen(branches) => branches.iter().any(|(branch, _)| branch.binds()),
+            Self::Search { sub, .. } => sub.binds(),
+            Self::Fact { binds, .. } => !binds.is_empty(),
             Self::Pattern { vars, .. } => !vars.is_empty(),
             Self::All(items) | Self::Any(items) => items.iter().any(Self::binds),
             Self::Relation { sub, .. } => sub.binds(),

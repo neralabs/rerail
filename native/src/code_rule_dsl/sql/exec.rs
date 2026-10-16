@@ -6,7 +6,9 @@ use super::emit;
 use super::lower::ProgramBuilder;
 use super::nodes::{NodeFacts, NodeTable};
 use super::plan::{SlotKind, Statement, Unsupported};
-use super::terminals::{PatternRow, PatternTable, PatternTerm, Terminal, TextTable, fresh_rows};
+use super::terminals::{
+    BatchScopes, FactTable, PatternRow, PatternTable, PatternTerm, Terminal, TextTable, fresh_rows,
+};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::GrammarMatcher;
 use crate::code_rule_dsl::tape::TapeDoc;
@@ -25,6 +27,16 @@ pub(in crate::code_rule_dsl) struct BatchFile {
     pub(in crate::code_rule_dsl) root: AstGrep<TapeDoc>,
     pub(in crate::code_rule_dsl) dialect: GrammarDialect,
     pub(super) facts: NodeFacts,
+    /// What the native evaluator knows of the file beyond its tape (`FileContext`).
+    pub(super) context: FileContext,
+}
+
+/// What the native evaluator installs for a file besides its tree: its host path and Python
+/// module path, which the input-set terminals' file scopes read (`FileScopeSlot`).
+#[derive(Clone, Default)]
+pub(in crate::code_rule_dsl) struct FileContext {
+    pub(in crate::code_rule_dsl) path: Option<String>,
+    pub(in crate::code_rule_dsl) module: Option<Arc<crate::code_rule_dsl::module_path::ModulePath>>,
 }
 
 /// The terminals and stages of the clauses a batch runs.
@@ -41,11 +53,12 @@ pub(super) struct Batch {
 }
 
 impl Batch {
-    /// A batch of `docs`, their node facts computed once each, for a program's `terminals`.
-    pub(super) fn new(docs: Vec<TapeDoc>, terminals: Vec<Terminal>) -> Arc<Self> {
+    /// A batch of `docs`, each with its context, their node facts computed once each, for a
+    /// program's `terminals`.
+    pub(super) fn new(docs: Vec<(TapeDoc, FileContext)>, terminals: Vec<Terminal>) -> Arc<Self> {
         let files = docs
             .into_iter()
-            .map(|doc| {
+            .map(|(doc, context)| {
                 let dialect = *doc.get_lang();
                 let root = AstGrep::doc(doc);
                 let facts = NodeFacts::of(&root);
@@ -53,6 +66,7 @@ impl Batch {
                     root,
                     dialect,
                     facts,
+                    context,
                 }
             })
             .collect();
@@ -85,6 +99,7 @@ impl BatchSlot {
 const NODE_MODULE: Module<'static, NodeTable> = Module::eponymous_only_module();
 const PATTERN_MODULE: Module<'static, PatternTable> = Module::eponymous_only_module();
 const TEXT_MODULE: Module<'static, TextTable> = Module::eponymous_only_module();
+const FACT_MODULE: Module<'static, FactTable> = Module::eponymous_only_module();
 
 /// An in-memory connection whose virtual tables read `slot`'s batch.
 fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
@@ -92,13 +107,19 @@ fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
     connection.create_module(c"node", &NODE_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"pattern", &PATTERN_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"text_match", &TEXT_MODULE, Some(Arc::clone(slot)))?;
+    connection.create_module(c"fact", &FACT_MODULE, Some(Arc::clone(slot)))?;
     Ok(connection)
 }
 
 /// `body` with a connection over a batch of `docs` (no terminals), for tests of the `node` table.
 #[cfg(test)]
 pub(super) fn with_nodes<T>(docs: Vec<TapeDoc>, body: impl FnOnce(&Connection, &Batch) -> T) -> T {
-    let batch = Batch::new(docs, Vec::new());
+    let batch = Batch::new(
+        docs.into_iter()
+            .map(|doc| (doc, FileContext::default()))
+            .collect(),
+        Vec::new(),
+    );
     let slot = Arc::new(BatchSlot::default());
     *slot.current.write() = Some(Arc::clone(&batch));
     let connection = connect(&slot).expect("connects");
@@ -187,19 +208,25 @@ impl Compiled {
     }
 
     /// Runs the batch: `files` are its tapes, each with the statement (by index into the
-    /// compiled grammars) that matches it, if any. Returns each file's matches, ordered by root.
+    /// compiled grammars) that matches it, if any, and what the file's scopes read beyond its tape
+    /// (`FileContext`). Returns each file's matches, ordered by root.
     pub(in crate::code_rule_dsl) fn run(
         self,
-        files: Vec<(TapeDoc, Option<usize>)>,
+        files: Vec<(TapeDoc, Option<usize>, FileContext)>,
     ) -> Result<Vec<Vec<SqlMatch>>, SqlError> {
         let Compiled { builder, clauses } = self;
-        let assigned: Vec<Option<usize>> = files.iter().map(|(_, statement)| *statement).collect();
+        let assigned: Vec<Option<usize>> =
+            files.iter().map(|(_, statement, _)| *statement).collect();
         let batch = Batch::new(
-            files.into_iter().map(|(doc, _)| doc).collect(),
+            files
+                .into_iter()
+                .map(|(doc, _, context)| (doc, context))
+                .collect(),
             builder.terminals,
         );
         let slot = Arc::new(BatchSlot::default());
         *slot.current.write() = Some(Arc::clone(&batch));
+        let _scopes = BatchScopes::begin();
         let connection = connect(&slot)?;
         let file_list = |wanted: &dyn Fn(usize, &BatchFile) -> bool| -> String {
             let listed: Vec<String> = batch
@@ -230,9 +257,15 @@ impl Compiled {
             let files = file_list(&|_, file| file.dialect == stage.dialect);
             let (query, steps) = stage.statements.split_last().expect("a final select");
             run(steps, &namespace, &files)?;
+            // A three-valued stage keeps the nodes it is unknown at too, with `unk`.
+            let columns = if stage.three {
+                "file, node, unk"
+            } else {
+                "file, node"
+            };
             connection.execute_batch(&format!(
-                "CREATE TEMP TABLE {table}(file INTEGER, node INTEGER, PRIMARY KEY (file, node)) WITHOUT ROWID; \
-                 INSERT INTO {table}(file, node) {}",
+                "CREATE TEMP TABLE {table}(file INTEGER, node INTEGER, unk INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (file, node)) WITHOUT ROWID; \
+                 INSERT INTO {table}({columns}) {}",
                 query.replace(emit::NAMESPACE, &namespace)
             ))?;
         }

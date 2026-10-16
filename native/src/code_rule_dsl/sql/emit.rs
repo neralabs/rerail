@@ -9,6 +9,8 @@
 //! definition into every reference (`resolveFromTermToCte`), CTEs it references included: a rule
 //! whose frames are each read twice would expand exponentially with its depth.
 
+mod three;
+
 use super::plan::{CallReturn, CallSlot, OfRule, Op, Slot, SlotKind, Statement, Stop, Walk};
 use std::fmt::Write;
 
@@ -35,19 +37,25 @@ pub(super) fn clause(statement: &Statement) -> Vec<String> {
         .flat_map(|(id, slot)| slot.columns(id))
         .map(|column| format!(", {column}"))
         .collect();
+    // An unknown root does not match.
+    let known = if emitter.three { " WHERE unk = 0" } else { "" };
     emitter.statements.push(format!(
-        "SELECT file, node{columns} FROM {out} ORDER BY file, node"
+        "SELECT file, node{columns} FROM {out}{known} ORDER BY file, node"
     ));
     emitter.statements
 }
 
-/// A stage's statements: the last selects the distinct `(file, node)` its rule matches.
+/// A stage's statements: the last selects the distinct `(file, node)` its rule matches; in a
+/// three-valued statement `(file, node, unk)`, where it is true or unknown.
 pub(super) fn stage(statement: &Statement) -> Vec<String> {
     let mut emitter = Emitter::new(&statement.slots);
     let out = emitter.statement(statement);
-    emitter
-        .statements
-        .push(format!("SELECT DISTINCT file, node FROM {out}"));
+    let select = if emitter.three {
+        format!("SELECT file, node, MIN(unk) FROM {out} GROUP BY file, node")
+    } else {
+        format!("SELECT DISTINCT file, node FROM {out}")
+    };
+    emitter.statements.push(select);
     emitter.statements
 }
 
@@ -57,6 +65,12 @@ struct Emitter<'s> {
     physical: Vec<String>,
     statements: Vec<String>,
     next: usize,
+    /// Whether the statement is three-valued (`Op::Unknowable`): frames then carry `unk` and
+    /// `masks` withheld-mask columns.
+    three: bool,
+    masks: usize,
+    /// The stop-rule stages whose verdict may be unknown.
+    open: Vec<usize>,
 }
 
 /// `An+B` at a 1-based position `index`, as `nth_child::Position::holds` computes it.
@@ -90,6 +104,9 @@ impl<'s> Emitter<'s> {
             physical,
             statements: Vec::new(),
             next: 0,
+            three: false,
+            masks: 0,
+            open: Vec::new(),
         }
     }
 
@@ -118,8 +135,9 @@ impl<'s> Emitter<'s> {
     fn frame_with(&mut self, prefix: &str, with: &str, select: &str) -> String {
         let name = self.name(prefix);
         self.statements.push(format!(
-            "CREATE TEMP TABLE {name}(k INTEGER PRIMARY KEY, file, node{})",
-            self.physical_list()
+            "CREATE TEMP TABLE {name}(k INTEGER PRIMARY KEY, file, node{}{})",
+            self.physical_list(),
+            self.extra_list()
         ));
         self.statements
             .push(format!("{with}INSERT INTO {name} {select}"));
@@ -133,8 +151,9 @@ impl<'s> Emitter<'s> {
     /// The frame columns of `alias`.
     fn cols(&self, alias: &str) -> String {
         format!(
-            "{alias}.k, {alias}.file, {alias}.node{}",
-            self.physical_of(alias)
+            "{alias}.k, {alias}.file, {alias}.node{}{}",
+            self.physical_of(alias),
+            self.zeros()
         )
     }
 
@@ -148,6 +167,7 @@ impl<'s> Emitter<'s> {
             }
             .expect("write to a string");
         }
+        select.push_str(&self.zeros());
         select
     }
 
@@ -163,7 +183,52 @@ impl<'s> Emitter<'s> {
         self.slots[slot].columns(slot)
     }
 
+    /// A three-valued frame's columns after the slots, comma-led: `, unk, wh0…`; empty in a
+    /// two-valued statement.
+    fn extra_list(&self) -> String {
+        if !self.three {
+            return String::new();
+        }
+        let mut list = String::from(", unk");
+        for word in 0..self.masks {
+            write!(list, ", wh{word}").expect("write to a string");
+        }
+        list
+    }
+
+    /// The values of `extra_list` for a row an operator emits as true: `, 0, 0…`.
+    fn zeros(&self) -> String {
+        if !self.three {
+            return String::new();
+        }
+        ", 0".repeat(1 + self.masks)
+    }
+
+    /// `select` with the verdict `unk` (an expression) and no withheld capture: the row of a
+    /// three-valued operator.
+    fn verdict(&self, alias: &str, overrides: &[(String, String)], unk: &str) -> String {
+        let mut select = format!("{alias}.k, {alias}.file, {alias}.node");
+        for column in &self.physical {
+            match overrides.iter().find(|(name, _)| name == column) {
+                Some((_, expr)) => write!(select, ", {expr}"),
+                None => write!(select, ", {alias}.{column}"),
+            }
+            .expect("write to a string");
+        }
+        write!(select, ", {unk}{}", ", 0".repeat(self.masks)).expect("write to a string");
+        select
+    }
+
     fn statement(&mut self, statement: &Statement) -> String {
+        let op = match &statement.op {
+            Op::Unknowable { op, masks, open } => {
+                self.three = true;
+                self.masks = *masks;
+                self.open.clone_from(open);
+                op
+            }
+            op => op,
+        };
         let nulls: String = self.physical.iter().map(|_| ", NULL").collect();
         let kinds = match &statement.kinds {
             None => String::new(),
@@ -173,13 +238,19 @@ impl<'s> Emitter<'s> {
         let root = self.frame(
             "r",
             &format!(
-                "SELECT ROW_NUMBER() OVER (), n.file, n.id{nulls} FROM node n WHERE n.file IN ({FILES}){kinds}"
+                "SELECT ROW_NUMBER() OVER (), n.file, n.id{nulls}{} FROM node n WHERE n.file IN ({FILES}){kinds}",
+                self.zeros()
             ),
         );
-        self.op(&statement.op, &root)
+        self.op(op, &root)
     }
 
     fn op(&mut self, op: &Op, input: &str) -> String {
+        if self.three
+            && let Some(out) = self.op3(op, input)
+        {
+            return out;
+        }
         match op {
             Op::Kinds(kinds) => {
                 let test = match kinds.as_slice() {
@@ -350,6 +421,15 @@ impl<'s> Emitter<'s> {
                 }
                 current
             }
+            Op::Fact {
+                term,
+                reads,
+                at_node,
+                binds,
+            } => self.fact(*term, reads, *at_node, binds, input),
+            Op::Unknowable { .. } | Op::AllOpen(_) | Op::AnyOpen(_) | Op::Search { .. } => {
+                unreachable!("three-valued operators lower under `Unknowable`, at the root only")
+            }
         }
     }
 
@@ -500,13 +580,15 @@ impl<'s> Emitter<'s> {
         };
         let name = self.name("g");
         self.statements.push(format!(
-            "CREATE TEMP TABLE {name}(k INTEGER PRIMARY KEY, file, node{}, pk, ord)",
-            self.physical_list()
+            "CREATE TEMP TABLE {name}(k INTEGER PRIMARY KEY, file, node{}, pk, ord{})",
+            self.physical_list(),
+            self.extra_list()
         ));
         self.statements.push(format!(
-            "{with}INSERT INTO {name} SELECT ROW_NUMBER() OVER (), c.file, c.node{}, c.pk, {order} \
+            "{with}INSERT INTO {name} SELECT ROW_NUMBER() OVER (), c.file, c.node{}, c.pk, {order}{} \
              FROM ({source}) c JOIN {input} f ON f.k = c.pk",
-            self.physical_of("f")
+            self.physical_of("f"),
+            self.zeros()
         ));
         name
     }
@@ -555,14 +637,16 @@ impl<'s> Emitter<'s> {
             Some(OfRule::Frame(rule)) => {
                 let siblings = self.name("g");
                 self.statements.push(format!(
-                    "CREATE TEMP TABLE {siblings}(k INTEGER PRIMARY KEY, file, node{}, pk, ord)",
-                    self.physical_list()
+                    "CREATE TEMP TABLE {siblings}(k INTEGER PRIMARY KEY, file, node{}, pk, ord{})",
+                    self.physical_list(),
+                    self.extra_list()
                 ));
                 self.statements.push(format!(
-                    "INSERT INTO {siblings} SELECT ROW_NUMBER() OVER (), c.file, c.id{}, f.k, c.id FROM {input} f \
+                    "INSERT INTO {siblings} SELECT ROW_NUMBER() OVER (), c.file, c.id{}, f.k, c.id{} FROM {input} f \
                      JOIN node fn ON fn.file = f.file AND fn.id = f.node \
                      JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
-                    self.physical_of("f")
+                    self.physical_of("f"),
+                    self.zeros()
                 ));
                 let matched = self.op(rule, &siblings);
                 let with = format!(
@@ -778,6 +862,12 @@ impl<'s> Emitter<'s> {
         }
         let returned = format!("({})", returned.join(" OR "));
         let ok = format!("({})", ok.join(" AND "));
+        // Three-valued: a body whose verdict is unknown returns nothing; the call is unknown.
+        let (returned, verdict) = if self.three {
+            (format!("(b.unk = 0 AND {returned})"), "b.unk")
+        } else {
+            (returned, "")
+        };
         let overrides: Vec<(String, String)> = overrides
             .into_iter()
             .map(|(column, value)| {
@@ -785,12 +875,14 @@ impl<'s> Emitter<'s> {
                 (column, kept)
             })
             .collect();
+        let select = if self.three {
+            self.verdict("b", &overrides, verdict)
+        } else {
+            self.select("b", &overrides)
+        };
         self.frame(
             "x",
-            &format!(
-                "SELECT {} FROM {bound} b{joins} WHERE NOT {returned} OR {ok}",
-                self.select("b", &overrides)
-            ),
+            &format!("SELECT {select} FROM {bound} b{joins} WHERE NOT {returned} OR {ok}"),
         )
     }
 }

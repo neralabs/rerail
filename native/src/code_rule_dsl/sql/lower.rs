@@ -3,14 +3,19 @@
 //! compiled. An operator the SQL engine does not cover yet fails with `Unsupported`; the engine
 //! never answers for a clause it cannot lower.
 
+mod three;
+
 use super::emit;
 use super::plan::{
-    CallReturn, CallSlot, OfRule, Op, Slot, SlotId, SlotKind, Statement, Stop, Unsupported, Walk,
+    CallReturn, CallSlot, MASK_BITS, Mask, OfRule, Op, Slot, SlotId, SlotKind, Statement, Stop,
+    Unsupported, Walk, mask,
 };
-use super::terminals::{PATTERN_COLUMNS, PatternTerm, Terminal};
+use super::terminals::{
+    FACT_COLUMNS, FactTerm, Leaf, PATTERN_COLUMNS, PatternTerm, Terminal, Verdicts,
+};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::{
-    AstMatcher, CaptureAnalysis, GrammarMatcher, Related, Semantic, StopBy, UtilRef,
+    AstMatcher, CaptureAnalysis, GrammarMatcher, Related, Semantic, StopBy, UtilRef, reads_values,
 };
 use ast_grep_core::matcher::Matcher;
 use std::collections::{BTreeSet, HashMap};
@@ -19,10 +24,12 @@ use std::collections::{BTreeSet, HashMap};
 /// in the files of its dialect, computed once per batch into `stage_<index>`. Stop rules and
 /// context-free utilities are stages; equal ones (equal SQL) are one, keyed by digest. The last
 /// of `statements` selects the stage's distinct `(file, node)` rows; its root frame reads the
-/// `/*FILES*/` the driver substitutes.
+/// `/*FILES*/` the driver substitutes. A three-valued clause's stages are three-valued (`three`):
+/// they keep the nodes their rule is unknown at, with `unk`.
 pub(super) struct Stage {
     pub(super) dialect: GrammarDialect,
     pub(super) statements: Vec<String>,
+    pub(super) three: bool,
 }
 
 /// The terminals and stages a set of clauses shares.
@@ -33,20 +40,22 @@ pub(super) struct ProgramBuilder {
     stage_index: HashMap<String, usize>,
     regexes: HashMap<(String, String), usize>,
     fresh_patterns: HashMap<usize, usize>,
+    /// Leaf fact terminals by the leaf's address and the captures their keys carry: lowering a
+    /// stage again (to key it by its SQL) reuses them.
+    leaves: HashMap<(usize, Vec<(String, SlotKind)>), usize>,
 }
 
 impl ProgramBuilder {
     /// Lowers one clause's grammar matcher to its statement.
     pub(super) fn clause(&mut self, grammar: &GrammarMatcher) -> Result<Statement, Unsupported> {
-        if grammar.three_valued {
-            return Err(Unsupported("three-valued clause".into()));
-        }
         let kinds = grammar
             .anchors
             .root_kinds()
             .map(|kinds| kinds.iter().copied().collect());
         let mut lowerer = Lowerer::new(self, grammar.language, Vec::new());
+        lowerer.three = grammar.three_valued;
         let (op, _) = lowerer.lower(&grammar.matcher, 0, &BTreeSet::new())?;
+        let op = lowerer.finish(op);
         Ok(Statement {
             slots: lowerer.slots,
             kinds,
@@ -65,6 +74,13 @@ struct Lowerer<'p> {
     scopes: usize,
     /// The utilities being lowered, innermost last: one met again is recursive.
     utils: Vec<(usize, usize)>,
+    /// Whether the statement is three-valued (`GrammarMatcher::three_valued`, which its stages
+    /// share): its `all`s, `any`s and relations lower to `AllOpen`, `AnyOpen` and `Search`.
+    three: bool,
+    /// The withheld-mask bit of each capture (scope, name) an `all` may withhold.
+    bits: HashMap<(usize, String), usize>,
+    /// The stop-rule stages whose verdict may be unknown.
+    open: Vec<usize>,
 }
 
 fn unsupported<T>(operator: &str) -> Result<T, Unsupported> {
@@ -148,6 +164,9 @@ impl<'p> Lowerer<'p> {
             index: HashMap::new(),
             scopes: 0,
             utils,
+            three: false,
+            bits: HashMap::new(),
+            open: Vec::new(),
         }
     }
 
@@ -169,12 +188,131 @@ impl<'p> Lowerer<'p> {
         self.index.get(&(scope, name.to_owned(), kind)).copied()
     }
 
+    /// The statement's root: a three-valued one under `Op::Unknowable`, with as many mask
+    /// columns as its withheld captures need and the stop stages that may be unknown.
+    fn finish(&self, op: Op) -> Op {
+        if !self.three {
+            return op;
+        }
+        Op::Unknowable {
+            op: Box::new(op),
+            masks: self.bits.len().div_ceil(MASK_BITS),
+            open: self.open.clone(),
+        }
+    }
+
+    /// The withheld-mask bit of a capture an `all` may withhold.
+    fn bit(&mut self, scope: usize, name: &str) -> usize {
+        let next = self.bits.len();
+        *self.bits.entry((scope, name.to_owned())).or_insert(next)
+    }
+
+    /// The mask of the names that have a bit (only those can be withheld).
+    fn mask(&self, scope: usize, names: &BTreeSet<String>) -> Mask {
+        let bits: Vec<usize> = names
+            .iter()
+            .filter_map(|name| self.bits.get(&(scope, name.clone())).copied())
+            .collect();
+        let words = bits.iter().max().map_or(0, |bit| bit / MASK_BITS + 1);
+        mask(bits, words)
+    }
+
+    /// The one way a leaf the frame algebra does not express reaches a frame: an input-set
+    /// terminal (`Op::Fact`) that evaluates `verdicts` once per distinct key of the frame. A key
+    /// carries the bindings of `reads` (every slot of those names in `scope`) and, `at_node`, the
+    /// node. The terminal answers true, false or unknown, and binds `binds` (in its column order)
+    /// where it is true; it unifies them with the bindings it reads itself. `identity` names a
+    /// terminal that evaluates alike wherever it is lowered with the same reads (one is shared).
+    #[allow(clippy::too_many_arguments)]
+    fn fact(
+        &mut self,
+        verdicts: impl FnOnce() -> Box<dyn Verdicts>,
+        identity: Option<usize>,
+        scope: usize,
+        reads: &BTreeSet<String>,
+        at_node: bool,
+        binds: &[(String, SlotKind)],
+        bound: &Bound,
+    ) -> Result<(Op, Bound), Unsupported> {
+        let mut slots = Vec::new();
+        let mut vars = Vec::new();
+        for name in reads {
+            for kind in [SlotKind::Node, SlotKind::List, SlotKind::Count] {
+                if let Some(slot) = self.existing(scope, name, kind) {
+                    slots.push(slot);
+                    vars.push((name.clone(), kind));
+                }
+            }
+        }
+        let mut out = bound.clone();
+        let mut bound_slots = Vec::new();
+        let mut width = 0;
+        for (name, kind) in binds {
+            let slot = self.slot(scope, name, *kind);
+            width += self.slots[slot].columns(slot).len();
+            out.insert(slot);
+            bound_slots.push(slot);
+        }
+        if width > FACT_COLUMNS {
+            return unsupported("terminal binding more than 8 columns");
+        }
+        let key = identity
+            .filter(|_| binds.is_empty())
+            .map(|identity| (identity, vars.clone()));
+        let term = match key.as_ref().and_then(|key| self.program.leaves.get(key)) {
+            Some(&term) => term,
+            None => {
+                let term = self.program.terminals.len();
+                self.program.terminals.push(Terminal::Fact(FactTerm {
+                    verdicts: verdicts(),
+                    reads: vars,
+                }));
+                if let Some(key) = key {
+                    self.program.leaves.insert(key, term);
+                }
+                term
+            }
+        };
+        Ok((
+            Op::Fact {
+                term,
+                reads: slots,
+                at_node,
+                binds: bound_slots,
+            },
+            out,
+        ))
+    }
+
+    /// A leaf the matcher evaluates itself (`value`, `compare`, `layout`, `testUnknown`) as a
+    /// fact terminal reading `reads`.
+    fn leaf(
+        &mut self,
+        leaf: &AstMatcher,
+        scope: usize,
+        reads: &BTreeSet<String>,
+        at_node: bool,
+        bound: &Bound,
+    ) -> Result<(Op, Bound), Unsupported> {
+        self.fact(
+            || Box::new(Leaf(leaf.clone())),
+            Some(std::ptr::from_ref(leaf) as usize),
+            scope,
+            reads,
+            at_node,
+            &[],
+            bound,
+        )
+    }
+
     /// A stage for `rule`, matched in a fresh environment: lowered, emitted and keyed by its SQL.
     fn stage(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
         let kinds = root_kinds(rule, 0).map(|kinds| kinds.into_iter().collect());
         let statement = {
             let mut lowerer = Lowerer::new(self.program, self.dialect, self.utils.clone());
+            lowerer.three = self.three;
             let (op, _) = lowerer.lower(rule, 0, &BTreeSet::new())?;
+            let op = lowerer.finish(op);
             Statement {
                 slots: lowerer.slots,
                 kinds,
@@ -191,6 +329,7 @@ impl<'p> Lowerer<'p> {
         self.program.stages.push(Stage {
             dialect: self.dialect,
             statements,
+            three: self.three,
         });
         Ok(id)
     }
@@ -199,7 +338,17 @@ impl<'p> Lowerer<'p> {
         Ok(match stop {
             StopBy::Neighbor => Stop::Neighbor,
             StopBy::End => Stop::End,
-            StopBy::Rule(rule) => Stop::Rule(self.stage(rule)?),
+            StopBy::Rule(rule) => {
+                let stage = self.stage(rule)?;
+                // A stop rule unknown at a node ends the walk there and leaves it open.
+                if self.three
+                    && reads_values(rule, &mut BTreeSet::new())
+                    && !self.open.contains(&stage)
+                {
+                    self.open.push(stage);
+                }
+                Stop::Rule(stage)
+            }
         })
     }
 
@@ -276,6 +425,21 @@ impl<'p> Lowerer<'p> {
                     }
                 };
                 Ok((Op::Regex(id), bound.clone()))
+            }
+            AstMatcher::All(items) if self.three => self.all_open(items, scope, bound),
+            AstMatcher::Any(items)
+                if self.three && !items.iter().all(|item| matches!(item, AstMatcher::Kind(_))) =>
+            {
+                self.any_open(items, scope, bound)
+            }
+            AstMatcher::Inside(..)
+            | AstMatcher::Has(..)
+            | AstMatcher::Precedes(..)
+            | AstMatcher::Follows(..)
+            | AstMatcher::Field(_)
+                if self.three =>
+            {
+                self.search(matcher, scope, bound)
             }
             AstMatcher::All(items) => {
                 let mut ops = Vec::with_capacity(items.len());
@@ -515,22 +679,35 @@ impl<'p> Lowerer<'p> {
                     current,
                 ))
             }
-            AstMatcher::Compare(_) => unsupported("compare"),
+            // `compare` reads the bindings of its sides (or of a transform variable's roots) and
+            // never the node.
+            AstMatcher::Compare(_) => {
+                let reads = CaptureAnalysis::default().reads(matcher);
+                self.leaf(matcher, scope, &reads, false, bound)
+            }
+            AstMatcher::Semantic(Semantic::Value(_)) => {
+                self.leaf(matcher, scope, &BTreeSet::new(), true, bound)
+            }
+            AstMatcher::Semantic(Semantic::Layout(layout)) => {
+                let reads = layout.reads().map(str::to_owned).collect();
+                self.leaf(matcher, scope, &reads, true, bound)
+            }
             AstMatcher::Semantic(semantic) => unsupported(match semantic {
                 Semantic::Resolves(_) => "resolves",
                 Semantic::Binding(_) => "resolves.binding",
                 Semantic::Binds(_) => "binds",
-                Semantic::Value(_) => "value",
                 Semantic::Arguments(_) => "arguments",
                 Semantic::Parse(_) => "parse",
                 Semantic::Host(_) => "host",
                 Semantic::Capture(_) => "capture",
                 Semantic::FormatArgs(_) => "formatArgs",
-                Semantic::Layout(_) => "layout",
                 Semantic::Calls(_) => "calls",
+                Semantic::Value(_) | Semantic::Layout(_) => {
+                    unreachable!("`value` and `layout` lower as fact terminals")
+                }
             }),
             #[cfg(test)]
-            AstMatcher::TestUnknown(_) => unsupported("testUnknown"),
+            AstMatcher::TestUnknown(_) => self.leaf(matcher, scope, &BTreeSet::new(), true, bound),
         }
     }
 }

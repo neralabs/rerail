@@ -436,7 +436,14 @@ impl SqlFiles {
             };
             read.push(Some(match file_tape(grammar.language, file) {
                 Ok((doc, lines)) => {
-                    inputs.push((doc, Some(statement)));
+                    inputs.push((
+                        doc,
+                        Some(statement),
+                        crate::code_rule_dsl::sql::FileContext {
+                            path: Some(file.path.clone()),
+                            module: file.module.clone(),
+                        },
+                    ));
                     Ok((inputs.len() - 1, lines))
                 }
                 Err(error) => Err(error.reason.clone()),
@@ -445,7 +452,7 @@ impl SqlFiles {
         let grammars: Vec<&GrammarMatcher> = used.iter().map(|&index| &matchers[index]).collect();
         let compiled = crate::code_rule_dsl::sql::compile(&grammars)
             .map_err(|error| invalid(error.to_string()))?;
-        let docs: Vec<_> = inputs.iter().map(|(doc, _)| doc.clone()).collect();
+        let docs: Vec<_> = inputs.iter().map(|(doc, _, _)| doc.clone()).collect();
         let mut matches = compiled
             .run(inputs)
             .map_err(|error| invalid(error.to_string()))?
