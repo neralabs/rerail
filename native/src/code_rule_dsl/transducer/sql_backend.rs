@@ -184,6 +184,8 @@ pub(in crate::code_rule_dsl) struct BatchFile {
     kinds: OnceLock<HashMap<u16, Vec<u32>>>,
     /// A full AST terminal scan of this file visits at most this many nodes (`bounded`).
     node_limit: usize,
+    /// The file evaluation's budget, retained across preparation and batched execution.
+    deadline: Option<crate::code_rule_dsl::budget::MatchDeadline>,
 }
 
 impl BatchFile {
@@ -201,6 +203,7 @@ impl BatchFile {
             module,
             kinds: OnceLock::new(),
             node_limit: usize::MAX,
+            deadline: crate::code_rule_dsl::budget::current_deadline(),
         }
     }
 
@@ -221,6 +224,7 @@ impl BatchFile {
             module,
             kinds: OnceLock::new(),
             node_limit: usize::MAX,
+            deadline: crate::code_rule_dsl::budget::current_deadline(),
         }
     }
 
@@ -388,7 +392,7 @@ impl MatchBatch {
         Arc::clone(cell.rows.get_or_init(|| {
             cell.executions.fetch_add(1, Ordering::Relaxed);
             let terminal = &self.terminals[index];
-            let deadline = self.deadline.clone();
+            let batch_deadline = self.deadline.clone();
             Arc::new(
                 self.files
                     .par_iter()
@@ -397,9 +401,13 @@ impl MatchBatch {
                             terminal,
                             batch_file,
                             || {
-                                deadline.as_ref().is_some_and(
-                                    crate::code_rule_dsl::budget::MatchDeadline::exhausted,
-                                )
+                                batch_file
+                                    .deadline
+                                    .as_ref()
+                                    .or(batch_deadline.as_ref())
+                                    .is_some_and(
+                                        crate::code_rule_dsl::budget::MatchDeadline::exhausted,
+                                    )
                             },
                             #[cfg(test)]
                             &self.pattern_match_attempts,

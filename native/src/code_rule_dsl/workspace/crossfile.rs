@@ -29,6 +29,7 @@ pub(super) struct CrossFileFileState {
     pub(super) calls_stamp: Option<HashKey>,
 }
 
+#[derive(Clone)]
 pub(super) struct CrossFileConsumer {
     view: Arc<crate::code_rule_dsl::calls::CallsView>,
     summary: Arc<crate::code_rule_dsl::calls::summary::Summary>,

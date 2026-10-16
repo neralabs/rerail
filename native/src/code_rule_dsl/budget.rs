@@ -193,15 +193,20 @@ impl MatchBudget {
         Self { deadline }
     }
 
+    /// Installs another phase of the same file evaluation on the current worker thread.
+    pub(super) fn resume(deadline: MatchDeadline) -> Self {
+        Self::install(deadline)
+    }
+
+    /// This evaluation's shared deadline, for a later phase or a backend worker.
+    pub(super) fn deadline(&self) -> MatchDeadline {
+        self.deadline.clone()
+    }
+
     /// Whether a poll found the budget exhausted: an evaluation that finished without one is
     /// complete.
     pub(super) fn observed(&self) -> bool {
         self.deadline.observed()
-    }
-
-    #[cfg(test)]
-    pub(super) fn deadline(&self) -> MatchDeadline {
-        self.deadline.clone()
     }
 
     #[cfg(test)]

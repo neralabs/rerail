@@ -48,6 +48,14 @@ type SiblingKey = (i64, u32, Option<i64>);
 thread_local! {
     static ROWS_STEPPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
+#[cfg(test)]
+static MAX_REGISTERED_FILES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(super) fn max_registered_files() -> usize {
+    MAX_REGISTERED_FILES.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 #[cfg(test)]
 #[allow(dead_code, reason = "retained for SQL profiling assertions")]
@@ -148,6 +156,8 @@ impl QueryConnection {
         catalog: Arc<Catalog>,
         deadline: Option<crate::code_rule_dsl::budget::MatchDeadline>,
     ) -> QueryBatch<'_> {
+        #[cfg(test)]
+        MAX_REGISTERED_FILES.fetch_max(files.len(), std::sync::atomic::Ordering::Relaxed);
         let state = Arc::new(BatchState {
             catalog,
             envs: EnvArena::default(),
@@ -371,13 +381,13 @@ impl QueryBatch<'_> {
 
     /// The ordered rows of a text terminal, followed by its completion row. A text statement
     /// never touches `rerail_nodes`, so a text-only batch remains untaped.
-    pub(super) fn text_rows(&self, terminal: usize) -> rusqlite::Result<TextRows> {
+    pub(super) fn text_rows(&self, terminal: usize, file: usize) -> rusqlite::Result<TextRows> {
         let mut statement = self.owner.connection.prepare_cached(
             "SELECT start_byte, end_byte, complete FROM rerail_matches \
-             WHERE batch = ?1 AND program_index = ?2 AND file_index = 0 \
+             WHERE batch = ?1 AND program_index = ?2 AND file_index = ?3 \
              ORDER BY match_index IS NULL, match_index",
         )?;
-        let mut rows = statement.query((self.token, terminal as i64))?;
+        let mut rows = statement.query((self.token, terminal as i64, file as i64))?;
         let mut found = Vec::new();
         while let Some(row) = rows.next()? {
             let complete = row.get::<_, i64>(2)? != 0;
@@ -485,13 +495,28 @@ impl SqlPlans {
         self.regexes.get(&(code_rule, clause)).copied()
     }
 
-    /// Runs `visit` with a one-file batch on this thread's connection (see `with_file`).
+    /// Runs `visit` with a one-file batch on this thread's connection.
     pub(super) fn with_file<T>(
         &self,
         file: BatchFile,
         visit: impl FnOnce(&QueryBatch<'_>) -> T,
     ) -> rusqlite::Result<T> {
-        with_file(&self.terminals, &self.catalog, self.statements, file, visit)
+        self.with_files(vec![file], visit)
+    }
+
+    /// Runs `visit` with one immutable multi-file batch on this thread's connection.
+    pub(super) fn with_files<T>(
+        &self,
+        files: Vec<BatchFile>,
+        visit: impl FnOnce(&QueryBatch<'_>) -> T,
+    ) -> rusqlite::Result<T> {
+        with_files(
+            &self.terminals,
+            &self.catalog,
+            self.statements,
+            files,
+            visit,
+        )
     }
 }
 
@@ -533,17 +558,14 @@ pub(super) fn release_connections() {
     });
 }
 
-/// Runs `visit` with a one-file batch on this thread's connection, whose statement cache holds
-/// at least `statements`: a code_rule set runs every statement on every file in the same order, so a
-/// smaller cache misses on each (every file parsed and prepared every statement again, under
-/// SQLite's mutex). Statements and terminals poll the deadline of this thread's budget: a
-/// statement is interrupted (and fails) once it is exhausted, checked every few thousand SQLite
-/// steps.
-fn with_file<T>(
+/// Runs `visit` with one immutable file batch on this thread's connection. The statement cache
+/// holds at least `statements`, so a catalog pass does not repeatedly prepare the same plans.
+/// Statements and terminals poll this thread's current deadline.
+fn with_files<T>(
     terminals: &Arc<Vec<Terminal>>,
     catalog: &Arc<Catalog>,
     statements: usize,
-    file: BatchFile,
+    files: Vec<BatchFile>,
     visit: impl FnOnce(&QueryBatch<'_>) -> T,
 ) -> rusqlite::Result<T> {
     let slot = CONNECTION.with(Arc::clone);
@@ -565,14 +587,13 @@ fn with_file<T>(
     }
     let connection = &*connection;
     let deadline = crate::code_rule_dsl::budget::current_deadline();
-    if let Some(deadline) = deadline.clone() {
-        connection
-            .connection
-            .progress_handler(4096, Some(move || deadline.exhausted()))?;
-    }
+    connection.connection.progress_handler(
+        4096,
+        Some(crate::code_rule_dsl::budget::matcher_budget_exhausted),
+    )?;
     let batch = connection.register_with_deadline(
         Arc::clone(terminals),
-        vec![file],
+        files,
         Arc::clone(catalog),
         deadline,
     );

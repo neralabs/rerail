@@ -705,9 +705,38 @@ fn text_terminal_keeps_zero_width_multibyte_path_and_limit_completion_rows() {
         }),
     );
     assert_eq!(
-        batch.text_rows(0).unwrap(),
+        batch.text_rows(0, 0).unwrap(),
         vec![(Some((0, 0)), true), (None, false)]
     );
+}
+
+#[test]
+fn text_terminal_executes_once_for_every_file_in_a_batch() {
+    let connection = QueryConnection::open().unwrap();
+    let batch = connection.register(
+        Arc::new(vec![Terminal::Text(
+            Regex::new("secret").unwrap(),
+            super::TextSource::Content,
+            10,
+        )]),
+        ["secret one", "two secret"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, source)| {
+                BatchFile::text_shared(
+                    Arc::new(source.to_owned()),
+                    Arc::from(format!("{index}.txt")),
+                    Arc::from("text"),
+                    None,
+                )
+            })
+            .collect(),
+        empty_catalog(),
+    );
+
+    assert_eq!(batch.text_rows(0, 0).unwrap(), vec![(Some((0, 6)), true)]);
+    assert_eq!(batch.text_rows(0, 1).unwrap(), vec![(Some((4, 10)), true)]);
+    assert_eq!(batch.counters().terminal_executions, [1]);
 }
 
 /// A text-only file has no tree: every node walk over it, the kind index's included, is empty.

@@ -8,6 +8,17 @@ It also defines the changes that can remove each cost.
 The historical run establishes the performance baseline.
 See `benchmark/history/ner-1562-historical-sql-reproduction-2026-10-16.md`.
 
+## Implementation status
+
+Rerail now prepares SQLite AST files in worker-local groups of at most 16 files.
+Files share a batch only when their language and candidate-clause set are equal.
+This restriction prevents a rejected terminal from spending another file's work budget.
+
+The shared batch runs each terminal once across its files.
+Each file retains its own deadline, completion state, scope cache, and witness limits.
+Clause statements still run once for each file-clause pair.
+Clause-major statement execution remains the next execution-shape change.
+
 ## Evidence
 
 The complete data-layer run took 1,404.7 seconds inside `applyAsync`.
@@ -24,13 +35,13 @@ New counters must quantify each family before an optimization changes it.
 
 ## Current execution topology
 
-The workspace evaluates files in parallel.
-Each worker restores one file and calls `SqlPlans::with_file()`.
-That function registers a batch that contains only that file.
+The workspace prepares files in parallel worker-local chunks.
+It registers compatible prepared AST files through `SqlPlans::with_files()`.
 
-`evaluate_statements()` then loops over each candidate clause.
+The batch then evaluates one file at a time.
+`evaluate_statements()` loops over each candidate clause for that file.
 It calls `QueryBatch::run_while()` once for each clause.
-Therefore, statement execution scales with file-clause pairs.
+Therefore, statement execution still scales with file-clause pairs.
 
 Each clause is one large SQL expression.
 The expression calls Rust scalar functions for matcher terms and state changes.
@@ -55,16 +66,15 @@ The expensive operations remain behind callbacks and integer handles.
 
 ## Problems and corrections
 
-### 1. A batch contains one file
+### 1. Batching does not include clause statements
 
-`SqlPlans::with_file()` passes `vec![file]` to the query registry.
-The terminal cache can process many files, but production calls give it one file.
+Production now registers compatible files in immutable batches of at most 16 files.
+The `OnceLock` terminal cache processes all files in such a batch.
 
-As a result, the engine cannot share one statement execution across files.
-The `OnceLock` terminal cache also has only one file to process.
+The clause statements still run separately for each file.
+Thus, the first batching change removes terminal duplication but not statement duplication.
 
-**Correction:** Build immutable batches with many files.
-Run a clause plan over all eligible files in one batch.
+**Correction:** Run a clause plan over all eligible files in one batch.
 Partition a batch only for a measured memory or backend limit.
 
 **Gate:** Statement executions must scale with clauses and partitions.
