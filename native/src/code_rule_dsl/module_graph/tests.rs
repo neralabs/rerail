@@ -19,6 +19,7 @@ fn graph(folder: &str, files: &[(&str, &str)]) -> Option<Vec<String>> {
     in_file_set(
         folder,
         files.iter().copied(),
+        &mut HashMap::new(),
         &|directory| manifests.contains(directory),
         &Config::read(folder, &read),
     )
@@ -445,6 +446,65 @@ fn a_configuration_with_a_byte_order_mark_reads_as_typescript_reads_it() {
         "\u{feff}{ \"compilerOptions\": { \"jsxImportSource\": \"preact\" } }".to_owned(),
     )];
     assert_eq!(jsx_import_source("", &files).as_deref(), Some("preact"));
+}
+
+/// A configuration that does not parse sets nothing, and nothing reports it: no `paths` alias or
+/// `jsxImportSource`, no `extends` base read, and the `jsconfig.json` beside a `tsconfig.json`
+/// that does not parse is not read in its place.
+#[test]
+fn a_configuration_that_does_not_parse_sets_nothing_and_is_not_replaced() {
+    let tsconfig = |closing: &str| {
+        format!(
+            r#"{{ "extends": "./tsconfig.base.json", "compilerOptions": {{ "jsxImportSource": "preact", "paths": {{ "@/*": ["./src/*"] }} }}{closing}"#
+        )
+    };
+    let base = r#"{ "compilerOptions": { "baseUrl": "." } }"#;
+    let jsconfig = r#"{ "compilerOptions": { "jsxImportSource": "solid-js", "paths": { "@/*": ["./src/*"] } } }"#;
+    for (closing, parses) in [(" }", true), ("", false)] {
+        let tsconfig = tsconfig(closing);
+        let files = [
+            ("package.json", r#"{ "dependencies": { "next": "15" } }"#),
+            ("tsconfig.json", tsconfig.as_str()),
+            ("tsconfig.base.json", base),
+            ("jsconfig.json", jsconfig),
+            (
+                "app/page.tsx",
+                "import { load } from '@/load';\nexport default 1;\n",
+            ),
+            ("src/load.ts", "export const load = 1;\n"),
+        ];
+        let reads = std::cell::RefCell::new(Vec::new());
+        let read = |path: &str| {
+            reads.borrow_mut().push(path.to_owned());
+            files
+                .iter()
+                .find(|(entry, _)| *entry == path)
+                .map(|(_, text)| (*text).to_owned())
+        };
+        let config = Config::read("", &read);
+        if parses {
+            assert_eq!(config.jsx_import_source(), Some("preact"));
+            assert_eq!(config.files(), ["tsconfig.json", "tsconfig.base.json"]);
+            assert_eq!(config.candidates("@/load"), ["./src/load", "@/load"]);
+        } else {
+            assert_eq!(
+                config,
+                Config {
+                    files: vec!["tsconfig.json".to_owned()],
+                    ..Config::default()
+                }
+            );
+            assert_eq!(*reads.borrow(), ["tsconfig.json"]);
+        }
+        // The page reaches the module only through the alias.
+        let members = graph("", &files).expect("a graph");
+        let expected: &[&str] = if parses {
+            &["app/page.tsx", "src/load.ts"]
+        } else {
+            &["app/page.tsx"]
+        };
+        assert_eq!(members, expected, "{closing:?}");
+    }
 }
 
 #[test]

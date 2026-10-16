@@ -86,9 +86,18 @@ pub(crate) struct Summary {
     specifiers: Vec<String>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// ECMA sources `summarize` parsed on this thread.
+    pub(crate) static SUMMARIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The summary of the ECMA source at `path`; `None` for a path of no ECMA dialect.
 pub(crate) fn summarize(path: &str, source: &str) -> Option<Summary> {
-    let tree = dialect_by_label(ecma_label(path)?)?.ast_grep(source);
+    let dialect = dialect_by_label(ecma_label(path)?)?;
+    #[cfg(test)]
+    SUMMARIES.set(SUMMARIES.get() + 1);
+    let tree = dialect.ast_grep(source);
     Some(summary_of(&tree.root()))
 }
 
@@ -96,12 +105,6 @@ pub(crate) fn summarize(path: &str, source: &str) -> Option<Summary> {
 /// manifests (`Adapter::PACKAGE_MANIFESTS`: the files whose imports a package's graph follows).
 fn ecma_label(path: &str) -> Option<&'static str> {
     label_of_path(path).filter(|label| package_manifests(label))
-}
-
-/// Whether a server graph reads the file at `path`: an ECMA source, or a `tsconfig.json` or
-/// `jsconfig.json` (its own, or one it `extends`).
-pub(crate) fn read_by_graphs(path: &str) -> bool {
-    is_module_config(path) || is_source(path)
 }
 
 /// Whether `path` names an ECMA source a server graph summarizes.
@@ -834,16 +837,29 @@ fn gone(error: &std::io::Error) -> bool {
 }
 
 /// The server graph of the package in `folder` over a file set's entries: `sources` gives the
-/// set's paths and texts (`from_summaries`); `None` where the package has no graph.
+/// set's paths and texts, `summaries` the summaries of them computed already, by path, which it
+/// completes with those of the sources below `folder` (`summarize_bounded`, `from_summaries`);
+/// `None` where the package has no graph.
 pub(crate) fn in_file_set<'s>(
     folder: &str,
     sources: impl Iterator<Item = (&'s str, &'s str)>,
+    summaries: &mut HashMap<String, Option<Summary>>,
     manifest: &dyn Fn(&str) -> bool,
     config: &Config,
 ) -> Option<BTreeSet<String>> {
     let entries = sources
         .filter(|(path, _)| relative_to(folder, path).is_some())
-        .map(|(path, source)| (path, summarize_bounded(path, source)));
+        .map(|(path, source)| {
+            let summary = match summaries.get(path) {
+                Some(summary) => summary.clone(),
+                None => {
+                    let summary = summarize_bounded(path, source);
+                    summaries.insert(path.to_owned(), summary.clone());
+                    summary
+                }
+            };
+            (path, summary)
+        });
     from_summaries(folder, entries, manifest, config)
 }
 

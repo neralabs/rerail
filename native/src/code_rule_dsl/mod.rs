@@ -59,7 +59,7 @@ macro_rules! oracle {
 pub(crate) use oracle;
 
 use compile::{compile_document, parse_capabilities, parse_document};
-use eval::{derive_packages, evaluate_code_rule, evaluation_json, parse_snapshot, violation_ids};
+use eval::{DerivedPackages, evaluate_code_rule, evaluation_json, parse_snapshot, violation_ids};
 use json::{canonicalize_value, hex_digest, invalid, json_error, required_str, required_u64};
 use model::{CompiledCodeRule, Snapshot};
 use napi::Result;
@@ -315,13 +315,11 @@ impl CompiledCodeRuleDsl {
 
     #[napi]
     pub fn open_editor(&self, snapshot_json: String) -> Result<CodeRuleDslEditor> {
-        let server_graph = self.inner.reads_server_graph();
-        let (snapshot, derived_packages) = parse_snapshot(&snapshot_json, server_graph)?;
+        let (snapshot, derived) = parse_snapshot(&snapshot_json, self.inner.reads_server_graph())?;
         Ok(CodeRuleDslEditor {
             code_rule: Arc::clone(&self.inner),
             snapshot,
-            derived_packages,
-            server_graph,
+            derived,
             previous_ids: BTreeSet::new(),
         })
     }
@@ -331,12 +329,9 @@ impl CompiledCodeRuleDsl {
 pub struct CodeRuleDslEditor {
     code_rule: Arc<CompiledCodeRule>,
     snapshot: Snapshot,
-    /// The files whose `package` the snapshot's `package.json` entries give, the host having sent
-    /// none: an edit of one of those entries, or of a file a server graph reads, gives them
-    /// theirs again (`derive_packages`).
-    derived_packages: Vec<usize>,
-    /// Whether the code rule reads `file.package.serverGraph`.
-    server_graph: bool,
+    /// The `package` the snapshot's `package.json` entries give the files the host sent none for:
+    /// an edit gives them theirs again where it changes what they read (`DerivedPackages::edited`).
+    derived: DerivedPackages,
     previous_ids: BTreeSet<String>,
 }
 
@@ -379,12 +374,13 @@ impl CodeRuleDslEditor {
         let start = required_u64(&edit, "startByte", "edit")? as usize;
         let end = required_u64(&edit, "oldEndByte", "edit")? as usize;
         let new_text = required_str(&edit, "newText", "edit")?;
-        let file = self
+        let index = self
             .snapshot
             .files
-            .iter_mut()
-            .find(|file| file.path == path)
+            .iter()
+            .position(|file| file.path == path)
             .ok_or_else(|| invalid(format!("edit path `{path}` is not in the snapshot")))?;
+        let file = &mut self.snapshot.files[index];
         if start > end
             || end > file.source.len()
             || !file.source.is_char_boundary(start)
@@ -393,16 +389,7 @@ impl CodeRuleDslEditor {
             return Err(invalid("edit byte range is invalid"));
         }
         Arc::make_mut(&mut file.source).replace_range(start..end, new_text);
-        if package_manifest::manifest_directory(path).is_some()
-            || module_graph::is_module_config(path)
-            || (self.server_graph && module_graph::read_by_graphs(path))
-        {
-            derive_packages(
-                &mut self.snapshot,
-                &self.derived_packages,
-                self.server_graph,
-            );
-        }
+        self.derived.edited(&mut self.snapshot, index);
         self.snapshot.revision = revision;
         self.evaluate(mode)
     }
