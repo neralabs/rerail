@@ -6,6 +6,7 @@ Development tools that compare native query engines. Nothing here ships, and not
   builds, each in its own process. It reports every section where their findings, failures or coverage differ.
 - `query-parity-semantic.ts` names the semantic-resolution workloads (`resolves`, `usage`) that `query-parity.ts` runs.
 - `history/ner-1562-historical-sql-reproduction-2026-10-16.md` records the reproduced historical SQLite slowdown.
+- `history/ner-1562-sql-batching-milestones-2026-10-16.md` records the batching milestones and the new bottlenecks.
 
 The workloads are host test data under `fixtures/host/benchmark/<kind>/`. Benchmark results are never committed. Keep
 them out of the repository, and put headline numbers in prose (with corpus commits and tool versions) where a change

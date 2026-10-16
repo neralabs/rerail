@@ -39,6 +39,22 @@ The source identifies the execution topology.
 It does not yet quantify every callback family.
 New counters must quantify each family before an optimization changes it.
 
+## Post-cutover measurement
+
+The corrected clause-major run used the complete 5,725-file data-layer corpus.
+It executed 61,805 statements and returned 3,921,804 rows from 154 compatibility batches.
+The last file-major milestone executed 1,142,480 statements.
+Thus, clause-major execution removed 94.6 percent of statement executions.
+
+Sequential compatibility groups took 651.9 seconds.
+Parallel groups took 293.1 seconds with the same violations and failures.
+Peak RSS increased from 14.88 GiB to 19.95 GiB.
+
+The parallel profile assigned 785.2 CPU-seconds to AST matching.
+Parsing used 7.2 CPU-seconds, and regular expressions used 0.3 CPU-seconds.
+Scalar callbacks, virtual-table walks, environments, and facts now need separate counters.
+See `benchmark/history/ner-1562-sql-batching-milestones-2026-10-16.md`.
+
 ## Current execution topology
 
 The workspace prepares files in parallel worker-local chunks.
