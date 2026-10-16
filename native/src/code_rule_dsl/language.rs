@@ -709,6 +709,12 @@ pub(crate) enum Family {
     Blade,
 }
 
+impl Family {
+    pub(crate) fn reads_php(self) -> bool {
+        matches!(self, Self::Php | Self::Blade)
+    }
+}
+
 /// Whether a language reads a capability, as its registry entry declares.
 /// The generated `CodeRuleLanguage::capability` constructs the variants the registry uses; one no
 /// supported language declares today is still handled wherever a rule is compiled.

@@ -1529,3 +1529,36 @@ pub(super) fn file_table<D: Doc>(
     }
     Some(table)
 }
+
+pub(super) fn charged_file_usage<D: Doc>(
+    node: &Node<'_, D>,
+    language: GrammarDialect,
+    reading: Reading,
+) -> Option<(Arc<ScopeTable>, Arc<Usage>)> {
+    if UTIL_EXCEEDED.get().is_some() || crate::code_rule_dsl::literal::sub_tree(node).is_some() {
+        return None;
+    }
+    let stub = language == GrammarDialect::Python
+        && FILE_SCOPES.with_borrow(|slot| slot.as_ref().is_some_and(|slot| slot.stub));
+    let reading = Reading {
+        stub,
+        python_minor: if stub { reading.python_minor } else { 0 },
+        ..reading
+    };
+    let check = CURRENT_CLAUSE.get();
+    let table = FILE_SCOPES.with_borrow(|slot| {
+        let slot = slot.as_ref()?;
+        if !slot.charged.contains(&check) {
+            return None;
+        }
+        let table = slot
+            .tables
+            .iter()
+            .find(|table| table.language == language && table.reading == reading)?;
+        slot.usage_charged
+            .contains(&(check, Arc::as_ptr(table) as usize))
+            .then(|| Arc::clone(table))
+    })?;
+    let usage = Arc::clone(table.usage.get()?);
+    Some((table, usage))
+}

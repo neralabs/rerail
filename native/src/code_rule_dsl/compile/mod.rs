@@ -856,6 +856,7 @@ fn compile_query_as(
                         file: file.clone(),
                         applies,
                         transform: transform.clone(),
+                        statement: usize::MAX,
                     });
                 }
             }

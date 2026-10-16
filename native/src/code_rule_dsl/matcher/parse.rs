@@ -8,6 +8,7 @@ use super::each::HostMap;
 use super::each::HostRanges;
 use super::exported::export;
 use super::exported::{exported_span, exported_text, is_span_variable};
+use super::facts::{Facts, Target};
 use super::resolve::SubTables;
 use super::resolve::{
     file_table, memoize_parse, memoize_value_parse, memoized_parse, memoized_value_parse,
@@ -318,6 +319,34 @@ fn spend_steps(count: usize) -> bool {
         None => {
             UTIL_EXCEEDED.set(Some(UtilLimit::Value));
             false
+        }
+    }
+}
+
+impl ParseTest {
+    pub(super) fn facts<'t, D: Doc>(&self, node: Node<'t, D>, facts: &mut Facts<'t, D>) {
+        if !self.host_kinds.contains(&node.kind_id()) {
+            return;
+        }
+        if self.grammar == Grammar::Annotation {
+            let Some(table) = file_table(&node, GrammarDialect::Python, self.reading) else {
+                return;
+            };
+            let Some(annotation) = table.annotation_at(&node.range()) else {
+                return;
+            };
+            let tree = Arc::clone(&annotation.tree);
+            facts.gate(1, Target::Tree(tree, Some(table)));
+            return;
+        }
+        match parsed_tree(&node, self.grammar) {
+            None | Some(Parsed::NotString) => {}
+            Some(Parsed::Unknown) => {
+                facts.gate(-1, Target::None);
+            }
+            Some(Parsed::Tree(tree)) => {
+                facts.gate(1, Target::Tree(tree, None));
+            }
         }
     }
 }

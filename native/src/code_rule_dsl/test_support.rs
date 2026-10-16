@@ -75,6 +75,11 @@ pub(super) fn clause_document(clause: Value) -> Value {
     json!({ "format": "rerail.policy/v1", "id": "strict", "revision": 1, "mode": "block", "clauses": [clause] })
 }
 
+/// Historical SQL test name for `clause_document`.
+pub(super) fn check_document(clause: Value) -> Value {
+    clause_document(clause)
+}
+
 pub(super) fn violation() -> Value {
     json!({ "anchor": "witness.span", "code": "X", "message": "x" })
 }
@@ -196,6 +201,8 @@ pub(super) fn grammar_matchers(compiled: &CompiledCodeRuleDsl) -> &[GrammarMatch
 pub(super) enum Walk {
     SoundVerdict,
     OptionalCaptures,
+    StructureLowers,
+    StructureLowering,
     CaptureVariables,
     AstCaptures,
     NodeRegexes,

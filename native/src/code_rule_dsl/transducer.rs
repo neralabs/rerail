@@ -10,6 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 use std::ops::Range;
 
+pub(super) mod sql_backend;
+
 // Benchmark-only backends are deliberately excluded from the production addon.
 #[cfg(all(
     test,
@@ -174,6 +176,54 @@ impl Program {
             vec![1, 2],
             Vec::new(),
         )
+    }
+
+    pub(super) fn node_test(kinds: &[u16], regexes: &[Regex]) -> Result<Self, Error> {
+        let mut words = kinds
+            .iter()
+            .map(|&kind| word(KIND, 0, kind))
+            .collect::<Vec<_>>();
+        let mut strings = Vec::with_capacity(regexes.len() + 1);
+        let mut predicates = Vec::with_capacity(regexes.len());
+        for regex in regexes {
+            let index = u16::try_from(strings.len()).map_err(|_| Error::InvalidOperand(0))?;
+            words.push(word(TEXT, 0, index));
+            strings.push(regex.as_str().as_bytes().to_vec());
+            predicates.push(TextPredicate::Regex {
+                source: index,
+                compiled: regex.clone(),
+            });
+        }
+        let label = u16::try_from(strings.len()).map_err(|_| Error::InvalidOperand(0))?;
+        strings.push(b"node-test".to_vec());
+        words.push(word(EMIT, 0, 0));
+        Self::new(words, strings, predicates, vec![label], Vec::new())
+    }
+
+    pub(super) fn accepts(&self, tape: &TapeDoc, node: u32) -> Result<bool, Error> {
+        for &instruction in &self.words {
+            let (opcode, mode, operand) = split(instruction);
+            let retain = match opcode {
+                KIND => tape.transducer_kind(node) == operand,
+                FIELD => tape.transducer_field(node) == operand,
+                FLAGS => {
+                    let flags = tape.transducer_flags(node);
+                    flags & mode == mode && flags & operand as u8 == 0
+                }
+                TEXT => self.text_matches(operand, tape.transducer_text_str(node)),
+                EMIT => return Ok(true),
+                STOP => return Ok(false),
+                _ => {
+                    return self
+                        .execute_roots(tape, std::iter::once(node))
+                        .map(|outputs| !outputs.is_empty());
+                }
+            };
+            if !retain {
+                return Ok(false);
+            }
+        }
+        unreachable!("a validated program ends in STOP, EMIT or GOTO")
     }
 
     pub(super) fn new(

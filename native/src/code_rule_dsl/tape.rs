@@ -49,6 +49,26 @@ pub(super) fn take_table_reservation() -> usize {
     TABLE_RESERVATION.replace(0)
 }
 
+#[cfg(test)]
+thread_local! {
+    static ANCHOR_SIBLINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn anchor_siblings() -> usize {
+    ANCHOR_SIBLINGS.get()
+}
+
+#[cfg(test)]
+pub(super) fn reset_anchor_siblings() {
+    ANCHOR_SIBLINGS.set(0);
+}
+
+#[cfg(test)]
+fn count_anchor_sibling() {
+    ANCHOR_SIBLINGS.set(ANCHOR_SIBLINGS.get() + 1);
+}
+
 /// Deterministic grammar-wide codes: kind code is the dialect's kind id, field code its field id
 /// (zero means no field), both as `GrammarDialect::kinds` numbers them; a Blade tape also holds
 /// the PHP its template embeds (`blade::view`), its codes following Blade's.
@@ -1320,7 +1340,6 @@ impl TapeDoc {
         self.data[node as usize].kind
     }
 
-    #[cfg(test)]
     fn kind_alias(&self, node: u32) -> Option<&(String, bool)> {
         self.kind_overrides
             .binary_search_by_key(&node, |&(index, _)| index)
@@ -1328,7 +1347,6 @@ impl TapeDoc {
             .map(|slot| &self.kind_aliases[self.kind_overrides[slot].1 as usize])
     }
 
-    #[cfg(test)]
     fn node_is_named(&self, node: u32) -> bool {
         self.kind_alias(node).map_or_else(
             || self.grammar.kind_is_named(self.data[node as usize].kind),
@@ -1336,12 +1354,10 @@ impl TapeDoc {
         )
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_field(&self, node: u32) -> u16 {
         self.data[node as usize].field
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_flags(&self, node: u32) -> u8 {
         let rec = &self.data[node as usize];
         u8::from(self.node_is_named(node))
@@ -1355,13 +1371,11 @@ impl TapeDoc {
         rec.start as usize..rec.end as usize
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_parent(&self, node: u32) -> Option<u32> {
         let parent = self.data[node as usize].parent;
         (parent != NONE).then_some(parent)
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_children(&self, node: u32) -> impl Iterator<Item = u32> + '_ {
         let mut next = self.data[node as usize].first;
         std::iter::from_fn(move || {
@@ -1379,7 +1393,6 @@ impl TapeDoc {
         node + 1..node + rec.size
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_next_sibling(&self, node: u32, named: bool) -> Option<u32> {
         let mut next = self.data[node as usize].next;
         while next != NONE {
@@ -1391,6 +1404,12 @@ impl TapeDoc {
         None
     }
 
+    /// The structurally adjacent previous sibling, named or anonymous.
+    pub(super) fn transducer_prev_sibling(&self, node: u32) -> Option<u32> {
+        let prev = self.data[node as usize].prev;
+        (prev != NONE).then_some(prev)
+    }
+
     /// The whole source, for the Metal backend's concatenated buffer.
     #[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
     pub(super) fn transducer_source(&self) -> &[u8] {
@@ -1400,6 +1419,10 @@ impl TapeDoc {
     /// A node's source slice. Restoring the tape validates every span as a UTF-8 boundary.
     pub(super) fn transducer_text_str(&self, node: u32) -> &str {
         &self.source[self.transducer_span(node)]
+    }
+
+    pub(super) fn source_text(&self) -> &str {
+        &self.source
     }
 
     /// The node at a preorder ordinal: `root.adopt(doc.node(ordinal))` is the node ast-grep
@@ -1469,7 +1492,11 @@ impl<'a> TapeNode<'a> {
             return container.children().find(|child| child.rec().end > start);
         }
         let start = self.rec().start;
-        let ends_after = |node: &Self| node.rec().end > start;
+        let ends_after = |node: &Self| {
+            #[cfg(test)]
+            count_anchor_sibling();
+            node.rec().end > start
+        };
         let mut anchor = match self.parent() {
             Some(_) => *self,
             None => self.children().next()?,

@@ -75,6 +75,11 @@ pub(super) fn matcher_budget_observed() -> bool {
     })
 }
 
+/// A clone of this thread's installed deadline for a registered SQL batch.
+pub(super) fn current_deadline() -> Option<MatchDeadline> {
+    MATCH_BUDGET.with(|budget| budget.borrow().clone())
+}
+
 /// Spends this thread's budget without polling it: what a last step that runs past the budget and
 /// never polls leaves behind.
 #[cfg(test)]
@@ -192,6 +197,11 @@ impl MatchBudget {
     /// complete.
     pub(super) fn observed(&self) -> bool {
         self.deadline.observed()
+    }
+
+    #[cfg(test)]
+    pub(super) fn deadline(&self) -> MatchDeadline {
+        self.deadline.clone()
     }
 
     #[cfg(test)]

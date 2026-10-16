@@ -51,6 +51,16 @@ pub(crate) struct NthChild {
 }
 
 impl NthChild {
+    /// Whether `index` among `count` counted siblings holds, before or after reversal.
+    pub(crate) fn index_holds(&self, index: usize, count: usize) -> bool {
+        let index = if self.reverse {
+            count - 1 - index
+        } else {
+            index
+        };
+        self.position.holds(index)
+    }
+
     pub(super) fn match_node<'t, D: Doc>(
         &self,
         node: Node<'t, D>,

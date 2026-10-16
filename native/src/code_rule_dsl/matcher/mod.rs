@@ -10,6 +10,7 @@ mod compare;
 mod count;
 mod each;
 mod exported;
+pub(super) mod facts;
 mod format_args;
 mod layout;
 mod memo;
@@ -107,6 +108,8 @@ pub(super) struct GrammarMatcher {
     pub(super) three_valued: bool,
     /// The query's `transform`, applied to each match after its rule and constraints.
     pub(super) transform: Option<Arc<Transform>>,
+    /// The index of this matcher's historical SQL statement when one is compiled.
+    pub(super) statement: usize,
 }
 
 /// Whole-root matching: production matches each candidate root within a clause `begin_clause` set
@@ -650,7 +653,7 @@ thread_local! {
 
 /// Enters one level of utility recursion (`matches` or a parameterized call) within the depth and
 /// stack limits the matcher applies: the level to restore on leaving, or the limit hit.
-fn enter_util_level() -> Result<u32, UtilLimit> {
+pub(super) fn enter_util_level() -> Result<u32, UtilLimit> {
     if let Some(limit) = UTIL_EXCEEDED.get() {
         return Err(limit);
     }
@@ -665,7 +668,7 @@ fn enter_util_level() -> Result<u32, UtilLimit> {
 }
 
 /// Leaves a level `enter_util_level` entered.
-fn leave_util_level(depth: u32) {
+pub(super) fn leave_util_level(depth: u32) {
     UTIL_DEPTH.set(depth);
 }
 
@@ -720,7 +723,7 @@ fn spend_util_steps(steps: usize) -> bool {
 }
 
 /// Remaining utility/count budget for a memoization replay.
-fn utility_steps_left() -> usize {
+pub(super) fn utility_steps_left() -> usize {
     UTIL_STEPS_LEFT.get()
 }
 
@@ -806,7 +809,7 @@ pub(super) fn end_clause() -> (usize, Option<UtilLimit>) {
 
 /// Whether recursion from `begin_clause` has used more stack than utilities may
 /// (`MAX_UTIL_STACK_BYTES`), as the matcher checks before each utility.
-fn util_stack_exceeded() -> bool {
+pub(super) fn util_stack_exceeded() -> bool {
     let base = UTIL_STACK_BASE.get();
     base != 0 && base.abs_diff(stack_address()) > MAX_UTIL_STACK_BYTES
 }
@@ -821,7 +824,29 @@ impl EachScope {
     }
 
     /// Records a match's binding of `name`; false where it binds nothing new.
-    fn record<D: Doc>(&self, env: &MetaVarEnv<'_, D>, name: &str) -> bool {
+    pub(super) fn record<D: Doc>(&self, env: &MetaVarEnv<'_, D>, name: &str) -> bool {
         self.0.record(each::binding_range(env, name))
     }
+}
+
+/// A predicate's explicit verdict for the restored SQL query engine.
+pub(super) enum Verdict<'tree, D: Doc> {
+    Match(MetaVarEnv<'tree, D>),
+    NoMatch,
+    Unknown,
+}
+
+/// Whether matching `term` never adds a binding.
+pub(super) fn binds_nothing(term: &AstMatcher) -> bool {
+    term.binds_nothing()
+}
+
+/// Whether a relation's rule can bind a capture.
+pub(super) fn may_bind(term: &AstMatcher) -> bool {
+    relation::may_bind(term)
+}
+
+/// Whether an active `violation.each` enumeration excludes this environment.
+pub(super) fn each_excluded<D: Doc>(env: &MetaVarEnv<'_, D>) -> bool {
+    each::active() && each::excluded(env)
 }
