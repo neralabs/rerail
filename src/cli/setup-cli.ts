@@ -168,20 +168,23 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
 /**
  * `rerail install --refresh`: register this version again with every coding agent already connected to the managed
  * install, so commands it added arrive and ones it retired go; `rerail update` runs it from the version it activated.
- * Coding agents never connected stay untouched. Exits 1 when a coding agent's configuration could not be refreshed.
+ * Coding agents never connected stay untouched, and one whose configuration cannot be read to tell is named and left
+ * alone. Exits 1 only when a connected coding agent could not be refreshed.
  */
 async function runRefresh(context: SetupContext): Promise<number> {
   const root = registrationRoot(context);
   const result = await refreshCodingAgents(root, codingAgentHome());
   if (result.agents.length === 0 && result.failures.length === 0) {
     process.stdout.write(`No coding agents are connected to ${root}; nothing to refresh.\n`);
-    return 0;
   }
   if (result.agents.length > 0) {
     const changed = result.changes.filter(change => change.action === "created" || change.action === "updated");
     const names = result.agents.map(id => CODING_AGENT_NAMES[id]).join(", ");
     process.stdout.write(changed.length === 0 ? `Coding agents up to date: ${names}\n` : `Refreshed Rerail in ${names}:\n`);
     printReport({ changes: changed, notes: changed.length === 0 ? [] : result.notes }, false);
+  }
+  for (const { agent, message } of result.unchecked) {
+    process.stdout.write(`  note: left ${CODING_AGENT_NAMES[agent]} alone: its configuration could not be read to tell whether Rerail is connected (${message})\n`);
   }
   for (const { agent, message } of result.failures) {
     process.stderr.write(`rerail: could not refresh ${CODING_AGENT_NAMES[agent]}: ${message}\n`);

@@ -854,7 +854,10 @@ function planOmpMcp(context: Context): Promise<Plan> {
     const servers = value.mcpServers === undefined ? {} : value.mcpServers;
     if (!isObject(servers))
       throw new Error(`Cannot register rerail MCP server: "mcpServers" in ${path} is not an object`);
-    const { [RERAIL_MCP_SERVER_NAME]: _previous, ...others } = servers;
+    const { [RERAIL_MCP_SERVER_NAME]: previous, ...others } = servers;
+    // Removal takes out only this installation's bridge: a `rerail` entry naming another install or checkout stays.
+    const ours = isObject(previous) && Array.isArray(previous.args) && previous.args[0] === join(context.root, ENTRY_POINTS.cli);
+    if (context.mode === "unregister" && !ours) return value;
     const kept: JsonObject = {};
     for (const [name, server] of Object.entries(others)) {
       if (context.mode === "register" && await isPackageMcpBridge(context, server)) continue;

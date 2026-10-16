@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInstallCommand, type SetupContext } from "../../src/cli/setup-cli.js";
 import { ManagedUpdater } from "../../src/setup/index.js";
+import { CODEX_HOOK_EVENTS } from "../../src/setup/harness-registration.js";
 
 const temporaryDirectories: string[] = [];
 const previousHome = process.env.HOME;
@@ -200,20 +201,39 @@ describe("rerail install --refresh", () => {
     expect(await readdir(join(hostConfigHome, ".claude"))).toEqual([]);
   });
 
-  it("fails naming the agent whose configuration it cannot read, after refreshing the others", async () => {
+  it("fails naming a connected agent it cannot register again, after refreshing the others", async () => {
     const { context, hostConfigHome, packageRoot } = await fixture();
     await mkdir(join(hostConfigHome, ".codex"));
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code,codex"], context);
     await rm(join(hostConfigHome, ".claude", "commands", "rerail-show-me.md"));
-    await writeFile(join(hostConfigHome, ".codex", "hooks.json"), "{ not json");
+    const codexHooks = join(hostConfigHome, ".codex", "hooks.json");
+    const config = JSON.parse(await readFile(codexHooks, "utf8")) as { hooks: Record<string, unknown> };
+    config.hooks[CODEX_HOOK_EVENTS[0]!] = "not a list";
+    await writeFile(codexHooks, JSON.stringify(config));
     const output = captureOutput();
 
     expect(await runInstallCommand(["--refresh"], context)).toBe(1);
 
     expect(existsSync(join(hostConfigHome, ".claude", "commands", "rerail-show-me.md"))).toBe(true);
     expect(output.stderr()).toContain("Codex");
-    expect(output.stderr()).toContain(join(hostConfigHome, ".codex", "hooks.json"));
+    expect(output.stderr()).toContain(codexHooks);
     expect(output.stderr()).toContain("rerail install --refresh");
+  });
+
+  it("succeeds, naming it, when an agent's configuration cannot be read to tell whether it is connected", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    await mkdir(join(hostConfigHome, ".cursor"));
+    const cursorHooks = join(hostConfigHome, ".cursor", "hooks.json");
+    await writeFile(cursorHooks, "{ not json");
+    const output = captureOutput();
+
+    expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+    expect(output.stdout()).toContain("left Cursor alone");
+    expect(output.stdout()).toContain(cursorHooks);
+    expect(output.stderr()).toBe("");
+    expect(await readFile(cursorHooks, "utf8")).toBe("{ not json");
   });
 
   it.each([[["--agents", "claude-code"]], [["--root", "."]], [["--remove"]], [["--dry-run"]]])("refuses --refresh with %j", async flag => {

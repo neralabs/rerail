@@ -73,7 +73,7 @@ async function isRegistered(root: string, home: string, id: Harness): Promise<bo
   return plan.changes.some(change => change.harness === id && change.action !== "unchanged" && change.action !== "skipped");
 }
 
-export interface RefreshFailure {
+export interface RefreshProblem {
   agent: Harness;
   message: string;
 }
@@ -83,8 +83,13 @@ export interface RefreshResult {
   agents: Harness[];
   changes: RegistrationChange[];
   notes: string[];
-  /** Coding agents whose configuration could not be read or written, with the reason; the others are refreshed. */
-  failures: RefreshFailure[];
+  /** Connected coding agents whose registration could not be written, with the reason; the others are refreshed. */
+  failures: RefreshProblem[];
+  /**
+   * Coding agents left alone because their configuration could not be read to tell whether Rerail is connected:
+   * one never connected must not fail an update, so these are reported, not failures.
+   */
+  unchecked: RefreshProblem[];
 }
 
 /**
@@ -93,16 +98,22 @@ export interface RefreshResult {
  * only that one. Agents with no registration of `root` are left alone.
  */
 export async function refreshCodingAgents(root: string, home: string): Promise<RefreshResult> {
-  const result: RefreshResult = { agents: [], changes: [], notes: [], failures: [] };
+  const result: RefreshResult = { agents: [], changes: [], notes: [], failures: [], unchecked: [] };
+  const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
   for (const id of detectHarnesses(home)) {
     try {
       if (!(await isRegistered(root, home, id))) continue;
+    } catch (error) {
+      result.unchecked.push({ agent: id, message: message(error) });
+      continue;
+    }
+    try {
       const report = await registerHarnesses({ root, home, harnesses: [id] });
       result.agents.push(id);
       result.changes.push(...report.changes.filter(change => change.harness === id));
       for (const note of report.notes) if (!result.notes.includes(note)) result.notes.push(note);
     } catch (error) {
-      result.failures.push({ agent: id, message: error instanceof Error ? error.message : String(error) });
+      result.failures.push({ agent: id, message: message(error) });
     }
   }
   return result;

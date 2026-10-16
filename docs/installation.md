@@ -298,7 +298,9 @@ Every coding agent gets the same commands: `/rerail`, `/rerail-manage`,
 then runs `rerail install --refresh` from the version it activated: every coding
 agent already connected gets that version's commands, skills and hooks, and loses
 the ones it retired; a coding agent never connected is left alone. Command files
-and skills Rerail generated are replaced without a `.bak` copy.
+and skills Rerail generated are replaced without a `.bak` copy. Updating from
+0.1.0-next.2 or earlier runs that version's update, which does not do this: run
+`rerail install --refresh` once afterwards.
 Settings, scans, status, update checks, rollback and reset are the CLI
 commands above.
 Restart the coding agent after installing or rebuilding to load the commands.

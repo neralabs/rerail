@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { refreshCodingAgents } from "../../src/setup/coding-agents.js";
-import { registerHarnesses } from "../../src/setup/harness-registration.js";
+import { CODEX_HOOK_EVENTS, registerHarnesses } from "../../src/setup/harness-registration.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -53,15 +53,45 @@ describe("refreshCodingAgents", () => {
     expect(second.changes.every(change => change.action === "unchanged")).toBe(true);
   });
 
-  it("refreshes the other agents when one agent's configuration cannot be read, and names that one", async () => {
+  it("refreshes the other agents when a connected agent's registration cannot be written, and names that one", async () => {
     const { root, home, commands } = await fixture();
     await registerHarnesses({ root, home, harnesses: ["codex"] });
-    await writeFile(join(home, ".codex", "hooks.json"), "{ not json");
+    const path = join(home, ".codex", "hooks.json");
+    const config = JSON.parse(await readFile(path, "utf8")) as { hooks: Record<string, unknown> };
+    // Rerail's other hooks still name the root, so Codex is connected; registering cannot add to an event that is not a list.
+    config.hooks[CODEX_HOOK_EVENTS[0]!] = "not a list";
+    await writeFile(path, JSON.stringify(config));
 
     const result = await refreshCodingAgents(root, home);
     expect(result.agents).toEqual(["claude-code"]);
-    expect(result.failures).toEqual([{ agent: "codex", message: expect.stringContaining(join(home, ".codex", "hooks.json")) }]);
+    expect(result.failures).toEqual([{ agent: "codex", message: expect.stringContaining(path) }]);
+    expect(result.unchecked).toEqual([]);
     expect(await readdir(commands)).toContain("rerail-show-me.md");
+  });
+
+  it("leaves an agent alone, without failing, when its configuration cannot be read to tell whether it is connected", async () => {
+    const { root, home, commands } = await fixture();
+    const cursorHooks = join(home, ".cursor", "hooks.json");
+    await mkdir(join(home, ".cursor"));
+    await writeFile(cursorHooks, "{ not json");
+
+    const result = await refreshCodingAgents(root, home);
+    expect(result.agents).toEqual(["claude-code"]);
+    expect(result.failures).toEqual([]);
+    expect(result.unchecked).toEqual([{ agent: "cursor", message: expect.stringContaining(cursorHooks) }]);
+    expect(await readdir(join(home, ".cursor"))).toEqual(["hooks.json"]);
+    expect(await readFile(cursorHooks, "utf8")).toBe("{ not json");
+    expect(await readdir(commands)).toContain("rerail-show-me.md");
+  });
+
+  it("leaves OMP alone when its rerail MCP bridge names another install", async () => {
+    const { root, home, packageRoot } = await fixture();
+    await registerHarnesses({ root: await packageRoot("elsewhere"), home, harnesses: ["omp"] });
+    const mcp = await readFile(join(home, ".omp", "agent", "mcp.json"), "utf8");
+
+    const result = await refreshCodingAgents(root, home);
+    expect(result.agents).toEqual(["claude-code"]);
+    expect(await readFile(join(home, ".omp", "agent", "mcp.json"), "utf8")).toBe(mcp);
   });
 
   it("does nothing when no agent is registered", async () => {
@@ -71,7 +101,7 @@ describe("refreshCodingAgents", () => {
     await mkdir(join(home, ".claude"), { recursive: true });
     await mkdir(join(home, ".cursor"));
     const result = await refreshCodingAgents(join(base, "root"), home);
-    expect(result).toEqual({ agents: [], changes: [], notes: [], failures: [] });
+    expect(result).toEqual({ agents: [], changes: [], notes: [], failures: [], unchecked: [] });
     expect((await readdir(home)).sort()).toEqual([".claude", ".cursor"]);
     expect(await readdir(join(home, ".cursor"))).toEqual([]);
   });

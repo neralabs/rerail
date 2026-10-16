@@ -1349,6 +1349,15 @@ describe("OMP extensions symlink", () => {
     expect(change(again.changes, "omp", "mcp.json").action).toBe("unchanged");
   });
 
+  it("keeps a rerail bridge that names another install when removing this one", async () => {
+    const { home, root, nodePath } = await fixture();
+    const path = join(home, ".omp", "agent", "mcp.json");
+    const original = await seed(path, { mcpServers: { rerail: { command: nodePath, args: [join(dirname(home), "checkout", "dist", "cli", "cli.js"), "mcp-bridge"] } } });
+    const removed = await unregisterHarnesses({ root, home, nodePath, harnesses: ["omp"] });
+    expect(change(removed.changes, "omp", "mcp.json").action).toBe("unchanged");
+    expect(await readFile(path, "utf8")).toBe(original);
+  });
+
   it("replaces another install's bridge and extension link under any name, and leaves foreign ones", async () => {
     const { home, root, nodePath } = await fixture();
     const otherInstall = join(home, "other install");

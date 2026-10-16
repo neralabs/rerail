@@ -209,13 +209,23 @@ describe("Rerail managed launcher", () => {
       previous: { version: manifest.version },
     });
 
-    // A coding agent configuration registration cannot read fails the update, which keeps the version it activated.
     // The rejected update above left its channel selected; back on latest, nothing is newer and only the refresh runs.
-    await writeFile(join(userHome, ".claude", "settings.json"), "{ not json");
-    const unreadable = await run(["node", entrypoint, "update", "--channel", "latest"], environment);
-    expect(unreadable.exitCode).toBe(1);
-    expect(unreadable.stderr).toContain(join(userHome, ".claude", "settings.json"));
-    expect(unreadable.stderr).toContain("rerail install --refresh");
+    // A coding agent never connected whose configuration cannot be read is named and left alone: the update succeeds.
+    await writeFile(join(userHome, ".cursor", "hooks.json"), "{ not json");
+    const unconnected = await run(["node", entrypoint, "update", "--channel", "latest"], environment);
+    expect(unconnected).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(unconnected.stdout).toContain("left Cursor alone");
+    expect(await readFile(join(userHome, ".cursor", "hooks.json"), "utf8")).toBe("{ not json");
+
+    // A connected coding agent registration cannot write fails the update, which keeps the version it activated.
+    const settingsPath = join(userHome, ".claude", "settings.json");
+    const settings = JSON.parse(await readFile(settingsPath, "utf8")) as { hooks: Record<string, unknown> };
+    settings.hooks.SessionStart = "not a list";
+    await writeFile(settingsPath, JSON.stringify(settings));
+    const unwritable = await run(["node", entrypoint, "update"], environment);
+    expect(unwritable.exitCode).toBe(1);
+    expect(unwritable.stderr).toContain(settingsPath);
+    expect(unwritable.stderr).toContain("rerail install --refresh");
     expect(JSON.parse(await readFile(join(home, "update-state.json"), "utf8"))).toMatchObject({ current: { version: acceptedVersion } });
   }, 60_000);
 
