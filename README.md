@@ -693,7 +693,7 @@ git clone https://github.com/neralabs/rerail.git
 
 `RERAIL_ORACLES_DIR` points the build and tests at another fixtures directory.
 
-Prerequisites: Node.js 24+, npm, and Rust through [rustup](https://rustup.rs/). `rust-toolchain.toml` pins the toolchain, so `cargo` installs and selects it on first use.
+Prerequisites: Node.js 24+, npm, Rust through [rustup](https://rustup.rs/), and [`just`](https://github.com/casey/just) for the dev recipes (`just rerail-dev`, `just nuke-rerail`). `rust-toolchain.toml` pins the toolchain, so `cargo` installs and selects it on first use.
 
 ```sh
 npm ci
