@@ -629,7 +629,7 @@ describe("one database for every repository", () => {
     const alphaView = closeAfterTest(new SqliteSessionReader(path, { repositoryId: "alpha" }));
     const machineView = closeAfterTest(new SqliteSessionReader(path));
     expect(alphaView.sessions().map(session => [session.sessionId, session.repositoryId])).toEqual([["alpha-session", "alpha"]]);
-    expect(alphaView.sessionsSince(0).map(session => session.sessionId)).toEqual(["alpha-session"]);
+    expect(alphaView.sessionPage({ since: 0, limit: 50 }).sessions.map(session => session.sessionId)).toEqual(["alpha-session"]);
     expect(alphaView.steersByRule(0)).toEqual(new Map([["shared-rule", 1]]));
     expect(machineView.sessions().map(session => session.sessionId)).toEqual(["alpha-session", "beta-session"]);
     expect(machineView.steersByRule(0)).toEqual(new Map([["shared-rule", 3]]));
@@ -641,8 +641,9 @@ describe("one database for every repository", () => {
 describe("resetRepositoryHistory", () => {
   it("clears or explicitly keeps every session-keyed table, so a new one cannot slip past a reset", () => {
     const reset = new Set<SQLiteTable>(schema.SESSION_HISTORY_TABLES);
-    // Handled by hand: ended sessions and their runtime ownership go, running ones stay.
-    const handled = new Set<SQLiteTable>([schema.sessions, schema.policySessionOwners]);
+    // Handled by hand: ended sessions and their runtime ownership go, running ones stay. The derived audit history
+    // goes with the audits it came from, through the triggers on `audits`.
+    const handled = new Set<SQLiteTable>([schema.sessions, schema.policySessionOwners, ...schema.DERIVED_AUDIT_HISTORY_TABLES]);
     const exported: unknown[] = Object.values(schema);
     const tables = exported.filter((value): value is SQLiteTable => is(value, SQLiteTable));
     for (const table of tables) {

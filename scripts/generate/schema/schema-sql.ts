@@ -23,13 +23,20 @@ import {
   rules,
   sessions,
   workLinks,
+  AUDIT_HISTORY_TRIGGER_STATEMENTS,
+  auditRuleSetRules,
+  auditRuleSets,
+  auditRuleSetUses,
+  auditViolations,
+  auditViolationsStaging,
+  ruleViolationRollup,
 } from "../../../src/engine/index.js";
 
 export const SCHEMA_SQL_PATH = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..", "src", "engine", "storage", "schema-sql.generated.ts");
 
 /**
- * Render the DDL for the Drizzle tables in `src/engine/storage/schema.ts` as an idempotent
- * statement list, applied verbatim every time a database is opened.
+ * Render the DDL for the Drizzle tables in `src/engine/storage/schema.ts`, then the triggers that keep the derived
+ * audit history in step (`audit-history.ts`), as an idempotent statement list applied verbatim on every open.
  */
 export async function renderRerailSchemaStatements(): Promise<string[]> {
   const empty = await generateSQLiteDrizzleJson({});
@@ -41,6 +48,12 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   workLinks,
   audits: audits,
   auditResultPages: auditResultPages,
+  auditViolations,
+  auditViolationsStaging,
+  ruleViolationRollup,
+  auditRuleSets,
+  auditRuleSetRules,
+  auditRuleSetUses,
   auditUnlistedFailures: auditUnlistedFailures,
   presentationPreferences,
   auditSettings: auditSettings,
@@ -57,13 +70,16 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   schemaMigrations,
   });
   const statements = await generateSQLiteMigration(empty, current);
-  return statements.map(statement =>
-    statement
-      .trim()
-      .replace(/^CREATE TABLE `/u, "CREATE TABLE IF NOT EXISTS `")
-      .replace(/^CREATE (UNIQUE )?INDEX `/u, "CREATE $1INDEX IF NOT EXISTS `")
-      .replace(/;$/u, ""),
-  );
+  return [
+    ...statements.map(statement =>
+      statement
+        .trim()
+        .replace(/^CREATE TABLE `/u, "CREATE TABLE IF NOT EXISTS `")
+        .replace(/^CREATE (UNIQUE )?INDEX `/u, "CREATE $1INDEX IF NOT EXISTS `")
+        .replace(/;$/u, ""),
+    ),
+    ...AUDIT_HISTORY_TRIGGER_STATEMENTS,
+  ];
 }
 
 export async function renderRerailSchemaModule(): Promise<string> {

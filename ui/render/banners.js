@@ -52,7 +52,7 @@ function showWelcome(repository) {
   if (ui.welcomeDismissed) return false;
   try { if (localStorage.getItem(welcomeKey()) === "1") return false; } catch { /* storage blocked */ }
   const at = repository.configuredAt;
-  return at !== null && at >= startOfDay() && !data.sessions.some(s => s.startedAt >= at);
+  return at !== null && at >= startOfDay() && !(data.newestSession !== null && data.newestSession.startedAt >= at);
 }
 
 function welcomeBanner(repo) {

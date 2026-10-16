@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { codeRulesPendingBoundaries, droppedEvents, placeCorrections, resumeCommand, sessionTurns, uncheckedBoundaries, type Correction } from "../../ui/sessions-model.js";
+import { placeCorrections, resumeCommand, sessionTurns, type Correction } from "../../ui/sessions-model.js";
 import { titleFromPrompts } from "../../ui/poll.js";
-import { data, sinceFor } from "../../ui/state.js";
+import { sinceFor } from "../../ui/state.js";
 
 const T0 = 1_700_000_000_000;
 
@@ -146,57 +146,6 @@ describe("resumeCommand", () => {
     expect(r.name).toBe("Cursor");
     expect(r.cmd).toBeNull();
     expect(r.how).toContain("cur-1");
-  });
-});
-
-describe("droppedEvents", () => {
-  afterEach(() => data.sessionDetail.clear());
-
-  it("sums the events its host recorded as dropped, and none before the transcript loads", () => {
-    expect(droppedEvents({ sessionId: "s1" })).toBe(0);
-    data.sessionDetail.set("s1", {
-      events: events([prompt("Fix it"), { kind: "events-dropped", payload: { count: 3 } }, turnEnd(), { kind: "events-dropped", payload: { count: 2 } }]),
-      nextAfter: 4, loaded: true, loading: null,
-    });
-    expect(droppedEvents({ sessionId: "s1" })).toBe(5);
-  });
-});
-
-describe("uncheckedBoundaries", () => {
-  afterEach(() => data.sessionDetail.clear());
-
-  it("counts the boundaries that answered before the shell-write check finished, and none before the transcript loads", () => {
-    expect(uncheckedBoundaries({ sessionId: "s1" })).toBe(0);
-    data.sessionDetail.set("s1", {
-      events: events([
-        prompt("Fix it"),
-        { kind: "source-discovery-pending", payload: { boundary: "command" } },
-        { kind: "source-discovery-pending", payload: { boundary: "turn" } },
-        turnEnd(),
-        { kind: "events-dropped", payload: { count: 2 } },
-        { kind: "source-discovery-pending", payload: { boundary: "close" } },
-      ]),
-      nextAfter: 6, loaded: true, loading: null,
-    });
-    expect(uncheckedBoundaries({ sessionId: "s1" })).toBe(3);
-  });
-});
-
-describe("codeRulesPendingBoundaries", () => {
-  afterEach(() => data.sessionDetail.clear());
-
-  it("counts the boundaries that answered before the code-rule evaluator opened, and none before the transcript loads", () => {
-    expect(codeRulesPendingBoundaries({ sessionId: "s1" })).toBe(0);
-    data.sessionDetail.set("s1", {
-      events: events([
-        prompt("Fix it"),
-        { kind: "code-rules-pending", payload: { boundary: "call" } },
-        { kind: "source-discovery-pending", payload: { boundary: "turn" } },
-        { kind: "code-rules-pending", payload: { boundary: "turn-end" } },
-      ]),
-      nextAfter: 4, loaded: true, loading: null,
-    });
-    expect(codeRulesPendingBoundaries({ sessionId: "s1" })).toBe(2);
   });
 });
 

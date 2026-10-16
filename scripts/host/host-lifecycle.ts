@@ -446,6 +446,13 @@ function report(host: Host, { run, rerail, steer, transcript }: Evidence): void 
   if (run.exitCode !== 0 || transcript.replies === 0) {
     const tail = `${run.stdout}\n${run.stderr}`.trim().split("\n").slice(-3).join(" | ").slice(0, 400);
     infos.push(`harness output tail: ${tail}`);
+    // Where a run that did not finish stopped: Rerail's last record against the wall clock says whether the host was
+    // still waiting on Rerail (a turn end with nothing after it) or on the model (Rerail long done).
+    const last = rerail.events.at(-1);
+    const recorded = rerail.events.map((event) => event.kind).join(", ") || "none";
+    infos.push(last === undefined
+      ? "Rerail recorded no events"
+      : `Rerail's last event ${last.kind} at ${Math.round((last.observedAt - run.startedAt) / 1000)} s of ${Math.round(run.ms / 1000)} s; events: ${recorded}`);
   }
   print(assertions, infos);
 }
