@@ -962,6 +962,13 @@ impl NodesCursor<'_> {
                 }
             }
         }
+        if self.current.is_some()
+            && let Some(state) = self.view.as_ref().and_then(batch_state)
+        {
+            state
+                .node_rows
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 }
 

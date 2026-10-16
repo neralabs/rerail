@@ -120,6 +120,11 @@ fn record_query_counters(metrics: &mut Metrics, counters: query::QueryCounters, 
     metrics.sqlite_files += files;
     metrics.sqlite_statements += counters.statements;
     metrics.sqlite_rows += counters.rows;
+    metrics.sqlite_scalar_callbacks += counters.scalar_callbacks;
+    metrics.sqlite_node_rows += counters.node_rows;
+    metrics.sqlite_environments += counters.environments;
+    metrics.sqlite_fact_builds += counters.fact_builds;
+    metrics.sqlite_fact_hits += counters.fact_hits;
     metrics.sqlite_terminal_executions += counters.terminal_executions;
     metrics.sqlite_virtual_table_filters += counters.virtual_table_filters;
 }

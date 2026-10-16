@@ -222,6 +222,13 @@ impl Default for EnvArena {
 }
 
 impl EnvArena {
+    pub(super) fn len(&self) -> usize {
+        self.envs
+            .lock()
+            .expect("environment arena mutex poisoned")
+            .len()
+    }
+
     pub(super) fn get(&self, handle: i64) -> Option<Arc<Env>> {
         let index = usize::try_from(handle).ok()?;
         self.envs

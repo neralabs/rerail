@@ -694,6 +694,11 @@ pub(super) struct Metrics {
     pub(super) sqlite_files: usize,
     pub(super) sqlite_statements: usize,
     pub(super) sqlite_rows: usize,
+    pub(super) sqlite_scalar_callbacks: usize,
+    pub(super) sqlite_node_rows: usize,
+    pub(super) sqlite_environments: usize,
+    pub(super) sqlite_fact_builds: usize,
+    pub(super) sqlite_fact_hits: usize,
     pub(super) sqlite_terminal_executions: usize,
     pub(super) sqlite_virtual_table_filters: usize,
     pub(super) storage_retries: usize,
@@ -735,6 +740,11 @@ impl Metrics {
         self.sqlite_files += other.sqlite_files;
         self.sqlite_statements += other.sqlite_statements;
         self.sqlite_rows += other.sqlite_rows;
+        self.sqlite_scalar_callbacks += other.sqlite_scalar_callbacks;
+        self.sqlite_node_rows += other.sqlite_node_rows;
+        self.sqlite_environments += other.sqlite_environments;
+        self.sqlite_fact_builds += other.sqlite_fact_builds;
+        self.sqlite_fact_hits += other.sqlite_fact_hits;
         self.sqlite_terminal_executions += other.sqlite_terminal_executions;
         self.sqlite_virtual_table_filters += other.sqlite_virtual_table_filters;
         self.storage_retries += other.storage_retries;

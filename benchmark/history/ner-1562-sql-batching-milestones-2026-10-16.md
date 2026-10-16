@@ -94,16 +94,30 @@ Parsing used 7.2 CPU-seconds, and regular expressions used 0.3 CPU-seconds.
 The clause-major engine now uses all four workers across compatibility groups.
 This change reduced wall time, but concurrent batch state increased peak memory to 19.95 GiB.
 
-The next measurements must separate these costs:
+A second profile added counters to the complete parallel run.
+The counter instrumentation increased wall time from 293.1 seconds to 372.1 seconds.
+Therefore, the first parallel run remains the runtime result.
 
-1. Scalar callback calls by function family.
-2. Virtual-table rows and walks by table and axis.
-3. Environment allocations and retained bytes.
-4. Semantic-fact builds, hits, and retained bytes.
-5. Recursive utility statement calls.
-6. Memory per active compatibility group.
+The detailed profile measured these counts:
 
-The first correction must target the largest measured callback or walk family.
+| Operation | Count |
+| --- | ---: |
+| Node virtual-table rows | 3,486,284,310 |
+| Scalar callbacks | 2,696,546,413 |
+| Environment handles | 100,521,003 |
+| Semantic-fact cache hits | 11,490,154 |
+| Semantic-fact builds | 7,232,793 |
+| Output rows | 3,921,804 |
+
+Node walks and scalar callbacks dominate the new execution shape.
+SQLite emits 889 node rows for each output row.
+It also invokes 688 scalar callbacks for each output row.
+
+Environment retention is the next memory target.
+The batches created more than 100 million environment handles.
+
+The first correction must reduce repeated node walks and scalar callbacks together.
+Bulk structural relations are the measured next boundary.
 The engine must not add more compatibility partitions.
 
 ## Historical comparison

@@ -72,7 +72,7 @@ where
 fn batch(context: &Context<'_>, registry: &MatchRegistry) -> SqlResult<Arc<BatchView>> {
     let token = context.get::<i64>(0)?;
     let owner = registry as *const MatchRegistry as usize;
-    CURRENT.with(|current| {
+    let view = CURRENT.with(|current| -> SqlResult<Arc<BatchView>> {
         let mut current = current.borrow_mut();
         if let Some((cached_owner, cached_token, view)) = current.as_ref()
             && *cached_owner == owner
@@ -87,7 +87,13 @@ fn batch(context: &Context<'_>, registry: &MatchRegistry) -> SqlResult<Arc<Batch
         );
         *current = Some((owner, token, Arc::clone(&view)));
         Ok(view)
-    })
+    })?;
+    if let Some(state) = batch_state(&view) {
+        state
+            .scalar_callbacks
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(view)
 }
 
 fn state(view: &BatchView) -> SqlResult<&BatchState> {

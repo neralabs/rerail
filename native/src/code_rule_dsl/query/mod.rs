@@ -77,6 +77,10 @@ pub(super) struct BatchState {
     envs: EnvArena,
     statement_executions: std::sync::atomic::AtomicUsize,
     rows: std::sync::atomic::AtomicUsize,
+    scalar_callbacks: std::sync::atomic::AtomicUsize,
+    node_rows: std::sync::atomic::AtomicUsize,
+    fact_builds: std::sync::atomic::AtomicUsize,
+    fact_hits: std::sync::atomic::AtomicUsize,
     text_rows: std::sync::Mutex<foldhash::HashMap<usize, Arc<Vec<TextRows>>>>,
     /// Recursive utility verdicts are pure for a fixed node, environment and recursion depth.
     /// The cached cost is replayed so `maxVisitedNodes` remains observable.
@@ -176,6 +180,10 @@ impl QueryConnection {
             envs: EnvArena::default(),
             statement_executions: std::sync::atomic::AtomicUsize::new(0),
             rows: std::sync::atomic::AtomicUsize::new(0),
+            scalar_callbacks: std::sync::atomic::AtomicUsize::new(0),
+            node_rows: std::sync::atomic::AtomicUsize::new(0),
+            fact_builds: std::sync::atomic::AtomicUsize::new(0),
+            fact_hits: std::sync::atomic::AtomicUsize::new(0),
             text_rows: std::sync::Mutex::default(),
             util_memo: std::sync::Mutex::default(),
             roots: std::sync::Mutex::new(None),
@@ -215,6 +223,11 @@ pub(super) struct QueryBatch<'a> {
 pub(super) struct QueryCounters {
     pub(super) statements: usize,
     pub(super) rows: usize,
+    pub(super) scalar_callbacks: usize,
+    pub(super) node_rows: usize,
+    pub(super) environments: usize,
+    pub(super) fact_builds: usize,
+    pub(super) fact_hits: usize,
     pub(super) terminal_executions: usize,
     pub(super) virtual_table_filters: usize,
 }
@@ -235,6 +248,11 @@ impl QueryBatch<'_> {
         QueryCounters {
             statements: self.state.statement_executions.load(Ordering::Relaxed),
             rows: self.state.rows.load(Ordering::Relaxed),
+            scalar_callbacks: self.state.scalar_callbacks.load(Ordering::Relaxed),
+            node_rows: self.state.node_rows.load(Ordering::Relaxed),
+            environments: self.state.envs.len(),
+            fact_builds: self.state.fact_builds.load(Ordering::Relaxed),
+            fact_hits: self.state.fact_hits.load(Ordering::Relaxed),
             terminal_executions,
             virtual_table_filters,
         }

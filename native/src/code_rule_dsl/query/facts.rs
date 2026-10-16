@@ -100,8 +100,14 @@ fn facts(
         .expect("facts cache mutex poisoned")
         .get(&key)
     {
+        state
+            .fact_hits
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return Ok(Arc::clone(found));
     }
+    state
+        .fact_builds
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let Some(Term::Semantic(leaf)) = state.catalog.terms.get(term) else {
         return Err(module_error("rerail_facts term is not a predicate"));
     };

@@ -52,7 +52,13 @@ Peak RSS increased from 14.88 GiB to 19.95 GiB.
 
 The parallel profile assigned 785.2 CPU-seconds to AST matching.
 Parsing used 7.2 CPU-seconds, and regular expressions used 0.3 CPU-seconds.
-Scalar callbacks, virtual-table walks, environments, and facts now need separate counters.
+
+A detailed run counted 3.49 billion node rows and 2.70 billion scalar callbacks.
+It also created 100.5 million environments and built 7.23 million semantic-fact entries.
+The counter overhead increased wall time by 27 percent, so it is not the runtime result.
+
+Repeated node walks and scalar callbacks are now the measured primary bottleneck.
+Bulk structural relations are the next correction boundary.
 See `benchmark/history/ner-1562-sql-batching-milestones-2026-10-16.md`.
 
 ## Current execution topology
