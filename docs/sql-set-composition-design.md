@@ -158,18 +158,19 @@ The engine is selected at runtime (`engine: native|sql` in the evaluation option
 | G0 baseline | Native whole-tree time, CPU and digest on this branch (`benchmark/data-layer`), stable across 3 runs. |
 | G1 kernel | `kind`, `regex`, `pattern`, `all`/`any`/`not`, relations with every stop mode and `field`, non-recursive `matches`, `Call`, `nthChild`, `count`, `constraints`. A differential test generates random rules over fixture files in Python, TypeScript and PHP, and the two engines agree on ≥ 20,000 cases. |
 | G2 data-layer parity | Semantic terminals, three-valued logic, `each`, recursion and `select_when`. Whole-tree output is byte-identical to native with limits lifted. |
-| G3 speed | Whole-tree wall time ≤ 1.10 × native, alternating runs ×3, recorded with load average. Reached through the speed levers below, in their order. Each lever records the profile that motivated it and its before/after numbers. |
+| G3 speed | Whole-tree wall time ≤ 1.10 × native, alternating runs ×3, recorded with load average. Reached through the speed levers below, in their order. Each lever records the profile that motivated it and its before/after numbers. **Memory condition:** peak RSS on the 47-workspace benchmark stays under 1 GiB and close to native's 564 MiB, with a row cap per batch. A lever that raises the peak noticeably is rejected, even if it is faster. |
 | G4 production | Workspace and stateless paths on SQL; language conformance, pack and query-parity suites pass; budgets redefined (D-record); native only under `cfg(test)`; docs updated. |
 
 ## Speed levers (G3), in order
 
-Correct SQL composition comes first; levers are applied only after G2 parity. The first four are Jeremy's execution levers, which G1/G2 don't use yet.
+Correct SQL composition comes first; levers are applied only after G2 parity. Levers 3–5 are Jeremy's execution levers, which G1/G2 don't use yet. Levers 2 and 3 both attack the measured hotspot: in the G2 probe, frame row writes into SQLite B-trees plus index lookups were about 48% of the time.
 
 1. **Measure.** Profile the whole tree on SQL. Attribute the time to statements, frames, terminals and sub-rules.
-2. **Transducer pushdown.** Compile the dominant capture-free sub-rules into transducer `Program`s over tapes, run once per batch across many tapes. Jeremy's list of what transducers may take is same-file joins, conjunctions, disjunctions and simple counting. The `Program` interpreter becomes a production terminal behind a virtual table. A pushed-down sub-rule keeps its SQL lowering as its definition and as the differential oracle for the program.
-3. **Storage inside the virtual tables.** The `node` table and terminals read tapes from the content store and its arena caches directly: decompression, caching and pinning happen inside the tables, not in a restore step in the batch driver.
-4. **Selector-driven loads.** Clause selectors (root kinds, required text, anchor facts) decide which files and tapes a batch loads, through batched reads instead of given file lists.
-5. **Physical tuning.** Batch size, frame materialization, statement caching, `xBestIndex` costs.
+2. **Frames and nodes in Rust memory.** Frames live in Rust-owned columnar buffers exposed to SQL as virtual tables, instead of TEMP tables. The `node` table is served from the tape and anchor indexes (kind postings, parent links, subtree ranges) instead of being queried row by row. Each statement still reads and writes whole frames; only the storage changes, so semantics are unchanged and the differential tests keep checking it.
+3. **Transducer pushdown.** Compile the dominant capture-free sub-rules into transducer `Program`s over tapes, run once per batch across many tapes. Jeremy's list of what transducers may take is same-file joins, conjunctions, disjunctions and simple counting. The `Program` interpreter becomes a production terminal behind a virtual table. A pushed-down sub-rule keeps its SQL lowering as its definition and as the differential oracle for the program.
+4. **Storage inside the virtual tables.** The `node` table and terminals read tapes from the content store and its arena caches directly: decompression, caching and pinning happen inside the tables, not in a restore step in the batch driver.
+5. **Selector-driven loads.** Clause selectors (root kinds, required text, anchor facts) decide which files and tapes a batch loads, through batched reads instead of given file lists.
+6. **Physical tuning.** Batch size, statement caching, `xBestIndex` costs.
 
 Native shortcuts (moving a combinator into a native terminal) are not a lever: they would create a second way to add an operator. Parallel or GPU transducers across tapes stay deferred; workers keep native's 4 threads. Recursion over stored facts for multi-file analysis (coloring, call graphs) is out of scope for this experiment; `calls` stays a terminal.
 
