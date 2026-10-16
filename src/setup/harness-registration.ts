@@ -394,7 +394,7 @@ async function resolveWriteTarget(path: string): Promise<string> {
 }
 
 /** Backs up the file behind `path` (only when it already exists) and replaces it via temp file + rename beside it. */
-async function writeTextFile(path: string, text: string, existing: { exists: boolean; mode: number }): Promise<void> {
+export async function writeTextFile(path: string, text: string, existing: { exists: boolean; mode: number }): Promise<void> {
   const target = await resolveWriteTarget(path);
   const directory = dirname(target);
   await mkdir(directory, { recursive: true });

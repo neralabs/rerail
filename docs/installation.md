@@ -48,6 +48,14 @@ person says yes.
    version is installed: OMP and Pi run those from the session's own package,
    which may be older than `current`, and installing it would undo
    `/rerail-update`.
+   - **May Rerail read your sessions** — once per computer, before set-up
+     reads a repository or connects a coding agent, it asks whether Rerail may
+     read the sessions of the coding agents it connects to (what you ask, what
+     they do, the files they edit) to check them against your rules and show
+     their events in the dashboard. "Yes" (`--answer allow`) is kept in
+     `~/.rerail/consent.json` and never asked again; "No" (`--answer decline`)
+     stops set-up with nothing connected or started, and the next set-up asks
+     again. `rerail start` in a repository that is not set up asks it too.
 2. **Ask before reading** — set-up names the Git repository it ran in and asks
    whether it may read it. Outside a repository (or in your home folder) it
    asks which folder to start with instead; `--repo <folder>` names one, which
@@ -102,8 +110,22 @@ person says yes.
    repository and checkout). The daemon used is the active install's, which
    serves every repository; one from another version or on another port is
    replaced (`--port` picks the port). The browser opens unless
-   `BROWSER=none`, the session is over SSH, or Linux has no display. Add
-   `~/.rerail/bin` to `PATH` (the Windows launcher is `rerail.cmd`).
+   `BROWSER=none`, the session is over SSH, or Linux has no display.
+
+Every set-up run also puts `~/.rerail/bin` (the Windows launcher is
+`rerail.cmd`) on `PATH`, so `rerail` runs from a new terminal. On macOS and
+Linux it appends a block between `# >>> rerail >>>` and `# <<< rerail <<<` to
+the startup file `$SHELL` reads: `$ZDOTDIR/.zshrc` (else `~/.zshrc`) for zsh;
+`~/.bashrc` and the first of `~/.bash_profile`, `~/.bash_login`,
+`~/.profile` that exists (else `~/.profile`) for bash; its own
+`~/.config/fish/conf.d/rerail.fish` for fish; `~/.profile` otherwise. The block
+adds the directory only when `PATH` lacks it, so a file sourced twice adds it
+once. On Windows it appends the directory to the user `Path`
+(`HKCU\Environment`), keeping that value's registry kind. Set-up says what it
+changed, and changes nothing when the running `PATH` has the directory
+already, when the entry is in place, or with `RERAIL_MODIFY_PATH=0`; a block
+written for another Rerail home is replaced. A file it changes gets the same
+`<file>.<timestamp>.bak` as coding agent config.
 
 "Skip for now" (no repository) connects the coding agents found and starts
 Rerail nowhere. Set-up run again in a repository that is set up never asks
@@ -221,7 +243,7 @@ instead of a prompt waiting on input.
 **In a coding agent's own UI**, `--json` on `rerail setup` and on `rerail
 start` prints one JSON object per run and nothing else on stdout:
 `{ step, screen, question }` (`SetupStep` in `src/setup-step.ts`). `step` is
-`read-repo`, `confirm-packs` or `no-repo` at a question, else `done`,
+`sessions`, `read-repo`, `confirm-packs` or `no-repo` at a question, else `done`,
 `stopped`, or `error` (exit 1); `screen` is plain text for the person; each of
 the question's options carries its answer key, label, `detail`, the arguments
 that give it (`next.args`, starting with `setup` and carrying `--json`), and,
@@ -269,8 +291,8 @@ expired; sign in again with `npm login`. Rerail redacts `_authToken` and
 
 ## After setup
 
-The following commands describe the managed installation, once `~/.rerail/bin`
-is on `PATH`:
+The following commands describe the managed installation, from a terminal
+opened after set-up put `~/.rerail/bin` on `PATH`:
 
 ```sh
 rerail start             # start Rerail in this checkout (first time: runs set-up's questions for the repository)
@@ -473,8 +495,9 @@ daemon and moves `rerail.sqlite` (with its `-wal`/`-shm`) into
 exists), so your rules and history are kept. Restart open harness sessions
 afterwards: their loaded hooks point at files that are about to go.
 
-Then delete the Rerail home (`~/.rerail`, or `$RERAIL_HOME`) and the content
-store directory (`~/.cache/rerail`), and remove `~/.rerail/bin` from `PATH`.
+It also takes the `PATH` entry set-up added out of every shell startup file
+(or the Windows user `Path`). Then delete the Rerail home (`~/.rerail`, or
+`$RERAIL_HOME`) and the content store directory (`~/.cache/rerail`).
 
 ## Developing from a checkout
 

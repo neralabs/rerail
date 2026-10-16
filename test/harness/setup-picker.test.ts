@@ -52,6 +52,9 @@ async function machine(): Promise<Machine> {
   mkdirSync(join(packageRoot, "dist"), { recursive: true });
   writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
   vi.stubEnv("RERAIL_HOME", home);
+  // Past set-up's one approval that Rerail may read sessions; `setup-json.test.ts` asks it.
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, "consent.json"), JSON.stringify({ sessions: { approvedAt: "2026-10-16T00:00:00.000Z" } }));
   const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0" });
   await updater.activateRoot(packageRoot);
   return { root, repo: gitRepository(join(root, "acme-api")), databasePath: join(home, "rerail.sqlite"), context: { home, packageRoot, updater } };
