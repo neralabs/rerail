@@ -137,15 +137,16 @@ jobs:
           restore-keys: |
             port-readiness-corpus-${{ matrix.pack }}-
 
-      # Each result is keyed by everything the rule's verdict depends on, so a stale entry is never read.
+      # Each result is keyed by everything the rule's verdict depends on, so a stale entry is never read. The `-run-`
+      # after the tool and shard keeps eslint-plugin-react's prefix from matching eslint-plugin-react-hooks' entries.
       - name: Restore earlier rule results
         if: ${{ !inputs.no-cache }}
         uses: actions/cache/restore@v6
         with:
           path: .rerail/port-readiness/results
-          key: port-readiness-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: port-readiness-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-run-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            port-readiness-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-
+            port-readiness-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-run-
 
       - id: gates
         name: Run the gates
@@ -159,6 +160,9 @@ jobs:
           npm run port-readiness -- --pack "$PACK" --tool "$TOOL" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/gates" $REFRESH
           echo "status=$?" >> "$GITHUB_OUTPUT"
 
+      # Pull requests restore main's corpus (by exact key, or by prefix when the pull request changes a pin) and never
+      # save their own: it would duplicate main's unchanged corpora (hundreds of MB) into the pull request's own cache
+      # scope, where only its own later runs could use it.
       - name: Save the corpus and upstream's test files
         if: ${{ always() && github.event_name != 'pull_request' }}
         uses: actions/cache/save@v6
@@ -176,7 +180,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: .rerail/port-readiness/results
-          key: port-readiness-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: port-readiness-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-run-${{ github.run_id }}-${{ github.run_attempt }}
         continue-on-error: true
 
       - name: Upload the report
