@@ -101,7 +101,8 @@ async function fetch(args: string[]): Promise<number> {
   const cacheRoot = resolve(typeof flags["--cache"] === "string" ? flags["--cache"] : DEFAULT_CACHE_ROOT);
   const selected = gatedToolPacks(root).filter(({ pack, tool }) => (flags["--pack"] === undefined || flags["--pack"] === pack) && (flags["--tool"] === undefined || flags["--tool"] === tool));
   if (selected.length === 0) throw new Error(`no gated tool-pack matches${flags["--pack"] === undefined ? "" : ` --pack ${String(flags["--pack"])}`}${flags["--tool"] === undefined ? "" : ` --tool ${String(flags["--tool"])}`}`);
-  // The repository and the token come from the job's environment; locally, an anonymous read of a public release works.
+  // The repository and the token come from the job's environment. Locally the attestation check needs a signed-in
+  // GitHub CLI or GITHUB_TOKEN, even for a public release; only the hand-uploaded LIFTED_ASSETS skip it.
   const options = {
     ...(typeof flags["--repository"] === "string" ? { repository: flags["--repository"] } : process.env.GITHUB_REPOSITORY === undefined ? {} : { repository: process.env.GITHUB_REPOSITORY }),
     ...(process.env.GITHUB_TOKEN === undefined ? {} : { token: process.env.GITHUB_TOKEN }),

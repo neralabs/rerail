@@ -259,11 +259,12 @@ jobs:
     name: Source pack validation
     needs: [changes, build]
     if: needs.changes.outputs.gates != 'false'
-    # The report job posts the results as a pull request comment.
+    # The report job posts the results as a pull request comment; the gates read the recordings' attestations.
     permissions:
       contents: read
       issues: write
       pull-requests: write
+      attestations: read
     uses: ./.github/workflows/rule-gates.yml
     with:
       base: ${{ github.event.pull_request.base.sha || github.event.before }}

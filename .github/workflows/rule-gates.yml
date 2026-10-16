@@ -33,6 +33,10 @@ jobs:
     # An uncached leg judges every rule again: javascript/eslint (121 rules, 11,368 upstream cases) takes 35 min on a
     # laptop, as nera-rule-validation does, and Ruff took 4.5 times longer on a cold CI runner than on a laptop.
     timeout-minutes: 180
+    # Reading the recordings' attestations, which the fetch below checks (recording/fetch.ts). The callers grant the same.
+    permissions:
+      contents: read
+      attestations: read
     strategy:
       fail-fast: false
       matrix:
@@ -135,7 +139,8 @@ jobs:
 
       # The recordings are not in the tree (docs/rule-gates.md): this downloads the two a shard's own tool-pack needs
       # from the release, and nothing else, and fails when the sha256 is not the one the lock names — which is how a
-      # pull request that hand-edits a lock to point at its own recording fails here.
+      # pull request that hand-edits a lock to point at its own recording fails here — or when rule-gates-record.yml,
+      # run from main, did not attest it.
       - name: Fetch this tool-pack's recording
         env:
           PACK: ${{ matrix.pack }}

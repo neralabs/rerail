@@ -158,7 +158,8 @@ format, the pins it was made at and the release that holds it.
 Release assets rather than Git LFS, because every public clone and every fork would draw on the repository's LFS
 bandwidth quota and going over it blocks LFS for the whole repository; rather than Actions artifacts, because those
 expire after 90 days and a commit must stay judgeable. An asset is named `<pack>-<tool>-<stem>-<sha256>.json.gz`, so
-it is write-once: the same recording is the same asset, and nothing a commit already names is ever replaced.
+it is write-once: the same recording is the same asset, and nothing a commit already names is ever replaced. A lock
+naming its asset any other way is refused, so it cannot point at another tool-pack's recording.
 
 ```sh
 npm run gates -- fetch --pack python --tool ruff   # download what this commit's lock names, into .rerail/gates/recordings/
@@ -167,6 +168,13 @@ npm run gates -- fetch --pack python --tool ruff   # download what this commit's
 Each gate leg fetches its own tool-pack and nothing else, and a job that runs no gate fetches nothing. A recording is
 cached by its own digest, so a re-run on the same commit downloads nothing, and a download whose sha256 is not the
 one the lock names fails the leg — which is how a pull request that points its lock at a recording of its own fails.
+
+A matching digest only says the asset is the one the lock names. Anyone who can write to the repository, and any
+workflow with a write token, can upload to the release, so the fetch also requires the GitHub artifact attestation
+that `rule-gates-record.yml` makes when it records from `main` (`gh attestation verify`, so fetching needs the GitHub
+CLI, signed in or given `GH_TOKEN`/`GITHUB_TOKEN`, even once the repository is public). The only assets taken without
+one are those uploaded by hand when the recordings left the tree, before that workflow could run; `recording/fetch.ts`
+lists them, and an entry goes when its tool-pack is next recorded.
 
 ### Recording
 
@@ -189,20 +197,22 @@ recording with the `record-gates` label, or by hand with a pull request and the 
 records **only that commit**: if the pull request has moved on since, it fails rather than record the newer push. The
 recorder and the runtimes come **from the base branch**, and only the pull request's `packs/` and rule list from its
 head; a fork may not change the upstream its `gates.yaml` pins (repository, commit, runtime, tests), only
-`popularity` and `known_gaps`.
+`popularity` and `known_gaps`. Only a run from `main`, for `main` or a pull request into `main`, is attested, and the
+gates take no other recording, so `authorize` refuses any other before a leg records: one started by hand from another
+branch, and a stacked pull request, which is recorded once it targets `main`.
 
 The run has three jobs, so nothing a pull request chose runs where a write token is. `authorize` checks who started
 it and fixes the commits, the tool-packs and the release. One read-only `record` leg per tool-pack runs the recorder
 and uploads what it wrote as an artifact. `publish`, the only job with a write token, runs no recorder, node or npm: it
-checks every path and digest in those artifacts, uploads the recordings, and commits every leg's lock, case sources and
-`UPSTREAM.md` rows as one commit on the recorded head, pushed once:
+checks every path and digest in those artifacts, attests the recordings it checked, uploads them, and commits every
+leg's lock, case sources and `UPSTREAM.md` rows as one commit on the recorded head, pushed once:
 
 - a pull request from a branch here gets the commit on its branch, as a fast-forward;
 - a fork's goes to `gate-recordings/pr-<n>` here, since the default token cannot write to a fork, and a comment says
   to merge it;
-- a run started by hand with no pull request records the branch it was started on, pushes
-  `gate-recordings/run-<id>`, and opens a pull request into that branch: a recording never reaches a protected branch
-  without review. (GitHub must let Actions create pull requests, under Settings → Actions → General.)
+- a run started by hand from `main` with no pull request records `main`, pushes `gate-recordings/run-<id>`, and opens
+  a pull request into `main`: a recording never reaches a protected branch without review. (GitHub must let Actions
+  create pull requests, under Settings → Actions → General.)
 
 A push or pull request made with the workflow token starts no workflow, so CI runs on the recording commit once
 someone pushes to the branch or closes and reopens the pull request.

@@ -6,15 +6,16 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
 
-import { fetchToolPackRecordings } from "../../../conformance/gates/recording/fetch.js";
+import { PACKAGE_ROOT } from "../../../src/engine/index.js";
+import { fetchToolPackRecordings, LIFTED_ASSETS } from "../../../conformance/gates/recording/fetch.js";
 import { diffRecordings, renderRecordingChanges, type RecordedPair } from "../../../conformance/gates/recording/diff.js";
 import {
-  assetName, buildRecordingLock, gzipRecording, readCachedRecording, recordingFromAsset, recordingLockSchema,
+  assetName, buildRecordingLock, gzipRecording, readCachedRecording, readRecordingLock, recordingFromAsset, recordingLockSchema,
   recordingLockText, writeCachedRecording, RECORDING_LOCK,
 } from "../../../conformance/gates/recording/store.js";
 import { gatesCorpusSchema, gatesRecordingSchema, GATES_CORPUS_FORMAT, GATES_RECORDING_FORMAT, recordingText } from "../../../conformance/gates/recording/schema.js";
@@ -101,12 +102,19 @@ test("a fetch caches by digest, and a second fetch on the same commit downloads 
       downloads += 1;
       return gzipRecording(asset.asset === lock.files["gates.json"].asset ? TEXTS["gates.json"] : TEXTS["gates-corpus.json"]);
     };
-    const first = await fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download });
+    // Every downloaded recording's attestation is checked, on the text whose sha256 the lock names.
+    const verified: string[] = [];
+    const verify = async (text: string, asset: { sha256: string }) => {
+      assert.equal(digest(text), asset.sha256);
+      verified.push(asset.sha256);
+    };
+    const first = await fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify });
     assert.deepEqual(first.map((entry) => entry.cached), [false, false]);
     assert.equal(downloads, 2);
+    assert.deepEqual(verified, [lock.files["gates.json"].sha256, lock.files["gates-corpus.json"].sha256]);
     assert.equal(readCachedRecording(cacheRoot, lock.files["gates.json"].sha256), TEXTS["gates.json"]);
 
-    const second = await fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download });
+    const second = await fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify });
     assert.deepEqual(second.map((entry) => entry.cached), [true, true]);
     assert.equal(downloads, 2);
   } finally {
@@ -146,6 +154,76 @@ test("a hand-edited manifest naming a hash the release does not hold fails, and 
   } finally {
     cleanup();
   }
+});
+
+test("an asset with the right bytes that the record workflow did not attest fails the fetch, and is not cached", async () => {
+  const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
+  try {
+    // What anyone who can write here could upload by hand: the digest the lock names, and no attestation.
+    const download = async (asset: { asset: string }) => gzipRecording(asset.asset === lock.files["gates.json"].asset ? TEXTS["gates.json"] : TEXTS["gates-corpus.json"]);
+    const verify = async () => {
+      throw new Error("no attestation from rule-gates-record.yml");
+    };
+    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify }), /no attestation from rule-gates-record\.yml/u);
+    assert.equal(existsSync(join(cacheRoot, "recordings")), false);
+  } finally {
+    cleanup();
+  }
+});
+
+test("an asset uploaded by hand when the recordings were lifted is taken without an attestation, and only that one", async () => {
+  const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
+  try {
+    const download = async (asset: { asset: string }) => gzipRecording(asset.asset === lock.files["gates.json"].asset ? TEXTS["gates.json"] : TEXTS["gates-corpus.json"]);
+    const verified: string[] = [];
+    const verify = async (_text: string, asset: { asset: string }) => {
+      verified.push(asset.asset);
+      throw new Error("no attestation from rule-gates-record.yml");
+    };
+    // Only the recording is lifted: it is cached unverified, and the corpus beside it still has to be attested.
+    const lifted = new Set([lock.files["gates.json"].asset]);
+    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify, lifted }), /no attestation from rule-gates-record\.yml/u);
+    assert.deepEqual(verified, [lock.files["gates-corpus.json"].asset]);
+    assert.equal(readCachedRecording(cacheRoot, lock.files["gates.json"].sha256), TEXTS["gates.json"]);
+    assert.equal(readCachedRecording(cacheRoot, lock.files["gates-corpus.json"].sha256), undefined);
+  } finally {
+    cleanup();
+  }
+});
+
+test("a lock that names an asset other than its own tool-pack's recording of that digest is refused before any download", async () => {
+  const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
+  try {
+    // The same bytes under another tool-pack's name: the digest matches, so only the name gives it away.
+    const misnamed = { ...lock, files: { ...lock.files, "gates.json": { ...lock.files["gates.json"], asset: assetName("demo", "ruff", "gates.json", lock.files["gates.json"].sha256) } } };
+    writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(misnamed));
+    let downloads = 0;
+    const download = async () => {
+      downloads += 1;
+      return gzipRecording(TEXTS["gates.json"]);
+    };
+    await assert.rejects(
+      fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify: async () => undefined }),
+      /\/files\/gates\.json\/asset is demo-ruff-gates-[0-9a-f]{64}\.json\.gz, and this tool-pack's recording of sha256 [0-9a-f]{12} is demo-bandit-gates-[0-9a-f]{64}\.json\.gz/u,
+    );
+    assert.equal(downloads, 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("every asset taken without an attestation is one a committed lock still names", () => {
+  // The hand-uploaded assets the recordings were lifted into: an entry whose tool-pack has been recorded since must go.
+  const named = new Set<string>();
+  for (const pack of readdirSync(join(PACKAGE_ROOT, "packs"))) {
+    const upstream = join(PACKAGE_ROOT, "packs", pack, "upstream");
+    if (!existsSync(upstream)) continue;
+    for (const tool of readdirSync(upstream)) {
+      if (!existsSync(join(upstream, tool, RECORDING_LOCK))) continue;
+      for (const locked of Object.values(readRecordingLock(PACKAGE_ROOT, pack, tool).files)) named.add(locked.asset);
+    }
+  }
+  assert.deepEqual([...LIFTED_ASSETS].filter((asset) => !named.has(asset)), []);
 });
 
 test("a recording whose cached bytes were tampered with reads as absent, not as a recording", async () => {

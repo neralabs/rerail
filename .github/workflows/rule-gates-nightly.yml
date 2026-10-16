@@ -102,8 +102,10 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    # attestations: read is for the fetch, which checks each recording's attestation (recording/fetch.ts).
     permissions:
       contents: read
+      attestations: read
     strategy:
       fail-fast: false
       # rule-gates-record.yml's matrix: every gated tool-pack.
@@ -177,11 +179,13 @@ jobs:
   gates:
     name: Source pack validation, uncached
     needs: build
-    # The called report job asks for these to post on pull requests; a scheduled run posts nothing.
+    # The called report job asks for these to post on pull requests; a scheduled run posts nothing. The called gates
+    # job reads the recordings' attestations.
     permissions:
       contents: read
       issues: write
       pull-requests: write
+      attestations: read
     uses: ./.github/workflows/rule-gates.yml
     with:
       no-cache: true

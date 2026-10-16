@@ -9,8 +9,12 @@ name: Rule gates (record)
 # Started two ways, both by someone who can write here:
 #   * the `record-gates` label on a pull request (removed again when the run starts, so a second label re-runs it),
 #     which records the head commit the label was put on;
-#   * workflow_dispatch, with a pack and a tool (empty for every one), and either a pull request and the head sha you
-#     reviewed, or neither, to record the branch the run was started on.
+#   * workflow_dispatch from main, with a pack and a tool (empty for every one), and either a pull request and the head
+#     sha you reviewed, or neither, to record main itself.
+# Only a run from main, for main or a pull request into main, records: rule-gates.yml takes a recording only with the
+# attestation publish makes, which the fetch checks was made by this workflow run from refs/heads/main
+# (recording/fetch.ts). authorize refuses any other run before a leg records — one dispatched from another branch, and
+# a stacked pull request, which is recorded once it targets main.
 # rule-gates-nightly.yml checks for drift in a read-only job of its own and does not call this workflow.
 #
 # Three jobs, so that nothing a pull request chose runs where a write token is:
@@ -20,14 +24,14 @@ name: Rule gates (record)
 #              uploads what the recorder wrote (the lock, the case sources it copied, the rows it added to UPSTREAM.md,
 #              the two recordings) as an artifact;
 #   publish    the only job with a write token. It runs no recorder, node or npm, and reads every leg's artifact as
-#              data: it checks each path and digest, uploads the recordings, and commits every leg's files as one
-#              commit on the recorded head, pushed once.
+#              data: it checks each path and digest, attests the recordings, uploads them, and commits every leg's
+#              files as one commit on the recorded head, pushed once.
 #
 # Where that commit goes: a pull request from a branch here gets it on that branch, as a fast-forward. A fork's goes to
 # `gate-recordings/pr-<n>` here, with a comment saying to merge it: the default token cannot write to a fork, and a
 # token that could would hand a fork pull request write access to its own base. A run with no pull request pushes
-# `gate-recordings/run-<id>` and opens a pull request into the branch it recorded, so a recording never reaches a
-# protected branch without review. A push or pull request made with the workflow token starts no workflow, so CI runs
+# `gate-recordings/run-<id>` and opens a pull request into main, so a recording never reaches a protected branch
+# without review. A push or pull request made with the workflow token starts no workflow, so CI runs
 # on the new commit once someone pushes to the branch or closes and reopens the pull request.
 
 on:
@@ -42,7 +46,7 @@ on:
         type: string
         default: ""
       pr:
-        description: The pull request to record for; empty records the branch this run is started on, through a new pull request.
+        description: The pull request into main to record for; empty records main, through a new pull request. Run it from main.
         type: string
         default: ""
       sha:
@@ -136,6 +140,12 @@ jobs:
             fork=false
           fi
           git check-ref-format "refs/heads/$base" || fail "the base branch name is not one git accepts"
+          # The gates' fetch takes a recording only with this workflow's attestation from refs/heads/main, the ref the
+          # run itself started from (under the label, the pull request's base); the base is the recorder that runs.
+          # Anything else would be uploaded and committed only for every gate leg to refuse it.
+          if [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$base" != "main" ]; then
+            fail "this run is from $GITHUB_REF for base $base: only a run from refs/heads/main, for main or a pull request into main, is attested, and the gates refuse an unattested recording"
+          fi
           # Every leg records against this one base commit, so they all run the same recorder whatever lands meanwhile.
           {
             echo "pr=$pr"
@@ -207,8 +217,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     # Read-only: this job runs upstream's code and reads the pull request's packs/, so the write token is publish's.
+    # attestations: read is for the fetch of the recording the committed lock names, which checks its attestation.
     permissions:
       contents: read
+      attestations: read
     strategy:
       fail-fast: false
       matrix:
@@ -399,9 +411,12 @@ jobs:
     if: ${{ !cancelled() && needs.record.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # id-token and attestations: write sign the recordings' attestation, which the gates' fetch requires of every asset.
     permissions:
       contents: write
       pull-requests: write
+      id-token: write
+      attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -431,6 +446,7 @@ jobs:
       # Every leg's lock must be the recorder's, for its tool-pack, naming the release authorize chose and two assets
       # named for their own sha256, which the files must decompress to. Every file to commit must be the lock, a new
       # case source under the tool-pack's fixtures/, or an UPSTREAM.md the tree already has; nothing else is taken.
+      # Each checked recording's sha256 and asset name go to subjects.txt, for the attestation below.
       - name: Check the recordings and build the commit
         id: commit
         run: |
@@ -446,6 +462,7 @@ jobs:
           export GIT_INDEX_FILE="$RUNNER_TEMP/recording.index"
           git read-tree "$parent"
           : > "$RUNNER_TEMP/assets.txt"
+          : > "$RUNNER_TEMP/subjects.txt"
           declare -A staged=()
           recorded=()
           while IFS=' ' read -r pack tool; do
@@ -466,6 +483,7 @@ jobs:
               [ "$(gzip -dc -- "$file" | sha256sum | cut -d ' ' -f 1)" = "$digest" ] ||
                 fail "$label: $asset does not decompress to the sha256 its name gives"
               printf '%s\n' "$file" >> "$RUNNER_TEMP/assets.txt"
+              printf '%s  %s\n' "$digest" "$asset" >> "$RUNNER_TEMP/subjects.txt"
             done < <(jq -r '.files[] | "\(.asset) \(.sha256)"' "$lock")
 
             [ -f "$dir/changed.list" ] || fail "$label: its record leg left no list of the files it wrote"
@@ -518,6 +536,16 @@ jobs:
             -m "Recorded by rule-gates-record.yml (run $GITHUB_RUN_ID). The recordings are assets of the $RELEASE release; this commit holds the locks that name them, the case sources the recorder copied, and their UPSTREAM.md rows.")"
           git diff --stat "$parent" "$commit"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      # The gates' fetch takes an asset only with this attestation (recording/fetch.ts): anyone who can write here, and
+      # any workflow with a write token, can upload to the release, so a digest alone does not say the recorder made it.
+      # The subjects are the recordings' own sha256s, of the JSON the lock names, so an asset already in the release is
+      # covered too, and the signer is this workflow at the run's ref, which authorize required to be refs/heads/main.
+      # Made before the upload and the push, so a failed attestation leaves no lock naming an asset the gates refuse.
+      - name: Attest the recordings
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: ${{ runner.temp }}/subjects.txt
 
       # Content-addressed, so an upload is write-once: an asset whose name is already in the release holds exactly
       # these bytes and is left alone. Uploaded before the commit is pushed, so no lock names an asset that is not there.

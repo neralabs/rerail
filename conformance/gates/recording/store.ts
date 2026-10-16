@@ -54,7 +54,10 @@ const lockedFileSchema = z.strictObject({
   size: z.number().int().positive(),
   /** The recording's own `format`, checked after the download so a v2 reader never parses a v3 recording. */
   format: z.enum([GATES_RECORDING_FORMAT, GATES_CORPUS_FORMAT]),
-  /** The asset's name in the release: `<pack>-<tool>-<stem>-<sha256>.json.gz`. */
+  /**
+   * The asset's name in the release: `<pack>-<tool>-<stem>-<sha256>.json.gz`. readRecordingLock refuses any other,
+   * so a lock cannot name another tool-pack's recording, or an asset under a name of its own choosing.
+   */
   asset: nonEmpty,
 });
 
@@ -102,6 +105,10 @@ export function readRecordingLock(root: string, pack: string, tool: string): Rec
   if (!existsSync(path)) throw new Error(`packs/${pack}/upstream/${tool}/${RECORDING_LOCK} is missing: run npm run gates:record -- --pack ${pack} --tool ${tool}`);
   const parsed = recordingLockSchema.safeParse(JSON.parse(readFileSync(path, "utf8")));
   if (!parsed.success) throw new Error(`packs/${pack}/upstream/${tool}/${RECORDING_LOCK}: ${parsed.error.issues.slice(0, 5).map((issue) => `/${issue.path.map(String).join("/")}: ${issue.message}`).join("; ")}`);
+  for (const [file, locked] of Object.entries(parsed.data.files)) {
+    const expected = assetName(pack, tool, file, locked.sha256);
+    if (locked.asset !== expected) throw new Error(`packs/${pack}/upstream/${tool}/${RECORDING_LOCK}: /files/${file}/asset is ${locked.asset}, and this tool-pack's recording of sha256 ${locked.sha256.slice(0, 12)} is ${expected}`);
+  }
   return parsed.data;
 }
 
