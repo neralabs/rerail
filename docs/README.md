@@ -16,6 +16,9 @@
 - [pack-format.md](pack-format.md): the pack layout and its validation contract
 - [language-packs.md](language-packs.md): the language registry, statuses, and how to start a pack
 
+## Release
+- [release-plan.md](release-plan.md): the current release checklist: packs on npm, install from scratch, recommended packs
+
 ## Repository
 - [repository-structure.md](repository-structure.md): the layout rules and the structure gate
   (`npm run check:structure`) that enforces them
