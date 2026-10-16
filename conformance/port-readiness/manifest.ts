@@ -156,6 +156,12 @@ export const gatesManifestSchema = z.strictObject({
     pack: z.string().regex(/^[a-z0-9-]+$/u),
     /** The upstream project's directory under packs/<pack>/licenses/, which keeps its LICENSE and UPSTREAM.md. */
     project: z.string().regex(/^[A-Za-z0-9._-]+$/u),
+    /**
+     * The file types rerail's ports of this tool cover, when the pack deliberately covers fewer than upstream lints:
+     * `loads`'s in-scope check then asks for these alone. Each must be a type upstream lints (the `in-scope-narrowing`
+     * tool-pack check). Absent, the ports must cover every type upstream lints.
+     */
+    in_scope: unique(z.string().regex(/^\.[a-z]+$/u)).min(1).optional(),
   }),
   upstream: z.strictObject({
     name: nonEmpty,

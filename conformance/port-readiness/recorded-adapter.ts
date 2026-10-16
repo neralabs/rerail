@@ -164,6 +164,14 @@ export function readRecordedInputs(root: string, cacheRoot: string, pack: string
  * must agree with it: a pull request whose pins moved is stale on its own commit, before any byte is fetched, and a
  * lock that disagrees with the recording it names means the two were written by different runs.
  */
+/**
+ * `loads`'s in-scope samples: upstream's (one example file per type its approved configuration lints), narrowed to the
+ * types gates.yaml's `rerail.in_scope` names when the pack deliberately covers fewer.
+ */
+export function inScopeSamples(samples: readonly string[], inScope: readonly string[] | undefined): string[] {
+  return inScope === undefined ? [...samples] : samples.filter((sample) => inScope.includes(extname(sample)));
+}
+
 export function toolPackChecks(inputs: RecordedInputs, liftedCaseSources: ReadonlyMap<string, string> = LIFTED_CASE_SOURCES): Check[] {
   const { root, manifest, lock, recording, corpus, tools, names } = inputs;
   const pack = manifest.rerail.pack;
@@ -235,6 +243,20 @@ export function toolPackChecks(inputs: RecordedInputs, liftedCaseSources: Readon
   }
   const liftedNote = undigested.length === 0 ? "" : ` (${undigested.length} of them pinned together: ${RECORDING_FILE} was uploaded by hand before cases carried a sha256)`;
   checks.push({ id: "case-sources", ok: sourceMismatches.length === 0, detail: sourceMismatches.length === 0 ? `${recordedDigests.size} committed case source(s) are the bytes upstream's answers were recorded on${liftedNote}` : `${sourceMismatches.length} case source(s) differ: ${sourceMismatches.slice(0, 3).join("; ")}: ${stale}` });
+
+  // A narrowing may only leave types out: a type upstream does not lint would hold the ports to nothing upstream checks.
+  const inScope = manifest.rerail.in_scope;
+  if (inScope !== undefined) {
+    const linted = new Set(recording.inScopeSamples.map((sample) => extname(sample)));
+    const unlinted = inScope.filter((type) => !linted.has(type));
+    checks.push({
+      id: "in-scope-narrowing",
+      ok: unlinted.length === 0,
+      detail: unlinted.length === 0
+        ? `gates.yaml's rerail.in_scope holds the ports to ${inScope.join(", ")} of the ${[...linted].join(", ")} upstream lints`
+        : `gates.yaml's rerail.in_scope names ${unlinted.join(", ")}, which upstream does not lint (it lints ${[...linted].join(", ")})`,
+    });
+  }
 
   const absent = new Set(recording.absent);
   const unrecorded = [...new Set(names)].filter((name) => !(name in recording.rules) && !absent.has(name)).sort();
@@ -324,7 +346,7 @@ export function createRecordedAdapter(
     },
     keywords: new Set(recording.keywords),
     commentVocabulary: new Set(recording.commentVocabulary),
-    inScopeSamples: recording.inScopeSamples,
+    inScopeSamples: inScopeSamples(recording.inScopeSamples, manifest.rerail.in_scope),
     cases(name): UpstreamCase[] {
       return (recording.rules[name]?.cases ?? []).map((testCase) => ({
         fixture: testCase.fixture,

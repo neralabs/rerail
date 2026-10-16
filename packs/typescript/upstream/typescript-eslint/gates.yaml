@@ -4,6 +4,14 @@ adapter: eslint
 rerail:
   pack: typescript
   project: typescript-eslint
+  # Since #52 (NER-1868) a typescript rule runs on TypeScript files only, and JavaScript files are the javascript pack's.
+  # typescript-eslint's approved configurations also lint .js, .mjs and .cjs, so the ports are held to the TypeScript
+  # types alone. Upstream's tests have no JavaScript file, and the pack's corpus excludes them.
+  in_scope:
+    - .ts
+    - .mts
+    - .cts
+    - .tsx
 upstream:
   name: typescript-eslint/typescript-eslint plugin rules
   repository: https://github.com/typescript-eslint/typescript-eslint
