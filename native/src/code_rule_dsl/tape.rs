@@ -1410,15 +1410,27 @@ impl TapeDoc {
         (prev != NONE).then_some(prev)
     }
 
-    /// The whole source, for the Metal backend's concatenated buffer.
-    #[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
+    /// The whole source, for packed CPU and Metal backends.
     pub(super) fn transducer_source(&self) -> &[u8] {
         self.source.as_bytes()
     }
 
     /// A node's source slice. Restoring the tape validates every span as a UTF-8 boundary.
+    pub(super) fn transducer_text(&self, node: u32) -> &[u8] {
+        &self.source.as_bytes()[self.transducer_span(node)]
+    }
+
     pub(super) fn transducer_text_str(&self, node: u32) -> &str {
         &self.source[self.transducer_span(node)]
+    }
+
+    /// Version 4 has no supertype table.
+    pub(super) fn transducer_supertypes(&self) -> impl Iterator<Item = (u32, u16)> {
+        std::iter::empty()
+    }
+
+    pub(super) fn transducer_has_supertype(&self, _node: u32, _kind: u16) -> bool {
+        false
     }
 
     pub(super) fn source_text(&self) -> &str {

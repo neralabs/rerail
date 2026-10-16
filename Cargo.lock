@@ -2668,6 +2668,7 @@ dependencies = [
  "parking_lot",
  "rayon",
  "regex",
+ "regex-automata",
  "regex-syntax",
  "rusqlite",
  "rustc-hash",
