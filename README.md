@@ -525,8 +525,9 @@ to exclude or split the file, and is not counted as a rule that ran out. A file
 every rule failed on is a **blind file**: it is listed once, as one failure
 marked `blind`, never cut from the list, and the audit record reports
 `blindFiles` and `blindFileCount`. A file blind for its work (`budget`) is a
-gap; one blind for its syntax (`syntax`) fails the audit, as a rule kept out by
-syntax errors does. A scan whose only failures are coverage gaps completes,
+gap; one blind for its syntax (`syntax`) is a file read in part, as a rule kept
+out by syntax errors is: a repository audit lists it and completes, a
+touched-files scan fails on it. A scan whose only failures are gaps completes,
 `rerail scan` exits `0`, and the session footer says how many files were not
 checked, how many rules ran out of work and how many the file's work stopped
 instead of "audit failed". A rule that finds more than `maxWitnesses` on a file

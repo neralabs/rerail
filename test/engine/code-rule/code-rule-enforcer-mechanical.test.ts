@@ -663,8 +663,8 @@ describe("mechanical code rule regressions", () => {
       expect(result?.failures).toContainEqual(expect.objectContaining({ path: "web/binary.ts", code: "source-incomplete" }));
       expect(result?.failures).toContainEqual(expect.objectContaining({ path: "web/broken00.ts", code: "source-partial" }));
       // 26 files were read in part and 20 are listed: the rest are counted, which does not fail a completed audit.
-      expect(result?.failures?.at(-1)).toEqual({ clauseId: "scan", code: "budget-exceeded", stage: "scan", message: "6 further failures not recorded" });
-      expect(result?.failures).toHaveLength(21);
+      expect(result?.failures).toHaveLength(20);
+      expect(result?.unlistedFailureCount).toBe(6);
     } finally { await enforcer.close(); }
   });
 

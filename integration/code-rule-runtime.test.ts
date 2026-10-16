@@ -421,7 +421,7 @@ describe("Rerail code rule runtime", () => {
     }
   }, 60_000);
 
-  it("fails an audit where a file's syntax kept every rule out, listing the file once", async () => {
+  it("lists once a file whose syntax kept every rule out: a repository audit completes, a touched-files scan fails", async () => {
     const root = await rootDirectory();
     await writeFile(join(root, "api", "broken.py"), "print(3)\ndef (:\n");
     await writeFile(join(root, "api", "route.py"), "print('checked')\n");
@@ -446,11 +446,14 @@ describe("Rerail code rule runtime", () => {
     try {
       await enforcer.openWorkspace("syntax-blind");
       await enforcer.audit("syntax-blind", { scope: "repository", mode: "log" });
+      await enforcer.audit("syntax-blind", { scope: "touched-files", mode: "log", paths: ["api/broken.py"] });
+      const blind = [expect.objectContaining({ path: "api/broken.py", code: "source-incomplete", blind: "syntax" })];
       expect(audits[0]?.result).toMatchObject({
-        status: "failed",
-        failures: [expect.objectContaining({ path: "api/broken.py", code: "source-incomplete", blind: "syntax" })],
+        status: "completed",
+        failures: blind,
         violations: [expect.objectContaining({ path: "api/route.py", code: "CALL" })],
       });
+      expect(audits[1]?.result).toMatchObject({ status: "failed", failures: blind });
     } finally {
       await enforcer.close();
     }

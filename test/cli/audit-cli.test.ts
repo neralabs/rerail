@@ -300,9 +300,10 @@ describe("rerail scan and settings CLI", () => {
     expect(session.audit).toMatchObject({ status: "failed", gapCount: 0, outOfWorkRuleCount: 0 });
   });
 
-  it("keeps how many failures a failed scan had past the 20 it lists, and reports them with the session", async () => {
+  it("keeps how many failures a scan had past the 20 it lists, and reports them with the session", async () => {
     // An AST rule on files with syntax errors fails on each (`source-partial`), while the regex rule reads them, so
-    // no file is blind and every failure fails the scan: 25 of them, five past the list's 20.
+    // no file is blind: 25 files read in part, five past the list's 20. A touched-files audit fails on them; a
+    // repository scan lists them and completes.
     const PRINT_CALL = codeRuleSchema.parse({
       format: "rerail.policy/v1", id: "test:print-call", revision: 1, mode: "log",
       scope: { include: ["api/**/*.py"], exclude: [] },
@@ -325,13 +326,13 @@ describe("rerail scan and settings CLI", () => {
     let output = "";
     expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
       home, stdout: { write: text => { output += text; return true; } },
-    })).toBe(1);
+    })).toBe(0);
     const request = auditRequestSchema.parse(JSON.parse(output));
     const { audits } = await (await fetch(new URL(`/api/audits?auditId=${request.auditIds[0]}`, daemon.url))).json();
-    expect(audits).toEqual([expect.objectContaining({ status: "failed", failureCount: 25, unlistedFailureCount: 5 })]);
+    expect(audits).toEqual([expect.objectContaining({ status: "completed", failureCount: 25, unlistedFailureCount: 5 })]);
     expect(audits[0].failures).toHaveLength(20);
     const session = await (await fetch(new URL("/api/sessions/s1", daemon.url))).json();
-    expect(session.audit).toMatchObject({ status: "failed", failureCount: 25, unlistedFailureCount: 5 });
+    expect(session.audit).toMatchObject({ status: "completed", failureCount: 25, unlistedFailureCount: 5 });
   });
 
   it("applies saved log mode to new edits while an explicit audit is still running", async () => {

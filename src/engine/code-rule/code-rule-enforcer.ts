@@ -347,17 +347,17 @@ function alwaysListed(item: AuditFailure): boolean {
   return item.blind !== undefined || item.stage === "scan";
 }
 /**
- * A cap on one audit's failure list, over the lists it is given in turn (the failures before evaluation, then each
- * result page): it keeps every failure `alwaysListed` keeps, the first failure of each rule that ran out of work and
- * of each rule the file's work stopped (so the list names every such rule and the summary counts it), at most `limit`
- * failures that fail the audit and at most `limit` gaps (coverage gaps and files read only in part), so gaps never
- * crowd out what failed it. Each list is ordered with those that fail the audit first, then gaps.
+ * A cap on the failure list of one audit of `scope`, over the lists it is given in turn (the failures before
+ * evaluation, then each result page): it keeps every failure `alwaysListed` keeps, the first failure of each rule that
+ * ran out of work and of each rule the file's work stopped (so the list names every such rule and the summary counts
+ * it), at most `limit` failures that fail the audit and at most `limit` it tolerates (`tolerated`), so gaps never crowd
+ * out what failed it. Each list is ordered with those that fail the audit first, then the tolerated ones.
  */
-function auditFailureCap(limit = AUDIT_MAX_FAILURES): (failures: readonly AuditFailure[]) => AuditFailure[] {
+function auditFailureCap(scope: AuditScope, limit = AUDIT_MAX_FAILURES): (failures: readonly AuditFailure[]) => AuditFailure[] {
   let failing = limit;
   let gaps = limit;
   const counted = new Set<string>();
-  const gap = (item: AuditFailure) => isCoverageGap(item) || isSourceGap(item);
+  const gap = (item: AuditFailure) => tolerated(item, scope);
   const firstOfRule = (item: AuditFailure) => {
     const kind = isOutOfWork(item) ? "own" : isFileWorkStopped(item) ? "file" : undefined;
     if (kind === undefined || item.ruleId === undefined || counted.has(`${kind}:${item.ruleId}`)) return false;
@@ -962,7 +962,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       const indexStartedAt = performance.now();
       const walked = indexed
         ? await this.#indexRepository(workspace, auditId, failures, nested)
-        : await this.#walkAuditSources(workspace, auditId, paths, failures, nested);
+        : await this.#walkAuditSources(workspace, scope, auditId, paths, failures, nested);
       const indexMilliseconds = performance.now() - indexStartedAt;
       if (this.#closing) return auditId;
       const summary = await this.#finishScopeAudit({
@@ -983,7 +983,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     } catch (error) {
       const all = [...failures, failure("scan", "adapter-error", errorMessage(error), undefined, "scan")];
       if (scope === "repository") this.#logRepositoryAudit("failed", startedAt, 0, 0, 0, 0, all.length);
-      const listed = auditFailureCap()(all);
+      const listed = auditFailureCap(scope)(all);
       this.#finishAudit(auditId, "failed", [], listed, all.length - listed.length);
       return auditId;
     } finally {
@@ -1035,7 +1035,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       failures.push(...chunk.failures.map((item) => failure("source", item.code, item.message, item.path, "read")));
       const evaluation = chunk.evaluation;
       if (evaluation !== null && auditId !== undefined)
-        this.#recordProgress(auditId, evaluation.violations, [...failures, ...evaluation.failures]);
+        this.#recordProgress(auditId, "repository", evaluation.violations, [...failures, ...evaluation.failures]);
       if (chunk.overBudget) {
         failures.push(auditBudgetFailure("Repository scan exceeded its 100,000-file or 512 MiB source budget"));
         return { sourcePaths: [], stopped: true, files };
@@ -1067,6 +1067,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
 
   async #walkAuditSources(
     workspace: NativeCodeRuleDslWorkspace,
+    scope: AuditScope,
     auditId: string | undefined,
     paths: readonly string[],
     failures: AuditFailure[],
@@ -1088,17 +1089,18 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       sourcePaths.push(file.path);
       bytes += Buffer.byteLength(file.source);
       if (files.length >= AUDIT_BATCH_FILES || bytes >= AUDIT_CHUNK_BYTES) {
-        await this.#flushAuditBatch(workspace, auditId, failures, files);
+        await this.#flushAuditBatch(workspace, scope, auditId, failures, files);
         files = [];
         bytes = 0;
       }
     }
-    if (files.length > 0) await this.#flushAuditBatch(workspace, auditId, failures, files);
+    if (files.length > 0) await this.#flushAuditBatch(workspace, scope, auditId, failures, files);
     return { sourcePaths, stopped: budget.stopped, files: sourcePaths.length };
   }
 
   async #flushAuditBatch(
     workspace: NativeCodeRuleDslWorkspace,
+    scope: AuditScope,
     auditId: string | undefined,
     failures: readonly AuditFailure[],
     files: WorkspaceFile[],
@@ -1106,13 +1108,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     await this.#waitForEvaluationIdle();
     if (this.#closing) return;
     const result = await this.#applyRequest(workspace, { files, removed: [], deferGlobal: true });
-    if (auditId !== undefined) this.#recordProgress(auditId, result.violations, [...failures, ...result.failures]);
+    if (auditId !== undefined) this.#recordProgress(auditId, scope, result.violations, [...failures, ...result.failures]);
     await yieldToHost();
   }
 
   /** Records a running audit's results so far, its failures capped as its finished list is (`auditFailureCap`). */
-  #recordProgress(auditId: string, violations: CodeRuleViolation[], failures: readonly AuditFailure[]): void {
-    const listed = auditFailureCap()(failures);
+  #recordProgress(auditId: string, scope: AuditScope, violations: CodeRuleViolation[], failures: readonly AuditFailure[]): void {
+    const listed = auditFailureCap(scope)(failures);
     this.#record(() =>
       this.#audits.progress(auditId, { violations, failures: listed, unlistedFailureCount: failures.length - listed.length }),
     );
@@ -1136,7 +1138,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       });
     if (this.#closing) return;
     const resultPagesStartedAt = performance.now();
-    const streamed = await this.#resultPages(workspace, auditId, mode === "log" && !generatedEdit, failures);
+    const streamed = await this.#resultPages(workspace, scope, auditId, mode === "log" && !generatedEdit, failures);
     const resultPagesMilliseconds = performance.now() - resultPagesStartedAt;
     // Gaps are listed but do not fail the audit; files read only in part are gaps of a repository audit alone.
     const result: Evaluation = {
@@ -1149,7 +1151,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       ...failures,
       ...result.failures.map((item) => ({ ...item, stage: "evaluate" as const })),
     ];
-    const allFailures = auditFailureCap()(unboundedFailures);
+    const allFailures = auditFailureCap(scope)(unboundedFailures);
     // The paged list is capped by the same rule over the same failures, so it leaves out as many.
     const unlisted = unboundedFailures.length - allFailures.length;
     const status = failsAudit(unboundedFailures, scope) ? "failed" : "completed";
@@ -1309,6 +1311,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    */
   async #resultPages(
     workspace: NativeCodeRuleDslWorkspace,
+    scope: AuditScope,
     auditId: string | undefined,
     allowPersistentPaging: boolean,
     precedingFailures: readonly AuditFailure[],
@@ -1324,7 +1327,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     // A paged audit keeps no violations in memory; the count is all the timing line needs.
     let violationCount = 0;
     // One cap across the preceding failures and every page (`auditFailureCap`).
-    const cap = auditFailureCap();
+    const cap = auditFailureCap(scope);
     const preceding = cap(precedingFailures);
     let cursor = 0;
     let pageIndex = 0;
