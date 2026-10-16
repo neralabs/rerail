@@ -16,8 +16,9 @@ This restriction prevents a rejected terminal from spending another file's work 
 
 Shared AST and text batches run each required terminal once across their files.
 Each file retains its own deadline, completion state, scope cache, and witness limits.
-Clause statements still run once for each file-clause pair.
-Clause-major statement execution remains the next execution-shape change.
+Each text terminal now returns every file's rows through one statement per batch.
+AST clause statements still run once for each file-clause pair.
+Clause-major AST execution remains the next execution-shape change.
 
 Profile output now reports SQLite batches, registered files, statement executions, result rows,
 terminal executions, and virtual-table filters. These counters measure the remaining file-clause
@@ -76,8 +77,8 @@ Production now registers every compatible file in one immutable batch.
 Language and candidate-clause differences can produce separate batches.
 The `OnceLock` terminal cache processes all files in each batch.
 
-The clause statements still run separately for each file.
-Thus, the first batching change removes terminal duplication but not statement duplication.
+The AST clause statements still run separately for each file.
+Text terminals now use one all-file statement, but AST statement duplication remains.
 
 **Correction:** Run a clause plan over all eligible files in one batch.
 Partition a batch only for a measured memory or backend limit.

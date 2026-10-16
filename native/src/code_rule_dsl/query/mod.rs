@@ -77,6 +77,7 @@ pub(super) struct BatchState {
     envs: EnvArena,
     statement_executions: std::sync::atomic::AtomicUsize,
     rows: std::sync::atomic::AtomicUsize,
+    text_rows: std::sync::Mutex<foldhash::HashMap<usize, Arc<Vec<TextRows>>>>,
     /// Recursive utility verdicts are pure for a fixed node, environment and recursion depth.
     /// The cached cost is replayed so `maxVisitedNodes` remains observable.
     util_memo: std::sync::Mutex<foldhash::HashMap<UtilityMemoKey, UtilityMemoValue>>,
@@ -165,6 +166,7 @@ impl QueryConnection {
             envs: EnvArena::default(),
             statement_executions: std::sync::atomic::AtomicUsize::new(0),
             rows: std::sync::atomic::AtomicUsize::new(0),
+            text_rows: std::sync::Mutex::default(),
             util_memo: std::sync::Mutex::default(),
             roots: std::sync::Mutex::new(None),
             derived: std::sync::Mutex::new(Vec::new()),
@@ -414,26 +416,53 @@ impl QueryBatch<'_> {
     /// never touches `rerail_nodes`, so a text-only batch remains untaped.
     pub(super) fn text_rows(&self, terminal: usize, file: usize) -> rusqlite::Result<TextRows> {
         use std::sync::atomic::Ordering;
+        if let Some(rows) = self
+            .state
+            .text_rows
+            .lock()
+            .expect("text row cache mutex poisoned")
+            .get(&terminal)
+            .cloned()
+        {
+            return Ok(rows.get(file).cloned().unwrap_or_default());
+        }
         self.state
             .statement_executions
             .fetch_add(1, Ordering::Relaxed);
         let mut statement = self.owner.connection.prepare_cached(
-            "SELECT start_byte, end_byte, complete FROM rerail_matches \
-             WHERE batch = ?1 AND program_index = ?2 AND file_index = ?3 \
-             ORDER BY match_index IS NULL, match_index",
+            "SELECT file_index, start_byte, end_byte, complete FROM rerail_matches \
+             WHERE batch = ?1 AND program_index = ?2 \
+             ORDER BY file_index, match_index IS NULL, match_index",
         )?;
-        let mut rows = statement.query((self.token, terminal as i64, file as i64))?;
-        let mut found = Vec::new();
-        while let Some(row) = rows.next()? {
+        let mut query = statement.query((self.token, terminal as i64))?;
+        let mut by_file = (0..self.view().files().len())
+            .map(|_| Vec::new())
+            .collect::<Vec<TextRows>>();
+        while let Some(row) = query.next()? {
             self.state.rows.fetch_add(1, Ordering::Relaxed);
-            let complete = row.get::<_, i64>(2)? != 0;
-            let span = match (row.get::<_, Option<i64>>(0)?, row.get::<_, Option<i64>>(1)?) {
+            let file_index = usize::try_from(row.get::<_, i64>(0)?)
+                .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, -1))?;
+            let complete = row.get::<_, i64>(3)? != 0;
+            let span = match (row.get::<_, Option<i64>>(1)?, row.get::<_, Option<i64>>(2)?) {
                 (Some(start), Some(end)) => Some((start as usize, end as usize)),
                 _ => None,
             };
-            found.push((span, complete));
+            by_file
+                .get_mut(file_index)
+                .ok_or_else(|| {
+                    rusqlite::Error::ModuleError(
+                        "text terminal returned an unknown file".to_owned(),
+                    )
+                })?
+                .push((span, complete));
         }
-        Ok(found)
+        let by_file = Arc::new(by_file);
+        self.state
+            .text_rows
+            .lock()
+            .expect("text row cache mutex poisoned")
+            .insert(terminal, Arc::clone(&by_file));
+        Ok(by_file.get(file).cloned().unwrap_or_default())
     }
 }
 
