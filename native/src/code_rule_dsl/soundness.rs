@@ -309,6 +309,17 @@ pub(super) enum SyntaxReading {
     Unread(String),
 }
 
+/// A document's error regions as ranges of the file, unmerged: its ERROR and MISSING nodes', and
+/// the file bytes a guest cannot be read through.
+fn file_ranges(doc: &TapeDoc) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = doc
+        .syntax_error_nodes()
+        .filter_map(|(index, range)| Origin::of_node(doc, index, range))
+        .collect::<Vec<_>>();
+    ranges.extend(doc.host_errors());
+    ranges
+}
+
 impl SyntaxErrors {
     /// The native tree's regions, which tapes record (`TapeDoc::syntax_error_ranges`).
     #[cfg(test)]
@@ -348,11 +359,16 @@ impl SyntaxErrors {
 
     /// The regions of a restored document, as ranges of the file.
     pub(super) fn of_doc(doc: &TapeDoc) -> Self {
-        let mut ranges = doc
-            .syntax_error_nodes()
-            .filter_map(|(index, range)| Origin::of_node(doc, index, range))
-            .collect::<Vec<_>>();
-        ranges.extend(doc.host_errors());
+        Self::from_ranges(file_ranges(doc))
+    }
+
+    /// The regions of every document of the file whose own tree `host` is (`embed`): what a rule
+    /// crossing between them (`GrammarMatcher::crosses`) reads around.
+    pub(super) fn of_file(host: &TapeDoc) -> Self {
+        let mut ranges = file_ranges(host);
+        for guest in host.guests().iter().flat_map(|guests| guests.iter()) {
+            ranges.extend(file_ranges(&guest.doc));
+        }
         Self::from_ranges(ranges)
     }
 

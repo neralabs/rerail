@@ -643,14 +643,28 @@ pub(crate) fn compile_ast_rule(
             ))
         })?;
         let mut rules = Vec::new();
+        // The rule must be whole in some dialect the program may be in, as a query's must be in
+        // one of its own (`compile_query`): a gap left in every one (a misspelt kind compiles to
+        // `Never`, which a `not` reads as true) is the query's.
+        let mut whole = false;
+        let mut first_gap = None;
         for (dialect, table) in &documents.guests {
             let scope = utils.on(table.clone(), Side::Guest);
             let mut dialect_gaps = Vec::new();
             let compiled =
                 compile_ast_rule(inner, *dialect, &embedded_path, &mut dialect_gaps, &scope)?;
+            match dialect_gaps.into_iter().next() {
+                None => whole = true,
+                Some(gap) => {
+                    first_gap.get_or_insert(gap);
+                }
+            }
             if !matches!(compiled, AstMatcher::Never) {
                 rules.push((*dialect, compiled));
             }
+        }
+        if !whole && let Some(gap) = first_gap {
+            gaps.push(gap);
         }
         terms.push(if rules.is_empty() {
             grammar_gap(

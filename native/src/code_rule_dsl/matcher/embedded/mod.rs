@@ -8,7 +8,7 @@
 //! the program rule's captures exported into it.
 
 use super::AstMatcher;
-use super::each;
+use super::each::{self, HostRanges};
 use super::exported::{export, exported_span, exported_text, is_span_variable};
 use crate::code_rule_dsl::language::{GrammarDialect, Via};
 use crate::code_rule_dsl::origin::Origin;
@@ -18,6 +18,7 @@ use ast_grep_core::{AstGrep, Doc, Matcher, Node};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ops::Range;
+use std::sync::Arc;
 
 /// `embedded`: a rule over the program a file embeds through `via`, compiled for each dialect the
 /// program may be written in.
@@ -145,6 +146,9 @@ impl EmbeddedTest {
             each::suspended(|| rule.match_node_with_env(target, &mut host).is_some())
         };
         let _hosted = Hosted::enter(&run, guest.doc.clone());
+        // `violation.each` reads the program's bindings at the file bytes they stand for, as the
+        // host's environment receives them, and passes over a candidate binding one it reported.
+        let _hosts = each::active().then(|| HostRanges::enter(Arc::new(guest.doc.clone())));
         // The program's nodes standing for bytes within the node's, in preorder: a node's bytes
         // hold its descendants', so a subtree whose bytes miss the node's is passed over.
         let mut stack = vec![program.root()];
@@ -160,6 +164,7 @@ impl EmbeddedTest {
                 if rule
                     .match_node_with_env(candidate.clone(), &mut inner)
                     .is_some()
+                    && !(each::active() && each::excluded(&inner))
                 {
                     for (name, text, range) in program_exports(&inner, &guest.doc) {
                         if self.exports.contains(&name) {

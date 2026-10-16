@@ -335,19 +335,16 @@ enum Context {
 
 type Visit<T = Flowing> = Result<T, BuildError>;
 
-/// Visits the PHP program rooted at `root`: a file's, or a Blade template's embedded program
-/// (`blade::view`, a `compiled-view` guest), whose markers stand for the variables Blade's
-/// directives define and whose top level is the scope of the view's data.
+/// Visits the PHP program rooted at `root`, a file's.
 pub(crate) fn visit_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -> Visit<()> {
-    visit(builder, root, compiled_view(root))
+    visit(builder, root, false)
 }
 
-/// Whether `node` is a node of a Blade template's embedded program (`compiled-view`).
-pub(crate) fn compiled_view<D: Doc>(node: &Node<'_, D>) -> bool {
-    let doc: &dyn std::any::Any = node.get_doc();
-    doc.downcast_ref::<crate::code_rule_dsl::tape::TapeDoc>()
-        .and_then(crate::code_rule_dsl::tape::TapeDoc::via)
-        == Some(crate::code_rule_dsl::language::Via::CompiledView)
+/// Visits a Blade template's compiled view (`blade::view`), whose markers stand for the variables
+/// Blade's directives define and whose top level is the scope of the view's data. Blade's embedder
+/// reads its views so (`embed::CompiledView`).
+pub(crate) fn visit_blade_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -> Visit<()> {
+    visit(builder, root, true)
 }
 
 fn visit<D: Doc>(builder: &mut Builder, root: &Node<'_, D>, blade: bool) -> Visit<()> {

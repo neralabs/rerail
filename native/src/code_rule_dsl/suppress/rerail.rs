@@ -217,7 +217,7 @@ fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, file: &InFile<'_>) -> Op
     let lines = file.lines();
     let line = lines.line(start);
     let line_start = lines.start(line);
-    let before = &file.source()[line_start..start];
+    let before = file.source().get(line_start..start)?;
     if before.trim().is_empty() {
         // Leading: the next code among its siblings. Python places a comment before a body's
         // first statement beside the body (`block`, which starts at that statement), not in it:

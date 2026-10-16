@@ -42,7 +42,9 @@ pub(crate) use script_block::ScriptBlock;
 #[cfg(test)]
 pub(crate) use test_script::TestScript;
 
-use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
+use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::scope::{BuildError, Builder, Reading};
 use ast_grep_core::{Doc, Node};
 use segments::SegmentMap;
 use std::ops::Range;
@@ -73,6 +75,19 @@ pub(crate) trait Embedder {
     /// The program the host tree rooted at `root`, over `source`, embeds; `None` where it embeds
     /// none.
     fn build(root: TsNode<'_>, source: &str) -> Option<Program>;
+
+    /// Builds the scope of a program this embedder built, rooted at `root`, whose dialect is of
+    /// `family`: as that family reads any program, unless the embedding gives the program's
+    /// statements a meaning of its own (a Blade view's markers define the variables its
+    /// directives do).
+    fn scope<D: Doc>(
+        family: Family,
+        builder: &mut Builder<'_>,
+        root: &Node<'_, D>,
+        reading: Reading,
+    ) -> Result<(), BuildError> {
+        with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::visit(builder, root, reading))
+    }
 }
 
 /// Whether an embedder wrote a token of `node`, a guest document's, that the host does not spell

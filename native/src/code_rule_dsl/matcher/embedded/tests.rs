@@ -134,3 +134,81 @@ fn a_programs_line_numbers_are_the_files() {
     assert_eq!(violations[0]["message"], "line 5", "{result}");
     assert_eq!(violations[0]["span"]["startLine"], 4, "{result}");
 }
+
+/// A rule over the program is whole in some dialect the program may be in, as a query is in one
+/// of its own: a misspelt kind under `embedded` is refused, not read as matching nothing (which a
+/// `not` would read as matching everything).
+#[test]
+fn a_gap_under_embedded_is_the_querys() {
+    let document = clause_document(json!({
+        "id": "c",
+        "forbid": { "ast": { "language": "blade", "rule": { "kind": "echo", "embedded": {
+            "kind": "function_call_expression",
+            "not": { "kind": "functon_call_expression" }
+        } } } },
+        "violation": violation(),
+    }));
+    let reason = rejection(compile_document_with(
+        document,
+        &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+    ));
+    assert!(reason.contains("functon_call_expression"), "{reason}");
+}
+
+/// `violation.each` enumerates a capture `embedded` exports: one violation per program binding,
+/// each at the file bytes it stands for.
+#[test]
+fn each_enumerates_what_embedded_exports() {
+    let source = "<template>\n  <p>{{ a + b }}</p>\n</template>\n";
+    let document = clause_document(json!({
+        "id": "c",
+        "forbid": { "ast": { "language": "vue", "rule": {
+            "kind": "interpolation",
+            "embedded": { "kind": "identifier", "pattern": "$N" }
+        } } },
+        "violation": { "anchor": "capture.N", "each": "N", "code": "X", "message": "$N" },
+    }));
+    let compiled = compile_document_with(
+        document,
+        &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    let result = evaluate_file(&compiled, "vue", "C.vue", source);
+    assert_eq!(result["failures"], json!([]), "{result}");
+    let messages = result["violations"]
+        .as_array()
+        .expect("violations")
+        .iter()
+        .map(|violation| violation["message"].as_str().expect("message").to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(messages, ["a", "b"], "{result}");
+}
+
+/// A define's utility may read a literal only the program's grammar hosts (`parse` of an ESLint
+/// directive comment): a Vue component's own tree hosts none, but the utility is whole in the
+/// program's.
+#[test]
+fn a_define_holds_a_programs_parse_utility() {
+    let source = "<script setup>\n/* eslint-disable no-console */\nconst a = 1\n</script>\n";
+    let document = json!({
+        "format": "rerail.policy/v1", "id": "d", "revision": 1, "mode": "block",
+        "clauses": [
+            { "id": "shared", "define": { "language": "vue", "utils": {
+                "directive": { "kind": "comment", "parse": { "grammar": "eslintDirective", "kind": "directive" } }
+            } } },
+            { "id": "c", "forbid": { "ast": { "language": "vue", "embedded": "script-block",
+                "rule": { "matches": "directive" } } },
+              "violation": violation() }
+        ]
+    });
+    let compiled = compile_document_with(
+        document,
+        &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    let result = evaluate_file(&compiled, "vue", "C.vue", source);
+    assert_eq!(
+        matched_texts(&result, source),
+        ["/* eslint-disable no-console */"]
+    );
+}

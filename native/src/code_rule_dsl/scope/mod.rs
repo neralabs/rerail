@@ -563,7 +563,17 @@ impl ScopeTable {
             php_names,
         };
         builder.push(ScopeKind::Module, root.range());
-        with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::visit(&mut builder, &root, reading))?;
+        // A program a file embeds is read as its embedder says (`embed::Embedder::scope`).
+        match crate::code_rule_dsl::tape::tape_doc(&root)
+            .and_then(crate::code_rule_dsl::tape::TapeDoc::via)
+        {
+            Some(via) => {
+                crate::code_rule_dsl::language::with_embedder!(via, E => <E as crate::code_rule_dsl::embed::Embedder>::scope(family, &mut builder, &root, reading))?
+            }
+            None => {
+                with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::visit(&mut builder, &root, reading))?
+            }
+        }
         let mut table = builder.table;
         table.sort_references();
         with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::finish(&mut table, &root));

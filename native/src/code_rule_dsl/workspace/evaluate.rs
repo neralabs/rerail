@@ -555,6 +555,8 @@ fn evaluate_ast_file(
     // over a program the file does not embed has nothing to read: it answers.
     let mut settled = placed.iter().map(Option::is_none).collect::<Vec<_>>();
     let nodes = doc.transducer_len();
+    // A clause crossing between the documents (`embedded`, `host`) reads around every one's errors.
+    let file_errors = SyntaxErrors::of_file(&doc);
     for (index, document) in documents.into_iter().enumerate() {
         let slots = placed
             .iter()
@@ -565,18 +567,27 @@ fn evaluate_ast_file(
                     .map(|(_, grammar)| (slot, grammar))
             })
             .collect::<Vec<_>>();
-        if !slots.is_empty() {
-            evaluate_document(
-                file,
-                code_rules,
-                document,
-                &slots,
-                &lines,
-                metrics,
-                work,
-                &mut settled,
-            )?;
+        if slots.is_empty() {
+            // A document no clause reads still has its errors: the file was read around them.
+            let errors = SyntaxErrors::of_doc(&document);
+            if !errors.is_empty() {
+                let (SyntaxReading::Partial(message) | SyntaxReading::Unread(message)) =
+                    errors.reading(&lines, file.input.source.len());
+                file.syntax.get_or_insert(message);
+            }
+            continue;
         }
+        evaluate_document(
+            file,
+            code_rules,
+            document,
+            &slots,
+            &file_errors,
+            &lines,
+            metrics,
+            work,
+            &mut settled,
+        )?;
     }
     #[cfg(feature = "code-rule-profile")]
     profile::record_nodes(metrics.visited_nodes);
@@ -620,6 +631,7 @@ fn evaluate_document(
     code_rules: &[Arc<CompiledCodeRule>],
     doc: tape::TapeDoc,
     slots: &[(usize, &GrammarMatcher)],
+    file_errors: &SyntaxErrors,
     lines: &Arc<LineTable>,
     metrics: &mut Metrics,
     work: &mut ClauseWork,
@@ -639,15 +651,22 @@ fn evaluate_document(
                 file.syntax.get_or_insert(message);
             }
             SyntaxReading::Partial(message) => {
-                for &(slot, grammar) in slots {
-                    let id = file.candidates.ast[slot];
-                    if !file.failures.contains_key(&id) && errors.incomplete(grammar) {
-                        file.failures
-                            .insert(id, ("source-incomplete", "file has syntax errors"));
-                    }
-                }
                 file.syntax.get_or_insert(message);
             }
+        }
+    }
+    for &(slot, grammar) in slots {
+        let id = file.candidates.ast[slot];
+        // A clause reads around its document's errors, or, crossing to the file's other document,
+        // every document's.
+        let read = if grammar.crosses {
+            file_errors
+        } else {
+            &errors
+        };
+        if !file.failures.contains_key(&id) && read.incomplete(grammar) {
+            file.failures
+                .insert(id, ("source-incomplete", "file has syntax errors"));
         }
     }
     let root = Root::doc(doc.clone());
@@ -745,7 +764,7 @@ fn evaluate_document(
         code_rules,
         slots,
         root.root().get_doc(),
-        &errors,
+        (&errors, file_errors),
         metrics,
         &mut util_work,
         work,
@@ -940,7 +959,7 @@ fn evaluate_clauses(
     code_rules: &[Arc<CompiledCodeRule>],
     slots: &[(usize, &GrammarMatcher)],
     doc: &tape::TapeDoc,
-    errors: &SyntaxErrors,
+    (errors, file_errors): (&SyntaxErrors, &SyntaxErrors),
     metrics: &mut Metrics,
     util_work: &mut [usize],
     work: &mut ClauseWork,
@@ -1014,6 +1033,7 @@ fn evaluate_clauses(
                                 }
                                 *work = crate::code_rule_dsl::matcher::end_clause().0;
                             }
+                            let errors = if grammar.crosses { file_errors } else { errors };
                             if errors.overlaps(&place.node(matched.get_node())) {
                                 return Ok(true);
                             }

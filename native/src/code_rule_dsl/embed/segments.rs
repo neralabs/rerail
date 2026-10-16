@@ -290,6 +290,26 @@ impl SegmentMap {
         Ok(map)
     }
 
+    /// Checks a map read back against the texts it links (`read` checks only its own shape): every
+    /// segment starts and ends on character boundaries of both, and a copied one's bytes are the
+    /// host bytes it stands for. A map that fails is no map of these texts.
+    pub(crate) fn check(&self, program: &str, host: &str) -> Result<(), String> {
+        let fits = self.segments.iter().all(|segment| {
+            let (at, end) = (segment.at as usize, segment.end as usize);
+            let (from, to) = (segment.from as usize, segment.to as usize);
+            program.is_char_boundary(at)
+                && program.is_char_boundary(end)
+                && host.is_char_boundary(from)
+                && host.is_char_boundary(to)
+                && (!segment.copied || program.as_bytes()[at..end] == host.as_bytes()[from..to])
+        });
+        if fits {
+            Ok(())
+        } else {
+            Err("embedded program segments do not fit the texts they link".into())
+        }
+    }
+
     pub(crate) fn estimated_bytes(&self) -> usize {
         self.segments.capacity() * std::mem::size_of::<Segment>()
             + (self.starts.capacity() + self.ends.capacity()) * std::mem::size_of::<u32>()
