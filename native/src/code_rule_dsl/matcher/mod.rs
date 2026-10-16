@@ -10,6 +10,7 @@ mod collate;
 mod compare;
 mod count;
 mod each;
+mod embedded;
 mod exported;
 mod format_args;
 mod layout;
@@ -44,6 +45,7 @@ pub(super) use captures::{Capture, CaptureAnalysis, collect_variables, parse_exp
 pub(super) use compare::{Collation, CompareOp, CompareText, Comparison, EqClass, SemanticText};
 pub(super) use count::{Count, CountBinding};
 pub(crate) use each::binding_range;
+pub(crate) use embedded::EmbeddedTest;
 pub(crate) use exported::{WITNESS_NODE, export_text, exported_span, is_span_variable};
 pub(crate) use format_args::{FormatArgs, Style};
 pub(crate) use layout::{Gap, Layout, LineCount, Neighbour};
@@ -90,7 +92,16 @@ pub(super) use value::{Bound, Reading, ValueTest};
 
 #[derive(Clone)]
 pub(super) struct GrammarMatcher {
+    /// The dialect of the document the matcher reads: the file's own, or for an embedded clause
+    /// (`ast.embedded`) its program's.
     pub(super) language: GrammarDialect,
+    /// The embedding whose program the matcher reads (`ast.embedded`); `None` for the file's own
+    /// tree.
+    pub(super) document: Option<crate::code_rule_dsl::language::Via>,
+    /// Keeps the utility tables of the file's other document alive (`embedded`, `host`), as
+    /// `utils` does the clause's own: their rules reach them only weakly (`UtilRef`).
+    #[allow(dead_code)]
+    pub(super) other_utils: Vec<Arc<UtilTable>>,
     pub(super) matcher: AstMatcher,
     pub(super) anchors: Arc<anchors::AnchorPlan>,
     /// What a file must contain for the matcher to match in it (`RequiredText`); `None` where
@@ -110,6 +121,17 @@ pub(super) struct GrammarMatcher {
     pub(super) three_valued: bool,
     /// The query's `transform`, applied to each match after its rule and constraints.
     pub(super) transform: Option<Arc<Transform>>,
+}
+
+impl GrammarMatcher {
+    /// The kinds of the roots its witnesses may have, as codes of the file's own tree (`None`
+    /// where any, or where it reads an embedded program, whose codes are its own grammar's).
+    pub(super) fn host_root_kinds(&self) -> Option<&std::collections::BTreeSet<u16>> {
+        self.document
+            .is_none()
+            .then(|| self.anchors.root_kinds())
+            .flatten()
+    }
 }
 
 /// Whole-root matching: production matches each candidate root within a clause `begin_clause` set
@@ -481,31 +503,6 @@ impl AstMatcher {
             _ => None,
         }
     }
-}
-
-/// The whole text of the file a host node belongs to, and its language; `None` for a node of a
-/// parsed literal's tree.
-pub(crate) fn host<'t, D: Doc>(
-    node: &ast_grep_core::Node<'t, D>,
-) -> Option<(&'t str, GrammarDialect)> {
-    let doc: &'t dyn std::any::Any = node.get_doc();
-    if let Some(doc) = doc.downcast_ref::<ast_grep_core::tree_sitter::StrDoc<GrammarDialect>>() {
-        return Some((doc.get_source().as_str(), *doc.get_lang()));
-    }
-    let doc = doc.downcast_ref::<crate::code_rule_dsl::tape::TapeDoc>()?;
-    Some((doc.get_source().as_str(), *doc.get_lang()))
-}
-
-/// The line table of the file a host node belongs to: its tape document's, which the evaluator
-/// built once for the file. `None` for a node of a parsed literal's tree.
-pub(crate) fn host_lines<'t, D: Doc>(
-    node: &ast_grep_core::Node<'t, D>,
-) -> Option<&'t crate::code_rule_dsl::lines::LineTable> {
-    let doc: &'t dyn std::any::Any = node.get_doc();
-    Some(
-        doc.downcast_ref::<crate::code_rule_dsl::tape::TapeDoc>()?
-            .line_table(),
-    )
 }
 
 /// Whether a matcher can reach an unknown verdict: it holds a `value` predicate or a comparison over

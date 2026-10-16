@@ -70,6 +70,7 @@ export {
   CODE_RULE_AST_LANGUAGES,
   CODE_RULE_DIALECTS,
   CODE_RULE_LANGUAGE_FAMILIES,
+  codeRuleLanguageEmbedVias,
   codeRuleLanguageFamily,
 } from "./code-rule/code-rule-languages.js";
 export { CODE_RULE_FORMAT, type CodeRule, codeRuleSchema, type CodeRuleScope } from "./code-rule/code-rule-schema.js";

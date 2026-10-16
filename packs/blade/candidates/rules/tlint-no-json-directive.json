@@ -3,7 +3,7 @@
   "id": "tlint-no-json-directive",
   "revision": 1,
   "mode": "steer",
-  "description": "tlint 9.7.0 NoJsonDirective: a @json directive, read from the view, where Blade compiles it to a call (in text, attribute values and script alike).",
+  "description": "tlint 9.7.0 NoJsonDirective: a @json directive, read from the view, where Blade compiles it to a call (in text, attribute values and script alike), whose host is the `@json(...)` directive.",
   "scope": {
     "include": [
       "**/*.blade.php"
@@ -16,9 +16,12 @@
       "forbid": {
         "ast": {
           "language": "blade",
+          "embedded": "compiled-view",
           "rule": {
             "kind": "function_call_expression",
-            "regex": "^@(json)\\b"
+            "host": {
+              "regex": "^@(json)\\b"
+            }
           }
         }
       },

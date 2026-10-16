@@ -1192,7 +1192,7 @@ fn e11_a_blade_call_reaches_a_conditionally_declared_php_helper() {
     let clauses = json!([{
         "id": "reaches-escape",
         "violation": violation("E11", "the call reaches htmlspecialchars"),
-        "forbid": { "ast": { "language": "blade", "rule": {
+        "forbid": { "ast": { "language": "blade", "embedded": "compiled-view", "rule": {
             "kind": "function_call_expression",
             "calls": { "has": { "stopBy": "end", "kind": "function_call_expression",
                 "has": { "field": "function", "regex": "^htmlspecialchars$" } } }

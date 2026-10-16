@@ -1,6 +1,6 @@
 //! Format strings' arguments (`formatArgs`): `Semantic::FormatArgs`.
 
-use super::{Blade, Php, Python, Refusal, Refused};
+use super::{Php, Python, Refusal, Refused};
 use crate::code_rule_dsl::matcher::Style;
 use std::borrow::Cow;
 
@@ -60,27 +60,6 @@ impl FormatArgRules for Php {
             ),
             FormatArgFeature::Style(Style::Brace) => refused(
                 "`brace` reads Python's `str.format` calls; PHP has no such templates (its printf-family calls are style `printf`)",
-            ),
-        }
-    }
-}
-
-/// Blade's format calls are those of the PHP its template embeds (`blade::view`); its refusals
-/// name the template.
-impl FormatArgRules for Blade {
-    const SUPPORTED: bool = <Php as FormatArgRules>::SUPPORTED;
-    const FOLLOWS_STRINGS: bool = <Php as FormatArgRules>::FOLLOWS_STRINGS;
-
-    fn feature(feature: FormatArgFeature) -> Result<(), Refusal> {
-        match feature {
-            FormatArgFeature::Style(Style::Printf | Style::Scanf) => {
-                <Php as FormatArgRules>::feature(feature)
-            }
-            FormatArgFeature::Style(Style::Percent) => refused(
-                "`percent` reads Python's `%` formats; blade embeds PHP, whose printf-family calls are style `printf`",
-            ),
-            FormatArgFeature::Style(Style::Brace) => refused(
-                "`brace` reads Python's `str.format` calls; blade embeds PHP, which has no such templates (its printf-family calls are style `printf`)",
             ),
         }
     }

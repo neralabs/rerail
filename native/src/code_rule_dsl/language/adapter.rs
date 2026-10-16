@@ -41,7 +41,6 @@ use crate::code_rule_dsl::suppress::{
     BiomeSuppressions, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex,
     PhpstanIndex, PsalmIndex, Suppress, parent_statement, root,
 };
-use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Doc, Node};
 use ast_grep_language::LanguageExt;
@@ -55,57 +54,13 @@ pub(crate) struct Python;
 pub(crate) struct Ecma;
 /// PHP's family.
 pub(crate) struct Php;
-/// Blade templates: their semantics are those of the PHP the template embeds (`blade::view`).
-/// Each concern impl delegates to PHP's, apart from what reads the template itself: scope reads
-/// the compiled view (`php::visit_blade_program`), calls come from the tape, and refusals name
-/// Blade.
+/// Blade templates' own tree (`blade::forte`). A template's semantics are those of the PHP it
+/// embeds (`blade::view`), a guest document read with PHP's family (`embed`): a clause reads
+/// them with `ast.embedded` or `embedded`. The concerns name PHP's, which the compile refuses on
+/// the template's own tree (`compile::refuse_unavailable_semantics`).
 pub(crate) struct Blade;
 /// The adapter of a capability a family does not read (registry `refused` or `not-supported-yet`).
 pub(crate) struct Refused;
-
-/// A part of a document a family's semantics read: the root of its tree, and the dialect that
-/// tree is read as (the file's own, or the one its embedder built an embedded program in:
-/// `tape::EmbeddedProgram`).
-pub(crate) struct Region<'r, D: Doc> {
-    pub(crate) root: Node<'r, D>,
-    pub(crate) dialect: GrammarDialect,
-}
-
-/// The parts of the document of `dialect` rooted at `root` that its family's semantics read: the
-/// root itself, but in a dialect that embeds others (`GrammarDialect::embeds`) the programs its
-/// tape embeds (`embed`), each read as the dialect its embedder built it in, which a tape records
-/// (`tape::EmbeddedProgram`): a Blade template's compiled view, PHP; none where it embeds nothing
-/// (or is no tape). At most one program per registry `via`. Consumers read every region; call
-/// summaries read the first (`calls::summarize`), so a family whose documents may hold several
-/// refuses calls.
-pub(crate) fn regions<'r, D: Doc>(
-    root: &Node<'r, D>,
-    dialect: GrammarDialect,
-) -> impl Iterator<Item = Region<'r, D>> + use<'r, D> {
-    let doc: &'r dyn std::any::Any = root.get_doc();
-    let programs = doc
-        .downcast_ref::<TapeDoc>()
-        .map_or(&[][..], TapeDoc::programs);
-    let embedding = dialect.kinds().has_embedded();
-    let whole = (!embedding).then(|| Region {
-        root: root.clone(),
-        dialect,
-    });
-    // The programs are the root's last children, in tape order.
-    let host = root.clone();
-    let count = if embedding { host.children().len() } else { 0 };
-    let embedded = (count.saturating_sub(programs.len())..count).filter_map(move |nth| {
-        let child = host.child(nth)?;
-        let program = programs
-            .iter()
-            .find(|program| program.root as usize == child.node_id())?;
-        Some(Region {
-            root: child,
-            dialect: program.dialect,
-        })
-    });
-    whole.into_iter().chain(embedded)
-}
 
 /// A registry family's semantics.
 pub(crate) trait Adapter: 'static {
@@ -305,11 +260,11 @@ impl Adapter for Blade {
     const TERMINATORS: Terminators = Terminators::Newlines;
     const PACKAGES: bool = false;
     const DECLARATION_FILES: bool = true;
-    type Scope = Self;
-    type Value = Self;
-    type Arguments = Self;
+    type Scope = Php;
+    type Value = Php;
+    type Arguments = Php;
     type Calls = Self;
-    type FormatArgs = Self;
+    type FormatArgs = Php;
 
     fn name(text: Cow<'_, str>) -> Cow<'_, str> {
         text

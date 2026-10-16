@@ -21,6 +21,7 @@ import {
   type RulePackFile,
   compareDeterministicStrings,
 } from "../src/engine/index.js";
+import { codeRuleLanguageSuppressions, isCodeRuleAstLanguage } from "../src/engine/code-rule/code-rule-languages.js";
 import { CONFORMANCE_FILE, defaultCorpusRoot, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
 import { capabilitiesJson } from "./engine.js";
@@ -230,8 +231,19 @@ function suppressionOf(tool: string): Suppression | undefined {
 }
 
 const suppressingDocumentSchema = z.object({
-  clauses: z.array(z.looseObject({ id: z.string(), violation: z.looseObject({ suppress: z.record(z.string(), z.record(z.string(), z.unknown())).optional() }).optional() })),
+  clauses: z.array(
+    z.looseObject({
+      id: z.string(),
+      violation: z.looseObject({ suppress: z.record(z.string(), z.record(z.string(), z.unknown())).optional() }).optional(),
+      forbid: z.looseObject({ ast: z.looseObject({ language: z.string() }).optional() }).optional(),
+    }),
+  ),
 });
+
+/** Whether a query in `language` honours Biome's comments (an AST language whose registry entry lists `biome`). */
+function honoursBiome(language: string | undefined): boolean {
+  return language !== undefined && isCodeRuleAstLanguage(language) && codeRuleLanguageSuppressions(language).includes("biome");
+}
 
 /** The string items of a suppression's list (`suppress.eslint.rules`), or none. */
 function listed(suppression: Record<string, unknown> | undefined, list: string): string[] {
@@ -244,7 +256,8 @@ function listed(suppression: Record<string, unknown> | undefined, list: string):
  * (`unsuppressed`); once any violation carries `suppress.oxlint`, of those that carry only one of `suppress.eslint`
  * and `suppress.oxlint` (`oxlintApart`): Oxlint reads `eslint-disable` comments too, so a port of a rule Oxlint
  * implements honours both on the same violations; of those whose `suppress.eslint` names a rule Biome has a rule the
- * same as, without that Biome rule under `suppress.biome` (`biomeMissing`, with the missing rules), and of those that
+ * same as, without that Biome rule under `suppress.biome` (`biomeMissing`, with the missing rules; only in a query whose
+ * language honours Biome's comments, as the registry's `suppressions` say), and of those that
  * carry `suppress.biome` without `suppress.eslint` (`biomeAlone`). `undefined` when the document cannot be read (check
  * 1 reports that). A PHP_CodeSniffer port names its sniff's message codes, `<sniff>.<code>`, as `phpcs:ignore` does.
  */
@@ -262,7 +275,9 @@ function suppressionGaps(
   }
   const parsed = suppressingDocumentSchema.safeParse(document);
   if (!parsed.success) return undefined;
-  const violations = parsed.data.clauses.flatMap(clause => (clause.violation === undefined ? [] : [{ id: clause.id, suppress: clause.violation.suppress ?? {} }]));
+  const violations = parsed.data.clauses.flatMap(clause =>
+    clause.violation === undefined ? [] : [{ id: clause.id, suppress: clause.violation.suppress ?? {}, language: clause.forbid?.ast?.language }],
+  );
   const unsuppressed = violations
     .filter(({ suppress }) => {
       const names = suppress[suppression.key]?.[suppression.list];
@@ -273,7 +288,8 @@ function suppressionGaps(
   const oxlint = eslintFamily && violations.some(({ suppress }) => suppress.oxlint !== undefined);
   const oxlintApart = oxlint ? violations.filter(({ suppress }) => (suppress.eslint === undefined) !== (suppress.oxlint === undefined)).map(violation => violation.id) : [];
   const biomeMissing = { clauses: [] as string[], rules: [] as string[] };
-  for (const { id, suppress } of eslintFamily ? violations : []) {
+  for (const { id, suppress, language } of eslintFamily ? violations : []) {
+    if (!honoursBiome(language)) continue;
     const carried = new Set(listed(suppress.biome, "rules"));
     const missing = listed(suppress.eslint, "rules").flatMap(name => BIOME_SAME_SOURCES[name] ?? []).filter(name => !carried.has(name));
     if (missing.length === 0) continue;

@@ -15,7 +15,8 @@ use crate::code_rule_dsl::budget::{
     MatchBudget, matcher_budget_exhausted, matcher_budget_observed,
 };
 use crate::code_rule_dsl::eval::{
-    WitnessError, file_language, grammar_matcher, witness_from_match, witnesses_from_match,
+    WitnessError, document_matcher, file_language, grammar_matcher, witness_from_match,
+    witnesses_from_match,
 };
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -458,159 +459,41 @@ fn evaluate_ast_file(
         drop(_decode_timer);
         profile::record_transient(doc.navigation_bytes());
     }
-    let errors = SyntaxErrors::of_doc(&doc);
-    if !errors.is_empty() {
-        match errors.reading(&lines, file.input.source.len()) {
-            // No AST clause runs on a file the parser did not read, sound or not; the failure
-            // reports `file.syntax` in place of its static message (`results::failure_message`).
-            SyntaxReading::Unread(message) => {
-                for &id in &file.candidates.ast {
-                    file.failures
-                        .entry(id)
-                        .or_insert(("source-incomplete", UNREAD));
-                }
-                file.syntax = Some(message);
-            }
-            SyntaxReading::Partial(message) => {
-                for &id in &file.candidates.ast {
-                    if !file.failures.contains_key(&id)
-                        && errors.incomplete(candidate_grammar(
-                            &code_rules[id.0],
-                            id.1,
-                            &file.input,
-                        ))
-                    {
-                        file.failures
-                            .insert(id, ("source-incomplete", "file has syntax errors"));
-                    }
-                }
-                file.syntax = Some(message);
-            }
-        }
-    }
     #[cfg(feature = "code-rule-profile")]
     let _doc_owner = profile::DocOwner::start();
-    let restored = doc.clone();
-    let root = Root::doc(doc);
-    #[cfg(test)]
-    pause_at_test_phase("restored-doc", &file.input.source);
-    let max_nodes = file
+    // A file that embeds code is several documents (`embed`): its own tree, then each program it
+    // embeds. Each clause reads one of them (`ast.embedded`), with that document's syntax errors,
+    // anchors, scope tables and coordinates.
+    let mut documents = vec![doc.clone()];
+    if let Some(guests) = doc.guests() {
+        documents.extend(guests.iter().map(|guest| guest.doc.clone()));
+    }
+    // Each candidate slot's document and matcher; `None` where the file holds no program the
+    // clause reads.
+    let placed = file
         .candidates
         .ast
         .iter()
-        .filter(|id| !file.failures.contains_key(id))
-        .map(|id| code_rules[id.0].capabilities.limits.max_visited_nodes)
-        .max()
-        .unwrap_or(0);
-    {
-        // Shadows the grammar cache, which is no longer needed once the document is restored.
-        let grammars = file
-            .candidates
-            .ast
-            .iter()
-            .map(|id| candidate_grammar(&code_rules[id.0], id.1, &file.input))
-            .collect::<Vec<_>>();
-        // A clause whose matcher needs text the file lacks matches no root: it selects none. The
-        // clauses share many literals, each searched for once.
-        let mut searched = rustc_hash::FxHashMap::<&str, bool>::default();
-        let mut found = |text: &str, literal| {
-            *searched.entry(literal).or_insert_with(|| {
-                memchr::memmem::find(text.as_bytes(), literal.as_bytes()).is_some()
+        .map(|id| {
+            let matchers = clause_matchers(&code_rules[id.0], id.1);
+            documents.iter().enumerate().find_map(|(index, document)| {
+                document_matcher(matchers, &file.input, document).map(|grammar| (index, grammar))
             })
-        };
-        let runs = file
-            .candidates
-            .ast
+        })
+        .collect::<Vec<_>>();
+    for (index, document) in documents.into_iter().enumerate() {
+        let slots = placed
             .iter()
-            .zip(&grammars)
-            .map(|(id, grammar)| {
-                !file.failures.contains_key(id)
-                    && grammar
-                        .text
-                        .as_ref()
-                        .is_none_or(|text| text.holds_with(&file.input.source, &mut found))
+            .enumerate()
+            .filter_map(|(slot, place)| {
+                place
+                    .filter(|(at, _)| *at == index)
+                    .map(|(_, grammar)| (slot, grammar))
             })
             .collect::<Vec<_>>();
-        let plans = grammars
-            .iter()
-            .zip(&runs)
-            .filter(|(_, runs)| **runs)
-            .map(|(grammar, _)| grammar.anchors.as_ref())
-            .collect::<Vec<_>>();
-        #[cfg(feature = "code-rule-profile")]
-        let index_timer = profile::PhaseTimer::start(profile::Phase::Index);
-        let index = FileAnchorIndex::build(&root, &plans, max_nodes, matcher_budget_exhausted);
-        metrics.visited_nodes += index.visited_nodes();
-        let _ = index;
-        #[cfg(feature = "code-rule-profile")]
-        {
-            drop(index_timer);
+        if !slots.is_empty() {
+            evaluate_document(file, code_rules, document, &slots, &lines, metrics)?;
         }
-        #[cfg(feature = "code-rule-profile")]
-        let selection_timer = profile::PhaseTimer::start(profile::Phase::Selection);
-        let selections = grammars
-            .iter()
-            .zip(&runs)
-            .map(|(grammar, runs)| {
-                if !runs {
-                    return Selection::Roots(Cow::Borrowed(&[]));
-                }
-                index.select(&grammar.anchors)
-            })
-            .collect::<Vec<_>>();
-        #[cfg(feature = "code-rule-profile")]
-        {
-            drop(selection_timer);
-            profile::record_index(index.len(), index.estimated_bytes(), index.complete());
-            for (slot, selection) in selections.iter().enumerate() {
-                if !file.failures.contains_key(&file.candidates.ast[slot]) {
-                    profile::record_selection(
-                        match selection {
-                            Selection::All => index.len(),
-                            Selection::Roots(roots) => roots.len(),
-                        },
-                        matches!(selection, Selection::All),
-                    );
-                }
-            }
-        }
-        let mut util_work = file
-            .candidates
-            .ast
-            .iter()
-            .map(|id| code_rules[id.0].capabilities.limits.max_visited_nodes)
-            .collect::<Vec<_>>();
-        #[cfg(feature = "code-rule-profile")]
-        let _dispatch_timer = profile::PhaseTimer::start(profile::Phase::Dispatch);
-        let scopes = FileScopeSlot::install(
-            file.scopes
-                .as_ref()
-                .filter(|(revision, _)| *revision == file.source_revision)
-                .map(|(_, tables)| tables.clone())
-                .unwrap_or_default(),
-            file.input.module.clone(),
-            errors.hide_bindings(),
-        )
-        .path(&file.input.path);
-        let match_started = Instant::now();
-        evaluate_clauses(
-            file,
-            code_rules,
-            &grammars,
-            root.root().get_doc(),
-            &errors,
-            &lines,
-            metrics,
-            &mut util_work,
-            &selected_roots_by_slot(&selections, &index),
-        )?;
-        let tables = scopes.tables();
-        if !tables.is_empty() {
-            file.scopes = Some((file.source_revision, tables));
-        }
-        metrics.ast_match_nanoseconds += match_started.elapsed().as_nanos() as u64;
-        #[cfg(test)]
-        pass_deadline_at_test_phase("checks-done");
     }
     #[cfg(feature = "code-rule-profile")]
     profile::record_nodes(metrics.visited_nodes);
@@ -629,7 +512,174 @@ fn evaluate_ast_file(
                 .insert(id, ("budget-exceeded", "file AST work budget exceeded"));
         }
     }
-    Ok(Some(restored))
+    Ok(Some(doc))
+}
+
+/// The matchers of an AST clause, one per dialect it compiled for.
+fn clause_matchers(code_rule: &CompiledCodeRule, clause: usize) -> &[GrammarMatcher] {
+    let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &code_rule.clauses[clause].kind else {
+        unreachable!("an AST candidate is an AST clause")
+    };
+    matchers
+}
+
+/// Runs the candidate clauses `slots` (slot, matcher) read on one document of the file (`embed`):
+/// the file's own tree or a program it embeds. Its syntax errors (as ranges of the file) decide
+/// which clauses run around them; its anchor index selects the roots; its scope tables join the
+/// file's, which hold every document's.
+fn evaluate_document(
+    file: &mut FileState,
+    code_rules: &[Arc<CompiledCodeRule>],
+    doc: tape::TapeDoc,
+    slots: &[(usize, &GrammarMatcher)],
+    lines: &Arc<LineTable>,
+    metrics: &mut Metrics,
+) -> Result<()> {
+    let errors = SyntaxErrors::of_doc(&doc);
+    if !errors.is_empty() {
+        match errors.reading(lines, file.input.source.len()) {
+            // No AST clause runs on a document the parser did not read, sound or not; the failure
+            // reports `file.syntax` in place of its static message (`results::failure_message`).
+            SyntaxReading::Unread(message) => {
+                for &(slot, _) in slots {
+                    file.failures
+                        .entry(file.candidates.ast[slot])
+                        .or_insert(("source-incomplete", UNREAD));
+                }
+                file.syntax.get_or_insert(message);
+            }
+            SyntaxReading::Partial(message) => {
+                for &(slot, grammar) in slots {
+                    let id = file.candidates.ast[slot];
+                    if !file.failures.contains_key(&id) && errors.incomplete(grammar) {
+                        file.failures
+                            .insert(id, ("source-incomplete", "file has syntax errors"));
+                    }
+                }
+                file.syntax.get_or_insert(message);
+            }
+        }
+    }
+    let root = Root::doc(doc.clone());
+    #[cfg(test)]
+    pause_at_test_phase("restored-doc", &file.input.source);
+    let max_nodes = slots
+        .iter()
+        .map(|&(slot, _)| file.candidates.ast[slot])
+        .filter(|id| !file.failures.contains_key(id))
+        .map(|id| code_rules[id.0].capabilities.limits.max_visited_nodes)
+        .max()
+        .unwrap_or(0);
+    // A clause whose matcher needs text the document lacks matches no root: it selects none. The
+    // clauses share many literals, each searched for once.
+    let text = ast_grep_core::Doc::get_source(&doc).as_str();
+    let mut searched = rustc_hash::FxHashMap::<&str, bool>::default();
+    let mut found = |text: &str, literal| {
+        *searched
+            .entry(literal)
+            .or_insert_with(|| memchr::memmem::find(text.as_bytes(), literal.as_bytes()).is_some())
+    };
+    let runs = slots
+        .iter()
+        .map(|&(slot, grammar)| {
+            !file.failures.contains_key(&file.candidates.ast[slot])
+                && grammar
+                    .text
+                    .as_ref()
+                    .is_none_or(|required| required.holds_with(text, &mut found))
+        })
+        .collect::<Vec<_>>();
+    let plans = slots
+        .iter()
+        .zip(&runs)
+        .filter(|(_, runs)| **runs)
+        .map(|((_, grammar), _)| grammar.anchors.as_ref())
+        .collect::<Vec<_>>();
+    #[cfg(feature = "code-rule-profile")]
+    let index_timer = profile::PhaseTimer::start(profile::Phase::Index);
+    let index = FileAnchorIndex::build(&root, &plans, max_nodes, matcher_budget_exhausted);
+    metrics.visited_nodes += index.visited_nodes();
+    #[cfg(feature = "code-rule-profile")]
+    {
+        drop(index_timer);
+    }
+    #[cfg(feature = "code-rule-profile")]
+    let selection_timer = profile::PhaseTimer::start(profile::Phase::Selection);
+    let selections = slots
+        .iter()
+        .zip(&runs)
+        .map(|((_, grammar), runs)| {
+            if !runs {
+                return Selection::Roots(Cow::Borrowed(&[]));
+            }
+            index.select(&grammar.anchors)
+        })
+        .collect::<Vec<_>>();
+    #[cfg(feature = "code-rule-profile")]
+    {
+        drop(selection_timer);
+        profile::record_index(index.len(), index.estimated_bytes(), index.complete());
+        for (&(slot, _), selection) in slots.iter().zip(&selections) {
+            if !file.failures.contains_key(&file.candidates.ast[slot]) {
+                profile::record_selection(
+                    match selection {
+                        Selection::All => index.len(),
+                        Selection::Roots(roots) => roots.len(),
+                    },
+                    matches!(selection, Selection::All),
+                );
+            }
+        }
+    }
+    let mut util_work = file
+        .candidates
+        .ast
+        .iter()
+        .map(|id| code_rules[id.0].capabilities.limits.max_visited_nodes)
+        .collect::<Vec<_>>();
+    #[cfg(feature = "code-rule-profile")]
+    let _dispatch_timer = profile::PhaseTimer::start(profile::Phase::Dispatch);
+    let scopes = FileScopeSlot::install(
+        file.scopes
+            .as_ref()
+            .filter(|(revision, _)| *revision == file.source_revision)
+            .map(|(_, tables)| tables.clone())
+            .unwrap_or_default(),
+        file.input.module.clone(),
+        errors.hide_bindings(),
+    )
+    .path(&file.input.path);
+    let match_started = Instant::now();
+    evaluate_clauses(
+        file,
+        code_rules,
+        slots,
+        root.root().get_doc(),
+        &errors,
+        metrics,
+        &mut util_work,
+        &selected_roots_by_slot(&selections, &index),
+    )?;
+    // The file keeps the tables every document's evaluation built.
+    let tables = scopes.tables();
+    if !tables.is_empty() {
+        match &mut file.scopes {
+            Some((revision, known)) if *revision == file.source_revision => {
+                for table in tables {
+                    if !known.iter().any(|known| {
+                        known.language == table.language && known.reading == table.reading
+                    }) {
+                        known.push(table);
+                    }
+                }
+            }
+            scopes => *scopes = Some((file.source_revision, tables)),
+        }
+    }
+    metrics.ast_match_nanoseconds += match_started.elapsed().as_nanos() as u64;
+    #[cfg(test)]
+    pass_deadline_at_test_phase("checks-done");
+    Ok(())
 }
 
 /// Parses `file`'s source and keeps its tape for this source revision. `Ok(Err(failure))` where the
@@ -761,28 +811,28 @@ fn selected_roots_by_slot(
 fn evaluate_clauses(
     file: &mut FileState,
     code_rules: &[Arc<CompiledCodeRule>],
-    grammars: &[&GrammarMatcher],
+    slots: &[(usize, &GrammarMatcher)],
     doc: &tape::TapeDoc,
     errors: &SyntaxErrors,
-    lines: &Arc<LineTable>,
     metrics: &mut Metrics,
     util_work: &mut [usize],
     roots: &[Option<Arc<[u32]>>],
 ) -> Result<()> {
     use crate::code_rule_dsl::matcher::{Stopped, enumerate, node_at, run_clause, with_file_memo};
     let target = ast_grep_core::AstGrep::doc(doc.clone());
+    // A guest document's nodes span its program's text; error regions are the file's (`origin`).
+    let place = crate::code_rule_dsl::origin::InFile::tape(doc);
     with_file_memo(&target, || -> Result<()> {
-        for slot in 0..file.candidates.ast.len() {
+        for (position, &(slot, grammar)) in slots.iter().enumerate() {
             let id = file.candidates.ast[slot];
             // An anchor selection of no roots leaves nothing for the clause to match.
             if file.failures.contains_key(&id)
                 || matcher_budget_exhausted()
-                || roots[slot].as_deref().is_some_and(<[u32]>::is_empty)
+                || roots[position].as_deref().is_some_and(<[u32]>::is_empty)
             {
                 continue;
             }
             let code_rule = &code_rules[id.0];
-            let grammar = grammars[slot];
             let violation = &code_rule.clauses[id.1].violation;
             let decision = code_rule.clauses[id.1].decision;
             let each = violation.each.as_deref();
@@ -796,7 +846,7 @@ fn evaluate_clauses(
                 run_clause(
                     &target,
                     grammar,
-                    roots[slot].as_deref(),
+                    roots[position].as_deref(),
                     limits.max_visited_nodes,
                     &mut util_work[slot],
                     |node, first, work| {
@@ -818,7 +868,7 @@ fn evaluate_clauses(
                                 }
                                 *work = crate::code_rule_dsl::matcher::end_clause().0;
                             }
-                            if errors.overlaps(&matched.get_node().range()) {
+                            if errors.overlaps(&place.node(matched.get_node())) {
                                 return Ok(true);
                             }
                             let matched_node = matched.get_node();
@@ -855,7 +905,6 @@ fn evaluate_clauses(
                                     violation,
                                     (limits.max_witnesses + 1).saturating_sub(reported),
                                     matcher_budget_exhausted,
-                                    |start, end| lines.span(start, end),
                                     keep,
                                 )
                             } else {
@@ -864,7 +913,6 @@ fn evaluate_clauses(
                                     &matched,
                                     grammar.language,
                                     Some(violation),
-                                    |start, end| lines.span(start, end),
                                 )
                                 .map(|mut witness| {
                                     if keep(&mut witness) {

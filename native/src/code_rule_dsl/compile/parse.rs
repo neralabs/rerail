@@ -361,11 +361,7 @@ pub(super) fn compile_parse(
                 language,
                 &["string", "encapsed_string", "heredoc", "nowdoc"],
             ),
-            // A template's own `{{-- --}}` comments are no PHP doc comments.
-            LiteralHost::PhpComment => with_adapter!(family, A => kind_ids(language, &["comment"])
-                .into_iter()
-                .filter(|id| <A as SyntaxRules>::php_comment(language, *id))
-                .collect()),
+            LiteralHost::PhpComment => kind_ids(language, &["comment"]),
         }),
         reading: table_reading(utils.options.as_deref(), utils.python.as_deref()),
     }))))

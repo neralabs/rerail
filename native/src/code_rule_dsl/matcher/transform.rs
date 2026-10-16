@@ -7,9 +7,8 @@ mod semantic;
 mod string_case;
 
 use super::exported::exported_span;
-use super::host_lines;
 use super::value::Reading;
-use crate::code_rule_dsl::lines::LineTable;
+use crate::code_rule_dsl::origin::InFile;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::source::Content;
 use ast_grep_core::{Doc, Node};
@@ -172,14 +171,15 @@ impl Trans {
             |source: &Source, text: Option<String>| text.or_else(|| source.default.clone());
         let output = match self {
             Self::Line { source, end } => {
-                let text = placed(env, &source.variable).map(|(range, lines)| {
+                let text = placed(env, &source.variable).map(|(range, file)| {
                     let at = if *end { range.end } else { range.start };
-                    (lines.line(at) + 1).to_string()
+                    (file.lines().line(at) + 1).to_string()
                 });
                 or_default(source, text)
             }
             Self::Lines { source } => {
-                let text = placed(env, &source.variable).map(|(range, lines)| {
+                let text = placed(env, &source.variable).map(|(range, file)| {
+                    let lines = file.lines();
                     (lines.line(range.end) - lines.line(range.start) + 1).to_string()
                 });
                 or_default(source, text)
@@ -315,28 +315,34 @@ fn replace_bounded(
     Ok(output)
 }
 
-/// Where a capture stands in its file, and the file's lines: a node's range, a `$$$` capture's
-/// from its first node to its last, or the host range a parsed tree exported. `None` where it is
-/// unbound or no node of the host file is bound to place it.
+/// Where a capture stands in its file (`origin`), and the file's lines: a node's bytes, a `$$$`
+/// capture's from its first node to its last, or those of the range a nested document exported.
+/// `None` where it is unbound or no node of a file's document is bound to place it.
 fn placed<'t, D: Doc>(
     env: &MetaVarEnv<'t, D>,
     source: &MetaVariable,
-) -> Option<(Range<usize>, &'t LineTable)> {
-    let (range, node) = match source {
+) -> Option<(Range<usize>, InFile<'t>)> {
+    match source {
         MetaVariable::Capture(name, _) => match env.get_match(name) {
-            Some(node) => (node.range(), Some(node.clone())),
-            None => (exported_span(env, name)?, None),
+            Some(node) => {
+                let file = InFile::of(node)?;
+                Some((file.node(node), file))
+            }
+            None => {
+                let range = exported_span(env, name)?;
+                // An exported capture has no node: any node of the document places the file.
+                let file = InFile::of(&any_node(env)?)?;
+                Some((file.range(range), file))
+            }
         },
         MetaVariable::MultiCapture(name) => {
             let nodes = env.get_multiple_matches(name);
             let (first, last) = (nodes.first()?, nodes.last()?);
-            (first.range().start..last.range().end, Some(first.clone()))
+            let file = InFile::of(first)?;
+            Some((file.node(first).start..file.node(last).end, file))
         }
-        MetaVariable::Dropped(_) | MetaVariable::Multiple => return None,
-    };
-    // An exported capture has no node: any node of the host places the file.
-    let node = node.or_else(|| any_node(env))?;
-    Some((range, host_lines(&node)?))
+        MetaVariable::Dropped(_) | MetaVariable::Multiple => None,
+    }
 }
 
 /// A node some single capture of `env` holds.

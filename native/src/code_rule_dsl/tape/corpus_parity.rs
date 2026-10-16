@@ -317,59 +317,43 @@ fn point(source: &str, byte: usize) -> (usize, usize, usize) {
     (line, column, byte)
 }
 
-/// The records of the embedded program `view` makes from the native template, as a Blade tape
-/// appends them under its root (`parent`, spanning `parent_range`): PHP's kinds and fields as the
-/// tape numbers them (`numbering`), each node at its template span kept inside its parent's,
-/// placeholders left out.
+/// The records of the embedded program `view` makes from the native template, as its guest tape
+/// holds them: its tree over its own text, placeholders left out.
 fn view_records(
     view: &crate::code_rule_dsl::blade::view::View,
     node: tree_sitter::Node<'_>,
-    source: &str,
     field: u16,
-    parent: (usize, Range<usize>),
-    numbering: &crate::code_rule_dsl::language::Embedded,
+    parent: Option<usize>,
     records: &mut Vec<NodeRecord>,
 ) -> Option<usize> {
-    if view.omitted(node) {
+    if view.segments().omitted(node.byte_range()) {
         return None;
     }
-    let span = view.span(node);
-    let (low, high) = (parent.1.start, parent.1.end);
-    let start = span.start.clamp(low, high);
-    let range = start..span.end.clamp(start, high);
+    let text = view.text();
+    let range = node.byte_range();
     let index = records.len();
     records.push(NodeRecord {
         kind: node.kind().to_owned(),
-        kind_id: numbering.kind_code(node.kind_id()),
+        kind_id: node.kind_id(),
         named: node.is_named(),
         extra: node.is_extra(),
         error: node.is_error(),
         missing: node.is_missing(),
         field,
         range: range.clone(),
-        start: point(source, range.start),
-        end: point(source, range.end),
-        parent: Some(parent.0),
+        start: point(text, range.start),
+        end: point(text, range.end),
+        parent,
         children: Vec::new(),
         next: None,
         prev: None,
-        text: source[range.clone()].to_owned(),
+        text: text[range].to_owned(),
     });
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            let field = cursor
-                .field_id()
-                .map_or(0, |id| numbering.field_code(id.get()));
-            if let Some(child) = view_records(
-                view,
-                cursor.node(),
-                source,
-                field,
-                (index, range.clone()),
-                numbering,
-                records,
-            ) {
+            let field = cursor.field_id().map_or(0, |id| id.get());
+            if let Some(child) = view_records(view, cursor.node(), field, Some(index), records) {
                 records[index].children.push(child);
             }
             if !cursor.goto_next_sibling() {
@@ -399,11 +383,13 @@ fn blade_tape_parity(source: &str) -> Result<(usize, usize), String> {
     blade_tree_parity(&parse_tree(source.as_bytes()), source, &tape)
 }
 
-/// The records of a template's Forte tree, as a Blade tape numbers its kinds and fields.
+/// The records of a template's Forte tree, its syntax errors ERROR leaves where the tape places
+/// them (`error_place`).
 fn forte_records(
     node: crate::code_rule_dsl::blade::forte::tree::BladeNode<'_>,
     source: &str,
     parent: Option<usize>,
+    errors: &[(usize, usize, Range<usize>)],
     records: &mut Vec<NodeRecord>,
 ) -> usize {
     let range = node.range();
@@ -415,11 +401,7 @@ fn forte_records(
         extra: false,
         error: false,
         missing: false,
-        field: node.field_name().map_or(0, |name| {
-            GrammarDialect::Blade
-                .field_id(name)
-                .expect("a catalog field")
-        }),
+        field: node.field_id(),
         range: range.clone(),
         start: point(source, range.start),
         end: point(source, range.end),
@@ -429,9 +411,42 @@ fn forte_records(
         prev: None,
         text: source[range].to_owned(),
     });
-    for child in node.children() {
-        let child = forte_records(child, source, Some(index), records);
+    let error = |range: &Range<usize>, records: &mut Vec<NodeRecord>| {
+        records.push(NodeRecord {
+            kind: "ERROR".to_owned(),
+            kind_id: u16::MAX,
+            named: true,
+            extra: false,
+            error: true,
+            missing: false,
+            field: 0,
+            range: range.clone(),
+            start: point(source, range.start),
+            end: point(source, range.end),
+            parent: Some(index),
+            children: Vec::new(),
+            next: None,
+            prev: None,
+            text: source[range.clone()].to_owned(),
+        });
+        records.len() - 1
+    };
+    let here = errors
+        .iter()
+        .filter(|(at, _, _)| *at == node.node_id())
+        .collect::<Vec<_>>();
+    let mut placed = here.iter().peekable();
+    for (position, child) in node.children().enumerate() {
+        while let Some((_, _, range)) = placed.next_if(|(_, before, _)| *before <= position) {
+            let leaf = error(range, records);
+            records[index].children.push(leaf);
+        }
+        let child = forte_records(child, source, Some(index), errors, records);
         records[index].children.push(child);
+    }
+    for (_, _, range) in placed {
+        let leaf = error(range, records);
+        records[index].children.push(leaf);
     }
     let children = records[index].children.clone();
     for pair in children.windows(2) {
@@ -441,74 +456,90 @@ fn forte_records(
     index
 }
 
-/// A restored Blade tape against the template's Forte tree and the view built from it: the tape's
-/// first nodes are exactly the template's, and the rest, under the root's last child, exactly the
-/// view's. Returns the template's node count and the view's.
+/// A restored Blade tape against the template's Forte tree and the view built from it: the host
+/// tape is exactly the template's tree, its syntax errors ERROR leaves; its guest, exactly the
+/// view's tree over the view's text, read through the template's errors as Blade reads them.
+/// Returns the template's node count and the view's.
 fn blade_tree_parity(
     tree: &BladeTree,
     source: &str,
     tape: &TapeDoc,
 ) -> Result<(usize, usize), String> {
+    let mut placed = tree
+        .error_ranges()
+        .iter()
+        .map(|error| {
+            let (node, before) = super::error_place(tree.root(), error);
+            (node, before, error.clone())
+        })
+        .collect::<Vec<_>>();
+    placed.sort_by_key(|(node, before, error)| (*node, *before, error.start, error.end));
     let mut expected = Vec::new();
-    forte_records(tree.root(), source, None, &mut expected);
+    forte_records(tree.root(), source, None, &placed, &mut expected);
     let template = expected.len();
-    let reading = View::build(tree, source, &|| false)?;
-    let mut errors = Vec::new();
-    if let Some(view) = &reading.view {
-        let numbering = GrammarDialect::Blade
-            .kinds()
-            .embedding(GrammarDialect::Php)
-            .expect("Blade embeds PHP");
-        let program = view_records(
-            view,
-            view.root(),
-            source,
-            0,
-            (0, 0..source.len()),
-            numbering,
-            &mut expected,
-        )
-        .ok_or("the view's program is a placeholder")?;
-        if let Some(&last) = expected[0].children.last() {
-            expected[last].next = Some(program);
-            expected[program].prev = Some(last);
-        }
-        expected[0].children.push(program);
-        // The view's syntax errors, outermost first, as the tape reports them: none an ERROR
-        // contains, and the program is under the root, which recovery can make an ERROR.
-        let mut skip_until = 0;
-        for (index, record) in expected.iter().enumerate() {
-            if index >= skip_until && (record.error || record.missing) {
-                if index >= template {
-                    errors.push(record.range.clone());
-                }
-                skip_until = index + subtree_len(&expected, index);
-            }
-        }
-    }
-    // Then the template's own as Blade reads it: Forte's lexer errors, or the template it did
-    // not parse (`view::Reading::syntax_errors`).
-    errors.extend(reading.syntax_errors);
-    let actual = tape_records(tape);
-    if expected != actual {
-        let difference = expected
-            .iter()
-            .zip(&actual)
-            .position(|(left, right)| left != right)
-            .unwrap_or(expected.len().min(actual.len()));
-        return Err(format!(
-            "node record mismatch at {difference} (template has {template}): expected={:?}, actual={:?}",
-            expected.get(difference),
-            actual.get(difference)
-        ));
-    }
+    compare_records(&expected, &tape_records(tape), "template")?;
+    let mut errors = tree.error_ranges().to_vec();
+    errors.sort_by_key(|range| (range.start, range.end));
     if errors != tape.syntax_error_ranges() {
         return Err(format!(
-            "syntax error range mismatch: expected={errors:?}, actual={:?}",
+            "template syntax error mismatch: expected={errors:?}, actual={:?}",
             tape.syntax_error_ranges()
         ));
     }
-    Ok((template, expected.len() - template))
+    let guests = tape.guests().ok_or("the host owns its guests")?;
+    let Some(view) = View::build(tree, source, &|| false)? else {
+        return match guests.as_slice() {
+            [] => Ok((template, 0)),
+            _ => Err("a guest without a view".into()),
+        };
+    };
+    let [guest] = guests.as_slice() else {
+        return Err(format!("{} guests for one view", guests.len()));
+    };
+    let mut program = Vec::new();
+    view_records(&view, view.root(), 0, None, &mut program)
+        .ok_or("the view's program is a placeholder")?;
+    compare_records(&program, &tape_records(&guest.doc), "view")?;
+    let mut view_errors = Vec::new();
+    let mut skip_until = 0;
+    for (index, record) in program.iter().enumerate() {
+        if index >= skip_until && (record.error || record.missing) {
+            view_errors.push(record.range.clone());
+            skip_until = index + subtree_len(&program, index);
+        }
+    }
+    if view_errors != guest.doc.syntax_error_ranges()
+        || view.syntax_errors() != guest.doc.host_errors().collect::<Vec<_>>()
+    {
+        return Err(format!(
+            "view syntax error mismatch: expected={view_errors:?} and {:?}, actual={:?} and {:?}",
+            view.syntax_errors(),
+            guest.doc.syntax_error_ranges(),
+            guest.doc.host_errors().collect::<Vec<_>>()
+        ));
+    }
+    Ok((template, program.len()))
+}
+
+/// Whether two documents' records agree, else where they first differ.
+fn compare_records(
+    expected: &[NodeRecord],
+    actual: &[NodeRecord],
+    what: &str,
+) -> Result<(), String> {
+    if expected == actual {
+        return Ok(());
+    }
+    let difference = expected
+        .iter()
+        .zip(actual)
+        .position(|(left, right)| left != right)
+        .unwrap_or(expected.len().min(actual.len()));
+    Err(format!(
+        "{what} node record mismatch at {difference}: expected={:?}, actual={:?}",
+        expected.get(difference),
+        actual.get(difference)
+    ))
 }
 
 /// The number of records in `index`'s subtree, itself included.

@@ -58,11 +58,10 @@ impl NodeRef {
     }
 
     /// The node this names in `root`'s tree: the outermost node of that range and kind, first in
-    /// preorder. Siblings may overlap (a Blade tape's template tree and its embedded `program`,
-    /// a marker and the loop it opens), so a descent that finds no such node tries the next
-    /// sibling that also covers the range. Siblings are read only up to the one the descent
-    /// takes, and past it only when it fails: a lookup in a class of a thousand methods reads
-    /// the methods before the one holding the node, not all of them.
+    /// preorder. A descent that finds no such node tries the next sibling that also covers the
+    /// range (zero-width siblings may share a position). Siblings are read only up to the one the
+    /// descent takes, and past it only when it fails: a lookup in a class of a thousand methods
+    /// reads the methods before the one holding the node, not all of them.
     pub(crate) fn find<'r, D: Doc>(&self, root: Node<'r, D>) -> Option<Node<'r, D>> {
         let (start, end) = (self.start as usize, self.end as usize);
         let covers = |child: &Node<'r, D>| {
@@ -102,12 +101,11 @@ impl NodeRef {
         }
     }
 
-    /// `find` in `root`'s tree, searched from `near`, a node of the same tree. In a tree whose
-    /// siblings never overlap (every grammar's but an embedding one's, whose embedded program spans
-    /// the template's bytes again: Blade's), the nodes covering a nonempty
-    /// range form one path from the root, so the descent starts at the topmost node of `near`'s
-    /// nearest covering ancestor's range instead of reading every sibling before that path from
-    /// the root down: a read in a class of a thousand methods reads its own method's statements.
+    /// `find` in `root`'s tree, searched from `near`, a node of the same tree. In a file's tree,
+    /// whose siblings never overlap, the nodes covering a nonempty range form one path from the
+    /// root, so the descent starts at the topmost node of `near`'s nearest covering ancestor's
+    /// range instead of reading every sibling before that path from the root down: a read in a
+    /// class of a thousand methods reads its own method's statements.
     pub(crate) fn find_near<'r, D: Doc>(
         &self,
         root: Node<'r, D>,
@@ -115,15 +113,11 @@ impl NodeRef {
     ) -> Option<Node<'r, D>> {
         let (start, end) = (self.start as usize, self.end as usize);
         // A file's tree, native or taped; a parsed literal's tree has no dialect to vouch for it.
-        let disjoint = || {
+        let file = || {
             let doc: &dyn std::any::Any = root.get_doc();
-            let dialect = match doc.downcast_ref::<StrDoc<GrammarDialect>>() {
-                Some(doc) => Some(*doc.get_lang()),
-                None => doc.downcast_ref::<TapeDoc>().map(|doc| *doc.get_lang()),
-            };
-            dialect.is_some_and(|dialect| !dialect.kinds().has_embedded())
+            doc.is::<StrDoc<GrammarDialect>>() || doc.is::<TapeDoc>()
         };
-        if start >= end || root.parent().is_some() || !disjoint() {
+        if start >= end || root.parent().is_some() || !file() {
             return self.find(root);
         }
         let covers = |node: &Node<'r, D>| {

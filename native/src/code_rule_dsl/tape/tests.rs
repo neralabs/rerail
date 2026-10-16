@@ -119,13 +119,14 @@ fn persisted_image_round_trips_without_parsing() {
     // `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them.
     assert_eq!(
         digest,
-        "227bea89873bd43db3dae4b3a9d1af873c096e79a0b308b83959a967fbd183ca"
+        "a8fa2004ef352942f902d3215371b71229a657fc846000e1d0fc27edbc6218a4"
     );
 }
 
-/// A persisted image keeps each embedded program's root, dialect and apartness (`EmbeddedProgram`),
-/// and rejects an entry that names no dialect the language embeds, a flag that is neither 0 nor
-/// 1, and a root that is no child of the tape's root.
+/// A persisted image keeps each embedded program a document of its own (`GuestImage`): its
+/// embedding, text, segments and tape, which restore as the file's guest. It rejects a guest
+/// whose embedding the language has not, whose tape is of a dialect the language does not embed,
+/// or whose segments reach past its text.
 #[test]
 fn persisted_image_keeps_and_checks_its_embedded_programs() {
     let source = "<script lang=\"tsx\">let x = <a />;</script>\n";
@@ -133,39 +134,54 @@ fn persisted_image_keeps_and_checks_its_embedded_programs() {
     let image = TapeImage::parse(&grammar, source, &|| false)
         .unwrap()
         .unwrap();
-    let [program] = image.programs[..] else {
-        panic!("one program: {:?}", image.programs);
+    let [guest] = &image.guests[..] else {
+        panic!("one program: {}", image.guests.len());
     };
-    assert_eq!(program.dialect, GrammarDialect::Tsx);
-    assert!(program.apart);
+    assert_eq!(guest.tape.language, GrammarDialect::Tsx);
     let bytes = image.to_bytes().unwrap();
+    let read = TapeImage::from_bytes(&bytes, &grammar).unwrap();
+    assert_eq!(read.to_bytes().unwrap(), bytes);
+    let restored = TapeDoc::restore(
+        Arc::new(source.to_owned()),
+        Arc::clone(&grammar),
+        &read,
+        &|| false,
+    )
+    .unwrap();
+    let guests = restored.guests().unwrap();
     assert_eq!(
-        TapeImage::from_bytes(&bytes, &grammar).unwrap().programs,
-        image.programs
+        guests[0].via,
+        crate::code_rule_dsl::language::Via::TestScript
     );
-    // The program entry follows the header and the tables before it.
-    let at = 160
+    assert_eq!(guests[0].doc.get_source().as_str(), guest.text.as_str());
+    // The guest section follows the header and the tables before it: the embedding's index, then
+    // the text, the segments, the host errors and the tape, each after its length.
+    let aliases = image
+        .kind_aliases
+        .iter()
+        .map(|(name, _)| 5 + name.len())
+        .sum::<usize>();
+    let at = HEADER_BYTES
         + image.rec.len()
         + image.spans.len()
         + image.checkpoints.len()
         + 8 * (image.par_overflow.len() + image.size_overflow.len())
         + 4 * (image.extra.len() + image.error.len() + image.missing.len())
-        + 8 * image.syntax_errors.len();
-    assert_eq!(bytes[at..at + 4], program.root.to_le_bytes());
-    for (offset, byte) in [(4, 3), (5, 2)] {
+        + aliases
+        + 6 * image.kind_overrides.len();
+    assert_eq!(bytes[at], 0);
+    let segments_at = at + 1 + 8 + guest.text.len() + 8;
+    let tape_at = segments_at + 17 * guest.segments.len() + 8 + 8 * guest.host_errors.len() + 8;
+    assert_eq!(&bytes[tape_at..tape_at + 8], TAPE_MAGIC);
+    let corrupt = |at: usize, byte: u8| {
         let mut corrupt = bytes.clone();
-        corrupt[at + offset] = byte;
-        assert!(
-            TapeImage::from_bytes(&corrupt, &grammar).is_err(),
-            "{offset}"
-        );
-    }
-    let mut unknown = image.clone();
-    unknown.programs[0].dialect = GrammarDialect::Python;
-    assert!(unknown.to_bytes().is_err());
-    let mut nested = image.clone();
-    nested.programs[0].root += 1;
-    assert!(TapeDoc::restore(Arc::new(source.to_owned()), grammar, &nested, &|| false).is_err());
+        corrupt[at] = byte;
+        TapeImage::from_bytes(&corrupt, &grammar).is_err()
+    };
+    assert!(corrupt(at, 1), "no second embedding");
+    let python = crate::code_rule_dsl::language::tape_tag(GrammarDialect::Python).unwrap();
+    assert!(corrupt(tape_at + 8, python), "HTML embeds no Python");
+    assert!(corrupt(segments_at + 4, 0xff), "a segment past the text");
 }
 
 #[test]
