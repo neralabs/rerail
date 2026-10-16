@@ -12,7 +12,7 @@ use super::storage::{StorageContext, unix_seconds};
 use super::{CLAUSE_WORK_BUDGET_EXCEEDED, ClauseId, FileState, LocalFailure};
 use crate::WORK_POOL;
 use crate::code_rule_dsl::eval::file_language;
-use crate::code_rule_dsl::json::{invalid, json_error};
+use crate::code_rule_dsl::json::{hex_digest, invalid, json_error};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::UtilLimit;
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, FileInput, Query};
@@ -522,16 +522,22 @@ pub(super) fn grammar_set() -> HashKey {
 }
 
 /// The inputs besides source content that one file's clause results depend on: its path (and so
-/// its dialect), language and Python module. Stored results are keyed by content and this.
+/// its dialect), language, Python module and nearest `package.json`. Stored results are keyed by
+/// content and this.
 pub(super) fn file_context(input: &FileInput) -> HashKey {
     let module = input
         .module
         .as_deref()
         .map(|module| format!("{module:?}"))
         .unwrap_or_default();
+    let package = input
+        .package
+        .as_deref()
+        .map(|package| format!("\0package\0{}", hex_digest(package.digest())))
+        .unwrap_or_default();
     HashKey::sha256(
         format!(
-            "rerail-file-context-v1\0{}\0{}\0{module}",
+            "rerail-file-context-v1\0{}\0{}\0{module}{package}",
             input.language, input.path
         )
         .as_bytes(),

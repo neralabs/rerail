@@ -44,6 +44,9 @@ struct Expect {
     documents: &'static [Documents],
     /// The suffix of the family's files, and the module of `pkg/mod<suffix>` in a package `pkg`.
     module: (&'static str, Option<&'static str>),
+    /// Whether the family's files read their nearest `package.json` (`Adapter::PACKAGE_MANIFESTS`),
+    /// and whether `file.jsxRuntime` asks for their JSX runtime (`Adapter::JSX_RUNTIMES`).
+    package_manifests: (bool, bool),
     value: value_kit::Expect,
     /// What the family's calls answer.
     calls: super::calls::kit::Calls,
@@ -136,6 +139,10 @@ fn kit<A: Adapter>(expect: &Expect) {
     );
     // A family names modules from package markers exactly when it derives one for `pkg/mod`.
     assert_eq!(A::PACKAGES, module.is_some());
+    assert_eq!(
+        (A::PACKAGE_MANIFESTS, A::JSX_RUNTIMES),
+        expect.package_manifests
+    );
     value_kit::check::<A>(&expect.value, |s| semantic(s, expect.dialect));
     super::calls::kit::check::<A>(&expect.calls, expect.dialect);
     super::arguments::kit::check::<A>(&expect.arguments, expect.semantic, |s| {
@@ -157,6 +164,7 @@ fn python() {
         name: "file",
         documents: &[("x = 1\n", &[("module", 0..6)])],
         module: (".py", Some("pkg.mod")),
+        package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Python,
             string: Value::Str("é".to_owned()),
@@ -209,8 +217,8 @@ fn python() {
             language_options: None,
             compiled_options: Some((r#"{"pythonVersion": "3.12"}"#, None, Some(12))),
             when: &[
-                (r#"{"pythonVersion": {"min": "3.10"}}"#, Ok(true)),
-                (r#"{"pythonVersion": {"max": "3.9"}}"#, Ok(false)),
+                (r#"{"pythonVersion": {"min": "3.10"}}"#, Ok((true, None))),
+                (r#"{"pythonVersion": {"max": "3.9"}}"#, Ok((false, None))),
                 (
                     r#"{"ecmaVersion": {"min": 2015}}"#,
                     Err("unknown field `ecmaVersion` at /q/when"),
@@ -275,6 +283,7 @@ fn ecma() {
         name: "ﬁle",
         documents: &[("let x = 1;\n", &[("program", 0..11)])],
         module: (".ts", None),
+        package_manifests: (true, true),
         value: value_kit::Expect {
             lang: Family::Ecma,
             string: Value::Utf16(vec![0xe9]),
@@ -330,8 +339,11 @@ fn ecma() {
                 None,
             )),
             when: &[
-                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
-                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok((true, None))),
+                (
+                    r#"{"sourceType": "script"}"#,
+                    Ok((true, Some(&[SourceType::Script]))),
+                ),
                 (
                     r#"{"pythonVersion": {"min": "3.10"}}"#,
                     Err("unknown field `pythonVersion` at /q/when"),
@@ -350,7 +362,7 @@ fn ecma() {
         },
         scope: super::scope::kit::Expect {
             flow: false,
-            declared: (Some((2026, SourceType::Module)), None),
+            declared: (Some((2026, None)), None),
             unresolved: &[
                 ("undefinedName;\n", "undefinedName", true),
                 ("Math;\n", "Math", false),
@@ -403,6 +415,7 @@ fn php() {
         name: "ﬁle",
         documents: &[("<?php $x = 1;\n", &[("program", 0..14)])],
         module: (".php", None),
+        package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Php,
             string: Value::PhpStr(vec![0xc3, 0xa9]),
@@ -486,8 +499,8 @@ fn php() {
             language_options: Some("`languageOptions` is not available for php policies"),
             compiled_options: None,
             when: &[
-                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
-                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok((true, None))),
+                (r#"{"sourceType": "script"}"#, Ok((false, None))),
                 (
                     r#"{"pythonVersion": {"min": "3.10"}}"#,
                     Err("unknown field `pythonVersion` at /q/when"),
@@ -556,6 +569,7 @@ fn blade() {
             ("<p>x</p>\n", &[("document", 0..9)]),
         ],
         module: (".blade.php", None),
+        package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Php,
             string: Value::PhpStr(vec![0xc3, 0xa9]),
@@ -640,8 +654,8 @@ fn blade() {
             language_options: Some("`languageOptions` is not available for blade policies"),
             compiled_options: None,
             when: &[
-                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
-                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok((true, None))),
+                (r#"{"sourceType": "script"}"#, Ok((false, None))),
                 (
                     r#"{"pythonVersion": {"min": "3.10"}}"#,
                     Err("unknown field `pythonVersion` at /q/when"),
@@ -730,6 +744,7 @@ fn vue() {
             ),
         ],
         module: (".vue", None),
+        package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Ecma,
             string: Value::Utf16(vec![0xe9]),
@@ -790,8 +805,8 @@ fn vue() {
                 None,
             )),
             when: &[
-                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
-                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok((true, None))),
+                (r#"{"sourceType": "script"}"#, Ok((false, None))),
                 (
                     r#"{"pythonVersion": {"min": "3.10"}}"#,
                     Err("unknown field `pythonVersion` at /q/when"),
@@ -827,7 +842,7 @@ fn vue() {
         },
         scope: super::scope::kit::Expect {
             flow: false,
-            declared: (Some((2026, SourceType::Module)), None),
+            declared: (Some((2026, None)), None),
             unresolved: &[
                 (
                     "<template>{{ undefinedName }}</template>\n",
@@ -885,6 +900,7 @@ fn sql() {
         name: "ﬁle",
         documents: &[("SELECT 1;\n", &[("program", 0..10)])],
         module: (".sql", None),
+        package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Sql,
             string: Value::Str("é".to_owned()),
@@ -935,7 +951,7 @@ fn sql() {
             language_options: Some("`languageOptions` is not available for sql policies"),
             compiled_options: None,
             when: &[
-                ("{}", Ok(true)),
+                ("{}", Ok((true, None))),
                 (
                     r#"{"ecmaVersion": {"min": 2015}}"#,
                     Err("unknown field `ecmaVersion` at /q/when"),
@@ -995,6 +1011,7 @@ fn rust() {
         name: "ﬁle",
         documents: &[("fn f() {}\n", &[("source_file", 0..10)])],
         module: (".rs", None),
+        package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Rust,
             string: Value::Str("é".to_owned()),
@@ -1071,8 +1088,8 @@ fn rust() {
             language_options: Some("`languageOptions` is not available for rust policies"),
             compiled_options: None,
             when: &[
-                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
-                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok((true, None))),
+                (r#"{"sourceType": "script"}"#, Ok((false, None))),
                 (
                     r#"{"pythonVersion": {"min": "3.10"}}"#,
                     Err("unknown field `pythonVersion` at /q/when"),

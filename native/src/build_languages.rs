@@ -648,7 +648,7 @@ fn render(entries: &[Entry], test_planned: &[String]) -> String {
         for dialect in &entry.dialects {
             let _ = writeln!(
                 out,
-                "    Dialect {{ lang: {}, label: {:?}, #[cfg(test)] suffixes: &{:?}, tape_tag: {} }},",
+                "    Dialect {{ lang: {}, label: {:?}, suffixes: &{:?}, tape_tag: {} }},",
                 variant(&dialect.label),
                 dialect.label,
                 dialect.suffixes,

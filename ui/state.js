@@ -23,6 +23,13 @@ export function setScope(scope) {
   ui.owner = scope?.checkout === undefined ? "repository" : "checkout";
 }
 
+/**
+ * A list the daemon pages with a cursor: `key` is its URL without the cursor (a new key starts over), `owner` what it
+ * lists (a rule or session id, when it lists one), `rows` the loaded pages newest first, `total` every matching row,
+ * `next` the cursor past the last loaded row (`null`: nothing further), `pages` how many pages are loaded (0: none yet).
+ */
+export const pagedList = (key = null, owner = null) => ({ key, owner, rows: [], total: 0, next: null, pages: 0 });
+
 export const data = {
   /** The scoped repository (`repository_context_get`): name, key, set up, started; `null` until loaded. */
   repository: null,
@@ -42,12 +49,23 @@ export const data = {
   /** id → activity for the selected range, and for all time (`since=0`). */
   activity: {},
   activityAll: {},
-  /** Newest first, the pages fetched so far for the selected range. */
-  findings: [],
-  findingsTotal: 0,
-  /** Session summaries, newest first. */
-  sessions: [],
-  /** sessionId → { events: [], nextAfter, loaded, loading } */
+  /** `{ started, withViolations }`: sessions in the range, and since install, from the activity answers. */
+  activitySessions: null,
+  activityAllSessions: null,
+  /** Activity: the range's violations, newest first, the pages loaded so far (`pagedList`). */
+  findings: pagedList(),
+  /** The open rule panel's violations in range (`owner`: the rule id). */
+  ruleFindings: pagedList(),
+  /** Sessions view: session summaries, newest first, the pages loaded so far. */
+  sessions: pagedList(),
+  /** The selected session's violations, all time (`owner`: the session id). */
+  sessionFindings: pagedList(),
+  /** The newest session of the repository, or `null`: the welcome banner. */
+  newestSession: null,
+  /**
+   * sessionId → { head, events, nextAfter, loaded, earlier, loading }: `head` is the session's summary from
+   * `GET /api/sessions/{id}`, `events` the transcript loaded so far (the newest page first), `earlier` while older ones may be left.
+   */
   sessionDetail: new Map(),
   /** sessionId → first useful user prompt (null while unknown). */
   titles: new Map(),
@@ -110,7 +128,6 @@ export const ui = {
   evFilter: "all",
   showAll: false,
   openDays: new Set(["d0"]),
-  dayShown: {},
   openEvents: new Set(),
   closedEvents: new Set(),
   openFolds: new Set(),
@@ -282,7 +299,6 @@ export function summary() {
   const rules = rulesArray();
   const on = rules.filter(isRunning);
   let triggers = 0, rerailTotal = 0, steerRules = 0, firedN = 0, firedOn = 0, logged = 0;
-  let maxRuleSessions = 0;
   for (const r of rules) {
     const id = r.rule.id, f = fires(id), a = activityOf(id);
     triggers += f;
@@ -291,43 +307,41 @@ export function summary() {
     if (isMeasured(id)) logged += a.loggedViolations ?? 0;
     if (a.rerails > 0) steerRules += 1;
     if (f > 0) { firedN += 1; if (isRunning(r)) firedOn += 1; }
-    if (a.sessions > maxRuleSessions) maxRuleSessions = a.sessions;
   }
-  const since = sinceFor();
-  const sessionLower = new Set();
-  for (const x of data.findings) if (x.at >= since) sessionLower.add(x.sessionId);
-  const sessionsInRange = data.sessions.filter(s => s.startedAt >= since);
   const logOn = on.filter(isLog).length;
   return {
     rules, on, logOn, steerOn: on.length - logOn,
     triggers, rerails: rerailTotal, steerRules, logged,
     firedN, firedOn,
-    sessionsInRange: sessionsInRange.length,
-    // Lower bound: distinct sessions across fetched findings, or the busiest rule's own count.
-    sessionsWithTriggers: Math.max(sessionLower.size, maxRuleSessions),
+    // Exact, from the activity answer: sessions started in range, and sessions with a violation logged in range.
+    sessionsInRange: data.activitySessions?.started ?? 0,
+    sessionsWithTriggers: data.activitySessions?.withViolations ?? 0,
+    // Whether any session was ever recorded here: the overview's "your next session shows here".
+    anySessions: (data.activityAllSessions?.started ?? 0) > 0,
   };
 }
 
-/** Findings in range for one rule, newest first, from the fetched pages. */
+/** Activity's fallback pack name for a By Rerail rule not added through a pack. */
 const OTHER_RULES = "Other rules";
 /** The rule pack a violation files under on Activity: the added pack its rule is present through, else Other or Created rules. */
 export const activityPackOf = stored => (stored ? attachedPackOf(stored)?.name ?? (isByRerail(stored) ? OTHER_RULES : "Created rules") : OTHER_RULES);
 
 /**
- * What Activity shows under its pack and rule filters. The fetched pages are a prefix of the range, so
- * while the server has more (`findingsTotal`) a filter's matches may lie further back: `more` stays
+ * What Activity shows under its pack and rule filters. The loaded pages are a prefix of the range, so
+ * while the server has more (`findings.next`) a filter's matches may lie further back: `more` stays
  * available and an empty filtered list is not yet "none".
  */
 export function activityView() {
+  const findings = data.findings.rows;
   const filtered = ui.actPack !== "" || ui.actRule !== null;
   const list = filtered
-    ? data.findings.filter(x => (!ui.actPack || activityPackOf(data.rules.get(x.ruleId)) === ui.actPack) && (ui.actRule === null || x.ruleId === ui.actRule))
-    : data.findings;
-  const serverHasMore = data.findings.length < data.findingsTotal;
+    ? findings.filter(x => (!ui.actPack || activityPackOf(data.rules.get(x.ruleId)) === ui.actPack) && (ui.actRule === null || x.ruleId === ui.actRule))
+    : findings;
+  const serverHasMore = data.findings.next !== null;
   const shown = list.slice(0, ui.recentShown);
   const loadedLeft = list.length - shown.length;
   // Unfiltered, the server's total is the exact count; filtered, only the loaded matches are known.
-  const total = filtered ? list.length : Math.max(data.findingsTotal, list.length);
+  const total = filtered ? list.length : Math.max(data.findings.total, list.length);
   return {
     filtered, list, shown,
     none: list.length === 0 && !(filtered && serverHasMore),
@@ -337,7 +351,10 @@ export function activityView() {
   };
 }
 
-export const ruleFindings = id => data.findings.filter(x => x.ruleId === id);
+/** The open rule panel's violations in range, newest first, from the pages loaded for it. */
+export const ruleFindings = id => (data.ruleFindings.owner === id ? data.ruleFindings.rows : []);
+/** Every violation of the rule in range, once its first page is in; 0 before. */
+export const ruleFindingsTotal = id => (data.ruleFindings.owner === id ? data.ruleFindings.total : 0);
 
 /** The rule a panel shows, when the panel shows one. */
 export const panelRuleId = () => (ui.panel?.kind === "rule" ? ui.panel.id : null);

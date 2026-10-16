@@ -888,6 +888,7 @@ mod tests {
             "typescript".to_owned(),
             std::sync::Arc::new(source.clone()),
             None,
+            None,
             "file",
         )
         .expect("file input");

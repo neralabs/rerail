@@ -3,6 +3,7 @@
 //! limits (`begin_clause`), with `violation.each` enumerated at a matching root. Utility verdicts are
 //! remembered for the whole file while the caller holds `memo::with_file`.
 
+use super::resolve::{decide_file_jsx_runtime, decide_file_source_type};
 use super::{EachScope, GrammarMatcher, UtilLimit, begin_clause, end_clause, util_limit_hit};
 use crate::code_rule_dsl::budget::matcher_budget_observed;
 use crate::code_rule_dsl::tape::TapeDoc;
@@ -88,7 +89,9 @@ fn match_root<'f>(
 /// Runs `matcher`'s clause over `file` with `work` left of its utility budget, until `visit`
 /// (given each matching root and its bindings) ends it. Roots at preorder ordinals from `bound`
 /// on are not matched. The clause's context is set up only while roots are matched: `visit` runs
-/// outside it, with the budget it left in `work`.
+/// outside it, with the budget it left in `work`. A file whose source type its query's `when`
+/// does not list (`GrammarMatcher::may_apply_to`, decided here once its syntax is read), or whose
+/// JSX runtime its `file.jsxRuntime` does not, matches nothing.
 pub(in crate::code_rule_dsl) fn run_clause<'f, E>(
     file: &'f Root<TapeDoc>,
     matcher: &GrammarMatcher,
@@ -97,6 +100,17 @@ pub(in crate::code_rule_dsl) fn run_clause<'f, E>(
     work: &mut usize,
     mut visit: impl FnMut(u32, MetaVarEnv<'f, TapeDoc>, &mut usize) -> Result<bool, E>,
 ) -> Result<Result<(), Stopped>, E> {
+    if !matcher.may_apply_to(Some(decide_file_source_type(&file.root()))) {
+        return Ok(Ok(()));
+    }
+    if let Some(runtimes) = matcher
+        .file
+        .as_ref()
+        .and_then(|condition| condition.jsx_runtime.as_ref())
+        && !runtimes.contains(&decide_file_jsx_runtime(&file.root()))
+    {
+        return Ok(Ok(()));
+    }
     begin_clause(matcher, *work);
     for root in roots(file, matcher, None, selected).take_while(|&root| (root as usize) < bound) {
         let found = match match_root(file, matcher, root) {

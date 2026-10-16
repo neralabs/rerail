@@ -32,6 +32,12 @@
                 "kind": "html_character_reference"
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },

@@ -167,6 +167,7 @@ fn close_releases_idle_workspace_files() {
             language: "python".into(),
             source: Arc::new("print('secret')\n".into()),
             module: None,
+            package: None,
         };
         let file = make_file(input, 1, &[], &mut state.candidate_sets);
         state.files.insert(file.input.path.clone(), file);
@@ -257,6 +258,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
                     language: "python".into(),
                     source: Arc::clone(&source),
                     module: None,
+                    package: None,
                 },
                 1,
                 &[],
@@ -455,6 +457,7 @@ fn close_cancels_busy_owner_without_waiting_for_its_lock() {
             language: "python".into(),
             source: Arc::new("print('x')\n".into()),
             module: None,
+            package: None,
         };
         let file = make_file(input, 1, &[], &mut state.candidate_sets);
         state.files.insert(file.input.path.clone(), file);
@@ -495,6 +498,7 @@ fn close_and_lease_release_handoff_drops_resident_sources() {
                     language: "python".into(),
                     source: Arc::clone(&source),
                     module: None,
+                    package: None,
                 },
                 1,
                 &[],
@@ -1264,6 +1268,7 @@ fn cached_tape_rejects_revision_source_and_grammar_mismatch_without_stale_violat
                     language: "python".into(),
                     source: Arc::new(source.into()),
                     module: None,
+                    package: None,
                 },
                 1,
                 code_rules,
@@ -1382,6 +1387,7 @@ fn apply(state: &mut WorkspaceState, files: &[(&str, &str, &str)], removed: &[&s
                     language: language.to_owned(),
                     source: source.to_owned(),
                     module: None,
+                    package: None,
                 })
                 .collect(),
             removed: removed.iter().map(|path| (*path).to_owned()).collect(),
@@ -3477,4 +3483,54 @@ fn index_labels_a_basename_by_its_longest_listed_suffix_shorter_than_the_basenam
     // Suffix-only basenames have no extension, as the host's `languageOfPath` reads them.
     assert_eq!(label("views/.blade.php").as_deref(), Some("php"));
     assert_eq!(label("app/.php"), None);
+}
+
+#[test]
+fn reads_package_manifests_only_with_an_ast_clause_in_a_manifest_family() {
+    let ast = |language: &str, grammar: &str, kind: &str| {
+        let capabilities = json!({
+            "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
+                "languages": { language: grammar } },
+            "limits": { "maxAstPatternBytes": 16384, "maxRegexPatternBytes": 16384,
+                "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
+                "maxVisitedNodes": 100000, "maxWitnesses": 10000 }
+        });
+        let code_rule = json!({
+            "format": "rerail.policy/v1", "id": format!("{language}-call"), "revision": 1,
+            "mode": "steer",
+            "scope": { "include": ["**/*"], "exclude": [] },
+            "clauses": [{
+                "id": "call", "violation": { "anchor": "witness.span", "code": "CALL",
+                    "message": "found call" },
+                "forbid": { "ast": { "language": language, "rule": { "kind": kind } } }
+            }]
+        });
+        CodeRuleDslRuntime::compile(
+            code_rule.to_string(),
+            "json".into(),
+            capabilities.to_string(),
+        )
+        .unwrap()
+    };
+    assert!(!CodeRuleDslWorkspace::new().reads_package_manifests());
+    // A regex clause reads no file's facts, and Python files read no `package.json`.
+    assert!(!workspace(&["**/*"], false).reads_package_manifests());
+    let mut python = CodeRuleDslWorkspace::new();
+    python
+        .add_code_rule(&ast("python", "tree-sitter-python@0.23", "call"), None)
+        .unwrap();
+    assert!(!python.reads_package_manifests());
+    // An ECMA AST clause does, beside the Python one.
+    assert!(workspace(&["**/*"], true).reads_package_manifests());
+    python
+        .add_code_rule(
+            &ast(
+                "javascript",
+                "tree-sitter-javascript@0.23",
+                "call_expression",
+            ),
+            None,
+        )
+        .unwrap();
+    assert!(python.reads_package_manifests());
 }

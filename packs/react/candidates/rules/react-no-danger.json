@@ -44,6 +44,12 @@
                 "regex": "^[a-z]"
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },

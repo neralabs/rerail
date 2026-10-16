@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-no-exports-assign",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/no-exports-assign: an assignment to the global `exports` (CommonJS scope), except `module.exports = exports = \u2026` and `exports = module.exports = \u2026`.",
+  "description": "eslint-plugin-n 18.4.1 n/no-exports-assign: an assignment to the global `exports` (CommonJS scope), except `module.exports = exports = \u2026` and `exports = module.exports = \u2026`. No sourceType is pinned, so each file keeps its own module system (.cjs/.cts CommonJS; .mjs/.mts/.tsx an ES module; .js/.jsx/.ts by the nearest package.json's type, Node's syntax detection where that package.json sets no valid type, and an ES module where there is no package.json). As eslint-plugin-n's own configs (flat/mixed-esm-and-cjs picks per file), a CommonJS file has require, module, exports, __dirname and __filename (flat/recommended-script) and an ES module none of them (flat/recommended-module turns them off). So only a CommonJS file has the global `exports`; an ES module's assignments are not reported.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -23,9 +23,7 @@
       "forbid": {
         "ast": {
           "language": "typescript",
-          "languageOptions": {
-            "sourceType": "commonjs"
-          },
+          "languageOptions": {},
           "rule": {
             "any": [
               {

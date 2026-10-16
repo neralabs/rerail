@@ -26,6 +26,12 @@
           "rule": {
             "kind": "jsx_text",
             "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){1}"
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -55,6 +61,12 @@
           "rule": {
             "kind": "jsx_text",
             "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){2}"
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -84,6 +96,12 @@
           "rule": {
             "kind": "jsx_text",
             "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){3}"
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -113,6 +131,12 @@
           "rule": {
             "kind": "jsx_text",
             "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){4}"
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -142,6 +166,12 @@
           "rule": {
             "kind": "jsx_text",
             "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){5}"
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -171,6 +201,12 @@
           "rule": {
             "kind": "jsx_text",
             "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){6}"
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -200,6 +236,12 @@
           "rule": {
             "kind": "jsx_text",
             "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){7}"
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -229,6 +271,12 @@
           "rule": {
             "kind": "jsx_text",
             "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){8}"
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
