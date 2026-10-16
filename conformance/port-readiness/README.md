@@ -61,7 +61,7 @@ npm run port-readiness -- --pack python --tool bandit    # one tool-pack
 npm run port-readiness -- --no-cache                     # judge every rule again; read and save no results
 npm run port-readiness -- --refresh-cache                # judge every rule again and save the fresh results (the nightly)
 npm run port-readiness -- --write                        # also write this run's golden promotions to goldens.tsv
-npm run port-readiness -- --pack typescript --tool typescript-eslint --shard 2/6   # one shard: rules with sha256(id) mod 6 = 1
+npm run port-readiness -- --pack typescript --tool typescript-eslint --shard 2/8   # one shard: rules with sha256(id) mod 8 = 1
 npm run port-readiness -- merge .rerail/reports/port-readiness    # join each tool-pack's shard-<i>of<n>/ reports (shard.ts, merge.ts)
 npm run port-readiness -- summary .rerail/reports/port-readiness --base <sha>
 npm run port-readiness -- summary .rerail/reports/port-readiness --planned '["python/ruff"]'   # the others: not judged
@@ -74,12 +74,13 @@ native engine; it reads no upstream runtime. It fetches only the pinned corpora 
 
 Per-rule results are cached under `.rerail/port-readiness/results/<pack>/<tool>/<key>.json`, a shard's under
 `<tool>/shard-<i>of<n>/` (`--cache <dir>` moves the root).
-The key covers the gate code and its dependencies (`package.json`, `package-lock.json`), the engine (tracked engine
+The key covers the gate code a cached verdict can read (`GATE_CODE`), the locked closure of the npm packages the gates
+load (`GATE_PACKAGES`) with `package.json`'s `type`, `port-readiness` and `build:native` scripts, the engine (tracked engine
 sources; not the native binary, but a run on one older than them saves nothing), the tool-pack's `gates.yaml` and the two recording digests its `recording.lock` names, the corpus pins, and
 the rule's document, conformance entry, goldens and case sources. When every rule hits, nothing is fetched or
 evaluated. An entry that is not JSON, was written by another cache layout (`CACHE_FORMAT`), lacks the shape of a result,
-or names another document is a miss. In CI, pull request runs only read the cache; pushes to main and the nightly save
-it, so nothing a pull request's code computes is replayed later.
+or names another document is a miss. In CI every run saves its results, pull requests included; GitHub scopes a pull
+request's cache to that pull request, so main reads only what main's pushes and the nightly saved.
 
 ## Data
 

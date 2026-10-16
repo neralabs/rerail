@@ -91,31 +91,46 @@ The engine is this checkout's (`npm run build:native` first). The first run fetc
 
 ### What a cached result is keyed by
 
-A rule's result key covers everything its verdict can depend on: the gate code and its dependencies, the tool-pack's
-manifest, recordings and corpus pins, the rule's own document, conformance entry, goldens and upstream case sources,
-and the engine, though only the part of the engine the rule can be judged by.
+A rule's result key covers everything its verdict can depend on: the gate code a cached verdict can read, the npm
+packages the gate process loads, the tool-pack's manifest, recordings and corpus pins, the rule's own document,
+conformance entry, goldens and upstream case sources, and the engine, though only the part of the engine the rule can be
+judged by.
 
-That part is the engine's shared code plus the files of the rule's own **language family** (`languages/*.json`'s
-`family`: `ecma` for JavaScript and TypeScript, `python` for Python). `conformance/port-readiness/engine.ts` lists each family's
-files explicitly: its vendored grammars and registry entries, the scope and value modules named for it, its builtin
-tables, and the suppression readers only it honours. Everything else is shared and so part of every rule's key:
-`matcher/`, `compile/`, `workspace/`, `language/adapter/`, the lockfile, the host's TypeScript engine, and any engine
-file nobody listed. That last one is the direction the list fails in: a missing entry costs one cold re-judge of
-everything, never a stale verdict. A rule whose document names no language, or one the language registry does not
-know, keys on the whole engine for the same reason.
+The gate code is `conformance/port-readiness/` without what no cached verdict depends on: what only the report job or
+the recorder runs (the summary, the pull request comment, the shard merge, the not-gated and pending lists, the
+recording diff), report rendering (a leg renders `report.md` from a finished report), the leg plan and the README:
+`GATE_CODE` in `cache.ts`, and `cache.test.ts` fails if `run.ts`'s imports reach an excluded file.
+The npm packages are the locked closure (`package-lock.json`) of `GATE_PACKAGES` (apache-arrow, better-sqlite3, diff,
+drizzle-orm, tsx, yaml, zod), plus `package.json`'s `type`, the `port-readiness` script with its pre and post
+scripts, and `build:native`. Any other script, field or locked package is out, so a dependency bump the gates never load re-judges nothing;
+`cache.test.ts` bundles `run.ts` and fails if it loads a package outside that closure.
 
-A Python-only engine change therefore judges the Python legs cold and leaves every other leg reading main's results. The
-cost is the mirror image: a file listed as one family's that another family in fact reads would leave that family's
-verdicts stale until the nightly's uncached run. `test/conformance/port-readiness/engine.test.ts` fails when a listed path
-matches no engine source, so the list cannot rot silently.
+That part of the engine is its shared code plus the files of the rule's own **language family** (`languages/*.json`'s
+`family`: `ecma` for JavaScript and TypeScript, `python` for Python, `rust` for Rust). `conformance/port-readiness/engine.ts`
+lists each family's files explicitly: its vendored grammars and registry entries, the scope and value modules named for
+it, its builtin tables, and the suppression readers only it honours. Rust is listed though no Rust tool-pack is gated,
+so that its files leave the key of every ecma and python rule. Everything else is shared and so part of every rule's
+key: `matcher/`, `compile/`, `workspace/` and `language/adapter/` (apart from three Rust files: the adapter
+`language/adapter/rust.rs`, and `matcher/arguments/rust.rs` and `matcher/format_args/rust.rs`, which only that adapter
+and style `rust` call), the lockfile, the host's TypeScript engine, and any engine file nobody listed. That last one is the direction the list fails in: a
+missing entry costs one cold re-judge of everything, never a stale verdict. A rule whose document names no language, or
+one the language registry does not know, keys on the whole engine for the same reason.
 
-Two things are deliberately out of the key. The native binary: it is not bit-reproducible, so hashing it made a
+A Python-only engine change therefore judges the Python legs cold, and the unicorn leg, whose `unicorn-filename-case`
+names no language, and leaves every other leg reading main's results. The cost is the mirror image: a file listed as
+one family's that another family in fact reads would leave that family's verdicts stale until the nightly's uncached
+run. `test/conformance/port-readiness/engine.test.ts` fails when a listed path matches no engine source, so the list
+cannot rot silently.
+
+Some things are deliberately out of the key. The Node.js version (CI pins only the major), `@napi-rs/cli` and
+`tsconfig.json` could in principle move a verdict; the nightly's uncached run is what catches that. The engine sources
+only `cargo test` compiles cannot. And the native binary: it is not bit-reproducible, so hashing it made a
 build-cache miss on unchanged sources re-judge every rule, and the sources it was built from say the same thing
 reproducibly. That holds only while the binary is their build, so a binary older than an engine source it is built from
 (an edit not yet rebuilt) saves no result, and neither `--write` nor `merge --write` runs on it. A shard report does
 not record which binary made it, so shards run on a stale binary and merged after a rebuild are not caught: rerun them.
-And the engine sources only `cargo test` compiles: every file a `#[cfg(test)] mod` declaration reaches, which is how the
-engine keeps its oracle tests beside the code they check.
+The test-only sources are every file a `#[cfg(test)] mod` declaration reaches, which is how the engine keeps its oracle
+tests beside the code they check.
 
 In CI every run saves its results, pull requests included. GitHub scopes a pull request's cache to that pull request,
 so main never reads one: a push to main reads only what main's own pushes and the nightly saved. A pull request can
@@ -277,13 +292,15 @@ which the gates have no verdict and draw no conclusion.
 
 `ci.yml` calls `port-readiness.yml` after its build job when a pull request or a push to main touches `packs/`,
 `conformance/`, the engine, the root package files or the workflows: a plan job, one job per leg it plans, then a
-report job that writes the summary and fails when anything blocking failed.
+report job that writes the summary and fails when anything blocking failed. A push to main is compared with the
+previous head only when CI finished green there; after a red, cancelled or missing run it runs port readiness
+whatever it touches, so a failing shipped rule, or a change whose queued run was replaced, is never skipped past.
 
 The plan (`conformance/port-readiness/plan.mjs`) gives each gated tool-pack one leg, or one per shard. A pull request
 judges only the tool-packs of the packs it touches: a change under `packs/<pack>/` plans that pack's tool-packs, while
-a change to the engine, the gate code, the root package files or the workflows still plans every leg, and files only
-the report job reads (`summary.ts`, `comment.ts`, the not-gated and pending lists) plan none. A tool-pack left out keeps
-main's verdict. Pushes to main and the nightly judge every leg.
+a change to the engine, the gate code, the root package files or the workflows still plans every leg, and the
+not-gated and pending lists, which the report job checks on every run, plan none. A tool-pack left out keeps main's
+verdict. Pushes to main and the nightly judge every leg.
 
 ```sh
 node conformance/port-readiness/plan.mjs                                                  # every leg
@@ -297,7 +314,7 @@ A tool-pack too slow for one 60-minute job runs in several, each judging a share
 (1 to `shards`) and `shards`, and each runs
 
 ```sh
-npm run port-readiness -- --pack typescript --tool typescript-eslint --shard 2/6   # rules whose sha256(id) mod 6 is 1
+npm run port-readiness -- --pack typescript --tool typescript-eslint --shard 2/8   # rules whose sha256(id) mod 8 is 1
 ```
 
 A rule's shard depends only on its document id and the shard count, so adding or removing rules moves no other rule.

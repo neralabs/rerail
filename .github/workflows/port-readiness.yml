@@ -13,8 +13,8 @@ name: Port readiness
 # nightly judge every tool-pack.
 #
 # Every run saves its results, pull requests included. GitHub scopes a pull request's cache to that pull request, so
-# main never reads one: a push to main reads only what main's own pushes saved, and the nightly judges every rule
-# uncached. A pull request can therefore hand itself verdicts its own code computed, but it can edit the gate code
+# main never reads one: a push to main reads only what main's own pushes and the nightly saved, and the nightly
+# judges every rule uncached. A pull request can therefore hand itself verdicts its own code computed, but it can edit the gate code
 # that decides them just as easily, so this opens no route it did not already have.
 
 on:
