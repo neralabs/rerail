@@ -16,6 +16,7 @@
       "forbid": {
         "ast": {
           "language": "blade",
+          "embedded": "compiled-view",
           "rule": {
             "any": [
               {
@@ -72,6 +73,7 @@
       "forbid": {
         "ast": {
           "language": "blade",
+          "embedded": "compiled-view",
           "rule": {
             "any": [
               {
@@ -121,6 +123,7 @@
       "forbid": {
         "ast": {
           "language": "blade",
+          "embedded": "compiled-view",
           "rule": {
             "any": [
               {

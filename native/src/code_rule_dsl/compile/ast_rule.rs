@@ -2,6 +2,7 @@ mod semantic;
 
 use super::compare::{count_bounds, parse_comparison};
 use super::dialect::grammar_gap;
+use super::documents::Side;
 use super::nth_child::{compile_nth_child, validate_nth_child};
 use super::order::{all_order_conflicts, order_by_captures};
 use super::utils::{UtilIds, UtilScope, is_metavariable_name};
@@ -10,8 +11,8 @@ use crate::code_rule_dsl::json::{
 };
 use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
 use crate::code_rule_dsl::matcher::{
-    AstMatcher, CallArgs, CompareText, Count, FieldRelation, Reading, Related, StopBy, UtilCall,
-    UtilRef,
+    AstMatcher, CallArgs, CompareText, Count, EmbeddedTest, FieldRelation, HostTest, Reading,
+    Related, Semantic, StopBy, UtilCall, UtilRef, parse_exported,
 };
 use crate::code_rule_dsl::model::Limits;
 use ast_grep_core::Language;
@@ -19,6 +20,7 @@ use ast_grep_core::matcher::{KindMatcher, Pattern, PatternNode};
 use napi::Result;
 use regex::Regex;
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 #[cfg(not(test))]
 const AST_RULE_KEYS: &[&str] = &[
@@ -45,6 +47,8 @@ const AST_RULE_KEYS: &[&str] = &[
     "formatArgs",
     "layout",
     "calls",
+    "embedded",
+    "host",
 ];
 /// Tests add `testUnknown`, a leaf whose verdict is unknown where its regex matches the node's text.
 #[cfg(test)]
@@ -72,6 +76,8 @@ const AST_RULE_KEYS: &[&str] = &[
     "formatArgs",
     "layout",
     "calls",
+    "embedded",
+    "host",
     "testUnknown",
 ];
 
@@ -98,11 +104,6 @@ pub(super) fn validate_ast_rule(
     utils: &UtilIds,
 ) -> Result<()> {
     let rule = object(value, path)?;
-    if rule.contains_key("host") {
-        return Err(invalid(format!(
-            "{path}/host: host tests the literal a parse holds; use it inside parse"
-        )));
-    }
     reject_unknown(rule, AST_RULE_KEYS, path)?;
     if !AST_RULE_KEYS.iter().any(|key| rule.contains_key(*key)) {
         return Err(invalid(format!(
@@ -190,6 +191,12 @@ pub(super) fn validate_ast_rule(
     }
     if let Some(not) = rule.get("not") {
         validate_ast_rule(not, &format!("{path}/not"), limits, utils)?;
+    }
+    // Where `embedded` and `host` may stand is `documents::check_sides`'s.
+    for key in ["embedded", "host"] {
+        if let Some(inner) = rule.get(key) {
+            validate_ast_rule(inner, &format!("{path}/{key}"), limits, utils)?;
+        }
     }
     if let Some(compare) = rule.get("compare") {
         parse_comparison(compare, &format!("{path}/compare"))?;
@@ -410,8 +417,8 @@ pub(crate) fn compile_ast_rule(
             )
         };
         terms.push(match rule_pattern(source, language) {
-            Ok((compiled, parsed_as)) if !compiled.has_error() => {
-                match literal_dollar_name(&compiled, written, parsed_as) {
+            Ok(compiled) if !compiled.has_error() => {
+                match literal_dollar_name(&compiled, written, language) {
                     Some(name) => grammar_gap(
                         gaps,
                         format!(
@@ -439,19 +446,16 @@ pub(crate) fn compile_ast_rule(
                      carries; list its concrete kinds under `any`"
                 ),
             ),
-            Ok(_) => {
-                let ids = language.kinds().kind_ids(kind);
-                match ids.as_slice() {
-                    [id] => AstMatcher::Kind(KindMatcher::from_id(*id)),
-                    ids => AstMatcher::Any(
-                        ids.iter()
-                            .copied()
-                            .map(KindMatcher::from_id)
-                            .map(AstMatcher::Kind)
-                            .collect(),
-                    ),
-                }
-            }
+            Ok(matcher) => match language.kinds().kind_ids(kind).as_slice() {
+                [_] => AstMatcher::Kind(matcher),
+                ids => AstMatcher::Any(
+                    ids.iter()
+                        .copied()
+                        .map(KindMatcher::from_id)
+                        .map(AstMatcher::Kind)
+                        .collect(),
+                ),
+            },
             Err(error) => grammar_gap(gaps, format!("{path}/kind: {error}")),
         });
     }
@@ -627,6 +631,65 @@ pub(crate) fn compile_ast_rule(
             );
             group_paths.push(relation_path);
         }
+    }
+    // A rule over the file's other document (`embed`): from a host node, its embedded program's
+    // nodes standing for bytes the node spans; from a program's node, the host's node spanning the
+    // bytes it stands for. Each compiles in that document's grammar, with its utilities.
+    if let Some(inner) = rule.get("embedded") {
+        let embedded_path = format!("{path}/embedded");
+        let documents = utils.documents.ok_or_else(|| {
+            invalid(format!(
+                "{embedded_path}: this query's language embeds no program"
+            ))
+        })?;
+        let mut rules = Vec::new();
+        for (dialect, table) in &documents.guests {
+            let scope = utils.on(table.clone(), Side::Guest);
+            let mut dialect_gaps = Vec::new();
+            let compiled =
+                compile_ast_rule(inner, *dialect, &embedded_path, &mut dialect_gaps, &scope)?;
+            if !matches!(compiled, AstMatcher::Never) {
+                rules.push((*dialect, compiled));
+            }
+        }
+        terms.push(if rules.is_empty() {
+            grammar_gap(
+                gaps,
+                format!(
+                    "{embedded_path}: the rule matches in none of the embedded program's grammars"
+                ),
+            )
+        } else {
+            let mut exports = BTreeSet::new();
+            for (_, rule) in &rules {
+                parse_exported(rule, &mut exports);
+            }
+            AstMatcher::Semantic(Semantic::Embedded(Box::new(EmbeddedTest {
+                via: documents.via,
+                rules,
+                exports: exports.into_iter().collect(),
+            })))
+        });
+        group_paths.push(embedded_path);
+    }
+    if let Some(inner) = rule.get("host") {
+        let host_path = format!("{path}/host");
+        let documents = utils.documents.ok_or_else(|| {
+            invalid(format!(
+                "{host_path}: host tests the literal a parse holds; use it inside parse"
+            ))
+        })?;
+        let (dialect, table) = &documents.host;
+        let scope = utils.on(table.clone(), Side::Host);
+        terms.push(
+            match compile_ast_rule(inner, *dialect, &host_path, gaps, &scope)? {
+                AstMatcher::Never => AstMatcher::Never,
+                compiled => {
+                    AstMatcher::Semantic(Semantic::Host(Box::new(HostTest { rule: compiled })))
+                }
+            },
+        );
+        group_paths.push(host_path);
     }
     // A binding's sub-rules may bind, like a relation's; comparisons after it read them.
     if let Some(resolves) = rule.get("resolves")

@@ -61,7 +61,7 @@ function routedCodeRule(language: "php" | "blade") {
     clauses: [{
       id: "routed",
       violation: { code: "ROUTED", anchor: "witness.span", message: `routed as ${language}` },
-      forbid: { ast: { language, rule: { kind: "variable_name", regex: "^\\$routed$" } } },
+      forbid: { ast: { language, ...(language === "blade" ? { embedded: "compiled-view" } : {}), rule: { kind: "variable_name", regex: "^\\$routed$" } } },
     }],
   });
 }

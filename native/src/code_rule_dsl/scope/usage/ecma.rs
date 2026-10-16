@@ -11,7 +11,6 @@ use super::super::{
     ScopeTable, stack_address,
 };
 use super::{Facts, PrivateDeclaration, PrivateMember, Steps, known};
-use crate::code_rule_dsl::language::adapter::regions;
 use crate::code_rule_dsl::language::kind_ids;
 use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
@@ -1145,8 +1144,7 @@ fn anchor<D: Doc>(
         })
 }
 
-/// Builds the TypeScript facts of `table`, whose file's root is `root`: of each region the table
-/// read (`adapter::regions`).
+/// Builds the TypeScript facts of `table`, whose document's root is `root`.
 pub(super) fn build<'r, D: Doc>(
     table: &ScopeTable,
     root: &Node<'r, D>,
@@ -1193,9 +1191,7 @@ pub(super) fn build<'r, D: Doc>(
         classes: Vec::new(),
         privates: Vec::new(),
     };
-    for region in regions(root, table.language) {
-        walk.visit(region.root)?;
-    }
+    walk.visit(root.clone())?;
     let Walk {
         mut variables,
         comment_exports,

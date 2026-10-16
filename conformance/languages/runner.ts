@@ -14,6 +14,7 @@ import {
   CODE_RULE_AST_LANGUAGES,
   CODE_RULE_DIALECTS,
   codeRuleLanguageFamily,
+  codeRuleLanguageEmbedVias,
   compareDeterministicStrings,
   isUnreadFailure,
 } from "../../src/engine/index.js";
@@ -135,7 +136,8 @@ function unreadLocation(failure: Page["failures"][number]): SyntaxErrorLocation 
  * The first syntax error the grammar reports in each of `files` that skipped a clause with `SYNTAX_ERROR_FAILURE`.
  * A probe clause sound under errors (it matches `ERROR` nodes, which are never witnesses, so it reports nothing) is
  * evaluated over those files through the same workspace path; its `source-partial` failure confirms the syntax error
- * and locates it.
+ * and locates it. A language whose files embed a program probes each document (`ast.embedded`): each has its own
+ * syntax errors.
  */
 async function syntaxErrorLocations(loaded: LoadedPack, evaluation: Evaluation, files: readonly SourceFile[]): Promise<Map<string, SyntaxErrorLocation>> {
   const failed = new Set(
@@ -146,6 +148,7 @@ async function syntaxErrorLocations(loaded: LoadedPack, evaluation: Evaluation, 
   const locations = new Map<string, SyntaxErrorLocation>();
   if (failed.size === 0) return locations;
   const runtime = loadNativeBinding().CodeRuleDslRuntime;
+  const violation = { anchor: "witness.span", code: "SYNTAX-PROBE", message: "syntax probe" };
   const probes = CODE_RULE_AST_LANGUAGES.filter(language => codeRuleLanguageFamily(language) === loaded.pack.family).map(language =>
     runtime.compile(
       JSON.stringify({
@@ -155,7 +158,14 @@ async function syntaxErrorLocations(loaded: LoadedPack, evaluation: Evaluation, 
         mode: "log",
         description: "Locates the grammar's syntax errors; reports nothing.",
         scope: { include: ["**/*"], exclude: [] },
-        clauses: [{ id: "probe", forbid: { ast: { language, rule: { kind: "ERROR" } } }, violation: { anchor: "witness.span", code: "SYNTAX-PROBE", message: "syntax probe" } }],
+        clauses: [
+          { id: "probe", forbid: { ast: { language, rule: { kind: "ERROR" } } }, violation },
+          ...codeRuleLanguageEmbedVias(language).map(via => ({
+            id: `probe-${via}`,
+            forbid: { ast: { language, embedded: via, rule: { kind: "ERROR" } } },
+            violation,
+          })),
+        ],
       }),
       "json",
       capabilitiesJson(),

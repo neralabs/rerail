@@ -89,6 +89,15 @@ export const codeRuleLanguageCapability = (language: CodeRuleLanguageId, capabil
 export const codeRuleLanguageImplements = (language: CodeRuleAstLanguage, capability: CodeRuleSemanticCapability): boolean =>
   codeRuleLanguageCapability(language, capability) === "supported";
 export const codeRuleLanguageSuppressions = (language: CodeRuleAstLanguage): readonly CodeRuleSuppression[] => ENTRIES[language].suppressions as readonly CodeRuleSuppression[];
+/** How a registry entry's files embed another language: the `via`s of its `embeds`, each once, in declaration order. */
+export const codeRuleLanguageEmbedVias = (language: CodeRuleLanguageId): readonly string[] => {
+  const entry: RegistryEntry = ENTRIES[language];
+  return "embeds" in entry ? [...new Set(entry.embeds.map(embed => embed.via))] : [];
+};
+/** Every language whose files embed another, with its `via`s (`codeRuleLanguageEmbedVias`). */
+export const CODE_RULE_EMBEDDING_LANGUAGES: readonly (readonly [CodeRuleLanguageId, readonly string[]])[] = CODE_RULE_LANGUAGE_IDS.map(
+  language => [language, codeRuleLanguageEmbedVias(language)] as const,
+).filter(([, vias]) => vias.length > 0);
 
 /** Files audits read as text only (regex rules over their content): formats that are no registry language. */
 const TEXT_SOURCE_SUFFIXES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Map<string, CodeRuleSourceLanguage>([

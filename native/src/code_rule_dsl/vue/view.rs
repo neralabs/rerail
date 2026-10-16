@@ -70,7 +70,7 @@
 //! tag (`</ElTable.TableColumn>`) with an `ERROR` in it, a syntax error in the file (a
 //! self-closing dotted tag parses).
 
-use crate::code_rule_dsl::embed::segments::SegmentMap;
+use crate::code_rule_dsl::embed::{Program, segments::SegmentMap};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::vue::sfc;
 use crate::code_rule_dsl::vue::template::{self, Arg, Directive, Parse};
@@ -81,12 +81,11 @@ use tree_sitter::{Node, Parser, Tree};
 
 /// The program a Vue single-file component embeds and its map back to the file.
 pub(crate) struct View {
-    /// The program's text in order, never empty.
+    /// The program's text, never empty.
+    text: String,
     segments: SegmentMap,
     tree: Tree,
     dialect: GrammarDialect,
-    #[cfg(test)]
-    text: String,
 }
 
 impl View {
@@ -121,47 +120,74 @@ impl View {
         let mut parser = Parser::new();
         parser.set_language(&language).ok()?;
         let tree = parser.parse(&emitter.out, None)?;
+        let mut segments = emitter.segments;
+        segments.index();
         Some(Self {
-            segments: emitter.segments,
+            text: emitter.out,
+            segments,
             tree,
             dialect,
-            #[cfg(test)]
-            text: emitter.out,
         })
     }
 
+    /// The view as the component's embedded program (`script-block`), built from what the
+    /// component's recovered tree holds, as vue-eslint-parser recovers from a template's syntax
+    /// errors and ESLint reads the scripts: the component's errors are not the program's.
+    pub(crate) fn into_program(self) -> Program {
+        Program {
+            dialect: self.dialect,
+            tree: self.tree,
+            text: self.text,
+            segments: self.segments,
+            host_errors: Vec::new(),
+        }
+    }
+
     /// The grammar the program is written in.
+    #[cfg(test)]
     pub(crate) fn dialect(&self) -> GrammarDialect {
         self.dialect
     }
 
     /// The program's root node.
+    #[cfg(test)]
     pub(crate) fn root(&self) -> Node<'_> {
         self.tree.root_node()
-    }
-
-    /// The `.vue` bytes a node of the program stands for.
-    pub(crate) fn span(&self, node: Node<'_>) -> Range<usize> {
-        self.segments.span(node)
-    }
-
-    /// Whether a node is part of a placeholder the view does not keep: the parameter it writes in
-    /// an empty `v-for` alias slot (`(,a)`); every other token the view writes stands for script,
-    /// a template expression or the Vue syntax around one.
-    pub(crate) fn omitted(&self, node: Node<'_>) -> bool {
-        self.segments.omitted(node)
-    }
-
-    /// The file ranges the program copies byte for byte, in program order.
-    #[cfg(test)]
-    pub(crate) fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
-        self.segments.copied()
     }
 
     /// The program's text.
     #[cfg(test)]
     pub(crate) fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Where the program's text stands in the file. Its placeholders the tape leaves out are the
+    /// parameters it writes in an empty `v-for` alias slot (`(,a)`); every other token the view
+    /// writes stands for script, a template expression or the Vue syntax around one.
+    #[cfg(test)]
+    pub(crate) fn segments(&self) -> &SegmentMap {
+        &self.segments
+    }
+
+    /// The `.vue` bytes a node of the program stands for: its leaves' (`tape::node_hulls`).
+    #[cfg(test)]
+    pub(crate) fn span(&self, node: Node<'_>) -> Range<usize> {
+        let mut cursor = node.walk();
+        let children = node.children(&mut cursor).collect::<Vec<_>>();
+        if children.is_empty() {
+            return self.segments.host_span(node.byte_range());
+        }
+        children
+            .into_iter()
+            .map(|child| self.span(child))
+            .reduce(|hull, span| hull.start.min(span.start)..hull.end.max(span.end))
+            .expect("a node with children")
+    }
+
+    /// The file ranges the program copies byte for byte, in program order.
+    #[cfg(test)]
+    pub(crate) fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+        self.segments.copied()
     }
 }
 
@@ -915,7 +941,7 @@ mod tests {
         let mut loops = Vec::new();
         for node in nodes {
             // The only placeholders are empty alias slots' parameters, which the tape leaves out.
-            if view.omitted(node) {
+            if view.segments().omitted(node.byte_range()) {
                 assert_eq!(&text[node.byte_range()], "_", "placeholder in {text:?}");
                 assert!(view.span(node).is_empty(), "placeholder in {text:?}");
                 continue;
@@ -1159,26 +1185,30 @@ mod tests {
             let tree = parse(&source);
             let image =
                 TapeImage::encode(tree.root_node(), &grammar, &source, &|| false).expect("encodes");
-            let doc = AstGrep::doc(
-                TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false)
-                    .expect("restores"),
-            );
+            let host = TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false)
+                .expect("restores");
+            let program = host.guests().expect("owned")[0].doc.clone();
+            let dialect = *ast_grep_core::Doc::get_lang(&program);
+            let doc = AstGrep::doc(program.clone());
             let root = doc.root();
             assert!(
-                root.dfs()
-                    .all(|node| &*node.text() != "_" || node.kind() == "text"),
+                root.dfs().all(|node| &*node.text() != "_"),
                 "{alias}: the placeholder is left out"
             );
-            let table = ScopeTable::build(root, GrammarDialect::Vue, usize::MAX, &|| false)
-                .expect("scope table");
+            let table =
+                ScopeTable::build(root, dialect, usize::MAX, &|| false).expect("scope table");
             let mut names = table
                 .scopes
                 .iter()
                 .flat_map(|scope| scope.bindings.iter())
                 .flat_map(|(name, bindings)| {
-                    bindings.iter().filter_map(move |binding| {
+                    bindings.iter().filter_map(|binding| {
                         let span = binding.name?;
-                        Some((name.to_string(), span.start as usize..span.end as usize))
+                        Some((
+                            name.to_string(),
+                            crate::code_rule_dsl::origin::InFile::tape(&program)
+                                .range(span.start as usize..span.end as usize),
+                        ))
                     })
                 })
                 .collect::<Vec<_>>();

@@ -331,11 +331,7 @@ pub(super) fn restore_persisted_file(
                 .violation
                 .project
                 .is_empty()
-                .then(|| {
-                    candidate_grammar(&code_rules[id.0], id.1, &file.input)
-                        .anchors
-                        .root_kinds()
-                })
+                .then(|| candidate_grammar(&code_rules[id.0], id.1, &file.input).host_root_kinds())
                 .flatten()
                 .map(|kinds| crate::content_store::SearchKindLookup {
                     tape_id,

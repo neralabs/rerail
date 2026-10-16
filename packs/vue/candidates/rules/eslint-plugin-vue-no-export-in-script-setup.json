@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-export-in-script-setup",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 vue/no-export-in-script-setup (default options): every export_statement of the <script setup> block (a top-level statement whose nearest earlier script marker, the empty statement the view puts before each script, is the setup block's start tag) is reported at the statement's start, except type exports (`export type {..}`, `export type`/`interface` declarations, and `export { type A }` lists whose every specifier is type-only). Reads only syntax and the view's script markers.",
+  "description": "Ports eslint-plugin-vue 10.11.1 vue/no-export-in-script-setup (default options): every export_statement of the <script setup> block (a top-level statement of the script-block program whose nearest earlier script marker, the empty statement written before each script, has the setup block's start tag as its host) is reported at the statement's start, except type exports (`export type {..}`, `export type`/`interface` declarations, and `export { type A }` lists whose every specifier is type-only). Reads only syntax and the script markers' host start tags.",
   "scope": {
     "include": [
       "**/*.vue"
@@ -16,6 +16,7 @@
       "forbid": {
         "ast": {
           "language": "vue",
+          "embedded": "script-block",
           "rule": {
             "all": [
               {
@@ -25,10 +26,16 @@
                 "follows": {
                   "stopBy": {
                     "kind": "empty_statement",
-                    "regex": "^<script\\b"
+                    "host": {
+                      "kind": "start_tag",
+                      "regex": "^<script\\b"
+                    }
                   },
                   "kind": "empty_statement",
-                  "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                  "host": {
+                    "kind": "start_tag",
+                    "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                  }
                 }
               },
               {

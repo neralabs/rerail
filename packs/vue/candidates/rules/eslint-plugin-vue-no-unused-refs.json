@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-unused-refs",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 vue/no-unused-refs (no options): a static template `ref=\"name\"` attribute is reported at its value literal (quotes included) unless the file uses the name, or has an unknown use of $refs. Used: `$refs.name`/`$refs['name']`/object-pattern destructuring of `$refs` (script `this.$refs` and bare `$refs`, template bare `$refs`), `useTemplateRef('name')`, a name `setup()` of a Vue object (export default, defineComponent/Vue.component/..., new Vue) returns, and, when the file has a <script setup>, any module/global binding of the program. Unknown use (`const a = $refs`, `a = $refs`, `f($refs)`, `return $refs`, `for (k in $refs)`, dynamic key or rest/computed destructuring) suppresses every report in the file. Reads syntax, scope (binds) and compare over the view program.",
+  "description": "Ports eslint-plugin-vue 10.11.1 vue/no-unused-refs (no options): a static template `ref=\"name\"` attribute is reported at its value literal (quotes included) unless the file uses the name, or has an unknown use of $refs. Used: `$refs.name`/`$refs['name']`/object-pattern destructuring of `$refs` (script `this.$refs` and bare `$refs`, template bare `$refs`), `useTemplateRef('name')`, a name `setup()` of a Vue object (export default, defineComponent/Vue.component/..., new Vue) returns, and, when the file has a <script setup>, any module/global binding of the program. Unknown use (`const a = $refs`, `a = $refs`, `f($refs)`, `return $refs`, `for (k in $refs)`, dynamic key or rest/computed destructuring) suppresses every report in the file. A clause over the file's own tree: the uses are read through `embedded` from the document in the script-block program (syntax, scope binds), each name compared with the attribute value through `host: { compare }`.",
   "scope": {
     "include": [
       "**/*.vue"
@@ -21,7 +21,9 @@
               "inside": {
                 "stopBy": "end",
                 "kind": "statement_block",
-                "regex": "^<template"
+                "host": {
+                  "kind": "template_element"
+                }
               }
             },
             "static-index": {
@@ -540,231 +542,6 @@
                   }
                 }
               ]
-            },
-            "used-name": {
-              "all": [
-                {
-                  "any": [
-                    {
-                      "kind": "property_identifier"
-                    },
-                    {
-                      "kind": "shorthand_property_identifier"
-                    },
-                    {
-                      "kind": "shorthand_property_identifier_pattern"
-                    },
-                    {
-                      "kind": "string"
-                    },
-                    {
-                      "kind": "number"
-                    },
-                    {
-                      "kind": "true"
-                    },
-                    {
-                      "kind": "false"
-                    },
-                    {
-                      "kind": "template_string"
-                    }
-                  ]
-                },
-                {
-                  "pattern": "$N"
-                },
-                {
-                  "any": [
-                    {
-                      "kind": "property_identifier",
-                      "inside": {
-                        "field": "property",
-                        "kind": "member_expression",
-                        "has": {
-                          "field": "object",
-                          "matches": "refs"
-                        }
-                      }
-                    },
-                    {
-                      "matches": "static-index",
-                      "inside": {
-                        "field": "index",
-                        "kind": "subscript_expression",
-                        "has": {
-                          "field": "object",
-                          "matches": "refs"
-                        }
-                      }
-                    },
-                    {
-                      "kind": "shorthand_property_identifier_pattern",
-                      "any": [
-                        {
-                          "inside": {
-                            "matches": "refs-pattern"
-                          }
-                        },
-                        {
-                          "inside": {
-                            "field": "left",
-                            "kind": "object_assignment_pattern",
-                            "inside": {
-                              "matches": "refs-pattern"
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "any": [
-                        {
-                          "kind": "property_identifier"
-                        },
-                        {
-                          "kind": "string"
-                        },
-                        {
-                          "kind": "number"
-                        }
-                      ],
-                      "inside": {
-                        "field": "key",
-                        "kind": "pair_pattern",
-                        "inside": {
-                          "matches": "refs-pattern"
-                        }
-                      }
-                    },
-                    {
-                      "matches": "static-index",
-                      "inside": {
-                        "kind": "computed_property_name",
-                        "inside": {
-                          "field": "key",
-                          "kind": "pair_pattern",
-                          "inside": {
-                            "matches": "refs-pattern"
-                          }
-                        }
-                      }
-                    },
-                    {
-                      "kind": "shorthand_property_identifier",
-                      "inside": {
-                        "matches": "setup-returned-object"
-                      }
-                    },
-                    {
-                      "any": [
-                        {
-                          "kind": "property_identifier"
-                        },
-                        {
-                          "kind": "string"
-                        },
-                        {
-                          "kind": "number"
-                        }
-                      ],
-                      "inside": {
-                        "field": "key",
-                        "kind": "pair",
-                        "inside": {
-                          "matches": "setup-returned-object"
-                        }
-                      }
-                    },
-                    {
-                      "any": [
-                        {
-                          "kind": "property_identifier"
-                        },
-                        {
-                          "kind": "string"
-                        },
-                        {
-                          "kind": "number"
-                        }
-                      ],
-                      "inside": {
-                        "field": "name",
-                        "kind": "method_definition",
-                        "inside": {
-                          "matches": "setup-returned-object"
-                        }
-                      }
-                    },
-                    {
-                      "matches": "static-string",
-                      "follows": {
-                        "stopBy": {
-                          "not": {
-                            "kind": "comment"
-                          }
-                        },
-                        "regex": "^\\($"
-                      },
-                      "inside": {
-                        "kind": "arguments",
-                        "inside": {
-                          "kind": "call_expression",
-                          "has": {
-                            "field": "function",
-                            "kind": "identifier",
-                            "regex": "^useTemplateRef$"
-                          }
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "compare": {
-                    "left": "V",
-                    "op": "eq",
-                    "right": "N",
-                    "text": "unquoted"
-                  }
-                }
-              ]
-            },
-            "used-binding": {
-              "all": [
-                {
-                  "any": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "kind": "type_identifier"
-                    },
-                    {
-                      "kind": "shorthand_property_identifier_pattern"
-                    }
-                  ]
-                },
-                {
-                  "pattern": "$N"
-                },
-                {
-                  "binds": {
-                    "scope": [
-                      "global",
-                      "module"
-                    ]
-                  }
-                },
-                {
-                  "compare": {
-                    "left": "V",
-                    "op": "eq",
-                    "right": "N",
-                    "text": "unquoted"
-                  }
-                }
-              ]
             }
           },
           "rule": {
@@ -800,37 +577,260 @@
                   "inside": {
                     "stopBy": "end",
                     "kind": "document",
-                    "any": [
-                      {
-                        "has": {
-                          "stopBy": "end",
+                    "embedded": {
+                      "any": [
+                        {
                           "matches": "unknown-use"
-                        }
-                      },
-                      {
-                        "has": {
-                          "stopBy": "end",
-                          "matches": "used-name"
-                        }
-                      },
-                      {
-                        "all": [
-                          {
-                            "has": {
-                              "stopBy": "end",
-                              "kind": "empty_statement",
-                              "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                        },
+                        {
+                          "all": [
+                            {
+                              "any": [
+                                {
+                                  "kind": "property_identifier"
+                                },
+                                {
+                                  "kind": "shorthand_property_identifier"
+                                },
+                                {
+                                  "kind": "shorthand_property_identifier_pattern"
+                                },
+                                {
+                                  "kind": "string"
+                                },
+                                {
+                                  "kind": "number"
+                                },
+                                {
+                                  "kind": "true"
+                                },
+                                {
+                                  "kind": "false"
+                                },
+                                {
+                                  "kind": "template_string"
+                                }
+                              ]
+                            },
+                            {
+                              "pattern": "$N"
+                            },
+                            {
+                              "any": [
+                                {
+                                  "kind": "property_identifier",
+                                  "inside": {
+                                    "field": "property",
+                                    "kind": "member_expression",
+                                    "has": {
+                                      "field": "object",
+                                      "matches": "refs"
+                                    }
+                                  }
+                                },
+                                {
+                                  "matches": "static-index",
+                                  "inside": {
+                                    "field": "index",
+                                    "kind": "subscript_expression",
+                                    "has": {
+                                      "field": "object",
+                                      "matches": "refs"
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "shorthand_property_identifier_pattern",
+                                  "any": [
+                                    {
+                                      "inside": {
+                                        "matches": "refs-pattern"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "field": "left",
+                                        "kind": "object_assignment_pattern",
+                                        "inside": {
+                                          "matches": "refs-pattern"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier"
+                                    },
+                                    {
+                                      "kind": "string"
+                                    },
+                                    {
+                                      "kind": "number"
+                                    }
+                                  ],
+                                  "inside": {
+                                    "field": "key",
+                                    "kind": "pair_pattern",
+                                    "inside": {
+                                      "matches": "refs-pattern"
+                                    }
+                                  }
+                                },
+                                {
+                                  "matches": "static-index",
+                                  "inside": {
+                                    "kind": "computed_property_name",
+                                    "inside": {
+                                      "field": "key",
+                                      "kind": "pair_pattern",
+                                      "inside": {
+                                        "matches": "refs-pattern"
+                                      }
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "shorthand_property_identifier",
+                                  "inside": {
+                                    "matches": "setup-returned-object"
+                                  }
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier"
+                                    },
+                                    {
+                                      "kind": "string"
+                                    },
+                                    {
+                                      "kind": "number"
+                                    }
+                                  ],
+                                  "inside": {
+                                    "field": "key",
+                                    "kind": "pair",
+                                    "inside": {
+                                      "matches": "setup-returned-object"
+                                    }
+                                  }
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "property_identifier"
+                                    },
+                                    {
+                                      "kind": "string"
+                                    },
+                                    {
+                                      "kind": "number"
+                                    }
+                                  ],
+                                  "inside": {
+                                    "field": "name",
+                                    "kind": "method_definition",
+                                    "inside": {
+                                      "matches": "setup-returned-object"
+                                    }
+                                  }
+                                },
+                                {
+                                  "matches": "static-string",
+                                  "follows": {
+                                    "stopBy": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    },
+                                    "regex": "^\\($"
+                                  },
+                                  "inside": {
+                                    "kind": "arguments",
+                                    "inside": {
+                                      "kind": "call_expression",
+                                      "has": {
+                                        "field": "function",
+                                        "kind": "identifier",
+                                        "regex": "^useTemplateRef$"
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "host": {
+                                "compare": {
+                                  "left": "V",
+                                  "op": "eq",
+                                  "right": "N",
+                                  "text": "unquoted"
+                                }
+                              }
                             }
-                          },
-                          {
-                            "has": {
-                              "stopBy": "end",
-                              "matches": "used-binding"
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "kind": "type_identifier"
+                                    },
+                                    {
+                                      "kind": "shorthand_property_identifier_pattern"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "pattern": "$N"
+                                },
+                                {
+                                  "binds": {
+                                    "scope": [
+                                      "global",
+                                      "module"
+                                    ]
+                                  }
+                                },
+                                {
+                                  "host": {
+                                    "compare": {
+                                      "left": "V",
+                                      "op": "eq",
+                                      "right": "N",
+                                      "text": "unquoted"
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "program",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "empty_statement",
+                                  "host": {
+                                    "kind": "start_tag",
+                                    "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                                  }
+                                }
+                              }
                             }
-                          }
-                        ]
-                      }
-                    ]
+                          ]
+                        }
+                      ]
+                    }
                   }
                 }
               }

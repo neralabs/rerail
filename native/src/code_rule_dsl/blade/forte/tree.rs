@@ -76,8 +76,8 @@
 //! (so every byte is in at most one leaf), over every recorded tree.
 //!
 //! None of these nodes is an error node: a template's lexer errors and a parse's failure are
-//! byte ranges on the tree (`error_ranges`), as a tape's syntax errors are. A template Forte does
-//! not parse (`ParseError`) is a `document` alone.
+//! byte ranges on the tree (`error_ranges`), which its tape records as ERROR leaves, as a
+//! tree-sitter tree's are (`tape`). A template Forte does not parse is a `document` alone.
 
 use super::ast::{Ast, ElementClass};
 use super::directives::Directives;
@@ -1000,6 +1000,10 @@ impl<'r> BladeNode<'r> {
             0 => None,
             field => FIELD_NAMES.get(usize::from(field)).copied(),
         }
+    }
+    /// The id of the field this node is its parent's (`FIELD_NAMES`), 0 for none.
+    pub(crate) fn field_id(&self) -> u16 {
+        self.rec().field
     }
     /// The template's bytes this node spans.
     pub(crate) fn bytes(&self) -> &'r [u8] {

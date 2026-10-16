@@ -14,7 +14,11 @@ impl Visitor<'_, '_> {
         node: &Node<'_, D>,
         mut state: Flowing,
     ) -> Flowing {
-        let Some(marker) = crate::code_rule_dsl::blade::marker(&node.text()) else {
+        // A marker's text is the program's `;`; the directive is the file bytes it stands for.
+        let Some(file) = crate::code_rule_dsl::origin::InFile::of(node) else {
+            return state;
+        };
+        let Some(marker) = crate::code_rule_dsl::blade::marker(file.text(node)) else {
             return state;
         };
         if marker.reads_all {

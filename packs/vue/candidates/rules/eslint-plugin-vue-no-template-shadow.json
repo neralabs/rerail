@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-template-shadow",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-template-shadow` with default options (no allow list): a template variable (v-for alias or slot parameter, the parameters of the view's v-for / slot arrows) whose name is already an outer template variable (a parameter of an enclosing view arrow), a top-level binding of `<script setup>`, a `defineProps` prop name (runtime array or object keys, `defineProps<{...}>()` type-literal properties, a local interface or type alias named as the type argument), or a static key of the Options API groups props, computed, data, asyncData, methods and setup (array strings, object members, and the object a data/asyncData/setup function returns) of `export default {}`, `defineComponent({})`, `Vue.extend/component/mixin(...)` or `new Vue({})`. Names compare as text. Reported at the variable identifier.",
+  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-template-shadow` with default options (no allow list): a template variable (v-for alias or slot parameter, the parameters of the v-for / slot arrows of the script-block program, `ast.embedded`, inside the statement block whose host is the `<template>` element) whose name is already an outer template variable (a parameter of an enclosing view arrow), a top-level binding of `<script setup>`, a `defineProps` prop name (runtime array or object keys, `defineProps<{...}>()` type-literal properties, a local interface or type alias named as the type argument), or a static key of the Options API groups props, computed, data, asyncData, methods and setup (array strings, object members, and the object a data/asyncData/setup function returns) of `export default {}`, `defineComponent({})`, `Vue.extend/component/mixin(...)` or `new Vue({})`. Names compare as text. Reported at the variable identifier.",
   "scope": {
     "include": [
       "**/*.vue"
@@ -16,6 +16,7 @@
       "forbid": {
         "ast": {
           "language": "vue",
+          "embedded": "script-block",
           "utils": {
             "view-arrow": {
               "kind": "arrow_function",
@@ -37,7 +38,9 @@
               "inside": {
                 "stopBy": "end",
                 "kind": "statement_block",
-                "regex": "^<template"
+                "host": {
+                  "kind": "template_element"
+                }
               }
             },
             "view-param": {
@@ -75,20 +78,29 @@
               "follows": {
                 "stopBy": "end",
                 "kind": "empty_statement",
-                "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                "host": {
+                  "kind": "start_tag",
+                  "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                }
               },
               "not": {
                 "follows": {
                   "stopBy": "end",
                   "kind": "empty_statement",
-                  "regex": "^<script\\b",
-                  "not": {
-                    "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                  "host": {
+                    "kind": "start_tag",
+                    "regex": "^<script\\b",
+                    "not": {
+                      "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                    }
                   },
                   "follows": {
                     "stopBy": "end",
                     "kind": "empty_statement",
-                    "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                    "host": {
+                      "kind": "start_tag",
+                      "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                    }
                   }
                 }
               }
@@ -422,7 +434,7 @@
                   },
                   {
                     "inside": {
-                      "kind": "document",
+                      "kind": "program",
                       "stopBy": "end",
                       "has": {
                         "stopBy": "end",
@@ -468,7 +480,7 @@
                   },
                   {
                     "inside": {
-                      "kind": "document",
+                      "kind": "program",
                       "stopBy": "end",
                       "has": {
                         "stopBy": "end",
@@ -636,7 +648,7 @@
                               },
                               {
                                 "inside": {
-                                  "kind": "document",
+                                  "kind": "program",
                                   "stopBy": "end",
                                   "has": {
                                     "stopBy": "end",
@@ -664,7 +676,7 @@
                   },
                   {
                     "inside": {
-                      "kind": "document",
+                      "kind": "program",
                       "stopBy": "end",
                       "has": {
                         "stopBy": "end",
