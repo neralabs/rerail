@@ -28,12 +28,15 @@ The order matters:
 
 - [x] Reject release-packs run 38816533631. It was from before #128 and would have published 0.2.0.
 - [x] Approve run 38908654907. It published `complexity`, `next` and `typescript` at 0.1.1 under the `next` tag.
-- [ ] Publish the nine packs that were never published by hand, as `docs/pack-format.md` describes under "Publishing a
-      new pack". You need to be logged in to npm with 2FA.
+- [x] Publish the nine packs that were never published by hand, as `docs/pack-format.md` describes under "Publishing a
+      new pack". Done 2026-10-16 from a clean checkout of main (`0aff8338`): all nine are private, at 0.1.1, and tagged
+      on GitHub.
   ```sh
   node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs blade javascript node php python react rust sql vue
   node scripts/release/packs-publish.mjs /tmp/rule-packs
   ```
+  - The registry sets `latest` on a package's first publish, so these nine have `latest` and `next` both at 0.1.1.
+  - `npm view` returned 404 for them for several minutes after publishing; `npm dist-tag ls` saw them at once.
 - [ ] On npmjs.com, set up a trusted publisher for each of those nine packs:
   - org `neralabs`, repository `rerail`, workflow `release-packs.yml`, environment `release`
   - allow publish and dist-tag
@@ -42,6 +45,7 @@ The order matters:
 - [ ] Within 2 days, merge a patch changeset that touches the nine new packs. An unused trusted publisher setting
       expires.
 - [ ] Decide when packs move from `next` to `latest`. Use the release-packs manual run (`workflow_dispatch`, pack id).
+      Only `complexity`, `next` and `typescript` still need it (`latest` is 0.1.0).
 - Leave #84 (Version packs) open. It collects the version bumps from changesets until the new flows are on main.
 - #81 (Version packs in its own workflow, so CI does less work) is optional. Main is already merged into it.
 
