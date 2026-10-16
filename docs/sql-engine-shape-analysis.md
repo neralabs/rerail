@@ -10,7 +10,7 @@ See `benchmark/history/ner-1562-historical-sql-reproduction-2026-10-16.md`.
 
 ## Implementation status
 
-Rerail now prepares every SQLite AST file in one workspace apply before registration.
+Rerail now prepares every SQLite AST file in parallel before batch registration.
 Files share a batch only when their language and candidate-clause set are equal.
 This restriction prevents a rejected terminal from spending another file's work budget.
 

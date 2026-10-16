@@ -227,100 +227,105 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
     };
     let sql_work = |jobs: Vec<Job>, grammars: &mut BTreeMap<String, Arc<tape::Grammar>>| {
         let sql = context.sql.expect("SQLite jobs have compiled plans");
-        let mut pending = Vec::with_capacity(jobs.len());
-        for job in jobs {
-            let Job {
-                path,
-                mut file,
-                consumes,
-                crossfile,
-            } = job;
-            let mut prepared = None;
-            let mut restored = None;
-            let mut deadline = None;
-            let metrics_result = check_closed(context.closed).and_then(|()| {
-                #[cfg(feature = "code-rule-profile")]
-                let _worker_profile = profile::WorkerProfile::start();
-                let budget = MatchBudget::work(context.closed, file_work_budget());
-                deadline = Some(budget.deadline());
-                let storage_started = Instant::now();
-                #[cfg(feature = "code-rule-profile")]
-                let _storage_read_timer = profile::PhaseTimer::start(profile::Phase::StoreRead);
-                if let Some(storage) = context.storage {
-                    let source_hash = HashKey::from_sha256_digest(file.source_digest);
-                    let result_key = (source_hash, result_context(&file));
-                    let persisted = result_manifest
-                        .get(&result_key)
-                        .map(|results| results.as_slice());
-                    if context.summarize {
-                        CrossFileScheduler::restore_summary(
+        let mut pending = WORK_POOL.install(|| {
+            jobs.into_par_iter()
+                .map_init(BTreeMap::new, |grammars, job| {
+                    let Job {
+                        path,
+                        mut file,
+                        consumes,
+                        crossfile,
+                    } = job;
+                    let mut prepared = None;
+                    let mut restored = None;
+                    let mut deadline = None;
+                    let metrics_result = check_closed(context.closed).and_then(|()| {
+                        #[cfg(feature = "code-rule-profile")]
+                        let _worker_profile = profile::WorkerProfile::start();
+                        let budget = MatchBudget::work(context.closed, file_work_budget());
+                        deadline = Some(budget.deadline());
+                        let storage_started = Instant::now();
+                        #[cfg(feature = "code-rule-profile")]
+                        let _storage_read_timer =
+                            profile::PhaseTimer::start(profile::Phase::StoreRead);
+                        if let Some(storage) = context.storage {
+                            let source_hash = HashKey::from_sha256_digest(file.source_digest);
+                            let result_key = (source_hash, result_context(&file));
+                            let persisted = result_manifest
+                                .get(&result_key)
+                                .map(|results| results.as_slice());
+                            if context.summarize {
+                                CrossFileScheduler::restore_summary(
+                                    &mut file,
+                                    persisted.unwrap_or_default(),
+                                );
+                            }
+                            restore_persisted_file(
+                                &stored_documents,
+                                storage.store.as_ref(),
+                                &mut file,
+                                grammars,
+                                context.code_rules,
+                                persisted,
+                                source_hash,
+                            )?;
+                            let unanswered = (!file.candidates.ast.is_empty()
+                                && !file.selector_skipped)
+                                || !file.candidates.regex.is_empty();
+                            if unanswered && file.input.source.is_empty() && file.stored.is_some() {
+                                let stored =
+                                    stored_documents.objects.get(&source_hash).ok_or_else(
+                                        || invalid(format!("{path} is not in the store")),
+                                    )?;
+                                let source = storage
+                                    .store
+                                    .get_source(stored.source)
+                                    .map_err(|error| invalid(error.to_string()))?;
+                                file.input.source =
+                                    Arc::new(String::from_utf8(source).map_err(|_| {
+                                        invalid(format!("stored {path} is not UTF-8"))
+                                    })?);
+                            }
+                        }
+                        #[cfg(feature = "code-rule-profile")]
+                        drop(_storage_read_timer);
+                        let storage_read_nanoseconds = storage_started.elapsed().as_nanos() as u64;
+                        let _consumer = CrossFileScheduler::install(crossfile.clone());
+                        let mut metrics = evaluate_file_with_pending(
                             &mut file,
-                            persisted.unwrap_or_default(),
-                        );
+                            context.code_rules,
+                            grammars,
+                            context.closed,
+                            Some(sql),
+                            &budget,
+                            &mut restored,
+                            Some(&mut prepared),
+                        )?;
+                        metrics.storage_read_nanoseconds = storage_read_nanoseconds;
+                        Ok(metrics)
+                    });
+                    if deadline.is_none() {
+                        let budget = MatchBudget::work(context.closed, file_work_budget());
+                        deadline = Some(budget.deadline());
                     }
-                    restore_persisted_file(
-                        &stored_documents,
-                        storage.store.as_ref(),
-                        &mut file,
-                        grammars,
-                        context.code_rules,
-                        persisted,
-                        source_hash,
-                    )?;
-                    let unanswered = (!file.candidates.ast.is_empty() && !file.selector_skipped)
-                        || !file.candidates.regex.is_empty();
-                    if unanswered && file.input.source.is_empty() && file.stored.is_some() {
-                        let stored = stored_documents
-                            .objects
-                            .get(&source_hash)
-                            .ok_or_else(|| invalid(format!("{path} is not in the store")))?;
-                        let source = storage
-                            .store
-                            .get_source(stored.source)
-                            .map_err(|error| invalid(error.to_string()))?;
-                        file.input.source = Arc::new(
-                            String::from_utf8(source)
-                                .map_err(|_| invalid(format!("stored {path} is not UTF-8")))?,
-                        );
+                    let (metrics, error) = match metrics_result {
+                        Ok(metrics) => (metrics, None),
+                        Err(error) => (Metrics::default(), Some(error)),
+                    };
+                    PendingSqlJob {
+                        path,
+                        file,
+                        consumes,
+                        crossfile,
+                        metrics,
+                        prepared,
+                        restored,
+                        deadline: deadline.expect("every job has a deadline"),
+                        error,
                     }
-                }
-                #[cfg(feature = "code-rule-profile")]
-                drop(_storage_read_timer);
-                let storage_read_nanoseconds = storage_started.elapsed().as_nanos() as u64;
-                let _consumer = CrossFileScheduler::install(crossfile.clone());
-                let mut metrics = evaluate_file_with_pending(
-                    &mut file,
-                    context.code_rules,
-                    grammars,
-                    context.closed,
-                    Some(sql),
-                    &budget,
-                    &mut restored,
-                    Some(&mut prepared),
-                )?;
-                metrics.storage_read_nanoseconds = storage_read_nanoseconds;
-                Ok(metrics)
-            });
-            if deadline.is_none() {
-                let budget = MatchBudget::work(context.closed, file_work_budget());
-                deadline = Some(budget.deadline());
-            }
-            let (metrics, error) = match metrics_result {
-                Ok(metrics) => (metrics, None),
-                Err(error) => (Metrics::default(), Some(error)),
-            };
-            pending.push(PendingSqlJob {
-                path,
-                file,
-                consumes,
-                crossfile,
-                metrics,
-                prepared,
-                restored,
-                deadline: deadline.expect("every job has a deadline"),
-                error,
-            });
-        }
+                })
+                .collect::<Vec<_>>()
+        });
 
         // A terminal executes over every file in its batch. Group by language and candidate set,
         // so no file spends work on a terminal that its manifest rejected.
