@@ -171,7 +171,7 @@ describe("Rerail daemon", () => {
   it("serves sessions and paged events read from the session store", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();
-    expect(await getJson(daemon, "/api/sessions")).toEqual({ status: 200, body: { sessions: [] } });
+    expect(await getJson(daemon, "/api/sessions")).toEqual({ status: 200, body: { sessions: [], total: 0, nextCursor: null } });
 
     const store = new SqliteSessionStore(join(root, "rerail.sqlite"), { repositoryId: "test-repository" });
     store.openSession({ host: "claude-code", sessionId: "s1", cwd: "/workspace" }, 1_000);
@@ -183,9 +183,14 @@ describe("Rerail daemon", () => {
 
     expect(await getJson(daemon, "/api/sessions")).toEqual({
       status: 200,
-      body: { sessions: [{
-        sessionId: "s1", host: "claude-code", cwd: "/workspace", repositoryId: "test-repository", startedAt: 1_000, endedAt: 2_000, eventCount: 3,
-      }] },
+      body: {
+        sessions: [{
+          sessionId: "s1", host: "claude-code", cwd: "/workspace", repositoryId: "test-repository", startedAt: 1_000, endedAt: 2_000,
+          eventCount: 3, violationCount: 0,
+        }],
+        total: 1,
+        nextCursor: null,
+      },
     });
 
     const firstPage = await getJson(daemon, "/api/sessions/s1/events?limit=2");
@@ -204,6 +209,11 @@ describe("Rerail daemon", () => {
     expect(secondPage.body.nextAfter).toBe(3);
     expect(secondPage.body.events.map(event => event.eventId)).toEqual(["e3"]);
     expect(await getJson(daemon, "/api/sessions/s1/events?after=3")).toMatchObject({ body: { events: [], nextAfter: 3 } });
+    // Backward: the newest page, then the page before it, each in sequence order with the tail as `nextAfter`.
+    const newest = await getJson<{ events: Array<{ eventId: string }>; nextAfter: number }>(daemon, "/api/sessions/s1/events?before=9007199254740991&limit=2");
+    expect(newest.body).toMatchObject({ events: [{ eventId: "e2" }, { eventId: "e3" }], nextAfter: 3 });
+    expect((await getJson<{ events: Array<{ eventId: string }> }>(daemon, "/api/sessions/s1/events?before=2&limit=2")).body.events.map(event => event.eventId))
+      .toEqual(["e1"]);
     expect(await getJson(daemon, "/api/sessions/missing/events")).toMatchObject({ body: { events: [] } });
     expect(await getJson(daemon, "/api/sessions/s1")).toMatchObject({
       status: 200,
@@ -427,7 +437,8 @@ describe("Rerail daemon", () => {
 
     const sessionIds = async (query: string) =>
       (await getJson<{ sessions: Array<{ sessionId: string }> }>(daemon, `/api/sessions${query}`)).body.sessions.map(session => session.sessionId);
-    expect(await sessionIds("")).toEqual(["own", "foreign"]);
+    // Newest first: `foreign` opened after `own`.
+    expect(await sessionIds("")).toEqual(["foreign", "own"]);
     expect(await sessionIds("?since=0&repository=test-repository")).toEqual(["own"]);
     expect((await getJson(daemon, "/api/audits")).body).toMatchObject({ total: 2 });
     expect((await getJson(daemon, "/api/audits?repository=test-repository")).body)
@@ -867,7 +878,7 @@ describe("Rerail daemon", () => {
     // Every loopback spelling on any port, since a port mapping may present one the daemon never bound.
     for (const host of ["localhost:4737", "127.0.0.1:4737", "[::1]:4737", "LOCALHOST", `127.0.0.1:${daemon.port}`]) {
       expect(await rawRequest(daemon, "/healthz", { headers: { host } })).toMatchObject({ status: 200, body: { status: "ok" } });
-      expect(await rawRequest(daemon, "/api/sessions", { headers: { host } })).toEqual({ status: 200, body: { sessions: [] } });
+      expect(await rawRequest(daemon, "/api/sessions", { headers: { host } })).toEqual({ status: 200, body: { sessions: [], total: 0, nextCursor: null } });
     }
     expect((await rawRequest(daemon, "/", { headers: { host: "localhost:4737" } })).status).toBe(200);
   });

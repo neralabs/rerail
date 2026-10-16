@@ -57,3 +57,7 @@ rerail-language-conformance *args:
 # Compare a reference native query-engine addon with this checkout's addon (RERAIL_QUERY_PARITY_REFERENCE_ADDON=/absolute/reference.node, or pass both sides).
 rerail-query-parity *args:
     @node --import tsx benchmark/query-parity.ts {{ args }}
+
+# Dashboard history load: seed a throwaway database with N audits, then time each history read, a poll, and /healthz under polling (--audits 4000).
+rerail-dashboard-history *args:
+    @node --import tsx benchmark/dashboard-history.ts {{ args }}

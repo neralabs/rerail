@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
-import { and, asc, count, desc, eq, gt, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
+import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
 import type { DiscoveryPendingBoundary } from "../engine/code-rule/code-rule-bridge.js";
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
 import { ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import { events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
@@ -45,8 +47,29 @@ export interface SessionEventRecord {
 export interface SessionEventQuery {
   /** Return events with a sequence strictly greater than this value. */
   after?: number;
+  /** Return the last `limit` events with a sequence strictly less than this value, still in sequence order. */
+  before?: number;
   limit?: number;
 }
+
+export interface SessionPageQuery {
+  /** Only sessions started at or after this instant. */
+  since?: number;
+  limit: number;
+  /** The previous page's `nextCursor`; the first page without one. */
+  cursor?: string;
+}
+
+export interface SessionPage {
+  /** Newest first, each with its violation history count (as `/api/violations?sessionId=` totals it). */
+  sessions: Array<StoredSessionSummary & { violationCount: number }>;
+  /** Every session the query matches, on every page. */
+  total: number;
+  nextCursor: string | null;
+}
+
+/** A session's place in newest-first order: start descending, then id ascending. */
+const sessionCursorSchema = z.tuple([z.number().int(), z.string()]);
 
 export interface SessionHud {
   activeRuleCount: number | null;
@@ -367,6 +390,8 @@ export class SqliteSessionReader {
     const database = this.#database.open();
     if (database === undefined) return [];
     const limit = Math.min(Math.max(1, Math.trunc(query.limit ?? SESSION_EVENT_PAGE_LIMIT)), SESSION_EVENT_PAGE_LIMIT);
+    // With `before`, the page is the last `limit` events before it: read backwards, returned in sequence order.
+    const backwards = query.before !== undefined;
     const rows = database
       .select({
         sequence: events.sequence,
@@ -377,10 +402,15 @@ export class SqliteSessionReader {
         payloadJson: events.payloadJson,
       })
       .from(events)
-      .where(and(eq(events.sessionId, sessionId), gt(events.sequence, Math.max(0, Math.trunc(query.after ?? 0)))))
-      .orderBy(asc(events.sequence))
+      .where(and(
+        eq(events.sessionId, sessionId),
+        gt(events.sequence, Math.max(0, Math.trunc(query.after ?? 0))),
+        backwards ? lt(events.sequence, Math.trunc(query.before!)) : undefined,
+      ))
+      .orderBy(backwards ? desc(events.sequence) : asc(events.sequence))
       .limit(limit)
       .all();
+    if (backwards) rows.reverse();
     return rows.map(({ payloadJson, ...row }) => ({ ...row, payload: JSON.parse(payloadJson) as unknown }));
   }
 
@@ -389,12 +419,53 @@ export class SqliteSessionReader {
     return database === undefined ? [] : listWorkLinks(database, sessionId);
   }
 
-  /** Sessions that started at or after `since`, for a page showing one time range. */
-  sessionsSince(since: number, repositoryIds: readonly string[] | undefined = undefined): readonly StoredSessionSummary[] {
+  /**
+   * One page of sessions, newest first; counts are computed for the page's rows only, so a page costs the same
+   * however much history the database holds.
+   */
+  sessionPage(query: SessionPageQuery, repositoryIds: readonly string[] | undefined = undefined): SessionPage {
     const database = this.#database.open();
-    return database === undefined
-      ? []
-      : listSessions(database, { startedAtOrAfter: since, repositoryIds: repositoryIds ?? this.#repositoryIds });
+    if (database === undefined) return { sessions: [], total: 0, nextCursor: null };
+    const matching = and(
+      query.since === undefined ? undefined : gte(sessions.startedAt, query.since),
+      repositoryFilter(repositoryIds ?? this.#repositoryIds),
+    );
+    const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, sessionCursorSchema);
+    const continuing = after === undefined
+      ? undefined
+      : sql`(${sessions.startedAt} < ${after[0]} OR (${sessions.startedAt} = ${after[0]} AND ${sessions.sessionId} > ${after[1]}))`;
+    const rows = database
+      .select({
+        sessionId: sessions.sessionId,
+        host: sessions.host,
+        cwd: sessions.cwd,
+        repositoryId: sessions.repositoryId,
+        startedAt: sessions.startedAt,
+        endedAt: sessions.endedAt,
+        // Written out: Drizzle renders a single-table select's columns unqualified, which would correlate nothing.
+        eventCount: sql<number>`(SELECT count(*) FROM events WHERE events.session_id = sessions.session_id)`,
+        violationCount: sql<number>`(SELECT count(*) FROM audit_violations WHERE audit_violations.session_id = sessions.session_id)`,
+      })
+      .from(sessions)
+      .where(and(matching, continuing))
+      .orderBy(desc(sessions.startedAt), asc(sessions.sessionId))
+      .limit(query.limit + 1)
+      .all();
+    const page = rows.slice(0, query.limit);
+    const last = page.at(-1);
+    return {
+      sessions: page,
+      total: database.select({ total: count() }).from(sessions).where(matching).get()?.total ?? 0,
+      nextCursor: rows.length > query.limit && last !== undefined ? encodeCursor([last.startedAt, last.sessionId]) : null,
+    };
+  }
+
+  /** How many sessions started at or after `since`. */
+  sessionCount(since: number, repositoryIds: readonly string[] | undefined = undefined): number {
+    const database = this.#database.open();
+    if (database === undefined) return 0;
+    return database.select({ total: count() }).from(sessions)
+      .where(and(gte(sessions.startedAt, since), repositoryFilter(repositoryIds ?? this.#repositoryIds))).get()?.total ?? 0;
   }
 
   /**

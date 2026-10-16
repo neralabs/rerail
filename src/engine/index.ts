@@ -99,10 +99,15 @@ export {
 } from "./storage/database.js";
 export { defaultRerailHome } from "./storage/rerail-home.js";
 export { RERAIL_BASELINE_SCHEMA_VERSION, addColumn, type Migration } from "./storage/migrations.js";
+export { AUDIT_HISTORY_TRIGGER_STATEMENTS } from "./storage/audit-history.js";
 export {
   auditRequests,
   auditResultPages,
+  auditRuleSetRules,
+  auditRuleSets,
+  auditRuleSetUses,
   audits,
+  auditViolations,
   auditSettings,
   checkouts,
   events,
@@ -113,6 +118,7 @@ export {
   repositoryAudits,
   setupReviews,
   ruleAttachments,
+  ruleViolationRollup,
   ruleCatalogIdentities,
   schemaMigrations,
   rules,

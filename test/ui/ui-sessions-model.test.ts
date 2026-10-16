@@ -156,7 +156,7 @@ describe("droppedEvents", () => {
     expect(droppedEvents({ sessionId: "s1" })).toBe(0);
     data.sessionDetail.set("s1", {
       events: events([prompt("Fix it"), { kind: "events-dropped", payload: { count: 3 } }, turnEnd(), { kind: "events-dropped", payload: { count: 2 } }]),
-      nextAfter: 4, loaded: true, loading: null,
+      head: null, nextAfter: 4, loaded: true, earlier: false, loading: null,
     });
     expect(droppedEvents({ sessionId: "s1" })).toBe(5);
   });
@@ -176,7 +176,7 @@ describe("uncheckedBoundaries", () => {
         { kind: "events-dropped", payload: { count: 2 } },
         { kind: "source-discovery-pending", payload: { boundary: "close" } },
       ]),
-      nextAfter: 6, loaded: true, loading: null,
+      head: null, nextAfter: 6, loaded: true, earlier: false, loading: null,
     });
     expect(uncheckedBoundaries({ sessionId: "s1" })).toBe(3);
   });
@@ -194,7 +194,7 @@ describe("codeRulesPendingBoundaries", () => {
         { kind: "source-discovery-pending", payload: { boundary: "turn" } },
         { kind: "code-rules-pending", payload: { boundary: "turn-end" } },
       ]),
-      nextAfter: 4, loaded: true, loading: null,
+      head: null, nextAfter: 4, loaded: true, earlier: false, loading: null,
     });
     expect(codeRulesPendingBoundaries({ sessionId: "s1" })).toBe(2);
   });

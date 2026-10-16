@@ -280,12 +280,12 @@ function upgradeBeforeReading(path: string, database: RerailDatabase, migrations
   }
 }
 
-/** The tables and indexes this build's DDL creates, by name. */
+/** The tables, indexes and triggers this build's DDL creates, by name. */
 const SCHEMA_OBJECTS = RERAIL_SCHEMA_STATEMENTS
-  .map(statement => /^CREATE (?:UNIQUE )?(?:TABLE|INDEX) IF NOT EXISTS `([^`]+)`/u.exec(statement)?.[1])
+  .map(statement => /^CREATE (?:UNIQUE )?(?:TABLE|INDEX|TRIGGER) IF NOT EXISTS `([^`]+)`/u.exec(statement)?.[1])
   .filter(name => name !== undefined);
 
-/** The tables and indexes of this build's DDL that the file lacks. */
+/** The tables, indexes and triggers of this build's DDL that the file lacks. */
 function missingSchemaObjects(database: RerailDatabase): string[] {
   const present = new Set(database.all<{ name: string }>(sql`SELECT name FROM sqlite_master`).map(row => row.name));
   return SCHEMA_OBJECTS.filter(name => !present.has(name));

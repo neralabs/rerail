@@ -154,15 +154,36 @@ function onTurnEnd(b, e, pl) {
   t.ended = true;
 }
 
-/** Findings for this session from the fetched pages, joined to their rules. */
+/**
+ * How far back the selected session's loaded transcript and violations both reach: events before this time may
+ * have violations not loaded yet, and violations before it belong to events not loaded yet, so the timeline shows
+ * neither until Load earlier brings them. `-Infinity` once both are loaded to the start.
+ */
+export function loadedFrom(sessionId) {
+  const detail = data.sessionDetail.get(sessionId), slot = data.sessionFindings;
+  const events = detail?.earlier ? detail.events[0]?.observedAt ?? Infinity : -Infinity;
+  // Violations of one audit share its start and may straddle a page: the oldest loaded start is not yet complete.
+  const violations = slot.owner === sessionId && slot.next !== null ? (slot.rows.at(-1)?.at ?? Infinity) + 1 : -Infinity;
+  return Math.max(events, violations);
+}
+
+/** The session's violations from the pages loaded for it and inside `loadedFrom`, joined to their rules. */
 export function sessionCorrections(sessionId) {
+  const slot = data.sessionFindings;
+  if (slot.owner !== sessionId) return [];
+  const from = loadedFrom(sessionId);
   const out = [];
-  for (const f of data.findings) {
-    if (f.sessionId !== sessionId) continue;
+  for (const f of slot.rows) {
     const stored = data.rules.get(f.ruleId);
-    if (stored) out.push({ key: `${f.auditId}:${f.id}`, finding: f, rule: stored });
+    if (stored && f.at >= from) out.push({ key: `${f.auditId}:${f.id}`, finding: f, rule: stored });
   }
   return out;
+}
+
+/** Every violation logged in the session, once the first page of them is in; `null` before. */
+export function sessionViolationTotal(sessionId) {
+  const slot = data.sessionFindings;
+  return slot.owner === sessionId && slot.pages > 0 ? slot.total : null;
 }
 
 /**

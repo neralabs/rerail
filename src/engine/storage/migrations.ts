@@ -11,6 +11,7 @@
  * `schema_migrations`; an id this build does not know (a newer build's step) is left alone.
  */
 import { sql } from "drizzle-orm";
+import { AUDIT_HISTORY_BACKFILL_STATEMENTS } from "./audit-history.js";
 import type { RerailDatabase } from "./database.js";
 import { schemaMigrations } from "./schema.js";
 
@@ -77,6 +78,36 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       );
     },
   },
+  {
+    // The derived audit history the dashboard reads (`audit-history.ts`), filled from the audits a file already
+    // holds. Steps run before the DDL, so the tables are written out here as the DDL creates them; the triggers
+    // that keep them current come with the DDL right after. No floor: an older build never reads these tables,
+    // and its writes to `audits` reach them through the triggers.
+    id: "audit-history-derived-tables",
+    up(database) {
+      if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audits'`).length === 0) return;
+      for (const statement of AUDIT_HISTORY_TABLES) database.run(sql.raw(statement));
+      for (const statement of AUDIT_HISTORY_BACKFILL_STATEMENTS) database.run(sql.raw(statement));
+    },
+  },
+];
+
+/** The derived audit history tables as `audit-history-derived-tables` introduced them. */
+const AUDIT_HISTORY_TABLES: readonly string[] = [
+  "CREATE TABLE IF NOT EXISTS `audit_violations` (\n\t`audit_id` text NOT NULL,\n\t`ordinal` integer NOT NULL,\n\t`session_id` text NOT NULL,\n\t`started_at` integer NOT NULL,\n\t`rule_id` text,\n\t`violation_key` text NOT NULL,\n\t`logged` integer NOT NULL,\n\tPRIMARY KEY(`audit_id`, `ordinal`)\n)",
+  "CREATE INDEX IF NOT EXISTS `audit_violations_session_started` ON `audit_violations` (`session_id`,`started_at`)",
+  "CREATE INDEX IF NOT EXISTS `audit_violations_started` ON `audit_violations` (`started_at`)",
+  "CREATE INDEX IF NOT EXISTS `audit_violations_rule_started` ON `audit_violations` (`rule_id`,`started_at`)",
+  "CREATE INDEX IF NOT EXISTS `audit_violations_key` ON `audit_violations` (`session_id`,`rule_id`,`violation_key`,`started_at`)",
+  "CREATE INDEX IF NOT EXISTS `audit_violations_key_logged` ON `audit_violations` (`session_id`,`rule_id`,`violation_key`,`started_at`) WHERE \"audit_violations\".\"logged\" = 1",
+  "CREATE TABLE IF NOT EXISTS `rule_violation_rollup` (\n\t`session_id` text NOT NULL,\n\t`rule_id` text NOT NULL,\n\t`violation_key` text NOT NULL,\n\t`last_seen_at` integer NOT NULL,\n\t`last_logged_at` integer,\n\tPRIMARY KEY(`session_id`, `rule_id`, `violation_key`)\n)",
+  "CREATE INDEX IF NOT EXISTS `rule_violation_rollup_last_seen` ON `rule_violation_rollup` (`last_seen_at`)",
+  "CREATE TABLE IF NOT EXISTS `audit_rule_sets` (\n\t`rule_set_id` integer PRIMARY KEY NOT NULL,\n\t`rule_revisions_json` text NOT NULL\n)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS `audit_rule_sets_rule_revisions_json_unique` ON `audit_rule_sets` (`rule_revisions_json`)",
+  "CREATE TABLE IF NOT EXISTS `audit_rule_set_rules` (\n\t`rule_set_id` integer NOT NULL,\n\t`rule_id` text NOT NULL,\n\tPRIMARY KEY(`rule_set_id`, `rule_id`)\n)",
+  "CREATE TABLE IF NOT EXISTS `audit_rule_set_uses` (\n\t`audit_id` text PRIMARY KEY NOT NULL,\n\t`session_id` text NOT NULL,\n\t`started_at` integer NOT NULL,\n\t`rule_set_id` integer NOT NULL\n)",
+  "CREATE INDEX IF NOT EXISTS `audit_rule_set_uses_session_started` ON `audit_rule_set_uses` (`session_id`,`started_at`,`rule_set_id`)",
+  "CREATE INDEX IF NOT EXISTS `audit_rule_set_uses_started` ON `audit_rule_set_uses` (`started_at`,`rule_set_id`)",
 ];
 
 /** The schema version `migrations` leave a file at: the baseline, or the highest floor a step raises it to. */

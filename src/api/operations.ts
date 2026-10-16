@@ -196,6 +196,11 @@ function historyIds(stores: RerailApiStores, repository: string | undefined): st
 }
 
 const sinceParameter = countParameter.describe("Epoch milliseconds; only activity at or after this instant is counted. 0 means since install.");
+const PAGE_LIMIT = 50;
+const pageLimitParameter = countParameter.min(1).max(200).optional()
+  .describe(`Maximum rows to return; defaults to ${PAGE_LIMIT} and is capped at 200.`);
+const cursorParameter = z.string().min(1).optional().describe("The `nextCursor` of the previous page; omit it for the first page.");
+const nextCursorSchema = z.string().nullable().describe("Pass as `cursor` for the next page; null on the last page.");
 
 /**
  * What the catalog knows about one rule's effect over a time range. Conversation rules never write an
@@ -227,6 +232,7 @@ const violationRecordSchema = z.object({
   sessionId: z.string(),
   auditId: z.string(),
   at: z.number().int().describe("Start time of the audit that reported the violation."),
+  host: z.string().nullable().describe("The coding agent of the violation's session; null when the session is not recorded."),
 }).strict();
 
 const repositoryPathSchema = z.string().refine(value => value === "" || isAbsolute(value), "Repository must be an absolute path or empty for the database default.");
@@ -309,7 +315,14 @@ export const operations: readonly Operation[] = [
     path: "/api/rules/activity",
     summary: "Report what each rule actually caught since a given time: distinct violations, sessions, last sighting, how many audits evaluated it, and how many steering deliveries it drove. Use it to find rules worth disabling or rules that never fire.",
     query: z.object({ since: sinceParameter, ...repositoryFilter }).strict(),
-    output: z.object({ since: z.number().int().nonnegative(), rules: z.record(z.string(), ruleActivitySchema) }),
+    output: z.object({
+      since: z.number().int().nonnegative(),
+      rules: z.record(z.string(), ruleActivitySchema),
+      sessions: z.object({
+        started: z.number().int().nonnegative().describe("Sessions that started at or after `since`."),
+        withViolations: z.number().int().nonnegative().describe("Distinct sessions with a violation logged at or after `since`."),
+      }),
+    }),
     handler: (stores, input) => {
       const ids = historyIds(stores, input.repository);
       const activity = stores.audits.ruleActivity(input.since, ids);
@@ -330,7 +343,11 @@ export const operations: readonly Operation[] = [
           ...(inactive === undefined ? {} : { inactive }),
         };
       }
-      return { since: input.since, rules };
+      return {
+        since: input.since,
+        rules,
+        sessions: { started: stores.reader.sessionCount(input.since, ids), withViolations: stores.audits.sessionsWithViolations(input.since, ids) },
+      };
     },
   }),
   defineOperation({
@@ -455,28 +472,31 @@ export const operations: readonly Operation[] = [
     id: "violations_list",
     method: "GET",
     path: "/api/violations",
-    summary: "List individual violations newest first, optionally for one rule, with the session and audit that reported each. Use it to read what a rule actually flagged rather than how often.",
+    summary: "List individual violations newest first, optionally for one rule or one session, with the session and audit that reported each. Use it to read what a rule actually flagged rather than how often.",
     query: z.object({
       since: sinceParameter,
-      limit: countParameter.min(1).max(200).optional().describe("Maximum violations to return; defaults to 50 and is capped at 200."),
-      offset: countParameter.optional().describe("Number of matching violations to skip; defaults to 0."),
+      limit: pageLimitParameter,
+      cursor: cursorParameter,
       ruleId: z.string().min(1).optional().describe("Restrict to one rule id."),
+      sessionId: z.string().min(1).optional().describe("Restrict to one session."),
       ...repositoryFilter,
     }).strict(),
-    output: z.object({ total: z.number().int().nonnegative(), violations: z.array(violationRecordSchema) }),
+    output: z.object({ total: z.number().int().nonnegative(), violations: z.array(violationRecordSchema), nextCursor: nextCursorSchema }),
     handler: (stores, input) => {
       const page = stores.audits.listViolationHistory({
         since: input.since,
         ...(input.limit === undefined ? {} : { limit: input.limit }),
-        ...(input.offset === undefined ? {} : { offset: input.offset }),
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
         ...(input.ruleId === undefined ? {} : { ruleId: input.ruleId }),
+        ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
       }, historyIds(stores, input.repository));
       return {
         total: page.total,
-        violations: page.violations.map(({ violation, sessionId, auditId, at }) => {
+        violations: page.violations.map(({ violation, sessionId, auditId, at, host }) => {
           const { id, ruleId, clauseId, code, mode, message, path, span, fix } = violation;
-          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at };
+          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host };
         }),
+        nextCursor: page.nextCursor,
       };
     },
   }),
@@ -484,16 +504,25 @@ export const operations: readonly Operation[] = [
     id: "sessions_list",
     method: "GET",
     path: "/api/sessions",
-    summary: "List recorded harness sessions with their event counts, optionally only those started since a given time.",
+    summary: "List recorded harness sessions newest first, a page at a time, with their event and violation counts, optionally only those started since a given time.",
     query: z.object({
       since: sinceParameter.optional().describe("Epoch milliseconds; only sessions started at or after this instant."),
+      limit: pageLimitParameter,
+      cursor: cursorParameter,
       ...repositoryFilter,
     }).strict(),
-    output: z.object({ sessions: z.array(sessionSummarySchema) }),
-    handler: (stores, input) => {
-      const ids = historyIds(stores, input.repository);
-      return { sessions: [...(input.since === undefined ? stores.reader.sessions(ids) : stores.reader.sessionsSince(input.since, ids))] };
-    },
+    output: z.object({
+      sessions: z.array(sessionSummarySchema.extend({
+        violationCount: z.number().int().nonnegative().describe("Violations in the session's history, as `violations_list` with its `sessionId` counts them."),
+      })),
+      total: z.number().int().nonnegative(),
+      nextCursor: nextCursorSchema,
+    }),
+    handler: (stores, input) => stores.reader.sessionPage({
+      limit: input.limit ?? PAGE_LIMIT,
+      ...(input.since === undefined ? {} : { since: input.since }),
+      ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    }, historyIds(stores, input.repository)),
   }),
   defineOperation({
     id: "sessions_get",
@@ -512,10 +541,11 @@ export const operations: readonly Operation[] = [
     id: "session_events",
     method: "GET",
     path: "/api/sessions/{sessionId}/events",
-    summary: `Page through one session's transcript events in sequence order, at most ${SESSION_EVENT_PAGE_LIMIT} per page.`,
+    summary: `Page through one session's transcript events in sequence order, at most ${SESSION_EVENT_PAGE_LIMIT} per page: forward from \`after\`, or backward from \`before\` (the latest page is before a sequence past the end).`,
     params: sessionId,
     query: z.object({
       after: countParameter.optional().describe("Return events with a sequence strictly greater than this value."),
+      before: countParameter.optional().describe("Return the last page of events with a sequence strictly less than this value."),
       limit: countParameter.optional(),
     }),
     output: z.object({
@@ -526,6 +556,7 @@ export const operations: readonly Operation[] = [
     handler: (stores, input) => {
       const page = stores.reader.events(input.sessionId, {
         ...(input.after === undefined ? {} : { after: input.after }),
+        ...(input.before === undefined ? {} : { before: input.before }),
         ...(input.limit === undefined ? {} : { limit: input.limit }),
       });
       const last = page.at(-1);
