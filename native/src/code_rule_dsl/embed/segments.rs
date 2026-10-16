@@ -352,4 +352,23 @@ mod tests {
         assert!(SegmentMap::read(&bytes, 12, 34).is_err());
         assert!(SegmentMap::read(&bytes, 13, 33).is_err());
     }
+
+    /// A map read back fits the texts it links, or is refused: a copied stretch is the host bytes
+    /// it stands for, and every segment starts and ends on a character of both.
+    #[test]
+    fn a_map_that_does_not_fit_its_texts_is_refused() {
+        let mut map = SegmentMap::new();
+        map.push(0, 2, 3..5, true, false);
+        map.push(2, 3, 5..7, false, false);
+        map.index();
+        assert_eq!(map.check("ab;", "xyzabé"), Ok(()));
+        // The copied bytes differ from the host's.
+        assert!(map.check("ac;", "xyzabé").is_err());
+        // The written segment ends inside the host's `é`.
+        let mut split = SegmentMap::new();
+        split.push(0, 2, 3..5, true, false);
+        split.push(2, 3, 5..6, false, false);
+        split.index();
+        assert!(split.check("ab;", "xyzabé").is_err());
+    }
 }
