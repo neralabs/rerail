@@ -1243,9 +1243,10 @@ impl PackageCondition {
         self.bin
             .is_none_or(|bin| manifest.is_some_and(|manifest| manifest.is_bin(path) == bin))
             && self.node_version.as_ref().is_none_or(|range| {
-                manifest
-                    .map_or(&*DEFAULT_NODE_RANGE, Manifest::node_range)
-                    .is_subset_of(range)
+                manifest.map_or_else(
+                    || DEFAULT_NODE_RANGE.is_subset_of(range),
+                    |manifest| manifest.node_range_is_subset_of(range),
+                )
             })
             && self
                 .depends_on

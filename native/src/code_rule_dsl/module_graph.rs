@@ -37,6 +37,10 @@ const MAX_GRAPH_FILES: usize = 20_000;
 /// A package whose sources read on disk total more bytes than this gets no server graph, as past
 /// `MAX_GRAPH_FILES`: the host's audit budget (`AUDIT_MAX_SOURCE_BYTES`).
 const MAX_GRAPH_BYTES: u64 = 512 * 1024 * 1024;
+/// A package whose disk walk lists more entries than this (files and folders, those it skips
+/// included) gets no server graph, as past `MAX_GRAPH_FILES`: the host's audit bound
+/// (`AUDIT_MAX_FILES`).
+const MAX_GRAPH_ENTRIES: usize = 100_000;
 /// The folders a server graph does not read, beside hidden ones: the host's
 /// `IGNORED_DIRECTORIES` (code-rule-enforcer.ts), which its repository walk skips.
 const IGNORED_DIRECTORIES: [&str; 14] = [
@@ -604,9 +608,10 @@ const SETTLED_AFTER: Duration = Duration::from_secs(2);
 /// ones (`IGNORED_DIRECTORIES`), nested packages and nested checkouts (a folder holding `.git`).
 /// `overlay` replaces one source's text with a host's (`None`: deleted), for a source being
 /// edited that disk does not hold yet. `None` where the package has no graph rather than a
-/// partial one: a folder or source cannot be read, or it holds more than `MAX_GRAPH_FILES`
-/// sources or `MAX_GRAPH_BYTES` of them. The failure is not cached, so the next call reads it
-/// again. The walk is not cancellable; those bounds limit it.
+/// partial one: a folder or source cannot be read, its walk lists more than `MAX_GRAPH_ENTRIES`
+/// entries, or it holds more than `MAX_GRAPH_FILES` sources or `MAX_GRAPH_BYTES` of them. The
+/// failure is not cached, so the next call reads it again. The walk is not cancellable; it lists
+/// and inspects at most `MAX_GRAPH_ENTRIES` entries and reads at most `MAX_GRAPH_BYTES`.
 pub(crate) fn on_disk(
     root: &Path,
     folder: &str,
@@ -620,7 +625,14 @@ pub(crate) fn on_disk(
     };
     let mut sources = Vec::new();
     let mut budget = MAX_GRAPH_BYTES;
-    if !walk(&directory, &directory, &mut sources, &mut budget) {
+    let mut entries = MAX_GRAPH_ENTRIES;
+    if !walk(
+        &directory,
+        &directory,
+        &mut sources,
+        &mut budget,
+        &mut entries,
+    ) {
         return None;
     }
     // The cache's lock is held only to sort its hits from its misses: the misses are read and
@@ -726,8 +738,9 @@ pub(crate) fn summarize_bounded(path: &str, source: &str) -> Option<Summary> {
 }
 
 /// The configuration of the package whose folder (workspace-relative) is `folder`, read on disk
-/// below `root` (`Config::read`): regular files of at most 1 MiB whose canonical path lies below
-/// the root's, so a symlinked folder on the way leads nowhere outside the workspace.
+/// below `root` (`Config::read`): regular files of at most 1 MiB, symlinks followed, whose
+/// canonical path lies below the root's, so a symlink on the way leads nowhere outside the
+/// workspace.
 pub(crate) fn config_on_disk(root: &Path, folder: &str) -> Config {
     let Ok(canonical_root) = root.canonicalize() else {
         return Config::default();
@@ -742,7 +755,7 @@ pub(crate) fn config_on_disk(root: &Path, folder: &str) -> Config {
             return None;
         }
         let file = root.join(path);
-        let metadata = std::fs::symlink_metadata(&file).ok()?;
+        let metadata = std::fs::metadata(&file).ok()?;
         if !metadata.is_file() || metadata.len() > MAX_SOURCE_BYTES {
             return None;
         }
@@ -764,23 +777,33 @@ fn skipped_folder(name: &str) -> bool {
 /// folders `skipped_folder` names, nested packages and nested checkouts (a folder holding
 /// `.git`); `false` where a folder or entry cannot be read (one deleted since its folder was
 /// listed is absent), more than one past `MAX_GRAPH_FILES` (`on_disk` decides the bound once an
-/// overlay applies), or the sources it would read (of at most 1 MiB) total more than `budget`
-/// bytes, which it counts down.
+/// overlay applies), the sources it would read (of at most 1 MiB) total more than `budget`
+/// bytes, or it lists more than `entries` entries (files and folders, skipped ones included),
+/// both of which it counts down.
 fn walk(
     top: &Path,
     directory: &Path,
     sources: &mut Vec<(String, PathBuf, std::fs::Metadata)>,
     budget: &mut u64,
+    entries: &mut usize,
 ) -> bool {
-    let entries = match std::fs::read_dir(directory) {
-        Ok(entries) => entries,
+    let listing = match std::fs::read_dir(directory) {
+        Ok(listing) => listing,
         Err(error) => return gone(&error),
     };
-    let Ok(mut entries) = entries.collect::<Result<Vec<_>, _>>() else {
-        return false;
-    };
-    entries.sort_by_key(std::fs::DirEntry::file_name);
-    for entry in entries {
+    let mut listed = Vec::new();
+    for entry in listing {
+        let Some(left) = entries.checked_sub(1) else {
+            return false;
+        };
+        *entries = left;
+        let Ok(entry) = entry else {
+            return false;
+        };
+        listed.push(entry);
+    }
+    listed.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in listed {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let kind = match entry.file_type() {
@@ -796,7 +819,7 @@ fn walk(
             {
                 continue;
             }
-            if !walk(top, &path, sources, budget) {
+            if !walk(top, &path, sources, budget, entries) {
                 return false;
             }
         } else if kind.is_file() && ecma_label(&name).is_some() {

@@ -8,6 +8,7 @@ use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::{JsxRuntime, PackageType};
 use crate::code_rule_dsl::semver::Range;
 use napi::Result;
+use parking_lot::Mutex;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
@@ -73,8 +74,11 @@ pub(crate) struct Manifest {
     server_graph: ServerGraph,
     /// SHA-256 of `to_wire` and the server graph: what equality and reuse keys compare.
     digest: [u8; 32],
-    /// `node_version` parsed; `None` where it does not parse.
+    /// `node_version` parsed.
     node_range: Option<Range>,
+    /// Whether `node_range` (else the default) is a subset of a condition's range, by the range's
+    /// text (`node_range_is_subset_of`); shared by the manifest's copies, which keep its range.
+    node_subsets: Arc<Mutex<HashMap<String, bool>>>,
 }
 
 /// Which files below a manifest are in their Next app's server module graph.
@@ -104,14 +108,15 @@ impl PartialEq for Manifest {
 impl Eq for Manifest {}
 
 impl Manifest {
+    /// `node_version` comes with its parse, which validated it.
     fn new(
         folder: String,
         package_type: PackageType,
         bin: BTreeSet<String>,
-        node_version: Option<String>,
+        node_version: Option<(String, Range)>,
         dependencies: BTreeSet<String>,
     ) -> Self {
-        let node_range = node_version.as_deref().and_then(Range::parse);
+        let (node_version, node_range) = node_version.unzip();
         let mut manifest = Self {
             folder,
             package_type,
@@ -122,6 +127,7 @@ impl Manifest {
             server_graph: ServerGraph::Unread,
             digest: [0; 32],
             node_range,
+            node_subsets: Arc::default(),
         };
         manifest.digest = manifest.compute_digest();
         manifest
@@ -298,9 +304,10 @@ impl Manifest {
         };
         let node_version = match object.get("nodeVersion") {
             None => None,
-            Some(Value::String(version)) if Range::parse(version).is_some() => {
-                Some(version.clone())
-            }
+            Some(Value::String(version)) => Some((
+                version.clone(),
+                Range::parse(version).ok_or_else(malformed)?,
+            )),
             Some(_) => return Err(malformed()),
         };
         let jsx_import_source = match object.get("jsxImportSource") {
@@ -420,10 +427,22 @@ impl Manifest {
         names.iter().any(|name| self.dependencies.contains(name))
     }
 
-    /// eslint-plugin-n's configured Node range for files below the manifest: its own, else the
-    /// default.
-    pub(crate) fn node_range(&self) -> &Range {
-        self.node_range.as_ref().unwrap_or(&DEFAULT_NODE_RANGE)
+    /// Whether eslint-plugin-n's configured Node range for files below the manifest (its own, else
+    /// the default) is a subset of `range`, worked out once per range text: every file below the
+    /// manifest asks the same of each gated rule.
+    pub(crate) fn node_range_is_subset_of(&self, range: &Range) -> bool {
+        if let Some(&subset) = self.node_subsets.lock().get(range.text()) {
+            return subset;
+        }
+        let subset = self
+            .node_range
+            .as_ref()
+            .unwrap_or(&DEFAULT_NODE_RANGE)
+            .is_subset_of(range);
+        self.node_subsets
+            .lock()
+            .insert(range.text().to_owned(), subset);
+        subset
     }
 
     /// The JSX runtime the package names: its `jsxImportSource` where that names React (or a
@@ -452,14 +471,14 @@ impl Manifest {
 
 /// eslint-plugin-n's `getEnginesNode`, then `getDevEnginesNode`: the first source that is
 /// present decides, and one whose range does not parse falls through to the next.
-fn configured_node_version(manifest: &Map<String, Value>) -> Option<String> {
+fn configured_node_version(manifest: &Map<String, Value>) -> Option<(String, Range)> {
     if let Some(Value::String(node)) = manifest
         .get("engines")
         .and_then(Value::as_object)
         .and_then(|engines| engines.get("node"))
-        && Range::parse(node).is_some()
+        && let Some(range) = Range::parse(node)
     {
-        return Some(node.clone());
+        return Some((node.clone(), range));
     }
     let runtime = manifest
         .get("devEngines")
@@ -474,7 +493,7 @@ fn configured_node_version(manifest: &Map<String, Value>) -> Option<String> {
             .then(|| entry.get("version").and_then(Value::as_str))
             .flatten()
     })?;
-    Range::parse(version).map(|_| version.to_owned())
+    Range::parse(version).map(|range| (version.to_owned(), range))
 }
 
 /// A `bin` target of the manifest in `folder` relative to that folder, as Node's `path.resolve`
@@ -658,4 +677,55 @@ impl Manifests {
 /// The nearest manifest at or above `file`, never above `root`.
 pub(crate) fn manifest_of_file(file: &Path, root: &Path) -> Option<Arc<Manifest>> {
     Manifests::new(root).of_file(file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Manifest;
+    use crate::code_rule_dsl::semver::{Range, tally};
+    use serde_json::json;
+
+    /// A manifest's configured Node range is parsed once, on disk and from a host alike.
+    #[test]
+    fn a_manifest_parses_its_node_range_once() {
+        let parses = tally::PARSES.get();
+        let manifest = Manifest::parse(String::new(), br#"{ "engines": { "node": ">=20" } }"#);
+        assert_eq!(tally::PARSES.get() - parses, 1);
+        assert_eq!(manifest.node_version(), Some(">=20"));
+        let parses = tally::PARSES.get();
+        let wire = json!({ "folder": "", "type": "unset", "nodeVersion": ">=20" });
+        let manifest = Manifest::from_wire(&wire, "files/0").unwrap();
+        assert_eq!(tally::PARSES.get() - parses, 1);
+        assert_eq!(manifest.node_version(), Some(">=20"));
+    }
+
+    /// Whether a long `||` range is a subset of a condition's is worked out once per condition
+    /// range, whichever copy of the manifest a file carries, with node-semver's answer.
+    #[test]
+    fn a_manifest_works_out_each_node_range_subset_once() {
+        let alternatives = (0..1_000)
+            .map(|minor| format!("1.{minor}.0"))
+            .collect::<Vec<_>>()
+            .join(" || ");
+        let manifest = Manifest::parse(
+            String::new(),
+            json!({ "engines": { "node": alternatives } })
+                .to_string()
+                .as_bytes(),
+        );
+        let copy = manifest.clone().with_jsx_import_source(Some("preact"));
+        for (condition, expected) in [(">=1.0.0 <2.0.0", true), ("^1.2.0", false)] {
+            let condition = Range::parse(condition).unwrap();
+            let subsets = tally::SIMPLE_SUBSETS.get();
+            assert_eq!(manifest.node_range_is_subset_of(&condition), expected);
+            let worked = tally::SIMPLE_SUBSETS.get() - subsets;
+            assert!((1..=1_000).contains(&worked), "{worked} simpleSubset calls");
+            let subsets = tally::SIMPLE_SUBSETS.get();
+            for _ in 0..100 {
+                assert_eq!(manifest.node_range_is_subset_of(&condition), expected);
+                assert_eq!(copy.node_range_is_subset_of(&condition), expected);
+            }
+            assert_eq!(tally::SIMPLE_SUBSETS.get() - subsets, 0);
+        }
+    }
 }

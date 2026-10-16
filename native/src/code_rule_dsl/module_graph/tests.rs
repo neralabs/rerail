@@ -755,9 +755,32 @@ fn the_walk_stops_past_its_byte_budget() {
         "lib/big.ts",
         "x".repeat(MAX_SOURCE_BYTES as usize + 1),
     );
-    let walked = |mut budget: u64| walk(&root, &root, &mut Vec::new(), &mut budget);
+    let walked = |mut budget: u64| {
+        let mut entries = MAX_GRAPH_ENTRIES;
+        walk(&root, &root, &mut Vec::new(), &mut budget, &mut entries)
+    };
     assert!(walked(1_200));
     assert!(!walked(1_199));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// Past the walk's entry bound a package has no graph: every entry it lists counts, a file of no
+/// ECMA dialect, a folder and one it skips included, but not what a skipped folder holds.
+#[test]
+fn the_walk_stops_past_its_entry_bound() {
+    let root = temp_root("entries");
+    write_file(&root, "app/page.tsx", "export default 1;\n");
+    write_file(&root, "lib/a.ts", "");
+    write_file(&root, "lib/notes.txt", "");
+    write_file(&root, "node_modules/x/index.js", "");
+    write_file(&root, "node_modules/y/index.js", "");
+    // `app`, `lib`, `node_modules`, `app/page.tsx`, `lib/a.ts` and `lib/notes.txt`.
+    let walked = |mut entries: usize| {
+        let mut budget = MAX_GRAPH_BYTES;
+        walk(&root, &root, &mut Vec::new(), &mut budget, &mut entries)
+    };
+    assert!(walked(6));
+    assert!(!walked(5));
     std::fs::remove_dir_all(&root).unwrap();
 }
 
@@ -897,6 +920,39 @@ fn extends_through_a_symlinked_folder_reads_nothing_outside_the_workspace() {
     std::os::unix::fs::symlink(root.join("real"), root.join("shared")).unwrap();
     assert_eq!(
         config_on_disk(&root, "").jsx_import_source(),
+        Some("preact")
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+    std::fs::remove_dir_all(&outside).unwrap();
+}
+
+/// A `tsconfig.json` that is a symlink is read where it resolves inside the workspace, not
+/// replaced by the `jsconfig.json` beside it, and not where it resolves outside.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_configuration_is_read_only_inside_the_workspace() {
+    let shared = r#"{ "compilerOptions": { "jsxImportSource": "preact" } }"#;
+    let outside = temp_root("outside-shared");
+    write_file(&outside, "tsconfig.shared.json", shared);
+    let root = temp_root("symlinked-config");
+    write_file(&root, "tsconfig.shared.json", shared);
+    write_file(
+        &root,
+        "web/jsconfig.json",
+        r#"{ "compilerOptions": { "jsxImportSource": "solid-js" } }"#,
+    );
+    std::os::unix::fs::symlink("../tsconfig.shared.json", root.join("web/tsconfig.json")).unwrap();
+    let config = config_on_disk(&root, "web");
+    assert_eq!(config.jsx_import_source(), Some("preact"));
+    assert_eq!(config.files(), ["web/tsconfig.json"]);
+    std::fs::remove_file(root.join("web/tsconfig.json")).unwrap();
+    std::os::unix::fs::symlink(
+        outside.join("tsconfig.shared.json"),
+        root.join("web/tsconfig.json"),
+    )
+    .unwrap();
+    assert_ne!(
+        config_on_disk(&root, "web").jsx_import_source(),
         Some("preact")
     );
     std::fs::remove_dir_all(&root).unwrap();

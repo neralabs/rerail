@@ -13,6 +13,7 @@ use regex::{Captures, Regex};
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
 
 /// `MAX_LENGTH`: the longest version string `SemVer` accepts.
@@ -20,9 +21,27 @@ const MAX_LENGTH: usize = 256;
 /// `Number.MAX_SAFE_INTEGER`.
 const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
+/// Test-only tallies, per thread, of the work a range does that must stay bounded on the untrusted
+/// ranges manifests give.
+#[cfg(test)]
+pub(crate) mod tally {
+    use std::cell::Cell;
+
+    thread_local! {
+        /// Equality checks of comparator keys while `parse_range` deduplicates them.
+        pub(crate) static KEY_COMPARISONS: Cell<usize> = const { Cell::new(0) };
+        /// `Range::parse` calls.
+        pub(crate) static PARSES: Cell<usize> = const { Cell::new(0) };
+        /// `simple_subset` calls.
+        pub(crate) static SIMPLE_SUBSETS: Cell<usize> = const { Cell::new(0) };
+    }
+}
+
 /// A node-semver 7.8.5 `Range` (loose = false, includePrerelease = false).
 #[derive(Clone, Debug)]
 pub(crate) struct Range {
+    /// The whitespace-normalized text it parsed from, which alone decides the parse.
+    text: String,
     set: Vec<SimpleRange>,
 }
 
@@ -73,6 +92,8 @@ enum Ident {
 impl Range {
     /// `new Range(text)`; None where node-semver throws.
     pub(crate) fn parse(text: &str) -> Option<Self> {
+        #[cfg(test)]
+        tally::PARSES.set(tally::PARSES.get() + 1);
         let raw = collapse_whitespace(text);
         let mut set = raw
             .split("||")
@@ -90,7 +111,7 @@ impl Range {
                 }
             }
         }
-        Some(Self { set })
+        Some(Self { text: raw, set })
     }
 
     /// `subset(self, dom)` (ranges/subset.js) with `self` passed as a Range object.
@@ -111,9 +132,9 @@ impl Range {
         true
     }
 
-    /// `Range.test(version)`.
-    fn test(&self, version: &SemVer) -> bool {
-        self.set.iter().any(|simple| simple.test(version))
+    /// The whitespace-normalized text: ranges with the same parse alike.
+    pub(crate) fn text(&self) -> &str {
+        &self.text
     }
 }
 
@@ -124,17 +145,16 @@ impl SimpleRange {
             .first()
             .is_some_and(Comparator::is_null_set)
     }
+}
 
-    /// `testSet`: every comparator holds, and a prerelease version also shares its tuple with a
-    /// prerelease comparator.
-    fn test(&self, version: &SemVer) -> bool {
-        self.comparators.iter().all(|c| c.test(version))
-            && (version.prerelease.is_empty()
-                || self
-                    .comparators
-                    .iter()
-                    .any(|c| !c.semver.prerelease.is_empty() && c.semver.same_tuple(version)))
-    }
+/// `testSet`: every comparator holds, and a prerelease version also shares its tuple with a
+/// prerelease comparator; ANY is no comparators.
+fn test_set(comparators: &[Comparator], version: &SemVer) -> bool {
+    comparators.iter().all(|c| c.test(version))
+        && (version.prerelease.is_empty()
+            || comparators
+                .iter()
+                .any(|c| !c.semver.prerelease.is_empty() && c.semver.same_tuple(version)))
 }
 
 impl Comparator {
@@ -283,6 +303,8 @@ fn numeric_value(id: &Ident) -> Result<f64, &str> {
 
 /// `simpleSubset(sub, dom)`: `None` when `sub` is a null set.
 fn simple_subset(sub: &SimpleRange, dom: &SimpleRange) -> Option<bool> {
+    #[cfg(test)]
+    tally::SIMPLE_SUBSETS.set(tally::SIMPLE_SUBSETS.get() + 1);
     if sub.key.is_some() && sub.key == dom.key {
         return Some(true);
     }
@@ -421,10 +443,11 @@ fn lower_lt_is_b(a: &Comparator, b: &Comparator) -> bool {
     }
 }
 
-/// `satisfies(version, String(c))`: the comparator's value reparsed as a range, so `>=0.0.0` is
-/// ANY and testSet's prerelease rule applies.
+/// `satisfies(version, String(c))`: `c` alone as the range its value parses to, which is ANY for
+/// `>=0.0.0` (its `GTE0` rewrite), under testSet's prerelease rule.
 fn satisfies(version: &SemVer, c: &Comparator) -> bool {
-    Range::parse(&c.to_string()).is_some_and(|range| range.test(version))
+    let any = c.op == Op::Gte && c.semver.version == "0.0.0";
+    test_set(if any { &[] } else { std::slice::from_ref(c) }, version)
 }
 
 /// `range.trim().replace(/\s+/g, ' ')` with JS's whitespace set.
@@ -486,7 +509,7 @@ fn parse_range(range: &str) -> Option<SimpleRange> {
                 comparators: vec![comp],
             });
         }
-        if seen.insert((comp.op, comp.semver.version.clone())) {
+        if seen.insert(ComparatorKey(comp.op, comp.semver.version.clone())) {
             comparators.push(comp);
         }
     }
@@ -494,6 +517,26 @@ fn parse_range(range: &str) -> Option<SimpleRange> {
         key: Some(key),
         comparators,
     })
+}
+
+/// A comparator's `rangeMap` key: its operator and version.
+struct ComparatorKey(Op, String);
+
+impl PartialEq for ComparatorKey {
+    fn eq(&self, other: &Self) -> bool {
+        #[cfg(test)]
+        tally::KEY_COMPARISONS.set(tally::KEY_COMPARISONS.get() + 1);
+        self.0 == other.0 && self.1 == other.1
+    }
+}
+
+impl Eq for ComparatorKey {}
+
+impl Hash for ComparatorKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+        self.1.hash(state);
+    }
 }
 
 /// `parseComparator`: carets, tildes, x-ranges and stars desugared to plain comparators. Its
@@ -701,7 +744,7 @@ fn compile(source: &str) -> Regex {
 
 #[cfg(test)]
 mod tests {
-    use super::{Op, Range};
+    use super::{Comparator, Op, Range, SemVer, satisfies, tally, test_set};
 
     /// `[configured, given, subset(new Range(configured), given)]` and `[text, parses]`, recorded
     /// from node-semver 7.8.5.
@@ -754,22 +797,92 @@ mod tests {
         assert!(null.set[0].key.is_none());
     }
 
-    /// A manifest's `engines.node` is untrusted, so a range of 50,000 distinct comparators parses
-    /// in time linear in their number: pairwise deduplication makes that over 10⁹ comparisons.
+    /// A manifest's `engines.node` is untrusted, so a range of 50,000 distinct comparators is
+    /// deduplicated with a number of key comparisons linear in theirs: pairwise deduplication
+    /// makes that over 10⁹.
     #[test]
-    fn a_range_of_many_comparators_parses_quickly() {
+    fn a_range_of_many_comparators_parses_in_linear_work() {
         let text = (0..50_000)
             .map(|minor| format!(">=1.{minor}.0"))
             .collect::<Vec<_>>()
             .join(" ");
-        let started = std::time::Instant::now();
+        let before = tally::KEY_COMPARISONS.get();
         let range = Range::parse(&text).unwrap();
-        let elapsed = started.elapsed();
+        let comparisons = tally::KEY_COMPARISONS.get() - before;
         assert_eq!(range.set[0].comparators.len(), 50_000);
-        assert!(
-            elapsed < std::time::Duration::from_secs(5),
-            "parsing took {elapsed:?}"
-        );
+        assert!(comparisons <= 50_000, "{comparisons} key comparisons");
         assert!(range.is_subset_of(&Range::parse(">=1.0.0").unwrap()));
+    }
+
+    /// `satisfies` answers as node-semver's `satisfies(version, String(c))`, the comparator's
+    /// value parsed as a range (`>=0.0.0` as ANY, a prerelease only beside one on its tuple).
+    #[test]
+    fn satisfies_reads_a_comparator_as_the_range_its_value_parses_to() {
+        let comparators = [
+            ">=0.0.0",
+            ">0.0.0",
+            "<0.0.0-0",
+            "1.2.3",
+            "1.2.3-beta.1",
+            ">=1.2.3-alpha",
+            "<1.2.3",
+            "<=1.2.3-rc.2",
+            ">1.2.3",
+        ];
+        let versions = [
+            "0.0.0",
+            "0.0.0-0",
+            "1.2.3",
+            "1.2.3-alpha",
+            "1.2.3-beta.1",
+            "1.2.3-rc.2",
+            "1.2.4",
+            "1.2.4-0",
+            "2.0.0",
+        ];
+        for text in comparators {
+            let comparator = Comparator::parse(text).unwrap().unwrap();
+            let range = Range::parse(&comparator.to_string()).unwrap();
+            for version in versions {
+                let version = SemVer::parse(version).unwrap();
+                let expected = range
+                    .set
+                    .iter()
+                    .any(|simple| test_set(&simple.comparators, &version));
+                assert_eq!(
+                    satisfies(&version, &comparator),
+                    expected,
+                    "satisfies({}, {text})",
+                    version.version
+                );
+            }
+        }
+    }
+
+    /// A configured range of many `||` versions is checked against a range of a few alternatives
+    /// with one `simpleSubset` per pair at most, parsing no range anew for each comparator.
+    #[test]
+    fn a_long_alternation_is_a_subset_without_reparsing() {
+        let configured = (0..1_000)
+            .map(|minor| format!("1.{minor}.0"))
+            .collect::<Vec<_>>()
+            .join(" || ");
+        let configured = Range::parse(&configured).unwrap();
+        for (given, expected) in [
+            (">=0.0.0 <0.1.0 || >=1.0.0 <2.0.0", true),
+            (">=1.0.0 <1.500.0 || >=3.0.0", false),
+            ("*", true),
+        ] {
+            let given = Range::parse(given).unwrap();
+            let (parses, subsets) = (tally::PARSES.get(), tally::SIMPLE_SUBSETS.get());
+            assert_eq!(
+                configured.is_subset_of(&given),
+                expected,
+                "{}",
+                given.text()
+            );
+            assert_eq!(tally::PARSES.get() - parses, 0);
+            assert!(tally::SIMPLE_SUBSETS.get() - subsets <= 1_000 * 2);
+        }
     }
 }
