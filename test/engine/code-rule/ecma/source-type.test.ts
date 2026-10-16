@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuditInput, AuditRecorder, AuditResult, AuditScope } from "../../../../src/engine/audit/audit.js";
 import type { CodeRuleEdit } from "../../../../src/engine/code-rule/code-rule.js";
 import { bundledCodeRuleDslDirectory } from "../../../../src/engine/code-rule/code-rule-compile.js";
-import { languageFor, NativeCodeRuleEnforcer, sourceFileFacts } from "../../../../src/engine/code-rule/code-rule-enforcer.js";
+import { languageFor, NativeCodeRuleEnforcer, sourceFactsCache, sourceFileFacts } from "../../../../src/engine/code-rule/code-rule-enforcer.js";
 import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schema.js";
 import type { CodeRule } from "../../../../src/engine/code-rule/code-rule-schema.js";
 import { loadNativeBinding } from "../../../../src/engine/native/native.js";
@@ -69,7 +69,11 @@ async function enforcerFor(workspaceRoot: string, codeRule: CodeRule | (() => Co
     progress(auditId, result) { audits.get(auditId)!.result = { status: "completed", ...result }; },
     interrupt() {},
   };
-  /** The steers the enforcer published (revision, sources they speak for, text), and the sources it revised. */
+  /**
+   * The steers the enforcer published (revision, sources they speak for, text), and the sources it revised. A revision
+   * of a source drops the steers that speak for it, as the runtime drops queued ones, and hands back the other sources
+   * they spoke for.
+   */
   const steers: Array<{ revision: number | undefined; scope: readonly string[]; content: string }> = [];
   const revisions: Array<{ revision: number; paths: readonly string[] }> = [];
   const enforcer = new NativeCodeRuleEnforcer(testCodeRuleCatalog(() => [current()], capabilitiesPath), {
@@ -79,7 +83,12 @@ async function enforcerFor(workspaceRoot: string, codeRule: CodeRule | (() => Co
         steers.push({ revision: metadata?.revision, scope: metadata?.scope ?? [], content });
         return undefined;
       },
-      revised: (_session, revision, paths) => { revisions.push({ revision, paths: [...paths] }); },
+      revised: (_session, revision, paths) => {
+        revisions.push({ revision, paths: [...paths] });
+        const dropped = steers.filter(steer => (steer.revision ?? 0) < revision && steer.scope.some(path => paths.includes(path)));
+        steers.splice(0, steers.length, ...steers.filter(steer => !dropped.includes(steer)));
+        return [...new Set(dropped.flatMap(steer => steer.scope))].filter(path => !paths.includes(path));
+      },
     },
   });
   await enforcer.openWorkspace("package-facts");
@@ -128,6 +137,8 @@ async function enforcerFor(workspaceRoot: string, codeRule: CodeRule | (() => Co
   };
   return {
     audit, edit, snapshot, derived, steers, revisions, enforcer,
+    /** How many audits the enforcer started. */
+    auditCount: () => audits.size,
     acceptsPath: (path: string) => enforcer.acceptsPath(path),
     close: () => enforcer.close(),
   };
@@ -453,7 +464,7 @@ describe("a package.json edit alone", () => {
     }
   });
 
-  it("in ai-output scope leaves the findings and steers of the sources it repackages to their own edits", async () => {
+  it("in ai-output scope leaves the findings and steers of the sources it repackages to their own edits while those stand", async () => {
     const sources: Sources = { "package.json": '{ "type": "commonjs" }\n', "lib/plain.js": "module.exports = require('x');\n" };
     const root = await repository(false, sources);
     const { edit, steers, revisions, close } = await enforcerFor(root, CODE_RULE, sources, "ai-output");
@@ -465,14 +476,132 @@ describe("a package.json edit alone", () => {
       expect(steers.map(steer => [steer.revision, steer.scope, steer.content.includes("CommonJS require")])).toEqual([
         [1, ["lib/plain.js"], true],
       ]);
-      // A dependency the rules ignore gives the source another `package`, so the manifest edit sends it again. Its
-      // generated lines are the manifest's, which report none of the source's findings: the source's steer stands.
+      // A dependency the rules ignore gives the source another `package`, so the manifest edit sends it again. The
+      // findings in the source's own generated lines are unchanged: they and the source's steer stand.
       const manifest = '{ "type": "commonjs", "dependencies": { "left-pad": "1" } }\n';
       await writeFile(join(root, "package.json"), manifest);
       expect(await edit([{ path: "package.json", language: "json", generatedText: manifest }])).toEqual({});
       expect(revisions).toEqual([]);
       expect(steers).toHaveLength(1);
     } finally {
+      await close();
+    }
+  });
+
+  it("in ai-output scope reports again a repackaged source whose findings changed, so its stale steer is dropped", async () => {
+    const sources: Sources = { "package.json": '{ "type": "commonjs" }\n', "lib/plain.js": "module.exports = require('x');\n" };
+    const root = await repository(false, sources);
+    const { edit, steers, revisions, close } = await enforcerFor(root, CODE_RULE, sources, "ai-output");
+    try {
+      expect(await edit([{ path: "lib/plain.js", language: "javascript", generatedText: sources["lib/plain.js"]! }])).toEqual({
+        "lib/plain.js PROGRAM": 1,
+        "lib/plain.js REQUIRE": 1,
+      });
+      // The manifest turns the source into a module, whose `require` is no CommonJS global: the source is reported again
+      // at revision 2, its revision-1 steer is revised away, and revision 2's steer speaks for it without the require.
+      const manifest = '{ "type": "module" }\n';
+      await writeFile(join(root, "package.json"), manifest);
+      expect(await edit([{ path: "package.json", language: "json", generatedText: manifest }])).toEqual({ "lib/plain.js PROGRAM": 1 });
+      expect(revisions).toEqual([{ revision: 2, paths: ["lib/plain.js"] }]);
+      expect(steers.map(steer => [steer.revision, steer.scope, steer.content.includes("CommonJS require")])).toEqual([
+        [2, ["lib/plain.js", "package.json"], false],
+      ]);
+    } finally {
+      await close();
+    }
+  });
+
+  it("steers again the other sources of a steer that a manifest edit revised for one of them", async () => {
+    const sources: Sources = {
+      "a/package.json": '{ "type": "commonjs" }\n',
+      "a/a.js": "module.exports = require('x');\n",
+      "b/package.json": '{ "type": "commonjs" }\n',
+      "b/b.js": "module.exports = require('x');\n",
+    };
+    const root = await repository(false, sources);
+    const { edit, steers, revisions, close } = await enforcerFor(root, CODE_RULE, sources);
+    try {
+      // One batch, one steer for both sources.
+      expect(await edit()).toEqual({ "a/a.js PROGRAM": 1, "a/a.js REQUIRE": 1, "b/b.js PROGRAM": 1, "b/b.js REQUIRE": 1 });
+      expect(steers.map(steer => [steer.revision, steer.scope])).toEqual([[1, ["a/a.js", "b/b.js"]]]);
+      // b's manifest revises b/b.js alone, which drops the shared steer: a/a.js's findings are steered again at the
+      // revision they were reported at.
+      await writeFile(join(root, "b/package.json"), '{ "type": "module" }\n');
+      expect(await edit([{ path: "b/package.json", language: "json", generatedText: '{ "type": "module" }\n' }])).toEqual({
+        "b/b.js PROGRAM": 1,
+      });
+      expect(revisions).toEqual([{ revision: 2, paths: ["b/b.js"] }]);
+      expect(steers.map(steer => [steer.revision, steer.scope, steer.content.includes("CommonJS require")])).toEqual([
+        [1, ["a/a.js"], true],
+        [2, ["b/b.js", "b/package.json"], false],
+      ]);
+    } finally {
+      await close();
+    }
+  });
+
+  it("is routed only where a code rule reads manifests", async () => {
+    const sources: Sources = { "package.json": '{ "type": "commonjs" }\n', "tool.py": "print(1)\n" };
+    const root = await repository(false, sources);
+    // Python files read no package.json: the scopes alone decide, so a manifest or project configuration edit starts
+    // no audit.
+    const python = codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "package-facts:python", revision: 1, mode: "steer",
+      scope: { include: ["**/*.py"], exclude: [] },
+      clauses: [{
+        id: "call",
+        violation: { code: "CALL", anchor: "witness.span", message: "call" },
+        forbid: { ast: { language: "python", rule: { kind: "call" } } },
+      }],
+    });
+    const { acceptsPath, auditCount, enforcer, close } = await enforcerFor(root, python, sources);
+    try {
+      expect(acceptsPath("tool.py")).toBe(true);
+      expect(acceptsPath("package.json")).toBe(false);
+      expect(acceptsPath("lib/package.json")).toBe(false);
+      expect(acceptsPath("tsconfig.json")).toBe(false);
+      await enforcer.auditGeneratedEdits("package-facts", {
+        revision: 1, checkpoints: ["edit"],
+        edits: [{ path: "package.json", language: "json", generatedText: '{ "type": "module" }\n' }],
+      });
+      await enforcer.settle();
+      expect(auditCount()).toBe(0);
+    } finally {
+      await close();
+    }
+    // An ECMA code rule reads them.
+    const ecma = await enforcerFor(root, CODE_RULE, sources);
+    try {
+      expect(ecma.acceptsPath("package.json")).toBe(true);
+      expect(ecma.acceptsPath("tsconfig.json")).toBe(true);
+      expect(await ecma.edit([{ path: "package.json", language: "json", generatedText: '{ "type": "module" }\n' }])).toEqual({});
+      expect(ecma.auditCount()).toBe(1);
+    } finally {
+      await ecma.close();
+    }
+  });
+
+  it("is never read through a symlinked folder that leads outside the workspace", async () => {
+    const sources: Sources = { "lib/plain.js": "module.exports = require('x');\n" };
+    const root = await repository(false, sources);
+    // The folder outside holds a CommonJS manifest naming `next`; read through `vendor`, it would give the source a
+    // require finding and `NEXT`.
+    const outside = await directory("rerail-package-facts-outside-");
+    await writeFile(join(outside, "package.json"), '{ "type": "commonjs", "dependencies": { "next": "15" } }\n');
+    await writeFile(join(outside, "x.js"), "module.exports = require('x');\n");
+    await symlink(outside, join(root, "vendor"), "dir");
+    const binding = loadNativeBinding();
+    const reads = [vi.spyOn(binding, "packageFacts"), vi.spyOn(binding, "nearestPackage"), vi.spyOn(binding, "serverGraphAsync")];
+    const { edit, close } = await enforcerFor(root, CODE_RULE, sources);
+    try {
+      expect(await sourceFileFacts(root, "vendor/x.js", "javascript", undefined, true)).toEqual({});
+      // Without a manifest a .js file is a module.
+      expect(await edit([{ path: "vendor/x.js", language: "javascript", generatedText: "module.exports = require('x');\n" }])).toEqual({
+        "vendor/x.js PROGRAM": 1,
+      });
+      expect(reads.flatMap(spy => spy.mock.calls).filter(call => call.some(argument => String(argument).includes("vendor")))).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
       await close();
     }
   });
@@ -608,6 +737,51 @@ describe("a Next app's server module graph (file.package.serverGraph)", () => {
       });
       expect(await audit()).toEqual({ status: "completed", reported: { "app/shared/hook.ts CLIENT": 1 }, failures: [] });
     } finally {
+      await close();
+    }
+  });
+
+  it("gives the files of a package with no graph no membership, so neither value holds", async () => {
+    const files = sources();
+    const root = await repository(false, files);
+    const { edit, snapshot, close } = await enforcerFor(root, CODE_RULE, files);
+    // The binding has no graph for the package (an entry unreadable, or past the walk's bounds).
+    const walks = vi.spyOn(loadNativeBinding(), "serverGraphAsync").mockResolvedValue(null);
+    try {
+      const cache = sourceFactsCache();
+      for (const path of ["app/page.tsx", "app/widget.tsx"]) {
+        const facts = await sourceFileFacts(root, path, "tsx", cache, true);
+        expect(facts.package).toMatchObject({ folder: "", dependencies: ["next"] });
+        expect(facts.package).not.toHaveProperty("serverGraph");
+      }
+      // One walk per package and cache, its absence cached too.
+      expect(walks).toHaveBeenCalledOnce();
+      expect(await edit()).toEqual({});
+      expect(await snapshot()).toEqual({});
+    } finally {
+      walks.mockRestore();
+      await close();
+    }
+  });
+
+  it("never walks a package through a symlinked folder that leads outside the workspace", async () => {
+    const files = sources();
+    const root = await repository(false, { "package.json": "{}\n" });
+    // A Next app outside, reached through `vendor`: its page would be in its server graph.
+    const outside = await directory("rerail-package-facts-outside-");
+    for (const [path, source] of Object.entries(files)) {
+      await mkdir(dirname(join(outside, path)), { recursive: true });
+      await writeFile(join(outside, path), source);
+    }
+    await symlink(outside, join(root, "vendor"), "dir");
+    const binding = loadNativeBinding();
+    const reads = [vi.spyOn(binding, "packageFacts"), vi.spyOn(binding, "nearestPackage"), vi.spyOn(binding, "serverGraphAsync")];
+    const { edit, close } = await enforcerFor(root, CODE_RULE, {});
+    try {
+      expect(await edit([{ path: "vendor/app/page.tsx", language: "tsx", generatedText: files["app/page.tsx"]! }])).toEqual({});
+      expect(reads.flatMap(spy => spy.mock.calls).filter(call => call.some(argument => String(argument).includes("vendor")))).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
       await close();
     }
   });

@@ -27,10 +27,13 @@ use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::evidence::Side;
 use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
 use crate::code_rule_dsl::json::{invalid, json_error};
-use crate::code_rule_dsl::model::{ClauseKind, CodeRuleScope, Evaluation, Metrics, Snapshot};
+use crate::code_rule_dsl::language::{self, adapter::package_manifests};
+use crate::code_rule_dsl::model::{
+    ClauseKind, CodeRuleScope, CompiledCodeRule, Evaluation, Metrics, Query, Snapshot,
+};
 use crate::code_rule_dsl::placement::parse_placement;
 #[cfg(feature = "code-rule-profile")]
-use crate::code_rule_dsl::{matcher::GrammarMatcher, model::Query, profile};
+use crate::code_rule_dsl::{matcher::GrammarMatcher, profile};
 use crate::content_store::{OperationDeadline, StoreError, WorkspaceCompletion};
 use crate::release_allocator_memory;
 use napi::bindgen_prelude::{AsyncTask, Buffer};
@@ -54,6 +57,9 @@ pub struct CodeRuleDslWorkspace {
     pub(super) scopes: Mutex<Vec<CodeRuleScope>>,
     /// Whether a code rule reads `file.package.serverGraph`, answered without the state lock.
     pub(super) server_graph: AtomicBool,
+    /// Whether a code rule has an AST clause in a family whose files read their nearest
+    /// `package.json`, answered without the state lock.
+    pub(super) package_manifests: AtomicBool,
     pub(super) closed: Arc<AtomicBool>,
 }
 
@@ -75,6 +81,7 @@ impl CodeRuleDslWorkspace {
             state: Arc::new(Mutex::new(state)),
             scopes: Mutex::new(Vec::new()),
             server_graph: AtomicBool::new(false),
+            package_manifests: AtomicBool::new(false),
             closed: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -207,6 +214,9 @@ impl CodeRuleDslWorkspace {
         if resident.reads_server_graph() {
             self.server_graph.store(true, Ordering::Release);
         }
+        if reads_package_manifests(&resident) {
+            self.package_manifests.store(true, Ordering::Release);
+        }
         #[cfg(feature = "code-rule-profile")]
         for clause in &resident.clauses {
             if let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind {
@@ -253,6 +263,14 @@ impl CodeRuleDslWorkspace {
     #[napi]
     pub fn reads_server_graph(&self) -> bool {
         self.server_graph.load(Ordering::Acquire)
+    }
+
+    /// Whether a code rule has an AST clause in a family whose files read their nearest
+    /// `package.json` (ECMA): a host then treats `package.json` and `tsconfig`/`jsconfig` edits as
+    /// inputs, since they change those files' `package` facts.
+    #[napi]
+    pub fn reads_package_manifests(&self) -> bool {
+        self.package_manifests.load(Ordering::Acquire)
     }
 
     #[napi]
@@ -527,6 +545,30 @@ impl CodeRuleDslWorkspace {
             Err(error) => *error.into_inner() = Vec::new(),
         }
     }
+}
+
+/// Whether an AST clause of `code_rule` matches in a family whose files read their nearest
+/// `package.json` (`Adapter::PACKAGE_MANIFESTS`).
+fn reads_package_manifests(code_rule: &CompiledCodeRule) -> bool {
+    fn in_manifest_family(query: &Query) -> bool {
+        match query {
+            Query::Ast { matchers, .. } => matchers
+                .iter()
+                .any(|matcher| language::label(matcher.language).is_some_and(package_manifests)),
+            Query::SelectWhen { select, exists } => {
+                in_manifest_family(select) || in_manifest_family(exists)
+            }
+            Query::Regex { .. } => false,
+        }
+    }
+    code_rule.clauses.iter().any(|clause| match &clause.kind {
+        ClauseKind::Forbid(query) => in_manifest_family(query),
+        ClauseKind::RequireEach { subject, evidence } => {
+            in_manifest_family(&subject.ast.query) || in_manifest_family(&evidence.ast.query)
+        }
+        ClauseKind::Budget { query, .. } => in_manifest_family(&query.ast.query),
+        ClauseKind::Llm => false,
+    })
 }
 
 // Closing never waits on the JS thread. When close sees a busy lock, the

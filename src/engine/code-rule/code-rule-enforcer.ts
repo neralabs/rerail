@@ -1,7 +1,7 @@
 import { type Dirent, type Stats } from "node:fs";
 import { lstat, mkdtemp, opendir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, posix, relative, resolve, sep } from "node:path";
+import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import { setImmediate as yieldToHost, setTimeout as pause } from "node:timers/promises";
 import { diffLines } from "diff";
 import { z } from "zod";
@@ -50,7 +50,7 @@ import { RULE_MODES, steers } from "../catalog/rule-mode.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
 import { contentStorePath } from "../native/rerail-build.js";
-import { withinCheckout } from "../catalog/checkout-control.js";
+import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { languageOfPath, SOURCE_LANGUAGES } from "./code-rule-languages.js";
 
 export { SOURCE_LANGUAGES };
@@ -289,11 +289,11 @@ export type SourceFileFacts = { module?: string | string[]; package?: NativePack
 
 /**
  * The manifests one walk read, by language and directory, and the server graphs of their packages, by folder (each
- * requested once, so concurrent readers share one walk).
+ * requested once, so concurrent readers share one walk; `null` for a package with no graph).
  */
 export type SourceFactsCache = {
   packages: Map<string, NativePackageFacts | null>;
-  serverGraphs: Map<string, Promise<ReadonlySet<string>>>;
+  serverGraphs: Map<string, Promise<ReadonlySet<string> | null>>;
 };
 
 export function sourceFactsCache(): SourceFactsCache {
@@ -305,13 +305,15 @@ export type SourceOverlay = { path: string; source?: string | undefined };
 
 /**
  * The facts every ingestion path sends with the file at `path` below `root`: its module (`modulePath`), and its nearest
- * `package.json`, never above `root` (none without one), whose `type` decides an ECMA file's module system and which
- * `file.package` and `file.jsxRuntime` conditions read; the engine sends none for a family that reads no manifest. With
- * `serverGraph` (a code rule reads `file.package.serverGraph`), a file whose manifest names `next` also carries whether
- * it is in its Next app's server module graph, walked on disk off the JS thread once per package and cache,
- * `overlay`'s text standing in for its file's. The engine derives all of them; native repository indexing derives the
- * same values itself. `cache` keeps one walk's manifests and graphs, so one cache serves one overlay. The facts depend
- * on the path, the files on disk and `overlay` only, never on the file's own text.
+ * `package.json`, never above `root` (none without one, or where the file's folder resolves outside `root`), whose
+ * `type` decides an ECMA file's module system and which `file.package` and `file.jsxRuntime` conditions read; the
+ * engine sends none for a family that reads no manifest. With `serverGraph` (a code rule reads
+ * `file.package.serverGraph`), a file whose manifest names `next` also carries whether it is in its Next app's server
+ * module graph, walked on disk off the JS thread once per package and cache, `overlay`'s text standing in for its
+ * file's; a package with no graph (an entry unreadable, or past the walk's bounds) gives its files no `serverGraph`, so
+ * neither value holds. The engine derives all of them; native repository indexing derives the same values itself.
+ * `cache` keeps one walk's manifests and graphs, so one cache serves one overlay. The facts depend on the path, the
+ * files on disk and `overlay` only, never on the file's own text.
  */
 export async function sourceFileFacts(
   root: string,
@@ -327,19 +329,38 @@ export async function sourceFileFacts(
   const key = `${language}\0${posix.dirname(path)}`;
   let facts = cache?.packages.get(key);
   if (facts === undefined) {
-    facts = binding.packageFacts(language, absolute, root);
+    facts =
+      binding.readsPackageManifests(language) && folderWithinRoot(root, path)
+        ? binding.packageFacts(language, absolute, root)
+        : null;
     cache?.packages.set(key, facts);
   }
   if (facts !== null && serverGraph && facts.dependencies.includes("next")) {
     let members = cache?.serverGraphs.get(facts.folder);
     if (members === undefined) {
-      members = binding.serverGraphAsync(root, facts.folder, overlay?.path, overlay?.source).then(paths => new Set(paths));
+      members = binding
+        .serverGraphAsync(root, facts.folder, overlay?.path, overlay?.source)
+        .then(paths => (paths === null ? null : new Set(paths)));
       cache?.serverGraphs.set(facts.folder, members);
     }
+    const graph = await members;
     const relative = facts.folder === "" ? path : path.slice(facts.folder.length + 1);
-    facts = { ...facts, serverGraph: (await members).has(relative) };
+    if (graph !== null) facts = { ...facts, serverGraph: graph.has(relative) };
   }
   return { ...(module === undefined ? {} : { module }), ...(facts === null ? {} : { package: facts }) };
+}
+
+/**
+ * Whether the folder holding `path` (below `root`), as its deepest existing ancestor resolves through symlinks, lies
+ * within `root`'s real path: a file reached through a symlinked folder that leads out of the checkout reads no
+ * manifest, project configuration or server graph there.
+ */
+function folderWithinRoot(root: string, path: string): boolean {
+  try {
+    return withinCheckout(physicalPath(root), physicalPath(dirname(resolve(root, path))));
+  } catch {
+    return false;
+  }
 }
 
 /** The folder a `package.json` path holds the manifest of (`""` for the root one); undefined for any other path. */
@@ -495,6 +516,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #pendingBytes = 0;
   readonly #readyModes = new Map<number, AuditMode>();
   readonly #readyViolations = new Map<number, Map<string, CodeRuleViolation[]>>();
+  /**
+   * The findings each source last reported in its own slot, with the revision and mode it reported them at: what a
+   * repackaged source's new findings are compared with, and what steers again a source whose queued steer a revision of
+   * another source dropped (`#steerAgain`).
+   */
+  readonly #sourceFindings = new Map<string, { revision: number; mode: AuditMode; violations: CodeRuleViolation[] }>();
   #spoolDirectory: string | undefined;
   #spoolSequence = 0;
   readonly #spoolRemovals = new Set<Promise<void>>();
@@ -546,12 +573,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   }
 
   /**
-   * A `package.json` is accepted whatever the code rules' scopes: it gives the ECMA sources below it their `package`,
-   * so an edit of it alone refreshes the sources already applied (`#apply`). So is a `tsconfig.json`-style project
-   * configuration, whose `jsxImportSource` and import aliases (`paths`, `baseUrl`) those `package` facts read, and,
-   * where a code rule reads Next server module graphs, any source a manifest reads, since its imports move other
-   * sources in or out of a graph, and any file in an `app/` folder, which may make a root `app/` (hiding `src/app/`)
-   * present.
+   * Where a code rule has an AST clause in a family that reads manifests (ECMA), a `package.json` is accepted whatever
+   * the code rules' scopes: it gives the ECMA sources below it their `package`, so an edit of it alone refreshes the
+   * sources already applied (`#apply`). So is a `tsconfig.json`-style project configuration, whose `jsxImportSource`
+   * and import aliases (`paths`, `baseUrl`) those `package` facts read, and, where a code rule reads Next server module
+   * graphs, any source a manifest reads, since its imports move other sources in or out of a graph, and any file in an
+   * `app/` folder, which may make a root `app/` (hiding `src/app/`) present. Without such a rule, the scopes alone
+   * decide.
    */
   acceptsPath(path: string): boolean {
     const language = languageFor(path);
@@ -559,8 +587,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const graphInput = language !== undefined && (loadNativeBinding().readsPackageManifests(language) || inAppFolder(path));
     return (
       language !== undefined &&
-      (manifestDirectory(path) !== undefined ||
-        isModuleConfig(path) ||
+      (((manifestDirectory(path) !== undefined || isModuleConfig(path)) &&
+        (workspace?.readsPackageManifests() ?? true)) ||
         (workspace?.readsServerGraph() === true && graphInput) ||
         (workspace?.acceptsPath(path) ?? true))
     );
@@ -999,21 +1027,29 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     stored: StoredEdit,
     edit: CodeRuleEdit,
     result: Evaluation,
-    repackaged: readonly string[],
+    repackaged: readonly CodeRuleEdit[],
     unreported: () => void,
   ): Promise<void> {
     const failures = result.failures.map((item) => ({ ...item, stage: "evaluate" as const }));
     const scopeFailure = this.#scopeFailureForEdit(stored.scope, path, edit);
     if (scopeFailure !== undefined) this.#readFailures.set(path, scopeFailure);
-    // Only touched-files scope reports the findings of the sources the edit gave another `package` (`#apply`); any other
-    // scope reports the edit's own generated lines, so those sources keep their earlier findings and steers untouched.
-    const reported = stored.scope === "touched-files" ? repackaged : [];
-    const violations =
-      scopeFailure === undefined ? this.#selectViolations(stored.scope, edit, result.violations, reported) : [];
+    // Touched-files scope reports every source the edit gave another `package` (`#apply`). Any other scope reports each
+    // edit's own generated lines, so such a source is reported again only where the findings in its own edit's
+    // generated lines changed; the others keep their earlier findings and steers.
+    const reported = new Map<string, CodeRuleViolation[]>();
+    for (const source of repackaged) {
+      const findings = this.#selectViolations(stored.scope, source, result.violations);
+      if (
+        stored.scope === "touched-files" ||
+        JSON.stringify(findings) !== JSON.stringify(this.#sourceFindings.get(source.path)?.violations ?? [])
+      )
+        reported.set(source.path, findings);
+    }
+    const own = scopeFailure === undefined ? this.#selectViolations(stored.scope, edit, result.violations) : [];
     this.#finishAudit(
       stored.auditId,
       scopeFailure === undefined && result.status === "completed" ? "completed" : "failed",
-      violations,
+      [...own, ...[...reported.values()].flat()],
       scopeFailure === undefined ? failures : [...failures, scopeFailure],
     );
     if (this.#versions.get(path) !== stored.revision || this.#replacement !== undefined) {
@@ -1028,21 +1064,37 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
     // Each source the evaluation reported again owns its findings: a later edit of it in the same batch replaces them,
     // and its later revisions supersede them (`#versions`).
-    const slots = new Map<string, CodeRuleViolation[]>([[path, []]]);
-    for (const source of reported) {
-      slots.set(source, []);
+    for (const source of reported.keys())
       if ((this.#versions.get(source) ?? 0) < stored.revision) this.#versions.set(source, stored.revision);
+    for (const [slot, violations] of [[path, own] as const, ...reported]) {
+      readyViolations.set(slot, violations);
+      if (slot === path && edit.deleted) this.#sourceFindings.delete(slot);
+      else this.#sourceFindings.set(slot, { revision: stored.revision, mode: stored.mode, violations });
     }
-    for (const violation of violations) {
-      const slot = violation.path !== undefined && slots.has(violation.path) ? violation.path : path;
-      slots.get(slot)!.push(violation);
-    }
-    for (const [slot, slotViolations] of slots) readyViolations.set(slot, slotViolations);
-    // A steer queued for a source this evaluation reported again speaks for its older facts.
-    if (reported.length > 0 && this.#sessionId !== undefined)
-      this.#steerDelivery.revised?.(this.#sessionId, stored.revision, reported.map(source => this.#presentPath(source)));
     this.#readyModes.set(stored.revision, stored.mode);
+    // A steer queued for a source this evaluation reported again speaks for its older facts. The runtime drops each
+    // such steer whole, so the other sources it spoke for are steered again with the findings they last reported.
+    if (reported.size > 0 && this.#sessionId !== undefined) {
+      const revised = [...reported.keys()].map(source => this.#presentPath(source));
+      await this.#steerAgain(this.#steerDelivery.revised?.(this.#sessionId, stored.revision, revised) ?? []);
+    }
     if (this.#pending.size === 0) await this.#publishReady();
+  }
+
+  /** Publishes again, at the revision each reported them, the findings of `sources` (paths as the session sees them). */
+  async #steerAgain(sources: readonly string[]): Promise<void> {
+    if (sources.length === 0) return;
+    const wanted = new Set(sources);
+    const byRevision = new Map<number, { mode: AuditMode; sources: string[]; violations: CodeRuleViolation[] }>();
+    for (const [source, findings] of this.#sourceFindings) {
+      if (!wanted.has(this.#presentPath(source))) continue;
+      const group = byRevision.get(findings.revision) ?? { mode: findings.mode, sources: [], violations: [] };
+      group.sources.push(source);
+      group.violations.push(...findings.violations);
+      byRevision.set(findings.revision, group);
+    }
+    for (const [revision, group] of byRevision)
+      await this.#publish(revision, group.sources, group.violations, group.mode, true);
   }
 
   #scopeFailureForEdit(
@@ -1063,22 +1115,17 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#finishAudit(stored.auditId, "failed", [], [problem]);
   }
   /**
-   * An edit's violations: in touched-files scope its file's and those of the sources it gave another `package`
-   * (`#apply`), otherwise those in the lines it generated.
+   * An edit's violations: in touched-files scope its file's, otherwise those in the lines it generated (none where its
+   * file's earlier text was unreadable).
    */
   #selectViolations(
     scope: AuditScope,
     edit: CodeRuleEdit,
     violations: readonly CodeRuleViolation[],
-    repackaged: readonly string[],
   ): CodeRuleViolation[] {
-    if (scope === "touched-files")
-      return violations.filter(
-        (violation) =>
-          violation.path === edit.path || (violation.path !== undefined && repackaged.includes(violation.path)),
-      );
     const pathViolations = violations.filter((violation) => violation.path === edit.path);
-    if (edit.deleted || edit.generatedText === undefined) return pathViolations;
+    if (scope === "touched-files" || edit.deleted || edit.generatedText === undefined) return pathViolations;
+    if (edit.previousReadError !== undefined) return [];
     const ranges = generatedRanges(edit.previousText ?? "", edit.generatedText);
     return pathViolations.filter((violation) => intersectsGeneratedRange(violation, ranges));
   }
@@ -1519,11 +1566,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * Applies `edit` with the facts its file has on disk now. As the workspace keeps the `package` a host sent rather
    * than derive one from a `package.json` it holds, an edit of a `package.json` or a `tsconfig.json`-style project
    * configuration (created, changed or deleted) sends again each source applied below it whose family reads manifests
-   * and whose `package` that changes; `repackaged` names them. Where a code rule reads Next server module graphs, an
-   * edit of a source in a package naming `next` does the same for the package's sources, whose membership
-   * (`package.serverGraph`) the edit may change. A source's facts depend on its path and disk only (with the edit's
-   * text standing in for its file's), so only a source whose facts changed is read back. One facts cache serves the
-   * call, so each package's graph is walked once.
+   * and whose `package` that changes; `repackaged` holds their applied edits. Where a code rule reads Next server module
+   * graphs, an edit of a source in a package naming `next` does the same for the package's sources, whose membership
+   * (`package.serverGraph`) the edit may change. A source's facts depend on its path and disk only (with the edit's text
+   * standing in for its file's), so only a source whose facts changed is read back. One facts cache serves the call, so
+   * each package's graph is walked once.
    *
    * `pass` is the facts cache a workspace replacement shares while it applies every applied source again: graphs read
    * on disk once for the whole pass, every source gets its facts from it so none needs sending again, and global
@@ -1533,7 +1580,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     workspace: NativeCodeRuleDslWorkspace,
     edit: CodeRuleEdit,
     pass?: SourceFactsCache,
-  ): Promise<{ evaluation: Evaluation; repackaged: string[]; unreported: () => void }> {
+  ): Promise<{ evaluation: Evaluation; repackaged: CodeRuleEdit[]; unreported: () => void }> {
     const packages = this.#workspacePackages.get(workspace);
     if (packages === undefined) throw new Error("Policy workspace was disposed");
     const serverGraph = workspace.readsServerGraph();
@@ -1551,7 +1598,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
             source: edit.generatedText,
             ...(await sourceFileFacts(root, edit.path, edit.language, cache, serverGraph, overlay)),
           }];
-    const repackaged: string[] = [];
+    const repackaged: CodeRuleEdit[] = [];
     // A project configuration may be another package's base (`extends`), so its edit rechecks every applied source.
     const manifest = manifestDirectory(edit.path);
     const directory =
@@ -1573,7 +1620,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         const applied = await this.#load(stored);
         if (applied.generatedText === undefined) continue;
         files.push({ path, language: applied.language, source: applied.generatedText, ...facts });
-        repackaged.push(path);
+        repackaged.push(applied);
       }
     const evaluation = await this.#applyRequest(workspace, {
       files,
@@ -1587,18 +1634,19 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (pass === undefined) workspace.evictInactive();
     // A superseded evaluation's repackaged sources: no facts match the mark, so the next edit reaching them resends them.
     const unreported = () => {
-      for (const path of repackaged) if (packages.has(path)) packages.set(path, UNREPORTED_FACTS);
+      for (const { path } of repackaged) if (packages.has(path)) packages.set(path, UNREPORTED_FACTS);
     };
     return { evaluation, repackaged, unreported };
   }
 
   /**
    * The folder of the package naming `next` whose server module graph an edit of a source, or of a file in an `app/`
-   * folder, can change; undefined for any other edit.
+   * folder, can change; undefined for any other edit, or one whose folder resolves outside the workspace.
    */
   #serverGraphFolder(edit: CodeRuleEdit): string | undefined {
     const binding = loadNativeBinding();
     if (!binding.readsPackageManifests(edit.language) && !inAppFolder(edit.path)) return undefined;
+    if (!folderWithinRoot(this.#workspaceRoot, edit.path)) return undefined;
     const facts = binding.nearestPackage(resolve(this.#workspaceRoot, edit.path), this.#workspaceRoot);
     return facts?.dependencies.includes("next") ? facts.folder : undefined;
   }
@@ -1606,10 +1654,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /**
    * The folder whose applied sources an edit of the `package.json` in `folder` can change: that folder, or, where a code
    * rule reads Next server module graphs, the enclosing package naming `next`, whose graph a nested package's boundary
-   * (created or removed) cuts.
+   * (created or removed) cuts, unless `folder` resolves outside the workspace.
    */
   #manifestEditFolder(folder: string, serverGraph: boolean): string {
-    if (!serverGraph || folder === "") return folder;
+    if (!serverGraph || folder === "" || !folderWithinRoot(this.#workspaceRoot, folder)) return folder;
     const enclosing = loadNativeBinding().nearestPackage(resolve(this.#workspaceRoot, folder), this.#workspaceRoot);
     return enclosing?.dependencies.includes("next") ? enclosing.folder : folder;
   }

@@ -249,6 +249,13 @@ describe("Rerail session startup", () => {
       delivery!.revised!(session.sessionId, 2, ["lib/a.js"]);
       expect(await delivery!.requestSteer(session.sessionId, "steer", "CommonJS require", steer)).toBe("discarded");
       expect(await delivery!.requestSteer(session.sessionId, "steer", "Refreshed", { revision: 2, scope: ["lib/a.js"] })).toBe("queued");
+      // A steer for several sources is dropped whole when one is revised; the others, not revised since, are handed
+      // back for the auditor to steer again, and sources revised with it are not.
+      expect(await delivery!.requestSteer(session.sessionId, "steer", "Both", { revision: 3, scope: ["lib/b.js", "lib/c.js"] })).toBe("queued");
+      expect(await delivery!.requestSteer(session.sessionId, "steer", "Other", { revision: 3, scope: ["lib/d.js"] })).toBe("queued");
+      expect(delivery!.revised!(session.sessionId, 4, ["lib/c.js"])).toEqual(["lib/b.js"]);
+      expect(await delivery!.requestSteer(session.sessionId, "steer", "Wide", { revision: 4, scope: ["lib/b.js", "lib/e.js"] })).toBe("queued");
+      expect(delivery!.revised!(session.sessionId, 5, ["lib/b.js", "lib/e.js"])).toEqual([]);
     } finally {
       await runtime.dispose();
     }

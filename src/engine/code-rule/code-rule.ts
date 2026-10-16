@@ -1335,9 +1335,11 @@ export interface RuleSteerDelivery {
   ): Promise<void | "queued" | "discarded">;
   /**
    * Sources an evaluation at `revision` read again without an edit of their own (a `package.json`, project configuration
-   * or server-graph change gave them new facts): a steer queued for one of them at an earlier revision is stale.
+   * or server-graph change gave them new facts, or findings): a steer queued for one of them at an earlier revision is
+   * stale and is dropped whole. Returns the other sources the dropped steers spoke for that no later revision revised,
+   * whose findings the auditor steers again.
    */
-  revised?(sessionId: string, revision: number, paths: readonly string[]): void;
+  revised?(sessionId: string, revision: number, paths: readonly string[]): readonly string[];
 }
 export interface AuditSettings {
   scope?: AuditScope;
