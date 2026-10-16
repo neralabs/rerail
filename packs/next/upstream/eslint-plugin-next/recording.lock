@@ -1,8 +1,8 @@
 {
-  "format": "rerail.gates-recording-lock/v1",
+  "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "eslint-plugin-next",
-  "release": "gate-recordings",
-  "recorder": "0.1.0-next.1",
+  "release": "port-readiness-recordings",
+  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/vercel/next.js",
     "commit": "b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6",
@@ -18,17 +18,17 @@
     }
   },
   "files": {
-    "gates.json": {
-      "sha256": "57b494f4aa66a021048bacf610abe2d2702e3f71ff4f24d47d920615bda28a10",
-      "size": 237954,
-      "format": "rerail.gates-recording/v2",
-      "asset": "next-eslint-plugin-next-gates-57b494f4aa66a021048bacf610abe2d2702e3f71ff4f24d47d920615bda28a10.json.gz"
+    "recording.json": {
+      "sha256": "824360574a54f5a3e9b42c76b507ee87522169e9502d88ebdaadb5802483fced",
+      "size": 254331,
+      "format": "rerail.port-readiness-recording/v2",
+      "asset": "next-eslint-plugin-next-recording-824360574a54f5a3e9b42c76b507ee87522169e9502d88ebdaadb5802483fced.json.gz"
     },
-    "gates-corpus.json": {
-      "sha256": "43f24383610a797418dae21ee0d1c64483d274ee19754af30544284a4a781447",
-      "size": 1710137,
-      "format": "rerail.gates-corpus/v2",
-      "asset": "next-eslint-plugin-next-gates-corpus-43f24383610a797418dae21ee0d1c64483d274ee19754af30544284a4a781447.json.gz"
+    "corpus.json": {
+      "sha256": "220df27c30349a333b333cc17bf70af7213f44f063c570406ac53ad330bd0f0b",
+      "size": 1710146,
+      "format": "rerail.port-readiness-corpus/v2",
+      "asset": "next-eslint-plugin-next-corpus-220df27c30349a333b333cc17bf70af7213f44f063c570406ac53ad330bd0f0b.json.gz"
     }
   }
 }

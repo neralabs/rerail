@@ -1,8 +1,8 @@
 {
-  "format": "rerail.gates-recording-lock/v1",
+  "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "bandit",
-  "release": "gate-recordings",
-  "recorder": "0.1.0-next.1",
+  "release": "port-readiness-recordings",
+  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/PyCQA/bandit",
     "commit": "92ae8b82fb422a639f0ed8d99e96cea769594e08",
@@ -20,17 +20,17 @@
     }
   },
   "files": {
-    "gates.json": {
-      "sha256": "ec6b29fce85a03c292dabbfbe9438e76078a082af3409c1d7a0faa7aa8efecaa",
-      "size": 2195889,
-      "format": "rerail.gates-recording/v2",
-      "asset": "python-bandit-gates-ec6b29fce85a03c292dabbfbe9438e76078a082af3409c1d7a0faa7aa8efecaa.json.gz"
+    "recording.json": {
+      "sha256": "2baa8fc4fc3fdcde02845a367113b58861d05ea897a6edb8ad8e8acb455fa802",
+      "size": 2816298,
+      "format": "rerail.port-readiness-recording/v2",
+      "asset": "python-bandit-recording-2baa8fc4fc3fdcde02845a367113b58861d05ea897a6edb8ad8e8acb455fa802.json.gz"
     },
-    "gates-corpus.json": {
-      "sha256": "6bf91179fe4e9347b56b3d94ce91ab1ff7888f52baf4df316eb257bbe3199f3d",
-      "size": 474384,
-      "format": "rerail.gates-corpus/v2",
-      "asset": "python-bandit-gates-corpus-6bf91179fe4e9347b56b3d94ce91ab1ff7888f52baf4df316eb257bbe3199f3d.json.gz"
+    "corpus.json": {
+      "sha256": "ead66a1ebf52f6daa1a94556eea9e4443f675f275ae79fe6ab7af9f152b1d949",
+      "size": 474393,
+      "format": "rerail.port-readiness-corpus/v2",
+      "asset": "python-bandit-corpus-ead66a1ebf52f6daa1a94556eea9e4443f675f275ae79fe6ab7af9f152b1d949.json.gz"
     }
   }
 }

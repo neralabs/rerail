@@ -1,8 +1,8 @@
 {
-  "format": "rerail.gates-recording-lock/v1",
+  "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "typescript-eslint",
-  "release": "gate-recordings",
-  "recorder": "0.1.0-next.1",
+  "release": "port-readiness-recordings",
+  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/typescript-eslint/typescript-eslint",
     "commit": "23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7",
@@ -18,17 +18,17 @@
     }
   },
   "files": {
-    "gates.json": {
-      "sha256": "302d0de625111bb16d158a2198c53119ab47229ecb744b7e8d3b9cab443de309",
-      "size": 10777560,
-      "format": "rerail.gates-recording/v2",
-      "asset": "typescript-typescript-eslint-gates-302d0de625111bb16d158a2198c53119ab47229ecb744b7e8d3b9cab443de309.json.gz"
+    "recording.json": {
+      "sha256": "aece5f8587bf60f4e561124a0746b5f0a4673b5406776e084b7af5e9c1ad88df",
+      "size": 11076417,
+      "format": "rerail.port-readiness-recording/v2",
+      "asset": "typescript-typescript-eslint-recording-aece5f8587bf60f4e561124a0746b5f0a4673b5406776e084b7af5e9c1ad88df.json.gz"
     },
-    "gates-corpus.json": {
-      "sha256": "c7ee7614b5b99b8d92789b88d89e307654bddb18471c1025234e2fe3bec00c7b",
-      "size": 13249972,
-      "format": "rerail.gates-corpus/v2",
-      "asset": "typescript-typescript-eslint-gates-corpus-c7ee7614b5b99b8d92789b88d89e307654bddb18471c1025234e2fe3bec00c7b.json.gz"
+    "corpus.json": {
+      "sha256": "a722b4540559768f80e7d7502952e74b5aa74a909126c3d7b3a305b15cd1d4a5",
+      "size": 13200422,
+      "format": "rerail.port-readiness-corpus/v2",
+      "asset": "typescript-typescript-eslint-corpus-a722b4540559768f80e7d7502952e74b5aa74a909126c3d7b3a305b15cd1d4a5.json.gz"
     }
   }
 }

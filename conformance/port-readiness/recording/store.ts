@@ -95,24 +95,24 @@ export type RecordingLock = z.infer<typeof recordingLockSchema>;
  * named by no committed lock.
  */
 export const LIFTED_ASSETS: ReadonlySet<string> = new Set([
-  "javascript-eslint-gates-6b2c8c972842da71225cd69fc6db0ad98c23b35d1e2cbd67dff34d768d7c5e57.json.gz",
-  "javascript-eslint-gates-corpus-4a0005ebc7096ebdd43bfce65187a919ad7bb40dc98f453fc4b51245123061aa.json.gz",
-  "javascript-eslint-plugin-unicorn-gates-corpus-2c1af5f587d2bc7d34e6cb1b89e0d5e5267b2a84445acba29172f7fa0869efd0.json.gz",
-  "javascript-eslint-plugin-unicorn-gates-eca17ffaf1c7c589938f30129cd667617c29dc4cf66193f2a93fdf1e7fc18217.json.gz",
-  "next-eslint-plugin-next-gates-57b494f4aa66a021048bacf610abe2d2702e3f71ff4f24d47d920615bda28a10.json.gz",
-  "next-eslint-plugin-next-gates-corpus-43f24383610a797418dae21ee0d1c64483d274ee19754af30544284a4a781447.json.gz",
-  "python-bandit-gates-corpus-6bf91179fe4e9347b56b3d94ce91ab1ff7888f52baf4df316eb257bbe3199f3d.json.gz",
-  "python-bandit-gates-ec6b29fce85a03c292dabbfbe9438e76078a082af3409c1d7a0faa7aa8efecaa.json.gz",
-  "python-ruff-gates-8f6038d965cf0cf26193f61e8b69963a7bfb35c480ed0ce02cd2bf30c04c2746.json.gz",
-  "python-ruff-gates-corpus-c4cfcbb4345494ca185899b903d8b8ee282bac98698bcd92bb04d6adbe29bcab.json.gz",
-  "react-eslint-plugin-react-gates-17f4eeabca71c32a612062f80f60dd9d3126360d6944c3cacb788665830eef55.json.gz",
-  "react-eslint-plugin-react-gates-corpus-6257ec57d71616eab398281ae57bd7d47bca946c29fb603ee607809fc87cfcbc.json.gz",
-  "react-eslint-plugin-react-hooks-gates-corpus-f98cafeb13f98fd8918469c8acfbcff07fc52fdc01f4d394b4dfb92199acad8c.json.gz",
-  "react-eslint-plugin-react-hooks-gates-ec9af105936015a25c2d67b97126d3c142ca2066d1e0a1167e3f56e125255a2f.json.gz",
-  "typescript-eslint-plugin-vitest-gates-corpus-9909aa03f587bbeaed1e34ad3ec57293b6733161c0e3778eb9265acee45f67c4.json.gz",
-  "typescript-eslint-plugin-vitest-gates-e2f09bcaebc4d0e7518a0c03ed2d75b802ea4af9cdeaaab0575ea543a207a4f9.json.gz",
-  "typescript-typescript-eslint-gates-302d0de625111bb16d158a2198c53119ab47229ecb744b7e8d3b9cab443de309.json.gz",
-  "typescript-typescript-eslint-gates-corpus-c7ee7614b5b99b8d92789b88d89e307654bddb18471c1025234e2fe3bec00c7b.json.gz",
+  "javascript-eslint-corpus-4e955069b420e258c368e99c0cba326b987ade51c0232c19fca8cbef2bb2cee4.json.gz",
+  "javascript-eslint-plugin-unicorn-corpus-58f3d9e9b7a813b10c921c110ead51ccb2443e8caa08b18b1d2f62c05d9b5267.json.gz",
+  "javascript-eslint-plugin-unicorn-recording-030ae504d4d81216fadb2759ee942ec5a9604f4de75a92621fbea8375337228a.json.gz",
+  "javascript-eslint-recording-e91788d9a22310304f9f913971a5ca224b981a825a965c05cf75865207c544a4.json.gz",
+  "next-eslint-plugin-next-corpus-220df27c30349a333b333cc17bf70af7213f44f063c570406ac53ad330bd0f0b.json.gz",
+  "next-eslint-plugin-next-recording-824360574a54f5a3e9b42c76b507ee87522169e9502d88ebdaadb5802483fced.json.gz",
+  "python-bandit-corpus-ead66a1ebf52f6daa1a94556eea9e4443f675f275ae79fe6ab7af9f152b1d949.json.gz",
+  "python-bandit-recording-2baa8fc4fc3fdcde02845a367113b58861d05ea897a6edb8ad8e8acb455fa802.json.gz",
+  "python-ruff-corpus-941b451583ab220d51a50cd883fa9c47e80e606bc62bdcbde0332ce2438fb5f5.json.gz",
+  "python-ruff-recording-34a2fac3e70ef1fb025ccc1beaedcc6f9207a5128d5030caf7a1a39e90e565a1.json.gz",
+  "react-eslint-plugin-react-corpus-1c9eaeebcd65f8b67b37f3859e6827a8d7942702f0491e5531d23e8e64f8eb91.json.gz",
+  "react-eslint-plugin-react-hooks-corpus-b85afe644972c47e475a26ff186273468bb7317e7211863d6f0c8a2626222e1c.json.gz",
+  "react-eslint-plugin-react-hooks-recording-11e50fbaf44ab74565931616b6c90fa69db7b8303d11f6a87b251dcc3b88710e.json.gz",
+  "react-eslint-plugin-react-recording-e171b74355708619ec757af1570fb5db03db8bf8675d34f3fb9b7c5e83d25d6e.json.gz",
+  "typescript-eslint-plugin-vitest-corpus-2062b527fbdb0816a05de3ddd8cb88f5dc8bea720acdf757a1c9011d693d0084.json.gz",
+  "typescript-eslint-plugin-vitest-recording-2cf5e774987e23a649aa5d6b8375dec162f293da8396cb53553ba7ec4ac3318f.json.gz",
+  "typescript-typescript-eslint-corpus-a722b4540559768f80e7d7502952e74b5aa74a909126c3d7b3a305b15cd1d4a5.json.gz",
+  "typescript-typescript-eslint-recording-aece5f8587bf60f4e561124a0746b5f0a4673b5406776e084b7af5e9c1ad88df.json.gz",
 ]);
 
 /**
@@ -124,17 +124,8 @@ export const LIFTED_ASSETS: ReadonlySet<string> = new Set([
  * covers that one recording and no other. A recording whose cases carry their own sha256 needs no entry. The list only
  * shrinks: an entry goes with the asset's entry in LIFTED_ASSETS, when the tool-pack gets an attested recording.
  */
-export const LIFTED_CASE_SOURCES: ReadonlyMap<string, string> = new Map([
-  ["javascript-eslint-gates-6b2c8c972842da71225cd69fc6db0ad98c23b35d1e2cbd67dff34d768d7c5e57.json.gz", "55ed6950b41dda8a69dc39b1f0e2db6ccc7bc844c8fc8b8115ece451ab4aad01"],
-  ["javascript-eslint-plugin-unicorn-gates-eca17ffaf1c7c589938f30129cd667617c29dc4cf66193f2a93fdf1e7fc18217.json.gz", "2cf9555df128696126f4de3e11379ec20ed154f9264df91f37b0321901409d58"],
-  ["next-eslint-plugin-next-gates-57b494f4aa66a021048bacf610abe2d2702e3f71ff4f24d47d920615bda28a10.json.gz", "c05906a98e7288249ba7010d76e4e08d0e104d66463735a3694e9e649ff026ff"],
-  ["python-bandit-gates-ec6b29fce85a03c292dabbfbe9438e76078a082af3409c1d7a0faa7aa8efecaa.json.gz", "1919d65b918095429612693c3e7ce43e258124b4db8b7d4be28ab8ef73c3f3e9"],
-  ["python-ruff-gates-8f6038d965cf0cf26193f61e8b69963a7bfb35c480ed0ce02cd2bf30c04c2746.json.gz", "04b0f9cb79fb696d4df4d182ccf12be69df22d0dc2d37e283692649f8f77f056"],
-  ["react-eslint-plugin-react-gates-17f4eeabca71c32a612062f80f60dd9d3126360d6944c3cacb788665830eef55.json.gz", "6f883431014f89bede712e3ad20d5267fb82a5250f819cba393c162c2e35b581"],
-  ["react-eslint-plugin-react-hooks-gates-ec9af105936015a25c2d67b97126d3c142ca2066d1e0a1167e3f56e125255a2f.json.gz", "88ca837f731ebd9e289c2f01c224fa69eac13707a77d279e29c4a68393e27ed6"],
-  ["typescript-eslint-plugin-vitest-gates-e2f09bcaebc4d0e7518a0c03ed2d75b802ea4af9cdeaaab0575ea543a207a4f9.json.gz", "f52c697f90ff40d28936f94654448848876a41704c7d66c3ee3cd9a9f82a4e41"],
-  ["typescript-typescript-eslint-gates-302d0de625111bb16d158a2198c53119ab47229ecb744b7e8d3b9cab443de309.json.gz", "4ac07a2a450f23eba43f9ad3b6bb55e89e19b4aafd56e700d4b22f4a86aa5dfd"],
-]);
+// Empty: every hand-uploaded recording now carries a sha256 per case.
+export const LIFTED_CASE_SOURCES: ReadonlyMap<string, string> = new Map();
 
 /**
  * One digest over a set of case sources: sha256 of `<sha256 of the file's bytes>  <file>\n` per file (sha256sum's

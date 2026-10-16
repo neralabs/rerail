@@ -1,8 +1,8 @@
 {
-  "format": "rerail.gates-recording-lock/v1",
+  "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "eslint-plugin-react-hooks",
-  "release": "gate-recordings",
-  "recorder": "0.1.0-next.1",
+  "release": "port-readiness-recordings",
+  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/facebook/react",
     "commit": "d1727fbf987392749b374f3afe62227d2c70fc41",
@@ -18,17 +18,17 @@
     }
   },
   "files": {
-    "gates.json": {
-      "sha256": "ec9af105936015a25c2d67b97126d3c142ca2066d1e0a1167e3f56e125255a2f",
-      "size": 1862916,
-      "format": "rerail.gates-recording/v2",
-      "asset": "react-eslint-plugin-react-hooks-gates-ec9af105936015a25c2d67b97126d3c142ca2066d1e0a1167e3f56e125255a2f.json.gz"
+    "recording.json": {
+      "sha256": "11e50fbaf44ab74565931616b6c90fa69db7b8303d11f6a87b251dcc3b88710e",
+      "size": 2085741,
+      "format": "rerail.port-readiness-recording/v2",
+      "asset": "react-eslint-plugin-react-hooks-recording-11e50fbaf44ab74565931616b6c90fa69db7b8303d11f6a87b251dcc3b88710e.json.gz"
     },
-    "gates-corpus.json": {
-      "sha256": "f98cafeb13f98fd8918469c8acfbcff07fc52fdc01f4d394b4dfb92199acad8c",
-      "size": 215057,
-      "format": "rerail.gates-corpus/v2",
-      "asset": "react-eslint-plugin-react-hooks-gates-corpus-f98cafeb13f98fd8918469c8acfbcff07fc52fdc01f4d394b4dfb92199acad8c.json.gz"
+    "corpus.json": {
+      "sha256": "b85afe644972c47e475a26ff186273468bb7317e7211863d6f0c8a2626222e1c",
+      "size": 215066,
+      "format": "rerail.port-readiness-corpus/v2",
+      "asset": "react-eslint-plugin-react-hooks-corpus-b85afe644972c47e475a26ff186273468bb7317e7211863d6f0c8a2626222e1c.json.gz"
     }
   }
 }
