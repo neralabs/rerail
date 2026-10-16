@@ -663,8 +663,8 @@ describe("mechanical code rule regressions", () => {
       expect(result?.failures).toContainEqual(expect.objectContaining({ path: "web/binary.ts", code: "source-incomplete" }));
       expect(result?.failures).toContainEqual(expect.objectContaining({ path: "web/broken00.ts", code: "source-partial" }));
       // 26 files were read in part and 20 are listed: the rest are counted, which does not fail a completed audit.
-      expect(result?.failures?.at(-1)).toEqual({ clauseId: "scan", code: "budget-exceeded", stage: "scan", message: "6 further failures not recorded" });
-      expect(result?.failures).toHaveLength(21);
+      expect(result?.failures).toHaveLength(20);
+      expect(result?.unlistedFailureCount).toBe(6);
     } finally { await enforcer.close(); }
   });
 
@@ -798,6 +798,103 @@ describe("mechanical code rule regressions", () => {
         });
       }
       expect(audits.size).toBe(2);
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("fails a repository audit when a file's source was released by a busy store: that is no file read in part", async () => {
+    const { recorder, audits } = recordingAudits();
+    const real = native.loadNativeBinding();
+    const released = {
+      ruleId: "test:needle", clauseId: "needle", code: "source-incomplete", path: "api/a.py",
+      message: "source released while the content store was busy and no longer available",
+    };
+    class Workspace {
+      constructor() {
+        const inner = new real.CodeRuleDslWorkspace();
+        return new Proxy(inner, {
+          get(target, key) {
+            const value: unknown = Reflect.get(target, key, target);
+            if (typeof value !== "function") return value;
+            if (key === "resultPageAsync")
+              return async (cursor: number, bytes: number) => {
+                const page = JSON.parse(await target.resultPageAsync(cursor, bytes)) as { failures: unknown[] };
+                return JSON.stringify({ ...page, failures: [...page.failures, released] });
+              };
+            return value.bind(target);
+          },
+        });
+      }
+    }
+    const binding = vi
+      .spyOn(native, "loadNativeBinding")
+      .mockReturnValue(Object.assign(Object.create(real) as NativeBinding, { CodeRuleDslWorkspace: Workspace }));
+    const { root, enforcer } = await fixture({ audits: recorder });
+    try {
+      await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
+      await writeFile(join(root, "api", "a.py"), "safe()\n");
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", gitCommit, { cwd: root });
+      await enforcer.openWorkspace("released-source");
+      const [auditId] = await enforcer.audit("released-source", { scope: "repository", mode: "log" });
+      expect(audits.get(auditId!)?.result).toMatchObject({
+        status: "failed",
+        failures: [expect.objectContaining({ path: "api/a.py", code: "source-incomplete", message: released.message })],
+      });
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("lists a guardrail that stopped the scan after more read failures than the list holds", async () => {
+    const { recorder, audits } = recordingAudits();
+    const real = native.loadNativeBinding();
+    // The index reports 25 unreadable files, then that the scan reached its file or byte budget.
+    const unreadable = Array.from({ length: 25 }, (_, index) => ({
+      path: `api/unreadable-${index}.py`, code: "budget-exceeded", message: "Source exceeds the per-file byte budget",
+    }));
+    class Workspace {
+      constructor() {
+        const inner = new real.CodeRuleDslWorkspace();
+        return new Proxy(inner, {
+          get(target, key) {
+            const value: unknown = Reflect.get(target, key, target);
+            if (typeof value !== "function") return value;
+            if (key === "indexRepositoryAsync")
+              return async (options: NativeRepositoryIndexOptions) => {
+                const chunk = JSON.parse(await target.indexRepositoryAsync(options)) as Record<string, unknown>;
+                return JSON.stringify({ ...chunk, done: true, overBudget: true, failures: unreadable });
+              };
+            return value.bind(target);
+          },
+        });
+      }
+    }
+    const binding = vi
+      .spyOn(native, "loadNativeBinding")
+      .mockReturnValue(Object.assign(Object.create(real) as NativeBinding, { CodeRuleDslWorkspace: Workspace }));
+    const { root, enforcer } = await fixture({ audits: recorder });
+    try {
+      await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
+      await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", gitCommit, { cwd: root });
+      await enforcer.openWorkspace("stopped-index");
+      const [auditId] = await enforcer.audit("stopped-index", { scope: "repository", mode: "log" });
+      expect(audits.get(auditId!)?.result).toMatchObject({
+        status: "failed",
+        failures: [
+          ...Array.from({ length: 20 }, () => expect.objectContaining({ clauseId: "source", stage: "read" })),
+          expect.objectContaining({
+            clauseId: "scan", stage: "scan", message: "Repository scan exceeded its 100,000-file or 512 MiB source budget",
+          }),
+        ],
+      });
     } finally {
       binding.mockRestore();
       await enforcer.close();
@@ -1473,6 +1570,93 @@ describe("result paging", () => {
         violations: [],
         failures: [expect.objectContaining({ clauseId: "scan", code: "adapter-error", stage: "scan" })],
       });
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("caps the failure list of a scan that fails, and keeps how many it leaves out", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { root, enforcer } = await fixture({ audits: recorder });
+    const session = pagingWorkspace(() => { throw new Error("the session workspace is never paged"); });
+    const scan = pagingWorkspace(() => { throw new Error("the result stream broke"); });
+    const binding = nativeWorkspaces(session, scan);
+    try {
+      // 25 files past the byte budget fail to read before the scan itself fails.
+      const oversized = Array.from({ length: 25 }, (_, index) => `api/oversized-${index}.py`);
+      await Promise.all(oversized.map(async (path) => {
+        await writeFile(join(root, path), "");
+        await fsPromises.truncate(join(root, path), 32_000_001);
+      }));
+      await writeFile(join(root, "api", "page.py"), "safe()\n");
+      await enforcer.openWorkspace("scan-fails");
+      await enforcer.audit("scan-fails", { scope: "touched-files", mode: "log", paths: [...oversized, "api/page.py"] });
+      const result = audits.get("run-1")?.result;
+      expect(result).toMatchObject({ status: "failed", unlistedFailureCount: 5 });
+      expect(result?.failures).toHaveLength(21);
+      expect(result?.failures).toContainEqual(expect.objectContaining({ clauseId: "scan", code: "adapter-error", stage: "scan" }));
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("lists each rule the file's work stopped, however many failures came before it", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { root, enforcer } = await fixture({ audits: recorder });
+    const gap = (ruleId: string, code: string, index: number) => ({
+      ruleId, clauseId: "c", code, message: "out of work", path: `api/f${index}.py`,
+    });
+    // One rule runs out of work on 21 files, then the file's work stops another on one more.
+    const failures = [
+      ...Array.from({ length: 21 }, (_, index) => gap("test:own", "budget-exceeded", index)),
+      gap("test:file", "file-budget-exceeded", 21),
+    ];
+    const session = pagingWorkspace(() => { throw new Error("the session workspace is never paged"); });
+    const scan = pagingWorkspace(() => JSON.stringify({
+      revision: 1, cursor: 1, done: true, failures, coverage: [], bytes: 0, violations: [],
+    }));
+    const binding = nativeWorkspaces(session, scan);
+    try {
+      await writeFile(join(root, "api", "page.py"), "safe()\n");
+      await enforcer.openWorkspace("file-work-listed");
+      await enforcer.audit("file-work-listed", { scope: "touched-files", mode: "log", paths: ["api/page.py"] });
+      const result = audits.get("run-1")?.result;
+      expect(result?.status).toBe("completed");
+      expect(result?.failures).toContainEqual(expect.objectContaining({ ruleId: "test:file", code: "file-budget-exceeded" }));
+      expect(result?.failures).toHaveLength(22);
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("folds into a blind file only the failures its row stands for, so a cross-file query's failure still fails the audit", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { root, enforcer } = await fixture({ audits: recorder });
+    const path = "api/x.py";
+    const failures = [
+      { ruleId: "test:local", clauseId: "c", code: "budget-exceeded", message: "clause work budget exceeded", path },
+      { ruleId: "test:cross", clauseId: "g", code: "source-incomplete", message: "A cross-file query source is incomplete", path },
+    ];
+    const blindFiles = [{ path, reason: "budget", clauses: 1, message: "clause work budget exceeded", folded: [["test:local", "c"]] }];
+    const session = pagingWorkspace(() => { throw new Error("the session workspace is never paged"); });
+    const scan = pagingWorkspace(() => JSON.stringify({
+      revision: 1, cursor: 1, done: true, failures, blindFiles, coverage: [], bytes: 0, violations: [],
+    }));
+    const binding = nativeWorkspaces(session, scan);
+    try {
+      await writeFile(join(root, "api", "page.py"), "safe()\n");
+      await enforcer.openWorkspace("cross-blind");
+      await enforcer.audit("cross-blind", { scope: "touched-files", mode: "log", paths: ["api/page.py"] });
+      const result = audits.get("run-1")?.result;
+      expect(result?.status).toBe("failed");
+      expect(result?.failures).toEqual(expect.arrayContaining([
+        expect.objectContaining({ ruleId: "test:cross", clauseId: "g", code: "source-incomplete", path }),
+        expect.objectContaining({ clauseId: "file", path, blind: "budget" }),
+      ]));
+      expect(result?.failures).not.toContainEqual(expect.objectContaining({ ruleId: "test:local" }));
     } finally {
       binding.mockRestore();
       await enforcer.close();

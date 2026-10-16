@@ -204,7 +204,7 @@ describe("semantic acceptance", () => {
       const limited = JSON.stringify({ ...JSON.parse(capabilities), limits: { ...JSON.parse(capabilities).limits, maxWitnesses: 1 } });
       const compiled = loadNativeBinding().CodeRuleDslRuntime!.compile(document([clause("limit", { pattern: "f($X)", capture: "X" }, "typescript", { violation: { anchor: "capture.X", code: "limit", message: "$X", each: "X" } })]), "json", limited);
       const result = evaluate(compiled, [{ path: "a.ts", language: "typescript", source: "f(a); f(b);" }]);
-      expect(result.failures.map(item => item.code)).toContain("budget-exceeded");
+      expect(result.failures.map(item => item.code)).toContain("witness-limit");
     });
   });
 

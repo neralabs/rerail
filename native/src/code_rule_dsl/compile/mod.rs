@@ -184,6 +184,10 @@ pub(super) fn parse_capabilities(source: &str) -> Result<Capabilities> {
         max_regex_pattern_bytes: limit(limits, "maxRegexPatternBytes")?,
         max_source_bytes: limit(limits, "maxSourceBytes")?,
         max_visited_nodes: limit(limits, "maxVisitedNodes")?,
+        max_visits_per_node: match limits.get("maxVisitsPerNode") {
+            None => 0,
+            Some(_) => limit(limits, "maxVisitsPerNode")?,
+        },
         max_witnesses: limit(limits, "maxWitnesses")?,
     };
     Ok(Capabilities { raw, limits })

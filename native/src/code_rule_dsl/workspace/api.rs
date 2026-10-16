@@ -15,10 +15,13 @@ use super::memory::record_workspace_residency;
 use super::memory::workspace_memory_profile;
 use super::persisted::{Persisted, candidate_catalog, persist_files};
 use super::results::{
-    ResultText, profile_result, replace_global_changes, serialize_result, serialize_result_page,
+    ResultText, evicted_file_states, profile_result, replace_global_changes, serialize_result,
+    serialize_result_page,
 };
 use super::storage::{Attached, StorageContext, attach_storage, unix_seconds};
-use super::{CandidateSets, FILE_WORK_BUDGET, WorkspaceState, check_closed};
+use super::{
+    CLAUSE_WORK_BUDGET, CandidateSets, STORED_RESULT_UNAVAILABLE, WorkspaceState, check_closed,
+};
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::evidence::Side;
@@ -304,6 +307,7 @@ impl CodeRuleDslWorkspace {
                 code_rules,
                 grammars,
                 &self.closed,
+                false,
                 &budget,
                 &mut None,
             )?;
@@ -440,12 +444,12 @@ impl CodeRuleDslWorkspace {
         {
             return Ok(false);
         }
-        // A file whose last evaluation was transient, or whose results a busy store left
-        // unpublished, has no stored results to page; it stays.
+        // A file the store lacks results of (`FileState::stays_resident`: a transient evaluation,
+        // an unstored clause, or results a busy store left unpublished) has none to page; it stays.
         let evicted = state
             .files
             .values()
-            .filter(|file| !file.transient_failure && !file.unpublished)
+            .filter(|file| !file.stays_resident())
             .map(|file| {
                 let mut input = file.input.clone();
                 input.source = Arc::new(String::new());
@@ -456,9 +460,7 @@ impl CodeRuleDslWorkspace {
             state.versions.insert(input.path.clone(), version);
             state.evicted_inputs.insert(input.path.clone(), input);
         }
-        state
-            .files
-            .retain(|_, file| file.transient_failure || file.unpublished);
+        state.files.retain(|_, file| file.stays_resident());
         state.documents.clear();
         state.candidate_sets = CandidateSets::new();
         state.grammars.clear();
@@ -996,13 +998,43 @@ impl WorkspaceApplyTask {
             LAST_APPLY_UNPUBLISHED_FILES.set(metrics.storage_unpublished_files);
         }
         // Files made resident only for their consumers are evicted again once their results are
-        // stored; a transient evaluation stays resident, as eviction would leave it, and so does
-        // an unpublished file, whose results the store does not hold.
+        // stored. One the store lacks results of (a transient evaluation, an unstored clause, or an
+        // unpublished file) stays resident, as eviction would leave it; rebuilt for its consumers
+        // alone, it holds their results only, so its other clauses' stored results join them and it
+        // stays resident whole. A clause the store does not answer (a result it no longer holds, or
+        // a read that fails) fails, unstored, and the file is transient, so the next apply that
+        // offers it evaluates it in full.
         for path in crossfile_evicted {
-            if state.files.get(&path).is_some_and(|file| {
-                file.stored.is_some() && !file.transient_failure && !file.unpublished
-            }) {
-                state.files.remove(&path);
+            let Some(file) = state.files.get(&path) else {
+                continue;
+            };
+            if file.stored.is_none() {
+                continue;
+            }
+            let mut file = state.files.remove(&path).expect("checked above");
+            if file.stays_resident() {
+                let only = BTreeSet::from([path.clone()]);
+                if let Ok(Some(stored)) =
+                    evicted_file_states(&state, Some(&only), false).map(|mut stored| stored.pop())
+                {
+                    file.join_other_clauses(stored);
+                }
+                let all = make_file(
+                    file.input.clone(),
+                    state.revision.max(1),
+                    &state.code_rules,
+                    &mut CandidateSets::new(),
+                )
+                .candidates;
+                for &id in all.regex.iter().chain(&all.ast) {
+                    if !file.witnesses.contains_key(&id) && !file.failures.contains_key(&id) {
+                        file.failures
+                            .insert(id, ("adapter-error", STORED_RESULT_UNAVAILABLE));
+                        file.unstored.insert(id);
+                        file.transient_failure = true;
+                    }
+                }
+                state.files.insert(path, file);
             }
         }
         metrics.storage_write_nanoseconds = storage_write_started.elapsed().as_nanos() as u64;
@@ -1018,7 +1050,7 @@ impl WorkspaceApplyTask {
             let dirty = std::mem::take(&mut state.dirty_globals);
             for index in dirty {
                 check_closed(&self.closed)?;
-                let budget = MatchBudget::work(&self.closed, FILE_WORK_BUDGET);
+                let budget = MatchBudget::work(&self.closed, CLAUSE_WORK_BUDGET);
                 let mut evaluation = evaluate_global(&state, index, &snapshot)?;
                 #[cfg(test)]
                 super::pass_deadline_at_test_phase("global-done");

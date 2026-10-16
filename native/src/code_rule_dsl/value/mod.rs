@@ -35,6 +35,12 @@ pub(crate) const MAX_ELEMENTS: usize = 4096;
 /// an operation past it is `Unknown`; an operation checks before it computes (`2 ** 10**9`).
 pub(crate) const MAX_INT_BITS: u64 = 4096;
 
+#[cfg(test)]
+thread_local! {
+    /// Children `NodeRef::find` read one by one, on this thread.
+    pub(crate) static LINEAR_CHILDREN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// A node of a file, by its byte range and kind: a binding's site, value or annotation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NodeRef {
@@ -75,6 +81,10 @@ impl NodeRef {
             node.children()
                 .enumerate()
                 .skip(from)
+                .inspect(|_| {
+                    #[cfg(test)]
+                    LINEAR_CHILDREN.set(LINEAR_CHILDREN.get() + 1);
+                })
                 .find(|(_, child)| covers(child))
         };
         // The nodes the descent passed through, and the position of the next child to try there.
@@ -145,7 +155,53 @@ impl NodeRef {
         {
             from = parent;
         }
-        self.find(from)
+        match self.find_in_tape(&from) {
+            Some(found) => found,
+            None => self.find(from),
+        }
+    }
+
+    /// `find` from `from` in a tape's tree whose siblings never overlap, by binary search: such a
+    /// tree's preorder visits nodes by start byte, so the node sought is among the run of `from`'s
+    /// subtree that starts where it starts, and the first of that run with its range and kind is
+    /// the outermost, first in preorder. A child list a thousand wide is not read child by child
+    /// (jison's parser tables read once per binding occurrence held a clause for seconds). `None`
+    /// where `D` is not a tape (`find` answers then); `Some(None)` where the tree holds no such
+    /// node, which the search proves: every node of the range is in `from`'s subtree.
+    #[allow(clippy::option_option)]
+    fn find_in_tape<'r, D: Doc>(&self, from: &Node<'r, D>) -> Option<Option<Node<'r, D>>> {
+        if std::any::TypeId::of::<D>() != std::any::TypeId::of::<TapeDoc>() {
+            return None;
+        }
+        // SAFETY: `D` is `TapeDoc` (checked above).
+        let from: &Node<'r, TapeDoc> = unsafe { &*std::ptr::from_ref(from).cast() };
+        let tape = from.get_doc();
+        let first = from.node_id() as u32;
+        let (start, end) = (self.start as usize, self.end as usize);
+        let (mut low, mut high) = (first, tape.transducer_descendants(first).end);
+        let subtree_end = high;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if tape.transducer_span(middle).start < start {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        let Some(found) = (low..subtree_end)
+            .take_while(|&ordinal| tape.transducer_span(ordinal).start == start)
+            .find(|&ordinal| {
+                tape.transducer_span(ordinal).end == end
+                    && tape.transducer_kind(ordinal) == self.kind
+            })
+        else {
+            return Some(None);
+        };
+        let found = std::mem::ManuallyDrop::new(from.root().adopt(tape.node(found)));
+        // SAFETY: `D` is `TapeDoc` (checked above); the original is not dropped.
+        Some(Some(unsafe {
+            std::mem::transmute_copy::<Node<'r, TapeDoc>, Node<'r, D>>(&*found)
+        }))
     }
 }
 

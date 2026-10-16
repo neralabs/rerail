@@ -44,13 +44,36 @@ type ClauseId = (usize, usize);
 type LocalFailure = (&'static str, &'static str);
 type CandidateSets =
     HashMap<(Option<GrammarDialect>, Vec<ClauseId>, Vec<ClauseId>), Arc<Candidates>>;
-/// Budget polls a file's evaluation (or a global clause's) may spend, the same on any machine and
-/// under any load. Measured over whole corpora (laravel and a Python and a TypeScript application,
-/// release build, Apple silicon), evaluations poll 190 (Python packs)
-/// to 900 (TypeScript packs) times a millisecond, so this is about 55 to 260 ms of their work; a
-/// file whose work polls rarely runs longer (a generated 29,000-line TanStack Query module spends
-/// 17,327 units in 520 ms under the TypeScript packs).
-const FILE_WORK_BUDGET: u64 = 50_000;
+/// Budget polls one clause's evaluation of a small file (or a global clause's evaluation) may
+/// spend, the same on any machine and under any load. Measured over whole corpora (laravel and a
+/// Python and a TypeScript application, release build, Apple silicon), evaluations poll 190
+/// (Python packs) to 900 (TypeScript packs) times a millisecond, so this is about 55 to 260 ms of
+/// work. Each clause has its own (`budget::with_allowance`), so a clause that runs out fails
+/// alone. What it spends can still depend on the clauses before it: a per-file table (scope
+/// tables, PHP names, anchor text) is built under the allowance of the first clause that needs it.
+const CLAUSE_WORK_BUDGET: u64 = 50_000;
+/// Source bytes per budget poll a file's work may spend beyond `CLAUSE_WORK_BUDGET`, both the work
+/// every clause shares (parsing, the tape and the anchor index) and each clause's own: work grows
+/// with the file, so its allowance does, rather than cutting a large file off at a fixed point.
+/// The largest measured shared rate is about one poll per 15 bytes (a 445 KB minified pdf.js
+/// module spends 30,465 units on them), so a budget is about twice what its file's size needs.
+const FILE_WORK_BYTES_PER_UNIT: u64 = 8;
+/// Clause allowances a file's clauses may spend together (`clause_work_ceiling`): what bounds a
+/// file's total work however many clauses run on it. A clause the ceiling stops fails as a
+/// coverage gap (`FILE_CLAUSE_WORK_EXCEEDED`) that no other clause's outcome depends on. Measured
+/// (release build), every JavaScript, TypeScript, Node, Next and complexity rule (204 to 219
+/// clauses) spends 0.25 to 0.97 of one allowance on 360 to 700 KB generated and test files, and the
+/// Python pack 0.11 on pandas' 725 KB `frame.py`: eight is eight times the most measured, and
+/// bounds a 445 KB file to about 850,000 polls (1 to 4.5 s at the rates above).
+const FILE_CLAUSE_WORK_ALLOWANCES: u64 = 8;
+/// The failure of a clause that ran out of its own work allowance on a file.
+const CLAUSE_WORK_BUDGET_EXCEEDED: &str = "clause work budget exceeded";
+/// The failure of a clause the file's clause-work ceiling stopped: the clauses before it on the
+/// file spent it. Not the clause's verdict on the content, so never persisted (`FileState::unstored`).
+const FILE_CLAUSE_WORK_EXCEEDED: &str = "file clause work budget exceeded";
+/// The failure of a clause of a resident file whose stored result could not be read back: the
+/// file is evaluated again by the next apply that offers it.
+const STORED_RESULT_UNAVAILABLE: &str = "the file's stored result could not be read";
 /// Persisted per-file clause results are reused only under a key covering every input the result
 /// depends on: source content, file context (`file_context`) and engine build (`candidate_catalog`).
 const REUSE_LOCAL_RESULTS: bool = true;
@@ -68,13 +91,23 @@ const STORE_BUSY_COOLDOWN: Duration = Duration::from_secs(30);
 const UNPUBLISHED_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
 #[cfg(test)]
 thread_local! {
-    /// Tests shorten the per-file work budget on their own thread to force a transient timeout.
+    /// Tests shorten the per-file work budget (the shared steps') on their own thread.
     static TEST_FILE_WORK_BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
     /// Tests shrink the unpublished files' resident byte budget on their own thread.
     static TEST_UNPUBLISHED_RESIDENT_BYTES: Cell<Option<usize>> = const { Cell::new(None) };
     /// Tests move the busy window's clock forward on their own thread, so a window passes
     /// without a wait (`store_busy_now`).
     static TEST_STORE_BUSY_CLOCK_ADVANCE: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    /// Tests fail every read of evicted files' stored results on their own thread while set.
+    static TEST_EVICTED_READ_FAILURE: Cell<bool> = const { Cell::new(false) };
+    /// Tests shorten each clause's work allowance on their own thread.
+    static TEST_CLAUSE_WORK_BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
+    /// Tests shorten the next clause's allowance alone, once, on their own thread.
+    static TEST_NEXT_CLAUSE_WORK_BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
+    /// Tests shorten each clause's allowance in cross-file consumer passes alone.
+    static TEST_CONSUMER_CLAUSE_WORK_BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
+    /// Tests shorten a file's clause-work ceiling on their own thread.
+    static TEST_CLAUSE_WORK_CEILING: Cell<Option<u64>> = const { Cell::new(None) };
     /// Tests stand in another engine build on their own thread.
     static TEST_ENGINE_BUILD_ID: Cell<Option<&'static str>> = const { Cell::new(None) };
     /// Tests inject a failure in the batch local-result storage read.
@@ -84,12 +117,35 @@ thread_local! {
     static TEST_DEADLINE_PASSES_AT: Cell<Option<&'static str>> = const { Cell::new(None) };
 }
 
-fn file_work_budget() -> u64 {
+/// The work a file's shared steps (parsing, the tape, the anchor index) may spend.
+fn file_work_budget(source_bytes: usize) -> u64 {
     #[cfg(test)]
     if let Some(budget) = TEST_FILE_WORK_BUDGET.get() {
         return budget;
     }
-    FILE_WORK_BUDGET
+    CLAUSE_WORK_BUDGET + source_bytes as u64 / FILE_WORK_BYTES_PER_UNIT
+}
+
+/// The work one clause's evaluation of a file of `source_bytes` may spend.
+fn clause_work_budget(source_bytes: usize) -> u64 {
+    #[cfg(test)]
+    if let Some(budget) = TEST_NEXT_CLAUSE_WORK_BUDGET
+        .take()
+        .or(TEST_CLAUSE_WORK_BUDGET.get())
+    {
+        return budget;
+    }
+    CLAUSE_WORK_BUDGET + source_bytes as u64 / FILE_WORK_BYTES_PER_UNIT
+}
+
+/// The work every clause's evaluation of a file of `source_bytes` may spend together.
+fn clause_work_ceiling(source_bytes: usize) -> u64 {
+    #[cfg(test)]
+    if let Some(ceiling) = TEST_CLAUSE_WORK_CEILING.get() {
+        return ceiling;
+    }
+    FILE_CLAUSE_WORK_ALLOWANCES
+        * (CLAUSE_WORK_BUDGET + source_bytes as u64 / FILE_WORK_BYTES_PER_UNIT)
 }
 
 fn unpublished_resident_bytes() -> usize {
@@ -231,7 +287,8 @@ struct FileState {
     tape_decompressed: bool,
     restored_local_results: usize,
     restored_result_ids: HashSet<ClauseId>,
-    /// The last evaluation hit its deadline or was cancelled; see `evaluate_file`.
+    /// The last evaluation was interrupted (the workspace closed, or the inline deadline passed):
+    /// not the content's verdict; see `evaluate_file`.
     transient_failure: bool,
     /// The store does not hold the results of the file's last evaluation: their publication found
     /// the store busy past its write deadline. However much of the file `stored` says the store
@@ -241,6 +298,11 @@ struct FileState {
     /// resident (`release_unpublished_over_budget`): its results stand, it is never published,
     /// and its source is empty.
     results_only: bool,
+    /// Clauses whose last result depends on more than the content and the catalog: the file's
+    /// shared work or its clause-work ceiling ran out before they finished, or they ran out of
+    /// work in a pass over some of the file's clauses, or with tables an earlier pass built. Kept
+    /// for this workspace, which evaluates the same way, but never persisted.
+    unstored: HashSet<ClauseId>,
     candidates: Arc<Candidates>,
     witnesses: Witnesses,
     failures: BTreeMap<ClauseId, LocalFailure>,
@@ -265,6 +327,44 @@ impl FileState {
                     "source released while the content store was busy and no longer available",
                 ),
             );
+        }
+    }
+
+    /// Whether eviction keeps the file: the store lacks some of its results (its last evaluation
+    /// was transient, some clause's result is `unstored`, or a busy store left it `unpublished`),
+    /// which reading it back would lose.
+    fn stays_resident(&self) -> bool {
+        self.transient_failure || self.unpublished || !self.unstored.is_empty()
+    }
+
+    /// Takes `stored`'s results (this file read back from the store) for the clauses this file
+    /// did not evaluate (`candidates`), keeping its own for those it did.
+    fn join_other_clauses(&mut self, stored: FileState) {
+        let evaluated = self
+            .candidates
+            .regex
+            .iter()
+            .chain(&self.candidates.ast)
+            .copied()
+            .collect::<HashSet<_>>();
+        let FileState {
+            mut witnesses,
+            failures,
+            syntax,
+            ..
+        } = stored;
+        for (id, found) in std::mem::take(&mut *witnesses) {
+            if !evaluated.contains(&id) {
+                self.witnesses.entry(id).or_insert(found);
+            }
+        }
+        for (id, failure) in failures {
+            if !evaluated.contains(&id) {
+                self.failures.entry(id).or_insert(failure);
+            }
+        }
+        if self.syntax.is_none() {
+            self.syntax = syntax;
         }
     }
 }

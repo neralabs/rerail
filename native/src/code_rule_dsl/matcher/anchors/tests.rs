@@ -1263,3 +1263,45 @@ fn relation_selections_spend_units_on_the_related_nodes_only() {
         );
     }
 }
+
+/// A pattern's literal leaves select the roots whose subtree holds every one of them, a posting
+/// search per root. Those searches spend budget by the step, counted across roots: a file of many
+/// candidate roots spends a unit per 256 roots, not one per root (pandas' `frame.py` under the
+/// Python pack spent 39,541 of its 50,000 units here before any clause ran).
+#[test]
+fn a_pattern_selection_spends_a_unit_per_256_roots_not_per_root() {
+    use crate::code_rule_dsl::budget::MatchBudget;
+    use std::sync::atomic::AtomicBool;
+    let rule = json!({ "pattern": "send($A, 1)" });
+    let matcher = compile_rule(
+        &rule,
+        GrammarDialect::TypeScript,
+        "test/rule",
+        &mut Vec::new(),
+    )
+    .unwrap();
+    let plan = AnchorPlan::compile(&matcher);
+    let roots = 8_000;
+    let source = (0..roots)
+        .map(|n| format!("send(a{n}, {});\n", n % 3))
+        .collect::<String>();
+    let native = AstGrep::doc(StrDoc::new(&source, GrammarDialect::TypeScript));
+    let index = FileAnchorIndex::build(&native, &[&plan], usize::MAX, || false);
+    let budget = MatchBudget::work(&Arc::new(AtomicBool::new(false)), u64::MAX);
+    let selection = index.select(&plan);
+    let spent = budget.spent();
+    drop(budget);
+    let Selection::Roots(selected) = &selection else {
+        panic!("a complete index selects roots");
+    };
+    let found = selected
+        .iter()
+        .filter_map(|&ordinal| matched(index.node(ordinal), &matcher))
+        .collect::<Vec<_>>();
+    assert_eq!(found, actual(&native, &matcher), "sound selection");
+    assert_eq!(found.len(), roots / 3 + 1);
+    assert!(
+        spent < (roots / 16) as u64,
+        "{spent} units for {roots} candidate roots"
+    );
+}

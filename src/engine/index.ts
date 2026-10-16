@@ -102,6 +102,7 @@ export { RERAIL_BASELINE_SCHEMA_VERSION, addColumn, type Migration } from "./sto
 export {
   auditRequests,
   auditResultPages,
+  auditUnlistedFailures,
   audits,
   auditSettings,
   checkouts,
