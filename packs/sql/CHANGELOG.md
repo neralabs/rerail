@@ -1,5 +1,11 @@
 # @neralabs/rerail-pack-sql
 
+## 0.1.2
+
+### Patch Changes
+
+- da9e12b: First release through the release workflow with npm trusted publishing. The rules are unchanged.
+
 ## 0.1.1
 
 ### Patch Changes
