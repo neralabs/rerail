@@ -8,7 +8,8 @@ import { dirname, join } from "node:path";
 import { afterAll, describe, it } from "vitest";
 import { parse } from "yaml";
 
-import { changedPaths, gatedToolPacks, legsOf, plan, ROOT, ROOTS, SHARDS, writeOutputs, type Leg } from "../../../conformance/port-readiness/plan.mjs";
+import { changedPaths, gatedToolPacks, legsOf, plan, REPORT_ONLY, ROOT, ROOTS, SHARDS, writeOutputs, type Leg } from "../../../conformance/port-readiness/plan.mjs";
+import { GATE_CODE } from "../../../conformance/port-readiness/cache.js";
 import { gatedToolPacks as runGatedToolPacks } from "../../../conformance/port-readiness/run.js";
 
 const temporary: string[] = [];
@@ -71,6 +72,18 @@ describe("every leg", () => {
   it("covers what ci.yml's port-readiness filter calls the workflow for, glob for glob", () => {
     const filter = workflow("ci.yml").jobs.changes.steps.find((step: { id?: string }) => step.id === "filter");
     assert.deepEqual(ROOTS, parse(filter.with.filters)["port-readiness"]);
+  });
+
+  // A report-only path selects no leg, so it must also be out of every rule's key (cache.ts GATE_CODE): otherwise a
+  // pull request that edits only it would skip the legs whose keys it moved.
+  it("leaves out only files the results key leaves out too", () => {
+    const tracked = (pathspec: readonly string[]): string[] =>
+      execFileSync("git", ["ls-files", "-z", "--", ...pathspec], { cwd: ROOT, encoding: "utf8" }).split("\0").filter((path) => path !== "");
+    const keyed = new Set(tracked(GATE_CODE));
+    for (const path of REPORT_ONLY) {
+      assert.deepEqual(tracked([path]), [path], `REPORT_ONLY names ${path}, which is not tracked`);
+      assert.ok(!keyed.has(path), `REPORT_ONLY names ${path}, which is part of every rule's key`);
+    }
   });
 
   it("is what the recorder and the nightly's drift check list by hand", () => {
