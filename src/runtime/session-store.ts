@@ -8,7 +8,7 @@ import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
 import { ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
-import { events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
+import { auditViolations, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
 
@@ -450,35 +450,34 @@ export class SqliteSessionReader {
    * however much history the database holds.
    */
   sessionPage(query: SessionPageQuery, repositoryIds: readonly string[] | undefined = undefined): SessionPage {
+    // A malformed cursor is refused whether or not any history exists yet.
+    const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, sessionCursorSchema);
     const database = this.#database.open();
     if (database === undefined) return { sessions: [], total: 0, nextCursor: null };
     const matching = and(
       query.since === undefined ? undefined : gte(sessions.startedAt, query.since),
       repositoryFilter(repositoryIds ?? this.#repositoryIds),
     );
-    const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, sessionCursorSchema);
     const continuing = after === undefined
       ? undefined
       : sql`(${sessions.startedAt} < ${after[0]} OR (${sessions.startedAt} = ${after[0]} AND ${sessions.sessionId} > ${after[1]}))`;
-    // The page and its total from one snapshot, so a commit between them cannot make them disagree.
+    // The page is chosen first and counted after: sorting every session with its counts attached would count them all.
+    // The page and its total come from one snapshot, so a commit between them cannot make them disagree.
     const { rows, total } = database.transaction(() => ({
-      rows: database
-        .select({
-          sessionId: sessions.sessionId,
-          host: sessions.host,
-          cwd: sessions.cwd,
-          repositoryId: sessions.repositoryId,
-          startedAt: sessions.startedAt,
-          endedAt: sessions.endedAt,
-          // Written out: Drizzle renders a single-table select's columns unqualified, which would correlate nothing.
-          eventCount: sql<number>`(SELECT count(*) FROM events WHERE events.session_id = sessions.session_id)`,
-          violationCount: sql<number>`(SELECT count(*) FROM audit_violations WHERE audit_violations.session_id = sessions.session_id)`,
-        })
-        .from(sessions)
-        .where(and(matching, continuing))
-        .orderBy(desc(sessions.startedAt), asc(sessions.sessionId))
-        .limit(query.limit + 1)
-        .all(),
+      rows: database.all<StoredSessionSummary & { violationCount: number }>(sql`
+        SELECT
+          page.session_id AS sessionId, page.host AS host, page.cwd AS cwd, page.repository_id AS repositoryId,
+          page.started_at AS startedAt, page.ended_at AS endedAt,
+          (SELECT count(*) FROM ${events} WHERE ${events.sessionId} = page.session_id) AS eventCount,
+          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount
+        FROM (
+          SELECT * FROM ${sessions}
+          WHERE ${and(matching, continuing) ?? sql`1 = 1`}
+          ORDER BY ${sessions.startedAt} DESC, ${sessions.sessionId}
+          LIMIT ${query.limit + 1}
+        ) page
+        ORDER BY page.started_at DESC, page.session_id
+      `),
       total: database.select({ total: count() }).from(sessions).where(matching).get()?.total ?? 0,
     }));
     const page = rows.slice(0, query.limit);

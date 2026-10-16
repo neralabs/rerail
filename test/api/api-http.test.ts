@@ -335,6 +335,7 @@ describe("Rerail API over HTTP", () => {
 
   it("computes a history read once per change to the database, however often the dashboard polls it", async () => {
     addLibraryRules();
+    addRepository(WEB, { configuredAt: 5, started: true });
     const activity = vi.spyOn(stores.audits, "ruleActivity");
     const first = await getJson("/api/rules/activity?since=0");
     expect(await getJson("/api/rules/activity?since=0")).toEqual(first);
@@ -343,8 +344,9 @@ describe("Rerail API over HTTP", () => {
     seedAudit({ at: 5_000, violations: [flagged] });
     expect(await getJson("/api/rules/activity?since=0")).not.toEqual(first);
     expect(activity).toHaveBeenCalledTimes(2);
-    // A write through the API itself counts too, and another range is its own read.
-    expect((await putJson("/api/presentation-preferences", { repository: "", host: "", presence: "silent" })).status).toBe(200);
+    // A write through the API's own connection counts too, which `PRAGMA data_version` does not see (only the stores'
+    // local revision does), and another range is its own read.
+    expect((await putJson("/api/repository/settings", { repository: WEB, owner: "repository", targets: [{ kind: "pack", id: "complexity" }], on: false })).status).toBe(200);
     await getJson("/api/rules/activity?since=0");
     await getJson("/api/rules/activity?since=1");
     expect(activity).toHaveBeenCalledTimes(4);

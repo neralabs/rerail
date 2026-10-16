@@ -291,7 +291,9 @@ const ROW_ID = { violations: r => `${r.auditId}:${r.id}`, sessions: r => r.sessi
 /**
  * The first page of the paged list `data[name]` at `key` (its URL without a cursor; `field` names the rows in the
  * answer), conditionally. Another key starts the list over at once, dropping the previous key's pages. Under the
- * same key, pages loaded beyond the first stay, deduplicated, and so does the cursor past the last of them.
+ * same key, pages loaded beyond the first stay, deduplicated, with the cursor past the last of them, as long as the
+ * fresh page reaches them: when more rows arrived than a page holds, the rows between the fresh page and the kept
+ * ones could never be loaded, so the list starts over from the fresh page and its own cursor.
  */
 async function loadFirstPage(name, field, key, owner = null) {
   if (data[name].key !== key) {
@@ -301,11 +303,16 @@ async function loadFirstPage(name, field, key, owner = null) {
   const body = await fetchFresh(key, name, () => data[name].key === key);
   if (body === undefined) return false;
   const current = data[name], rows = body[field];
-  if (current.pages <= 1) {
+  const id = ROW_ID[field];
+  const kept = new Set(current.rows.map(id));
+  // The fresh page is the whole list, or it does not reach the kept pages: it replaces them.
+  const complete = body.nextCursor === null;
+  const reaches = rows.length > 0 && kept.has(id(rows.at(-1)));
+  if (current.pages <= 1 || complete || !reaches) {
     data[name] = { ...current, rows, total: body.total, next: body.nextCursor, pages: 1 };
     return true;
   }
-  const id = ROW_ID[field], fresh = new Set(rows.map(id));
+  const fresh = new Set(rows.map(id));
   data[name] = { ...current, rows: rows.concat(current.rows.filter(r => !fresh.has(id(r)))), total: body.total };
   return true;
 }
@@ -344,9 +351,18 @@ export async function showMoreActivity() {
 /** Sessions view: the next page of the list. */
 export const loadMoreSessions = () => loadNextPage("sessions", "sessions");
 
-/** The selected session's violations, all time, newest first; selecting another session drops the previous one's. */
-export const loadSessionFindings = id => loadFirstPage("sessionFindings", "violations",
-  `/api/violations?since=0&sessionId=${encodeURIComponent(id)}&limit=${SESSION_FINDINGS_PAGE}${repositoryFilter()}`, id);
+/**
+ * The selected session's violations, all time, newest first; selecting another session drops the previous one's.
+ * Their total goes into the session's list row too, so its count, the With violations filter and its day agree
+ * however old the page the row came with.
+ */
+export async function loadSessionFindings(id) {
+  const changed = await loadFirstPage("sessionFindings", "violations",
+    `/api/violations?since=0&sessionId=${encodeURIComponent(id)}&limit=${SESSION_FINDINGS_PAGE}${repositoryFilter()}`, id);
+  const slot = data.sessionFindings;
+  if (slot.owner === id && slot.pages > 0) patchSessionRow({ sessionId: id, violationCount: slot.total });
+  return changed;
+}
 
 /** One page of a session's transcript, `query` saying where (`after=…` or `before=…`). */
 async function eventsPage(id, query) {
@@ -361,11 +377,11 @@ async function sessionLoad(detail, load) {
   try { return await detail.loading; } finally { detail.loading = null; }
 }
 
-/** Writes a session's fresh head over its row in the loaded list, so a row past the first page stays current too. */
-function patchSessionRow(head) {
+/** Writes a session's fresh fields over its row in the loaded list, so a row past the first page stays current too. */
+function patchSessionRow(fields) {
   const rows = data.sessions.rows;
-  if (!rows.some(s => s.sessionId === head.sessionId)) return;
-  data.sessions = { ...data.sessions, rows: rows.map(s => (s.sessionId === head.sessionId ? { ...s, ...head } : s)) };
+  if (!rows.some(s => s.sessionId === fields.sessionId)) return;
+  data.sessions = { ...data.sessions, rows: rows.map(s => (s.sessionId === fields.sessionId ? { ...s, ...fields } : s)) };
 }
 
 /** Forgets a session the daemon no longer has; the view then falls back to another, as for a session never selected. */

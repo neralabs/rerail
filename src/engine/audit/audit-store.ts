@@ -501,10 +501,20 @@ function ruleActivity(database: RerailDatabase, since: number, repositoryId?: Re
   }]));
 }
 
+/**
+ * Distinct sessions with a violation from an audit started at or after `since`. The rollup holds only violations
+ * that name a rule, so the few stored without one are read from `audit_violations` (index on rule and start).
+ */
 function sessionsWithViolations(database: RerailDatabase, since: number, repositoryId?: Repository): number {
   return database.all<{ sessions: number }>(sql`
-    SELECT count(DISTINCT ${ruleViolationRollup.sessionId}) AS sessions FROM ${ruleViolationRollup}
-    WHERE ${ruleViolationRollup.lastSeenAt} >= ${since} AND ${scopedSessions(ruleViolationRollup.sessionId, repositoryId)}
+    SELECT count(*) AS sessions FROM (
+      SELECT ${ruleViolationRollup.sessionId} AS session_id FROM ${ruleViolationRollup}
+      WHERE ${ruleViolationRollup.lastSeenAt} >= ${since} AND ${scopedSessions(ruleViolationRollup.sessionId, repositoryId)}
+      UNION
+      SELECT ${auditViolations.sessionId} FROM ${auditViolations}
+      WHERE ${auditViolations.ruleId} IS NULL AND ${auditViolations.startedAt} >= ${since}
+        AND ${scopedSessions(auditViolations.sessionId, repositoryId)}
+    )
   `)[0]?.sessions ?? 0;
 }
 
@@ -757,6 +767,8 @@ export class SqliteAuditReader implements AuditReader {
     return database === undefined ? new Map() : ruleActivity(database, since, repositoryIds ?? this.#repositoryId);
   }
   listViolationHistory(query: ViolationHistoryQuery, repositoryIds?: readonly string[]): ViolationHistoryPage {
+    // A malformed cursor is refused whether or not any history exists yet.
+    if (query.cursor !== undefined) decodeCursor(query.cursor, historyCursorSchema);
     const database = this.#database.open();
     return database === undefined
       ? { violations: [], total: 0, nextCursor: null }

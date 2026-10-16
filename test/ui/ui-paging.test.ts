@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadEarlier, loadMoreFindings, loadSession, loadSessionFindings, refresh, refreshNow } from "../../ui/poll.js";
-import { sessionCorrections } from "../../ui/sessions-model.js";
+import { placeCorrections, sessionCorrections, sessionTurns } from "../../ui/sessions-model.js";
 import { data, pagedList, setScope, ui, type Violation } from "../../ui/state.js";
 
 /** How the test daemon answers one GET: the body, a `Response` (another status), or a promise of either. */
@@ -129,6 +129,30 @@ describe("Load more on a paged list", () => {
     expect(data.findings.next).toBe("c3");
     expect(data.findings.total).toBe(4);
   });
+
+  it("starts over from the fresh first page when more rows arrived than it reaches, and takes a complete page whole", async () => {
+    ui.view = "activity";
+    let first: { violations: Violation[]; total: number; nextCursor: string | null } = { violations: [violation(5), violation(6)], total: 4, nextCursor: "c6" };
+    answer = url => {
+      if (url.pathname !== "/api/violations") return emptyDaemon(url);
+      return url.searchParams.get("cursor") === "c6" ? { violations: [violation(7), violation(8)], total: 4, nextCursor: null } : first;
+    };
+    await refresh();
+    await loadMoreFindings();
+    expect([ids(data.findings.rows), data.findings.next]).toEqual([["v5", "v6", "v7", "v8"], null]);
+
+    // Two more violations than the page holds: v3 and v4 lie between the fresh page and the kept rows. Keeping the
+    // old (null) cursor would leave them unreachable; the list starts over with the fresh page's own cursor.
+    first = { violations: [violation(1), violation(2)], total: 8, nextCursor: "c2" };
+    await refresh();
+    expect([ids(data.findings.rows), data.findings.next, data.findings.pages]).toEqual([["v1", "v2"], "c2", 1]);
+
+    // A first page that is the whole list replaces what was loaded, rows deleted since included.
+    await loadMoreFindings();
+    first = { violations: [violation(1)], total: 1, nextCursor: null };
+    await refresh();
+    expect([ids(data.findings.rows), data.findings.next]).toEqual([["v1"], null]);
+  });
 });
 
 describe("the selected session's violations", () => {
@@ -216,16 +240,21 @@ describe("the selected session", () => {
   beforeEach(() => { ui.view = "sessions"; });
 
   it("refreshes its row in the list every poll, even on a page past the first", async () => {
-    // s1 came in on a later page: the first-page refresh never rewrites it, its head does.
-    data.sessions = { ...pagedList("/api/sessions?limit=50&repository=A"), rows: [{ ...session, eventCount: 5 }], total: 60, next: "c1", pages: 2 };
+    // s1 came in on a later page: the first-page refresh (newest session s0, its cursor reaching the kept rows) never
+    // rewrites it, its head does.
+    const s0 = { ...session, sessionId: "s0", startedAt: 2 };
+    data.sessions = { ...pagedList("/api/sessions?limit=50&repository=A"), rows: [s0, { ...session, eventCount: 5 }], total: 60, next: "c1", pages: 2 };
     let eventCount = 5;
-    answer = url => (url.pathname === "/api/sessions/s1" ? { session: { ...session, eventCount } } : emptyDaemon(url));
+    answer = url => {
+      if (url.pathname === "/api/sessions") return { sessions: [s0], total: 60, nextCursor: "c0" };
+      return url.pathname === "/api/sessions/s1" ? { session: { ...session, eventCount } } : emptyDaemon(url);
+    };
     ui.selectedSession = "s1";
     await refresh();
     eventCount = 9;
     await refresh();
 
-    expect(data.sessions.rows).toEqual([expect.objectContaining({ sessionId: "s1", eventCount: 9 })]);
+    expect(data.sessions.rows).toEqual([expect.objectContaining({ sessionId: "s0" }), expect.objectContaining({ sessionId: "s1", eventCount: 9 })]);
   });
 
   it("drops the selection when the session goes away, instead of reading as an unknown repository", async () => {
@@ -251,5 +280,29 @@ describe("the selected session", () => {
     data.sessionFindings = { ...pagedList<Violation>("k", "s1"), rows: [violation(1), { ...violation(2), ruleId: "removed" }], total: 2, pages: 1 };
 
     expect(sessionCorrections("s1").map(c => [c.finding.ruleId, c.rule === null])).toEqual([["r", false], ["removed", true]]);
+  });
+});
+
+describe("a selected session's counts and timeline", () => {
+  it("writes its violation total into its list row, past the first page too, so every count of it agrees", async () => {
+    data.sessions = { ...pagedList("/api/sessions?limit=50&repository=A"), rows: [{ ...session, violationCount: 0 }], total: 60, next: "c1", pages: 2 };
+    answer = url => (url.pathname === "/api/violations" ? { violations: [violation(1)], total: 1, nextCursor: null } : emptyDaemon(url));
+
+    await loadSessionFindings("s1");
+
+    expect(data.sessions.rows).toEqual([expect.objectContaining({ sessionId: "s1", violationCount: 1 })]);
+  });
+
+  it("keeps its violations when the loaded window starts between a tool call and its result", () => {
+    // Only the result and the turn end of the call that opened the turn are loaded: they make no turn of their own.
+    const events = [
+      { sequence: 11, sessionId: "s1", eventId: "r", kind: "result", observedAt: 110, payload: { toolCallId: "t1", failed: false } },
+      { sequence: 12, sessionId: "s1", eventId: "e", kind: "turn-end", observedAt: 120, payload: {} },
+    ];
+    const corrections = [{ key: "a1:v1", finding: { ...violation(1), path: "src/a.ts" }, rule: null }];
+
+    const turns = placeCorrections(sessionTurns(events), corrections as never);
+
+    expect(turns.flatMap(turn => turn.orphans.map(c => c.key))).toEqual(["a1:v1"]);
   });
 });

@@ -263,6 +263,64 @@ describe("derived audit history", () => {
     }
   });
 
+  it("follows an older writer that replaces an audit with INSERT OR REPLACE, renames it, then deletes it", async () => {
+    const path = await temporaryDatabase();
+    const database = openRerailDatabase(path);
+    const client = database.$client;
+    try {
+      openSessions(path);
+      const write = (verb: string, auditId: string, entries: CodeRuleViolation[]) => client.prepare(`${verb} INTO audits (audit_id, session_id,
+        workspace_root, scope, mode, revision, catalog_revision, rule_revisions_json, rule_provenance_json, paths_json, started_at,
+        finished_at, status, violations_json, failures_json)
+        VALUES (?, 's1', '/w', 'touched-files', 'steer', 1, NULL, '[{"ruleId":"rule-a","revision":1}]', '[]', '[]', 5000, NULL, 'completed', ?, '[]')`)
+        .run(auditId, JSON.stringify(entries));
+      const flagged = (ruleId: string) => ({ id: ruleId, ruleId, clauseId: "c", code: "X", mode: "steer", message: "m", path: "a.ts", captures: {}, variables: {} }) as CodeRuleViolation;
+      const derived = (table: string) => client.prepare(`SELECT count(*) AS n FROM ${table}`).get();
+      const rollupRules = () => client.prepare("SELECT rule_id FROM rule_violation_rollup ORDER BY rule_id").pluck().all();
+
+      write("INSERT", "a1", [flagged("rule-a")]);
+      write("INSERT OR REPLACE", "a1", []);
+      expectMatchesOracle(path, client);
+      expect([derived("audit_violations"), rollupRules()]).toEqual([{ n: 0 }, []]);
+
+      write("INSERT OR REPLACE", "a1", [flagged("rule-b")]);
+      expectMatchesOracle(path, client);
+      expect(rollupRules()).toEqual(["rule-b"]);
+
+      client.prepare("UPDATE audits SET audit_id = 'a2' WHERE audit_id = 'a1'").run();
+      expectMatchesOracle(path, client);
+      expect(client.prepare("SELECT DISTINCT audit_id FROM audit_violations UNION SELECT audit_id FROM audit_rule_set_uses").pluck().all()).toEqual(["a2"]);
+
+      client.prepare("DELETE FROM audits").run();
+      for (const table of ["audit_violations", "audit_violations_staging", "rule_violation_rollup", "audit_rule_set_uses"]) {
+        expect(derived(table), table).toEqual({ n: 0 });
+      }
+    } finally {
+      database.$client.close();
+    }
+  });
+
+  it("counts a session whose only violations name no rule among the sessions with violations", async () => {
+    const path = await temporaryDatabase();
+    const database = openRerailDatabase(path);
+    const store = new SqliteAuditStore(path);
+    try {
+      openSessions(path);
+      const auditId = store.start({
+        sessionId: "s3", workspaceRoot: "/w", scope: "repository", mode: "steer", revision: 1, catalogRevision: null, ruleRevisions: [], paths: [],
+      });
+      store.finish(auditId, { status: "completed", violations: [{ id: "no-rule", clauseId: "c", code: "X", mode: "steer", message: "m", captures: {}, variables: {} } as unknown as CodeRuleViolation], failures: [] });
+
+      expect(store.sessionsWithViolations(0)).toBe(1);
+      expect(store.sessionsWithViolations(0, [REPOSITORY_B])).toBe(1);
+      expect(store.sessionsWithViolations(0, [REPOSITORY_A])).toBe(0);
+      expect(store.listViolationHistory({ since: 0, sessionId: "s3" }).total).toBe(1);
+    } finally {
+      store.close();
+      database.$client.close();
+    }
+  });
+
   it("fills the derived history from the audits a file already holds when it is upgraded, then keeps it current", async () => {
     const path = await temporaryDatabase();
     const created = new Database(path);

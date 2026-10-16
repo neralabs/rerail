@@ -172,6 +172,11 @@ describe("Rerail daemon", () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();
     expect(await getJson(daemon, "/api/sessions")).toEqual({ status: 200, body: { sessions: [], total: 0, nextCursor: null } });
+    // Before anything is recorded, a malformed cursor is refused just as it is once history exists.
+    expect(existsSync(join(root, "rerail.sqlite"))).toBe(false);
+    for (const path of ["/api/sessions?cursor=not-a-cursor", "/api/violations?since=0&cursor=not-a-cursor"]) {
+      expect(await getJson(daemon, path), path).toMatchObject({ status: 400, body: { error: "invalid-cursor" } });
+    }
 
     const store = new SqliteSessionStore(join(root, "rerail.sqlite"), { repositoryId: "test-repository" });
     store.openSession({ host: "claude-code", sessionId: "s1", cwd: "/workspace" }, 1_000);

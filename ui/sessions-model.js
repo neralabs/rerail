@@ -192,13 +192,18 @@ export function sessionViolationTotal(sessionId) {
  * event a finding interrupted.
  */
 export function placeCorrections(turns, corrections) {
+  // The loaded window can start between a tool call and its result, leaving no turn at all: the corrections still
+  // show, in a turn of their own, rather than vanish while the header counts them.
+  const placed = turns.length === 0 && corrections.length > 0
+    ? [{ key: "t-window", ti: 0, u: null, a: null, uSeq: null, aSeq: null, uTime: null, aTime: null, tools: [], orphans: [], ended: true }]
+    : turns;
   for (const c of corrections) {
     const key = c.finding.path ? c.finding.path.split(":")[0] : null;
-    const ev = key ? toolCallTouching(turns, key) : null;
+    const ev = key ? toolCallTouching(placed, key) : null;
     if (ev) ev.correction = c;
-    else if (turns.length) turns[Math.min(1, turns.length - 1)].orphans.push(c);
+    else placed[Math.min(1, placed.length - 1)].orphans.push(c);
   }
-  return turns;
+  return placed;
 }
 
 /** First unclaimed tool call on `key`: a change or command targeting it, else any call whose input mentions it. */

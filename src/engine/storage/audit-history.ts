@@ -6,8 +6,10 @@
  *
  * The triggers are part of the DDL applied on every open (`schema-sql.generated.ts`), created `IF NOT EXISTS`: a
  * build that changes one must drop it in a migration step so the new body is created. The statements avoid conflict
- * clauses (`OR IGNORE`, upserts), which an outer `INSERT OR REPLACE` on `audits` would override. The backfill that
- * fills the tables for audits written before them is frozen in its migration step (`migrations.ts`).
+ * clauses (`OR IGNORE`, upserts), which an outer `INSERT OR REPLACE` on `audits` would override. Such a REPLACE
+ * deletes the old row without running `audits_history_delete` (SQLite runs no delete trigger for it while
+ * `recursive_triggers` is off, its default), so the insert trigger clears what an audit of that id left first. The
+ * backfill that fills the tables for audits written before them is frozen in its migration step (`migrations.ts`).
  */
 
 /**
@@ -97,7 +99,7 @@ const REPLACE_VIOLATIONS = `
   INSERT INTO audit_violations_staging ${VIOLATION_COLUMNS} ${violationRows("0")};
   DELETE FROM audit_violations WHERE audit_id = OLD.audit_id AND NOT EXISTS (
     SELECT 1 FROM audit_violations_staging staged
-    WHERE staged.audit_id = NEW.audit_id AND staged.ordinal = audit_violations.ordinal
+    WHERE staged.audit_id = NEW.audit_id AND staged.audit_id = audit_violations.audit_id AND staged.ordinal = audit_violations.ordinal
       AND staged.session_id = audit_violations.session_id AND staged.started_at = audit_violations.started_at
       AND staged.rule_id IS audit_violations.rule_id AND staged.violation_key = audit_violations.violation_key
       AND staged.logged = audit_violations.logged);
@@ -161,6 +163,8 @@ export const AUDIT_HISTORY_TRIGGER_STATEMENTS: readonly string[] = [
   END`,
   `CREATE TRIGGER IF NOT EXISTS \`audits_history_insert\` AFTER INSERT ON \`audits\`
   BEGIN
+  DELETE FROM audit_violations WHERE audit_id = NEW.audit_id;
+  DELETE FROM audit_rule_set_uses WHERE audit_id = NEW.audit_id;
   ${INSERT_VIOLATIONS};${USE_RULE_SET("NEW")}
   END`,
   `CREATE TRIGGER IF NOT EXISTS \`audits_history_violations_append\` AFTER UPDATE OF violations_json ON \`audits\`

@@ -32,13 +32,14 @@ function options(): Options {
       seed: { type: "string", default: "1" },
     },
   });
+  // Every option counts something the run needs at least one of: zero would only fail later, mid-run.
   const number = (name: keyof typeof values): number => {
     const value = Number(values[name]);
-    if (!Number.isSafeInteger(value) || value < 0) throw new Error(`--${name} must be a non-negative integer\n${USAGE}`);
+    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`--${name} must be a positive integer\n${USAGE}`);
     return value;
   };
   return {
-    audits: number("audits"), rules: number("rules"), backlog: number("backlog"), chunks: Math.max(1, number("chunks")), sessions: number("sessions"),
+    audits: number("audits"), rules: number("rules"), backlog: number("backlog"), chunks: number("chunks"), sessions: number("sessions"),
     tabs: number("tabs"), seconds: number("seconds"), seed: number("seed"),
   };
 }
@@ -220,13 +221,15 @@ async function main(): Promise<void> {
     console.log(`\n/healthz while ${settings.tabs} tab(s) poll for ${settings.seconds} s and a session commits every 250 ms`);
     committing = setInterval(commit, 250);
     const until = performance.now() + settings.seconds * 1000;
-    const tabs = Array.from({ length: settings.tabs }, async () => { while (performance.now() < until) await poll(); });
+    // Settled from the start, so a tab whose poll fails while /healthz is still sampled is no unhandled rejection
+    // (which would end the process before `finally` removes the temporary folder); its error is raised below.
+    const tabs = Promise.allSettled(Array.from({ length: settings.tabs }, async () => { while (performance.now() < until) await poll(); }));
     const probes: number[] = [];
     while (performance.now() < until) {
       probes.push(await timed(`${base}/healthz`));
       await sleep(100);
     }
-    await Promise.all(tabs);
+    for (const tab of await tabs) if (tab.status === "rejected") throw tab.reason;
     const over = probes.filter(value => value > 2_000).length;
     console.log(`  samples ${probes.length}, median ${ms(median(probes))}, p99 ${ms(percentile(probes, 0.99))}, max ${ms(Math.max(...probes))}, over 2 s: ${over}`);
   } finally {
