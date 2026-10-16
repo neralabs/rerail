@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-no-duplicate-enum-values",
-  "revision": 5,
+  "revision": 6,
   "mode": "steer",
   "description": "typescript-eslint 8.70.1 @typescript-eslint/no-duplicate-enum-values, default options. Port of typescript-eslint's `no-duplicate-enum-values` rule (https://typescript-eslint.io/rules/no-duplicate-enum-values). Flags an enum member whose initializer (a string, number or static template literal under any chain of unary + and -) has the same value, by Object.is, as an earlier member's; NaN values and other initializers are ignored.",
   "scope": {

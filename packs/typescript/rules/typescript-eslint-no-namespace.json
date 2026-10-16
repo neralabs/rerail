@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-no-namespace",
-  "revision": 6,
+  "revision": 7,
   "mode": "steer",
   "description": "typescript-eslint 8.70.1 @typescript-eslint/no-namespace, default options. allowDefinitionFiles is fixed at its default (true): a file whose name typescript-eslint's isDefinitionFile matches (`\\.d\\.(ts|cts|mts|.*\\.ts)$`) is not checked. Port of typescript-eslint's `no-namespace` rule (https://typescript-eslint.io/rules/no-namespace). Flags `namespace X {}` and `module X {}` (not `declare global`, `global {}` inside `declare module 'name'`, or `declare module 'name'`) with its defaults: declared namespaces are flagged, and definition files (*.d.ts, *.d.cts, *.d.mts, *.d.*.ts) are exempt through the document scope. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
   "scope": {

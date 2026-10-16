@@ -141,7 +141,7 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2014 Max Brunsfeld", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
-# node-semver 7.8.5, ported to Rust (semver.rs); its subset() and new Range() answers recorded by
+# node-semver 7.8.5, ported to Rust (semver/mod.rs, provenance in semver/UPSTREAM.md); its subset() and new Range() answers recorded by
 # scripts/generate/semver/semver-subset-cases.mjs.
 [[annotations]]
 path = ["native/src/code_rule_dsl/semver/mod.rs", "native/src/code_rule_dsl/semver/subset_cases.json"]

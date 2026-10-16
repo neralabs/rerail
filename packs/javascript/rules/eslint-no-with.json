@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-with",
-  "revision": 3,
+  "revision": 4,
   "mode": "steer",
   "description": "Port of ESLint's `no-with` rule (https://eslint.org/docs/latest/rules/no-with). Reports every `with` statement, at its `with` keyword.",
   "scope": {

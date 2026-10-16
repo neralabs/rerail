@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-default-param-last",
-  "revision": 3,
+  "revision": 4,
   "mode": "steer",
   "description": "Port of typescript-eslint's `default-param-last` rule (https://typescript-eslint.io/rules/default-param-last), identical to the ESLint base port. Reports a defaulted or optional parameter of a function with a body that is followed by a required, non-rest parameter.",
   "scope": { "include": ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"], "exclude": [] },

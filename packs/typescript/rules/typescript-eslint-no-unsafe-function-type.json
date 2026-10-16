@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-no-unsafe-function-type",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "typescript-eslint 8.70.1 @typescript-eslint/no-unsafe-function-type, default options. Port of typescript-eslint's `no-unsafe-function-type` rule (https://typescript-eslint.io/rules/no-unsafe-function-type). Flags the global `Function` type used as a type reference, class implements or interface extends: a `type_identifier` reference that `resolves` to no file-local type binding.",
   "scope": {
