@@ -63,6 +63,8 @@ const AUDIT_CHUNK_BYTES = 1024 * 1024;
 const AUDIT_MAX_DURATION_MS = 5 * 60_000;
 const AUDIT_MAX_FILES = 100_000;
 const AUDIT_MAX_FAILURES = 20;
+/** The recorded `package` facts of a source a superseded evaluation repackaged: equal to no facts' JSON. */
+const UNREPORTED_FACTS = "\0unreported";
 const AUDIT_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
 export const IGNORED_DIRECTORIES = new Set([
   ".git",
@@ -965,9 +967,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (prepared === undefined) throw new Error("Policy workspace could not be initialized");
     this.#readFailures.delete(path);
     this.#readFailures.delete("worker");
-    const { evaluation, repackaged, sent } = await this.#apply(prepared.workspace, edit);
+    const { evaluation, repackaged, unreported } = await this.#apply(prepared.workspace, edit);
     this.#replaceAppliedEdit(path, stored, edit);
-    await this.#finishPendingEvaluation(path, stored, edit, evaluation, repackaged, sent);
+    await this.#finishPendingEvaluation(path, stored, edit, evaluation, repackaged, unreported);
   }
 
   #readFailureForEdit(path: string, edit: CodeRuleEdit): AuditFailure | undefined {
@@ -989,8 +991,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
 
   /**
    * Publishes an evaluation's findings, unless a later revision of its file or a workspace replacement supersedes it.
-   * Only a published evaluation records the `package` facts it sent (`commitSent`): a superseded one leaves the old
-   * facts in place, so the next edit that reaches its sources sends them again and their findings are reported.
+   * A superseded evaluation reports nothing for the sources it repackaged, so it marks them `unreported`: the next edit
+   * that reaches them sends them again, and their findings are reported, whatever facts it gives them.
    */
   async #finishPendingEvaluation(
     path: string,
@@ -998,7 +1000,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     edit: CodeRuleEdit,
     result: Evaluation,
     repackaged: readonly string[],
-    commitSent: () => void,
+    unreported: () => void,
   ): Promise<void> {
     const failures = result.failures.map((item) => ({ ...item, stage: "evaluate" as const }));
     const scopeFailure = this.#scopeFailureForEdit(stored.scope, path, edit);
@@ -1014,8 +1016,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       violations,
       scopeFailure === undefined ? failures : [...failures, scopeFailure],
     );
-    if (this.#versions.get(path) !== stored.revision || this.#replacement !== undefined) return;
-    commitSent();
+    if (this.#versions.get(path) !== stored.revision || this.#replacement !== undefined) {
+      unreported();
+      return;
+    }
     this.#evaluation = result;
     let readyViolations = this.#readyViolations.get(stored.revision);
     if (readyViolations === undefined) {
@@ -1529,7 +1533,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     workspace: NativeCodeRuleDslWorkspace,
     edit: CodeRuleEdit,
     pass?: SourceFactsCache,
-  ): Promise<{ evaluation: Evaluation; repackaged: string[]; sent: () => void }> {
+  ): Promise<{ evaluation: Evaluation; repackaged: string[]; unreported: () => void }> {
     const packages = this.#workspacePackages.get(workspace);
     if (packages === undefined) throw new Error("Policy workspace was disposed");
     const serverGraph = workspace.readsServerGraph();
@@ -1577,15 +1581,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       ...(pass !== undefined ? { deferGlobal: true, quiet: true } : {}),
     });
     if (edit.deleted) packages.delete(edit.path);
-    // The `package` facts sent, recorded once the evaluation is published (`#finishPendingEvaluation`).
-    const sent = () => {
-      for (const file of files)
-        if (loadNativeBinding().readsPackageManifests(file.language)) packages.set(file.path, JSON.stringify(file.package ?? null));
+    // What the workspace now holds: the facts each file was sent with.
+    for (const file of files)
+      if (loadNativeBinding().readsPackageManifests(file.language)) packages.set(file.path, JSON.stringify(file.package ?? null));
+    if (pass === undefined) workspace.evictInactive();
+    // A superseded evaluation's repackaged sources: no facts match the mark, so the next edit reaching them resends them.
+    const unreported = () => {
+      for (const path of repackaged) if (packages.has(path)) packages.set(path, UNREPORTED_FACTS);
     };
-    // A replacement pass publishes nothing of its own, so it records what it sent at once.
-    if (pass !== undefined) sent();
-    else workspace.evictInactive();
-    return { evaluation, repackaged, sent };
+    return { evaluation, repackaged, unreported };
   }
 
   /**

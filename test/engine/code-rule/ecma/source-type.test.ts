@@ -404,7 +404,48 @@ describe("a package.json edit alone", () => {
       await queued;
       spy.mockRestore();
       await enforcer.settle();
-      // The superseded revision recorded nothing it sent, so revision 3 sends the source again and reports it.
+      // The superseded revision reported nothing for the source, so revision 3 sends it again and reports it.
+      expect(revisions).toContainEqual({ revision: 3, paths: ["lib/plain.js"] });
+    } finally {
+      vi.restoreAllMocks();
+      await close();
+    }
+  });
+
+  it("sends a source again when a superseded manifest edit is reverted, so it is evaluated with the reverted facts", async () => {
+    const sources: Sources = { "package.json": '{ "type": "commonjs" }\n', "lib/plain.js": "module.exports = require('x');\n" };
+    const root = await repository(false, sources);
+    const { edit, revisions, enforcer, close } = await enforcerFor(root, CODE_RULE, sources);
+    const prototype = loadNativeBinding().CodeRuleDslWorkspace.prototype;
+    const applyBufferAsync = prototype.applyBufferAsync;
+    try {
+      expect(await edit([{ path: "lib/plain.js", language: "javascript", generatedText: sources["lib/plain.js"]! }])).toEqual({
+        "lib/plain.js PROGRAM": 1,
+        "lib/plain.js REQUIRE": 1,
+      });
+      // Revision 2 makes the package a module, which sends the source as one; revision 3, queued while revision 2's
+      // request is in flight, turns it back to CommonJS, so revision 2 never publishes.
+      await writeFile(join(root, "package.json"), '{ "type": "module" }\n');
+      let queued: Promise<unknown> | undefined;
+      const spy = vi.spyOn(prototype, "applyBufferAsync").mockImplementation(function (this: unknown, ...args: unknown[]) {
+        queued ??= (async () => {
+          await writeFile(join(root, "package.json"), sources["package.json"]!);
+          await enforcer.auditGeneratedEdits("package-facts", {
+            revision: 3, checkpoints: ["edit"],
+            edits: [{ path: "package.json", language: "json", generatedText: sources["package.json"]! }],
+          });
+        })();
+        return Reflect.apply(applyBufferAsync, this, args);
+      });
+      await enforcer.auditGeneratedEdits("package-facts", {
+        revision: 2, checkpoints: ["edit"],
+        edits: [{ path: "package.json", language: "json", generatedText: '{ "type": "module" }\n' }],
+      });
+      await enforcer.settle();
+      await queued;
+      spy.mockRestore();
+      await enforcer.settle();
+      // The workspace held the source as a module: revision 3 sends it again as CommonJS and reports it.
       expect(revisions).toContainEqual({ revision: 3, paths: ["lib/plain.js"] });
     } finally {
       vi.restoreAllMocks();
