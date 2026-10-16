@@ -200,6 +200,16 @@ describe("rerail install --refresh", () => {
     expect(await readdir(join(hostConfigHome, ".claude"))).toEqual([]);
   });
 
+  it("does not claim nothing is connected when an agent's configuration could not be read to tell", async () => {
+    const { context, hostConfigHome } = await fixture();
+    await mkdir(join(hostConfigHome, ".cursor"));
+    await writeFile(join(hostConfigHome, ".cursor", "hooks.json"), "{ not json");
+    const output = captureOutput();
+    expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+    expect(output.stdout()).not.toContain("No coding agents are connected");
+    expect(output.stdout()).toContain("left Cursor alone");
+  });
+
   it("fails naming a connected agent it cannot register again, after refreshing the others", async () => {
     const { context, hostConfigHome, packageRoot } = await fixture();
     await mkdir(join(hostConfigHome, ".codex"));

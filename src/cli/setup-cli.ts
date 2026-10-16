@@ -174,7 +174,7 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
 async function runRefresh(context: SetupContext): Promise<number> {
   const root = registrationRoot(context);
   const result = await refreshCodingAgents(root, codingAgentHome());
-  if (result.agents.length === 0 && result.failures.length === 0) {
+  if (result.agents.length === 0 && result.failures.length === 0 && result.unchecked.length === 0) {
     process.stdout.write(`No coding agents are connected to ${root}; nothing to refresh.\n`);
   }
   if (result.agents.length > 0) {
