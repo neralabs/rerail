@@ -12,6 +12,7 @@
 #[cfg(test)]
 use super::Program;
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::packed::Program as PackedProgram;
 use crate::code_rule_dsl::tape::TapeDoc;
 #[cfg(test)]
 use ast_grep_core::matcher::KindMatcher;
@@ -75,6 +76,12 @@ struct MatchRow {
 /// tests of the virtual table, a transducer program or node kind). Text terminals return source
 /// byte spans in match order.
 pub(in crate::code_rule_dsl) enum Terminal {
+    /// A verified packed relation program. Production SQL executes these only through `xFilter`.
+    #[allow(
+        dead_code,
+        reason = "constructed by the direct Rerail lowering cutover"
+    )]
+    Packed(Arc<PackedProgram>),
     #[cfg(test)]
     #[allow(dead_code, reason = "retained for direct virtual-table tests")]
     Program(Program),
@@ -549,6 +556,7 @@ fn execute_terminal_with_budget(
         };
     }
     let foreign = match terminal {
+        Terminal::Packed(_) => false,
         #[cfg(test)]
         Terminal::Program(_) => false,
         Terminal::Pattern(pattern) => !pattern.reads(file),
@@ -564,6 +572,33 @@ fn execute_terminal_with_budget(
         };
     }
     match terminal {
+        Terminal::Packed(program) => {
+            let outputs = program.execute(file.tape());
+            match outputs {
+                Ok(outputs) => FileMatches {
+                    matches: outputs
+                        .into_iter()
+                        .map(|output| TerminalMatch {
+                            node: output.start,
+                            output_label: output.label,
+                            span: None,
+                            captures: output
+                                .captures
+                                .into_iter()
+                                .map(|capture| (capture.label, vec![capture.node]))
+                                .collect(),
+                        })
+                        .collect(),
+                    complete: true,
+                    error: None,
+                },
+                Err(error) => FileMatches {
+                    matches: Vec::new(),
+                    complete: false,
+                    error: Some(format!("{error:?}")),
+                },
+            }
+        }
         #[cfg(test)]
         Terminal::Program(program) => {
             let outputs = program.execute(file.tape());
@@ -1018,6 +1053,35 @@ mod tests {
         assert!(!matches.complete);
         assert_eq!(matches.error.as_deref(), Some("budget-exceeded"));
         assert!(matches.matches.is_empty());
+    }
+
+    #[test]
+    fn sqlite_demands_one_verified_packed_batch() {
+        let pattern = Pattern::try_new("target", GrammarDialect::Python).unwrap();
+        let terminal = Terminal::Packed(Arc::new(
+            PackedProgram::compile_ast_grep_literal(&pattern).unwrap(),
+        ));
+        let registry = Arc::new(MatchRegistry::default());
+        let connection = Connection::open_in_memory().unwrap();
+        register_module(&connection, Arc::clone(&registry)).unwrap();
+        let token = registry.register_query_batch(
+            Arc::new(vec![terminal]),
+            vec![python_file("target\nother\ntarget\n")],
+            Arc::new(()),
+            None,
+        );
+        let matches: i64 = connection
+            .query_row(
+                "WITH terminal AS MATERIALIZED (\
+                   SELECT * FROM rerail_matches WHERE batch = ?1\
+                 ) SELECT count(DISTINCT match_index) FROM terminal \
+                   WHERE complete = 1 AND match_index IS NOT NULL",
+                [token],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(matches, 2);
+        assert_eq!(registry.query_execution_counters(token), Some((1, 1)));
     }
 
     #[test]
