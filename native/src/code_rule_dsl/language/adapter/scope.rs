@@ -1,7 +1,7 @@
 //! Scope tables, bindings and usage (`resolves`, `binds`): `Semantic::Scope`.
 
-use super::{Adapter, Blade, Ecma, Php, Python, Refusal, regions};
-use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
+use super::{Adapter, Ecma, Php, Python, Refusal};
+use crate::code_rule_dsl::language::SourceType;
 use crate::code_rule_dsl::matcher::{ScopeName, Unresolved, file_module};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{
@@ -811,144 +811,6 @@ impl ScopeRules for Php {
     }
 }
 
-/// The PHP the template embeds, as the compiled view runs it (`blade::view`): PHP's scope, but
-/// for the visit of the view's program.
-impl ScopeRules for Blade {
-    const SUPPORTED: bool = true;
-    const FLOW: bool = <Php as ScopeRules>::FLOW;
-    const STUBS: bool = <Php as ScopeRules>::STUBS;
-    const REDEFINES_SHADOWED: bool = <Php as ScopeRules>::REDEFINES_SHADOWED;
-    const REFERENCE_KINDS: &'static [&'static str] = <Php as ScopeRules>::REFERENCE_KINDS;
-    const ANNOTATION_STRING_KINDS: &'static [&'static str] =
-        <Php as ScopeRules>::ANNOTATION_STRING_KINDS;
-    const NAME_KINDS: &'static [&'static str] = <Php as ScopeRules>::NAME_KINDS;
-    const PRIVATE_NAME_KINDS: &'static [&'static str] = <Php as ScopeRules>::PRIVATE_NAME_KINDS;
-    const FORMS: &'static [(&'static str, Form)] = <Php as ScopeRules>::FORMS;
-    const SCOPES: &'static [(&'static str, ScopeName)] = <Php as ScopeRules>::SCOPES;
-    const REFUSED_FILTERS: &'static [&'static str] = <Php as ScopeRules>::REFUSED_FILTERS;
-    const IMPORT_PATHS: bool = <Php as ScopeRules>::IMPORT_PATHS;
-
-    fn visit<D: Doc>(
-        builder: &mut Builder<'_>,
-        root: &Node<'_, D>,
-        _: Reading,
-    ) -> Result<(), BuildError> {
-        for region in regions(root, GrammarDialect::Blade) {
-            php::visit_blade_program(builder, &region.root)?;
-        }
-        Ok(())
-    }
-
-    fn finish<D: Doc>(table: &mut ScopeTable, root: &Node<'_, D>) {
-        <Php as ScopeRules>::finish(table, root);
-    }
-
-    fn resolve<'t>(
-        table: &'t ScopeTable,
-        reference: &Reference,
-        name: &str,
-    ) -> Option<&'t Binding> {
-        <Php as ScopeRules>::resolve(table, reference, name)
-    }
-
-    fn binding<'t>(
-        table: &'t ScopeTable,
-        reference: &Reference,
-        name: &str,
-    ) -> Option<(&'t Binding, Option<NodeRef>)> {
-        <Php as ScopeRules>::binding(table, reference, name)
-    }
-
-    fn binding_by<'t>(
-        table: &'t ScopeTable,
-        reference: &Reference,
-        name: &str,
-        lookup: Lookup,
-    ) -> Option<(&'t Binding, Option<NodeRef>)> {
-        <Php as ScopeRules>::binding_by(table, reference, name, lookup)
-    }
-
-    fn index(
-        table: &ScopeTable,
-        reference: &Reference,
-        name: &str,
-        lookup: Lookup,
-    ) -> Option<(u32, usize)> {
-        <Php as ScopeRules>::index(table, reference, name, lookup)
-    }
-
-    fn undecided(table: &ScopeTable, reference: &Reference) -> bool {
-        <Php as ScopeRules>::undecided(table, reference)
-    }
-
-    fn unbound_annotation(
-        table: &ScopeTable,
-        reference: &Reference,
-        name: &str,
-    ) -> Option<(u32, usize)> {
-        <Php as ScopeRules>::unbound_annotation(table, reference, name)
-    }
-
-    fn unresolved(
-        table: &ScopeTable,
-        reference: &Reference,
-        name: &str,
-        mode: Unresolved,
-        python: &PythonOptions,
-        options: Option<&LanguageOptions>,
-        directives: Option<&Directives>,
-    ) -> bool {
-        <Php as ScopeRules>::unresolved(table, reference, name, mode, python, options, directives)
-    }
-
-    fn eslint_options(options: Option<&Arc<LanguageOptions>>) -> Option<Arc<LanguageOptions>> {
-        <Php as ScopeRules>::eslint_options(options)
-    }
-
-    fn ruff_options(python: Option<&Arc<PythonOptions>>) -> Option<Arc<PythonOptions>> {
-        <Php as ScopeRules>::ruff_options(python)
-    }
-
-    #[cfg(test)]
-    fn unbound_locally(
-        table: &ScopeTable,
-        reference: &Reference,
-        name: &str,
-        builtin: bool,
-    ) -> bool {
-        <Php as ScopeRules>::unbound_locally(table, reference, name, builtin)
-    }
-
-    fn usage<D: Doc>(
-        table: &ScopeTable,
-        root: &Node<'_, D>,
-        steps: &mut Steps<'_>,
-    ) -> Result<Usage, BuildError> {
-        <Php as ScopeRules>::usage(table, root, steps)
-    }
-
-    fn unpackaged_module(path: &str) -> Option<ModulePath> {
-        <Php as ScopeRules>::unpackaged_module(path)
-    }
-
-    fn import_path<D: Doc>(
-        table: &ScopeTable,
-        node: &Node<'_, D>,
-        file: Option<&str>,
-    ) -> Option<String> {
-        <Php as ScopeRules>::import_path(table, node, file)
-    }
-
-    fn feature(feature: ScopeFeature) -> Result<(), Refusal> {
-        php_feature(
-            feature,
-            <Self as Adapter>::LABEL,
-            "ESLint reports an unused variable once, at its last write; blade reads its embedded PHP, whose usage oracle, Psalm, reports each unused assignment, which `binds: { used: false }` matches",
-            "qualified import names are Python's; a blade variable is never bound by an import",
-        )
-    }
-}
-
 #[cfg(test)]
 pub(super) mod kit {
     use super::{Adapter, ScopeFeature, ScopeRules};
@@ -957,8 +819,8 @@ pub(super) mod kit {
     use crate::code_rule_dsl::matcher::Unresolved;
     use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
     use crate::code_rule_dsl::scope::{Form, ScopeTable};
-    use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
-    use ast_grep_core::AstGrep;
+    use crate::code_rule_dsl::tape::TapeDoc;
+    use ast_grep_core::{AstGrep, Doc};
     use std::sync::Arc;
 
     /// What one family's scope rules answer.
@@ -984,17 +846,23 @@ pub(super) mod kit {
         pub(crate) unpackaged: Option<&'static str>,
     }
 
-    /// A tape of `source` in `dialect`, as files are read: Blade's from its Forte tree, the rest
-    /// from tree-sitter's.
-    fn tape(source: &str, dialect: GrammarDialect) -> AstGrep<TapeDoc> {
-        let grammar = Grammar::new(dialect).expect("grammar");
-        let image = TapeImage::parse(&grammar, source, &|| false)
-            .expect("parses")
-            .expect("encodes");
-        AstGrep::doc(
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
-                .expect("restores"),
-        )
+    /// The document a file of `source` in `dialect` holds that its family's scope reads (the
+    /// program an embedding file embeds), with its dialect and the range of the last `name` in its
+    /// text.
+    fn read(
+        source: &str,
+        dialect: GrammarDialect,
+        name: &str,
+    ) -> (AstGrep<TapeDoc>, GrammarDialect, std::ops::Range<usize>) {
+        let doc = super::super::kit::semantic(source, dialect);
+        let read = *doc.root().get_doc().get_lang();
+        let start = doc
+            .root()
+            .get_doc()
+            .get_source()
+            .rfind(name)
+            .expect("the name is read");
+        (doc, read, start..start + name.len())
     }
 
     /// `A`'s scope rules against `expect`, its files in `dialect` with `suffix`.
@@ -1025,13 +893,10 @@ pub(super) mod kit {
         );
         let builtins = PythonOptions::new(ruff.as_deref().map_or(0, |python| python.minor));
         for (source, name, unresolved) in expect.unresolved {
-            let doc = tape(source, dialect);
-            let table = ScopeTable::build(doc.root(), dialect, usize::MAX, &|| false)
-                .expect("table builds");
-            let start = source.rfind(name).expect("the name is read");
-            let reference = table
-                .reference(&(start..start + name.len()))
-                .expect("a reference");
+            let (doc, read, range) = read(source, dialect, name);
+            let table =
+                ScopeTable::build(doc.root(), read, usize::MAX, &|| false).expect("table builds");
+            let reference = table.reference(&range).expect("a reference");
             assert!(<A::Scope as ScopeRules>::resolve(&table, reference, name).is_none());
             assert_eq!(
                 <A::Scope as ScopeRules>::unresolved(
@@ -1058,13 +923,10 @@ pub(super) mod kit {
         );
         assert_eq!(<A::Scope as ScopeRules>::NAME_KINDS, expect.name_kinds);
         let (source, name, form) = expect.resolves;
-        let doc = tape(source, dialect);
+        let (doc, read, range) = read(source, dialect, name);
         let table =
-            ScopeTable::build(doc.root(), dialect, usize::MAX, &|| false).expect("table builds");
-        let start = source.rfind(name).expect("the name is read");
-        let reference = table
-            .reference(&(start..start + name.len()))
-            .expect("a reference");
+            ScopeTable::build(doc.root(), read, usize::MAX, &|| false).expect("table builds");
+        let reference = table.reference(&range).expect("a reference");
         assert_eq!(
             <A::Scope as ScopeRules>::resolve(&table, reference, name)
                 .map(|binding| binding.site.form),

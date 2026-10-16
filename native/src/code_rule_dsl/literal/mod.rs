@@ -331,6 +331,25 @@ pub(crate) struct SubTree {
     base: usize,
 }
 
+/// A parsed tree's bytes are the literal's decoded text: a node stands for the source bytes of its
+/// characters (`HostMap`), in the document the literal was parsed from.
+impl crate::code_rule_dsl::origin::Origin for SubTree {
+    fn of_node(&self, id: usize, _: Range<usize>) -> Option<Range<usize>> {
+        let rec = self.nodes.get(self.index_of(id)?)?;
+        Some(self.map_range(rec.start as usize..rec.end as usize))
+    }
+
+    fn of_range(&self, range: Range<usize>) -> Option<Range<usize>> {
+        Some(self.map_range(self.decoded(range)?))
+    }
+
+    /// Only an exact literal's bytes are copied: elsewhere decoding rewrote them.
+    fn copied(&self, range: Range<usize>) -> Option<Range<usize>> {
+        let range = self.decoded(range)?;
+        matches!(self.map, HostMap::Exact(_)).then(|| self.map_range(range))
+    }
+}
+
 /// Node ids of sub-trees have the top bit set; tapes use small indices, tree-sitter addresses.
 /// Blade trees (`blade::forte::tree`) draw their ids from the same counter.
 pub(crate) const ID_FLAG: usize = 1 << 63;
@@ -403,19 +422,12 @@ impl SubTree {
             .filter(|index| *index < self.nodes.len())
     }
 
-    /// The source range of the node with this id.
-    pub(crate) fn host_range(&self, node_id: usize) -> Option<Range<usize>> {
-        let rec = self.nodes.get(self.index_of(node_id)?)?;
-        Some(self.map_range(rec.start as usize..rec.end as usize))
-    }
-
-    /// The source range of a range of this tree's nodes (offset included): a capture a nested
-    /// tree exported.
-    pub(crate) fn host_span(&self, range: Range<usize>) -> Option<Range<usize>> {
+    /// A range of this tree's nodes (offset included) as decoded bytes.
+    fn decoded(&self, range: Range<usize>) -> Option<Range<usize>> {
         let offset = self.source.offset;
         let start = range.start.checked_sub(offset)?;
         let end = range.end.checked_sub(offset)?;
-        (end <= self.source.text.len()).then(|| self.map_range(start..end))
+        (end <= self.source.text.len()).then_some(start..end)
     }
 
     /// The source range of decoded bytes `range`.
@@ -887,7 +899,12 @@ mod tests {
             chars[2].parent().map(|node| node.kind().into_owned()),
             Some("text".into())
         );
-        let host = tree.host_range(chars[1].node_id()).expect("mapped");
+        let host = crate::code_rule_dsl::origin::Origin::of_node(
+            &*tree,
+            chars[1].node_id(),
+            chars[1].range(),
+        )
+        .expect("mapped");
         assert_eq!(&source[host], "\\x62");
         assert_eq!(
             tree.value(chars[2].node_id()),

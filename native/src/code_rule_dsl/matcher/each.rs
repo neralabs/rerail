@@ -10,6 +10,7 @@
 //! exclusion reads the sub-tree's nodes by their host ranges.
 
 use super::exported::exported_span;
+use crate::code_rule_dsl::origin::Origin;
 use ast_grep_core::Doc;
 use ast_grep_core::meta_var::MetaVarEnv;
 use std::cell::{Cell, RefCell};
@@ -17,22 +18,15 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
 
-/// A parsed sub-tree's coordinates: `node` maps one of its node ids to its range in the document
-/// the sub-tree was parsed from; `span` maps a range of the sub-tree there.
-#[derive(Clone)]
-pub(crate) struct HostMap {
-    pub(crate) node: Arc<dyn Fn(usize) -> Option<Range<usize>>>,
-    pub(crate) span: Arc<dyn Fn(Range<usize>) -> Option<Range<usize>>>,
-}
-
 thread_local! {
     /// Whether an enumeration is excluding bindings here (false inside a negation or count).
     static ACTIVE: Cell<bool> = const { Cell::new(false) };
     /// The enumerated capture and the ranges it was bound to so far, as `(start, end)`.
     static EXCLUDED: RefCell<(String, HashSet<(usize, usize)>)> =
         RefCell::new((String::new(), HashSet::new()));
-    /// The sub-trees being matched, innermost last.
-    static HOSTS: RefCell<Vec<HostMap>> = const { RefCell::new(Vec::new()) };
+    /// The sub-trees being matched, innermost last: each's bytes in the document it was parsed
+    /// from.
+    static HOSTS: RefCell<Vec<Arc<dyn Origin>>> = const { RefCell::new(Vec::new()) };
     /// Bumped whenever the excluded ranges change: what a memoized verdict read of them.
     static GENERATION: Cell<u64> = const { Cell::new(0) };
 }
@@ -66,8 +60,8 @@ thread_local! {
 pub(crate) struct HostRanges;
 
 impl HostRanges {
-    pub(crate) fn enter(map: HostMap) -> Self {
-        HOSTS.with_borrow_mut(|hosts| hosts.push(map));
+    pub(crate) fn enter(tree: Arc<dyn Origin>) -> Self {
+        HOSTS.with_borrow_mut(|hosts| hosts.push(tree));
         Self
     }
 }
@@ -91,11 +85,11 @@ pub(crate) fn binding_range<D: Doc>(env: &MetaVarEnv<'_, D>, name: &str) -> Opti
             let Some((innermost, outer)) = hosts.split_last() else {
                 return Some(node.range());
             };
-            let range = (innermost.node)(node.node_id())?;
+            let range = innermost.of_node(node.node_id(), node.range())?;
             outer
                 .iter()
                 .rev()
-                .try_fold(range, |range, host| (host.span)(range))
+                .try_fold(range, |range, host| host.of_range(range))
         }),
         None => {
             let range = exported_span(env, name)?;
@@ -103,7 +97,7 @@ pub(crate) fn binding_range<D: Doc>(env: &MetaVarEnv<'_, D>, name: &str) -> Opti
                 hosts
                     .iter()
                     .rev()
-                    .try_fold(range, |range, host| (host.span)(range))
+                    .try_fold(range, |range, host| host.of_range(range))
             })
         }
     }
@@ -194,14 +188,16 @@ impl Drop for Enumeration {
 
 #[cfg(test)]
 mod tests {
-    use super::{HostMap, HostRanges, binding_range};
+    use super::{HostRanges, binding_range};
     use crate::code_rule_dsl::CompiledCodeRuleDsl;
     use crate::code_rule_dsl::language::GrammarDialect;
+    use crate::code_rule_dsl::origin::Origin;
     use crate::code_rule_dsl::test_support::*;
     use crate::code_rule_dsl::violations;
     use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
     use ast_grep_language::LanguageExt;
     use serde_json::{Value, json};
+    use std::ops::Range;
     use std::sync::Arc;
 
     fn compile(rule: Value, each: Option<&str>, capabilities: &Value) -> CompiledCodeRuleDsl {
@@ -363,12 +359,19 @@ mod tests {
         env.insert("C", node.clone());
         assert_eq!(binding_range(&env, "C"), Some(2..5));
         // Inside a sub-tree, a node reads through the sub-tree's coordinates, innermost first.
-        let shift = |by: usize| HostMap {
-            node: Arc::new(move |_| Some(10 + by..11 + by)),
-            span: Arc::new(move |range: std::ops::Range<usize>| {
-                Some(range.start + by..range.end + by)
-            }),
-        };
+        struct Shift(usize);
+        impl Origin for Shift {
+            fn of_node(&self, _: usize, _: Range<usize>) -> Option<Range<usize>> {
+                Some(10 + self.0..11 + self.0)
+            }
+            fn of_range(&self, range: Range<usize>) -> Option<Range<usize>> {
+                Some(range.start + self.0..range.end + self.0)
+            }
+            fn copied(&self, range: Range<usize>) -> Option<Range<usize>> {
+                self.of_range(range)
+            }
+        }
+        let shift = |by: usize| -> Arc<dyn Origin> { Arc::new(Shift(by)) };
         {
             let _outer = HostRanges::enter(shift(100));
             let _inner = HostRanges::enter(shift(0));
@@ -892,11 +895,6 @@ mod tests {
             || {
                 polls.set(polls.get() + 1);
                 polls.get() > enumeration_polls
-            },
-            |start, end| crate::code_rule_dsl::violations::Span {
-                start_byte: start,
-                end_byte: end,
-                ..Default::default()
             },
             |_| true,
         );

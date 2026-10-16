@@ -3,7 +3,7 @@
 //! declaration it documents.
 
 use crate::code_rule_dsl::test_support::{
-    CAPABILITIES, clause_document, compile_document_with, evaluate_file, violation,
+    CAPABILITIES, clause_document, compile_document_with, evaluate_file, matched_texts, violation,
 };
 use serde_json::{Value, json};
 
@@ -159,29 +159,49 @@ fn a_blank_line_or_code_on_the_same_line_is_read_through_layout() {
     );
 }
 
+/// A Blade template's comments are its own tree's (`comment`, `blade_comment`, ...); its PHP's are
+/// its compiled view's, a document of its own (`ast.embedded`), whose `comment` names PHP's alone.
 #[test]
-fn blade_comment_names_the_templates_comments_and_its_embedded_phps() {
+fn blade_comments_are_each_documents_own() {
     let source = "{{-- blade --}}\n<!-- html -->\n@php\n    // note\n    $x = 1; /** @var int */\n@endphp\n<?php # tag ?>\n";
-    assert_eq!(
+    let template = |kind: &str| {
         found(
             "blade",
             "blade",
             "a.blade.php",
-            json!({ "kind": "comment" }),
-            source
-        ),
-        [
-            "{{-- blade --}}",
-            "<!-- html -->",
-            "// note",
-            "/** @var int */",
-            "# tag "
-        ]
-    );
-    // A doc comment's tree reads the embedded PHP's comments only, now named by `kind`.
-    let doc = json!({ "kind": "comment", "parse": { "grammar": "phpDoc", "has": { "stopBy": "end", "kind": "php_doc_tag" } } });
+            json!({ "kind": kind }),
+            source,
+        )
+    };
+    // `comment` names the template's comments of every kind.
+    assert_eq!(template("comment"), ["{{-- blade --}}", "<!-- html -->"]);
+    assert_eq!(template("blade_comment"), ["{{-- blade --}}"]);
+    let view = |rule: Value| {
+        let capabilities: Value =
+            serde_json::from_str(CAPABILITIES).expect("capabilities are JSON");
+        let compiled = compile_document_with(
+            clause_document(json!({
+                "id": "comments",
+                "forbid": { "ast": { "language": "blade", "embedded": "compiled-view", "rule": rule } },
+                "violation": violation(),
+            })),
+            &capabilities,
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        matched_texts(
+            &evaluate_file(&compiled, "blade", "a.blade.php", source),
+            source,
+        )
+    };
     assert_eq!(
-        found("blade", "blade", "a.blade.php", doc, source),
+        view(json!({ "kind": "comment" })),
+        ["// note", "/** @var int */", "# tag "]
+    );
+    // A doc comment's tree reads the view's comments.
+    assert_eq!(
+        view(
+            json!({ "kind": "comment", "parse": { "grammar": "phpDoc", "has": { "stopBy": "end", "kind": "php_doc_tag" } } })
+        ),
         ["/** @var int */"]
     );
 }

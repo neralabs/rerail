@@ -8,12 +8,12 @@
 use super::AstMatcher;
 use super::each::{self, HostRanges};
 use super::exported::export;
-use super::parse::host_map;
 use super::parse::parsed_tree;
 use super::util::{THREE_VALUED, UNKNOWN};
 use super::value::Reading;
 use crate::code_rule_dsl::identifier::python_identifier;
 use crate::code_rule_dsl::literal::{Grammar, Parsed, SubDoc, offsets, rust_format};
+use crate::code_rule_dsl::origin::Origin;
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::Matcher;
 use ast_grep_core::meta_var::MetaVarEnv;
@@ -294,13 +294,13 @@ impl FormatArgs {
                 })
                 .collect();
             let mut inner = Cow::Owned(MetaVarEnv::new());
-            let hosts = each::active().then(|| HostRanges::enter(host_map(&tree)));
+            let hosts = each::active().then(|| HostRanges::enter(tree.clone()));
             let found = first(rule, nodes, &mut inner);
             drop(hosts);
             if found == Some(true) {
                 for name in &self.exports {
                     if let Some(capture) = inner.get_match(name)
-                        && let Some(range) = tree.host_range(capture.node_id())
+                        && let Some(range) = tree.of_node(capture.node_id(), capture.range())
                     {
                         export(&mut env_after, name, &capture.text(), range);
                     }

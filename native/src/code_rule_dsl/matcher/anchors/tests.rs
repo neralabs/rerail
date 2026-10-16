@@ -27,6 +27,8 @@ fn compile_rule(
         conflicts: None,
         captures: Default::default(),
         calls: None,
+        documents: None,
+        side: crate::code_rule_dsl::compile::documents::Side::Host,
     };
     crate::code_rule_dsl::compile::compile_ast_rule(rule, language, path, gaps, &utils)
 }
@@ -795,17 +797,15 @@ fn sibling_projections_are_exact_around_zero_width_nodes_and_the_root() {
     }
 }
 
-// A Blade tape's embedded program is the root's last child, spanning the template bytes it
-// stands for, so it overlaps the template's nodes: for `{{ $x }}` the program and the template's
-// `echo` both span the echo. ast-grep's walks are byte-positioned there too (`next` skips the
-// program, `prev_all` from the program starts at the echo), and an exact plan, and its negation,
-// must select what the matcher matches.
+// A Blade file is two documents (`embed`): the template's tree, whose lexer errors are zero-width
+// ERROR leaves, and its compiled view, whose markers stand among its statements. In each, an exact
+// plan, and its negation, must select what the matcher matches.
 #[test]
-fn sibling_projections_are_exact_among_blade_overlapping_siblings() {
+fn sibling_projections_are_exact_in_both_blade_documents() {
     let mut rules = Vec::new();
     for relation in ["precedes", "follows"] {
         for stop in ["neighbor", "end"] {
-            for target in ["", "^\\{\\{", "^\\$", "^[a-z]"] {
+            for target in ["", "^\\{\\{", "^\\$", "^[a-z]", "^;"] {
                 rules.push(json!({ "regex": "", relation: { "stopBy": stop, "regex": target } }));
             }
         }
@@ -814,27 +814,18 @@ fn sibling_projections_are_exact_among_blade_overlapping_siblings() {
         "{{ $x }}",
         "<p>{{ $x }}</p>\n{!! $y !!}\n",
         "@if($a)\n{{ $b }}\n@endif\n",
+        "@foreach($xs as $x)\n{{ $loop->index }}\n@endforeach\n{{-- open\n",
     ];
     for source in sources {
         let grammar = Grammar::new(GrammarDialect::Blade).unwrap();
         let image = TapeImage::encode_template(&grammar, source, &|| false).unwrap();
-        let tape = AstGrep::doc(
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(),
-        );
-        let root = tape.root();
-        let program = root.children().last().expect("the embedded program");
-        assert_eq!(program.kind(), "program", "{source:?}");
-        let start = program.range().start;
-        assert!(
-            root.children()
-                .any(|child| child.node_id() != program.node_id() && child.range().end > start),
-            "{source:?}: the program overlaps a template node"
-        );
-        if source == "{{ $x }}" {
-            // No zero-width node: only the overlap puts the walk off the preorder ordinals.
-            assert!(root.dfs().all(|node| !node.range().is_empty()));
-        }
-        exact_sibling_projection(&tape, source, &rules);
+        let host =
+            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+        let guests = host.guests().unwrap();
+        let view = guests.first().expect("the compiled view").doc.clone();
+        let text = view.get_source().clone();
+        exact_sibling_projection(&AstGrep::doc(host), source, &rules);
+        exact_sibling_projection(&AstGrep::doc(view), &text, &rules);
     }
 }
 

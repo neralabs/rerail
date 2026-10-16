@@ -2,11 +2,12 @@
 //! program `illuminate/view` 13.34.0's `BladeCompiler` compiles the template to, without the
 //! bookkeeping Blade's runtime adds (`$__env`, `e()`, output buffering).
 //!
-//! The program is written out as PHP text and parsed with tree-sitter-php's PHP-only grammar; each
-//! of its nodes maps back to the template bytes it came from. The PHP a template spells (an echo's
-//! expression, a directive's arguments, a `@php` block, a component's bound attribute) is copied
-//! byte for byte, so its nodes map exactly onto the template. The PHP Blade wraps it in is
-//! written around it, each token anchored to the Blade token it stands for:
+//! The program is written out as PHP text and parsed with tree-sitter-php's PHP-only grammar: a
+//! document of its own (`embed`), whose text maps back to the template bytes it came from. The PHP
+//! a template spells (an echo's expression, a directive's arguments, a `@php` block, a
+//! component's bound attribute) is copied byte for byte, so its nodes stand for exactly those
+//! template bytes. The PHP Blade wraps it in is written around it, each token anchored to the
+//! Blade token it stands for:
 //!
 //! | Template | Program |
 //! |---|---|
@@ -53,27 +54,25 @@
 //! structure.
 
 use crate::code_rule_dsl::blade::forte::tree::{BladeNode, BladeTree, parse_tree};
-use crate::code_rule_dsl::embed::segments::SegmentMap;
+use crate::code_rule_dsl::embed::{Program, segments::SegmentMap};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::php_literal::literal_end;
 use ast_grep_core::source::SgNode;
 use ast_grep_language::LanguageExt;
 use std::ops::Range;
-use tree_sitter::{Node as TsNode, Parser, Tree};
+#[cfg(test)]
+use tree_sitter::Node as TsNode;
+use tree_sitter::{Parser, Tree};
 
 /// The embedded PHP program and its map back to the template.
 pub(crate) struct View {
+    text: String,
     segments: SegmentMap,
     tree: Tree,
-}
-
-/// A template as Blade reads it (`View::build`).
-pub(crate) struct Reading {
-    /// The PHP it embeds, `None` where it embeds none.
-    pub(crate) view: Option<View>,
-    /// Its syntax errors, sorted: Forte's, but where Forte read a directive's arguments Blade
-    /// does not (`Emitter::stray_arguments`), those of the template Blade reads there instead.
-    pub(crate) syntax_errors: Vec<Range<usize>>,
+    /// The template's syntax errors, sorted: Forte's, but where Forte read a directive's arguments
+    /// Blade does not (`Emitter::stray_arguments`), those of the template Blade reads there
+    /// instead.
+    syntax_errors: Vec<Range<usize>>,
 }
 
 /// Directives Blade compiles to control flow (a condition, a loop, a `@php` block, a guard):
@@ -275,13 +274,14 @@ pub(crate) fn compiles(name: &str) -> bool {
 }
 
 impl View {
-    /// The template `tree` reads as Blade reads it. `Err` where `budget` interrupted it (polled
-    /// before each sub-template is parsed, `Emitter::template`).
+    /// The program the template `tree` embeds, as Blade reads it; `None` where it embeds none.
+    /// `Err` where `budget` interrupted it (polled before each sub-template is parsed,
+    /// `Emitter::template`).
     pub(crate) fn build(
         tree: &BladeTree,
         template: &str,
         budget: &dyn Fn() -> bool,
-    ) -> Result<Reading, String> {
+    ) -> Result<Option<Self>, String> {
         let mut emitter = Emitter {
             template,
             out: String::new(),
@@ -301,38 +301,63 @@ impl View {
         if emitter.interrupted {
             return Err("tape operation interrupted".into());
         }
+        if emitter.segments.is_empty() {
+            return Ok(None);
+        }
         let syntax_errors = syntax_errors(tree.error_ranges(), &emitter.strays);
-        let view = (!emitter.segments.is_empty())
-            .then(|| {
-                let mut parser = Parser::new();
-                parser
-                    .set_language(&GrammarDialect::Php.get_ts_language())
-                    .ok()?;
-                parser.parse(&emitter.out, None)
-            })
-            .flatten()
-            .map(|tree| Self {
-                segments: emitter.segments,
-                tree,
-            });
-        Ok(Reading {
-            view,
+        let mut parser = Parser::new();
+        if parser
+            .set_language(&GrammarDialect::Php.get_ts_language())
+            .is_err()
+        {
+            return Ok(None);
+        }
+        let Some(program) = parser.parse(&emitter.out, None) else {
+            return Ok(None);
+        };
+        let mut segments = emitter.segments;
+        segments.index();
+        Ok(Some(Self {
+            text: emitter.out,
+            segments,
+            tree: program,
             syntax_errors,
-        })
+        }))
     }
 
+    /// The view as the template's embedded program (`compiled-view`): PHP, read through the
+    /// template's syntax errors.
+    pub(crate) fn into_program(self) -> Program {
+        Program {
+            dialect: GrammarDialect::Php,
+            tree: self.tree,
+            text: self.text,
+            segments: self.segments,
+            host_errors: self.syntax_errors,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn root(&self) -> TsNode<'_> {
         self.tree.root_node()
     }
 
-    /// The template bytes a node of the program stands for.
-    pub(crate) fn span(&self, node: TsNode<'_>) -> Range<usize> {
-        self.segments.span(node)
+    /// The program's text.
+    #[cfg(test)]
+    pub(crate) fn text(&self) -> &str {
+        &self.text
     }
 
-    /// Whether a node is part of a placeholder the view does not keep.
-    pub(crate) fn omitted(&self, node: TsNode<'_>) -> bool {
-        self.segments.omitted(node)
+    /// Where the program's text stands in the template.
+    #[cfg(test)]
+    pub(crate) fn segments(&self) -> &SegmentMap {
+        &self.segments
+    }
+
+    /// The template's syntax errors as Blade reads them.
+    #[cfg(test)]
+    pub(crate) fn syntax_errors(&self) -> &[Range<usize>] {
+        &self.syntax_errors
     }
 
     /// The template ranges the program copies byte for byte, in program order.

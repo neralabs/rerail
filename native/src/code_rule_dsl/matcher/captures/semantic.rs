@@ -24,6 +24,11 @@ pub(super) fn collect_binds(
         // A parsed tree's rule runs in an environment of its own; its captures come back as exports
         // (read through the rule: a utility's may not have been compiled when `exports` was).
         Semantic::Parse(test) => parse_exported(&test.rule, names),
+        Semantic::Embedded(test) => {
+            for rule in test.rules() {
+                parse_exported(rule, names);
+            }
+        }
         Semantic::Capture(name) => {
             names.insert(name.clone());
         }
@@ -81,6 +86,7 @@ pub(super) fn reads(
         | Semantic::Arguments(_)
         | Semantic::Parse(_)
         | Semantic::Host(_)
+        | Semantic::Embedded(_)
         | Semantic::Capture(_) => Names::new(),
     }
 }
@@ -119,6 +125,11 @@ pub(super) fn collect_mentions(
             names.extend(arguments.bind.iter().map(|(name, _)| name.clone()));
         }
         Semantic::Parse(test) => parse_exported(&test.rule, names),
+        Semantic::Embedded(test) => {
+            for rule in test.rules() {
+                parse_exported(rule, names);
+            }
+        }
         Semantic::Capture(name) => {
             names.insert(name.clone());
         }
@@ -154,6 +165,11 @@ pub(super) fn collect_in(
         }
         Semantic::Arguments(arguments) => {
             for (name, _) in &arguments.bind {
+                merge_capture(variables, name, Capture::Single);
+            }
+        }
+        Semantic::Embedded(test) => {
+            for name in &test.exports {
                 merge_capture(variables, name, Capture::Single);
             }
         }
@@ -202,6 +218,11 @@ fn exported_in(
             names.extend(pattern.defined_vars().into_iter().map(str::to_owned));
         }
         AstMatcher::Semantic(Semantic::Parse(test)) => exported_in(&test.rule, summaries, names),
+        AstMatcher::Semantic(Semantic::Embedded(test)) => {
+            for rule in test.rules() {
+                exported_in(rule, summaries, names);
+            }
+        }
         AstMatcher::Util(util) => names.extend(utility_exported(util, summaries)),
         // A call returns the parameters its utility exports, under the caller's names.
         AstMatcher::Call(call) => {

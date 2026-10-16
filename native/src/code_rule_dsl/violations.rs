@@ -28,6 +28,7 @@ mod suppression;
 pub(crate) use super::lines::Span;
 use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::origin::InFile;
 use ast_grep_core::matcher::NodeMatch;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::replacer::{Content, Replacer, TemplateFix};
@@ -453,8 +454,12 @@ pub(super) fn bind(
             )));
         };
         // A query's matchers are the dialects of one code-rule language, so of one family, which
-        // honours its own linters' comments or none.
-        let family = matchers.first().map(|grammar| Family::of(grammar.language));
+        // honours its own linters' comments or none: the file's, for a query over the program
+        // it embeds too.
+        let family = matchers.first().map(|grammar| match grammar.document {
+            Some(via) => via.host_family(),
+            None => Family::of(grammar.language),
+        });
         let language = family.map_or("empty", |family| with_adapter!(family, A => A::LABEL));
         for linter in suppress.requested() {
             if !family.is_some_and(|family| family.honours(linter)) {
@@ -826,7 +831,7 @@ pub(super) fn ast_output<D: Doc>(
     language: GrammarDialect,
     matched: &NodeMatch<'_, D>,
     groups: &[NodeGroup],
-    span: impl Fn(usize, usize) -> Span,
+    place: &InFile<'_>,
 ) -> (Option<String>, Option<Value>) {
     let env = matched.get_env();
     let message = violation.message_template.as_ref().map(|template| {
@@ -881,8 +886,11 @@ pub(super) fn ast_output<D: Doc>(
                         (range, template.generate_replacement(&target))
                     }
                 };
+                // A fix rewrites the file's bytes: only those the range copies (in an embedded
+                // program, `embed`, the program wrote the rest).
+                let range = place.copied(range)?;
                 Some(json!({
-                    "span": span(range.start, range.end),
+                    "span": place.span(range),
                     "text": <D::Source as Content>::encode_bytes(&bytes),
                 }))
             }),

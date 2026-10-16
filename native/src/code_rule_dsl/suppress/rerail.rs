@@ -16,9 +16,14 @@
 //! A violation is silenced when the byte its anchor names falls in a range covered for its rule's
 //! id: the anchor's start, or for an end anchor the witness's last byte (the point where a witness
 //! ends is where the next node may start).
+//!
+//! A file that embeds code (`embed`) is read document by document: its own tree's comments, then
+//! each embedded program's, whose covers are the file bytes the covered nodes stand for. Only the
+//! file's own tree's comments may cover the whole file.
 
-use crate::code_rule_dsl::lines::LineTable;
-use ast_grep_core::{Doc, Node};
+use crate::code_rule_dsl::origin::InFile;
+use crate::code_rule_dsl::tape::{TapeDoc, tape_doc};
+use ast_grep_core::{AstGrep, Doc, Node};
 use std::ops::Range;
 
 /// The directive's name.
@@ -40,14 +45,31 @@ pub(crate) struct RerailIgnores {
 }
 
 impl RerailIgnores {
-    /// Reads every comment of the file `root` is the root of; `source` is its whole text.
-    pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
+    /// Reads every comment of the file whose own tree `root` is the root of (`source` is its
+    /// text), then each embedded program's (`embed`); every cover is a range of the file.
+    pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
+        let file = InFile::of(root).expect("a file's own tree lies in its file");
+        let mut ignores = Self::read_tree(root, source, &file, true);
+        let guests = tape_doc(root).and_then(TapeDoc::guests);
+        for guest in guests.iter().flat_map(|guests| guests.iter()) {
+            let program = AstGrep::doc(guest.doc.clone());
+            let file = InFile::tape(&guest.doc);
+            let read = Self::read_tree(&program.root(), guest.doc.get_source(), &file, false);
+            ignores.covers.extend(read.covers);
+        }
+        ignores
+    }
+
+    /// Reads every comment of the tree `root` is the root of; `source` is its whole text, `file`
+    /// the file it lies in. A comment before the tree's first code covers the whole file only
+    /// where `whole`.
+    fn read_tree<D: Doc>(root: &Node<'_, D>, source: &str, file: &InFile<'_>, whole: bool) -> Self {
         let mut covers = Vec::new();
         // A file that never spells the directive holds none: no walk.
         if !source.contains(DIRECTIVE) {
             return Self { covers };
         }
-        let mut first = None;
+        let mut first = if whole { None } else { Some(0) };
         for comment in root.dfs().filter(is_comment) {
             let range = comment.range();
             let rules = rule_ids(&source[range.clone()]);
@@ -58,7 +80,7 @@ impl RerailIgnores {
             let covered = if range.end <= first {
                 Some(0..usize::MAX)
             } else {
-                covered(&comment, source, lines)
+                covered(&comment, source, file)
             };
             if let Some(range) = covered {
                 covers.push(Cover {
@@ -179,15 +201,23 @@ fn first_code<D: Doc>(root: &Node<'_, D>, source: &str) -> usize {
 
 /// Whether a node is code a directive can cover: named, no comment, not white space alone.
 fn is_code<D: Doc>(node: &Node<'_, D>, source: &str) -> bool {
-    node.is_named() && !is_comment(node) && !source[node.range()].trim().is_empty()
+    node.is_named()
+        && !is_comment(node)
+        && !source[node.range()].trim().is_empty()
+        // An embedded program's node its embedder wrote whole (a Blade directive's marker) is no
+        // code of the file's.
+        && InFile::of(node).is_none_or(|file| file.copies(node.range()))
 }
 
-/// The range a directive comment past the file's first code covers.
-fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, lines: &LineTable) -> Option<Range<usize>> {
-    let start = comment.range().start;
+/// The file range a directive comment past its tree's first code covers; the tree's nodes and
+/// lines are placed in `file` (an embedded program's comment on a line of its own is one in the
+/// file, whatever its embedder wrote before it).
+fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, file: &InFile<'_>) -> Option<Range<usize>> {
+    let start = file.node(comment).start;
+    let lines = file.lines();
     let line = lines.line(start);
     let line_start = lines.start(line);
-    let before = &source[line_start..start];
+    let before = &file.source()[line_start..start];
     if before.trim().is_empty() {
         // Leading: the next code among its siblings. Python places a comment before a body's
         // first statement beside the body (`block`, which starts at that statement), not in it:
@@ -199,7 +229,7 @@ fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, lines: &LineTable) -> Op
                     .then(|| node.children().find(|child| is_code(child, source)))
                     .flatten()
                     .filter(|child| child.range().start == node.range().start);
-                return Some(first.unwrap_or(node).range());
+                return Some(file.node(&first.unwrap_or(node)));
             }
             next = node.next();
         }
@@ -219,8 +249,8 @@ fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, lines: &LineTable) -> Op
         if is_comment(&node) || source[node.range()].trim().is_empty() {
             continue;
         }
-        let range = node.range();
-        if lines.line(range.end.saturating_sub(1).max(range.start)) != line {
+        let at = file.node(&node);
+        if lines.line(at.end.saturating_sub(1).max(at.start)) != line {
             break;
         }
         if !node.is_named() {
@@ -231,11 +261,11 @@ fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, lines: &LineTable) -> Op
             break;
         }
         if !separated {
-            return Some(range);
+            return Some(at);
         }
-        let end = *end.get_or_insert(range.end);
-        if range.start <= code {
-            return Some(range.start..end);
+        let end = *end.get_or_insert(at.end);
+        if at.start <= code {
+            return Some(at.start..end);
         }
     }
     // Otherwise the smallest construct holding the line's code: the comment sits inside it.
@@ -243,8 +273,9 @@ fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, lines: &LineTable) -> Op
     while let Some(node) = ancestor {
         let parent = node.parent();
         parent.as_ref()?;
-        if node.range().start <= code {
-            return Some(node.range());
+        let at = file.node(&node);
+        if at.start <= code {
+            return Some(at);
         }
         ancestor = parent;
     }
@@ -255,7 +286,6 @@ fn covered<D: Doc>(comment: &Node<'_, D>, source: &str, lines: &LineTable) -> Op
 mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::lines::Terminators;
     use crate::code_rule_dsl::test_support::*;
     use ast_grep_language::LanguageExt;
     use serde_json::{Value, json};
@@ -301,8 +331,7 @@ mod tests {
     /// The covered ranges of a TypeScript, Python or PHP source, as the texts they cover.
     fn covered_texts(language: GrammarDialect, source: &str) -> Vec<(String, Vec<String>)> {
         let root = language.ast_grep(source);
-        let lines = LineTable::new(source, Terminators::of(language));
-        RerailIgnores::read(&root.root(), source, &lines)
+        RerailIgnores::read(&root.root(), source)
             .covers
             .into_iter()
             .map(|cover| {
@@ -359,16 +388,19 @@ mod tests {
         );
     }
 
-    /// One code rule, `id`, reporting each node of `kind` in `language`, with `suppress` where
-    /// given.
+    /// One code rule, `id`, reporting each node of `kind` in `language` (a Blade template's
+    /// compiled view), with `suppress` where given.
     fn rule(id: &str, language: &str, kind: &str, suppress: Option<Value>) -> Value {
         let mut violation = violation();
         if let Some(suppress) = suppress {
             violation["suppress"] = suppress;
         }
+        let mut ast = json!({ "language": language, "rule": { "kind": kind } });
+        if language == "blade" {
+            ast["embedded"] = json!("compiled-view");
+        }
         json!({ "format": "rerail.policy/v1", "id": id, "revision": 1, "mode": "block",
-            "clauses": [{ "id": "c", "violation": violation,
-                "forbid": { "ast": { "language": language, "rule": { "kind": kind } } } }] })
+            "clauses": [{ "id": "c", "violation": violation, "forbid": { "ast": ast } }] })
     }
 
     fn reported(document: Value, language: &str, path: &str, source: &str) -> Vec<String> {
