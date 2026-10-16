@@ -444,7 +444,9 @@ fn join(directory: &str, path: &str) -> String {
     }
 }
 
-/// `path` with `.` and `..` resolved; `None` where it leaves the root.
+/// `path` with `.` and `..` resolved; `None` where it leaves the root, or where a name holds a
+/// `\`, `:` or NUL: on Windows such a name is another separator, a drive (`C:`) or a UNC share
+/// (`\\host\share`), which `Path::join` would read in place of the workspace.
 fn normalize(path: &str) -> Option<String> {
     let mut names = Vec::new();
     for name in path.split('/') {
@@ -453,6 +455,7 @@ fn normalize(path: &str) -> Option<String> {
             ".." => {
                 names.pop()?;
             }
+            name if name.contains(['\\', ':', '\0']) => return None,
             name => names.push(name),
         }
     }
@@ -639,6 +642,14 @@ pub(crate) fn summarize_bounded(path: &str, source: &str) -> Option<Summary> {
 /// below `root` (`Config::read`): regular files of at most 1 MiB.
 pub(crate) fn config_on_disk(root: &Path, folder: &str) -> Config {
     let read = |path: &str| {
+        // Only a path of plain names below `root`: `join` reads an absolute or prefixed one (a
+        // Windows drive or UNC share) in place of the workspace.
+        if !Path::new(path)
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+        {
+            return None;
+        }
         let file = root.join(path);
         let metadata = std::fs::symlink_metadata(&file).ok()?;
         (metadata.is_file() && metadata.len() <= MAX_SOURCE_BYTES)

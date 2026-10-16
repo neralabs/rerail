@@ -444,6 +444,31 @@ fn a_configuration_with_a_byte_order_mark_reads_as_typescript_reads_it() {
 }
 
 #[test]
+fn an_extends_naming_a_drive_or_share_reads_nothing_outside_the_workspace() {
+    // Each base would be read on Windows from a drive or an SMB share, not the workspace: the
+    // chain reads none of them, so their `jsxImportSource` is absent, whatever the reader holds.
+    let base = "{ \"compilerOptions\": { \"jsxImportSource\": \"preact\" } }";
+    for extends in [
+        "./x/../C:/Users/v/tsconfig.json",
+        "./x/../\\\\\\\\host\\\\share/tsconfig.json",
+        "./x/..\\\\..\\\\tsconfig.base.json",
+        "./tsconfig\\u0000.json",
+    ] {
+        let tsconfig = format!("{{ \"extends\": \"{extends}\" }}");
+        let read = |path: &str| {
+            Some(if path == "tsconfig.json" {
+                tsconfig.clone()
+            } else {
+                base.to_owned()
+            })
+        };
+        let config = Config::read("", &read);
+        assert_eq!(config.jsx_import_source(), None, "{extends}");
+        assert_eq!(config.files(), ["tsconfig.json"], "{extends}");
+    }
+}
+
+#[test]
 fn paths_beyond_the_pattern_and_target_bounds_are_ignored() {
     // Patterns past the first MAX_PATHS_PATTERNS (in key order) map nothing.
     let patterns = (0..MAX_PATHS_PATTERNS + 6)
