@@ -4,19 +4,13 @@
 //! it joins terminal rows with files, nodes and facts, and no scalar function runs a matcher for
 //! each joined row.
 //!
-//! Two access paths share one table:
-//! - With `program_index` (the terminal), and optionally `file_index` (equality or an `IN` set)
-//!   and `start_ordinal`, the table executes that terminal over every file of the batch the first
-//!   time any row of it is asked for, caches the rows, and answers every later call, however many
-//!   joined rows ask, from that cache. SQLite's nested loops call a table once per outer row; the
-//!   cache is what keeps that from being a terminal execution per row.
-//! - `rerail_matches(batch)` alone executes every file/program pair once and returns all match,
-//!   capture and completion rows: the transducer batch this module started as. Only a batch of
-//!   transducer programs, which tests build, has it; production statements always name the
-//!   terminal, and without one the table fails.
+//! `rerail_matches(batch)` executes every demanded file/program pair once when SQLite first opens
+//! the virtual table. It retains the normalized match, capture, and completion rows for every
+//! later scan. Program and file predicates filter those rows in SQLite. They never split the batch
+//! into separate executions.
 
 #[cfg(test)]
-use super::{Error, Output, Program, execute_batch};
+use super::Program;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::tape::TapeDoc;
 #[cfg(test)]
@@ -27,7 +21,6 @@ use ast_grep_core::{AstGrep as Root, Doc, Node};
 use foldhash::{HashMap, HashMapExt};
 use rayon::prelude::*;
 use regex::Regex;
-use rusqlite::fallible_iterator::FallibleIterator;
 use rusqlite::ffi;
 use rusqlite::vtab::{
     Context, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConfig, VTabConnection,
@@ -44,18 +37,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 const MODULE_NAME: &CStr = c"rerail_matches";
 const BATCH_COLUMN: c_int = 0;
-const FILE_COLUMN: c_int = 1;
-const PROGRAM_COLUMN: c_int = 2;
-const START_COLUMN: c_int = 4;
-
-/// `idx_num` bits: which constraints `best_index` consumed, in argv order after the batch.
+/// `idx_num` records the required batch equality constraint.
 const USE_BATCH: c_int = 1;
-const USE_PROGRAM: c_int = 2;
-const USE_FILE_EQ: c_int = 4;
-const USE_FILE_IN: c_int = 8;
-const USE_START: c_int = 16;
-
-const NEEDS_PROGRAMS: &str = "rerail_matches without a program constraint needs programs only";
 
 #[cfg(test)]
 thread_local! {
@@ -336,10 +319,8 @@ struct MatchBatch {
     cells: Vec<TerminalCell>,
     files: Vec<BatchFile>,
     deadline: Option<crate::code_rule_dsl::budget::MatchDeadline>,
-    /// The transducer batch's rows (`MatchBatch::rows`).
-    #[cfg(test)]
-    rows: OnceLock<Result<Arc<Vec<MatchRow>>, String>>,
-    #[cfg(test)]
+    /// Every terminal's rows, materialized by the first SQL scan of this batch.
+    rows: OnceLock<Arc<Vec<MatchRow>>>,
     executions: AtomicUsize,
     filters: AtomicUsize,
     #[cfg(test)]
@@ -349,41 +330,16 @@ struct MatchBatch {
 }
 
 impl MatchBatch {
-    #[cfg(test)]
-    fn programs(&self) -> Result<Vec<Program>, String> {
-        self.terminals
-            .iter()
-            .map(|terminal| match terminal {
-                Terminal::Program(program) => Ok(program.clone()),
-                _ => Err(NEEDS_PROGRAMS.into()),
-            })
-            .collect()
-    }
-
-    #[cfg(test)]
-    fn tapes(&self) -> Vec<TapeDoc> {
-        self.files
-            .iter()
-            .filter(|file| file.root.is_some())
-            .map(|file| file.tape().clone())
-            .collect()
-    }
-
-    /// Every file/program pair in one pass: the transducer batch.
-    #[cfg(test)]
-    fn rows(&self) -> Result<Arc<Vec<MatchRow>>, String> {
-        self.rows
-            .get_or_init(|| {
-                self.executions.fetch_add(1, Ordering::Relaxed);
-                let programs = self.programs()?;
-                let files = self.tapes();
-                let result = execute_batch(&programs, &files, None);
-                match result {
-                    Ok(outputs) => Ok(Arc::new(self.output_rows(outputs))),
-                    Err(error) => Ok(Arc::new(self.failure_rows(error))),
-                }
-            })
-            .clone()
+    /// Every file/program pair in one pass, demanded by SQLite and retained for later scans.
+    fn rows(&self) -> Arc<Vec<MatchRow>> {
+        Arc::clone(self.rows.get_or_init(|| {
+            self.executions.fetch_add(1, Ordering::Relaxed);
+            let mut rows = Vec::new();
+            for program in 0..self.terminals.len() {
+                rows.extend(self.terminal_rows(program, None, None));
+            }
+            Arc::new(rows)
+        }))
     }
 
     /// One terminal over every file of the batch, executed once and cached.
@@ -445,69 +401,6 @@ impl MatchBatch {
         let found = pattern.match_at(file, node).map(Arc::new);
         cached.insert((file_index, node), found.clone());
         found
-    }
-
-    #[cfg(test)]
-    fn output_rows(&self, outputs: Vec<Vec<Vec<Output>>>) -> Vec<MatchRow> {
-        let mut rows = Vec::new();
-        for (file, programs) in outputs.into_iter().enumerate() {
-            for (program, matches) in programs.into_iter().enumerate() {
-                if matches.is_empty() {
-                    rows.push(self.status_row(file, program, true, None));
-                    continue;
-                }
-                for (match_index, output) in matches.into_iter().enumerate() {
-                    if output.captures.is_empty() {
-                        rows.push(MatchRow {
-                            batch: self.token,
-                            file: file as i64,
-                            program: program as i64,
-                            match_index: Some(match_index as i64),
-                            start_ordinal: Some(i64::from(output.start)),
-                            output_label: Some(i64::from(output.label)),
-                            capture_index: None,
-                            capture_label: None,
-                            capture_node: None,
-                            start_byte: None,
-                            end_byte: None,
-                            complete: 1,
-                            error_code: None,
-                        });
-                        continue;
-                    }
-                    for (capture_index, capture) in output.captures.into_iter().enumerate() {
-                        rows.push(MatchRow {
-                            batch: self.token,
-                            file: file as i64,
-                            program: program as i64,
-                            match_index: Some(match_index as i64),
-                            start_ordinal: Some(i64::from(output.start)),
-                            output_label: Some(i64::from(output.label)),
-                            capture_index: Some(capture_index as i64),
-                            capture_label: Some(i64::from(capture.label)),
-                            capture_node: Some(i64::from(capture.node)),
-                            start_byte: Some(capture.span.start as i64),
-                            end_byte: Some(capture.span.end as i64),
-                            complete: 1,
-                            error_code: None,
-                        });
-                    }
-                }
-            }
-        }
-        rows
-    }
-
-    #[cfg(test)]
-    fn failure_rows(&self, error: Error) -> Vec<MatchRow> {
-        let code = format!("{error:?}");
-        (0..self.files.len())
-            .flat_map(|file| {
-                let code = code.clone();
-                (0..self.terminals.len())
-                    .map(move |program| self.status_row(file, program, false, Some(code.clone())))
-            })
-            .collect()
     }
 
     fn status_row(
@@ -855,9 +748,7 @@ impl MatchRegistry {
             cells,
             files,
             deadline,
-            #[cfg(test)]
             rows: OnceLock::new(),
-            #[cfg(test)]
             executions: AtomicUsize::new(0),
             filters: AtomicUsize::new(0),
             #[cfg(test)]
@@ -1000,68 +891,23 @@ unsafe impl<'vtab> VTab<'vtab> for MatchTable {
     }
 
     fn best_index(&self, info: &mut IndexInfo) -> SqlResult<bool> {
-        let mut slots: [Option<usize>; 4] = [None; 4];
-        let mut file_in = false;
         for (index, constraint) in info.constraints().enumerate() {
-            if !constraint.is_usable()
-                || constraint.operator() != IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
+            if constraint.column() == BATCH_COLUMN
+                && constraint.is_usable()
+                && constraint.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
             {
-                continue;
-            }
-            let slot = match constraint.column() {
-                BATCH_COLUMN => 0,
-                PROGRAM_COLUMN => 1,
-                FILE_COLUMN => 2,
-                START_COLUMN => 3,
-                _ => continue,
-            };
-            slots[slot].get_or_insert(index);
-        }
-        if let Some(index) = slots[2] {
-            file_in = info.is_in_constraint(index)? && info.set_in_constraint(index, true)?;
-        }
-        let Some(_) = slots[0] else {
-            info.set_idx_num(0);
-            info.set_estimated_cost(f64::MAX);
-            info.set_estimated_rows(i64::MAX);
-            return Ok(true);
-        };
-        // Without a terminal the whole transducer batch is read (test batches only); a start
-        // ordinal alone does not narrow it.
-        if slots[1].is_none() {
-            slots[2] = None;
-            slots[3] = None;
-        }
-        let mut idx_num = 0;
-        let mut argv = 0;
-        let bits = [
-            USE_BATCH,
-            USE_PROGRAM,
-            if file_in { USE_FILE_IN } else { USE_FILE_EQ },
-            USE_START,
-        ];
-        let used = slots;
-        for (slot, constraint) in used.iter().enumerate() {
-            if let Some(constraint) = constraint {
-                argv += 1;
-                idx_num |= bits[slot];
-                let mut usage = info.constraint_usage(*constraint);
-                usage.set_argv_index(argv);
+                let mut usage = info.constraint_usage(index);
+                usage.set_argv_index(1);
                 usage.set_omit(true);
+                info.set_idx_num(USE_BATCH);
+                info.set_estimated_cost(100_000.0);
+                info.set_estimated_rows(100_000);
+                return Ok(true);
             }
         }
-        let (cost, rows) = if idx_num & USE_START != 0 {
-            (2.0, 2)
-        } else if idx_num & (USE_FILE_EQ | USE_FILE_IN) != 0 {
-            (50.0, 50)
-        } else if idx_num & USE_PROGRAM != 0 {
-            (5_000.0, 5_000)
-        } else {
-            (100_000.0, 100_000)
-        };
-        info.set_idx_num(idx_num);
-        info.set_estimated_cost(cost);
-        info.set_estimated_rows(rows);
+        info.set_idx_num(0);
+        info.set_estimated_cost(f64::MAX);
+        info.set_estimated_rows(i64::MAX);
         Ok(true)
     }
 
@@ -1085,11 +931,6 @@ struct MatchCursor<'vtab> {
     phantom: PhantomData<&'vtab MatchTable>,
 }
 
-fn nonnegative(value: i64, what: &str) -> SqlResult<usize> {
-    usize::try_from(value)
-        .map_err(|_| rusqlite::Error::ModuleError(format!("rerail_matches {what} is negative")))
-}
-
 unsafe impl VTabCursor for MatchCursor<'_> {
     fn filter(
         &mut self,
@@ -1108,49 +949,7 @@ unsafe impl VTabCursor for MatchCursor<'_> {
         })?;
         batch.filters.fetch_add(1, Ordering::Relaxed);
         self.position = 0;
-        if idx_num & USE_PROGRAM == 0 {
-            #[cfg(test)]
-            {
-                self.rows = batch.rows().map_err(rusqlite::Error::ModuleError)?;
-                return Ok(());
-            }
-            #[cfg(not(test))]
-            return Err(rusqlite::Error::ModuleError(NEEDS_PROGRAMS.to_owned()));
-        }
-        let mut argv = 1;
-        let program = nonnegative(args.get::<i64>(argv)?, "program index")?;
-        argv += 1;
-        if program >= batch.terminals.len() {
-            self.rows = Arc::new(Vec::new());
-            return Ok(());
-        }
-        let files = if idx_num & USE_FILE_EQ != 0 {
-            let file = nonnegative(args.get::<i64>(argv)?, "file index")?;
-            argv += 1;
-            Some(vec![file])
-        } else if idx_num & USE_FILE_IN != 0 {
-            let mut files = Vec::new();
-            let mut values = args.in_values(argv)?;
-            while let Some(value) = values.next()? {
-                files.push(nonnegative(value.as_i64()?, "file index")?);
-            }
-            argv += 1;
-            files.sort_unstable();
-            files.dedup();
-            Some(files)
-        } else {
-            None
-        };
-        let start = if idx_num & USE_START != 0 {
-            u32::try_from(args.get::<i64>(argv)?).ok()
-        } else {
-            None
-        };
-        if idx_num & USE_START != 0 && start.is_none() {
-            self.rows = Arc::new(Vec::new());
-            return Ok(());
-        }
-        self.rows = Arc::new(batch.terminal_rows(program, files.as_deref(), start));
+        self.rows = batch.rows();
         Ok(())
     }
 

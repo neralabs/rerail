@@ -537,7 +537,7 @@ fn a_hand_written_statement_matches_the_matcher_and_runs_its_terminal_once_per_b
     assert_eq!(rows.iter().map(|row| row.0).collect::<Vec<_>>(), [0, 2]);
     // One terminal execution for the whole batch, however often SQLite read the table.
     assert_eq!(counters.terminal_executions, [1]);
-    assert!(counters.filters >= FIXTURES.len(), "{counters:?}\n{plan}");
+    assert_eq!(counters.filters, 1, "{counters:?}\n{plan}");
 }
 
 #[test]
