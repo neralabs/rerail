@@ -479,15 +479,17 @@ store directory (`~/.cache/rerail`), and remove `~/.rerail/bin` from `PATH`.
 ## Developing from a checkout
 
 A source checkout builds and tests with Node.js 24+, npm, and Rust; see
-[Develop](../README.md#develop) in the README. After `npm run build`,
+[Develop](../README.md#develop) in the README.
 
 ```sh
-node dist/cli/cli.js install --root "$PWD"
+just rerail-dev --install-bridge
 ```
 
-activates the checkout as `~/.rerail/current` the way `setup` activates a
-published version, writes the launcher, and registers every harness; its hooks
-name `~/.rerail/current`, never the checkout path. Run
+builds the checkout, activates it as `~/.rerail/current` the way `setup`
+activates a published version, writes the launcher, registers every harness,
+and starts the checkout's dev daemon on the default home; its hooks name
+`~/.rerail/current`, never the checkout path. `just nuke-rerail` removes it
+again (with a backup). Run
 `npx @neralabs/rerail setup` to return to the published package. Restart
 harness sessions after every rebuild.
 
