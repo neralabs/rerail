@@ -8,7 +8,7 @@ import { settingWrites } from "./settings-writes.js";
 import { h, setAttr, setText, setContent } from "./dom.js";
 import { ago, plural, shortSessionId } from "./format.js";
 import { data, ui, summary, panelRuleId, titleOf, packOfRule, rulesArray, readScope, setScope, repoName, stateHere, keptPacks, reviewing } from "./state.js";
-import { startPolling, refreshNow, loadSession, showMoreActivity, loadAgents, loadPresence, loadRecommendations, changeScope } from "./poll.js";
+import { startPolling, refreshNow, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier, showMoreActivity, loadAgents, loadPresence, loadRecommendations, changeScope } from "./poll.js";
 import { attachmentWrites, packName } from "./attachments.js";
 import { renderOverview } from "./render/overview.js";
 import { renderRules, allGroupsFolded, sectionKeys, groupRules } from "./render/rules.js";
@@ -239,10 +239,13 @@ async function setRepository(key, verb) {
 /* ---------- navigation ---------- */
 
 function openRule(id, fromPack = null) {
-  if (panelRuleId() !== id) { ui.askOpen = false; resetPanelScroll(); }
+  const changed = panelRuleId() !== id;
+  if (changed) { ui.askOpen = false; resetPanelScroll(); }
   ui.backToPack = fromPack;
   ui.panel = { kind: "rule", id };
   invalidate();
+  // The panel shows the rule's violations in range, which only an open panel loads.
+  if (changed && data.loaded) refreshNow();
 }
 
 function closePanel() {
@@ -270,25 +273,37 @@ function goView(view) {
   enterView(view);
   invalidate();
   window.scrollTo(0, 0);
+  // Each view loads only its own data: the new one's now, not at the next poll.
+  refreshNow();
 }
 
 /** The load behind the current selection, while it runs; a fallback must not pre-empt a deep link's 404 check. */
 let selecting = null;
 
-/** Resolves to the load error (`null` on success) so a caller can tell a missing session from a slow one. */
+/**
+ * Select a session and load it: its head and first transcript page, and its violations (the previous selection's are
+ * dropped). Resolves to the transcript's load error (`null` on success) so a caller can tell a missing session from a slow one.
+ */
 async function selectSession(id, then) {
   ui.selectedSession = id;
   ui.resumeOpen = false;
   invalidate();
   if (id === null) return null;
+  const violations = loadSessionFindings(id).catch(e => console.warn("session violations failed", e));
   const load = loadSession(id).then(() => null, e => e);
   selecting = load;
-  const error = await load;
+  const [error] = await Promise.all([load, violations]);
   if (selecting === load) selecting = null;
   if (error) console.warn("session load failed", error);
   render();
   if (then) then();
   return error;
+}
+
+/** A Load more button: run its load, then show what it brought; a failure is a toast, the button stays. */
+async function loadMore(load) {
+  try { await load(); } catch (error) { toast(`Could not load more: ${error.message}`); }
+  invalidate();
 }
 
 /** No selection, or one the list no longer has: pick what the view would show anyway and load it now, as a click would. */
@@ -496,7 +511,7 @@ const ACTIONS = {
   },
   cmdcopy: text => copyText(text, null, `Copied ${text}`),
   range: id => { ui.range = Number(id); ui.recentShown = 50; invalidate(); refreshNow(); },
-  more: async () => { await showMoreActivity(); invalidate(); },
+  more: () => loadMore(showMoreActivity),
   actrule: id => { ui.actRule = id; ui.actPack = ""; ui.recentShown = 50; goView("activity"); invalidate(); },
   actclear: () => { ui.actRule = null; invalidate(); },
   session: id => { closePanel(); goView("sessions"); selectSession(id, () => { const first = document.querySelector(".tl .corr"); if (first) jumpTo(first.dataset.key); }); },
@@ -513,7 +528,8 @@ const ACTIONS = {
   showall: () => { ui.showAll = true; ui.evFilter = "all"; invalidate(); },
   sfilter: id => { ui.sessFilter = id; invalidate(); },
   daytoggle: id => { toggleSet(ui.openDays, id); invalidate(); },
-  daymore: id => { ui.dayShown[id] = (ui.dayShown[id] ?? 50) + 50; invalidate(); },
+  sessmore: () => loadMore(loadMoreSessions),
+  earlier: () => { const s = currentSession(); if (s) loadMore(() => loadEarlier(s.sessionId)); },
   resumetoggle: () => { ui.resumeOpen = !ui.resumeOpen; invalidate(); },
   resumecopy: () => {
     const s = currentSession(); if (!s) return;

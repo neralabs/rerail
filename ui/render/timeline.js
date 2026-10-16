@@ -1,23 +1,12 @@
 import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js";
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
 import { violationOutcome } from "../derive.js";
-import { data, ui, sinceFor, rangeLabel, titleOf } from "../state.js";
+import { ui, titleOf, packRuleOf } from "../state.js";
 import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, outputText, describeInput } from "../sessions-model.js";
 
 const EF = () => (ui.showAll ? ui.evFilter : "corrections");
 /** Folded away as noise, unless a correction hangs off it: that one must show, whatever its level. */
 const QUIET = ev => (ev.level === "observe" || ev.level === "coordinate") && ev.correction === null;
-
-/**
- * Whether the fetched findings say everything about this session. Pages come newest-first, so a
- * session that started inside the range and after the oldest fetched run has all its findings in;
- * outside that, "nothing" only means "nothing fetched".
- */
-export function findingsCover(s) {
-  if (s.startedAt < sinceFor()) return false;
-  if (data.findingsTotal <= data.findings.length) return true;
-  return s.startedAt > data.findings.at(-1).at;
-}
 
 const evMatches = ev => {
   const f = EF();
@@ -32,11 +21,12 @@ function build(tl) {
   t = {
     empty: h("div.empty", { style: "padding:48px 20px", hidden: true }, h("h3", null, "No violations logged"), h("p"), h("p", { style: "margin-top:12px" }, h("button.btn.sm", { "data-act": "showall" }, "Show all events"))),
     loading: h("div.empty", { hidden: true }, h("p", null, "Loading…")),
+    earlier: h("div.smore", { hidden: true }, h("button.btn.sm", { "data-act": "earlier" })),
     start: h("div.bound", null, "Session started"),
     turns: h("div.turns"),
     end: h("div.bound"),
   };
-  tl.replaceChildren(t.empty, t.loading, t.start, t.turns, t.end);
+  tl.replaceChildren(t.empty, t.loading, t.earlier, t.start, t.turns, t.end);
 }
 
 /* ---------- event rows ---------- */
@@ -160,10 +150,12 @@ function whereText(f) {
 
 function updateCorr(node, item) {
   const c = item.c, f = c.finding;
-  setText(node.querySelector("b"), titleOf(c.rule));
-  setText(node.querySelector(".mono"), c.rule.rule.id);
+  // A rule taken out of the repository since keeps its card: named from its pack, else by id, with nothing to open.
+  setText(node.querySelector("b"), c.rule === null ? `${packRuleOf(f.ruleId)?.rule.title ?? f.ruleId} (no longer in this repository)` : titleOf(c.rule));
+  setText(node.querySelector(".mono"), f.ruleId);
   setText(node.querySelector(".badge"), violationOutcome(f) === "logged" ? "Logged" : "Steered");
-  setAttr(node.querySelector("[data-act=detail]"), "data-i", c.rule.rule.id);
+  setAttr(node.querySelector("[data-act=detail]"), "data-i", f.ruleId);
+  setAttr(node.querySelector("[data-act=detail]"), "hidden", c.rule === null);
   setText(node.querySelector(".said"), f.message);
   const where = whereText(f);
   setText(node.querySelector("dd.where code"), where);
@@ -229,10 +221,28 @@ function endLabel(st, sess) {
   return `No end recorded · last event ${ago(lastEventAt(sess))}`;
 }
 
-export function renderTimeline(tl, rail, sess, turns, cs, loaded) {
+/** Load earlier, while the transcript or the session's violations reach less far back than the session's start. */
+function renderEarlier(earlier) {
+  setAttr(t.earlier, "hidden", earlier === false);
+  if (earlier === false) return;
+  const parts = [
+    ...(earlier.events < earlier.eventCount ? [`${fmt(earlier.events)} of ${fmt(earlier.eventCount)} events`] : []),
+    ...(earlier.violations < earlier.total ? [`${fmt(earlier.violations)} of ${fmt(earlier.total)} violations`] : []),
+  ];
+  setText(t.earlier.firstChild, ["Load earlier", ...parts].join(" · "));
+}
+
+/**
+ * `page`: whether the newest transcript page is `loaded`, the session's violation `total` (`null` until known), and
+ * `earlier`: `false` once the transcript and violations reach the session's start, else how many of each are loaded.
+ */
+export function renderTimeline(tl, rail, sess, turns, cs, page) {
   if (t === null || tl.firstChild !== t.empty) build(tl);
+  const { loaded, total, earlier } = page;
   const quietEmpty = !ui.showAll && cs.length === 0;
-  setAttr(t.empty, "hidden", !(loaded && quietEmpty));
+  // Audited clean: no violation logged in the whole session, not just none among the loaded events.
+  const clean = quietEmpty && total === 0;
+  setAttr(t.empty, "hidden", !(loaded && clean));
   const dropped = droppedEvents(sess);
   const unchecked = uncheckedBoundaries(sess);
   const rulesPending = codeRulesPendingBoundaries(sess);
@@ -241,18 +251,18 @@ export function renderTimeline(tl, rail, sess, turns, cs, loaded) {
     ...(unchecked === 0 ? [] : [`shell edits were not yet checked at ${fmt(unchecked)} ${plural(unchecked, "boundary", "boundaries")}`]),
     ...(rulesPending === 0 ? [] : [`code rules were not yet running at ${fmt(rulesPending)} ${plural(rulesPending, "boundary", "boundaries")}`]),
   ].join("; ");
-  setText(t.empty.querySelector("p"), !findingsCover(sess)
-    ? `No violations logged ${rangeLabel()} · change the range on Rules`
-    : gaps === ""
-      ? `Rerail audited all ${fmt(sess.eventCount)} events in this session and logged no violations.`
-      : `Rerail logged no violations in the ${fmt(sess.eventCount)} events it audited; ${gaps}.`);
-  setAttr(t.loading, "hidden", loaded);
+  setText(t.empty.querySelector("p"), gaps === ""
+    ? `Rerail audited all ${fmt(sess.eventCount)} events in this session and logged no violations.`
+    : `Rerail logged no violations in the ${fmt(sess.eventCount)} events it audited; ${gaps}.`);
+  setAttr(t.loading, "hidden", loaded && !(quietEmpty && total === null));
   setAttr(rail, "hidden", quietEmpty || !loaded);
-  setAttr(t.start, "hidden", quietEmpty || !loaded);
+  // The start is only reached once the whole session is loaded back to it.
+  setAttr(t.start, "hidden", quietEmpty || !loaded || earlier !== false);
   setAttr(t.end, "hidden", quietEmpty || !loaded);
   const st = openState(sess);
   setText(t.end, gaps === "" ? endLabel(st, sess) : `${endLabel(st, sess)} · ${gaps}`);
   syncChildren(t.turns, quietEmpty ? [] : turns.filter(turnVisible), turn => turn.key, createTurn, (n, turn) => updateTurn(n, turn, sess.sessionId));
+  renderEarlier(loaded && !clean ? earlier : false);
   placeTicks(rail, tl);
 }
 

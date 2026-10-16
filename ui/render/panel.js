@@ -8,7 +8,7 @@
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { fmt, plural, whenLabel, clock, shortSessionId } from "../format.js";
 import { kindLabel, modeLabel, ruleMode, isLog, isByRerail, originLabel, scopeText, technical, conditionText, messageText, folderText, deciderText, onText, suppressionsText, nextSuppressions, optionsText, MODE_LABEL, MODE_PLAIN } from "../derive.js";
-import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, titleOf, originChip, packRuleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
+import { data, ui, rangeLabel, fires, allFires, isMeasured, activityOf, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, originChip, packRuleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
 import { CREATE_COMMAND } from "./rules.js";
 
@@ -118,20 +118,21 @@ function renderCondition(stored) {
 
 const lineOf = x => (x.span ? `:${x.span.startLine + 1}` : "");
 
+/** The rule's violations in range: how many, the folder most of the newest ones are in, and how many sessions. */
 function renderViolations(id) {
-  const inRange = ruleFindings(id);
-  setAttr(p.violations, "hidden", inRange.length === 0);
-  if (inRange.length === 0) return;
+  const newest = ruleFindings(id), total = ruleFindingsTotal(id);
+  setAttr(p.violations, "hidden", total === 0);
+  if (total === 0) return;
   const dirs = new Map();
-  for (const x of inRange) {
+  for (const x of newest) {
     if (!x.path?.includes("/")) continue;
     const dir = x.path.split("/").slice(0, -1).join("/");
     dirs.set(dir, (dirs.get(dir) ?? 0) + 1);
   }
   const top = [...dirs].sort((a, b) => b[1] - a[1])[0];
-  const sessions = new Set(inRange.map(x => x.sessionId)).size;
-  setContent(p.violations.lastChild, `${inRange.length}|${top}|${sessions}|${ui.range}`, () => [
-    h("b", null, fmt(inRange.length)), ` ${rangeLabel()}`,
+  const sessions = activityOf(id).sessions;
+  setContent(p.violations.lastChild, `${total}|${top}|${sessions}|${ui.range}`, () => [
+    h("b", null, fmt(total)), ` ${rangeLabel()}`,
     top ? [" · ", h("b", null, fmt(top[1])), " in ", h("span.mono", null, top[0])] : null,
     " · ", h("b", null, fmt(sessions)), ` ${plural(sessions, "session")}`,
   ]);
@@ -178,15 +179,14 @@ function renderSent(stored, id) {
 }
 
 function renderRecent(id) {
-  const list = ruleFindings(id), top = list.slice(0, 3), all = allFires(id);
-  const host = sessionId => data.sessions.find(s => s.sessionId === sessionId)?.host;
-  setContent(p.recent, `${id}|${top.map(x => `${x.auditId}:${x.id}`).join(",")}|${list.length}|${all}|${ui.range}`, () => {
+  const list = ruleFindings(id), top = list.slice(0, 3), all = allFires(id), total = ruleFindingsTotal(id);
+  setContent(p.recent, `${id}|${top.map(x => `${x.auditId}:${x.id}`).join(",")}|${total}|${all}|${ui.range}`, () => {
     if (top.length === 0) return h("p.muted", null, all ? `None logged ${rangeLabel()}. Widen the range to see earlier ones.` : "No violations logged yet. Rerail is silent until this rule matches.");
     return [h("div.ract", null, top.map(x => h("div.rrow", null,
       h("span.when", null, `${whenLabel(x.at)} · ${clock(x.at)}`),
       h("div.what", null, x.path ? h("span.mono", null, `${x.path}${lineOf(x)}`) : h("span.muted", null, "no path recorded"),
-        h("button.open", { "data-act": "session", "data-i": x.sessionId }, shortSessionId(x.sessionId, host(x.sessionId))))))),
-    h("button.btn.sm.ghost.link", { "data-act": "actrule", "data-i": id, style: "margin-top:6px" }, list.length > 3 ? `See all ${fmt(list.length)} in Activity` : "See it in Activity")];
+        h("button.open", { "data-act": "session", "data-i": x.sessionId }, shortSessionId(x.sessionId, x.host)))))),
+    h("button.btn.sm.ghost.link", { "data-act": "actrule", "data-i": id, style: "margin-top:6px" }, total > 3 ? `See all ${fmt(total)} in Activity` : "See it in Activity")];
   });
 }
 
