@@ -37,13 +37,15 @@ The order matters:
   ```
   - The registry sets `latest` on a package's first publish, so these nine have `latest` and `next` both at 0.1.1.
   - `npm view` returned 404 for them for several minutes after publishing; `npm dist-tag ls` saw them at once.
-- [ ] On npmjs.com, set up a trusted publisher for each of those nine packs:
+- [x] On npmjs.com, set up a trusted publisher for each of those nine packs (done 2026-10-16):
   - org `neralabs`, repository `rerail`, workflow `release-packs.yml`, environment `release`
   - allow publish and dist-tag
   - then turn on "Require 2FA and disallow tokens"
-- [ ] Check that the trusted publishers for `complexity`, `next` and `typescript` are still configured.
-- [ ] Within 2 days, merge a patch changeset that touches the nine new packs. An unused trusted publisher setting
-      expires.
+- [x] Check that the trusted publishers for `complexity`, `next` and `typescript` are still configured. Checked all
+      twelve with `npx npm@latest trust list @neralabs/rerail-pack-<id>` (npm 12): each has the values above and
+      `createPackage`, `manageDistTags`.
+- [ ] By 2026-10-18, merge a Version packs PR, so a publish uses the new trusted publishers before they expire. If it
+      slips, delete each setting and add it again just before the merge.
 - [ ] Decide when packs move from `next` to `latest`. Use the release-packs manual run (`workflow_dispatch`, pack id).
       Only `complexity`, `next` and `typescript` still need it (`latest` is 0.1.0).
 - Leave #84 (Version packs) open. It collects the version bumps from changesets until the new flows are on main.
