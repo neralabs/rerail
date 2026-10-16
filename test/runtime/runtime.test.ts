@@ -243,10 +243,15 @@ describe("Rerail session startup", () => {
     const session = { host: "omp" as const, sessionId: "revised-source", cwd: root };
     try {
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
-      const steer = { revision: 1, scope: ["lib/a.js"] };
+      // A turn boundary waits for the evaluator to have opened, so queued steers can be collected.
+      expect(await runtime.ingest({ kind: "turn-end", eventId: "opened", sessionId: session.sessionId, text: "" })).toEqual([]);
+      const steer = { revision: 1, scope: ["lib/a.js", "lib/z.js"] };
       expect(await delivery!.requestSteer(session.sessionId, "steer", "CommonJS require", steer)).toBe("queued");
-      // A package.json edit at revision 2 gave the source new facts.
-      delivery!.revised!(session.sessionId, 2, ["lib/a.js"]);
+      // A package.json edit at revision 2 gave lib/a.js new facts: the queued steer leaves the queue, and lib/z.js,
+      // which it also spoke for, is handed back.
+      expect(delivery!.revised!(session.sessionId, 2, ["lib/a.js"])).toEqual(["lib/z.js"]);
+      // Gone from the queue: a later revision finds nothing of it to drop or hand back.
+      expect(delivery!.revised!(session.sessionId, 2, ["lib/x.js"])).toEqual([]);
       expect(await delivery!.requestSteer(session.sessionId, "steer", "CommonJS require", steer)).toBe("discarded");
       expect(await delivery!.requestSteer(session.sessionId, "steer", "Refreshed", { revision: 2, scope: ["lib/a.js"] })).toBe("queued");
       // A steer for several sources is dropped whole when one is revised; the others, not revised since, are handed
@@ -256,6 +261,8 @@ describe("Rerail session startup", () => {
       expect(delivery!.revised!(session.sessionId, 4, ["lib/c.js"])).toEqual(["lib/b.js"]);
       expect(await delivery!.requestSteer(session.sessionId, "steer", "Wide", { revision: 4, scope: ["lib/b.js", "lib/e.js"] })).toBe("queued");
       expect(delivery!.revised!(session.sessionId, 5, ["lib/b.js", "lib/e.js"])).toEqual([]);
+      // Only the steers no revision made stale are delivered.
+      expect((await runtime.collectDeliveries(session.sessionId)).map(delivered => delivered.content)).toEqual(["Refreshed", "Other"]);
     } finally {
       await runtime.dispose();
     }
