@@ -28,7 +28,7 @@ mod util;
 mod value;
 
 use super::budget;
-use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 pub(super) use analysis::RequiredText;
 pub(crate) use analysis::calls_positive_only;
 pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
@@ -60,14 +60,15 @@ use regex::Regex;
 pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
 #[cfg(test)]
 pub(super) use relation::{set_answers_off, set_same_key_off};
-#[cfg(test)]
-pub(super) use resolve::TABLE_BUILDS;
-pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
 pub(crate) use resolve::{
-    calls_tables, file_biome_suppressions, file_clippy, file_eslint_directives, file_lines,
-    file_module, file_noqa, file_nosec, file_oxlint_directives, file_phpcs, file_phpstan,
-    file_psalm, file_rerail_ignores, file_sqlfluff, file_vue_directives, table_reading,
+    FileGates, calls_tables, file_biome_suppressions, file_clippy, file_eslint_directives,
+    file_lines, file_module, file_noqa, file_nosec, file_oxlint_directives, file_phpcs,
+    file_phpstan, file_psalm, file_rerail_ignores, file_source_type, file_sqlfluff,
+    file_vue_directives, table_reading,
 };
+pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
+#[cfg(test)]
+pub(super) use resolve::{JSX_RUNTIME_DERIVATIONS, SOURCE_TYPE_DERIVATIONS, TABLE_BUILDS};
 pub(super) use run::{Stopped, enumerate, node_at, run_clause};
 #[cfg(test)]
 pub(crate) use run::{reset_roots_matched, roots_matched};
@@ -122,6 +123,9 @@ pub(super) struct GrammarMatcher {
     /// Whether the query's `when` gate holds. A query outside it is compiled in full, so its
     /// captures and templates are checked, but matches no file: sound, not unknown.
     pub(super) applies: bool,
+    /// The source types `when.sourceType` lets a file have where the query leaves `sourceType`
+    /// to each file (`SourceType::of_file`); a file of another matches nothing (`run_clause`).
+    pub(super) source_types: Option<Vec<SourceType>>,
     /// Whether the matcher can reach an unknown verdict; see `reads_values`.
     pub(super) three_valued: bool,
     /// The query's `transform`, applied to each match after its rule and constraints.
@@ -142,6 +146,16 @@ impl GrammarMatcher {
 /// Whole-root matching: production matches each candidate root within a clause `begin_clause` set
 /// up (`match_rule`); `match_root` sets one up per root, for tests.
 impl GrammarMatcher {
+    /// Whether a file whose own source type is `file` may get this matcher: one its
+    /// `when.sourceType` lists, or, while the file's syntax is unread (`None`), a module or
+    /// CommonJS listed.
+    pub(super) fn may_apply_to(&self, file: Option<SourceType>) -> bool {
+        self.source_types.as_ref().is_none_or(|types| match file {
+            Some(file) => types.contains(&file),
+            None => types.contains(&SourceType::Module) || types.contains(&SourceType::CommonJs),
+        })
+    }
+
     /// This matcher's rule (with its constraints) at one root of the clause `begin_clause` set up:
     /// the root's match. A root whose verdict is unknown does not match.
     fn match_rule<'tree, D: Doc>(&self, node: Node<'tree, D>) -> Option<NodeMatch<'tree, D>> {

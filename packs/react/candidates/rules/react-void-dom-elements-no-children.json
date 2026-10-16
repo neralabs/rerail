@@ -58,6 +58,12 @@
                 }
               ]
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -125,6 +131,12 @@
                 }
               ]
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -303,6 +315,12 @@
             "PROPS": {
               "kind": "object"
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -503,6 +521,12 @@
                 ]
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },

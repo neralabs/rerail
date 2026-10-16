@@ -23,7 +23,7 @@ use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
-    FileAnchorIndex, FileScopeSlot, GrammarMatcher, Selection, UtilLimit,
+    FileAnchorIndex, FileGates, FileScopeSlot, GrammarMatcher, Selection, UtilLimit,
 };
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledCodeRule, FILE_BUDGET_EXCEEDED, FileInput, INPUT_LIMIT, Metrics, Query,
@@ -660,21 +660,23 @@ fn evaluate_document(
             }
         }
     }
+    let root = Root::doc(doc.clone());
+    // The gates' file facts are read once for the document, whichever candidate reads them.
+    let gates = FileGates::new(&file.input, root.root());
     for &(slot, grammar) in slots {
         let id = file.candidates.ast[slot];
         // A clause reads around its document's errors, or, crossing to the file's other document,
-        // every document's.
+        // every document's. A file the query's file gates exclude matches nothing, errors or not.
         let read = if grammar.crosses {
             file_errors
         } else {
             &errors
         };
-        if !file.failures.contains_key(&id) && read.incomplete(grammar) {
+        if !file.failures.contains_key(&id) && read.incomplete(grammar) && gates.admit(grammar) {
             file.failures
                 .insert(id, ("source-incomplete", "file has syntax errors"));
         }
     }
-    let root = Root::doc(doc.clone());
     #[cfg(test)]
     pause_at_test_phase("restored-doc", &file.input.source);
     // A document's node and utility visits grow with it (`Limits::visits_for`).
@@ -762,7 +764,7 @@ fn evaluate_document(
         file.input.module.clone(),
         errors.hide_bindings(),
     )
-    .path(&file.input.path);
+    .file(&file.input);
     let match_started = Instant::now();
     let ran = evaluate_clauses(
         file,

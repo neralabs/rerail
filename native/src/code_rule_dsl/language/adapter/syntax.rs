@@ -4,6 +4,7 @@
 use super::{Adapter, Blade, Ecma, Php, Python, Refusal};
 use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
+use crate::code_rule_dsl::language::SourceType;
 use crate::code_rule_dsl::literal::{Grammar, LiteralHost};
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use serde_json::Value;
@@ -22,6 +23,10 @@ pub(crate) enum SyntaxFeature {
 /// An ast query's compiled `languageOptions`: ESLint's settings, and Ruff's.
 pub(crate) type QueryOptions = (Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>);
 
+/// Whether an ast query applies by its `when`, and the source types a file must have where the
+/// query leaves `sourceType` to each file (`SourceType::of_file`; `run_clause` checks them).
+pub(crate) type QueryWhen = (bool, Option<Vec<SourceType>>);
+
 /// A family's syntax.
 pub(crate) trait SyntaxRules: Adapter {
     /// Whether a pattern's `$`-prefixed leaf that is no metavariable is a name of the language
@@ -33,14 +38,15 @@ pub(crate) trait SyntaxRules: Adapter {
     /// ESLint's settings, or Ruff's.
     fn compile_language_options(value: &Value, path: &str) -> napi::Result<QueryOptions>;
     /// Whether the ast query at `path` applies, by its `when` (`value`) read against its
-    /// compiled `languageOptions` (`options`, `python`) and the document's options.
+    /// compiled `languageOptions` (`options`, `python`) and the document's options, and the
+    /// source types it leaves to each file.
     fn compile_when(
         value: &Value,
         path: &str,
         options: Option<&LanguageOptions>,
         python: Option<&PythonOptions>,
         document: &Options,
-    ) -> napi::Result<bool>;
+    ) -> napi::Result<QueryWhen>;
 }
 
 /// The refusal of `parse` with `grammar` by a family whose literals it does not read (`reason`
@@ -88,8 +94,11 @@ impl SyntaxRules for Python {
         _: Option<&LanguageOptions>,
         python: Option<&PythonOptions>,
         document: &Options,
-    ) -> napi::Result<bool> {
-        options::compile_python_when(value, path, python, document)
+    ) -> napi::Result<QueryWhen> {
+        Ok((
+            options::compile_python_when(value, path, python, document)?,
+            None,
+        ))
     }
 }
 
@@ -121,7 +130,7 @@ impl SyntaxRules for Ecma {
         options: Option<&LanguageOptions>,
         _: Option<&PythonOptions>,
         document: &Options,
-    ) -> napi::Result<bool> {
+    ) -> napi::Result<QueryWhen> {
         options::compile_ecma_when(value, path, options, document)
     }
 }
@@ -166,8 +175,14 @@ impl SyntaxRules for Php {
         options: Option<&LanguageOptions>,
         python: Option<&PythonOptions>,
         document: &Options,
-    ) -> napi::Result<bool> {
-        <Ecma as SyntaxRules>::compile_when(value, path, options, python, document)
+    ) -> napi::Result<QueryWhen> {
+        // A PHP file has no module system: a `when.sourceType` reads ESLint's default, a module.
+        let (applies, types) =
+            <Ecma as SyntaxRules>::compile_when(value, path, options, python, document)?;
+        Ok((
+            applies && types.is_none_or(|types| types.contains(&SourceType::Module)),
+            None,
+        ))
     }
 }
 
@@ -198,7 +213,7 @@ impl SyntaxRules for Blade {
         options: Option<&LanguageOptions>,
         python: Option<&PythonOptions>,
         document: &Options,
-    ) -> napi::Result<bool> {
+    ) -> napi::Result<QueryWhen> {
         <Php as SyntaxRules>::compile_when(value, path, options, python, document)
     }
 }
@@ -208,8 +223,16 @@ impl SyntaxRules for Blade {
 pub(super) mod kit {
     use super::{SyntaxFeature, SyntaxRules};
     use crate::code_rule_dsl::compile::config::Options;
+    use crate::code_rule_dsl::language::SourceType;
     use crate::code_rule_dsl::language::adapter::Refusal;
     use crate::code_rule_dsl::literal::Grammar;
+
+    /// A `when`, and whether a query without `languageOptions` applies under it with the source
+    /// types it leaves to each file, or the error compiling it.
+    pub(in super::super) type When = (
+        &'static str,
+        Result<(bool, Option<&'static [SourceType]>), &'static str>,
+    );
 
     /// What a family's `SyntaxRules` answer.
     pub(in super::super) struct Expect {
@@ -219,9 +242,7 @@ pub(super) mod kit {
         /// Where read, a `languageOptions`, and the ESLint `ecmaVersion` and Python minor it
         /// compiles to.
         pub(in super::super) compiled_options: Option<(&'static str, Option<u16>, Option<u8>)>,
-        /// `when`s, and whether a query without `languageOptions` applies under each, or the
-        /// error compiling it.
-        pub(in super::super) when: &'static [(&'static str, Result<bool, &'static str>)],
+        pub(in super::super) when: &'static [When],
         /// The refusals of `parse` with each grammar, in `Grammar::ALL`'s order; `None` where
         /// the family's literals host it.
         pub(in super::super) parse: [Option<&'static str>; 8],
@@ -256,7 +277,9 @@ pub(super) mod kit {
             assert_eq!(
                 A::compile_when(&value, "/q", None, None, &Options::default())
                     .map_err(|error| error.reason),
-                applies.map_err(str::to_owned),
+                applies
+                    .map(|(applies, types)| (applies, types.map(<[SourceType]>::to_vec)))
+                    .map_err(str::to_owned),
                 "{source}"
             );
         }

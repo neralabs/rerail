@@ -978,6 +978,22 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         }
         return "queued";
       },
+      revised: (sessionId, revision, paths) => {
+        const current = this.#sessions.get(sessionId);
+        if (current !== opened || current.closed || paths.length === 0) return [];
+        for (const path of paths)
+          current.codeRuleSourceVersions.set(path, Math.max(current.codeRuleSourceVersions.get(path) ?? 0, revision));
+        // A dropped steer may speak for other sources too: those no later revision revised are the auditor's to steer
+        // again.
+        const surviving = new Set<string>();
+        current.pendingSteers = current.pendingSteers.filter(pending => {
+          if (this.#isCurrentSteer(current, pending)) return true;
+          for (const path of pending.scope)
+            if ((current.codeRuleSourceVersions.get(path) ?? 0) <= pending.revision) surviving.add(path);
+          return false;
+        });
+        return [...surviving];
+      },
     };
     let auditor: CodeRuleAuditor | undefined;
     let bridge: CodeRuleBridge | undefined;

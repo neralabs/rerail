@@ -215,16 +215,16 @@ export interface CodeRuleDslAstQuery {
     /**
      * Modelled on ESLint's `languageOptions`: which names are globals for `resolves` (`global`) and, for TypeScript,
      * what top-level `this` is (`this`). With them a `global` name must also be a declared global (TypeScript) or a
-     * builtin of `pythonVersion` (Python). Omitted keys take ESLint's defaults (`"latest"`, `"module"`, no extra
-     * globals) and Ruff's (`"3.10"`).
+     * builtin of `pythonVersion` (Python). Omitted keys take ESLint's defaults (`"latest"`, no extra globals) and Ruff's
+     * (`"3.10"`). Without a `sourceType`, each file has its own module system (see `sourceType`).
      */
     languageOptions?: CodeRuleDslLanguageOptions;
     /**
      * The configurations the query applies to: `pythonVersion` (Python, `"3.7"` to `"3.15"`) or `ecmaVersion`
      * (TypeScript, as in `languageOptions`) ranges, both bounds inclusive, and for TypeScript `sourceType` and
-     * `ecmaFeatures`. It reads the query's own `languageOptions`, else the defaults (`"3.10"`; `"latest"`, `"module"`,
-     * no features). Every key must hold; otherwise the query matches nothing, which is sound, not unknown (Ruff's B905
-     * applies from 3.10; ESLint's strict picks its mode by sourceType and ecmaFeatures).
+     * `ecmaFeatures`. It reads the query's own `languageOptions`, else the defaults (`"3.10"`; `"latest"`, the file's
+     * own module system, no features). Every key must hold; otherwise the query matches nothing, which is sound, not
+     * unknown (Ruff's B905 applies from 3.10; ESLint's strict picks its mode by sourceType and ecmaFeatures).
      */
     when?: CodeRuleDslAstWhen;
     /**
@@ -301,10 +301,67 @@ export interface CodeRuleDslFileCondition {
   module?: CodeRuleDslTextCondition;
   /** Python only. Over the module path's last name, the file's stem (`__init__` for a package's `__init__.py`, `my.mod`). */
   moduleName?: CodeRuleDslTextCondition;
-  /** Python only. Over the first name, the top package's directory as on disk (`json.d`; Ruff's N999 for `__init__.py`). Only in a package. */
-  package?: CodeRuleDslTextCondition;
+  /**
+   * Python: over the first name, the top package's directory as on disk (`json.d`; Ruff's N999 for `__init__.py`). Only
+   * in a package. TypeScript: conditions on the file's nearest `package.json` (see `CodeRuleDslPackageCondition`).
+   */
+  package?: CodeRuleDslTextCondition | CodeRuleDslPackageCondition;
   /** Python only. Whether the file is in a package: the host sent its module path, rather than the stem fallback (Ruff's INP001). */
   inPackage?: boolean;
+  /**
+   * TypeScript only: the file's JSX runtime is one of these. A `@jsxImportSource` pragma comment naming React or a React
+   * wrapper (`react`, `@emotion/react`, `theme-ui`, `@theme-ui/core`, or a subpath) gives `react`, one naming another JSX
+   * library (`preact`, `solid-js`, `vue`, `@stencil/core`, `hono`, `@builder.io/qwik`, `inferno`, `mithril`,
+   * `hyperapp`, or a subpath) `other`; a `@jsx` pragma naming `React` or `React.…` gives `react`; any other pragma is no
+   * evidence. Then a top-level static import of
+   * `h` or `createElement` from `@stencil/core`, `preact`, `vue`, `solid-js`, `solid-js/h`, `hyperapp` or `mithril`
+   * (`other`); else the `compilerOptions.jsxImportSource` of the `tsconfig.json` (else `jsconfig.json`) beside the
+   * nearest `package.json`, through relative `extends` to `tsconfig*.json` or `jsconfig*.json` files, where it names
+   * React's or another library's as a pragma would;
+   * else that manifest's dependencies: `react` for React's packages (`react`, `react-dom`,
+   * `react-native`, `next`) without another JSX library's (`vue`, `@stencil/core`, `preact`, `solid-js`,
+   * `@builder.io/qwik`, `inferno`, `mithril`), `other` for the reverse, `unknown` for both, neither or no manifest.
+   */
+  jsxRuntime?: Array<"react" | "other" | "unknown">;
+}
+
+/**
+ * TypeScript's `file.package`: conditions on the file's nearest `package.json` at or above it, never above the workspace
+ * root (a regular file of at most 1 MiB; one that cannot be read has no fields). Every key set must hold.
+ */
+export interface CodeRuleDslPackageCondition {
+  /**
+   * Whether the file is one of the manifest's `bin` targets (the string, or each string value of the object), as
+   * eslint-plugin-n's `isBinFile` resolves them against the manifest's folder: the target is the file's path, or that
+   * path without `.js`, or without `.js` and a last `/index`. Without a manifest neither `true` nor `false` holds.
+   */
+  bin?: boolean;
+  /**
+   * The file's configured Node range is a subset of `subsetOf` (node-semver's `subset`). The configured range is
+   * eslint-plugin-n's: `engines.node`, else the `devEngines.runtime` entry named `node`'s `version`, else `>=16.0.0`
+   * (also without a manifest); one that is no valid range falls through to the next.
+   */
+  nodeVersion?: { subsetOf: string };
+  /** The manifest lists one of these in `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`. Needs a manifest. */
+  dependsOn?: string[];
+  /** Over the file's path relative to the manifest's folder. Needs a manifest, `notRegex` too. */
+  path?: CodeRuleDslTextCondition;
+  /**
+   * The manifest names `next` and the file is in its Next App Router server module graph: a server file convention
+   * (`page`, `layout`, `template`, `default`, `loading`, `not-found`, `forbidden`, `unauthorized`, `global-not-found`,
+   * `route`, or a metadata image or route file) under the package's `app/` (else `src/app/`, which Next ignores beside a
+   * root `app/`), outside private `_` folders, or a module such a file reaches by static imports, `export … from`, and
+   * `import()` or `require()` of a string, passing no module whose directive prologue holds `"use client"` (that module
+   * and what only it imports are client code). Specifiers resolve as Next resolves them in the package: relative paths
+   * with Next's extensions and `index` files, then the package's `tsconfig.json` (else `jsconfig.json`) `paths` and
+   * `baseUrl` through relative `extends` to `tsconfig*.json` or `jsconfig*.json` files. A module of another package (a
+   * bare specifier, a file below a nested `package.json`) or in `node_modules` or a hidden folder is no edge; a package
+   * of more than 20,000 source files has no graph, on every path, nor has one read on disk whose source or folder cannot
+   * be read. Entries take Next's default page extensions (`.tsx`, `.ts`, `.jsx`, `.js`); `paths` maps through its first
+   * 64 patterns (by pattern text) and the first 16 targets of each. `false` holds for a file of a package naming `next`
+   * outside the graph; without such a manifest neither holds.
+   */
+  serverGraph?: boolean;
 }
 
 /** An inclusive version range; at least one bound. */
@@ -316,7 +373,7 @@ export interface CodeRuleDslVersionRange<T> {
 export interface CodeRuleDslAstWhen {
   pythonVersion?: CodeRuleDslVersionRange<string>;
   ecmaVersion?: CodeRuleDslVersionRange<number | "latest">;
-  /** TypeScript only: the query's `sourceType` (default `"module"`) is this one or one of these. */
+  /** TypeScript only: the query's `sourceType` (default the file's own, see `languageOptions.sourceType`) is this one or one of these. */
   sourceType?: "script" | "module" | "commonjs" | Array<"script" | "module" | "commonjs">;
   /** TypeScript only: each flag set equals the query's `parserOptions.ecmaFeatures` flag (default false). At least one. */
   ecmaFeatures?: { globalReturn?: boolean; impliedStrict?: boolean };
@@ -335,7 +392,15 @@ export interface CodeRuleDslLanguageOptions {
   /**
    * `script`: top-level declarations join the global scope and top-level `this` is the global object. `module`: a module
    * scope; `this` is `undefined`. `commonjs`: a function-like module scope that adds `require`, `module`, `exports` and
-   * `global`.
+   * `global`. Omitted, each file has its own: `.cjs` and `.cts` files (`.d.cts` included) are `commonjs`; `.mjs`,
+   * `.mts`, `.tsx` and other declaration files `module`. A `.js`, `.jsx` or `.ts` file follows the `type` of its nearest
+   * `package.json` (`module`
+   * or `commonjs`), as Node runs `.ts` files like `.js` ones; where that sets no valid `type`, Node's syntax detection
+   * decides: a top-level `import` or `export` declaration that type stripping keeps (not `import type`, `export type`,
+   * an exported interface, type alias or `declare`, nor `import x = require(…)` or `export =`), `import.meta`, a
+   * top-level `await` (outside functions), or a top-level `const`, `let` or `class` binding `require`, `module`,
+   * `exports`, `__dirname` or `__filename` makes a module, anything else `commonjs`. Without a `package.json` it is a
+   * module (ESLint's default).
    */
   sourceType?: "script" | "module" | "commonjs";
   /** Identifiers to declare global (`readonly`, `writable`) or to remove (`off`). At most 16384. */
@@ -1276,6 +1341,13 @@ export interface RuleSteerDelivery {
     content: string,
     metadata?: SteerMetadata,
   ): Promise<void | "queued" | "discarded">;
+  /**
+   * Sources an evaluation at `revision` read again without an edit of their own (a `package.json`, project configuration
+   * or server-graph change gave them new facts, or findings): a steer queued for one of them at an earlier revision is
+   * stale and is dropped whole. Returns the other sources the dropped steers spoke for that no later revision revised,
+   * whose findings the auditor steers again.
+   */
+  revised?(sessionId: string, revision: number, paths: readonly string[]): readonly string[];
 }
 export interface AuditSettings {
   scope?: AuditScope;

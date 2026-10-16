@@ -67,6 +67,71 @@ export const UPSTREAM = {
   },
 };
 
+/**
+ * Ours: cases Rerail wrote for the plugins to score beside the upstream tests, per tool. Each is a file of another JSX
+ * library (named by a pragma, an `h` import or a manifest depending on Vue), which the plugins, enabled on every file,
+ * still report and the React ports skip (`divergences.json`), or a React file whose JSX goes through Emotion (its
+ * `@jsxImportSource` pragma, or an `@jsx jsx` pragma in a package depending on react), which the plugins and the React
+ * ports both report. `errors` is the case's own rule's finding count, checked as a test's is; a case with a `manifest`
+ * is written as `<name>/<filename>` beside that `package.json`, and the two are one analysis unit.
+ */
+export const AUTHORED = {
+  "eslint-plugin-react": [
+    {
+      rule: "react/jsx-key",
+      directory: "jsx-key",
+      name: "stencil-h",
+      extension: "tsx",
+      code: "import { h } from '@stencil/core';\nexport const rows = (items: string[]) => items.map(i => <div>{i}</div>);\n",
+      errors: 1,
+    },
+    {
+      rule: "react/jsx-key",
+      directory: "jsx-key",
+      name: "jsx-import-source-emotion",
+      extension: "jsx",
+      code: "/** @jsxImportSource @emotion/react */\nexport const rows = items => items.map(i => <div>{i}</div>);\n",
+      errors: 1,
+    },
+    {
+      rule: "react/react-in-jsx-scope",
+      directory: "react-in-jsx-scope",
+      name: "jsx-import-source-preact",
+      extension: "jsx",
+      code: "/** @jsxImportSource preact */\nexport const Greeting = () => <p>Hello</p>;\n",
+      errors: 1,
+    },
+  ],
+  "eslint-plugin-react-hooks": [
+    {
+      rule: "react-hooks/rules-of-hooks",
+      directory: "rules-of-hooks",
+      name: "vue-package",
+      filename: "src/use-field.js",
+      manifest: { name: "vue-app", private: true, dependencies: { vue: "3.5.22" } },
+      code: "import { useId } from 'vue';\n\nexport function useField(labelled) {\n  if (labelled) {\n    return useId();\n  }\n  return undefined;\n}\n",
+      errors: 1,
+    },
+    {
+      rule: "react-hooks/rules-of-hooks",
+      directory: "rules-of-hooks",
+      name: "jsx-import-source-emotion",
+      extension: "jsx",
+      code: "/** @jsxImportSource @emotion/react */\nimport { useState } from 'react';\n\nexport function Panel({ open }) {\n  if (open) {\n    const [count] = useState(0);\n    return <div css={{ color: 'hotpink' }}>{count}</div>;\n  }\n  return null;\n}\n",
+      errors: 1,
+    },
+    {
+      rule: "react-hooks/rules-of-hooks",
+      directory: "rules-of-hooks",
+      name: "emotion-jsx-pragma",
+      filename: "src/banner.jsx",
+      manifest: { name: "emotion-app", private: true, dependencies: { "@emotion/react": "11.14.0", react: "19.2.0" } },
+      code: "/** @jsx jsx */\nimport { jsx } from '@emotion/react';\nimport { useState } from 'react';\n\nexport function Banner({ visible }) {\n  if (visible) {\n    const [text] = useState('Hello');\n    return <div css={{ color: 'hotpink' }}>{text}</div>;\n  }\n  return null;\n}\n",
+      errors: 1,
+    },
+  ],
+};
+
 /** The nearest ancestor of the repository holding `.rerail/<kind>/react` (sub-worktrees live under `.rerail/wt/`). */
 function checkoutDirectory(kind) {
   for (let directory = REPOSITORY; ; directory = dirname(directory)) {
@@ -146,9 +211,10 @@ export function resetDirectory(path) {
 
 /**
  * Writes the extracted cases (`{ rule, directory, kind, index, code, errors, origin, filename?, extension?, drop? }`)
- * under `<directory>/fixtures/`, records the pack configuration over them (every chosen rule on every file; the
- * recording holds `tool`'s rules, over the files ESLint parses) and checks each case: the rule's own finding count
- * under the pack configuration against the test's `errors`. The check's report goes to `<tools>/scratch/`.
+ * and `tool`'s AUTHORED cases under `<directory>/fixtures/`, records the pack configuration over them (every chosen
+ * rule on every source; the recording holds `tool`'s rules, over the files ESLint parses), lists the authored files in
+ * `<directory>/UPSTREAM.md` and checks each case: the rule's own finding count under the pack configuration against
+ * the test's `errors`. The check's report goes to `<tools>/scratch/`.
  */
 export async function finishFixtures(require, tool, directory, cases, tools) {
   const { ESLint } = require("eslint");
@@ -165,6 +231,12 @@ export async function finishFixtures(require, tool, directory, cases, tools) {
     const filename = entry.filename === undefined ? undefined : entry.filename.replace(/^\/+/u, "");
     written.push({ ...entry, path: writeCase(fixtures, entry.directory, name, entry.extension, entry.code, filename) });
   }
+  for (const entry of AUTHORED[tool]) {
+    const name = `rerail-${entry.name}`;
+    const path = writeCase(fixtures, entry.directory, name, entry.extension, entry.code, entry.filename);
+    const unit = entry.manifest === undefined ? path : [writeCase(fixtures, entry.directory, name, undefined, `${JSON.stringify(entry.manifest, null, 2)}\n`, "package.json"), path];
+    written.push({ ...entry, kind: "authored", origin: "written by Rerail", path, unit });
+  }
   const { findings, skipped } = await lint(ESLint, fixtures, config(require), written.map(entry => entry.path), ALL_RULES);
   const unparsable = new Map(skipped.map(entry => [entry.path, entry.reason]));
   for (const path of unparsable.keys()) rmSync(join(fixtures, path));
@@ -174,9 +246,10 @@ export async function finishFixtures(require, tool, directory, cases, tools) {
     join(directory, "fixtures.expected.json"),
     tool,
     PINS[tool],
-    { kind: "fixtures", origin: `${upstream.repository}@${upstream.commit}`, rules: RULES[tool], files: kept.map(entry => entry.path) },
+    { kind: "fixtures", origin: `${upstream.repository}@${upstream.commit}`, rules: RULES[tool], files: kept.map(entry => entry.unit ?? entry.path) },
     findings.filter(finding => RULES[tool].includes(finding.rule)),
   );
+  writeAuthoredRecord(tool, directory, kept);
   const mismatches = [];
   for (const entry of kept) {
     const own = findings.filter(finding => finding.path === entry.path && finding.rule === entry.rule).length;
@@ -197,6 +270,20 @@ export async function finishFixtures(require, tool, directory, cases, tools) {
   return { kept, report };
 }
 
+/** UPSTREAM.md beside the recorder: the fixtures Rerail wrote, which are Rerail's, not the plugin's. */
+function writeAuthoredRecord(tool, directory, kept) {
+  const rows = kept.filter(entry => entry.kind === "authored").flatMap(entry => [entry.unit].flat().map(path => `| \`upstream/${tool}/fixtures/${path}\` | written by Rerail |`));
+  const text = `# ${UPSTREAM[tool].title}: cases Rerail wrote
+
+The fixtures listed below were written by Rerail for the pinned plugin to score, beside the cases extracted from the plugin's own tests (\`licenses/${UPSTREAM[tool].project}/UPSTREAM.md\`). Each is a file of another JSX library, which the plugin, enabled on every file, reports and the React ports skip (\`divergences.json\`), or a React file whose JSX goes through Emotion, which the plugin and the React ports both report. \`../common.mjs\` holds them (\`AUTHORED\`) and records the plugin's findings on them in \`fixtures.expected.json\`. They are Rerail's (Apache-2.0, the pack's licence), so nothing goes under \`licenses/\`. Paths are relative to the pack directory.
+
+| File | Origin |
+|---|---|
+${rows.join("\n")}
+`;
+  writeFileSync(join(directory, "UPSTREAM.md"), text);
+}
+
 /** `licenses/<project>/LICENSE` (verbatim) and `UPSTREAM.md`: every copied file and every extracted fixture. */
 export function writeLicense(tool, upstream, copied, kept) {
   const meta = UPSTREAM[tool];
@@ -205,7 +292,7 @@ export function writeLicense(tool, upstream, copied, kept) {
   copyFileSync(join(upstream, "LICENSE"), join(directory, "LICENSE"));
   const rows = [
     ...copied.map(entry => `| \`upstream/${tool}/${entry.file}\` | \`${entry.upstream}\` | verbatim |`),
-    ...kept.map(entry => `| \`upstream/${tool}/fixtures/${entry.path}\` | \`${entry.origin}\` | extracted (its \`code\`, verbatim) |`),
+    ...kept.filter(entry => entry.kind !== "authored").map(entry => `| \`upstream/${tool}/fixtures/${entry.path}\` | \`${entry.origin}\` | extracted (its \`code\`, verbatim) |`),
   ];
   const text = `# ${meta.title}
 

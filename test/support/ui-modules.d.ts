@@ -49,6 +49,9 @@ declare module "*/ui/sessions-model.js" {
   export function droppedEvents(s: { sessionId: string }): number;
   export function uncheckedBoundaries(s: { sessionId: string }): number;
   export function codeRulesPendingBoundaries(s: { sessionId: string }): number;
+  export function sessionCorrections(sessionId: string): Correction[];
+  export function sessionViolationTotal(sessionId: string): number | null;
+  export function loadedFrom(sessionId: string): number;
 }
 
 declare module "*/ui/poll.js" {
@@ -66,6 +69,13 @@ declare module "*/ui/poll.js" {
   export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
   export function showMoreActivity(): Promise<void>;
+  export function refresh(): Promise<void>;
+  export function refreshNow(): Promise<void>;
+  export function loadMoreFindings(): Promise<boolean>;
+  export function loadMoreSessions(): Promise<boolean>;
+  export function loadSessionFindings(id: string): Promise<boolean>;
+  export function loadSession(id: string): Promise<boolean>;
+  export function loadEarlier(id: string): Promise<boolean>;
   export type Suppressions = "honour" | "ignore";
   /** One folder's own on, mode and suppressions, what decided its suppressions, and what added the rule there. */
   export interface FolderState { folder: string; on: boolean; mode: string; suppressions: Suppressions; suppressionsSource: object; source: { kind: string; id: string } }
@@ -100,25 +110,35 @@ declare module "*/ui/derive.js" {
 
 declare module "*/ui/state.js" {
   export function sinceFor(range?: number): number;
+  /** A cursor-paged list as the page holds it. */
+  export interface PagedList<Row> { key: string | null; owner: string | null; rows: Row[]; total: number; next: string | null; pages: number }
+  export function pagedList<Row = never>(key?: string | null, owner?: string | null): PagedList<Row>;
+  export interface SessionDetail { head: object | null; gaps: object | null; events: Array<{ sequence: number; observedAt: number; [k: string]: unknown }>; nextAfter: number; loaded: boolean; earlier: boolean; loading: Promise<unknown> | null }
+  export type Violation = { id: string; auditId: string; ruleId: string; sessionId: string; mode?: string; at: number; host?: string | null };
   export const data: {
     rules: Map<string, unknown>;
-    findings: Array<{ ruleId: string; mode?: string; at: number }>;
-    findingsTotal: number;
-    findingsSince: number;
+    findings: PagedList<Violation>;
+    ruleFindings: PagedList<Violation>;
+    sessions: PagedList<{ sessionId: string; startedAt: number; violationCount: number; eventCount?: number; [k: string]: unknown }>;
+    sessionFindings: PagedList<Violation>;
     activity: Record<string, unknown>;
     activityAll: Record<string, unknown>;
+    activitySessions: { started: number; withViolations: number } | null;
+    activityAllSessions: { started: number; withViolations: number } | null;
     packs: unknown[];
     attachedPacks: Map<string, string[]>;
-    repository: { setUp: boolean } | null;
+    repository: { setUp: boolean; repositoryKey?: string } | null;
     checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
-    sessionDetail: Map<string, { events: unknown[]; nextAfter: number; loaded: boolean; loading: Promise<unknown> | null }>;
+    sessionDetail: Map<string, SessionDetail>;
+    missing: boolean;
+    disconnected: boolean;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
-  export const ui: { filter: string; query: string; range: number; actPack: string; actRule: string | null; recentShown: number; view: string; settingUp: boolean };
+  export const ui: { filter: string; query: string; range: number; actPack: string; actRule: string | null; recentShown: number; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
-  export function summary(): { logged: number; triggers: number; on: unknown[] };
+  export function summary(): { logged: number; triggers: number; on: unknown[]; sessionsInRange: number; sessionsWithTriggers: number };
   export function runningCount(): number;
   export function matches(stored: object): boolean;
   export function activityView(): { filtered: boolean; list: unknown[]; shown: unknown[]; none: boolean; more: false | { count: number | null; of: number | null } };

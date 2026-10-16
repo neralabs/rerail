@@ -24,8 +24,13 @@
         "ast": {
           "language": "typescript",
           "file": {
-            "path": {
-              "regex": "^(?:src/)?app/(?:.*/)?(?:page|layout|template|loading|error|global-error|not-found|default|route)\\.(?:js|jsx|ts|tsx)$"
+            "package": {
+              "dependsOn": [
+                "next"
+              ],
+              "path": {
+                "regex": "^(?:src/)?app/(?:.*/)?(?:page|layout|template|loading|error|global-error|not-found|default|route)\\.(?:js|jsx|ts|tsx)$"
+              }
             }
           },
           "rule": {

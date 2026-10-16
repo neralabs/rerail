@@ -264,6 +264,12 @@
                 ]
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },

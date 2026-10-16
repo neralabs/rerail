@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
-import { and, asc, count, desc, eq, gt, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
+import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
 import type { DiscoveryPendingBoundary } from "../engine/code-rule/code-rule-bridge.js";
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
 import { ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
-import { events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
+import { auditViolations, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
 
@@ -45,8 +47,36 @@ export interface SessionEventRecord {
 export interface SessionEventQuery {
   /** Return events with a sequence strictly greater than this value. */
   after?: number;
+  /** Return the last `limit` events with a sequence strictly less than this value, still in sequence order. */
+  before?: number;
   limit?: number;
 }
+
+/** What a session's whole transcript says it missed (`SqliteSessionReader.gaps`). */
+export interface SessionGaps {
+  droppedEvents: number;
+  uncheckedBoundaries: number;
+  codeRulesPendingBoundaries: number;
+}
+
+export interface SessionPageQuery {
+  /** Only sessions started at or after this instant. */
+  since?: number;
+  limit: number;
+  /** The previous page's `nextCursor`; the first page without one. */
+  cursor?: string;
+}
+
+export interface SessionPage {
+  /** Newest first, each with its violation history count (as `/api/violations?sessionId=` totals it). */
+  sessions: Array<StoredSessionSummary & { violationCount: number }>;
+  /** Every session the query matches, on every page. */
+  total: number;
+  nextCursor: string | null;
+}
+
+/** A session's place in newest-first order: start descending, then id ascending. */
+const sessionCursorSchema = z.tuple([z.number().int(), z.string()]);
 
 export interface SessionHud {
   activeRuleCount: number | null;
@@ -363,10 +393,31 @@ export class SqliteSessionReader {
     });
   }
 
+  /**
+   * What the session's whole transcript says it missed, however much of it a reader has loaded: events its host
+   * never delivered (`events-dropped` counts), and boundaries that answered before the shell-write check finished or
+   * before code rules were running. Indexed by session and kind.
+   */
+  gaps(sessionId: string): SessionGaps {
+    const database = this.#database.open();
+    if (database === undefined) return { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0 };
+    const row = database.all<SessionGaps>(sql`
+      SELECT
+        coalesce(sum(CASE WHEN ${events.kind} = 'events-dropped' THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS droppedEvents,
+        count(*) FILTER (WHERE ${events.kind} = 'source-discovery-pending') AS uncheckedBoundaries,
+        count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries
+      FROM ${events}
+      WHERE ${events.sessionId} = ${sessionId} AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending')
+    `)[0];
+    return row ?? { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0 };
+  }
+
   events(sessionId: string, query: SessionEventQuery = {}): readonly SessionEventRecord[] {
     const database = this.#database.open();
     if (database === undefined) return [];
     const limit = Math.min(Math.max(1, Math.trunc(query.limit ?? SESSION_EVENT_PAGE_LIMIT)), SESSION_EVENT_PAGE_LIMIT);
+    // With `before`, the page is the last `limit` events before it: read backwards, returned in sequence order.
+    const backwards = query.before !== undefined;
     const rows = database
       .select({
         sequence: events.sequence,
@@ -377,10 +428,15 @@ export class SqliteSessionReader {
         payloadJson: events.payloadJson,
       })
       .from(events)
-      .where(and(eq(events.sessionId, sessionId), gt(events.sequence, Math.max(0, Math.trunc(query.after ?? 0)))))
-      .orderBy(asc(events.sequence))
+      .where(and(
+        eq(events.sessionId, sessionId),
+        gt(events.sequence, Math.max(0, Math.trunc(query.after ?? 0))),
+        backwards ? lt(events.sequence, Math.trunc(query.before!)) : undefined,
+      ))
+      .orderBy(backwards ? desc(events.sequence) : asc(events.sequence))
       .limit(limit)
       .all();
+    if (backwards) rows.reverse();
     return rows.map(({ payloadJson, ...row }) => ({ ...row, payload: JSON.parse(payloadJson) as unknown }));
   }
 
@@ -389,12 +445,56 @@ export class SqliteSessionReader {
     return database === undefined ? [] : listWorkLinks(database, sessionId);
   }
 
-  /** Sessions that started at or after `since`, for a page showing one time range. */
-  sessionsSince(since: number, repositoryIds: readonly string[] | undefined = undefined): readonly StoredSessionSummary[] {
+  /**
+   * One page of sessions, newest first; counts are computed for the page's rows only, so a page costs the same
+   * however much history the database holds.
+   */
+  sessionPage(query: SessionPageQuery, repositoryIds: readonly string[] | undefined = undefined): SessionPage {
+    // A malformed cursor is refused whether or not any history exists yet.
+    const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, sessionCursorSchema);
     const database = this.#database.open();
-    return database === undefined
-      ? []
-      : listSessions(database, { startedAtOrAfter: since, repositoryIds: repositoryIds ?? this.#repositoryIds });
+    if (database === undefined) return { sessions: [], total: 0, nextCursor: null };
+    const matching = and(
+      query.since === undefined ? undefined : gte(sessions.startedAt, query.since),
+      repositoryFilter(repositoryIds ?? this.#repositoryIds),
+    );
+    const continuing = after === undefined
+      ? undefined
+      : sql`(${sessions.startedAt} < ${after[0]} OR (${sessions.startedAt} = ${after[0]} AND ${sessions.sessionId} > ${after[1]}))`;
+    // The page is chosen first and counted after: sorting every session with its counts attached would count them all.
+    // The page and its total come from one snapshot, so a commit between them cannot make them disagree.
+    const { rows, total } = database.transaction(() => ({
+      rows: database.all<StoredSessionSummary & { violationCount: number }>(sql`
+        SELECT
+          page.session_id AS sessionId, page.host AS host, page.cwd AS cwd, page.repository_id AS repositoryId,
+          page.started_at AS startedAt, page.ended_at AS endedAt,
+          (SELECT count(*) FROM ${events} WHERE ${events.sessionId} = page.session_id) AS eventCount,
+          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount
+        FROM (
+          SELECT * FROM ${sessions}
+          WHERE ${and(matching, continuing) ?? sql`1 = 1`}
+          ORDER BY ${sessions.startedAt} DESC, ${sessions.sessionId}
+          LIMIT ${query.limit + 1}
+        ) page
+        ORDER BY page.started_at DESC, page.session_id
+      `),
+      total: database.select({ total: count() }).from(sessions).where(matching).get()?.total ?? 0,
+    }));
+    const page = rows.slice(0, query.limit);
+    const last = page.at(-1);
+    return {
+      sessions: page,
+      total,
+      nextCursor: rows.length > query.limit && last !== undefined ? encodeCursor([last.startedAt, last.sessionId]) : null,
+    };
+  }
+
+  /** How many sessions started at or after `since`. */
+  sessionCount(since: number, repositoryIds: readonly string[] | undefined = undefined): number {
+    const database = this.#database.open();
+    if (database === undefined) return 0;
+    return database.select({ total: count() }).from(sessions)
+      .where(and(gte(sessions.startedAt, since), repositoryFilter(repositoryIds ?? this.#repositoryIds))).get()?.total ?? 0;
   }
 
   /**

@@ -663,7 +663,7 @@ fn compile_query_as(
                     ))?
                 }
             };
-            let applies = ast
+            let (applies, source_types) = ast
                 .get("when")
                 .map(|when| {
                     with_adapter!(family, A => <A as SyntaxRules>::compile_when(
@@ -675,12 +675,14 @@ fn compile_query_as(
                     ))
                 })
                 .transpose()?
-                .unwrap_or(true);
+                .unwrap_or((true, None));
             let file = ast
                 .get("file")
                 .map(|file| {
-                    let (packages, declarations) =
-                        with_adapter!(family, A => (A::PACKAGES, A::DECLARATION_FILES));
+                    let (packages, declarations, manifests, jsx_runtimes) = with_adapter!(
+                        family,
+                        A => (A::PACKAGES, A::DECLARATION_FILES, A::PACKAGE_MANIFESTS, A::JSX_RUNTIMES)
+                    );
                     options::compile_file_condition(
                         file,
                         &format!("{path}/ast"),
@@ -688,6 +690,8 @@ fn compile_query_as(
                         options::FileKeys {
                             packages,
                             declarations,
+                            manifests,
+                            jsx_runtimes,
                         },
                         capabilities.limits.max_regex_pattern_bytes,
                     )
@@ -996,6 +1000,7 @@ fn compile_query_as(
                         utils: table,
                         file: file.clone(),
                         applies,
+                        source_types: source_types.clone(),
                         transform: transform.clone(),
                     });
                 }

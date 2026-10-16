@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { activityView, data, isAudited, sinceFor, summary, ui } from "../../ui/state.js";
+import { activityView, data, isAudited, pagedList, summary, ui, type Violation } from "../../ui/state.js";
 import { showMoreActivity } from "../../ui/poll.js";
 import { violationOutcome } from "../../ui/derive.js";
 
@@ -14,14 +14,18 @@ const storedRule = (id: string, mode: string, enabled: boolean) => ({
   rule: { id, mode, clauses: [] },
 });
 
-const finding = (n: number, ruleId: string, mode = "steer") => ({ id: `v${n}`, auditId: `a${n}`, ruleId, mode, at: 1_000 - n, sessionId: "s" });
+const finding = (n: number, ruleId: string, mode = "steer"): Violation => ({ id: `v${n}`, auditId: `a${n}`, ruleId, mode, at: 1_000 - n, sessionId: "s" });
+
+/** Activity's list as a poll leaves it: `rows` loaded, `total` in range, the cursor `next` past the last row. */
+const loaded = (rows: Violation[], total: number, next: string | null) =>
+  ({ ...pagedList<Violation>("/api/violations?since=0&limit=200"), rows, total, next, pages: 1 });
 
 afterEach(() => {
   data.rules = new Map();
   data.activity = {};
   data.activityAll = {};
-  data.findings = [];
-  data.findingsTotal = 0;
+  data.activitySessions = null;
+  data.findings = pagedList();
   ui.actPack = "";
   ui.actRule = null;
   ui.recentShown = 50;
@@ -40,6 +44,15 @@ describe("past violations keep the mode they were recorded with", () => {
   it("labels a past violation by its recorded mode in the timeline and Activity", () => {
     expect(violationOutcome({ mode: "steer" })).toBe("steered");
     expect(violationOutcome({ mode: "log" })).toBe("logged");
+  });
+});
+
+describe("overview session tiles", () => {
+  it("read the activity answer's session counts, not the loaded lists", () => {
+    data.activitySessions = { started: 12, withViolations: 5 };
+    data.findings = loaded([finding(1, "a")], 1, null);
+
+    expect(summary()).toMatchObject({ sessionsInRange: 12, sessionsWithTriggers: 5 });
   });
 });
 
@@ -66,8 +79,7 @@ describe("Activity filtered to one rule", () => {
   });
 
   it("keeps Show more while the server has pages the filter has not seen, and is not empty yet", () => {
-    data.findings = Array.from({ length: 50 }, (_, n) => finding(n, "a"));
-    data.findingsTotal = 120;
+    data.findings = loaded(Array.from({ length: 50 }, (_, n) => finding(n, "a")), 120, "c50");
 
     const view = activityView();
 
@@ -75,25 +87,24 @@ describe("Activity filtered to one rule", () => {
     expect(view.more).toBeTruthy();
   });
 
-  it("fetches further pages on Show more until the filter has enough matches or the range runs out", async () => {
-    data.findings = Array.from({ length: 50 }, (_, n) => finding(n, "a"));
-    data.findingsTotal = 150;
-    data.findingsSince = sinceFor();
-    const pages: Record<number, ReturnType<typeof finding>[]> = {
-      50: Array.from({ length: 50 }, (_, n) => finding(50 + n, "a")),
-      100: Array.from({ length: 50 }, (_, n) => finding(100 + n, n < 3 ? "b" : "a")),
+  it("fetches further pages by cursor on Show more until the filter has enough matches or the range runs out", async () => {
+    data.findings = loaded(Array.from({ length: 50 }, (_, n) => finding(n, "a")), 150, "c50");
+    const pages: Record<string, { violations: Violation[]; nextCursor: string | null }> = {
+      c50: { violations: Array.from({ length: 50 }, (_, n) => finding(50 + n, "a")), nextCursor: "c100" },
+      c100: { violations: Array.from({ length: 50 }, (_, n) => finding(100 + n, n < 3 ? "b" : "a")), nextCursor: null },
     };
-    const offsets: number[] = [];
+    const requested: URL[] = [];
     vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
     vi.stubGlobal("fetch", async (input: URL) => {
-      const offset = Number(new URL(input).searchParams.get("offset"));
-      offsets.push(offset);
-      return new Response(JSON.stringify({ violations: pages[offset] ?? [], total: 150, offset, limit: 50 }), { status: 200 });
+      const url = new URL(input);
+      requested.push(url);
+      return new Response(JSON.stringify({ ...pages[url.searchParams.get("cursor") ?? ""], total: 150 }), { status: 200 });
     });
 
     await showMoreActivity();
 
-    expect(offsets).toEqual([50, 100]);
+    expect(requested.map(url => url.searchParams.get("cursor"))).toEqual(["c50", "c100"]);
+    expect(requested.some(url => url.searchParams.has("offset"))).toBe(false);
     const view = activityView();
     expect(view.shown).toHaveLength(3);
     expect(view.none).toBe(false);
