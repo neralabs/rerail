@@ -14,7 +14,7 @@ Rerail now prepares every SQLite AST file in parallel before batch registration.
 Files share a batch only when their language and candidate-clause set are equal.
 This restriction prevents a rejected terminal from spending another file's work budget.
 
-The shared batch runs each terminal once across its files.
+Shared AST and text batches run each required terminal once across their files.
 Each file retains its own deadline, completion state, scope cache, and witness limits.
 Clause statements still run once for each file-clause pair.
 Clause-major statement execution remains the next execution-shape change.

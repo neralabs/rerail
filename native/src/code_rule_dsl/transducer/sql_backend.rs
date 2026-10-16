@@ -393,28 +393,29 @@ impl MatchBatch {
             cell.executions.fetch_add(1, Ordering::Relaxed);
             let terminal = &self.terminals[index];
             let batch_deadline = self.deadline.clone();
-            Arc::new(
-                self.files
-                    .par_iter()
-                    .map(|batch_file| {
-                        execute_terminal_with_budget(
-                            terminal,
-                            batch_file,
-                            || {
-                                batch_file
-                                    .deadline
-                                    .as_ref()
-                                    .or(batch_deadline.as_ref())
-                                    .is_some_and(
-                                        crate::code_rule_dsl::budget::MatchDeadline::exhausted,
-                                    )
-                            },
-                            #[cfg(test)]
-                            &self.pattern_match_attempts,
-                        )
-                    })
-                    .collect(),
-            )
+            let execute = |batch_file: &BatchFile| {
+                execute_terminal_with_budget(
+                    terminal,
+                    batch_file,
+                    || {
+                        batch_file
+                            .deadline
+                            .as_ref()
+                            .or(batch_deadline.as_ref())
+                            .is_some_and(crate::code_rule_dsl::budget::MatchDeadline::exhausted)
+                    },
+                    #[cfg(test)]
+                    &self.pattern_match_attempts,
+                )
+            };
+            // Text scans are short and already run inside SQLite's worker. Keeping them on that
+            // worker avoids nested Rayon dispatch for large all-file batches.
+            let rows = if matches!(terminal, Terminal::Text(..)) {
+                self.files.iter().map(execute).collect()
+            } else {
+                self.files.par_iter().map(execute).collect()
+            };
+            Arc::new(rows)
         }))
     }
 

@@ -1592,7 +1592,7 @@ fn sqlite_engine_runs_a_workspace_end_to_end() {
     assert_eq!(evaluation["failures"], json!([]), "{evaluation}");
     assert!(
         crate::code_rule_dsl::query::max_registered_files() >= 600,
-        "all 600 AST files use one SQLite batch"
+        "all 600 files use shared SQLite batches"
     );
     assert_eq!(
         evaluation["violations"],

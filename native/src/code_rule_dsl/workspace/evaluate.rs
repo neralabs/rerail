@@ -90,13 +90,18 @@ struct PreparedAst {
     max_nodes: usize,
 }
 
+struct PreparedSqlFile {
+    ast: Option<PreparedAst>,
+    lines: Option<Arc<LineTable>>,
+}
+
 struct PendingSqlJob {
     path: String,
     file: FileState,
     consumes: bool,
     crossfile: Option<CrossFileConsumer>,
     metrics: Metrics,
-    prepared: Option<PreparedAst>,
+    prepared: Option<PreparedSqlFile>,
     restored: Option<tape::TapeDoc>,
     deadline: crate::code_rule_dsl::budget::MatchDeadline,
     error: Option<napi::Error>,
@@ -327,11 +332,79 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                 .collect::<Vec<_>>()
         });
 
-        // A terminal executes over every file in its batch. Group by language and candidate set,
-        // so no file spends work on a terminal that its manifest rejected.
+        // Text terminals also execute once over every compatible file in the apply.
+        let mut regex_groups = BTreeMap::<Vec<ClauseId>, Vec<usize>>::new();
+        for (job_index, job) in pending.iter().enumerate() {
+            if job.prepared.is_some() && !job.file.candidates.regex.is_empty() {
+                regex_groups
+                    .entry(job.file.candidates.regex.clone())
+                    .or_default()
+                    .push(job_index);
+            }
+        }
+        for batch_jobs in regex_groups.into_values() {
+            let batch_files = batch_jobs
+                .iter()
+                .map(|&job_index| {
+                    let job = &pending[job_index];
+                    let _budget = MatchBudget::resume(job.deadline.clone());
+                    crate::code_rule_dsl::transducer::sql_backend::BatchFile::text_shared(
+                        Arc::clone(&job.file.input.source),
+                        Arc::from(job.file.input.path.as_str()),
+                        Arc::from(job.file.input.language.as_str()),
+                        None,
+                    )
+                })
+                .collect();
+            let outcome = sql.with_files(batch_files, |batch| {
+                for (batch_index, &job_index) in batch_jobs.iter().enumerate() {
+                    let job = &mut pending[job_index];
+                    let _budget = MatchBudget::resume(job.deadline.clone());
+                    #[cfg(feature = "code-rule-profile")]
+                    let _regex_timer = profile::PhaseTimer::start(profile::Phase::Regex);
+                    let regex_started = Instant::now();
+                    let lines = job
+                        .prepared
+                        .as_ref()
+                        .expect("prepared SQLite file")
+                        .lines
+                        .clone();
+                    if let Err(error) = evaluate_regex_statements(
+                        &mut job.file,
+                        context.code_rules,
+                        &lines,
+                        &mut job.metrics,
+                        sql,
+                        Some((batch, batch_index)),
+                    ) {
+                        job.error = Some(error);
+                    }
+                    job.metrics.regex_nanoseconds += regex_started.elapsed().as_nanos() as u64;
+                    job.file.transient_failure = job.deadline.observed();
+                }
+            });
+            if outcome.is_err() {
+                for job_index in batch_jobs {
+                    let job = &mut pending[job_index];
+                    for &id in &job.file.candidates.regex {
+                        job.file
+                            .failures
+                            .entry(id)
+                            .or_insert(("adapter-error", "query engine unavailable"));
+                    }
+                }
+            }
+        }
+
+        // An AST terminal executes over every file in its batch. Group by language and candidate
+        // set, so no file spends work on a terminal that its manifest rejected.
         let mut groups = BTreeMap::<(String, Vec<ClauseId>), Vec<usize>>::new();
         for (job_index, job) in pending.iter().enumerate() {
-            if job.prepared.is_some() {
+            if job
+                .prepared
+                .as_ref()
+                .is_some_and(|prepared| prepared.ast.is_some())
+            {
                 groups
                     .entry((
                         job.file.input.language.clone(),
@@ -346,7 +419,11 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                 .iter()
                 .map(|&job_index| {
                     let job = &pending[job_index];
-                    let prepared = job.prepared.as_ref().expect("batched AST file");
+                    let prepared = job
+                        .prepared
+                        .as_ref()
+                        .and_then(|prepared| prepared.ast.as_ref())
+                        .expect("batched AST file");
                     let _budget = MatchBudget::resume(job.deadline.clone());
                     crate::code_rule_dsl::transducer::sql_backend::BatchFile::new(
                         prepared.doc.clone(),
@@ -366,7 +443,11 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                     let _doc_owner = profile::DocOwner::start();
                     let _budget = MatchBudget::resume(job.deadline.clone());
                     let _consumer = CrossFileScheduler::install(job.crossfile.clone());
-                    let prepared = job.prepared.take().expect("batched AST file");
+                    let prepared = job
+                        .prepared
+                        .as_mut()
+                        .and_then(|prepared| prepared.ast.take())
+                        .expect("batched AST file");
                     match execute_prepared_ast_file(
                         &mut job.file,
                         context.code_rules,
@@ -477,7 +558,7 @@ fn evaluate_file_with_pending(
     sql: Option<&query::SqlPlans>,
     budget: &MatchBudget,
     restored: &mut Option<tape::TapeDoc>,
-    pending: Option<&mut Option<PreparedAst>>,
+    mut pending: Option<&mut Option<PreparedSqlFile>>,
 ) -> Result<Metrics> {
     let mut metrics = Metrics {
         files: 1,
@@ -528,6 +609,7 @@ fn evaluate_file_with_pending(
     #[cfg(feature = "code-rule-profile")]
     let regex_timer = profile::PhaseTimer::start(profile::Phase::Regex);
     let regex_started = Instant::now();
+    let defer_sql = sql.is_some() && pending.is_some();
     if sql.is_none() {
         for &id in &file.candidates.regex {
             let code_rule = &code_rules[id.0];
@@ -603,8 +685,10 @@ fn evaluate_file_with_pending(
             }
             metrics.witnesses += witnesses.len();
         }
-    } else if let Some(sql) = sql {
-        evaluate_regex_statements(file, code_rules, &lines, &mut metrics, sql)?;
+    } else if let Some(sql) = sql
+        && !defer_sql
+    {
+        evaluate_regex_statements(file, code_rules, &lines, &mut metrics, sql, None)?;
     }
     #[cfg(feature = "code-rule-profile")]
     drop(regex_timer);
@@ -624,12 +708,25 @@ fn evaluate_file_with_pending(
     if !file.candidates.ast.is_empty() && !file.selector_skipped {
         metrics.restored_tapes += usize::from(file.tape.is_some());
         if any_eligible
-            && let Some(prepared) =
-                prepare_ast_file(file, code_rules, grammars, closed, lines, &mut metrics)?
+            && let Some(prepared) = prepare_ast_file(
+                file,
+                code_rules,
+                grammars,
+                closed,
+                lines.clone(),
+                &mut metrics,
+            )?
         {
-            if let Some(pending) = pending.filter(|_| sql.is_some()) {
+            if defer_sql {
                 *restored = Some(prepared.doc.clone());
-                *pending = Some(prepared);
+                pending
+                    .as_deref_mut()
+                    .expect("deferred SQLite output")
+                    .get_or_insert_with(|| PreparedSqlFile {
+                        ast: None,
+                        lines: lines.clone(),
+                    })
+                    .ast = Some(prepared);
             } else {
                 *restored = Some(execute_prepared_ast_file(
                     file,
@@ -641,6 +738,11 @@ fn evaluate_file_with_pending(
                 )?);
             }
         }
+    }
+    if defer_sql {
+        pending
+            .expect("deferred SQLite output")
+            .get_or_insert(PreparedSqlFile { ast: None, lines });
     }
     for witness in file.witnesses.values_mut().flatten() {
         witness.path.clone_from(&file.input.path);
@@ -660,7 +762,14 @@ fn evaluate_regex_statements(
     lines: &Option<Arc<LineTable>>,
     metrics: &mut Metrics,
     sql: &query::SqlPlans,
+    registered: Option<(&query::QueryBatch<'_>, usize)>,
 ) -> Result<()> {
+    if let Some((batch, file_index)) = registered {
+        evaluate_regex_statements_in_batch(
+            file, code_rules, lines, metrics, sql, batch, file_index,
+        );
+        return Ok(());
+    }
     let failed = sql
         .with_file(
             crate::code_rule_dsl::transducer::sql_backend::BatchFile::text_shared(
@@ -670,90 +779,7 @@ fn evaluate_regex_statements(
                 None,
             ),
             |batch| {
-                for &id in &file.candidates.regex {
-                    let code_rule = &code_rules[id.0];
-                    let clause = &code_rule.clauses[id.1];
-                    let ClauseKind::Forbid(Query::Regex { regex, source }) = &clause.kind else {
-                        unreachable!()
-                    };
-                    let witnesses = file.witnesses.entry(id).or_default();
-                    witnesses.clear();
-                    let limits = &code_rule.capabilities.limits;
-                    if file.input.source.len() > limits.max_source_bytes || limits.max_files == 0 {
-                        file.failures
-                            .insert(id, ("budget-exceeded", "file input budget exceeded"));
-                        continue;
-                    }
-                    if file.failures.contains_key(&id) {
-                        continue;
-                    }
-                    let haystack: &str = match source {
-                        RegexSource::Content => &file.input.source,
-                        RegexSource::Path => &file.input.path,
-                    };
-                    let path_lines = LineTable::new(&file.input.path, Terminators::Eslint);
-                    let span = |start, end| match source {
-                        RegexSource::Content => lines
-                            .as_ref()
-                            .expect("eligible content has line table")
-                            .span(start, end),
-                        RegexSource::Path => path_lines.span(start, end),
-                    };
-                    let Some(terminal) = sql.regex_terminal(id.0, id.1) else {
-                        file.failures
-                            .insert(id, ("adapter-error", "query statement is unavailable"));
-                        continue;
-                    };
-                    let rows = match batch.text_rows(terminal, 0) {
-                        Ok(rows) => rows,
-                        Err(_) => {
-                            file.failures
-                                .insert(id, ("adapter-error", "query statement failed"));
-                            continue;
-                        }
-                    };
-                    let plain = regex.capture_names().flatten().next().is_none()
-                        && clause.violation.fix.is_none();
-                    for (span_row, complete) in rows {
-                        let Some((start, end)) = span_row else {
-                            if !complete {
-                                file.failures
-                                    .insert(id, ("budget-exceeded", "file match budget exceeded"));
-                            }
-                            continue;
-                        };
-                        if witnesses.len() >= limits.max_witnesses {
-                            file.failures
-                                .insert(id, ("budget-exceeded", "file match budget exceeded"));
-                            break;
-                        }
-                        let found = regex
-                            .captures_at(haystack, start)
-                            .expect("terminal match has captures");
-                        assert_eq!(found.get(0).expect("whole match").range(), start..end);
-                        if plain {
-                            witnesses.push(Witness {
-                                path: file.input.path.clone(),
-                                span: span(start, end),
-                                captures: Captures::default(),
-                                message: None,
-                                fix: None,
-                            });
-                        } else {
-                            witnesses.push(violations::regex_witness(
-                                &file.input.path,
-                                regex,
-                                &found,
-                                Some(&clause.violation),
-                                span,
-                            ));
-                        }
-                        if clause.decision {
-                            break;
-                        }
-                    }
-                    metrics.witnesses += witnesses.len();
-                }
+                evaluate_regex_statements_in_batch(file, code_rules, lines, metrics, sql, batch, 0);
             },
         )
         .is_err();
@@ -764,6 +790,102 @@ fn evaluate_regex_statements(
         }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_regex_statements_in_batch(
+    file: &mut FileState,
+    code_rules: &[Arc<CompiledCodeRule>],
+    lines: &Option<Arc<LineTable>>,
+    metrics: &mut Metrics,
+    sql: &query::SqlPlans,
+    batch: &query::QueryBatch<'_>,
+    file_index: usize,
+) {
+    for &id in &file.candidates.regex {
+        let code_rule = &code_rules[id.0];
+        let clause = &code_rule.clauses[id.1];
+        let ClauseKind::Forbid(Query::Regex { regex, source }) = &clause.kind else {
+            unreachable!()
+        };
+        let witnesses = file.witnesses.entry(id).or_default();
+        witnesses.clear();
+        let limits = &code_rule.capabilities.limits;
+        if file.input.source.len() > limits.max_source_bytes || limits.max_files == 0 {
+            file.failures
+                .insert(id, ("budget-exceeded", "file input budget exceeded"));
+            continue;
+        }
+        if file.failures.contains_key(&id) {
+            continue;
+        }
+        let haystack: &str = match source {
+            RegexSource::Content => &file.input.source,
+            RegexSource::Path => &file.input.path,
+        };
+        let path_lines = LineTable::new(&file.input.path, Terminators::Eslint);
+        let span = |start, end| match source {
+            RegexSource::Content => lines
+                .as_ref()
+                .expect("eligible content has line table")
+                .span(start, end),
+            RegexSource::Path => path_lines.span(start, end),
+        };
+        let Some(terminal) = sql.regex_terminal(id.0, id.1) else {
+            file.failures
+                .insert(id, ("adapter-error", "query statement is unavailable"));
+            continue;
+        };
+        let rows = match batch.text_rows(terminal, file_index) {
+            Ok(rows) => rows,
+            Err(_) => {
+                file.failures
+                    .insert(id, ("adapter-error", "query statement failed"));
+                continue;
+            }
+        };
+        let plain =
+            regex.capture_names().flatten().next().is_none() && clause.violation.fix.is_none();
+        for (span_row, complete) in rows {
+            let Some((start, end)) = span_row else {
+                if !complete {
+                    file.failures
+                        .insert(id, ("budget-exceeded", "file match budget exceeded"));
+                }
+                continue;
+            };
+            if witnesses.len() >= limits.max_witnesses {
+                file.failures
+                    .insert(id, ("budget-exceeded", "file match budget exceeded"));
+                break;
+            }
+            let found = regex
+                .captures_at(haystack, start)
+                .expect("terminal match has captures");
+            assert_eq!(found.get(0).expect("whole match").range(), start..end);
+            if plain {
+                witnesses.push(Witness {
+                    path: file.input.path.clone(),
+                    span: span(start, end),
+                    captures: Captures::default(),
+                    message: None,
+                    fix: None,
+                });
+            } else {
+                witnesses.push(violations::regex_witness(
+                    &file.input.path,
+                    regex,
+                    &found,
+                    Some(&clause.violation),
+                    span,
+                ));
+            }
+            if clause.decision {
+                break;
+            }
+        }
+        metrics.witnesses += witnesses.len();
+    }
 }
 
 /// The document the clauses were read on, `None` where none was restored.
