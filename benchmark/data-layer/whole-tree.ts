@@ -5,7 +5,7 @@ import { cpus, loadavg, totalmem } from "node:os";
 import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { z } from "zod";
-import { blindFileLine, compareStrings, failureLine, RuleWorkspace, sha256, violationLine, type Engine, type PortedRule } from "./engine.js";
+import { blindFileLine, compareStrings, engineReportSchema, failureLine, RuleWorkspace, sha256, violationLine, type Engine, type Matcher, type PortedRule } from "./engine.js";
 import type { Repository } from "./corpus.js";
 
 const runSchema = z.object({
@@ -24,6 +24,11 @@ const runSchema = z.object({
   failureCodes: z.record(z.string(), z.number()),
   loadAverage: z.array(z.number()),
   lines: z.string(),
+  /** The engine's report (`engineReport()`): on SQL, the clauses it refused and how many it compiled and ran. */
+  engineReport: engineReportSchema,
+  /** The lines of the clauses the engine ran (every clause on native): their sha256 and count, in `whole-tree-<run>.ran.txt`. */
+  ranDigest: z.string(),
+  ranLines: z.number().int(),
 });
 export type WholeTreeRun = z.infer<typeof runSchema>;
 
@@ -31,9 +36,9 @@ export type WholeTreeRun = z.infer<typeof runSchema>;
  * One run in this process: every accepted file in one `applyAsync`. Writes the sorted violation and failure lines to
  * `whole-tree-<run>.lines.txt` (their sha256 is the digest) and the blind files to `whole-tree-<run>.blind.txt`.
  */
-export async function runWholeTree(options: { engine: Engine; repository: Repository; rules: PortedRule[]; output: string; run: number; processStarted: number; processCpu: NodeJS.CpuUsage }): Promise<WholeTreeRun> {
-  const { engine, repository, rules, output, run } = options;
-  const workspace = new RuleWorkspace(engine, rules);
+export async function runWholeTree(options: { engine: Engine; matcher: Matcher; repository: Repository; rules: PortedRule[]; output: string; run: number; processStarted: number; processCpu: NodeJS.CpuUsage }): Promise<WholeTreeRun> {
+  const { engine, matcher, repository, rules, output, run } = options;
+  const workspace = new RuleWorkspace(engine, rules, matcher);
   try {
     const accepted = repository.files.filter(file => workspace.accepts(file.path));
     const loadAverage = loadavg();
@@ -42,10 +47,17 @@ export async function runWholeTree(options: { engine: Engine; repository: Reposi
     const blind = result.blindFiles.map(blindFileLine).sort(compareStrings);
     const text = lines.map(line => `${line}\n`).join("");
     const blindText = blind.map(line => `${line}\n`).join("");
+    // The clauses the SQL engine refused fail on every file they read: the rest compare with native's lines.
+    const engineReport = workspace.engineReport();
+    const refused = new Set(engineReport.engine === "sql" ? engineReport.refused.map(refusal => `${refusal.ruleId}\t${refusal.clauseId}`) : []);
+    const ran = (finding: { ruleId?: string; clauseId: string }) => !refused.has(`${finding.ruleId ?? ""}\t${finding.clauseId}`);
+    const ranLines = [...result.violations.filter(ran).map(violationLine), ...result.failures.filter(ran).map(failureLine)].sort(compareStrings);
+    const ranText = ranLines.map(line => `${line}\n`).join("");
     mkdirSync(output, { recursive: true });
     const linesPath = resolve(output, `whole-tree-${run}.lines.txt`);
     writeFileSync(linesPath, text);
     writeFileSync(resolve(output, `whole-tree-${run}.blind.txt`), blindText);
+    writeFileSync(resolve(output, `whole-tree-${run}.ran.txt`), ranText);
     // Failures grouped by code and message, numbers (lines, columns, counts) folded so one group spans many files.
     const failureCodes: Record<string, number> = {};
     for (const failure of result.failures) {
@@ -69,6 +81,9 @@ export async function runWholeTree(options: { engine: Engine; repository: Reposi
       failureCodes,
       loadAverage,
       lines: linesPath,
+      engineReport,
+      ranDigest: sha256(ranText),
+      ranLines: ranLines.length,
     };
   } finally {
     workspace.close();
@@ -94,18 +109,20 @@ export async function runWholeTreeChildren(options: { script: string; childArgum
 }
 
 export function formatRun(run: WholeTreeRun): string {
-  return `apply wall ${(run.applyWallMs / 1000).toFixed(2)} s, apply CPU ${(run.applyCpuMs / 1000).toFixed(2)} s (process wall ${(run.processWallMs / 1000).toFixed(2)} s, CPU ${(run.processCpuMs / 1000).toFixed(2)} s); ${run.files} files, ${run.findings} findings, ${run.failures} failures, ${run.blindFiles} blind files; ${run.digest}; load ${run.loadAverage.map(value => value.toFixed(2)).join(" ")}`;
+  const sql = run.engineReport.engine === "sql" ? `; sql: ${run.engineReport.ran} of ${run.engineReport.compiled} compiled clauses ran, ${run.engineReport.refused.length} refused; ran lines ${run.ranLines}, ${run.ranDigest}` : "";
+  return `apply wall ${(run.applyWallMs / 1000).toFixed(2)} s, apply CPU ${(run.applyCpuMs / 1000).toFixed(2)} s (process wall ${(run.processWallMs / 1000).toFixed(2)} s, CPU ${(run.processCpuMs / 1000).toFixed(2)} s); ${run.files} files, ${run.findings} findings, ${run.failures} failures, ${run.blindFiles} blind files; ${run.digest}; load ${run.loadAverage.map(value => value.toFixed(2)).join(" ")}${sql}`;
 }
 
 /** `whole-tree.json` and the console summary for every run; the exit code is 1 when the runs' digests differ. */
-export function reportWholeTree(options: { engine: Engine; repository: Repository; rules: PortedRule[]; output: string; runs: WholeTreeRun[] }): number {
-  const { engine, repository, rules, output, runs } = options;
+export function reportWholeTree(options: { engine: Engine; matcher: Matcher; repository: Repository; rules: PortedRule[]; output: string; runs: WholeTreeRun[] }): number {
+  const { engine, matcher, repository, rules, output, runs } = options;
   const digests = new Set(runs.map(run => `${run.digest} ${run.blindDigest}`));
   const report = {
     format: "rerail.data-layer-whole-tree/v1",
     addon: engine.addon,
     workerThreads: engine.workerThreads,
     capabilities: { path: engine.capabilities.path, sha256: engine.capabilities.sha256 },
+    matcher,
     corpus: { root: repository.root, commit: repository.git.commit, changes: repository.git.changes, files: repository.files.length, bytes: repository.bytes, skipped: repository.skipped },
     rules: rules.map(rule => ({ linter: rule.linter, path: rule.path, sha256: rule.sha256, clauses: rule.clauses })),
     machine: { cpus: cpus().length, model: cpus()[0]?.model, memoryBytes: totalmem(), platform: `${process.platform} ${process.arch}`, node: process.version },
@@ -120,6 +137,14 @@ export function reportWholeTree(options: { engine: Engine; repository: Repositor
   if (runs[0] !== undefined) {
     const failures = Object.entries(runs[0].failureCodes).sort(([left], [right]) => compareStrings(left, right));
     for (const [code, count] of failures) console.log(`  failure ${count}× ${code}`);
+  }
+  const sql = runs[0]?.engineReport;
+  if (sql?.engine === "sql") {
+    console.log(`sql engine (batch ${sql.batchSize}): ${sql.clauses} AST clause matchers, ${sql.compiled} compiled, ${sql.ran} ran, ${sql.refused.length} refused`);
+    const reasons = new Map<string, number>();
+    for (const refusal of sql.refused) reasons.set(refusal.reason, (reasons.get(refusal.reason) ?? 0) + 1);
+    for (const [reason, count] of [...reasons].sort(([left], [right]) => compareStrings(left, right))) console.log(`  refused ${count}× ${reason}`);
+    for (const refusal of sql.refused) console.log(`  refused ${refusal.ruleId}/${refusal.clauseId} (${refusal.language}): ${refusal.reason}`);
   }
   console.log(digests.size === 1 ? `digest stable across ${runs.length} run(s)` : `DIGEST UNSTABLE: ${[...digests].join(" | ")}`);
   console.log(`outputs: ${output}`);

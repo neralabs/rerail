@@ -7,7 +7,7 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { collectRepository } from "./corpus.js";
 import { runConformance } from "./conformance.js";
-import { loadEngine, loadRules, type Engine } from "./engine.js";
+import { loadEngine, loadRules, type Engine, type Matcher } from "./engine.js";
 import { passIds, runPass, runPasses, writePassResult, writeProfile } from "./profile.js";
 import { reportWholeTree, runWholeTree, runWholeTreeChildren } from "./whole-tree.js";
 
@@ -35,11 +35,12 @@ interface Options {
   top: number;
   show: number;
   allowLimits: boolean;
+  matcher: Matcher;
   childRun: number | undefined;
   passResult: string | undefined;
 }
 
-const valued = ["--addon", "--capabilities", "--corpus", "--policies", "--oracles", "--output", "--rule", "--pass", "--runs", "--repeat", "--jobs", "--top", "--show", "--child-run", "--pass-result"];
+const valued = ["--addon", "--capabilities", "--corpus", "--policies", "--oracles", "--output", "--rule", "--pass", "--runs", "--repeat", "--jobs", "--top", "--show", "--child-run", "--pass-result", "--engine", "--sql-batch"];
 
 function count(name: string, value: string, minimum: number): number {
   const parsed = Number(value);
@@ -71,6 +72,11 @@ export function parseOptions(argv: readonly string[], env: NodeJS.ProcessEnv = p
   if (policies === undefined) throw new UsageError("--policies (or RERAIL_DATA_LAYER_POLICIES) is required");
   const output = last("--output");
   if ((command === "whole-tree" || command === "profile") && output === undefined) throw new UsageError(`${command} needs --output <dir>`);
+  const engine = last("--engine") ?? "native";
+  if (engine !== "native" && engine !== "sql") throw new UsageError(`--engine takes native or sql, not ${engine}`);
+  if (engine === "sql" && command !== "whole-tree") throw new UsageError("--engine sql runs whole-tree only");
+  const sqlBatch = last("--sql-batch");
+  if (sqlBatch !== undefined && engine !== "sql") throw new UsageError("--sql-batch needs --engine sql");
   return {
     command: command as Command,
     addon: last("--addon") ?? env.RERAIL_ENGINE_PATH,
@@ -87,6 +93,7 @@ export function parseOptions(argv: readonly string[], env: NodeJS.ProcessEnv = p
     top: count("--top", last("--top") ?? "40", 1),
     show: count("--show", last("--show") ?? "10", 0),
     allowLimits,
+    matcher: { engine, ...(sqlBatch === undefined ? {} : { sqlBatchSize: count("--sql-batch", sqlBatch, 1) }) },
     childRun: last("--child-run") === undefined ? undefined : count("--child-run", last("--child-run")!, 1),
     passResult: last("--pass-result"),
   };
@@ -99,6 +106,8 @@ function childArguments(options: Options, engine: Engine): string[] {
     ...(options.output === undefined ? [] : ["--output", options.output]),
     ...options.rules.flatMap(rule => ["--rule", rule]),
     ...(options.allowLimits ? ["--allow-limits"] : []),
+    "--engine", options.matcher.engine,
+    ...(options.matcher.sqlBatchSize === undefined ? [] : ["--sql-batch", String(options.matcher.sqlBatchSize)]),
   ];
 }
 
@@ -118,6 +127,9 @@ function usage(): string {
     "  --capabilities <path>  the capabilities rules compile against (default: the bundled ones, production's limits)",
     "  --rule <linter>    only these rules (repeatable)",
     "  --allow-limits     accept an addon whose work allowances are bounded (not an `unbounded-work` build)",
+    "  --engine <name>    whole-tree: which engine matches AST clauses, native (default) or sql; sql reports the",
+    "                     clauses it refuses and digests the lines of the clauses it ran apart",
+    "  --sql-batch <n>    files per SQL batch (default 64)",
   ].join("\n");
 }
 
@@ -145,12 +157,12 @@ async function main(): Promise<number> {
   switch (options.command) {
     case "whole-tree": {
       if (options.childRun !== undefined) {
-        const run = await runWholeTree({ engine, repository, rules, output: options.output!, run: options.childRun, processStarted, processCpu });
+        const run = await runWholeTree({ engine, matcher: options.matcher, repository, rules, output: options.output!, run: options.childRun, processStarted, processCpu });
         process.stdout.write(`${JSON.stringify(run)}\n`);
         return 0;
       }
       const runs = await runWholeTreeChildren({ script, childArguments: childArguments(options, engine), runs: options.runs });
-      return reportWholeTree({ engine, repository, rules, output: options.output!, runs });
+      return reportWholeTree({ engine, matcher: options.matcher, repository, rules, output: options.output!, runs });
     }
     case "profile-pass": {
       const [id] = options.passes;

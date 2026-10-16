@@ -17,7 +17,7 @@ use ast_grep_core::matcher::NodeMatch;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use napi::Result;
 use serde_json::{Map, Value};
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
@@ -314,12 +314,7 @@ pub(crate) fn evaluate_query(
     engine: Engine,
 ) -> Result<std::result::Result<Vec<Witness>, Incomplete>> {
     let sql = match (engine, query) {
-        (Engine::Native, _) | (Engine::Sql, Query::Regex { .. }) => None,
-        (Engine::Sql, Query::SelectWhen { .. }) => {
-            return Err(invalid(
-                crate::code_rule_dsl::sql::SqlError::unsupported("select_when").to_string(),
-            ));
-        }
+        (Engine::Native, _) | (Engine::Sql, Query::Regex { .. } | Query::SelectWhen { .. }) => None,
         (Engine::Sql, Query::Ast { matchers, .. }) => {
             if violation.is_some_and(|violation| violation.each.is_some()) {
                 return Err(invalid(
@@ -336,7 +331,9 @@ pub(crate) fn evaluate_query(
         sql: sql.as_ref(),
     };
     if let Query::SelectWhen { .. } = query {
-        return leaf.select_when(query, metrics, decision, partial, violation, util_limit);
+        return leaf.select_when(
+            query, metrics, decision, partial, violation, util_limit, engine,
+        );
     }
     let mut witnesses = Vec::new();
     for (index, file) in snapshot.files.iter().enumerate() {
@@ -640,8 +637,11 @@ impl<'a> Leaf<'a> {
         }
     }
 
-    /// A `select_when` answered by `query::select_when`, each leaf read from the snapshot as the
-    /// answer asks for its rows.
+    /// A `select_when` answered by `query::select_when` (`Engine::Native`) or `sql::select_when`
+    /// (`Engine::Sql`), each leaf read from the snapshot as the answer asks for its rows. Under
+    /// `Engine::Sql` an AST leaf's matches come from one SQL batch over the snapshot, run when the
+    /// answer first reads the leaf.
+    #[allow(clippy::too_many_arguments)]
     fn select_when(
         self,
         query: &'a Query,
@@ -650,18 +650,38 @@ impl<'a> Leaf<'a> {
         partial: &mut BTreeMap<String, String>,
         violation: Option<&ViolationSpec>,
         util_limit: &mut Option<(String, UtilLimit)>,
+        engine: Engine,
     ) -> Result<std::result::Result<Vec<Witness>, Incomplete>> {
         let plan = Plan::new(query, decision, |leaf, _| leaf);
+        if engine == Engine::Sql
+            && violation.is_some_and(|violation| violation.each.is_some())
+            && plan
+                .leaves
+                .iter()
+                .any(|leaf| leaf.reported && matches!(leaf.id, Query::Ast { .. }))
+        {
+            return Err(invalid(
+                crate::code_rule_dsl::sql::SqlError::unsupported("violation.each").to_string(),
+            ));
+        }
         let leaves = SnapshotLeaves {
             leaf: self,
             plan: &plan,
             violation,
             work: RefCell::new((metrics, util_limit)),
             reads: plan.leaves.iter().map(|_| RefCell::default()).collect(),
+            engine,
+            sql: plan.leaves.iter().map(|_| OnceCell::new()).collect(),
             error: RefCell::new(None),
         };
         let cap = self.limits.max_witnesses.saturating_add(1);
-        let answer = match select_when::answer(&plan, cap, &leaves) {
+        let answer = match engine {
+            Engine::Native => select_when::answer(&plan, cap, &leaves),
+            Engine::Sql => {
+                crate::code_rule_dsl::sql::select_when::answer_leaves(&plan, cap, &leaves)
+            }
+        };
+        let answer = match answer {
             Ok(Ok(answer)) => answer,
             Ok(Err((leaf, position))) => {
                 let read = leaves.reads[leaf].borrow();
@@ -699,6 +719,10 @@ struct SnapshotLeaves<'a, 'w> {
     violation: Option<&'a ViolationSpec>,
     work: RefCell<(&'w mut Metrics, &'w mut Option<(String, UtilLimit)>)>,
     reads: Vec<RefCell<SnapshotRead>>,
+    engine: Engine,
+    /// Per leaf, under `Engine::Sql`, an AST leaf's matches over the snapshot: one SQL batch, run
+    /// when the leaf is first read.
+    sql: Vec<OnceCell<SqlFiles>>,
     /// The error that ended the answer, returned in its place.
     error: RefCell<Option<napi::Error>>,
 }
@@ -725,6 +749,25 @@ impl Leaves for SnapshotLeaves<'_, '_> {
     fn row(&self, leaf: usize, position: usize) -> std::result::Result<Option<LeafRow>, String> {
         let spec = &self.plan.leaves[leaf];
         let mut read = self.reads[leaf].borrow_mut();
+        let mut reader = self.leaf;
+        if let (Engine::Sql, Query::Ast { matchers, .. }) = (self.engine, spec.id)
+            && read.rows.len() <= position
+            && !read.ended
+        {
+            if self.sql[leaf].get().is_none() {
+                match SqlFiles::evaluate(matchers, self.leaf.snapshot, self.leaf.scope) {
+                    Ok(files) => {
+                        let _ = self.sql[leaf].set(files);
+                    }
+                    Err(error) => {
+                        let message = error.to_string();
+                        *self.error.borrow_mut() = Some(error);
+                        return Err(message);
+                    }
+                }
+            }
+            reader.sql = self.sql[leaf].get();
+        }
         while read.rows.len() <= position && !read.ended {
             let file = read.next;
             let Some(input) = self.leaf.snapshot.files.get(file) else {
@@ -734,7 +777,7 @@ impl Leaves for SnapshotLeaves<'_, '_> {
             read.next += 1;
             let mut work = self.work.borrow_mut();
             let (metrics, util_limit) = &mut *work;
-            let step = self.leaf.file(
+            let step = reader.file(
                 spec.id,
                 file,
                 input,
