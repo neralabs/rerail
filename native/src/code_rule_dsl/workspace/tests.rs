@@ -1564,18 +1564,21 @@ fn sqlite_engine_runs_a_workspace_end_to_end() {
     let _slot = WORKSPACE_TEST_SLOT
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let files = json!([
-        {
-            "path": "src/a.ts",
-            "language": "typescript",
-            "source": "debugger; const value = 'secret';\n",
-        },
-        {
-            "path": "src/b.ts",
-            "language": "typescript",
-            "source": "function b() { debugger; }\n",
-        }
-    ]);
+    let files = Value::Array(
+        (0..128)
+            .map(|index| {
+                json!({
+                    "path": format!("src/{index}.ts"),
+                    "language": "typescript",
+                    "source": if index == 0 {
+                        "debugger; const value = 'secret';\n"
+                    } else {
+                        "function f() { debugger; }\n"
+                    },
+                })
+            })
+            .collect(),
+    );
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
@@ -1588,8 +1591,8 @@ fn sqlite_engine_runs_a_workspace_end_to_end() {
         serde_json::from_str::<Value>(&output).expect("result is JSON")["evaluation"].clone();
     assert_eq!(evaluation["failures"], json!([]), "{evaluation}");
     assert!(
-        crate::code_rule_dsl::query::max_registered_files() >= 2,
-        "both AST files use one SQLite batch"
+        crate::code_rule_dsl::query::max_registered_files() >= 128,
+        "all 128 AST files use one SQLite batch"
     );
     assert_eq!(
         evaluation["violations"],

@@ -417,7 +417,7 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
     };
 
     if context.sql.is_some() {
-        const SQL_BATCH_FILES: usize = 16;
+        const SQL_BATCH_FILES: usize = 512;
         return Ok(if jobs.len() <= SQL_BATCH_FILES {
             let mut grammars = BTreeMap::new();
             sql_work(jobs, &mut grammars)

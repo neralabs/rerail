@@ -10,7 +10,7 @@ See `benchmark/history/ner-1562-historical-sql-reproduction-2026-10-16.md`.
 
 ## Implementation status
 
-Rerail now prepares SQLite AST files in worker-local groups of at most 16 files.
+Rerail now prepares SQLite AST files in worker-local groups of at most 512 files.
 Files share a batch only when their language and candidate-clause set are equal.
 This restriction prevents a rejected terminal from spending another file's work budget.
 
@@ -68,7 +68,7 @@ The expensive operations remain behind callbacks and integer handles.
 
 ### 1. Batching does not include clause statements
 
-Production now registers compatible files in immutable batches of at most 16 files.
+Production now registers compatible files in immutable batches of at most 512 files.
 The `OnceLock` terminal cache processes all files in such a batch.
 
 The clause statements still run separately for each file.
