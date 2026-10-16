@@ -20,6 +20,19 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `candidates/` | Every port (`rules/`, listed in `conformance.json`; `n-no-deprecated-api` and `n-hashbang` in `candidates/conformance.json`) and the Node probes (`probes/`), scored, never shipped; `node_policies.py` writes every document but the hand-written `n-no-process-exit` |
 | `licenses/eslint-plugin-n/` | The plugin's licence and `UPSTREAM.md`, listing every copied file |
 
+No rule in `rules/` or `candidates/rules/` pins `languageOptions.sourceType` (the probes do, to state Node facts): each
+file keeps its own module system (`.cjs`/`.cts` CommonJS; `.mjs`/`.mts`/`.tsx` an ES module; `.js`/`.jsx`/`.ts` by the
+nearest package.json's `type`, Node's syntax detection where that package.json sets no valid `type`, and an ES module
+where there is no package.json), as the plugin's `flat/mixed-esm-and-cjs` config picks `flat/recommended-script` or
+`flat/recommended-module` per file. Only a CommonJS file has `require`, `module`,
+`exports`, `__dirname` and `__filename`; an ES module has none (`flat/recommended-module` turns them off), so the rules
+that reach them through scope (exports-style, no-exports-assign, no-path-concat, prefer-global/\*, prefer-promises/\*,
+no-deprecated-api) report them in CommonJS files only. Rules upstream reads by name (global-require, no-new-require,
+no-mixed-requires, prefer-node-protocol) report in both. The recorder lints each fixture and corpus file the same way:
+`globals.node`, without those five names in an ES module. Upstream's RuleTester declares `globals.node` in every case,
+so a case it runs as a module that reads one of those names and has no module syntax is written as CommonJS (`.js`
+under the fixtures' `"type": "commonjs"` package.json), where Node defines them.
+
 Re-recording and regenerating run offline against the pinned tools under `.rerail/tools/node` (eslint 10.11.0,
 eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0) and the corpus
 checkouts under `.rerail/corpora/node`:

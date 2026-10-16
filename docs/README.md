@@ -17,6 +17,10 @@
 - [port-readiness.md](port-readiness.md): the port readiness gates every shipped ported rule must pass, and how to read their report
 - [language-packs.md](language-packs.md): the language registry, statuses, and how to start a pack
 
+## Release
+- [publishing-a-new-pack.md](publishing-a-new-pack.md): runbook for a pack's first publish to npm and its trusted
+  publisher
+
 ## Repository
 - [repository-structure.md](repository-structure.md): the layout rules and the structure gate
   (`npm run check:structure`) that enforces them

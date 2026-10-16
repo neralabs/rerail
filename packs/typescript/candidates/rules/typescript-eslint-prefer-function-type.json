@@ -6,7 +6,10 @@
   "description": "Port of typescript-eslint's `prefer-function-type` (https://typescript-eslint.io/rules/prefer-function-type). Flags a type literal, or an interface with no supertype other than `Function`, whose only member is a call or construct signature with a return type; in such an interface the first `this` type (outside nested literals) is reported instead. Fixes cover call signatures without comments; the checks are split by fix shape.",
   "scope": {
     "include": [
-      "**/*"
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
     ],
     "exclude": []
   },

@@ -253,7 +253,13 @@
         "compare",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-duplicate-case",
@@ -549,7 +555,13 @@
         "scope",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-sparse-arrays",
@@ -627,7 +639,13 @@
         "syntax",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-useless-call",
@@ -707,7 +725,13 @@
         "syntax",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-operator-assignment",
@@ -896,7 +920,13 @@
         "value",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-curly",
@@ -923,7 +953,13 @@
         "syntax",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-dot-notation",
@@ -936,7 +972,13 @@
         "syntax",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-empty",
@@ -979,7 +1021,13 @@
         "scope",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-unused-private-class-members",
@@ -1130,7 +1178,13 @@
         "value",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-max-statements",
@@ -1172,7 +1226,13 @@
         "scope",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-await-in-loop",
@@ -1214,7 +1274,13 @@
         "compare",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-dupe-else-if",
@@ -1257,7 +1323,13 @@
         "value",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-extra-bind",
@@ -1350,7 +1422,13 @@
         "value",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-multi-assign",
@@ -1392,7 +1470,13 @@
         "scope",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-object-constructor",
@@ -1422,7 +1506,13 @@
         "scope",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-self-assign",
@@ -1464,7 +1554,13 @@
         "scope",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-unexpected-multiline",
@@ -1503,7 +1599,13 @@
         "syntax",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-unused-labels",
@@ -1532,7 +1634,13 @@
         "scope",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-no-useless-computed-key",
@@ -1561,7 +1669,13 @@
         "arguments",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-one-var",
@@ -1589,7 +1703,13 @@
         "compare",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-prefer-exponentiation-operator",
@@ -1632,7 +1752,13 @@
         "value",
         "suppression"
       ],
-      "match": "line+column"
+      "match": "line+column",
+      "fixtures": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     },
     {
       "id": "eslint-require-yield",

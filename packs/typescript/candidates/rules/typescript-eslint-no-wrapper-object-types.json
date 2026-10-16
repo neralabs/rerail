@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-no-wrapper-object-types",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "typescript-eslint 8.70.1 @typescript-eslint/no-wrapper-object-types, default options. Port of typescript-eslint's `no-wrapper-object-types` rule (https://typescript-eslint.io/rules/no-wrapper-object-types). Flags type references, `implements` and interface `extends` naming BigInt/Boolean/Number/Object/String/Symbol when the name `resolves` to no file-local type binding. Type references are fixed to the lowercase primitive.",
   "scope": {
@@ -9,11 +9,7 @@
       "**/*.ts",
       "**/*.tsx",
       "**/*.mts",
-      "**/*.cts",
-      "**/*.js",
-      "**/*.jsx",
-      "**/*.mjs",
-      "**/*.cjs"
+      "**/*.cts"
     ],
     "exclude": []
   },

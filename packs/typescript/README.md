@@ -6,6 +6,11 @@ experimental. Each is scored against the tool's own findings on the tool's test 
 (vscode), through the engine's production workspace path, with every disagreement declared in `divergences.json`
 (none today). ESLint's core rules are in the [JavaScript pack](../javascript/README.md).
 
+Every typescript-eslint rule runs on `.ts`, `.tsx`, `.mts` and `.cts` files only, and the vscode corpus is scored on
+its TypeScript files only (`exclude` in `conformance.json`). On JavaScript a port steers CommonJS files away from
+`require` (`no-require-imports` on `jest.config.js`), and with both packs added a port with an ESLint core twin would
+report the same violation as the twin, which runs on JavaScript files only.
+
 It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack typescript"`, against the
 [pack structure and validation contract](../../docs/pack-format.md).
 

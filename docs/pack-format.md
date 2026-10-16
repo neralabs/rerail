@@ -289,22 +289,8 @@ The scripts are in `scripts/release/`. To check a pack's tarball locally:
 
 npm only lets a trusted publisher be configured for a package that exists, and a new configuration expires unless a
 publish uses it within 2 days. So a pack's first version is published by hand, and the workflow publishes the next.
-Until then each release run reports the pack as needing its first publish and fails after publishing the others.
-
-1. From a clean checkout of `main` whose commit is pushed, with the native engine built
-   (`npm ci && npm run build:native`), an interactive npm login with 2FA (`npm login`; a token that bypasses 2FA
-   cannot configure trusted publishing), and `gh` logged in with write access to `neralabs/rerail` (it creates the
-   release tag). The publish script checks the commit is on GitHub before it publishes anything:
-   ```sh
-   node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id>   # the publish gate
-   node scripts/release/packs-publish.mjs /tmp/rule-packs                       # publish under next, tag it
-   ```
-2. On npmjs.com: Packages → `@neralabs/rerail-pack-<id>` → Settings → Trusted publishing → GitHub Actions:
-   organization `neralabs`, repository `rerail`, workflow `release-packs.yml`, environment `release`; allow
-   **npm publish** and **npm dist-tag**. Then Settings → Publishing access → "Require two-factor authentication and
-   disallow tokens".
-3. Within 2 days, merge the Version packs pull request that bumps the pack. Its publish uses the configuration and
-   keeps it. If the 2 days pass, delete the configuration and add it again before merging.
+Until then each release run reports the pack as needing its first publish and fails after publishing the others. The
+steps are in [publishing-a-new-pack.md](publishing-a-new-pack.md).
 
 ## Licensing
 

@@ -1,7 +1,8 @@
 // The React pack's policies as compact specs, one entry per pack rule (`candidate: true`: a port that does not pass
 // its fixtures or the V1 rule validation gates yet, written to packs/react/candidates/). build.mjs turns each into a
-// rerail.policy/v1 document (scope, violation, eslint suppression and a shared `define` are added there) and lists it,
-// with the HAND_WRITTEN ports, in packs/react/conformance.json. Edit here, then run build.mjs.
+// rerail.policy/v1 document (scope, the JSX-runtime gate on every query, violation, eslint suppression and a shared
+// `define` are added there) and lists it, with the HAND_WRITTEN ports, in packs/react/conformance.json. Edit here, then
+// run build.mjs.
 const R = "eslint-plugin-react";
 const H = "eslint-plugin-react-hooks";
 const VOID = "^(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr)$";
@@ -1029,7 +1030,7 @@ export const SPECS = [
     upstream: "react/react-in-jsx-scope",
     capabilities: ["syntax", "scope", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/react-in-jsx-scope (pragma React): a JSX opening element or fragment where no `React` binding is visible: none declared at the top level (import, var/let/const, function), in an enclosing block's own declarations, or as an enclosing function's parameter. Files whose `@jsx X` comment names another pragma are not checked: the pragma is a per-file fact a policy cannot read.",
+    description: "eslint-plugin-react 7.37.5 react/react-in-jsx-scope (pragma React): a JSX opening element or fragment where no `React` binding is visible: none declared at the top level (import, var/let/const, function), in an enclosing block's own declarations, or as an enclosing function's parameter. Files whose `@jsx X` comment names a factory other than React are not checked: upstream then requires that factory in scope, which the port does not check.",
     checks: [
       {
         id: "upstream",

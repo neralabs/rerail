@@ -24,6 +24,14 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack java
 The pack is recommended for a repository with JavaScript or TypeScript source files. Files under test, script and
 fixture folders, test and spec files, and configuration files (`*.config.*`, `.*rc.*`) do not count.
 
+This pack and the [TypeScript pack](../typescript/README.md) split ECMA files by type. The 21 core rules that
+typescript-eslint 8.70.1 replaces with an extension rule, or turns off for TypeScript in its `eslint-recommended`
+configuration (`no-redeclare`, `no-undef`, `no-unused-vars`, `no-dupe-keys` and others), run on `.js`, `.jsx`, `.mjs`
+and `.cjs` files only, and are scored on ESLint's JavaScript test cases only (`fixtures` in `conformance.json`). On
+TypeScript they report overloads, declaration merges and type names, and with both packs added a typescript-eslint
+port would report the same violation again. `no-loss-of-precision` and `prefer-spread`, which typescript-eslint leaves
+to the core rule on TypeScript, run on every ECMA file.
+
 Re-recording runs offline against the pinned tool versions (the recorder's header lists them):
 
 ```sh

@@ -83,6 +83,12 @@
                 "matches": "name-chain"
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
