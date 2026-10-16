@@ -1565,7 +1565,7 @@ fn sqlite_engine_runs_a_workspace_end_to_end() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let files = Value::Array(
-        (0..128)
+        (0..600)
             .map(|index| {
                 json!({
                     "path": format!("src/{index}.ts"),
@@ -1591,8 +1591,8 @@ fn sqlite_engine_runs_a_workspace_end_to_end() {
         serde_json::from_str::<Value>(&output).expect("result is JSON")["evaluation"].clone();
     assert_eq!(evaluation["failures"], json!([]), "{evaluation}");
     assert!(
-        crate::code_rule_dsl::query::max_registered_files() >= 128,
-        "all 128 AST files use one SQLite batch"
+        crate::code_rule_dsl::query::max_registered_files() >= 600,
+        "all 600 AST files use one SQLite batch"
     );
     assert_eq!(
         evaluation["violations"],

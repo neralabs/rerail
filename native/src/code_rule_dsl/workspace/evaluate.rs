@@ -417,19 +417,8 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
     };
 
     if context.sql.is_some() {
-        const SQL_BATCH_FILES: usize = 512;
-        return Ok(if jobs.len() <= SQL_BATCH_FILES {
-            let mut grammars = BTreeMap::new();
-            sql_work(jobs, &mut grammars)
-        } else {
-            WORK_POOL.install(|| {
-                jobs.into_par_iter()
-                    .chunks(SQL_BATCH_FILES)
-                    .map_init(BTreeMap::new, |grammars, jobs| sql_work(jobs, grammars))
-                    .flatten()
-                    .collect()
-            })
-        });
+        let mut grammars = BTreeMap::new();
+        return Ok(sql_work(jobs, &mut grammars));
     }
 
     Ok(if jobs.len() < WORKER_THREADS {
