@@ -320,14 +320,12 @@ pub(crate) fn evaluate_query(
                 crate::code_rule_dsl::sql::SqlError::unsupported("select_when").to_string(),
             ));
         }
-        (Engine::Sql, Query::Ast { matchers, .. }) => {
-            if violation.is_some_and(|violation| violation.each.is_some()) {
-                return Err(invalid(
-                    crate::code_rule_dsl::sql::SqlError::unsupported("violation.each").to_string(),
-                ));
-            }
-            Some(SqlFiles::evaluate(matchers, snapshot, scope)?)
-        }
+        (Engine::Sql, Query::Ast { matchers, .. }) => Some(SqlFiles::evaluate(
+            matchers,
+            snapshot,
+            scope,
+            violation.and_then(|violation| violation.each.as_deref()),
+        )?),
     };
     let leaf = Leaf {
         snapshot,
@@ -403,11 +401,13 @@ struct SqlFile {
 
 impl SqlFiles {
     /// Runs the query's grammar matchers over every file of the snapshot in the code rule's
-    /// scope as one batch: one statement per grammar matcher that reads a file.
+    /// scope as one batch: one statement per grammar matcher that reads a file. Under
+    /// `violation.each` (`each`), a root's matches are its enumeration's, in order.
     fn evaluate(
         matchers: &[GrammarMatcher],
         snapshot: &Snapshot,
         scope: &CodeRuleScope,
+        each: Option<&str>,
     ) -> Result<Self> {
         let mut used: Vec<usize> = Vec::new();
         let mut inputs = Vec::new();
@@ -443,7 +443,7 @@ impl SqlFiles {
             }));
         }
         let grammars: Vec<&GrammarMatcher> = used.iter().map(|&index| &matchers[index]).collect();
-        let compiled = crate::code_rule_dsl::sql::compile(&grammars)
+        let compiled = crate::code_rule_dsl::sql::compile_each(&grammars, each)
             .map_err(|error| invalid(error.to_string()))?;
         let docs: Vec<_> = inputs.iter().map(|(doc, _)| doc.clone()).collect();
         let mut matches = compiled
@@ -936,7 +936,8 @@ fn evaluate_file_clause(
             }
             Ok(true)
         };
-        match each {
+        // The SQL engine enumerated `each` itself: each of its matches at a root is one visit.
+        match each.filter(|_| sql.is_none()) {
             Some(name) => enumerate(&target, grammar, node, first, work, name, visit),
             None => visit(first, work),
         }

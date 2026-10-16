@@ -9,8 +9,11 @@ mod exec;
 mod lower;
 mod nodes;
 mod plan;
+mod recursion;
 mod terminals;
 #[cfg(test)]
 mod tests;
 
-pub(super) use exec::{SqlError, SqlMatch, compile, environment};
+#[cfg(test)]
+pub(super) use exec::compile;
+pub(super) use exec::{SqlError, SqlMatch, compile_each, environment};

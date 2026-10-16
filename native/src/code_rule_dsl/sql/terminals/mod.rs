@@ -13,8 +13,9 @@ pub(super) use pattern::{PatternRow, PatternTable, fresh_rows};
 use regex::Regex;
 pub(super) use text::TextTable;
 
-/// The most value columns a pattern terminal has (`v0`…).
-pub(super) const PATTERN_COLUMNS: usize = 32;
+/// The most value columns a pattern terminal has (`v0`…): far above any pattern's captures, and
+/// within SQLite's column limit (2000) with the frames' own columns.
+pub(super) const PATTERN_COLUMNS: usize = 1024;
 
 /// One terminal of a program, by its index.
 pub(super) enum Terminal {
@@ -62,6 +63,15 @@ impl PatternTerm {
             })
             .sum()
     }
+}
+
+/// A pattern's captures (single ones as nodes, `$$$` ones as lists), sorted and deduplicated.
+pub(super) fn pattern_vars(pattern: &Pattern) -> Vec<(String, SlotKind)> {
+    let mut vars = Vec::new();
+    collect_vars(&pattern.node, &mut vars);
+    vars.sort();
+    vars.dedup();
+    vars
 }
 
 fn collect_vars(node: &PatternNode, vars: &mut Vec<(String, SlotKind)>) {

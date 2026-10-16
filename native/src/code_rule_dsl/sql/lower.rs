@@ -5,15 +5,25 @@
 
 use super::emit;
 use super::plan::{
-    CallReturn, CallSlot, OfRule, Op, Slot, SlotId, SlotKind, Statement, Stop, Unsupported, Walk,
+    CallReturn, CallSlot, OfRule, Op, Slot, SlotId, SlotKind, Statement, Stop, Unit, Unsupported,
+    Walk,
 };
+use super::recursion::{self, Cycle, Recursion, UtilKey, util_key};
 use super::terminals::{PATTERN_COLUMNS, PatternTerm, Terminal};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::{
     AstMatcher, CaptureAnalysis, GrammarMatcher, Related, Semantic, StopBy, UtilRef,
 };
 use ast_grep_core::matcher::Matcher;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
+
+/// The scope of the slots no capture of the rule names: the root a row is evaluated for
+/// (`violation.each`).
+pub(super) const INTERNAL: usize = usize::MAX;
+
+/// The internal slot holding, in a unit's loop, the demand row a row is evaluated for: what the
+/// loop records each recursive reference's read from (`emit::Emitter::recur`).
+pub(super) const ORIGIN: &str = "\0origin";
 
 /// A per-batch shared stage: a rule matched in a fresh environment at every node of its root kinds
 /// in the files of its dialect, computed once per batch into `stage_<index>`. Stop rules and
@@ -31,31 +41,65 @@ pub(super) struct ProgramBuilder {
     pub(super) terminals: Vec<Terminal>,
     pub(super) stages: Vec<Stage>,
     stage_index: HashMap<String, usize>,
+    /// Each rule lowered as a stage, by its address and dialect: a stage is context-free, so a
+    /// rule reached again (a utility many terms or utilities share) is lowered once, not once per
+    /// path to it.
+    stage_rules: HashMap<(usize, String), usize>,
     regexes: HashMap<(String, String), usize>,
     fresh_patterns: HashMap<usize, usize>,
+    recursion: Recursion,
+    /// A capture-free recursive utility's stage, per utility and dialect.
+    recursive_stages: HashMap<(UtilKey, String), usize>,
+    /// The stages of each capture-free cycle's members, by the digest of the cycle's loop.
+    recursive_stage_index: HashMap<String, Vec<usize>>,
+    /// The members of the cycles whose units are being lowered.
+    in_progress: HashSet<UtilKey>,
+    /// When set, an operator the engine does not lower is recorded here and lowered as `Never`,
+    /// so a census reads every refusal of a clause, not only its first.
+    pub(super) census: Option<Vec<Unsupported>>,
 }
 
 impl ProgramBuilder {
-    /// Lowers one clause's grammar matcher to its statement.
-    pub(super) fn clause(&mut self, grammar: &GrammarMatcher) -> Result<Statement, Unsupported> {
+    /// Lowers one clause's grammar matcher to its statement; under `violation.each` (`each`, the
+    /// enumerated capture), the statement records each row's root and excludes the ranges the
+    /// driver reports per root (`Op::EachRoot`, `Op::Excluded`).
+    pub(super) fn clause_each(
+        &mut self,
+        grammar: &GrammarMatcher,
+        each: Option<&str>,
+    ) -> Result<Statement, Unsupported> {
         if grammar.three_valued {
-            return Err(Unsupported("three-valued clause".into()));
+            let refusal = Unsupported("three-valued clause".into());
+            match &mut self.census {
+                Some(census) => census.push(refusal),
+                None => return Err(refusal),
+            }
         }
         let kinds = grammar
             .anchors
             .root_kinds()
             .map(|kinds| kinds.iter().copied().collect());
-        let mut lowerer = Lowerer::new(self, grammar.language, Vec::new());
+        let mut lowerer = Lowerer::new(self, grammar.language);
+        let root = each.map(|name| {
+            lowerer.exclude = Some(name.to_owned());
+            let root = lowerer.slot(INTERNAL, "\0root", SlotKind::Node);
+            lowerer.root = Some(root);
+            root
+        });
         let (op, _) = lowerer.lower(&grammar.matcher, 0, &BTreeSet::new())?;
-        Ok(Statement {
-            slots: lowerer.slots,
-            kinds,
-            op,
-        })
+        let op = match root {
+            Some(root) => Op::All(vec![Op::EachRoot { root }, op]),
+            None => op,
+        };
+        Ok(lowerer.finish(kinds, op))
     }
 }
 
 type Bound = BTreeSet<SlotId>;
+
+/// A recursive unit's identity in a statement: its utility, the scope it runs in (`INTERNAL` for
+/// a parameterized call's frame) and the capture `violation.each` excludes there.
+type UnitKey = (UtilKey, usize, Option<String>);
 
 struct Lowerer<'p> {
     program: &'p mut ProgramBuilder,
@@ -63,17 +107,23 @@ struct Lowerer<'p> {
     slots: Vec<Slot>,
     index: HashMap<(usize, String, SlotKind), SlotId>,
     scopes: usize,
-    /// The utilities being lowered, innermost last: one met again is recursive.
-    utils: Vec<(usize, usize)>,
+    units: Vec<Unit>,
+    /// Each unit's identity, and for a call's unit the scope it runs in.
+    unit_index: HashMap<UnitKey, (usize, usize)>,
+    /// Each unit's utility.
+    unit_utils: Vec<UtilRef>,
+    /// The capture `violation.each` excludes here, by its name in the current scope; `None` where
+    /// nothing is excluded (no `each`, or a negation, a count, a probe or a call it is not passed
+    /// to).
+    exclude: Option<String>,
+    /// The slot of each row's root, under `violation.each`.
+    root: Option<SlotId>,
+    /// While lowering a capture-free cycle's stage: its members' units.
+    stage_members: HashMap<UtilKey, usize>,
 }
 
 fn unsupported<T>(operator: &str) -> Result<T, Unsupported> {
     Err(Unsupported(operator.to_owned()))
-}
-
-/// The utility identity of a reference: its table and index.
-fn util_key(util: &UtilRef) -> (usize, usize) {
-    (util.table.as_ptr() as usize, util.index)
 }
 
 /// Whether a rule reads, binds or counts no capture: its verdict at a node is the node's alone.
@@ -135,20 +185,344 @@ fn kind_id(kind: &ast_grep_core::matcher::KindMatcher) -> u16 {
         .map_or(u16::MAX, |kind| kind as u16)
 }
 
+/// The units each unit's body refers to (`Op::Recur`), in `out`.
+fn referred(op: &Op, out: &mut Vec<usize>) {
+    match op {
+        Op::Recur { unit, .. } => out.push(*unit),
+        Op::All(items) | Op::Any(items) => items.iter().for_each(|item| referred(item, out)),
+        Op::Not(inner) => referred(inner, out),
+        Op::Relation { sub, .. } | Op::Count { sub, .. } => referred(sub, out),
+        Op::NthChild {
+            of_rule: Some(OfRule::Frame(rule)),
+            ..
+        } => referred(rule, out),
+        Op::Call { body, .. } => referred(body, out),
+        Op::Constrained { rule, constraints } => {
+            referred(rule, out);
+            constraints
+                .iter()
+                .for_each(|(_, constraint)| referred(constraint, out));
+        }
+        Op::NthCommit { nth, commit } => {
+            referred(nth, out);
+            referred(commit, out);
+        }
+        Op::Kinds(_)
+        | Op::Regex(_)
+        | Op::Pattern { .. }
+        | Op::Never
+        | Op::NthChild { .. }
+        | Op::Stage(_)
+        | Op::EachRoot { .. }
+        | Op::Excluded { .. } => {}
+    }
+}
+
+/// Numbers the strongly connected components of the units' reference graph (Tarjan): units that
+/// reach each other share one loop.
+fn assign_sccs(units: &mut [Unit]) {
+    struct Tarjan<'u> {
+        edges: &'u [Vec<usize>],
+        index: Vec<Option<usize>>,
+        low: Vec<usize>,
+        stack: Vec<usize>,
+        on_stack: Vec<bool>,
+        next: usize,
+        scc: Vec<usize>,
+        sccs: usize,
+    }
+    impl Tarjan<'_> {
+        fn visit(&mut self, unit: usize) {
+            self.index[unit] = Some(self.next);
+            self.low[unit] = self.next;
+            self.next += 1;
+            self.stack.push(unit);
+            self.on_stack[unit] = true;
+            for &to in &self.edges[unit] {
+                match self.index[to] {
+                    None => {
+                        self.visit(to);
+                        self.low[unit] = self.low[unit].min(self.low[to]);
+                    }
+                    Some(index) if self.on_stack[to] => {
+                        self.low[unit] = self.low[unit].min(index);
+                    }
+                    Some(_) => {}
+                }
+            }
+            if Some(self.low[unit]) == self.index[unit] {
+                while let Some(member) = self.stack.pop() {
+                    self.on_stack[member] = false;
+                    self.scc[member] = self.sccs;
+                    if member == unit {
+                        break;
+                    }
+                }
+                self.sccs += 1;
+            }
+        }
+    }
+    let edges: Vec<Vec<usize>> = units
+        .iter()
+        .map(|unit| {
+            let mut out = Vec::new();
+            referred(&unit.body, &mut out);
+            out
+        })
+        .collect();
+    let mut tarjan = Tarjan {
+        edges: &edges,
+        index: vec![None; units.len()],
+        low: vec![0; units.len()],
+        stack: Vec::new(),
+        on_stack: vec![false; units.len()],
+        next: 0,
+        scc: vec![0; units.len()],
+        sccs: 0,
+    };
+    for unit in 0..units.len() {
+        if tarjan.index[unit].is_none() {
+            tarjan.visit(unit);
+        }
+    }
+    for (unit, scc) in units.iter_mut().zip(tarjan.scc) {
+        unit.scc = scc;
+    }
+}
+
 impl<'p> Lowerer<'p> {
-    fn new(
-        program: &'p mut ProgramBuilder,
-        dialect: GrammarDialect,
-        utils: Vec<(usize, usize)>,
-    ) -> Self {
+    fn new(program: &'p mut ProgramBuilder, dialect: GrammarDialect) -> Self {
         Self {
             program,
             dialect,
             slots: Vec::new(),
             index: HashMap::new(),
             scopes: 0,
-            utils,
+            units: Vec::new(),
+            unit_index: HashMap::new(),
+            unit_utils: Vec::new(),
+            exclude: None,
+            root: None,
+            stage_members: HashMap::new(),
         }
+    }
+
+    /// The statement of what was lowered: its root kinds, its operator and its units.
+    fn finish(self, kinds: Option<Vec<u16>>, op: Op) -> Statement {
+        let mut units = self.units;
+        assign_sccs(&mut units);
+        Statement {
+            slots: self.slots,
+            kinds,
+            op,
+            units,
+        }
+    }
+
+    /// `inner` with `exclude` as the capture `violation.each` excludes.
+    fn with_exclude<T>(
+        &mut self,
+        exclude: Option<String>,
+        inner: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let saved = std::mem::replace(&mut self.exclude, exclude);
+        let result = inner(self);
+        self.exclude = saved;
+        result
+    }
+
+    /// `op` followed by `Excluded` where `violation.each` excludes here and the enumerated
+    /// capture has a node slot in `scope`: where no slot exists, no row binds it here.
+    fn excluding(&self, scope: usize, op: Op) -> Op {
+        let (Some(name), Some(root)) = (&self.exclude, self.root) else {
+            return op;
+        };
+        match self.existing(scope, name, SlotKind::Node) {
+            Some(slot) => Op::All(vec![op, Op::Excluded { name: slot, root }]),
+            None => op,
+        }
+    }
+
+    /// `walk_leak` for a relation's rule, also through a recursive unit: a relation in a context
+    /// `violation.each` excludes in tests each candidate on a trial environment and leaks nothing.
+    fn leaks(&self, sub: &Op) -> Result<(), Unsupported> {
+        if self.exclude.is_some() {
+            return Ok(());
+        }
+        walk_leak(sub)?;
+        if let Op::Recur { unit, .. } = sub {
+            let leaky = self.unit_utils[*unit]
+                .with_target(|rule| match rule {
+                    AstMatcher::NthChild(nth) => nth
+                        .of_rule
+                        .as_ref()
+                        .is_some_and(|rule| !CaptureAnalysis::default().binds(rule).is_empty()),
+                    _ => false,
+                })
+                .unwrap_or(false);
+            if leaky {
+                return unsupported("nthChild with a binding ofRule as a relation's rule");
+            }
+        }
+        Ok(())
+    }
+
+    /// The unit of `util`, a member of `cycle` running in `scope` (a call's runs in a frame of its
+    /// own, whose key is the `params` it may bind), lowered on first use: its key and the scope
+    /// it runs in.
+    fn unit(
+        &mut self,
+        cycle: &Cycle,
+        util: &UtilRef,
+        params: Option<&[String]>,
+        scope: usize,
+        exclude: Option<String>,
+    ) -> Result<(usize, usize), Unsupported> {
+        let identity = (
+            util_key(util),
+            if params.is_some() { INTERNAL } else { scope },
+            exclude.clone(),
+        );
+        if let Some(&found) = self.unit_index.get(&identity) {
+            return Ok(found);
+        }
+        let own = match params {
+            Some(_) => {
+                self.scopes += 1;
+                self.scopes
+            }
+            None => scope,
+        };
+        let held = self.program.recursion.scope_kinds(util);
+        let mut key: Vec<SlotId> = held
+            .iter()
+            .filter(|(name, _)| params.is_none_or(|params| params.contains(name)))
+            .map(|(name, kind)| self.slot(own, name, *kind))
+            .collect();
+        if exclude.is_some()
+            && let Some(root) = self.root
+        {
+            key.push(root);
+        }
+        self.slot(INTERNAL, ORIGIN, SlotKind::Node);
+        let id = self.units.len();
+        self.units.push(Unit {
+            key: key.clone(),
+            body: Op::Never,
+            seed: None,
+            scc: 0,
+        });
+        self.unit_utils.push(util.clone());
+        self.unit_index.insert(identity, (id, own));
+        let entered: Vec<UtilKey> = cycle
+            .keys
+            .iter()
+            .copied()
+            .filter(|key| self.program.in_progress.insert(*key))
+            .collect();
+        let bound: Bound = key.iter().copied().collect();
+        let lowered = self.with_exclude(exclude, |lowerer| {
+            util.with_target(|rule| lowerer.lower(rule, own, &bound))
+        });
+        for key in entered {
+            self.program.in_progress.remove(&key);
+        }
+        if let Some(lowered) = lowered {
+            self.units[id].body = lowered?.0;
+        }
+        Ok((id, own))
+    }
+
+    /// The stage of `util`, a member of the capture-free `cycle`: every member is a unit of one
+    /// statement, evaluated over every node of its root kinds in a loop, and each member's
+    /// matches are a stage of their own. Equal cycles (equal SQL) are one.
+    fn recursive_stage(&mut self, cycle: &Cycle, util: &UtilRef) -> Result<usize, Unsupported> {
+        let dialect = self.dialect.to_string();
+        if let Some(&stage) = self
+            .program
+            .recursive_stages
+            .get(&(util_key(util), dialect.clone()))
+        {
+            return Ok(stage);
+        }
+        let mut lowerer = Lowerer::new(self.program, self.dialect);
+        lowerer.slot(INTERNAL, ORIGIN, SlotKind::Node);
+        for (index, member) in cycle.members.iter().enumerate() {
+            let seed = member
+                .with_target(|rule| root_kinds(rule, 0).map(|kinds| kinds.into_iter().collect()))
+                .flatten();
+            lowerer.units.push(Unit {
+                key: Vec::new(),
+                body: Op::Never,
+                seed: Some(seed),
+                scc: 0,
+            });
+            lowerer.unit_utils.push(member.clone());
+            lowerer.stage_members.insert(cycle.keys[index], index);
+        }
+        let entered: Vec<UtilKey> = cycle
+            .keys
+            .iter()
+            .copied()
+            .filter(|key| lowerer.program.in_progress.insert(*key))
+            .collect();
+        let mut bodies = Vec::new();
+        for member in &cycle.members {
+            let lowered = member.with_target(|rule| lowerer.lower(rule, 0, &BTreeSet::new()));
+            match lowered {
+                Some(Ok((body, _))) => bodies.push(body),
+                Some(Err(error)) => {
+                    for key in &entered {
+                        lowerer.program.in_progress.remove(key);
+                    }
+                    return Err(error);
+                }
+                None => bodies.push(Op::Never),
+            }
+        }
+        for key in &entered {
+            lowerer.program.in_progress.remove(key);
+        }
+        for (unit, body) in lowerer.units.iter_mut().zip(bodies) {
+            unit.body = body;
+        }
+        let statement = lowerer.finish(None, Op::Never);
+        let leader = emit::recursive_stage(&statement);
+        let digest = format!("{dialect}:recursive:{}", leader.join(";\n"));
+        let stages = match self.program.recursive_stage_index.get(&digest) {
+            Some(stages) => stages.clone(),
+            None => {
+                let first = self.program.stages.len();
+                let namespace = emit::stage_namespace(first);
+                self.program.stages.push(Stage {
+                    dialect: self.dialect,
+                    statements: leader,
+                });
+                let mut stages = vec![first];
+                for unit in 1..cycle.members.len() {
+                    stages.push(self.program.stages.len());
+                    self.program.stages.push(Stage {
+                        dialect: self.dialect,
+                        statements: vec![emit::recursive_member(&namespace, unit)],
+                    });
+                }
+                self.program
+                    .recursive_stage_index
+                    .insert(digest, stages.clone());
+                stages
+            }
+        };
+        for (key, stage) in cycle.keys.iter().zip(&stages) {
+            self.program
+                .recursive_stages
+                .insert((*key, dialect.clone()), *stage);
+        }
+        let index = cycle
+            .keys
+            .iter()
+            .position(|key| *key == util_key(util))
+            .expect("a member");
+        Ok(stages[index])
     }
 
     fn slot(&mut self, scope: usize, name: &str, kind: SlotKind) -> SlotId {
@@ -171,15 +545,21 @@ impl<'p> Lowerer<'p> {
 
     /// A stage for `rule`, matched in a fresh environment: lowered, emitted and keyed by its SQL.
     fn stage(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
+        let address = (std::ptr::from_ref(rule) as usize, self.dialect.to_string());
+        if let Some(&stage) = self.program.stage_rules.get(&address) {
+            return Ok(stage);
+        }
+        let stage = self.stage_of(rule)?;
+        self.program.stage_rules.insert(address, stage);
+        Ok(stage)
+    }
+
+    fn stage_of(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
         let kinds = root_kinds(rule, 0).map(|kinds| kinds.into_iter().collect());
         let statement = {
-            let mut lowerer = Lowerer::new(self.program, self.dialect, self.utils.clone());
+            let mut lowerer = Lowerer::new(self.program, self.dialect);
             let (op, _) = lowerer.lower(rule, 0, &BTreeSet::new())?;
-            Statement {
-                slots: lowerer.slots,
-                kinds,
-                op,
-            }
+            lowerer.finish(kinds, op)
         };
         let statements = emit::stage(&statement);
         let digest = format!("{}:{}", self.dialect, statements.join(";\n"));
@@ -223,11 +603,30 @@ impl<'p> Lowerer<'p> {
         scope: usize,
         bound: &Bound,
     ) -> Result<(Op, Bound), Unsupported> {
+        match self.lower_term(matcher, scope, bound) {
+            Err(refusal) if self.program.census.is_some() => {
+                self.program
+                    .census
+                    .as_mut()
+                    .expect("a census")
+                    .push(refusal);
+                Ok((Op::Never, bound.clone()))
+            }
+            lowered => lowered,
+        }
+    }
+
+    fn lower_term(
+        &mut self,
+        matcher: &AstMatcher,
+        scope: usize,
+        bound: &Bound,
+    ) -> Result<(Op, Bound), Unsupported> {
         match matcher {
             AstMatcher::Pattern(pattern) => {
                 let mut term = PatternTerm::new(pattern.clone(), self.dialect);
                 if term.width() > PATTERN_COLUMNS {
-                    return unsupported("pattern with more than 32 capture columns");
+                    return unsupported("pattern with more than 1024 capture columns");
                 }
                 let vars: Vec<SlotId> = term
                     .vars
@@ -302,13 +701,13 @@ impl<'p> Lowerer<'p> {
                 let mut out = bound.clone();
                 for item in items {
                     let (op, branch) = self.lower(item, scope, bound)?;
-                    ops.push(op);
+                    ops.push(self.excluding(scope, op));
                     out.extend(branch);
                 }
                 Ok((Op::Any(ops), out))
             }
             AstMatcher::Not(inner) => {
-                let (op, _) = self.lower(inner, scope, bound)?;
+                let (op, _) = self.with_exclude(None, |lowerer| lowerer.lower(inner, scope, bound))?;
                 Ok((Op::Not(Box::new(op)), bound.clone()))
             }
             AstMatcher::Never => Ok((Op::Never, bound.clone())),
@@ -318,7 +717,8 @@ impl<'p> Lowerer<'p> {
             | AstMatcher::Follows(..) => {
                 let (walk, related) = self.relation(matcher)?.expect("a relation");
                 let (sub, out) = self.lower(related.rule(), scope, bound)?;
-                walk_leak(&sub)?;
+                self.leaks(&sub)?;
+                let sub = self.excluding(scope, sub);
                 let binds = sub.binds();
                 Ok((
                     Op::Relation {
@@ -337,7 +737,8 @@ impl<'p> Lowerer<'p> {
                     Walk::FieldHas(relation.field, stop)
                 };
                 let (sub, out) = self.lower(&relation.rule, scope, bound)?;
-                walk_leak(&sub)?;
+                self.leaks(&sub)?;
+                let sub = self.excluding(scope, sub);
                 let binds = sub.binds();
                 Ok((
                     Op::Relation {
@@ -351,20 +752,40 @@ impl<'p> Lowerer<'p> {
             AstMatcher::NthChild(nth) => {
                 let (of_rule, out) = match &nth.of_rule {
                     None => (None, bound.clone()),
-                    Some(rule) if capture_free(rule) => {
+                    Some(rule)
+                        if capture_free(rule)
+                            && !recursion::reaches(rule, &self.program.in_progress) =>
+                    {
                         (Some(OfRule::Stage(self.stage(rule)?)), bound.clone())
                     }
                     Some(rule) => {
-                        let (op, out) = self.lower(rule, scope, bound)?;
+                        // The siblings are probed excluding nothing.
+                        let (op, out) =
+                            self.with_exclude(None, |lowerer| lowerer.lower(rule, scope, bound))?;
                         (Some(OfRule::Frame(Box::new(op))), out)
                     }
                 };
+                let committed = match (&nth.of_rule, &of_rule) {
+                    (Some(rule), Some(OfRule::Frame(probe)))
+                        if self.exclude.is_some() && probe.binds() =>
+                    {
+                        Some(self.lower(rule, scope, bound)?.0)
+                    }
+                    _ => None,
+                };
+                let nth = Op::NthChild {
+                    step: nth.position.step,
+                    offset: nth.position.offset,
+                    reverse: nth.reverse,
+                    of_rule,
+                };
                 Ok((
-                    Op::NthChild {
-                        step: nth.position.step,
-                        offset: nth.position.offset,
-                        reverse: nth.reverse,
-                        of_rule,
+                    match committed {
+                        Some(commit) => Op::NthCommit {
+                            nth: Box::new(nth),
+                            commit: Box::new(commit),
+                        },
+                        None => nth,
                     },
                     out,
                 ))
@@ -374,7 +795,9 @@ impl<'p> Lowerer<'p> {
                     // A count over any other term counts nothing and holds nowhere.
                     return Ok((Op::Never, bound.clone()));
                 };
-                let (sub, _) = self.lower(related.rule(), scope, bound)?;
+                let (sub, _) = self.with_exclude(None, |lowerer| {
+                    lowerer.lower(related.rule(), scope, bound)
+                })?;
                 let mut out = bound.clone();
                 let bind = count.binding.as_ref().map(|binding| {
                     let slot = self.slot(scope, &binding.name, SlotKind::Count);
@@ -393,50 +816,101 @@ impl<'p> Lowerer<'p> {
                 ))
             }
             AstMatcher::Util(util) => {
-                let key = util_key(util);
-                if self.utils.contains(&key) {
-                    return unsupported("recursive utility");
+                // A utility whose rules are gone or not compiled yet matches nothing, as natively.
+                if util.with_target(|_| ()).is_none() {
+                    return Ok((Op::Never, bound.clone()));
                 }
-                self.utils.push(key);
-                let lowered = util
-                    .with_target(|rule| {
-                        if capture_free(rule) {
-                            self.stage(rule)
-                                .map(|stage| (Op::Stage(stage), bound.clone()))
-                        } else {
-                            self.lower(rule, scope, bound)
-                        }
-                    })
-                    .unwrap_or_else(|| unsupported("unfilled utility"));
-                self.utils.pop();
-                lowered
+                if let Some(cycle) = self.program.recursion.cycle(util) {
+                    recursion::refusal(&cycle)?;
+                    if let Some(&unit) = self.stage_members.get(&util_key(util)) {
+                        return Ok((Op::Recur { unit, slots: None }, bound.clone()));
+                    }
+                    if cycle.capture_free {
+                        let stage = self.recursive_stage(&cycle, util)?;
+                        return Ok((Op::Stage(stage), bound.clone()));
+                    }
+                    let exclude = self.exclude.clone();
+                    let (unit, _) = self.unit(&cycle, util, None, scope, exclude)?;
+                    let mut out = bound.clone();
+                    out.extend(self.units[unit].key.iter().copied());
+                    return Ok((Op::Recur { unit, slots: None }, out));
+                }
+                util.with_target(|rule| {
+                    if capture_free(rule) {
+                        self.stage(rule)
+                            .map(|stage| (Op::Stage(stage), bound.clone()))
+                    } else {
+                        self.lower(rule, scope, bound)
+                    }
+                })
+                .expect("a filled utility")
             }
             AstMatcher::Call(call) => {
-                let key = util_key(&call.util);
-                if self.utils.contains(&key) {
-                    return unsupported("recursive utility");
+                if call.util.with_target(|_| ()).is_none() {
+                    return Ok((Op::Never, bound.clone()));
                 }
+                // The enumerated capture is excluded in the frame under the first parameter it
+                // is passed as; a frame it is not passed to excludes nothing (`each::framed`).
+                let exclude = self.exclude.as_ref().and_then(|name| {
+                    call.args
+                        .iter()
+                        .find(|(_, caller)| caller == name)
+                        .map(|(param, _)| param.clone())
+                });
                 self.scopes += 1;
                 let callee = self.scopes;
                 let kinds = [SlotKind::Node, SlotKind::List, SlotKind::Count];
-                // The parameters the caller's bindings may fill on entry.
-                let mut entry_bound = Bound::new();
-                for (param, caller) in &call.args {
-                    for kind in kinds {
-                        if let Some(slot) = self.existing(scope, caller, kind)
-                            && bound.contains(&slot)
-                        {
-                            entry_bound.insert(self.slot(callee, param, kind));
+                let (body, returned): (Op, Option<Bound>) =
+                    match self.program.recursion.cycle(&call.util) {
+                        Some(cycle) => {
+                            recursion::refusal(&cycle)?;
+                            let params: Vec<String> =
+                                call.args.iter().map(|(param, _)| param.clone()).collect();
+                            let (unit, _) =
+                                self.unit(&cycle, &call.util, Some(&params), scope, exclude)?;
+                            // The call's own copy of the frame's key: the unit's frame is the
+                            // same for every call, and a call inside the unit's own body must
+                            // not overwrite the parameters of the frame it runs in.
+                            let key = self.units[unit].key.clone();
+                            let slots = key
+                                .iter()
+                                .map(|&slot| {
+                                    if Some(slot) == self.root {
+                                        return slot;
+                                    }
+                                    let (name, kind) =
+                                        (self.slots[slot].name.clone(), self.slots[slot].kind);
+                                    self.slot(callee, &name, kind)
+                                })
+                                .collect();
+                            (
+                                Op::Recur {
+                                    unit,
+                                    slots: Some(slots),
+                                },
+                                None,
+                            )
                         }
-                    }
-                }
-                self.utils.push(key);
-                let lowered = call
-                    .util
-                    .with_target(|rule| self.lower(rule, callee, &entry_bound))
-                    .unwrap_or_else(|| unsupported("unfilled utility"));
-                self.utils.pop();
-                let (body, body_out) = lowered?;
+                        None => {
+                            // The parameters the caller's bindings may fill on entry.
+                            let mut entry_bound = Bound::new();
+                            for (param, caller) in &call.args {
+                                for kind in kinds {
+                                    if let Some(slot) = self.existing(scope, caller, kind)
+                                        && bound.contains(&slot)
+                                    {
+                                        entry_bound.insert(self.slot(callee, param, kind));
+                                    }
+                                }
+                            }
+                            let (body, body_out) = self.with_exclude(exclude, |lowerer| {
+                                call.util
+                                    .with_target(|rule| lowerer.lower(rule, callee, &entry_bound))
+                                    .expect("a filled utility")
+                            })?;
+                            (body, Some(body_out))
+                        }
+                    };
                 let mut entry = Vec::new();
                 for (param, caller) in &call.args {
                     for kind in kinds {
@@ -467,15 +941,10 @@ impl<'p> Lowerer<'p> {
                             .iter()
                             .filter(|(_, mapped)| mapped == caller)
                             .filter_map(|(param, _)| self.existing(callee, param, kind))
-                            .filter(|slot| body_out.contains(slot))
+                            .filter(|slot| returned.as_ref().is_none_or(|out| out.contains(slot)))
                             .collect();
                         if params.is_empty() {
                             continue;
-                        }
-                        if params.len() > 4 {
-                            return unsupported(
-                                "call mapping more than 4 parameters to one capture",
-                            );
                         }
                         let caller_slot = self.slot(scope, caller, kind);
                         out.insert(caller_slot);

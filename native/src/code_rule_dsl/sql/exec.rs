@@ -18,6 +18,7 @@ use parking_lot::RwLock;
 use rusqlite::Connection;
 use rusqlite::types::Value;
 use rusqlite::vtab::Module;
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 /// One file of a batch.
@@ -89,6 +90,8 @@ const TEXT_MODULE: Module<'static, TextTable> = Module::eponymous_only_module();
 /// An in-memory connection whose virtual tables read `slot`'s batch.
 fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
     let connection = Connection::open_in_memory()?;
+    // Recursion loops run their statements once per pass: every one stays prepared.
+    connection.set_prepared_statement_cache_capacity(4096);
     connection.create_module(c"node", &NODE_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"pattern", &PATTERN_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"text_match", &TEXT_MODULE, Some(Arc::clone(slot)))?;
@@ -155,24 +158,283 @@ impl From<rusqlite::Error> for SqlError {
 pub(in crate::code_rule_dsl) struct Compiled {
     builder: ProgramBuilder,
     clauses: Vec<(Statement, Vec<String>)>,
+    /// Whether the clauses enumerate `violation.each`: their statements run in rounds.
+    each: bool,
 }
 
 /// Compiles `grammars`, one clause each; `Unsupported` where one holds an operator the engine
 /// does not lower.
+#[cfg(test)]
 pub(in crate::code_rule_dsl) fn compile(
     grammars: &[&GrammarMatcher],
+) -> Result<Compiled, SqlError> {
+    compile_each(grammars, None)
+}
+
+/// `compile`, with `violation.each` enumerating the capture `each` at every matching root.
+pub(in crate::code_rule_dsl) fn compile_each(
+    grammars: &[&GrammarMatcher],
+    each: Option<&str>,
 ) -> Result<Compiled, SqlError> {
     let mut builder = ProgramBuilder::default();
     let mut clauses = Vec::new();
     for grammar in grammars {
-        let statement = builder.clause(grammar).map_err(SqlError::Unsupported)?;
-        let sql = emit::clause(&statement);
+        let statement = builder
+            .clause_each(grammar, each)
+            .map_err(SqlError::Unsupported)?;
+        let sql = match each {
+            Some(name) => {
+                let slot = statement.slots.iter().position(|slot| {
+                    slot.scope == 0 && slot.kind == SlotKind::Node && slot.name == name
+                });
+                emit::clause_each(&statement, slot)
+            }
+            None => emit::clause(&statement),
+        };
         clauses.push((statement, sql));
     }
-    Ok(Compiled { builder, clauses })
+    Ok(Compiled {
+        builder,
+        clauses,
+        each: each.is_some(),
+    })
+}
+
+/// Every operator the engine would refuse in `grammar`'s clause (`each`: its `violation.each`),
+/// not only the first: each refusal is recorded and lowered as `Never`.
+#[cfg(test)]
+pub(in crate::code_rule_dsl) fn census(grammar: &GrammarMatcher, each: Option<&str>) -> Vec<String> {
+    let mut builder = ProgramBuilder::default();
+    builder.census = Some(Vec::new());
+    let _ = builder.clause_each(grammar, each);
+    builder
+        .census
+        .unwrap_or_default()
+        .into_iter()
+        .map(|refusal| refusal.0)
+        .collect()
+}
+
+/// The most passes a recursion loop runs before the batch is refused: the matcher's utility
+/// depth limit, which no recursion over real code reaches with its limits lifted.
+const MAX_LEVELS: usize = 256;
+
+/// Runs `statements` (namespaced and substituted by `substitute`), each loop (`emit::LOOP` …
+/// `emit::UNTIL`) again while its last query counts a change. A loop that still changes after
+/// `MAX_LEVELS` passes refuses the batch: a recursion that deep is not evaluated. A loop's
+/// statements run on every pass, so they are prepared once (`looping`).
+fn execute(
+    connection: &Connection,
+    statements: &[String],
+    substitute: &dyn Fn(&str) -> String,
+    looping: bool,
+) -> Result<(), SqlError> {
+    let mut at = 0;
+    while at < statements.len() {
+        if let Some(reads) = statements[at].strip_prefix(emit::ACYCLIC) {
+            acyclic(connection, &substitute(reads))?;
+            at += 1;
+            continue;
+        }
+        if statements[at] != emit::LOOP {
+            let sql = substitute(&statements[at]);
+            if looping {
+                connection.prepare_cached(&sql)?.execute([])?;
+            } else {
+                connection.execute_batch(&sql)?;
+            }
+            at += 1;
+            continue;
+        }
+        let mut depth = 0;
+        let end = (at..statements.len())
+            .find(|&index| {
+                if statements[index] == emit::LOOP {
+                    depth += 1;
+                } else if statements[index].starts_with(emit::UNTIL) {
+                    depth -= 1;
+                }
+                depth == 0
+            })
+            .expect("a loop's end");
+        let until = substitute(&statements[end][emit::UNTIL.len()..]);
+        let mut passes = 0;
+        loop {
+            execute(connection, &statements[at + 1..end], substitute, true)?;
+            passes += 1;
+            let changed: i64 = connection
+                .prepare_cached(&until)?
+                .query_row([], |row| row.get(0))?;
+            if changed == 0 {
+                break;
+            }
+            if passes > MAX_LEVELS {
+                return Err(SqlError::unsupported("recursion deeper than 256 levels"));
+            }
+        }
+        at = end + 1;
+    }
+    Ok(())
+}
+
+/// Accepts a recursion loop's last pass (`recursion`): its recursive reads (`query`'s rows,
+/// `(unit, key, unit, key)`) must form no cycle, and no chain of them may be longer than the
+/// matcher's utility depth limit.
+fn acyclic(connection: &Connection, query: &str) -> Result<(), SqlError> {
+    let mut nodes: HashMap<(i64, i64), usize> = HashMap::new();
+    let mut edges: Vec<Vec<usize>> = Vec::new();
+    let mut node = |key: (i64, i64), edges: &mut Vec<Vec<usize>>| -> usize {
+        *nodes.entry(key).or_insert_with(|| {
+            edges.push(Vec::new());
+            edges.len() - 1
+        })
+    };
+    let mut prepared = connection.prepare(query)?;
+    let mut rows = prepared.query([])?;
+    while let Some(row) = rows.next()? {
+        let from = node((row.get(0)?, row.get(1)?), &mut edges);
+        let to = node((row.get(2)?, row.get(3)?), &mut edges);
+        edges[from].push(to);
+    }
+    // Iterative depth-first search: `depth` is a key's longest chain of reads, `None` while the
+    // key is on the search path (reaching it again closes a cycle).
+    let mut depth: Vec<Option<Option<usize>>> = vec![None; edges.len()];
+    for start in 0..edges.len() {
+        if depth[start].is_some() {
+            continue;
+        }
+        depth[start] = Some(None);
+        let mut path: Vec<(usize, usize)> = vec![(start, 0)];
+        while let Some(&mut (key, ref mut next)) = path.last_mut() {
+            if let Some(&to) = edges[key].get(*next) {
+                *next += 1;
+                match depth[to] {
+                    Some(None) => {
+                        return Err(SqlError::unsupported("recursion whose reads loop back"));
+                    }
+                    Some(Some(_)) => {}
+                    None => {
+                        depth[to] = Some(None);
+                        path.push((to, 0));
+                    }
+                }
+                continue;
+            }
+            let longest = edges[key]
+                .iter()
+                .filter_map(|&to| depth[to].flatten())
+                .max()
+                .map_or(0, |longest| longest + 1);
+            if longest > MAX_LEVELS {
+                return Err(SqlError::unsupported("recursion deeper than 256 levels"));
+            }
+            depth[key] = Some(Some(longest));
+            path.pop();
+        }
+    }
+    Ok(())
+}
+
+/// Reads the rows of a clause's final query: each `(file, root, captures…)`.
+fn read_matches(
+    connection: &Connection,
+    query: &str,
+    statement: &Statement,
+    mut found: impl FnMut(usize, SqlMatch),
+) -> Result<(), SqlError> {
+    let mut prepared = connection.prepare(query)?;
+    let captures: Vec<(String, SlotKind, usize)> = {
+        let mut column = 2;
+        statement
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(_, slot)| slot.scope == 0)
+            .map(|(id, slot)| {
+                let at = column;
+                column += slot.columns(id).len();
+                (slot.name.clone(), slot.kind, at)
+            })
+            .collect()
+    };
+    let mut rows = prepared.query([])?;
+    while let Some(row) = rows.next()? {
+        let file: i64 = row.get(0)?;
+        let root: i64 = row.get(1)?;
+        let mut bound = Vec::new();
+        for (name, kind, at) in &captures {
+            let value = |offset: usize| -> rusqlite::Result<Option<i64>> {
+                match row.get::<_, Value>(at + offset)? {
+                    Value::Integer(value) => Ok(Some(value)),
+                    _ => Ok(None),
+                }
+            };
+            let captured = match kind {
+                SlotKind::Node => value(0)?.map(|id| Captured::Node(id as u32)),
+                SlotKind::Count => value(0)?.map(Captured::Count),
+                SlotKind::List => match (value(0)?, value(1)?) {
+                    (Some(-1), _) => Some(Captured::List(None)),
+                    (Some(lo), Some(hi)) => Some(Captured::List(Some((lo as u32, hi as u32)))),
+                    _ => None,
+                },
+            };
+            if let Some(captured) = captured {
+                bound.push((name.clone(), captured));
+            }
+        }
+        found(
+            file as usize,
+            SqlMatch {
+                root: root as u32,
+                captures: bound,
+            },
+        );
+    }
+    Ok(())
+}
+
+/// Drops the temporary tables whose names start with `prefix`.
+fn drop_tables(connection: &Connection, prefix: &str) -> Result<(), SqlError> {
+    let names: Vec<String> = connection
+        .prepare(
+            "SELECT name FROM sqlite_temp_master WHERE type = 'table' AND substr(name, 1, length(?1)) = ?1",
+        )?
+        .query_map([prefix], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for name in names {
+        connection.execute_batch(&format!("DROP TABLE {name}"))?;
+    }
+    Ok(())
 }
 
 impl Compiled {
+    /// The statements one pass of each recursion loop runs, outermost loops first: stages', then
+    /// clauses'. A nested loop's statements count in its own entry, not in its parent's.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn loop_statements(&self) -> Vec<usize> {
+        let mut passes = Vec::new();
+        let lists = self
+            .builder
+            .stages
+            .iter()
+            .map(|stage| &stage.statements)
+            .chain(self.clauses.iter().map(|(_, sql)| sql));
+        for statements in lists {
+            // Per open loop: its statements so far.
+            let mut open: Vec<usize> = Vec::new();
+            for statement in statements {
+                if statement == emit::LOOP {
+                    open.push(0);
+                } else if statement.starts_with(emit::UNTIL) {
+                    passes.push(open.pop().expect("an open loop") + 1);
+                } else if let Some(count) = open.last_mut() {
+                    *count += 1;
+                }
+            }
+        }
+        passes
+    }
+
     /// How many statements one batch runs: each stage's, then each clause's.
     #[cfg(test)]
     pub(in crate::code_rule_dsl) fn statement_count(&self) -> (usize, usize) {
@@ -192,7 +454,11 @@ impl Compiled {
         self,
         files: Vec<(TapeDoc, Option<usize>)>,
     ) -> Result<Vec<Vec<SqlMatch>>, SqlError> {
-        let Compiled { builder, clauses } = self;
+        let Compiled {
+            builder,
+            clauses,
+            each,
+        } = self;
         let assigned: Vec<Option<usize>> = files.iter().map(|(_, statement)| *statement).collect();
         let batch = Batch::new(
             files.into_iter().map(|(doc, _)| doc).collect(),
@@ -215,25 +481,35 @@ impl Compiled {
                 listed.join(", ")
             }
         };
-        let run = |statements: &[String], namespace: &str, files: &str| -> Result<(), SqlError> {
-            for statement in statements {
-                let sql = statement
-                    .replace(emit::NAMESPACE, namespace)
-                    .replace(emit::FILES, files);
-                connection.execute_batch(&sql)?;
-            }
-            Ok(())
+        let run = |statements: &[String],
+                   namespace: &str,
+                   files: &str,
+                   each: &str|
+         -> Result<(), SqlError> {
+            execute(
+                &connection,
+                statements,
+                &|statement| {
+                    statement
+                        .replace(emit::NAMESPACE, namespace)
+                        .replace(emit::FILES, files)
+                        .replace(emit::EACH, each)
+                },
+                false,
+            )
         };
         for (index, stage) in builder.stages.iter().enumerate() {
             let table = emit::stage_table(index);
-            let namespace = format!("s{index}_");
+            let namespace = emit::stage_namespace(index);
             let files = file_list(&|_, file| file.dialect == stage.dialect);
             let (query, steps) = stage.statements.split_last().expect("a final select");
-            run(steps, &namespace, &files)?;
+            run(steps, &namespace, &files, "")?;
             connection.execute_batch(&format!(
                 "CREATE TEMP TABLE {table}(file INTEGER, node INTEGER, PRIMARY KEY (file, node)) WITHOUT ROWID; \
                  INSERT INTO {table}(file, node) {}",
-                query.replace(emit::NAMESPACE, &namespace)
+                query
+                    .replace(emit::NAMESPACE, &namespace)
+                    .replace(emit::FILES, &files)
             ))?;
         }
         let mut results: Vec<Vec<SqlMatch>> = batch.files.iter().map(|_| Vec::new()).collect();
@@ -242,55 +518,54 @@ impl Compiled {
             if files == "NULL" {
                 continue;
             }
-            let namespace = format!("c{index}_");
             let (query, steps) = sql.split_last().expect("a final select");
-            run(steps, &namespace, &files)?;
-            let mut prepared = connection.prepare(&query.replace(emit::NAMESPACE, &namespace))?;
-            let captures: Vec<(String, SlotKind, usize)> = {
-                let mut column = 2;
-                statement
-                    .slots
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, slot)| slot.scope == 0)
-                    .map(|(id, slot)| {
-                        let at = column;
-                        column += slot.columns(id).len();
-                        (slot.name.clone(), slot.kind, at)
-                    })
-                    .collect()
-            };
-            let mut rows = prepared.query([])?;
-            while let Some(row) = rows.next()? {
-                let file: i64 = row.get(0)?;
-                let root: i64 = row.get(1)?;
-                let mut bound = Vec::new();
-                for (name, kind, at) in &captures {
-                    let value = |offset: usize| -> rusqlite::Result<Option<i64>> {
-                        match row.get::<_, Value>(at + offset)? {
-                            Value::Integer(value) => Ok(Some(value)),
-                            _ => Ok(None),
-                        }
-                    };
-                    let captured = match kind {
-                        SlotKind::Node => value(0)?.map(|id| Captured::Node(id as u32)),
-                        SlotKind::Count => value(0)?.map(Captured::Count),
-                        SlotKind::List => match (value(0)?, value(1)?) {
-                            (Some(-1), _) => Some(Captured::List(None)),
-                            (Some(lo), Some(hi)) => {
-                                Some(Captured::List(Some((lo as u32, hi as u32))))
-                            }
-                            _ => None,
-                        },
-                    };
-                    if let Some(captured) = captured {
-                        bound.push((name.clone(), captured));
-                    }
+            if !each {
+                let namespace = format!("c{index}_");
+                run(steps, &namespace, &files, "")?;
+                read_matches(
+                    &connection,
+                    &query.replace(emit::NAMESPACE, &namespace),
+                    statement,
+                    |file, found| results[file].push(found),
+                )?;
+                continue;
+            }
+            // `violation.each`: rounds over the whole batch. A round re-runs the clause on the
+            // roots whose last match bound a fresh range of the capture, with every range
+            // reported for the root excluded; each reports what it found, after the earlier
+            // rounds' findings for the same root.
+            let each = format!("e{index}_");
+            connection.execute_batch(&format!(
+                "CREATE TEMP TABLE {each}x(file INTEGER, root INTEGER, start INTEGER, \"end\" INTEGER, \
+                 PRIMARY KEY (file, root, start, \"end\")) WITHOUT ROWID; \
+                 CREATE TEMP TABLE {each}a(file INTEGER, root INTEGER, PRIMARY KEY (file, root)) WITHOUT ROWID; \
+                 CREATE TEMP TABLE {each}r(round INTEGER); INSERT INTO {each}r VALUES (0)"
+            ))?;
+            let mut found: Vec<(usize, usize, SqlMatch)> = Vec::new();
+            for round in 0.. {
+                let namespace = format!("c{index}r{round}_");
+                run(steps, &namespace, &files, &each)?;
+                read_matches(
+                    &connection,
+                    &query
+                        .replace(emit::NAMESPACE, &namespace)
+                        .replace(emit::EACH, &each),
+                    statement,
+                    |file, matched| found.push((file, round, matched)),
+                )?;
+                drop_tables(&connection, &namespace)?;
+                let active: i64 =
+                    connection.query_row(&format!("SELECT count(*) FROM {each}a"), [], |row| {
+                        row.get(0)
+                    })?;
+                if active == 0 {
+                    break;
                 }
-                results[file as usize].push(SqlMatch {
-                    root: root as u32,
-                    captures: bound,
-                });
+                connection.execute_batch(&format!("UPDATE {each}r SET round = round + 1"))?;
+            }
+            found.sort_by_key(|(file, round, matched)| (*file, matched.root, *round));
+            for (file, _, matched) in found {
+                results[file].push(matched);
             }
         }
         *slot.current.write() = None;

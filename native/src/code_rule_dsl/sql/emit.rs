@@ -9,13 +9,43 @@
 //! definition into every reference (`resolveFromTermToCte`), CTEs it references included: a rule
 //! whose frames are each read twice would expand exponentially with its depth.
 
-use super::plan::{CallReturn, CallSlot, OfRule, Op, Slot, SlotKind, Statement, Stop, Walk};
+use super::lower::{INTERNAL, ORIGIN};
+use super::plan::{
+    CallReturn, CallSlot, OfRule, Op, Slot, SlotId, SlotKind, Statement, Stop, Unit, Walk,
+};
+use std::collections::BTreeSet;
 use std::fmt::Write;
 
 /// Where the driver substitutes the statement's file list (`n.file IN (…)` of the root frame).
 pub(super) const FILES: &str = "/*FILES*/";
 /// Where the driver substitutes the prefix of the statement's own tables.
 pub(super) const NAMESPACE: &str = "/*NS*/";
+/// Where the driver substitutes the prefix of a `violation.each` enumeration's tables: `x`, the
+/// ranges reported per root `(file, root, start, end)`; `a`, the roots still enumerated; `r`, the
+/// round.
+pub(super) const EACH: &str = "/*EACH*/";
+/// A statement that opens a loop: the statements up to the matching `UNTIL` run again while its
+/// query (the rest of the `UNTIL` statement) counts a change (`exec`).
+pub(super) const LOOP: &str = "/*LOOP*/";
+pub(super) const UNTIL: &str = "/*UNTIL*/";
+/// A query after a loop: the recursive reads of its last pass, `(unit, key, unit, key)`, which
+/// the driver accepts only where they form no cycle (`recursion`).
+pub(super) const ACYCLIC: &str = "/*ACYCLIC*/";
+
+/// The prefix of a stage's own tables.
+pub(super) fn stage_namespace(stage: usize) -> String {
+    format!("s{stage}_")
+}
+
+/// A unit's demand table: `(id, file, node, c0…)`, the keys asked for.
+fn demand_table(unit: usize) -> String {
+    format!("{NAMESPACE}d{unit}")
+}
+
+/// A unit's answer table: `(id, c0…)`, the bindings after the body for the keys it matched.
+fn answer_table(unit: usize) -> String {
+    format!("{NAMESPACE}a{unit}")
+}
 
 /// The table a stage's rows are stored in for the batch.
 pub(super) fn stage_table(stage: usize) -> String {
@@ -25,7 +55,7 @@ pub(super) fn stage_table(stage: usize) -> String {
 /// A clause's statements: the last selects its matching roots and the clause-scope bindings of
 /// each, `(file, node, columns of every scope-0 slot)`, ordered by file and root.
 pub(super) fn clause(statement: &Statement) -> Vec<String> {
-    let mut emitter = Emitter::new(&statement.slots);
+    let mut emitter = Emitter::new(statement);
     let out = emitter.statement(statement);
     let columns: String = statement
         .slots
@@ -41,9 +71,106 @@ pub(super) fn clause(statement: &Statement) -> Vec<String> {
     emitter.statements
 }
 
+/// A clause's statements under `violation.each` (the enumerated capture's scope-0 node slot is
+/// `name`), for one round of the enumeration: the statement's matches, the fresh ranges they bind
+/// recorded per root (`EACH` `x`) and the roots that bound one kept for the next round (`a`). The
+/// last selects what the round reports, as `clause`'s does: in round 0 every match, in a later
+/// round the matches that bound a fresh range.
+pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Vec<String> {
+    let mut emitter = Emitter::new(statement);
+    let out = emitter.statement(statement);
+    let columns: Vec<String> = statement
+        .slots
+        .iter()
+        .enumerate()
+        .filter(|(_, slot)| slot.scope == 0)
+        .flat_map(|(id, slot)| slot.columns(id))
+        .collect();
+    let of = |alias: &str| -> String {
+        columns
+            .iter()
+            .map(|column| format!(", {alias}.{column}"))
+            .collect()
+    };
+    let bare: String = columns.iter().map(|column| format!(", {column}")).collect();
+    let (range, join) = match name {
+        Some(slot) => (
+            "x.start, x.\"end\"".to_owned(),
+            format!(" LEFT JOIN node x ON x.file = o.file AND x.id = o.s{slot}"),
+        ),
+        None => ("NULL, NULL".to_owned(), String::new()),
+    };
+    let statements = &mut emitter.statements;
+    statements.push(format!(
+        "CREATE TEMP TABLE {NAMESPACE}eo(file, node{bare}, es, ee)"
+    ));
+    statements.push(format!(
+        "INSERT INTO {NAMESPACE}eo SELECT o.file, o.node{}, {range} FROM {out} o{join}",
+        of("o")
+    ));
+    statements.push(format!(
+        "CREATE TEMP TABLE {NAMESPACE}ef(file, node, es, ee)"
+    ));
+    statements.push(format!(
+        "INSERT INTO {NAMESPACE}ef SELECT e.file, e.node, e.es, e.ee FROM {NAMESPACE}eo e \
+         LEFT JOIN {EACH}x x ON x.file = e.file AND x.root = e.node AND x.start = e.es AND x.\"end\" = e.ee \
+         WHERE e.es IS NOT NULL AND x.root IS NULL"
+    ));
+    statements.push(format!(
+        "INSERT INTO {EACH}x SELECT file, node, es, ee FROM {NAMESPACE}ef"
+    ));
+    statements.push(format!("DELETE FROM {EACH}a"));
+    statements.push(format!(
+        "INSERT INTO {EACH}a SELECT file, node FROM {NAMESPACE}ef"
+    ));
+    statements.push(format!(
+        "SELECT e.file, e.node{} FROM {NAMESPACE}eo e WHERE (SELECT round FROM {EACH}r) = 0 \
+         OR EXISTS (SELECT 1 FROM {NAMESPACE}ef f WHERE f.file = e.file AND f.node = e.node) \
+         ORDER BY e.file, e.node",
+        of("e")
+    ));
+    emitter.statements
+}
+
+/// A capture-free cycle's stage (its units, every one seeded with the nodes of its root kinds):
+/// the members' loop, then the first member's matches. `recursive_member` selects another's.
+pub(super) fn recursive_stage(statement: &Statement) -> Vec<String> {
+    let mut emitter = Emitter::new(statement);
+    for (index, unit) in statement.units.iter().enumerate() {
+        emitter.unit_tables(index);
+        if let Some(seed) = &unit.seed {
+            let kinds = match seed {
+                None => String::new(),
+                Some(kinds) if kinds.is_empty() => " AND 0".to_owned(),
+                Some(kinds) => format!(" AND n.kind IN ({})", list(kinds)),
+            };
+            emitter.statements.push(format!(
+                "INSERT INTO {}(file, node) SELECT n.file, n.id FROM node n WHERE n.file IN ({FILES}){kinds}",
+                demand_table(index)
+            ));
+        }
+    }
+    let sccs: BTreeSet<usize> = statement.units.iter().map(|unit| unit.scc).collect();
+    for scc in sccs {
+        if statement.units.iter().any(|unit| unit.scc == scc && unit.seed.is_some()) {
+            emitter.recursion_loop(scc);
+        }
+    }
+    emitter.statements.push(recursive_member(NAMESPACE, 0));
+    emitter.statements
+}
+
+/// The matches of a capture-free cycle's member `unit`, from the tables of its stage's loop
+/// (`namespace`).
+pub(super) fn recursive_member(namespace: &str, unit: usize) -> String {
+    let demand = demand_table(unit).replace(NAMESPACE, namespace);
+    let answer = answer_table(unit).replace(NAMESPACE, namespace);
+    format!("SELECT d.file, d.node FROM {demand} d JOIN {answer} r ON r.id = d.id")
+}
+
 /// A stage's statements: the last selects the distinct `(file, node)` its rule matches.
 pub(super) fn stage(statement: &Statement) -> Vec<String> {
-    let mut emitter = Emitter::new(&statement.slots);
+    let mut emitter = Emitter::new(statement);
     let out = emitter.statement(statement);
     emitter
         .statements
@@ -53,10 +180,19 @@ pub(super) fn stage(statement: &Statement) -> Vec<String> {
 
 struct Emitter<'s> {
     slots: &'s [Slot],
+    units: &'s [Unit],
     /// Every slot's physical columns, in order.
     physical: Vec<String>,
     statements: Vec<String>,
     next: usize,
+    /// How many loops the statements being emitted run in: their tables are dropped first.
+    looping: usize,
+    /// The unit components whose loops are being emitted, innermost last.
+    emitting: Vec<usize>,
+    /// The units whose bodies are being emitted, innermost last.
+    evaluating: Vec<usize>,
+    /// The slot holding the demand row a unit's row is evaluated for.
+    origin: Option<SlotId>,
 }
 
 /// `An+B` at a 1-based position `index`, as `nth_child::Position::holds` computes it.
@@ -79,7 +215,8 @@ fn list<T: ToString>(items: &[T]) -> String {
 }
 
 impl<'s> Emitter<'s> {
-    fn new(slots: &'s [Slot]) -> Self {
+    fn new(statement: &'s Statement) -> Self {
+        let slots = &statement.slots;
         let physical = slots
             .iter()
             .enumerate()
@@ -87,9 +224,30 @@ impl<'s> Emitter<'s> {
             .collect();
         Self {
             slots,
+            units: &statement.units,
             physical,
             statements: Vec::new(),
             next: 0,
+            looping: 0,
+            emitting: Vec::new(),
+            evaluating: Vec::new(),
+            origin: slots
+                .iter()
+                .position(|slot| slot.scope == INTERNAL && slot.name == ORIGIN),
+        }
+    }
+
+    /// Creates the table `name(columns)`; inside a loop, once, emptying it on every pass: the
+    /// schema stays as it is, so the loop's statements are prepared once (`exec::execute`).
+    fn create(&mut self, name: &str, columns: &str) {
+        if self.looping > 0 {
+            self.statements.push(format!(
+                "CREATE TEMP TABLE IF NOT EXISTS {name}({columns})"
+            ));
+            self.statements.push(format!("DELETE FROM {name}"));
+        } else {
+            self.statements
+                .push(format!("CREATE TEMP TABLE {name}({columns})"));
         }
     }
 
@@ -117,10 +275,8 @@ impl<'s> Emitter<'s> {
     /// A frame table filled by `select` (canonical columns, in order), with CTEs `with`.
     fn frame_with(&mut self, prefix: &str, with: &str, select: &str) -> String {
         let name = self.name(prefix);
-        self.statements.push(format!(
-            "CREATE TEMP TABLE {name}(k INTEGER PRIMARY KEY, file, node{})",
-            self.physical_list()
-        ));
+        let columns = format!("k INTEGER PRIMARY KEY, file, node{}", self.physical_list());
+        self.create(&name, &columns);
         self.statements
             .push(format!("{with}INSERT INTO {name} {select}"));
         name
@@ -350,7 +506,243 @@ impl<'s> Emitter<'s> {
                 }
                 current
             }
+            Op::Recur { unit, slots } => self.recur(*unit, slots.as_deref(), input),
+            Op::EachRoot { root } => self.frame(
+                "x",
+                &format!(
+                    "SELECT {} FROM {input} f WHERE (SELECT round FROM {EACH}r) = 0 \
+                     OR EXISTS (SELECT 1 FROM {EACH}a a WHERE a.file = f.file AND a.root = f.node)",
+                    self.select("f", &[(format!("s{root}"), "f.node".to_owned())])
+                ),
+            ),
+            Op::Excluded { name, root } => self.frame(
+                "x",
+                &format!(
+                    "SELECT {} FROM {input} f LEFT JOIN node b ON b.file = f.file AND b.id = f.s{name} \
+                     LEFT JOIN {EACH}x e ON e.file = f.file AND e.root = f.s{root} AND e.start = b.start AND e.\"end\" = b.\"end\" \
+                     WHERE e.root IS NULL",
+                    self.cols("f")
+                ),
+            ),
+            Op::NthCommit { nth, commit } => {
+                let positioned = self.op(nth, input);
+                let passed = self.frame(
+                    "y",
+                    &format!(
+                        "SELECT {} FROM {input} f WHERE f.k IN (SELECT k FROM {positioned})",
+                        self.cols("f")
+                    ),
+                );
+                let committed = self.op(commit, &passed);
+                let overrides: Vec<(String, String)> = self
+                    .physical
+                    .iter()
+                    .map(|column| {
+                        (
+                            column.clone(),
+                            format!("CASE WHEN c.k IS NOT NULL THEN c.{column} ELSE f.{column} END"),
+                        )
+                    })
+                    .collect();
+                self.frame(
+                    "x",
+                    &format!(
+                        "SELECT {} FROM {passed} f LEFT JOIN {committed} c ON c.k = f.k",
+                        self.select("f", &overrides)
+                    ),
+                )
+            }
         }
+    }
+
+    /// The physical columns of `slots`, in order.
+    fn key_columns(&self, slots: &[SlotId]) -> Vec<String> {
+        slots.iter().flat_map(|&slot| self.columns(slot)).collect()
+    }
+
+    /// Creates `unit`'s demand and answer tables where they do not exist yet. A demanded key is
+    /// `dirty` until its body is evaluated, and again when a key it read changed its answer.
+    fn unit_tables(&mut self, unit: usize) {
+        let width = self.key_columns(&self.units[unit].key).len();
+        let columns: String = (0..width).map(|index| format!(", c{index}")).collect();
+        let demand = demand_table(unit);
+        let answer = answer_table(unit);
+        self.statements.push(format!(
+            "CREATE TEMP TABLE IF NOT EXISTS {demand}(id INTEGER PRIMARY KEY, file, node{columns}, dirty INTEGER DEFAULT 1)"
+        ));
+        self.statements.push(format!(
+            "CREATE INDEX IF NOT EXISTS {demand}_at ON {demand}(file, node)"
+        ));
+        self.statements.push(format!(
+            "CREATE TEMP TABLE IF NOT EXISTS {answer}(id INTEGER PRIMARY KEY{columns})"
+        ));
+    }
+
+    /// A recursive unit's answers at the keys of `input`'s rows (`site`: the frame's slots for the
+    /// unit's key; `None`, the key's own): the keys are demanded, the loop of the unit's component
+    /// runs where the unit is not being evaluated already, and each row whose key matched takes
+    /// the key's answer. Rows whose key did not match are dropped.
+    fn recur(&mut self, unit: usize, site: Option<&[SlotId]>, input: &str) -> String {
+        let units = self.units;
+        let key = &units[unit].key;
+        let unit_columns = self.key_columns(key);
+        let site_columns = match site {
+            Some(site) => self.key_columns(site),
+            None => unit_columns.clone(),
+        };
+        self.unit_tables(unit);
+        let demand = demand_table(unit);
+        let answer = answer_table(unit);
+        let matched: String = site_columns
+            .iter()
+            .enumerate()
+            .map(|(index, column)| format!(" AND d.c{index} IS f.{column}"))
+            .collect();
+        if units[unit].seed.is_none() {
+            let columns: String = (0..site_columns.len())
+                .map(|index| format!(", c{index}"))
+                .collect();
+            let values: String = site_columns
+                .iter()
+                .map(|column| format!(", f.{column}"))
+                .collect();
+            self.statements.push(format!(
+                "INSERT INTO {demand}(file, node{columns}) SELECT DISTINCT f.file, f.node{values} FROM {input} f \
+                 WHERE NOT EXISTS (SELECT 1 FROM {demand} d WHERE d.file = f.file AND d.node = f.node{matched})"
+            ));
+        }
+        let scc = units[unit].scc;
+        if !self.emitting.contains(&scc) {
+            self.recursion_loop(scc);
+        } else if let (Some(&from), Some(origin)) = (self.evaluating.last(), self.origin)
+            && units[from].scc == scc
+        {
+            // A read inside the component's own loop: recorded for the acyclicity check.
+            self.statements.push(format!(
+                "INSERT INTO {NAMESPACE}e{scc} SELECT DISTINCT {from}, f.s{origin}, {unit}, d.id FROM {input} f \
+                 JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched}"
+            ));
+        }
+        let overrides: Vec<(String, String)> = site_columns
+            .iter()
+            .enumerate()
+            .map(|(index, column)| (column.clone(), format!("r.c{index}")))
+            .collect();
+        self.frame(
+            "x",
+            &format!(
+                "SELECT {} FROM {input} f JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched} \
+                 JOIN {answer} r ON r.id = d.id",
+                self.select("f", &overrides)
+            ),
+        )
+    }
+
+    /// The loop of the units of component `scc`, semi-naive: each pass evaluates every unit's body
+    /// over its dirty keys (new ones, and those that read a key whose answer changed), reading the
+    /// answers so far, records what each read and replaces their answers; the loop ends after a
+    /// pass that leaves no key dirty. A key that read no changed answer would read the same keys
+    /// and answer the same again, so the answers are those of evaluating every key on every pass
+    /// (`recursion` proves they are then the matcher's). The reads kept are each key's latest.
+    fn recursion_loop(&mut self, scc: usize) {
+        let units = self.units;
+        let origin = self.origin.map(|slot| format!("s{slot}"));
+        let members: Vec<usize> = (0..units.len())
+            .filter(|&unit| units[unit].scc == scc)
+            .collect();
+        for &unit in &members {
+            self.unit_tables(unit);
+        }
+        let reads = format!("{NAMESPACE}e{scc}");
+        let changed = format!("{NAMESPACE}c{scc}");
+        self.statements.push(format!(
+            "CREATE TEMP TABLE IF NOT EXISTS {reads}(su, s, du, d)"
+        ));
+        self.statements.push(format!(
+            "CREATE INDEX IF NOT EXISTS {reads}_to ON {reads}(du, d)"
+        ));
+        self.statements.push(format!(
+            "CREATE INDEX IF NOT EXISTS {reads}_from ON {reads}(su, s)"
+        ));
+        self.statements.push(format!(
+            "CREATE TEMP TABLE IF NOT EXISTS {changed}(u, id)"
+        ));
+        self.emitting.push(scc);
+        self.looping += 1;
+        self.statements.push(LOOP.to_owned());
+        for &unit in &members {
+            let key = &units[unit].key;
+            let key_columns = self.key_columns(key);
+            let demand = demand_table(unit);
+            let answer = answer_table(unit);
+            let mut select = String::from("d.id, d.file, d.node");
+            for column in &self.physical {
+                let value = match key_columns.iter().position(|key| key == column) {
+                    Some(index) => format!("d.c{index}"),
+                    None if Some(column) == origin.as_ref() => "d.id".to_owned(),
+                    None => "NULL".to_owned(),
+                };
+                write!(select, ", {value}").expect("write to a string");
+            }
+            let keys = self.frame(
+                "u",
+                &format!("SELECT {select} FROM {demand} d WHERE d.dirty = 1"),
+            );
+            self.statements.push(format!(
+                "UPDATE {demand} SET dirty = 0 WHERE id IN (SELECT k FROM {keys})"
+            ));
+            self.statements.push(format!(
+                "DELETE FROM {reads} WHERE su = {unit} AND s IN (SELECT k FROM {keys})"
+            ));
+            self.evaluating.push(unit);
+            let out = self.op(&units[unit].body, &keys);
+            self.evaluating.pop();
+            let fresh = format!("{NAMESPACE}n{unit}");
+            let width = key_columns.len();
+            let columns: String = (0..width).map(|index| format!(", c{index}")).collect();
+            self.create(&fresh, &format!("id INTEGER PRIMARY KEY{columns}"));
+            let values: String = key_columns
+                .iter()
+                .map(|column| format!(", o.{column}"))
+                .collect();
+            self.statements.push(format!(
+                "INSERT INTO {fresh} SELECT o.k{values} FROM {out} o"
+            ));
+            // The evaluated keys whose answer changed: added, dropped or rebound.
+            let before = format!("SELECT * FROM {answer} WHERE id IN (SELECT k FROM {keys})");
+            self.statements.push(format!(
+                "INSERT INTO {changed} SELECT {unit}, id FROM \
+                 (SELECT * FROM {fresh} EXCEPT {before} UNION SELECT * FROM ({before} EXCEPT SELECT * FROM {fresh}))"
+            ));
+            self.statements.push(format!(
+                "DELETE FROM {answer} WHERE id IN (SELECT k FROM {keys})"
+            ));
+            self.statements
+                .push(format!("INSERT INTO {answer} SELECT * FROM {fresh}"));
+        }
+        for &unit in &members {
+            self.statements.push(format!(
+                "UPDATE {} SET dirty = 1 WHERE id IN (SELECT e.s FROM {reads} e JOIN {changed} c \
+                 ON c.u = e.du AND c.id = e.d WHERE e.su = {unit})",
+                demand_table(unit)
+            ));
+        }
+        self.statements.push(format!("DELETE FROM {changed}"));
+        let dirty = members
+            .iter()
+            .map(|&unit| {
+                format!(
+                    "(SELECT count(*) FROM {} WHERE dirty = 1)",
+                    demand_table(unit)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" + ");
+        self.statements.push(format!("{UNTIL}SELECT {dirty}"));
+        self.statements
+            .push(format!("{ACYCLIC}SELECT su, s, du, d FROM {reads}"));
+        self.looping -= 1;
+        self.emitting.pop();
     }
 
     fn pattern(
@@ -499,10 +891,11 @@ impl<'s> Emitter<'s> {
             "c.node"
         };
         let name = self.name("g");
-        self.statements.push(format!(
-            "CREATE TEMP TABLE {name}(k INTEGER PRIMARY KEY, file, node{}, pk, ord)",
+        let columns = format!(
+            "k INTEGER PRIMARY KEY, file, node{}, pk, ord",
             self.physical_list()
-        ));
+        );
+        self.create(&name, &columns);
         self.statements.push(format!(
             "{with}INSERT INTO {name} SELECT ROW_NUMBER() OVER (), c.file, c.node{}, c.pk, {order} \
              FROM ({source}) c JOIN {input} f ON f.k = c.pk",
@@ -554,10 +947,11 @@ impl<'s> Emitter<'s> {
             }
             Some(OfRule::Frame(rule)) => {
                 let siblings = self.name("g");
-                self.statements.push(format!(
-                    "CREATE TEMP TABLE {siblings}(k INTEGER PRIMARY KEY, file, node{}, pk, ord)",
+                let columns = format!(
+                    "k INTEGER PRIMARY KEY, file, node{}, pk, ord",
                     self.physical_list()
-                ));
+                );
+                self.create(&siblings, &columns);
                 self.statements.push(format!(
                     "INSERT INTO {siblings} SELECT ROW_NUMBER() OVER (), c.file, c.id{}, f.k, c.id FROM {input} f \
                      JOIN node fn ON fn.file = f.file AND fn.id = f.node \
@@ -659,29 +1053,19 @@ impl<'s> Emitter<'s> {
                     }
                     // The first in the source of the bound parameters (by range; ties keep the
                     // earlier parameter).
-                    let mut best = (
-                        String::from("NULL"),
-                        String::from("NULL"),
-                        String::from("NULL"),
-                    );
-                    for (param, alias) in &params {
-                        let present = format!("b.s{param} IS NOT NULL");
-                        let better = format!(
-                            "({present} AND ({} IS NULL OR ({alias}.start, {alias}.\"end\") < ({}, {})))",
-                            best.0, best.1, best.2
-                        );
-                        best = (
-                            format!("CASE WHEN {better} THEN b.s{param} ELSE {} END", best.0),
-                            format!("CASE WHEN {better} THEN {alias}.start ELSE {} END", best.1),
-                            format!(
-                                "CASE WHEN {better} THEN {alias}.\"end\" ELSE {} END",
-                                best.2
-                            ),
-                        );
-                    }
+                    let positions: Vec<(String, String)> = params
+                        .iter()
+                        .map(|(param, alias)| {
+                            (
+                                position(alias, &format!("b.s{param} IS NOT NULL")),
+                                format!("b.s{param}"),
+                            )
+                        })
+                        .collect();
+                    let best = first_of(&positions);
                     overrides.push((
                         format!("s{caller}"),
-                        format!("COALESCE(b.s{caller}, {})", best.0),
+                        format!("COALESCE(b.s{caller}, {best})"),
                     ));
                 }
                 SlotKind::List => {
@@ -720,20 +1104,13 @@ impl<'s> Emitter<'s> {
                         .map(|&param| (param, join(param, &format!("s{param}a"), &mut joins)))
                         .collect();
                     // The chosen list: the first in the source by its first node's range.
-                    let mut best = String::from("NULL");
-                    let mut best_start = String::from("NULL");
-                    let mut best_end = String::from("NULL");
-                    for (param, alias) in &params {
-                        let better = format!(
-                            "({} AND ({best} IS NULL OR ({alias}.start, {alias}.\"end\") < ({best_start}, {best_end})))",
-                            nonempty(*param)
-                        );
-                        best = format!("CASE WHEN {better} THEN {param} ELSE {best} END");
-                        best_start =
-                            format!("CASE WHEN {better} THEN {alias}.start ELSE {best_start} END");
-                        best_end =
-                            format!("CASE WHEN {better} THEN {alias}.\"end\" ELSE {best_end} END");
-                    }
+                    let positions: Vec<(String, String)> = params
+                        .iter()
+                        .map(|(param, alias)| {
+                            (position(alias, &nonempty(*param)), param.to_string())
+                        })
+                        .collect();
+                    let best = first_of(&positions);
                     // A caller name bound to no node takes only a list without named nodes.
                     let chosen_named = params
                         .iter()
@@ -793,6 +1170,34 @@ impl<'s> Emitter<'s> {
             ),
         )
     }
+}
+
+/// A node's range (`alias`'s) as one integer ordered as `(start, end)` (byte offsets fit in 32
+/// bits), where `present`; else NULL.
+fn position(alias: &str, present: &str) -> String {
+    format!("CASE WHEN {present} THEN {alias}.start * 4294967296 + {alias}.\"end\" END")
+}
+
+/// Of `(position, value)` pairs, the value of the least position (the earliest pair on ties), or
+/// NULL where no position is present: one expression whose size grows with the square of the
+/// pairs, where nesting a comparison per pair would grow exponentially.
+fn first_of(pairs: &[(String, String)]) -> String {
+    let least = match pairs {
+        [(only, _)] => only.clone(),
+        _ => format!(
+            "min({})",
+            pairs
+                .iter()
+                .map(|(position, _)| format!("COALESCE({position}, 9223372036854775807)"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    let arms: String = pairs
+        .iter()
+        .map(|(position, value)| format!(" WHEN {position} = {least} THEN {value}"))
+        .collect();
+    format!("(CASE{arms} END)")
 }
 
 /// A walk along one link (`parent`, `nsib`, `prev`) from `start`, up to and including the first
