@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node
 import { mkdir } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
-import { ruleKey, readCached, trackedDigest, writeCached, GATE_CODE, GATE_DEPENDENCIES, type SharedKeyInputs } from "./cache.js";
+import { dependencyDigest, ruleKey, readCached, trackedDigest, writeCached, GATE_CODE, type SharedKeyInputs } from "./cache.js";
 import { upstreamStatusChecks, defaultOn } from "./checks/upstream-status.js";
 import { loadAsBundled, loadsGate } from "./checks/loads.js";
 import { packConformance, passesConformanceChecks } from "./checks/passes-conformance.js";
@@ -498,7 +498,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
   const readOr = (file: string) => (existsSync(join(directory, file)) ? readFileSync(join(directory, file)) : "");
   const shared: SharedKeyInputs = {
     gateCode: trackedDigest(root, GATE_CODE),
-    dependencies: trackedDigest(root, GATE_DEPENDENCIES),
+    dependencies: dependencyDigest(root),
     gatesYaml: sha256(readOr(GATES_MANIFEST)),
     // The recordings are not in the tree: the lock's digests are what they are, and the lock is what the commit pins.
     gatesJson: inputs.lock?.files[GATES_RECORDING].sha256 ?? "",

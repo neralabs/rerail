@@ -33,10 +33,13 @@ export const GATE_CODE = [
 ] as const;
 
 /**
- * The gate code's own dependencies: a lockfile bump can change what a verdict reads (the schema validator, the YAML
- * reader), so it is part of every rule's key too.
+ * The npm packages the gate process loads (through run.ts and the src/engine barrel), plus tsx, which compiles it:
+ * a bump of one, or of anything it depends on, can change what a verdict reads (the schema validator, the YAML reader,
+ * the SQLite binding), so their locked closure is part of every rule's key (`dependencyDigest`). A package missing
+ * here leaves a stale verdict, the opposite of FAMILY_SOURCES (engine.ts), where a missing entry only costs a
+ * re-judge; cache.test.ts therefore checks the list against a bundle of run.ts.
  */
-export const GATE_DEPENDENCIES = ["package.json", "package-lock.json"] as const;
+export const GATE_PACKAGES = ["apache-arrow", "better-sqlite3", "diff", "drizzle-orm", "tsx", "yaml", "zod"] as const;
 
 /** Tags every cached entry, so an entry written by another layout of the cache is a miss. */
 export const CACHE_FORMAT = "rerail.port-readiness-cache/v1";
@@ -53,6 +56,89 @@ export function trackedDigest(root: string, pathspec: string | readonly string[]
     const absolute = join(root, path);
     return `${path}\0${existsSync(absolute) ? sha256(readFileSync(absolute)) : "deleted"}`;
   }).join("\n"));
+}
+
+/** One `packages` entry of package-lock.json, as far as the closure reads it. */
+interface LockedPackage {
+  version?: string;
+  integrity?: string;
+  resolved?: string;
+  link?: boolean;
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+}
+
+/**
+ * Every package location `roots` reach in a package-lock.json (lockfileVersion 2 or later), through their
+ * dependencies, optional dependencies and peers, each found as npm finds it: in the dependent's own `node_modules`,
+ * then in each enclosing one up to the top. The value is the location's version and integrity (or resolved URL).
+ *
+ * Type packages are skipped: nothing loads them. An optional dependency or optional peer the lockfile does not install
+ * is skipped; any other dependency it does not install throws, as does a root it does not install, and so does a
+ * workspace link, whose sources the key would not cover.
+ */
+export function lockedClosure(lock: unknown, roots: readonly string[]): Map<string, string> {
+  const { lockfileVersion, packages } = (lock ?? {}) as { lockfileVersion?: unknown; packages?: unknown };
+  if (typeof lockfileVersion !== "number" || lockfileVersion < 2 || packages === null || typeof packages !== "object") {
+    throw new Error("package-lock.json: expected lockfileVersion 2 or later, with a packages map");
+  }
+  const installed = packages as Record<string, LockedPackage>;
+  const find = (from: string, name: string): string | undefined => {
+    for (let at = from; ; at = at.slice(0, Math.max(at.lastIndexOf("/node_modules/"), 0))) {
+      const location = at === "" ? `node_modules/${name}` : `${at}/node_modules/${name}`;
+      if (Object.hasOwn(installed, location)) return location;
+      if (at === "") return undefined;
+    }
+  };
+  const queue = roots.map((root) => {
+    const location = `node_modules/${root}`;
+    if (!Object.hasOwn(installed, location)) throw new Error(`package-lock.json installs no ${root}`);
+    return location;
+  });
+  const closure = new Map<string, string>();
+  while (queue.length > 0) {
+    const location = queue.pop()!;
+    if (closure.has(location)) continue;
+    const entry = installed[location]!;
+    if (entry.link === true) throw new Error(`package-lock.json: ${location} links to the workspace ${entry.resolved ?? ""}, whose sources the key does not cover`);
+    closure.set(location, `${entry.version ?? ""}\0${entry.integrity ?? entry.resolved ?? ""}`);
+    const wanted = [
+      ...Object.keys(entry.dependencies ?? {}).map((name) => ({ name, optional: false })),
+      ...Object.keys(entry.optionalDependencies ?? {}).map((name) => ({ name, optional: true })),
+      ...Object.keys(entry.peerDependencies ?? {}).map((name) => ({ name, optional: entry.peerDependenciesMeta?.[name]?.optional === true })),
+    ];
+    for (const { name, optional } of wanted) {
+      if (name.startsWith("@types/")) continue;
+      const found = find(location, name);
+      if (found !== undefined) queue.push(found);
+      else if (!optional) throw new Error(`package-lock.json: ${location} needs ${name}, which it does not install`);
+    }
+  }
+  return closure;
+}
+
+/**
+ * The npm side of every rule's key, in the checkout at `root`: the locked closure of GATE_PACKAGES, and the
+ * package.json fields on the verdict path. Those are the command CI runs, `npm run port-readiness`, which is
+ * `scripts["port-readiness"]` with its `preport-readiness` and `postport-readiness` scripts when there are any;
+ * `scripts["build:native"]`, the command that builds the engine binary every verdict is judged on; and `type`, which
+ * says how tsx loads every .ts file. Every other package.json field, every other script and every other locked package
+ * stays out, so a bump the gates never load re-judges nothing.
+ *
+ * Some keyed entries are never loaded (json-with-bigint, @opentelemetry/api, the esbuild binaries of other
+ * platforms): a bump of one costs a re-judge, never a verdict, which is the safe direction. Left out on purpose: the
+ * Node.js version (CI pins only the major, in .github/actions/node-deps/action.yml, which no key covers), @napi-rs/cli
+ * (the native binary is no part of the key, engine.ts) and tsconfig.json; the uncached nightly judges every rule
+ * again, which catches a change to any of them.
+ */
+export function dependencyDigest(root: string): string {
+  const lock: unknown = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8"));
+  const { type, scripts } = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { type?: unknown; scripts?: Record<string, unknown> };
+  const fields = { type, script: scripts?.["port-readiness"], pre: scripts?.["preport-readiness"], post: scripts?.["postport-readiness"], native: scripts?.["build:native"] };
+  const locked = [...lockedClosure(lock, GATE_PACKAGES)].map(([location, value]) => `${location}\0${value}`).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return sha256([JSON.stringify(fields), ...locked].join("\n"));
 }
 
 /** The inputs every rule of a tool-pack shares; each is a digest or the text itself. */
