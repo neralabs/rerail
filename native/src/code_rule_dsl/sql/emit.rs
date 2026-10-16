@@ -8,6 +8,10 @@
 //! Frames are tables rather than one statement's CTEs because SQLite copies a CTE's whole
 //! definition into every reference (`resolveFromTermToCte`), CTEs it references included: a rule
 //! whose frames are each read twice would expand exponentially with its depth.
+//!
+//! A frame that numbers its rows afresh inserts NULL as `k`, so SQLite assigns the next rowid and
+//! appends: a `ROW_NUMBER() OVER ()` would buffer every row in an ephemeral table first and
+//! insert them by seeking.
 
 use super::plan::{CallReturn, CallSlot, OfRule, Op, Slot, SlotKind, Statement, Stop, Walk};
 use std::fmt::Write;
@@ -178,7 +182,7 @@ impl<'s> Emitter<'s> {
         let root = self.frame(
             "r",
             &format!(
-                "SELECT ROW_NUMBER() OVER (), file, id{nulls} FROM (\
+                "SELECT NULL, file, id{nulls} FROM (\
                  SELECT n.file AS file, n.id AS id FROM node n WHERE n.file IN ({FILES}){kinds} \
                  UNION ALL SELECT n.file, n.id FROM ({ROOTS}) r CROSS JOIN node n \
                  ON n.file = r.file AND n.id = r.node WHERE 1{kinds})"
@@ -512,7 +516,7 @@ impl<'s> Emitter<'s> {
             self.physical_list()
         ));
         self.statements.push(format!(
-            "{with}INSERT INTO {name} SELECT ROW_NUMBER() OVER (), c.file, c.node{}, c.pk, {order} \
+            "{with}INSERT INTO {name} SELECT NULL, c.file, c.node{}, c.pk, {order} \
              FROM ({source}) c JOIN {input} f ON f.k = c.pk",
             self.physical_of("f")
         ));
@@ -567,7 +571,7 @@ impl<'s> Emitter<'s> {
                     self.physical_list()
                 ));
                 self.statements.push(format!(
-                    "INSERT INTO {siblings} SELECT ROW_NUMBER() OVER (), c.file, c.id{}, f.k, c.id FROM {input} f \
+                    "INSERT INTO {siblings} SELECT NULL, c.file, c.id{}, f.k, c.id FROM {input} f \
                      JOIN node fn ON fn.file = f.file AND fn.id = f.node \
                      JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
                     self.physical_of("f")

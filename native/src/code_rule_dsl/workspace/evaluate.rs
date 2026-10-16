@@ -1059,13 +1059,16 @@ fn evaluate_ast_file(
     Ok(Some(doc.restored))
 }
 
+/// A clause's statement in the SQL program and its selected roots (`None`: every root).
+type PlannedRun = (usize, Option<Arc<[u32]>>);
+
 /// A file's AST clauses on the SQL engine: its document, which candidates run (`runs` of
 /// `clause_grammars`), the statement and roots of each that the engine matches, and, after the
 /// batch, their matches.
 struct SqlFile {
     doc: AstDoc,
     gate: Vec<bool>,
-    runs: Vec<Option<(usize, Option<Arc<[u32]>>)>>,
+    runs: Vec<Option<PlannedRun>>,
     matches: Vec<Vec<SqlMatch>>,
 }
 

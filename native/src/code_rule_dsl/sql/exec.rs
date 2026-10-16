@@ -364,7 +364,7 @@ pub(in crate::code_rule_dsl) struct Session {
     slot: Arc<BatchSlot>,
     program: Arc<Program>,
     stages: Vec<(GrammarDialect, Prepared)>,
-    clauses: Vec<(Prepared, Vec<(String, SlotKind, usize)>)>,
+    clauses: Vec<(Prepared, Vec<CaptureColumn>)>,
     stats: Stats,
 }
 
@@ -380,37 +380,40 @@ impl Session {
              node INTEGER NOT NULL, PRIMARY KEY (run, file, node)) WITHOUT ROWID;",
         )?;
         // Creates the frame tables of `statements` now, and fixes the text of the rest.
-        let prepare = |statements: &[String],
-                       namespace: &str,
-                       run: i64|
-         -> Result<(Vec<String>, Vec<String>, String, Vec<usize>), SqlError> {
-            let files = format!("SELECT file FROM runs WHERE run = {run}");
-            let roots = format!("SELECT file, node FROM roots WHERE run = {run}");
-            let mut steps = Vec::new();
-            let mut clear = Vec::new();
-            let mut stages = Vec::new();
-            for statement in statements {
-                let sql = statement
-                    .replace(emit::NAMESPACE, namespace)
-                    .replace(emit::FILES, &files)
-                    .replace(emit::ROOTS, &roots);
-                stages_read(&sql, &mut stages);
-                match sql.strip_prefix("CREATE TEMP TABLE ") {
-                    Some(table) => {
-                        connection.execute_batch(&sql)?;
-                        let name = table.split(['(', ' ']).next().unwrap_or_default();
-                        clear.push(format!("DELETE FROM {name}"));
+        let prepare =
+            |statements: &[String], namespace: &str, run: i64| -> Result<Prepared, SqlError> {
+                let files = format!("SELECT file FROM runs WHERE run = {run}");
+                let roots = format!("SELECT file, node FROM roots WHERE run = {run}");
+                let mut steps = Vec::new();
+                let mut clear = Vec::new();
+                let mut stages = Vec::new();
+                for statement in statements {
+                    let sql = statement
+                        .replace(emit::NAMESPACE, namespace)
+                        .replace(emit::FILES, &files)
+                        .replace(emit::ROOTS, &roots);
+                    stages_read(&sql, &mut stages);
+                    match sql.strip_prefix("CREATE TEMP TABLE ") {
+                        Some(table) => {
+                            connection.execute_batch(&sql)?;
+                            let name = table.split(['(', ' ']).next().unwrap_or_default();
+                            clear.push(format!("DELETE FROM {name}"));
+                        }
+                        None => steps.push(sql),
                     }
-                    None => steps.push(sql),
                 }
-            }
-            let last = steps.pop().expect("a final select");
-            Ok((steps, clear, last, stages))
-        };
+                let last = steps.pop().expect("a final select");
+                Ok(Prepared {
+                    steps,
+                    last,
+                    clear,
+                    stages,
+                })
+            };
         let mut stages = Vec::with_capacity(compiled.stages.len());
         for (index, stage) in compiled.stages.iter().enumerate() {
             let table = emit::stage_table(index);
-            let (steps, mut clear, query, reads) = prepare(
+            let mut prepared = prepare(
                 &stage.statements,
                 &format!("s{index}_"),
                 run_id(Some(index), 0),
@@ -418,33 +421,18 @@ impl Session {
             connection.execute_batch(&format!(
                 "CREATE TEMP TABLE {table}(file INTEGER, node INTEGER, PRIMARY KEY (file, node)) WITHOUT ROWID"
             ))?;
-            clear.push(format!("DELETE FROM {table}"));
-            stages.push((
-                stage.dialect,
-                Prepared {
-                    steps,
-                    last: format!("INSERT INTO {table}(file, node) {query}"),
-                    clear,
-                    stages: reads,
-                },
-            ));
+            prepared.clear.push(format!("DELETE FROM {table}"));
+            prepared.last = format!("INSERT INTO {table}(file, node) {}", prepared.last);
+            stages.push((stage.dialect, prepared));
         }
         let mut clauses = Vec::with_capacity(compiled.clauses.len());
         for (index, clause) in compiled.clauses.iter().enumerate() {
-            let (steps, clear, last, reads) = prepare(
+            let prepared = prepare(
                 &clause.statements,
                 &format!("c{index}_"),
                 run_id(None, index),
             )?;
-            clauses.push((
-                Prepared {
-                    steps,
-                    last,
-                    clear,
-                    stages: reads,
-                },
-                clause.captures.clone(),
-            ));
+            clauses.push((prepared, clause.captures.clone()));
         }
         // Every statement a batch can run stays prepared.
         let statements: usize = stages
@@ -503,9 +491,19 @@ impl Session {
     fn execute(connection: &Connection, stats: &mut Stats, sql: &str) -> Result<(), SqlError> {
         let started = std::time::Instant::now();
         let rows = connection.prepare_cached(sql)?.execute([])?;
+        let nanos = started.elapsed().as_nanos() as u64;
         stats.statements += 1;
         stats.rows += rows;
-        stats.nanos += started.elapsed().as_nanos() as u64;
+        stats.nanos += nanos;
+        #[cfg(test)]
+        STATEMENT_PROFILE.with_borrow_mut(|profile| {
+            if let Some(profile) = profile {
+                let entry = profile.entry(sql.to_owned()).or_default();
+                entry.0 += nanos;
+                entry.1 += rows;
+                entry.2 += 1;
+            }
+        });
         Ok(())
     }
 
@@ -633,6 +631,20 @@ impl Session {
         Ok(results)
     }
 }
+
+#[cfg(test)]
+thread_local! {
+    /// Where set, this thread's frame and stage statements, by text: their time, rows and runs.
+    pub(super) static STATEMENT_PROFILE: std::cell::RefCell<Option<StatementProfile>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Per statement text: its time, rows and runs.
+#[cfg(test)]
+pub(super) type StatementProfile = std::collections::HashMap<String, (u64, usize, usize)>;
+
+/// A clause-scope capture's name, kind and first column in a clause's last statement.
+type CaptureColumn = (String, SlotKind, usize);
 
 /// The clause-scope bindings of one row of a clause's last statement.
 fn bindings(

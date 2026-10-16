@@ -6,12 +6,14 @@
 //! Ignored by default; run it in release:
 //! `RERAIL_SQL_PROBE_CORPUS=~/rerail-bench/nera-data-layer-fce4dc72 cargo test --release
 //! sql::tests::probe -- --ignored --nocapture`. `RERAIL_SQL_PROBE_FILES` caps the files,
-//! `RERAIL_SQL_PROBE_BATCH` sets the batch size (default 256).
+//! `RERAIL_SQL_PROBE_BATCH` sets the batch size (default 64, the workspace's), and
+//! `RERAIL_SQL_PROBE_WHOLE_ONLY` skips the clause-by-clause SQL runs.
 
 use super::differential::tape;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::{GrammarMatcher, run_clause, with_file_memo};
 use crate::code_rule_dsl::model::{ClauseKind, Query};
+use crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE;
 use crate::code_rule_dsl::tape::TapeDoc;
 use crate::code_rule_dsl::test_support::CAPABILITIES;
 use crate::code_rule_dsl::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
@@ -107,7 +109,7 @@ fn probe() {
         )
     });
     let limit = env_usize("RERAIL_SQL_PROBE_FILES", usize::MAX);
-    let batch = env_usize("RERAIL_SQL_PROBE_BATCH", 256);
+    let batch = env_usize("RERAIL_SQL_PROBE_BATCH", 64);
     let rules = pack_rules();
     let mut clauses: Vec<(String, &GrammarMatcher)> = Vec::new();
     let mut refused = std::collections::BTreeMap::<String, usize>::new();
@@ -163,7 +165,13 @@ fn probe() {
         let found: usize = native.iter().map(Vec::len).sum();
         native_total += native_time;
         if whole_only {
-            report.push((name.clone(), found, native_time, Duration::ZERO, Default::default()));
+            report.push((
+                name.clone(),
+                found,
+                native_time,
+                Duration::ZERO,
+                Default::default(),
+            ));
             continue;
         }
         let (sql, sql_time, stats) = super::probe_sql(grammar, &docs, batch);
@@ -206,6 +214,7 @@ fn probe() {
     // batch: what a workspace apply runs.
     let grammars: Vec<&GrammarMatcher> = clauses.iter().map(|(_, grammar)| *grammar).collect();
     let started = Instant::now();
+    STATEMENT_PROFILE.set(Some(Default::default()));
     let (compiled, outcomes) = crate::code_rule_dsl::sql::compile_each(&grammars);
     let mut session = compiled.session().expect("a session");
     let setup = started.elapsed();
@@ -229,6 +238,63 @@ fn probe() {
         whole.as_secs_f64() / native_total.as_secs_f64()
     );
     breakdown(&session.stats());
+    attribute(STATEMENT_PROFILE.take().unwrap_or_default());
+}
+
+/// The frame and stage statements' time by what they do, and the costliest statements.
+fn attribute(profile: std::collections::HashMap<String, (u64, usize, usize)>) {
+    let kind = |sql: &str| {
+        if sql.contains("FROM pattern") {
+            "pattern terminal"
+        } else if sql.contains("text_match") {
+            "regex terminal"
+        } else if sql.starts_with("INSERT INTO stage_") {
+            "stage result"
+        } else if sql.contains("WITH RECURSIVE") {
+            "recursive walk (rule stop)"
+        } else if sql.contains("FROM runs") {
+            "root frame"
+        } else if sql.contains("GROUP BY") {
+            "argmin / count (GROUP BY)"
+        } else if sql.contains("JOIN node") {
+            "relation / kind join with node"
+        } else {
+            "frame copy / anti-join / union"
+        }
+    };
+    let total: u64 = profile.values().map(|(nanos, ..)| nanos).sum();
+    let mut kinds = std::collections::BTreeMap::<&str, (u64, usize, usize)>::new();
+    for (sql, (nanos, rows, runs)) in &profile {
+        let entry = kinds.entry(kind(sql)).or_default();
+        entry.0 += nanos;
+        entry.1 += rows;
+        entry.2 += runs;
+    }
+    let mut kinds: Vec<_> = kinds.into_iter().collect();
+    kinds.sort_by_key(|(_, (nanos, ..))| std::cmp::Reverse(*nanos));
+    eprintln!("statement time by kind (frames and stages, final selects excluded):");
+    for (kind, (nanos, rows, runs)) in kinds {
+        eprintln!(
+            "  {:>5.1}% {:>8.0} ms {:>11} rows {:>7} runs  {kind}",
+            100.0 * nanos as f64 / total.max(1) as f64,
+            nanos as f64 / 1e6,
+            rows,
+            runs
+        );
+    }
+    let mut statements: Vec<_> = profile.into_iter().collect();
+    statements.sort_by_key(|(_, (nanos, ..))| std::cmp::Reverse(*nanos));
+    eprintln!("costliest statements:");
+    for (sql, (nanos, rows, runs)) in statements.into_iter().take(12) {
+        eprintln!(
+            "  {:>5.1}% {:>7.0} ms {:>10} rows {:>5} runs  {}",
+            100.0 * nanos as f64 / total.max(1) as f64,
+            nanos as f64 / 1e6,
+            rows,
+            runs,
+            sql.chars().take(220).collect::<String>()
+        );
+    }
 }
 
 fn breakdown(stats: &crate::code_rule_dsl::sql::Stats) {

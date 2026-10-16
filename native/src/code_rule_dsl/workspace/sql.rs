@@ -149,6 +149,14 @@ impl SqlEngine {
                 }
             }
         }
+        // The workspace tests run on SQL show which of them hold a clause the engine refuses.
+        #[cfg(test)]
+        for refusal in &refusals {
+            eprintln!(
+                "sql-refused {}/{}: {}",
+                refusal.rule, refusal.clause, refusal.reason
+            );
+        }
         let statements = clauses.values().flatten().count();
         Self {
             compiled,
