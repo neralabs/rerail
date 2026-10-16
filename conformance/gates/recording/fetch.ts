@@ -17,7 +17,10 @@ import { join } from "node:path";
 
 import { ProcessCommandRunner, runChecked } from "../process.js";
 import { GATES_CORPUS, GATES_RECORDING } from "./schema.js";
-import { readCachedRecording, readRecordingLock, recordingCachePath, recordingFromAsset, writeCachedRecording, type LockedFile, type RecordingLock } from "./store.js";
+import { LIFTED_ASSETS, readCachedRecording, readRecordingLock, recordingCachePath, recordingFromAsset, writeCachedRecording, type LockedFile, type RecordingLock } from "./store.js";
+
+/** Kept here too, where the fetch takes them without an attestation; they are defined beside the lock in store.ts. */
+export { LIFTED_ASSETS };
 
 /** Where the recordings are published: this repository, unless a fork's CI says otherwise. */
 export const DEFAULT_REPOSITORY = "neralabs/rerail";
@@ -29,33 +32,6 @@ export const DEFAULT_REPOSITORY = "neralabs/rerail";
  */
 export const RECORD_WORKFLOW = ".github/workflows/rule-gates-record.yml";
 export const RECORD_REF = "refs/heads/main";
-
-/**
- * The assets uploaded by hand when the recordings were lifted out of the tree (migrate-v2.ts), before
- * rule-gates-record.yml could run from main to attest anything: the only ones taken without its attestation. Each
- * holds the bytes the reviewed in-tree recording held. The list only shrinks: an entry goes once its tool-pack's lock
- * names another recording, and a test fails while an entry is named by no committed lock.
- */
-export const LIFTED_ASSETS: ReadonlySet<string> = new Set([
-  "javascript-eslint-gates-6b2c8c972842da71225cd69fc6db0ad98c23b35d1e2cbd67dff34d768d7c5e57.json.gz",
-  "javascript-eslint-gates-corpus-4a0005ebc7096ebdd43bfce65187a919ad7bb40dc98f453fc4b51245123061aa.json.gz",
-  "javascript-eslint-plugin-unicorn-gates-corpus-2c1af5f587d2bc7d34e6cb1b89e0d5e5267b2a84445acba29172f7fa0869efd0.json.gz",
-  "javascript-eslint-plugin-unicorn-gates-eca17ffaf1c7c589938f30129cd667617c29dc4cf66193f2a93fdf1e7fc18217.json.gz",
-  "next-eslint-plugin-next-gates-57b494f4aa66a021048bacf610abe2d2702e3f71ff4f24d47d920615bda28a10.json.gz",
-  "next-eslint-plugin-next-gates-corpus-43f24383610a797418dae21ee0d1c64483d274ee19754af30544284a4a781447.json.gz",
-  "python-bandit-gates-corpus-6bf91179fe4e9347b56b3d94ce91ab1ff7888f52baf4df316eb257bbe3199f3d.json.gz",
-  "python-bandit-gates-ec6b29fce85a03c292dabbfbe9438e76078a082af3409c1d7a0faa7aa8efecaa.json.gz",
-  "python-ruff-gates-8f6038d965cf0cf26193f61e8b69963a7bfb35c480ed0ce02cd2bf30c04c2746.json.gz",
-  "python-ruff-gates-corpus-c4cfcbb4345494ca185899b903d8b8ee282bac98698bcd92bb04d6adbe29bcab.json.gz",
-  "react-eslint-plugin-react-gates-17f4eeabca71c32a612062f80f60dd9d3126360d6944c3cacb788665830eef55.json.gz",
-  "react-eslint-plugin-react-gates-corpus-6257ec57d71616eab398281ae57bd7d47bca946c29fb603ee607809fc87cfcbc.json.gz",
-  "react-eslint-plugin-react-hooks-gates-corpus-f98cafeb13f98fd8918469c8acfbcff07fc52fdc01f4d394b4dfb92199acad8c.json.gz",
-  "react-eslint-plugin-react-hooks-gates-ec9af105936015a25c2d67b97126d3c142ca2066d1e0a1167e3f56e125255a2f.json.gz",
-  "typescript-eslint-plugin-vitest-gates-corpus-9909aa03f587bbeaed1e34ad3ec57293b6733161c0e3778eb9265acee45f67c4.json.gz",
-  "typescript-eslint-plugin-vitest-gates-e2f09bcaebc4d0e7518a0c03ed2d75b802ea4af9cdeaaab0575ea543a207a4f9.json.gz",
-  "typescript-typescript-eslint-gates-302d0de625111bb16d158a2198c53119ab47229ecb744b7e8d3b9cab443de309.json.gz",
-  "typescript-typescript-eslint-gates-corpus-c7ee7614b5b99b8d92789b88d89e307654bddb18471c1025234e2fe3bec00c7b.json.gz",
-]);
 
 export interface FetchOptions {
   /** `<owner>/<repo>` holding the release; GITHUB_REPOSITORY in CI. */

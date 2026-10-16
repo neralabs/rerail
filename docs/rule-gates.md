@@ -28,8 +28,9 @@ report shows every failure, not only the first.
 
 Tool-pack checks come before any gate. When one fails, every rule of the tool-pack fails with it: a shipped rule blocks
 and a candidate is not ready to promote. They fail when the recording is stale (`corpus-pins` and the recording checks),
-when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`), when a corpus file the recording answers for was not fetched with its recorded bytes (`corpus-complete`, usually a
-failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
+when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`), when a corpus
+file the recording answers for was not fetched with its recorded bytes (`corpus-complete`, usually a failed download:
+run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
 loader (`bundled-load`, for example two documents with one id).
 
 Goldens: a golden is a real-code file where the rule and upstream once differed (`packs/<id>/upstream/<tool>/goldens.tsv`:
@@ -173,8 +174,11 @@ A matching digest only says the asset is the one the lock names. Anyone who can 
 workflow with a write token, can upload to the release, so the fetch also requires the GitHub artifact attestation
 that `rule-gates-record.yml` makes when it records from `main` (`gh attestation verify`, so fetching needs the GitHub
 CLI, signed in or given `GH_TOKEN`/`GITHUB_TOKEN`, even once the repository is public). The only assets taken without
-one are those uploaded by hand when the recordings left the tree, before that workflow could run; `recording/fetch.ts`
-lists them, and an entry goes when its tool-pack is next recorded.
+one are those uploaded by hand when the recordings left the tree, before that workflow could run; `LIFTED_ASSETS` in
+`recording/store.ts` lists them, and an entry goes when its tool-pack is next recorded. Those recordings predate the
+sha256 each recorded case now carries for its committed source, so `case-sources` holds their case sources to one
+digest over all of them instead, the one they had when they were lifted (`LIFTED_CASE_SOURCES`), and an edited or
+missing case source fails it the same way.
 
 ### Recording
 

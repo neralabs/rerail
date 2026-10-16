@@ -15,7 +15,7 @@ import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 import { fetchToolPackRecordings, LIFTED_ASSETS } from "../../../conformance/gates/recording/fetch.js";
 import { diffRecordings, renderRecordingChanges, type RecordedPair } from "../../../conformance/gates/recording/diff.js";
 import {
-  assetName, buildRecordingLock, gzipRecording, readCachedRecording, readRecordingLock, recordingFromAsset, recordingLockSchema,
+  assetName, buildRecordingLock, gzipRecording, LIFTED_CASE_SOURCES, readCachedRecording, readRecordingLock, recordingFromAsset, recordingLockSchema,
   recordingLockText, writeCachedRecording, RECORDING_LOCK,
 } from "../../../conformance/gates/recording/store.js";
 import { gatesCorpusSchema, gatesRecordingSchema, GATES_CORPUS_FORMAT, GATES_RECORDING_FORMAT, recordingText } from "../../../conformance/gates/recording/schema.js";
@@ -224,6 +224,10 @@ test("every asset taken without an attestation is one a committed lock still nam
     }
   }
   assert.deepEqual([...LIFTED_ASSETS].filter((asset) => !named.has(asset)), []);
+});
+
+test("every lifted recording whose case sources are pinned together is a lifted asset, so its pin goes with it", () => {
+  assert.deepEqual([...LIFTED_CASE_SOURCES.keys()].filter((asset) => !LIFTED_ASSETS.has(asset) || asset.includes("-gates-corpus-")), []);
 });
 
 test("a recording whose cached bytes were tampered with reads as absent, not as a recording", async () => {

@@ -6,7 +6,7 @@ import { checkoutPinned, type CorpusFile } from "./corpus.js";
 import { readGatesManifest, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { cleanVerdicts, GATES_CORPUS, GATES_RECORDING, gatesCorpusSchema, gatesRecordingSchema, spanOf, type GatesCorpusRecording, type GatesRecording } from "./recording/schema.js";
-import { readCachedRecording, readRecordingLock, RECORDING_LOCK, type RecordingLock } from "./recording/store.js";
+import { caseSourcesDigest, LIFTED_CASE_SOURCES, readCachedRecording, readRecordingLock, RECORDING_LOCK, type RecordingLock } from "./recording/store.js";
 import { banditSpan } from "./span-units/bandit.js";
 import { eslintSpan } from "./span-units/eslint.js";
 import { ruffSpan } from "./span-units/ruff.js";
@@ -156,14 +156,15 @@ export function readRecordedInputs(root: string, cacheRoot: string, pack: string
 /**
  * The tool-pack checks the gates make on a recording: pins agree (gates.yaml, recording.lock, gates.json,
  * conformance.json), the runtimes' pins (package.json, pyproject.toml, .python-version) are the committed ones, the
- * kept LICENSE is the recorded one, every committed case source has its recorded sha256, and the recording covers every
+ * kept LICENSE is the recorded one, every committed case source has its recorded sha256 (or, in a recording lifted out of
+ * the tree before cases carried one, the digest `liftedCaseSources` pins them all by), and the recording covers every
  * upstream rule the pack names. Any failure means the recording is stale.
  *
  * The pins and the runtime digests are read from `recording.lock`, which is committed, and the downloaded recording
  * must agree with it: a pull request whose pins moved is stale on its own commit, before any byte is fetched, and a
  * lock that disagrees with the recording it names means the two were written by different runs.
  */
-export function toolPackChecks(inputs: RecordedInputs): Check[] {
+export function toolPackChecks(inputs: RecordedInputs, liftedCaseSources: ReadonlyMap<string, string> = LIFTED_CASE_SOURCES): Check[] {
   const { root, manifest, lock, recording, corpus, tools, names } = inputs;
   const pack = manifest.rerail.pack;
   const tool = recording.tool;
@@ -213,14 +214,27 @@ export function toolPackChecks(inputs: RecordedInputs): Check[] {
     for (const testCase of rule.cases) if (testCase.file !== null) recordedDigests.set(testCase.file, (recordedDigests.get(testCase.file) ?? new Set()).add(testCase.sha256));
   }
   const sourceMismatches: string[] = [];
+  // A recording lifted out of the tree before cases carried a sha256 pins its case sources as one digest instead
+  // (liftedCaseSources, by the lock's asset name); any other recording without a case's sha256 is stale.
+  const undigested: [file: string, actual: string][] = [];
   for (const [file, digests] of [...recordedDigests].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const recorded = digests.size === 1 ? [...digests][0] : undefined;
     const path = join(directory, file);
     const actual = existsSync(path) ? sha256(readFileSync(path)) : null;
-    if (recorded === undefined) sourceMismatches.push(`${file} ${digests.size > 1 ? "has cases that disagree about its sha256" : "has no recorded sha256"}`);
-    else if (actual !== recorded) sourceMismatches.push(`${file} ${actual === null ? "is not committed" : `is ${actual.slice(0, 12)}, recorded ${recorded.slice(0, 12)}`}`);
+    if (digests.size > 1) sourceMismatches.push(`${file} has cases that disagree about its sha256`);
+    else if (actual === null) sourceMismatches.push(`${file} is not committed`);
+    else if (recorded === undefined) undigested.push([file, actual]);
+    else if (actual !== recorded) sourceMismatches.push(`${file} is ${actual.slice(0, 12)}, recorded ${recorded.slice(0, 12)}`);
   }
-  checks.push({ id: "case-sources", ok: sourceMismatches.length === 0, detail: sourceMismatches.length === 0 ? `${recordedDigests.size} committed case source(s) are the bytes upstream's answers were recorded on` : `${sourceMismatches.length} case source(s) differ: ${sourceMismatches.slice(0, 3).join("; ")}: ${stale}` });
+  const liftedAsset = lock?.files[GATES_RECORDING].asset;
+  const pinned = liftedAsset === undefined ? undefined : liftedCaseSources.get(liftedAsset);
+  if (undigested.length > 0 && pinned === undefined) {
+    sourceMismatches.push(...undigested.map(([file]) => `${file} has no recorded sha256`));
+  } else if (undigested.length > 0 && caseSourcesDigest(undigested) !== pinned) {
+    sourceMismatches.push(`the ${undigested.length} case source(s) ${liftedAsset} records no sha256 for are ${caseSourcesDigest(undigested).slice(0, 12)} together, pinned ${pinned!.slice(0, 12)} in recording/store.ts's LIFTED_CASE_SOURCES (git diff 357f01b6 -- packs/${pack}/upstream/${tool}/fixtures shows what changed)`);
+  }
+  const liftedNote = undigested.length === 0 ? "" : ` (${undigested.length} of them pinned together: ${GATES_RECORDING} was lifted out of the tree before cases carried a sha256)`;
+  checks.push({ id: "case-sources", ok: sourceMismatches.length === 0, detail: sourceMismatches.length === 0 ? `${recordedDigests.size} committed case source(s) are the bytes upstream's answers were recorded on${liftedNote}` : `${sourceMismatches.length} case source(s) differ: ${sourceMismatches.slice(0, 3).join("; ")}: ${stale}` });
 
   const absent = new Set(recording.absent);
   const unrecorded = [...new Set(names)].filter((name) => !(name in recording.rules) && !absent.has(name)).sort();

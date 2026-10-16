@@ -87,6 +87,64 @@ export const recordingLockSchema = z.strictObject({
 
 export type RecordingLock = z.infer<typeof recordingLockSchema>;
 
+/**
+ * The assets uploaded by hand when the recordings were lifted out of the tree (migrate-v2.ts), before
+ * rule-gates-record.yml could run from main to attest anything: the only ones fetch.ts takes without its attestation. Each
+ * holds the bytes the reviewed in-tree recording held. The list only shrinks: an entry goes once its tool-pack's lock
+ * names another recording, and a test fails while an entry is named by no committed lock.
+ */
+export const LIFTED_ASSETS: ReadonlySet<string> = new Set([
+  "javascript-eslint-gates-6b2c8c972842da71225cd69fc6db0ad98c23b35d1e2cbd67dff34d768d7c5e57.json.gz",
+  "javascript-eslint-gates-corpus-4a0005ebc7096ebdd43bfce65187a919ad7bb40dc98f453fc4b51245123061aa.json.gz",
+  "javascript-eslint-plugin-unicorn-gates-corpus-2c1af5f587d2bc7d34e6cb1b89e0d5e5267b2a84445acba29172f7fa0869efd0.json.gz",
+  "javascript-eslint-plugin-unicorn-gates-eca17ffaf1c7c589938f30129cd667617c29dc4cf66193f2a93fdf1e7fc18217.json.gz",
+  "next-eslint-plugin-next-gates-57b494f4aa66a021048bacf610abe2d2702e3f71ff4f24d47d920615bda28a10.json.gz",
+  "next-eslint-plugin-next-gates-corpus-43f24383610a797418dae21ee0d1c64483d274ee19754af30544284a4a781447.json.gz",
+  "python-bandit-gates-corpus-6bf91179fe4e9347b56b3d94ce91ab1ff7888f52baf4df316eb257bbe3199f3d.json.gz",
+  "python-bandit-gates-ec6b29fce85a03c292dabbfbe9438e76078a082af3409c1d7a0faa7aa8efecaa.json.gz",
+  "python-ruff-gates-8f6038d965cf0cf26193f61e8b69963a7bfb35c480ed0ce02cd2bf30c04c2746.json.gz",
+  "python-ruff-gates-corpus-c4cfcbb4345494ca185899b903d8b8ee282bac98698bcd92bb04d6adbe29bcab.json.gz",
+  "react-eslint-plugin-react-gates-17f4eeabca71c32a612062f80f60dd9d3126360d6944c3cacb788665830eef55.json.gz",
+  "react-eslint-plugin-react-gates-corpus-6257ec57d71616eab398281ae57bd7d47bca946c29fb603ee607809fc87cfcbc.json.gz",
+  "react-eslint-plugin-react-hooks-gates-corpus-f98cafeb13f98fd8918469c8acfbcff07fc52fdc01f4d394b4dfb92199acad8c.json.gz",
+  "react-eslint-plugin-react-hooks-gates-ec9af105936015a25c2d67b97126d3c142ca2066d1e0a1167e3f56e125255a2f.json.gz",
+  "typescript-eslint-plugin-vitest-gates-corpus-9909aa03f587bbeaed1e34ad3ec57293b6733161c0e3778eb9265acee45f67c4.json.gz",
+  "typescript-eslint-plugin-vitest-gates-e2f09bcaebc4d0e7518a0c03ed2d75b802ea4af9cdeaaab0575ea543a207a4f9.json.gz",
+  "typescript-typescript-eslint-gates-302d0de625111bb16d158a2198c53119ab47229ecb744b7e8d3b9cab443de309.json.gz",
+  "typescript-typescript-eslint-gates-corpus-c7ee7614b5b99b8d92789b88d89e307654bddb18471c1025234e2fe3bec00c7b.json.gz",
+]);
+
+/**
+ * The case sources of each lifted `gates.json`, pinned together: those recordings were made before a case carried the
+ * sha256 of its committed source (`cases[].sha256`), so the gates' `case-sources` check has nothing per case to check
+ * them against, and passing them unchecked would let an edited fixture be judged against upstream's unchanged answers.
+ * Each value is caseSourcesDigest over every file the recording's cases name, taken from the tree the recordings were
+ * lifted with: no case source has changed since 357f01b6, which lifted them. Keyed by asset name, which
+ * readRecordingLock ties to the recording's sha256 and tool-pack, so an entry covers that one recording and no other.
+ * It goes with the asset's entry in LIFTED_ASSETS, when the tool-pack is next recorded and its cases carry their own
+ * sha256.
+ */
+export const LIFTED_CASE_SOURCES: ReadonlyMap<string, string> = new Map([
+  ["javascript-eslint-gates-6b2c8c972842da71225cd69fc6db0ad98c23b35d1e2cbd67dff34d768d7c5e57.json.gz", "55ed6950b41dda8a69dc39b1f0e2db6ccc7bc844c8fc8b8115ece451ab4aad01"],
+  ["javascript-eslint-plugin-unicorn-gates-eca17ffaf1c7c589938f30129cd667617c29dc4cf66193f2a93fdf1e7fc18217.json.gz", "2cf9555df128696126f4de3e11379ec20ed154f9264df91f37b0321901409d58"],
+  ["next-eslint-plugin-next-gates-57b494f4aa66a021048bacf610abe2d2702e3f71ff4f24d47d920615bda28a10.json.gz", "c05906a98e7288249ba7010d76e4e08d0e104d66463735a3694e9e649ff026ff"],
+  ["python-bandit-gates-ec6b29fce85a03c292dabbfbe9438e76078a082af3409c1d7a0faa7aa8efecaa.json.gz", "1919d65b918095429612693c3e7ce43e258124b4db8b7d4be28ab8ef73c3f3e9"],
+  ["python-ruff-gates-8f6038d965cf0cf26193f61e8b69963a7bfb35c480ed0ce02cd2bf30c04c2746.json.gz", "04b0f9cb79fb696d4df4d182ccf12be69df22d0dc2d37e283692649f8f77f056"],
+  ["react-eslint-plugin-react-gates-17f4eeabca71c32a612062f80f60dd9d3126360d6944c3cacb788665830eef55.json.gz", "6f883431014f89bede712e3ad20d5267fb82a5250f819cba393c162c2e35b581"],
+  ["react-eslint-plugin-react-hooks-gates-ec9af105936015a25c2d67b97126d3c142ca2066d1e0a1167e3f56e125255a2f.json.gz", "88ca837f731ebd9e289c2f01c224fa69eac13707a77d279e29c4a68393e27ed6"],
+  ["typescript-eslint-plugin-vitest-gates-e2f09bcaebc4d0e7518a0c03ed2d75b802ea4af9cdeaaab0575ea543a207a4f9.json.gz", "f52c697f90ff40d28936f94654448848876a41704c7d66c3ee3cd9a9f82a4e41"],
+  ["typescript-typescript-eslint-gates-302d0de625111bb16d158a2198c53119ab47229ecb744b7e8d3b9cab443de309.json.gz", "4ac07a2a450f23eba43f9ad3b6bb55e89e19b4aafd56e700d4b22f4a86aa5dfd"],
+]);
+
+/**
+ * One digest over a set of case sources: sha256 of `<sha256 of the file's bytes>  <file>\n` per file (sha256sum's
+ * lines), the files in code-unit order. Any file added, dropped, renamed or edited changes it.
+ */
+export function caseSourcesDigest(files: Iterable<readonly [file: string, digest: string]>): string {
+  const lines = [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([file, digest]) => `${digest}  ${file}\n`);
+  return sha256(lines.join(""));
+}
+
 /** A recording's asset name: content-addressed, so the same bytes are always the same asset. */
 export function assetName(pack: string, tool: string, file: string, digest: string): string {
   return `${pack}-${tool}-${file.replace(/\.json$/u, "")}-${digest}.json.gz`;
