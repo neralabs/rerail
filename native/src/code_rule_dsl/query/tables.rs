@@ -786,7 +786,7 @@ unsafe impl VTabCursor for NodesCursor<'_> {
         // `selected = 1`: every node only among the roots the batch's anchor index selected for
         // the running statement (`BatchState::roots`); without a selection, every node.
         let selected = if idx_num & (1 << 6) != 0 && args.get::<i64>(argv)? == 1 {
-            batch_state(&view).and_then(|state| state.selected_roots())
+            batch_state(&view).and_then(|state| state.selected_roots(file))
         } else {
             None
         };

@@ -100,23 +100,20 @@ pub(super) struct BatchState {
 }
 
 impl BatchState {
-    fn selected_roots(&self) -> Option<Arc<[u32]>> {
+    fn selected_roots(&self, file: i64) -> Option<Arc<[u32]>> {
+        let batch = self
+            .batch_roots
+            .lock()
+            .expect("batch root selection mutex poisoned");
+        if !batch.is_empty() {
+            return usize::try_from(file)
+                .ok()
+                .and_then(|file| batch.get(file).cloned().flatten());
+        }
         self.roots
             .lock()
             .expect("root selection mutex poisoned")
             .clone()
-    }
-
-    fn root_selected(&self, file: usize, node: u32) -> bool {
-        self.batch_roots
-            .lock()
-            .expect("batch root selection mutex poisoned")
-            .get(file)
-            .is_none_or(|roots| {
-                roots
-                    .as_deref()
-                    .is_none_or(|roots| roots.binary_search(&node).is_ok())
-            })
     }
 }
 

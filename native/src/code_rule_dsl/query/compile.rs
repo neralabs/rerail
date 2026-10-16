@@ -124,9 +124,8 @@ pub(in crate::code_rule_dsl) fn compile_clause(
         "SELECT r.file_index, r.node, \
          CASE WHEN tq_enter_file(r.file_index) THEN {root} END \
          FROM rerail_files f JOIN rerail_nodes r ON \
-         r.batch = ?1 AND r.file_index = f.file_index AND r.axis = 'all'{kinds} \
-         WHERE f.batch = ?1 AND tq_selected(?1, r.file_index, r.node) \
-         ORDER BY r.file_index, r.pos"
+         r.batch = ?1 AND r.file_index = f.file_index AND r.axis = 'all' AND r.selected = 1{kinds} \
+         WHERE f.batch = ?1 ORDER BY r.file_index, r.pos"
     );
     Ok(ClausePlan {
         root_sql: format!("{select} AND r.node = ?3"),

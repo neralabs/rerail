@@ -1310,16 +1310,6 @@ pub(super) fn register(connection: &Connection, registry: &Arc<MatchRegistry>) -
         })
     })?;
     let owner = Arc::clone(registry);
-    connection.create_scalar_function("tq_selected", 3, flags, move |context| {
-        let view = batch(context, &owner)?;
-        let state = state(&view)?;
-        let file = usize::try_from(context.get::<i64>(1)?)
-            .map_err(|_| user_error("selected root file is invalid"))?;
-        let node = u32::try_from(context.get::<i64>(2)?)
-            .map_err(|_| user_error("selected root node is invalid"))?;
-        Ok(state.root_selected(file, node))
-    })?;
-    let owner = Arc::clone(registry);
     connection.create_scalar_function("tq_pattern", 5, flags, move |context| {
         pattern(context, &owner)
     })?;
