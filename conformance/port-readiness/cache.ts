@@ -146,8 +146,8 @@ export interface SharedKeyInputs {
   gateCode: string;
   dependencies: string;
   gatesYaml: string;
-  gatesJson: string;
-  gatesCorpus: string;
+  recordingJson: string;
+  corpusJson: string;
   corpusTasks: string;
   corpora: string;
 }
@@ -170,7 +170,7 @@ export interface RuleKeyInputs {
  */
 export function ruleKey(shared: SharedKeyInputs, rule: RuleKeyInputs): string {
   const parts = [
-    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.gatesJson, shared.gatesCorpus, shared.corpusTasks, shared.corpora,
+    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.recordingJson, shared.corpusJson, shared.corpusTasks, shared.corpora,
     rule.engine, rule.document, rule.conformanceEntry, rule.goldens, ...rule.caseSources,
   ];
   return sha256(parts.map((part) => sha256(part)).join("\n"));

@@ -25,23 +25,23 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import { z } from "zod";
 
 import { toolPackDirectory } from "../manifest.js";
-import { GATES_CORPUS, GATES_CORPUS_FORMAT, GATES_RECORDING, GATES_RECORDING_FORMAT } from "./schema.js";
+import { CORPUS_FILE, CORPUS_FORMAT, RECORDING_FILE, RECORDING_FORMAT } from "./schema.js";
 
 const sha256 = (bytes: string | Buffer): string => createHash("sha256").update(bytes).digest("hex");
 
 /** The committed manifest's file name in a tool-pack's directory. */
 export const RECORDING_LOCK = "recording.lock";
 
-export const RECORDING_LOCK_FORMAT = "rerail.gates-recording-lock/v1";
+export const RECORDING_LOCK_FORMAT = "rerail.port-readiness-recording-lock/v1";
 
 /**
  * The prerelease a lock names when `port-readiness:record` is given no `--release`. It is a prerelease so it never shows as the
  * repository's current release. GitHub caps a release at 1,000 assets, so port-readiness-record.yml, the only job that
- * uploads, passes `--release` itself: the newest of `gate-recordings`, `gate-recordings-2`, `-3` and so on, or the next
- * once the newest holds 900, and it refuses an upload that would pass the cap. A lock names the release that holds its
- * assets, so an older commit keeps fetching from the older one.
+ * uploads, passes `--release` itself: the newest of `port-readiness-recordings`, `port-readiness-recordings-2`, `-3`
+ * and so on, or the next once the newest holds 900, and it refuses an upload that would pass the cap. A lock names the
+ * release that holds its assets, so an older commit keeps fetching from the older one.
  */
-export const DEFAULT_RELEASE = "gate-recordings";
+export const DEFAULT_RELEASE = "port-readiness-recordings";
 
 const digestSchema = z.string().regex(/^[0-9a-f]{64}$/u, "a sha256 in lowercase hex");
 const nonEmpty = z.string().min(1);
@@ -53,7 +53,7 @@ const lockedFileSchema = z.strictObject({
   /** The text's length in bytes, so a fetch can report what it is about to read before it reads it. */
   size: z.number().int().positive(),
   /** The recording's own `format`, checked after the download so a v2 reader never parses a v3 recording. */
-  format: z.enum([GATES_RECORDING_FORMAT, GATES_CORPUS_FORMAT]),
+  format: z.enum([RECORDING_FORMAT, CORPUS_FORMAT]),
   /**
    * The asset's name in the release: `<pack>-<tool>-<stem>-<sha256>.json.gz`. readRecordingLock refuses any other,
    * so a lock cannot name another tool-pack's recording, or an asset under a name of its own choosing.
@@ -65,7 +65,7 @@ export type LockedFile = z.infer<typeof lockedFileSchema>;
 
 export const recordingLockSchema = z.strictObject({
   format: z.literal(RECORDING_LOCK_FORMAT),
-  /** The tool, as in gates.json: the directory under the pack's upstream/. */
+  /** The tool, as in recording.json: the directory under the pack's upstream/. */
   tool: nonEmpty,
   /** The release tag holding both assets. */
   release: nonEmpty,
@@ -75,23 +75,24 @@ export const recordingLockSchema = z.strictObject({
    */
   recorder: nonEmpty,
   /**
-   * The upstream pins the recording was made at, copied from gates.json. The stale-recording checks read them here,
+   * The upstream pins the recording was made at, copied from recording.json. The stale-recording checks read them here,
    * from the committed manifest, so a pull request whose pins moved fails before anything is downloaded.
    */
   pins: z.strictObject({ repository: nonEmpty, commit: z.string().regex(/^[0-9a-f]{40}$/u), version: nonEmpty, runtime: nonEmpty }),
-  /** The runtimes' committed pin digests, as gates.json records them, for the same reason. */
+  /** The runtimes' committed pin digests, as recording.json records them, for the same reason. */
   runtimes: z.record(z.string().regex(/^[a-z0-9._-]+$/u), z.record(z.string().regex(/^[A-Za-z0-9._-]+$/u), digestSchema)),
   /** Both recordings, by their file name. */
-  files: z.strictObject({ [GATES_RECORDING]: lockedFileSchema, [GATES_CORPUS]: lockedFileSchema }),
+  files: z.strictObject({ [RECORDING_FILE]: lockedFileSchema, [CORPUS_FILE]: lockedFileSchema }),
 });
 
 export type RecordingLock = z.infer<typeof recordingLockSchema>;
 
 /**
- * The assets uploaded by hand when the recordings were lifted out of the tree (migrate-v2.ts), before
- * port-readiness-record.yml could run from main to attest anything: the only ones fetch.ts takes without its attestation. Each
- * holds the bytes the reviewed in-tree recording held. The list only shrinks: an entry goes once its tool-pack's lock
- * names another recording, and a test fails while an entry is named by no committed lock.
+ * The assets recorded on a maintainer's machine and uploaded by hand before port-readiness-record.yml could run from
+ * main, the only ref whose recordings it attests: the only ones fetch.ts takes without its attestation. Each is the
+ * recording a reviewed commit's lock names. The list only shrinks: an entry goes once its tool-pack's lock names an
+ * attested recording, nothing joins it once the record workflow runs from main, and a test fails while an entry is
+ * named by no committed lock.
  */
 export const LIFTED_ASSETS: ReadonlySet<string> = new Set([
   "javascript-eslint-gates-6b2c8c972842da71225cd69fc6db0ad98c23b35d1e2cbd67dff34d768d7c5e57.json.gz",
@@ -115,14 +116,13 @@ export const LIFTED_ASSETS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The case sources of each lifted `gates.json`, pinned together: those recordings were made before a case carried the
- * sha256 of its committed source (`cases[].sha256`), so the gates' `case-sources` check has nothing per case to check
+ * The case sources of each hand-uploaded `recording.json` (LIFTED_ASSETS) made before a case carried the sha256 of its
+ * committed source (`cases[].sha256`), pinned together: the gates' `case-sources` check has nothing per case to check
  * them against, and passing them unchecked would let an edited fixture be judged against upstream's unchanged answers.
- * Each value is caseSourcesDigest over every file the recording's cases name, taken from the tree the recordings were
- * lifted with: no case source has changed since 357f01b6, which lifted them. Keyed by asset name, which
- * readRecordingLock ties to the recording's sha256 and tool-pack, so an entry covers that one recording and no other.
- * It goes with the asset's entry in LIFTED_ASSETS, when the tool-pack is next recorded and its cases carry their own
- * sha256.
+ * Each value is caseSourcesDigest over every file the recording's cases name, taken from the tree the recording was
+ * made from. Keyed by asset name, which readRecordingLock ties to the recording's sha256 and tool-pack, so an entry
+ * covers that one recording and no other. A recording whose cases carry their own sha256 needs no entry. The list only
+ * shrinks: an entry goes with the asset's entry in LIFTED_ASSETS, when the tool-pack gets an attested recording.
  */
 export const LIFTED_CASE_SOURCES: ReadonlyMap<string, string> = new Map([
   ["javascript-eslint-gates-6b2c8c972842da71225cd69fc6db0ad98c23b35d1e2cbd67dff34d768d7c5e57.json.gz", "55ed6950b41dda8a69dc39b1f0e2db6ccc7bc844c8fc8b8115ece451ab4aad01"],
@@ -230,7 +230,7 @@ export function buildRecordingLock(
   recorder: string,
   pins: RecordingLock["pins"],
   runtimes: RecordingLock["runtimes"],
-  texts: { [GATES_RECORDING]: string; [GATES_CORPUS]: string },
+  texts: { [RECORDING_FILE]: string; [CORPUS_FILE]: string },
 ): RecordingLock {
   const locked = (file: string, text: string, format: LockedFile["format"]): LockedFile => {
     const digest = sha256(Buffer.from(text, "utf8"));
@@ -244,8 +244,8 @@ export function buildRecordingLock(
     pins,
     runtimes,
     files: {
-      [GATES_RECORDING]: locked(GATES_RECORDING, texts[GATES_RECORDING], GATES_RECORDING_FORMAT),
-      [GATES_CORPUS]: locked(GATES_CORPUS, texts[GATES_CORPUS], GATES_CORPUS_FORMAT),
+      [RECORDING_FILE]: locked(RECORDING_FILE, texts[RECORDING_FILE], RECORDING_FORMAT),
+      [CORPUS_FILE]: locked(CORPUS_FILE, texts[CORPUS_FILE], CORPUS_FORMAT),
     },
   });
 }

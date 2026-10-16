@@ -1,10 +1,7 @@
 /**
- * `npm run port-readiness:record`: run a tool-pack's live adapter and write the recording the gates read
- * (packs/<pack>/upstream/<tool>/gates.json, gates-corpus.json and missing case sources). `--check` writes nothing and
- * exits 1 when a fresh recording differs from the committed one.
- *
- * `npm run port-readiness:record -- migrate-v2` rewrites every committed recording in the v2 format instead of recording
- * anything, which needs no upstream runtime (migrate-v2.ts).
+ * `npm run port-readiness:record`: run a tool-pack's live adapter and write the recording the gates read: recording.json
+ * and corpus.json into the cache, the recording.lock naming them, and missing case sources. `--check` writes nothing
+ * and exits 1 when a fresh recording differs from what the committed lock names.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -15,50 +12,11 @@ import { DEFAULT_CACHE_ROOT } from "../../port-readiness/corpus.js";
 import { ProcessCommandRunner } from "../../port-readiness/process.js";
 import { renderRecordingChanges } from "../../port-readiness/recording/diff.js";
 import { RECORDING_LOCK } from "../../port-readiness/recording/store.js";
-import { liftRecordings, migrateToolPacks } from "./migrate-v2.js";
 import { diffRecording, recordToolPack, writeRecording } from "./record.js";
 
 const USAGE = `usage:
   npm run port-readiness:record -- --pack <id> --tool <tool> [--cache dir] [--release tag] [--changes file] [--check]
-  npm run port-readiness:record -- migrate-v2 [--check]
-  npm run port-readiness:record -- lift [--cache dir] [--release tag]
 `;
-
-/** `migrate-v2`: rewrite every committed recording in the v2 format; `--check` writes nothing and reports what differs. */
-async function migrate(root: string, check: boolean): Promise<number> {
-  const results = await migrateToolPacks(root, !check);
-  const stale = results.filter((result) => !result.unchanged);
-  const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  for (const result of results) {
-    const label = `packs/${result.pack}/upstream/${result.tool}`;
-    process.stdout.write(result.unchanged
-      ? `${label}: already v2 (${mb(result.after)})\n`
-      : `${label}: ${mb(result.before)} → ${mb(result.after)} (${check ? "would rewrite" : "rewritten"})\n`);
-  }
-  const before = results.reduce((total, result) => total + result.before, 0);
-  const after = results.reduce((total, result) => total + result.after, 0);
-  process.stdout.write(`${results.length} tool-pack(s), ${stale.length} to rewrite: ${mb(before)} → ${mb(after)}\n`);
-  return check && stale.length > 0 ? 1 : 0;
-}
-
-/**
- * `lift`: seed the release from the recordings that were committed before it existed. It writes each tool-pack's
- * `recording.lock`, puts both recordings in the cache and the gzipped assets in `<cache>/recordings/upload/`; the
- * in-tree files are then removed from the tree and the assets uploaded once.
- */
-async function lift(root: string, cacheRoot: string, release: string | undefined): Promise<number> {
-  const lifted = await liftRecordings(root, cacheRoot, release);
-  let total = 0;
-  for (const entry of lifted) {
-    process.stdout.write(`packs/${entry.pack}/upstream/${entry.tool}/${RECORDING_LOCK} names ${entry.lock.release}\n`);
-    for (const asset of entry.assets) {
-      total += asset.bytes;
-      process.stdout.write(`  ${asset.name} (${(asset.bytes / 1024 / 1024).toFixed(1)} MB gzipped)\n`);
-    }
-  }
-  process.stdout.write(`${lifted.length} tool-pack(s), ${lifted.length * 2} assets, ${(total / 1024 / 1024).toFixed(1)} MB gzipped in ${cacheRoot}/recordings/upload/\n`);
-  return 0;
-}
 
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -74,8 +32,6 @@ async function main(): Promise<number> {
     allowPositionals: true,
     strict: true,
   });
-  if (positionals[0] === "migrate-v2") return migrate(PACKAGE_ROOT, values.check === true);
-  if (positionals[0] === "lift") return lift(PACKAGE_ROOT, resolve(values.cache ?? DEFAULT_CACHE_ROOT), values.release);
   if (values.help === true || positionals.length > 0 || values.pack === undefined || values.tool === undefined) {
     process.stderr.write(USAGE);
     return values.help === true ? 0 : 2;

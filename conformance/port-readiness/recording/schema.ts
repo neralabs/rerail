@@ -1,13 +1,14 @@
 /**
  * The recording contract between the gates recorder (conformance/recorders/port-readiness/, run on a maintainer machine and
- * nightly) and the gates (conformance/port-readiness/, run in PR CI): what a live adapter answers, written into the tool-pack's
- * directory `packs/<pack>/upstream/<tool>/` so the gates can read it back through a recorded adapter without running
- * upstream.
+ * nightly) and the gates (conformance/port-readiness/, run in PR CI): what a live adapter answers, written as two files
+ * the tool-pack's `recording.lock` names (store.ts) so the gates can read it back through a recorded adapter without
+ * running upstream.
  *
- * - `gates.json` (`rerail.gates-recording/v2`) holds every PackAdapter answer the gates read except upstream's answers
- *   on the corpus: identity, tool-pack checks, the license digest, the words and names `not-overfit` reads, every
- *   upstream rule's facts, name sources, span parts and cases, and independent parsers' verdicts on every case source.
- * - `gates-corpus.json` (`rerail.gates-corpus/v2`) holds `lintCorpus`'s answers: upstream's findings on every corpus
+ * - `recording.json` (`rerail.port-readiness-recording/v2`) holds every PackAdapter answer the gates read except
+ *   upstream's answers on the corpus: identity, tool-pack checks, the license digest, the words and names `not-overfit`
+ *   reads, every upstream rule's facts, name sources, span parts and cases, and independent parsers' verdicts on every
+ *   case source.
+ * - `corpus.json` (`rerail.port-readiness-corpus/v2`) holds `lintCorpus`'s answers: upstream's findings on every corpus
  *   file, and independent parsers' verdicts on each.
  *
  * Each PackAdapter member and where its recorded answer is:
@@ -19,7 +20,7 @@
  *   committed source of every case (`cases[].file`); keywords → `keywords`;
  *   commentVocabulary → `commentVocabulary`; inScopeSamples → `inScopeSamples`; cases(name) → `rules[name].cases`,
  *   each source read from its `file` and checked against its `sha256`; toSpan(name) → span-units/<adapter>.ts with `rules[name].spanParts`; inCorpus →
- *   `corpus`; lintCorpus → gates-corpus.json `files`; parserVerdicts → `parserVerdicts` here and gates-corpus.json
+ *   `corpus`; lintCorpus → corpus.json `files`; parserVerdicts → `parserVerdicts` here and corpus.json
  *   `files[].verdicts`, looked up by path, script and the source's sha256.
  *
  * Both files name their independent parsers once, in `parsers`, and leave `verdicts` off an entry no parser objected
@@ -36,12 +37,12 @@ import { z } from "zod";
 import { ADAPTERS } from "../manifest.js";
 import type { ParserVerdict, Span } from "../types.js";
 
-export const GATES_RECORDING_FORMAT = "rerail.gates-recording/v2";
-export const GATES_CORPUS_FORMAT = "rerail.gates-corpus/v2";
+export const RECORDING_FORMAT = "rerail.port-readiness-recording/v2";
+export const CORPUS_FORMAT = "rerail.port-readiness-corpus/v2";
 
-/** The recording's file names in a tool-pack's directory. */
-export const GATES_RECORDING = "gates.json";
-export const GATES_CORPUS = "gates-corpus.json";
+/** The two recordings' file names: the keys of a lock's `files`, and the stems of their asset names (store.ts). */
+export const RECORDING_FILE = "recording.json";
+export const CORPUS_FILE = "corpus.json";
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -273,7 +274,7 @@ function checkVerdicts(
 }
 
 export const gatesRecordingSchema = z.strictObject({
-  format: z.literal(GATES_RECORDING_FORMAT),
+  format: z.literal(RECORDING_FORMAT),
   /** The tool: `tools[].name` in the pack's conformance.json, and the directory under the pack's upstream/. */
   tool: nonEmpty,
   /** gates.yaml's adapter: whose live adapter recorded this, and whose span units (span-units/<adapter>.ts) toSpan uses. */
@@ -389,8 +390,8 @@ const corpusFileSchema = z.strictObject({
 export type RecordedCorpusFile = z.infer<typeof corpusFileSchema>;
 
 export const gatesCorpusSchema = z.strictObject({
-  format: z.literal(GATES_CORPUS_FORMAT),
-  /** The tool, as in gates.json. */
+  format: z.literal(CORPUS_FORMAT),
+  /** The tool, as in recording.json. */
   tool: nonEmpty,
   /** The pins of the corpus upstream was run on; a fetched corpus with other pins is not this recording's. */
   pins: z.strictObject({
@@ -407,7 +408,7 @@ export const gatesCorpusSchema = z.strictObject({
   }),
   /** The rules upstream was asked about on every file (lintCorpus's names), sorted. */
   rules: sortedStrings(nonEmpty),
-  /** The independent parsers every verdict list in the file names, in the live adapter's order, as in gates.json. */
+  /** The independent parsers every verdict list in the file names, in the live adapter's order, as in recording.json. */
   parsers: z.array(parserSchema).min(1),
   /** Every corpus file of a type upstream lints, sorted by task then path. */
   files: z.array(corpusFileSchema),

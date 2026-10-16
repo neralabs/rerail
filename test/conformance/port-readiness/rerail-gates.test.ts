@@ -223,7 +223,7 @@ describe("engine-reads-goldens", () => {
 });
 
 describe("cache keys", () => {
-  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", gatesYaml: "y", gatesJson: "j", gatesCorpus: "c", corpusTasks: "t", corpora: "[]" };
+  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", gatesYaml: "y", recordingJson: "j", corpusJson: "c", corpusTasks: "t", corpora: "[]" };
   const rules = {
     a: { engine: "e", document: '{"id":"a"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/a.py\0aa"] },
     b: { engine: "e", document: '{"id":"b"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/b.py\0bb"] },
@@ -243,7 +243,7 @@ describe("cache keys", () => {
   });
 
   it("a gate-code, dependency or recording change changes every key", () => {
-    for (const part of ["gateCode", "dependencies", "gatesJson", "gatesCorpus"] as const) {
+    for (const part of ["gateCode", "dependencies", "recordingJson", "corpusJson"] as const) {
       const changed = { ...shared, [part]: "changed" };
       assert.notEqual(ruleKey(changed, rules.a), ruleKey(shared, rules.a));
       assert.notEqual(ruleKey(changed, rules.b), ruleKey(shared, rules.b));

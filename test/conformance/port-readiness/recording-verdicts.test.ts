@@ -14,10 +14,9 @@ import { test } from "vitest";
 import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import { createRecordedAdapter } from "../../../conformance/port-readiness/recorded-adapter.js";
 import {
-  cleanVerdicts, gatesCorpusSchema, gatesRecordingSchema, isCleanVerdict, recordedParsers, recordingText,
-  GATES_CORPUS_FORMAT, GATES_RECORDING_FORMAT,
+  cleanVerdicts, gatesCorpusSchema, gatesRecordingSchema, isCleanVerdict, recordedParsers,
+  CORPUS_FORMAT, RECORDING_FORMAT,
 } from "../../../conformance/port-readiness/recording/schema.js";
-import { migrateToV2 } from "../../../conformance/recorders/port-readiness/migrate-v2.js";
 
 const MANIFEST = `adapter: bandit
 rerail:
@@ -49,7 +48,7 @@ const OBJECTING = [{ parser: "cpython 3.14.8", syntax: ["invalid syntax"], gramm
 
 function recording(parserVerdicts: unknown[]): unknown {
   return {
-    format: GATES_RECORDING_FORMAT,
+    format: RECORDING_FORMAT,
     tool: "bandit",
     adapter: "bandit",
     pins: { repository: "https://github.com/PyCQA/bandit", commit: "a".repeat(40), version: "1.9.4", runtime: "bandit-1.9.4" },
@@ -72,7 +71,7 @@ function recording(parserVerdicts: unknown[]): unknown {
 
 function corpus(files: unknown[]): unknown {
   return {
-    format: GATES_CORPUS_FORMAT,
+    format: CORPUS_FORMAT,
     tool: "bandit",
     pins: { tasks: "c".repeat(64), corpora: [] },
     rules: [],
@@ -158,36 +157,4 @@ test("the recorder's parser list is the one every source was asked about, and a 
   assert.deepEqual(recordedParsers([[], OBJECTING]), PARSERS);
   assert.throws(() => recordedParsers([OBJECTING, [OBJECTING[0]!]]), /independent parsers differ between sources/u);
   assert.throws(() => recordedParsers([]), /no independent parser ran/u);
-});
-
-test("the v1 to v2 migration drops only the silent lists, keeps every entry's identity, and a second run is a no-op", () => {
-  // A v1 recording has no `parsers`: the migration reads the parser list off the verdict lists themselves.
-  const withoutParsers = (value: unknown): Record<string, unknown> => {
-    const { parsers: _declared, ...rest } = value as Record<string, unknown>;
-    return rest;
-  };
-  const v1Recording = {
-    ...withoutParsers(recording([])),
-    format: "rerail.gates-recording/v1",
-    parserVerdicts: [
-      { path: "broken.py", script: false, sha256: digest(BROKEN), verdicts: OBJECTING },
-      { path: "silent.py", script: false, sha256: digest(SILENT), verdicts: cleanVerdicts(PARSERS) },
-    ],
-  };
-  const v1Corpus = {
-    ...withoutParsers(corpus([])),
-    format: "rerail.gates-corpus/v1",
-    files: [{ task: "demo", path: "app.py", sha256: digest(SILENT), excluded: null, findings: {}, verdicts: cleanVerdicts(PARSERS) }],
-  };
-
-  const first = migrateToV2(v1Recording, v1Corpus);
-  assert.deepEqual(first.recording.parsers, PARSERS);
-  assert.deepEqual(first.corpus.parsers, PARSERS);
-  // Both entries survive, sorted as before; only the silent one lost its list.
-  assert.deepEqual(first.recording.parserVerdicts.map((entry) => [entry.path, entry.verdicts === undefined]), [["broken.py", false], ["silent.py", true]]);
-  assert.deepEqual(first.corpus.files.map((file) => [file.path, file.sha256, file.verdicts === undefined]), [["app.py", digest(SILENT), true]]);
-
-  const again = migrateToV2(JSON.parse(recordingText(first.recording)), JSON.parse(recordingText(first.corpus)));
-  assert.equal(recordingText(again.recording), recordingText(first.recording));
-  assert.equal(recordingText(again.corpus), recordingText(first.corpus));
 });

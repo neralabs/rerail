@@ -256,7 +256,7 @@ async function patchedFiles(cacheRoot: string, task: string, repository: string,
 }
 
 /**
- * corpus-complete: every file `gates-corpus.json` holds upstream's answers for was fetched on this run with the bytes it
+ * corpus-complete: every file `corpus.json` holds upstream's answers for was fetched on this run with the bytes it
  * was recorded on. A task that failed to fetch (a download, a git fetch) or a file whose bytes differ would otherwise
  * drop out of matches-real-code without a word, and the rules judged on the rest would pass.
  */

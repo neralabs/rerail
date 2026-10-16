@@ -20,5 +20,5 @@ conformance/recorders/port-readiness/runtimes/*/uv.lock
 # are judged against, and the bytes live in a GitHub release (conformance/port-readiness/recording/store.ts). The recorder and
 # `npm run port-readiness -- fetch` put them in .rerail/port-readiness/recordings/; committing one again would put 71 MB of generated
 # JSON back in the history, where it stays forever.
-packs/*/upstream/*/gates.json
-packs/*/upstream/*/gates-corpus.json
+packs/*/upstream/*/recording.json
+packs/*/upstream/*/corpus.json

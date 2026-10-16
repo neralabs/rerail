@@ -1,7 +1,8 @@
 /**
  * The gates recorder: run a tool-pack's live adapter over every upstream rule the pack's conformance manifests name for
- * the tool, and write what the gates read (conformance/port-readiness/recording/schema.ts) into `packs/<pack>/upstream/<tool>/`:
- * gates.json, gates-corpus.json, and every case source the recording names that the directory lacks.
+ * the tool, and write what the gates read (conformance/port-readiness/recording/schema.ts): recording.json and
+ * corpus.json into the cache, the `recording.lock` naming them into `packs/<pack>/upstream/<tool>/`, and every case
+ * source the recording names that the directory lacks.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -12,7 +13,7 @@ import { buildCorpus, buildRerailCorpora, conformancePaths, CORPUS_TASKS, failed
 import { readGatesManifest, toolPackDirectory, type GatesManifest } from "../../port-readiness/manifest.js";
 import type { CommandRunner } from "../../port-readiness/process.js";
 import {
-  GATES_CORPUS, GATES_CORPUS_FORMAT, GATES_RECORDING, GATES_RECORDING_FORMAT, gatesCorpusSchema, gatesRecordingSchema, isCleanVerdict, recordedParsers, recordingText, spanTuple,
+  CORPUS_FILE, CORPUS_FORMAT, RECORDING_FILE, RECORDING_FORMAT, gatesCorpusSchema, gatesRecordingSchema, isCleanVerdict, recordedParsers, recordingText, spanTuple,
   type GatesCorpusRecording, type GatesRecording, type RecordedCase, type RecordedRule, type RecordedSpan,
 } from "../../port-readiness/recording/schema.js";
 import { diffRecordings, type RecordedPair, type RecordingChanges, type UnreadRecording } from "../../port-readiness/recording/diff.js";
@@ -42,9 +43,9 @@ const sortedUnique = (values: Iterable<string>): string[] => [...new Set([...val
 const GPL_DERIVED = /(?:^|\/)resources\/test\/fixtures\/(?:pylint|flake8_builtins)\//u;
 
 /**
- * The live adapter's fixtureTextSources as gates.json records them: files sorted by path, inline texts sorted. The list
- * the gates rebuild from it (rebuildFixtureTexts, on the live adapter's checkout) must equal the live fixtureTexts() as a
- * multiset, or nothing is written.
+ * The live adapter's fixtureTextSources as recording.json records them: files sorted by path, inline texts sorted. The
+ * list the gates rebuild from it (rebuildFixtureTexts, on the live adapter's checkout) must equal the live
+ * fixtureTexts() as a multiset, or nothing is written.
  */
 export function recordFixtureTexts(adapter: PackAdapter, cacheRoot: string, pins: { repository: string; commit: string }): RecordedFixtureTexts | undefined {
   const origins = adapter.fixtureTextSources?.();
@@ -356,7 +357,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   const extensions = PROBED_EXTENSIONS.filter((extension) => adapter.inCorpus(`src/example${extension}`));
   const runtimeDigests = options.runtimeDigests ?? ((runtime: string) => runtimePinDigests(runtime));
   const recording = gatesRecordingSchema.parse({
-    format: GATES_RECORDING_FORMAT,
+    format: RECORDING_FORMAT,
     tool,
     adapter: manifest.adapter,
     pins: { repository: manifest.upstream.repository, commit: manifest.upstream.commit, version: manifest.upstream.version, runtime: manifest.upstream.runtime },
@@ -398,15 +399,15 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   const answerOf = new Map(answers.map((answer) => [`${answer.file.task}\0${answer.file.path}`, answer]));
   const corpusVerdicts = await adapter.parserVerdicts(corpusFiles.map((file) => ({ path: file.path, source: file.source, script: false })));
   const corpus = gatesCorpusSchema.parse({
-    format: GATES_CORPUS_FORMAT,
+    format: CORPUS_FORMAT,
     tool,
     pins: {
       tasks: options.tasksSha256 ?? sha256(readFileSync(CORPUS_TASKS)),
       corpora: corpora.map(({ name, repository, commit, paths, exclude }) => ({ name, repository, commit, paths, exclude })),
     },
     rules: recorded,
-    // The same parsers gates.json names: one recorder run asked one set of parsers about cases and corpus files alike,
-    // and a tool upstream cannot lint real code for (javascript/eslint) has no corpus file to read them off.
+    // The same parsers recording.json names: one recorder run asked one set of parsers about cases and corpus files
+    // alike, and a tool upstream cannot lint real code for (javascript/eslint) has no corpus file to read them off.
     parsers: recording.parsers,
     files: corpusFiles.map((file, index) => {
       const answer = answerOf.get(`${file.task}\0${file.path}`);
@@ -431,7 +432,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
 
 /** What differs between a fresh recording and what the tool-pack's committed `recording.lock` names. */
 export interface RecordingDiff {
-  /** gates.json or gates-corpus.json when the lock names other bytes for it, or no lock is committed. */
+  /** recording.json or corpus.json when the lock names other bytes for it, or no lock is committed. */
   changed: string[];
   /** Case sources the directory lacks. */
   missing: CaseCopy[];
@@ -448,7 +449,7 @@ export function diffRecording(root: string, pack: string, tool: string, recorded
   const lockPath = join(directory, RECORDING_LOCK);
   const lock = existsSync(lockPath) ? recordingLockSchema.safeParse(JSON.parse(readFileSync(lockPath, "utf8"))) : null;
   const changed: string[] = [];
-  for (const [file, value] of [[GATES_RECORDING, recorded.recording], [GATES_CORPUS, recorded.corpus]] as const) {
+  for (const [file, value] of [[RECORDING_FILE, recorded.recording], [CORPUS_FILE, recorded.corpus]] as const) {
     const digest = sha256(Buffer.from(recordingText(value), "utf8"));
     if (lock === null || !lock.success || lock.data.files[file].sha256 !== digest) changed.push(file);
   }
@@ -497,7 +498,7 @@ export function withUpstreamRows(text: string, tool: string, copies: CaseCopy[],
 
 /**
  * Where a recording's inline fixture texts come from: upstream test text that is not a file of its own (Ruff's test-module
- * string literals, the `code` of ESLint's RuleTester cases), kept verbatim in gates.json.
+ * string literals, the `code` of ESLint's RuleTester cases), kept verbatim in recording.json.
  */
 export function inlineTextsSource(manifest: GatesManifest): string {
   if (manifest.adapter === "ruff") return "`crates/ruff_linter/src/rules/*/mod.rs`, `crates/ruff_linter/src/linter.rs`: their test modules' string literals";
@@ -505,28 +506,54 @@ export function inlineTextsSource(manifest: GatesManifest): string {
   return "upstream's test files";
 }
 
+/** How the note that lists the recording in UPSTREAM.md starts; the recorder finds an earlier note by it. */
+const RECORDING_NOTE_START = `> \`${RECORDING_FILE}\` is a port readiness recording`;
+
+/** Width a written note is wrapped to, `> ` included. */
+const NOTE_WIDTH = 120;
+
 /**
- * List the recording itself in UPSTREAM.md's file table when it holds upstream test text inline: gates.json is then
- * partly upstream's material (excerpts), like a copied fixture. The row is replaced when it exists; a table sorted as
- * text stays sorted, any other gets the row at its end.
+ * The note that lists the recording in UPSTREAM.md when it holds upstream test text inline, as a Markdown blockquote
+ * wrapped to NOTE_WIDTH: recording.json is then partly upstream's material (excerpts), like a copied fixture.
  */
-export function withRecordingRow(text: string, tool: string, source: string): string {
-  const lines = text.split("\n");
-  const row = `| \`upstream/${tool}/${GATES_RECORDING}\` | ${source} | excerpts |`;
-  const at = lines.findIndex((line) => line.startsWith(`| \`upstream/${tool}/${GATES_RECORDING}\` |`));
-  if (at >= 0) {
-    lines[at] = row;
-    return lines.join("\n");
+export function recordingNote(source: string): string[] {
+  const text = `${RECORDING_NOTE_START.slice(2)}, and no file of this pack, so it is recorded here rather than in the table above: `
+    + `the tool-pack's \`${RECORDING_LOCK}\` names it and a GitHub release holds the bytes (docs/port-readiness.md). It carries `
+    + `excerpts of this upstream's tests (${source}), redistributed under the licence above, together with Rerail's Apache-2.0; `
+    + "the LICENSE beside this file is this upstream's own, at the pinned commit.";
+  const lines: string[] = [];
+  let line = ">";
+  for (const word of text.split(" ")) {
+    if (line !== ">" && line.length + 1 + word.length > NOTE_WIDTH) {
+      lines.push(line);
+      line = ">";
+    }
+    line = `${line} ${word}`;
   }
+  return [...lines, line];
+}
+
+/**
+ * List the recording in UPSTREAM.md, in a note under the file table and never as a row of it: pack check 6 reads the
+ * table as the files the pack carries, and the recording is not one of them, so a row naming it fails the check. An
+ * earlier note is replaced, and left as it is when it already says the same in other line breaks; without one, the
+ * note goes after the table.
+ */
+export function withRecordingNote(text: string, source: string): string {
+  const lines = text.split("\n");
   const isRow = (line: string) => line.startsWith("| `upstream/");
   const first = lines.findIndex(isRow);
-  if (first < 0) throw new Error("UPSTREAM.md has no file table to list the recording in");
+  if (first < 0) throw new Error("UPSTREAM.md has no file table to list the recording under");
   let last = first;
   while (last + 1 < lines.length && isRow(lines[last + 1]!)) last += 1;
-  const existing = lines.slice(first, last + 1);
-  const sorted = existing.every((line, index) => index === 0 || byText(existing[index - 1]!, line) <= 0);
-  const table = sorted ? [...existing, row].sort(byText) : [...existing, row];
-  return [...lines.slice(0, first), ...table, ...lines.slice(last + 1)].join("\n");
+  const note = recordingNote(source);
+  const at = lines.findIndex((line) => line.startsWith(RECORDING_NOTE_START));
+  if (at < 0) return [...lines.slice(0, last + 1), "", ...note, ...lines.slice(last + 1)].join("\n");
+  let end = at;
+  while (end + 1 < lines.length && lines[end + 1]!.startsWith(">")) end += 1;
+  const words = (quote: string[]) => quote.map((line) => line.replace(/^>\s?/u, "")).join(" ").split(/\s+/u).filter((word) => word !== "").join(" ");
+  if (words(lines.slice(at, end + 1)) === words(note)) return text;
+  return [...lines.slice(0, at), ...note, ...lines.slice(end + 1)].join("\n");
 }
 
 /** What a written recording left behind, for the caller to upload and to commit. */
@@ -555,7 +582,7 @@ export async function writeRecording(root: string, pack: string, tool: string, r
   // The summary compares against the recording the committed lock named, where it is still in the cache. Without a
   // lock the report says it is a first recording; with one whose recording cannot be read, that what moved is unknown.
   const before = readLockedPair(root, options.cacheRoot, pack, tool);
-  const texts = { [GATES_RECORDING]: recordingText(recorded.recording), [GATES_CORPUS]: recordingText(recorded.corpus) };
+  const texts = { [RECORDING_FILE]: recordingText(recorded.recording), [CORPUS_FILE]: recordingText(recorded.corpus) };
   const lock = buildRecordingLock(pack, tool, options.release ?? DEFAULT_RELEASE, recorderVersion(root), recorded.recording.pins, recorded.recording.runtimes, texts);
   for (const text of Object.values(texts)) await writeCachedRecording(options.cacheRoot, text);
   await writeFile(join(directory, RECORDING_LOCK), recordingLockText(lock));
@@ -563,7 +590,7 @@ export async function writeRecording(root: string, pack: string, tool: string, r
   const uploads = join(options.cacheRoot, "recordings", "upload");
   await mkdir(uploads, { recursive: true });
   const assets = [];
-  for (const file of [GATES_RECORDING, GATES_CORPUS] as const) {
+  for (const file of [RECORDING_FILE, CORPUS_FILE] as const) {
     const gzipped = gzipRecording(texts[file]);
     const path = join(uploads, lock.files[file].asset);
     await writeFile(path, gzipped);
@@ -580,7 +607,7 @@ export async function writeRecording(root: string, pack: string, tool: string, r
     const upstreamMd = join(root, "packs", pack, "licenses", manifest.rerail.project, "UPSTREAM.md");
     let text = await readFile(upstreamMd, "utf8");
     if (diff.missing.length > 0) text = withUpstreamRows(text, tool, diff.missing, CASE_LAYOUTS[manifest.adapter]);
-    if (inline > 0) text = withRecordingRow(text, tool, inlineTextsSource(manifest));
+    if (inline > 0) text = withRecordingNote(text, inlineTextsSource(manifest));
     await writeFile(upstreamMd, text);
   }
   return { ...diff, lock, assets, changes: diffRecordings(pack, tool, before, { recording: recorded.recording, corpus: recorded.corpus }) };
@@ -597,7 +624,7 @@ export function readLockedPair(root: string, cacheRoot: string, pack: string, to
   if (!existsSync(lockPath)) return null;
   const lock = recordingLockSchema.safeParse(JSON.parse(readFileSync(lockPath, "utf8")));
   if (!lock.success) return { unavailable: `${RECORDING_LOCK} does not match its schema` };
-  const locked = [GATES_RECORDING, GATES_CORPUS].map((file) => lock.data.files[file as typeof GATES_RECORDING]);
+  const locked = [RECORDING_FILE, CORPUS_FILE].map((file) => lock.data.files[file as typeof RECORDING_FILE]);
   const texts = locked.map((file) => readCachedRecording(cacheRoot, file.sha256));
   const missing = locked.filter((_, index) => texts[index] === undefined).map((file) => file.asset);
   if (missing.length > 0) return { unavailable: `${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} not in the cache` };

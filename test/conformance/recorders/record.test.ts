@@ -56,7 +56,7 @@ const fakeAdapter: AdapterFactory = async () => ({
 }) satisfies PackAdapter;
 
 test("a fake adapter's answers are recorded in the form recording/schema.ts reads, and a second recording finds no drift", async () => {
-  const root = mkdtempSync(join(tmpdir(), "gates-record-"));
+  const root = mkdtempSync(join(tmpdir(), "port-readiness-record-"));
   try {
     mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
     mkdirSync(join(root, "packs/demo/licenses/bandit"), { recursive: true });
@@ -83,10 +83,10 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     // The lock names the recording; the recording itself is not in the tree but in the cache, by its own digest.
     const lock = recordingLockSchema.parse(JSON.parse(readFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), "utf8")));
     assert.deepEqual(lock.pins, recorded.recording.pins);
-    assert.match(lock.files["gates.json"].asset, /^demo-bandit-gates-[0-9a-f]{64}\.json\.gz$/u);
-    assert.deepEqual(written.assets.map((asset) => asset.name).sort(), [lock.files["gates-corpus.json"].asset, lock.files["gates.json"].asset].sort());
-    assert.equal(existsSync(join(root, "packs/demo/upstream/bandit/gates.json")), false);
-    const recording = gatesRecordingSchema.parse(JSON.parse(readCachedRecording(join(root, "cache"), lock.files["gates.json"].sha256)!));
+    assert.match(lock.files["recording.json"].asset, /^demo-bandit-recording-[0-9a-f]{64}\.json\.gz$/u);
+    assert.deepEqual(written.assets.map((asset) => asset.name).sort(), [lock.files["corpus.json"].asset, lock.files["recording.json"].asset].sort());
+    assert.equal(existsSync(join(root, "packs/demo/upstream/bandit/recording.json")), false);
+    const recording = gatesRecordingSchema.parse(JSON.parse(readCachedRecording(join(root, "cache"), lock.files["recording.json"].sha256)!));
     assert.deepEqual(Object.keys(recording.rules), ["B301"]);
     assert.deepEqual(recording.absent, ["B999"]);
     const rule = recording.rules.B301!;
@@ -101,7 +101,7 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     assert.equal(recording.parserVerdicts.length, 1);
     assert.equal(recording.corpus.extensions.includes(".py"), true);
 
-    const corpus = gatesCorpusSchema.parse(JSON.parse(readCachedRecording(join(root, "cache"), lock.files["gates-corpus.json"].sha256)!));
+    const corpus = gatesCorpusSchema.parse(JSON.parse(readCachedRecording(join(root, "cache"), lock.files["corpus.json"].sha256)!));
     assert.deepEqual(corpus.files.map((file) => [file.task, file.path, Object.keys(file.findings)]), [["demo-task", "app.py", ["B301"]]]);
     assert.equal(readFileSync(join(root, "packs/demo/upstream/bandit/fixtures/pickle_deserialize.py"), "utf8"), SOURCE);
     assert.match(readFileSync(join(root, "packs/demo/licenses/bandit/UPSTREAM.md"), "utf8"), /\| `upstream\/bandit\/fixtures\/pickle_deserialize\.py` \| `examples\/pickle_deserialize\.py` \| verbatim \|/u);
@@ -109,13 +109,13 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     const again = await recordToolPack(options);
     assert.deepEqual(diffRecording(root, "demo", "bandit", again), { changed: [], missing: [], conflicting: [] });
     // The lock is what a commit pins, so a lock naming other bytes is what the stale check sees.
-    writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), recordingLockText({ ...lock, files: { ...lock.files, "gates.json": { ...lock.files["gates.json"], sha256: "e".repeat(64) } } }));
-    assert.deepEqual(diffRecording(root, "demo", "bandit", again).changed, ["gates.json"]);
+    writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), recordingLockText({ ...lock, files: { ...lock.files, "recording.json": { ...lock.files["recording.json"], sha256: "e".repeat(64) } } }));
+    assert.deepEqual(diffRecording(root, "demo", "bandit", again).changed, ["recording.json"]);
     // A lock whose recording is not in the cache was recorded before: the summary says it could not compare, never
     // that this is a first recording.
     const uncompared = await writeRecording(root, "demo", "bandit", again, { cacheRoot: join(root, "cache") });
     assert.equal(uncompared.changes.first, false);
-    assert.equal(uncompared.changes.unavailable, `${lock.files["gates.json"].asset} is not in the cache`);
+    assert.equal(uncompared.changes.unavailable, `${lock.files["recording.json"].asset} is not in the cache`);
     const compared = await writeRecording(root, "demo", "bandit", again, { cacheRoot: join(root, "cache") });
     assert.equal(compared.changes.unavailable, null);
     assert.deepEqual(compared.changes.rules, []);

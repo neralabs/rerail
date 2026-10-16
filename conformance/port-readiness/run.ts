@@ -17,7 +17,7 @@ import { byText, promote, readGoldens, serializeGoldens, type Golden, type Golde
 import { GATES_MANIFEST, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { createRecordedAdapter, readRecordedInputs, staleMessage } from "./recorded-adapter.js";
-import { GATES_CORPUS, GATES_RECORDING } from "./recording/schema.js";
+import { CORPUS_FILE, RECORDING_FILE } from "./recording/schema.js";
 import { shardOf, type Shard } from "./shard.js";
 import { BLOCKING_GATES, GATES, verdict, type BlockingGateId, type Check, type GateId, type PackAdapter, type PackManifest, type PackRule, type ParserVerdict, type UpstreamCase, type UpstreamFile } from "./types.js";
 
@@ -285,7 +285,7 @@ export function gatedToolPacks(root: string): { pack: string; tool: string }[] {
 function method(manifest: PackManifest): GatesReport["method"] {
   return {
     "tool-pack": {
-      pins: "gates.yaml upstream.version, gates.json pins and conformance.json tools[].version agree, and every runtime pin file the recording names (package.json, pyproject.toml, .python-version) has the committed file's sha256",
+      pins: "gates.yaml upstream.version, recording.json pins and conformance.json tools[].version agree, and every runtime pin file the recording names (package.json, pyproject.toml, .python-version) has the committed file's sha256",
       license: "the kept licenses/<project>/LICENSE has the sha256 of upstream's LICENSE at the pinned commit, as recorded (rerail's pack checks 5 and 6 cover the rest of the licence contract)",
       effect: "a failing tool-pack check fails every shipped rule of the tool-pack: the recording is stale",
     },
@@ -308,12 +308,12 @@ function method(manifest: PackManifest): GatesReport["method"] {
       flag: `more than ${SIZE_FLAG_BYTES} bytes as shipped`,
       rewrite: `a flagged rule goes back when ${(REPEATED_SHARE_LIMIT * 100).toFixed(1)}% or more of its clauses is structure written out over and over, or one node kind definitely occurs ${NESTING_RUN_LIMIT} or more times along a single nesting path`,
     },
-    "matches-upstream-tests": { ...MATCHES_UPSTREAM_TESTS_METHOD, recorded: "upstream's output on its own test files is read from the tool-pack's gates.json, recorded by the gates recorder at the pinned upstream" },
+    "matches-upstream-tests": { ...MATCHES_UPSTREAM_TESTS_METHOD, recorded: "upstream's output on its own test files is read from the tool-pack's recording.json, recorded by the gates recorder at the pinned upstream" },
     "passes-conformance": {
       check: "the pack contract's own check (test:conformance, conformance/languages/): the pack's fixtures tier over every rule, shipped or candidate, each in its own workspace as the check runs them",
       fails: "an unexplained FP or FN on the fixtures (upstream's cases and Rerail's probes, after the pack's divergences.json), no true positive without pack.json examples, an engine failure, a stale divergence, or a pinned corpus whose recording does not cover the rule: what the check fails a shipped rule on",
     },
-    "matches-real-code": { ...MATCHES_REAL_CODE_METHOD, cases: MATCHES_REAL_CODE_METHOD.cases.replaceAll("5", String(CASES_PER_KIND)), recorded: "upstream's findings on the corpus are read from gates-corpus.json, joined to each fetched file by task, path and sha256; a fetched file the recording lacks has no ground truth" },
+    "matches-real-code": { ...MATCHES_REAL_CODE_METHOD, cases: MATCHES_REAL_CODE_METHOD.cases.replaceAll("5", String(CASES_PER_KIND)), recorded: "upstream's findings on the corpus are read from corpus.json, joined to each fetched file by task, path and sha256; a fetched file the recording lacks has no ground truth" },
   };
 }
 
@@ -477,7 +477,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
   const pinChecks: Check[] = [...adapter.packChecks];
   const recordedPins = adapter.recordedCorpusPins;
   const corpusPinsOk = recordedPins !== null && recordedPins.tasks === sha256(corpusTasksText) && canonicalJson(recordedPins.corpora) === canonicalJson(corpora);
-  pinChecks.push({ id: "corpus-pins", ok: corpusPinsOk, detail: corpusPinsOk ? "gates-corpus.json was recorded on this branch's pinned tasks and corpora" : `gates-corpus.json was recorded on other corpus pins: ${staleMessage(pack, tool)}` });
+  pinChecks.push({ id: "corpus-pins", ok: corpusPinsOk, detail: corpusPinsOk ? "corpus.json was recorded on this branch's pinned tasks and corpora" : `corpus.json was recorded on other corpus pins: ${staleMessage(pack, tool)}` });
 
   // bundled-load: rerail loads every document in the pack's rules/ together, whatever its upstream tool, so a conflict
   // between them (a duplicate id) fails here, where each rule's own loads check reads one document. It runs on every
@@ -501,8 +501,8 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     dependencies: dependencyDigest(root),
     gatesYaml: sha256(readOr(GATES_MANIFEST)),
     // The recordings are not in the tree: the lock's digests are what they are, and the lock is what the commit pins.
-    gatesJson: inputs.lock?.files[GATES_RECORDING].sha256 ?? "",
-    gatesCorpus: inputs.lock?.files[GATES_CORPUS].sha256 ?? "",
+    recordingJson: inputs.lock?.files[RECORDING_FILE].sha256 ?? "",
+    corpusJson: inputs.lock?.files[CORPUS_FILE].sha256 ?? "",
     corpusTasks: sha256(corpusTasksText),
     corpora: JSON.stringify(corpora),
   };

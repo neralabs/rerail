@@ -90,8 +90,8 @@ packs/<pack>/upstream/<tool>/recording.lock     which recording this commit is j
 packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id
 
 .rerail/port-readiness/recordings/<sha256>.json          the recordings themselves, fetched or recorded, cached by digest
-  gates.json                                    upstream's recorded answers (recording/schema.ts, rerail.gates-recording/v2)
-  gates-corpus.json                             upstream's findings on the corpus (rerail.gates-corpus/v2)
+  recording.json                                upstream's recorded answers (recording/schema.ts, rerail.port-readiness-recording/v2)
+  corpus.json                                   upstream's findings on the corpus (rerail.port-readiness-corpus/v2)
 ```
 
 The recordings are not in the tree: the lock names them and a GitHub release holds them, so `npm run port-readiness -- fetch
@@ -100,9 +100,9 @@ whose sha256 is not the one the lock names fails the run.
 
 `npm run port-readiness:record -- --pack <id> --tool <tool>` (conformance/recorders/port-readiness/) writes the recordings. A tool-pack
 check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to promote. The
-recording is stale when pins disagree between `gates.yaml`, `recording.lock`, `gates.json` and `conformance.json`, a
+recording is stale when pins disagree between `gates.yaml`, `recording.lock`, `recording.json` and `conformance.json`, a
 runtime's pins (`package.json`, `pyproject.toml`, `.python-version`) differ from the ones the lock records, the kept
-LICENSE is not the recorded one, or a rule is not recorded (`corpus-pins` and the recording checks). `corpus-complete` fails when a file `gates-corpus.json` answers for was not fetched with its
+LICENSE is not the recorded one, or a rule is not recorded (`corpus-pins` and the recording checks). `corpus-complete` fails when a file `corpus.json` answers for was not fetched with its
 recorded sha256 (a download or git fetch failed); those results are not cached. `bundled-load` loads every document in
 the pack's `rules/` together through rerail's bundled-rule loader, on every run, so a conflict between rules (a
 duplicate id) fails it.

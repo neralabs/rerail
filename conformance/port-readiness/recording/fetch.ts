@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ProcessCommandRunner, runChecked } from "../process.js";
-import { GATES_CORPUS, GATES_RECORDING } from "./schema.js";
+import { CORPUS_FILE, RECORDING_FILE } from "./schema.js";
 import { LIFTED_ASSETS, readCachedRecording, readRecordingLock, recordingCachePath, recordingFromAsset, writeCachedRecording, type LockedFile, type RecordingLock } from "./store.js";
 
 /** Kept here too, where the fetch takes them without an attestation; they are defined beside the lock in store.ts. */
@@ -131,7 +131,7 @@ export async function fetchToolPackRecordings(root: string, cacheRoot: string, p
   const verify = options.verify ?? ((text: string, asset: LockedFile) => verifyAttestation(text, asset, options));
   const lifted = options.lifted ?? LIFTED_ASSETS;
   const fetched: FetchedRecording[] = [];
-  for (const file of [GATES_RECORDING, GATES_CORPUS] as const) {
+  for (const file of [RECORDING_FILE, CORPUS_FILE] as const) {
     const locked = lock.files[file];
     if (readCachedRecording(cacheRoot, locked.sha256) !== undefined) {
       fetched.push({ file, asset: locked.asset, size: locked.size, cached: true });
@@ -149,5 +149,5 @@ export async function fetchToolPackRecordings(root: string, cacheRoot: string, p
 /** True when both of a tool-pack's recordings are already cached: the gates can run offline. */
 export function recordingsCached(root: string, cacheRoot: string, pack: string, tool: string): boolean {
   const lock = readRecordingLock(root, pack, tool);
-  return [GATES_RECORDING, GATES_CORPUS].every((file) => existsSync(recordingCachePath(cacheRoot, lock.files[file as typeof GATES_RECORDING].sha256)));
+  return [RECORDING_FILE, CORPUS_FILE].every((file) => existsSync(recordingCachePath(cacheRoot, lock.files[file as typeof RECORDING_FILE].sha256)));
 }

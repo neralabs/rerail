@@ -12,11 +12,12 @@ layout, and the gates answer from recordings instead of running upstream. The NR
 changed, are in [`conformance/port-readiness/README.md`](../conformance/port-readiness/README.md#where-the-code-comes-from).
 
 **Names.** The system is *port readiness*, its steps are *gates*, and GitHub shows its workflows and checks as "Port
-readiness". It was called the rule gates while this was built. A few names published outside the repository keep the
-older word until the first re-record after it merges, because the committed `recording.lock` files and the attestation
-check match them exactly: the recording formats (`rerail.gates-recording/v2`, `rerail.gates-corpus/v1`), the
-`gate-recordings` release and its asset names, the recording comment marker and the `record-gates` label. The files that
-configure the gates themselves (`gates.yaml`, `goldens.tsv`) are named for the gates, as they should be.
+readiness". It was called the rule gates while this was built. What it publishes outside the repository is named for
+port readiness too: the recordings (`recording.json`, `rerail.port-readiness-recording/v2`, and `corpus.json`,
+`rerail.port-readiness-corpus/v2`) and the lock that names them (`rerail.port-readiness-recording-lock/v1`), the
+`port-readiness-recordings` release and its assets, the branches the record workflow pushes, the marker on its comments
+and the `record-port-readiness` label. The files that configure the gates themselves (`gates.yaml`, `goldens.tsv`) are
+named for the gates, as they should be.
 
 ## The gates
 
@@ -176,7 +177,7 @@ packs/<id>/upstream/<tool>/
 
 ### The recordings are not in the tree
 
-A recording — `gates.json`, upstream's facts and expected findings per rule, and `gates-corpus.json`, its findings on
+A recording — `recording.json`, upstream's facts and expected findings per rule, and `corpus.json`, its findings on
 the real-code corpus — is generated, large, and rewritten whole every time a tool-pack is recorded. The sixteen of
 them were 71 MB, and git keeps every version of each forever, so a pack re-recorded after an upstream bump cost
 another few megabytes of history nobody can read. They live in a GitHub release instead, and each tool-pack commits a
@@ -185,9 +186,10 @@ format, the pins it was made at and the release that holds it.
 
 Release assets rather than Git LFS, because every public clone and every fork would draw on the repository's LFS
 bandwidth quota and going over it blocks LFS for the whole repository; rather than Actions artifacts, because those
-expire after 90 days and a commit must stay judgeable. An asset is named `<pack>-<tool>-<stem>-<sha256>.json.gz`, so
-it is write-once: the same recording is the same asset, and nothing a commit already names is ever replaced. A lock
-naming its asset any other way is refused, so it cannot point at another tool-pack's recording.
+expire after 90 days and a commit must stay judgeable. An asset is named `<pack>-<tool>-recording-<sha256>.json.gz` or
+`<pack>-<tool>-corpus-<sha256>.json.gz`, so it is write-once: the same recording is the same asset, and nothing a
+commit already names is ever replaced. A lock naming its asset any other way is refused, so it cannot point at another
+tool-pack's recording.
 
 ```sh
 npm run port-readiness -- fetch --pack python --tool ruff   # download what this commit's lock names, into .rerail/port-readiness/recordings/
@@ -201,11 +203,12 @@ A matching digest only says the asset is the one the lock names. Anyone who can 
 workflow with a write token, can upload to the release, so the fetch also requires the GitHub artifact attestation
 that `port-readiness-record.yml` makes when it records from `main` (`gh attestation verify`, so fetching needs the GitHub
 CLI, signed in or given `GH_TOKEN`/`GITHUB_TOKEN`, even once the repository is public). The only assets taken without
-one are those uploaded by hand when the recordings left the tree, before that workflow could run; `LIFTED_ASSETS` in
-`recording/store.ts` lists them, and an entry goes when its tool-pack is next recorded. Those recordings predate the
-sha256 each recorded case now carries for its committed source, so `case-sources` holds their case sources to one
-digest over all of them instead, the one they had when they were lifted (`LIFTED_CASE_SOURCES`), and an edited or
-missing case source fails it the same way.
+one are those recorded on a maintainer's machine and uploaded by hand before that workflow could run from `main`;
+`LIFTED_ASSETS` in `recording/store.ts` lists them, nothing joins the list once the workflow runs from `main`, and an
+entry goes when its tool-pack gets an attested recording. A hand-uploaded recording made before each recorded case
+carried the sha256 of its committed source has its case sources held by `case-sources` to one digest over all of them
+instead, the one they had when it was recorded (`LIFTED_CASE_SOURCES`), and an edited or missing case source fails it
+the same way.
 
 ### Recording
 
@@ -224,10 +227,10 @@ Locally that is all: the lock names what was just recorded and the gates read it
 port needs no release and no network. In CI only `port-readiness-record.yml` records, and it is the only workflow that
 uploads. Pull request CI never runs an upstream linter, so it cannot tell a recording that is what upstream says from
 one written to make a rule pass; in a public repository that would be a way past the gates. A maintainer starts a
-recording with the `record-gates` label, or by hand with a pull request and the head `sha` they reviewed, and the run
-records **only that commit**: if the pull request has moved on since, it fails rather than record the newer push. The
-recorder and the runtimes come **from the base branch**, and only the pull request's `packs/` and rule list from its
-head; a fork may not change the upstream its `gates.yaml` pins (repository, commit, runtime, tests), only
+recording with the `record-port-readiness` label, or by hand with a pull request and the head `sha` they reviewed, and
+the run records **only that commit**: if the pull request has moved on since, it fails rather than record the newer
+push. The recorder and the runtimes come **from the base branch**, and only the pull request's `packs/` and rule list
+from its head; a fork may not change the upstream its `gates.yaml` pins (repository, commit, runtime, tests), only
 `popularity` and `known_gaps`. Only a run from `main`, for `main` or a pull request into `main`, is attested, and the
 gates take no other recording, so `authorize` refuses any other before a leg records: one started by hand from another
 branch, and a stacked pull request, which is recorded once it targets `main`.
@@ -239,19 +242,19 @@ checks every path and digest in those artifacts, attests the recordings it check
 leg's lock, case sources and `UPSTREAM.md` rows as one commit on the recorded head, pushed once:
 
 - a pull request from a branch here gets the commit on its branch, as a fast-forward;
-- a fork's goes to `gate-recordings/pr-<n>` here, since the default token cannot write to a fork, and a comment says
-  to merge it;
-- a run started by hand from `main` with no pull request records `main`, pushes `gate-recordings/run-<id>`, and opens
-  a pull request into `main`: a recording never reaches a protected branch without review. (GitHub must let Actions
-  create pull requests, under Settings → Actions → General.)
+- a fork's goes to `port-readiness-recordings/pr-<n>` here, since the default token cannot write to a fork, and a
+  comment says to merge it;
+- a run started by hand from `main` with no pull request records `main`, pushes `port-readiness-recordings/run-<id>`,
+  and opens a pull request into `main`: a recording never reaches a protected branch without review. (GitHub must let
+  Actions create pull requests, under Settings → Actions → General.)
 
 A push or pull request made with the workflow token starts no workflow, so CI runs on the recording commit once
 someone pushes to the branch or closes and reopens the pull request.
 
-GitHub holds at most 1,000 assets in a release. `authorize` uses the newest of `gate-recordings`,
-`gate-recordings-2`, `-3` and so on, and starts the next once the newest holds 900; `publish` refuses an upload that
-would pass 1,000. A lock names the release that holds its recordings, so an older commit keeps fetching from the older
-one.
+GitHub holds at most 1,000 assets in a release. `authorize` uses the newest of `port-readiness-recordings`,
+`port-readiness-recordings-2`, `-3` and so on, and starts the next once the newest holds 900; `publish` refuses an
+upload that would pass 1,000. A lock names the release that holds its recordings, so an older commit keeps fetching
+from the older one.
 
 `port-readiness-nightly.yml` runs the same recorder with `--check` in a read-only job of its own, so it reports when a
 committed recording no longer matches the pinned upstream and uploads nothing, then judges every rule again
@@ -259,7 +262,8 @@ committed recording no longer matches the pinned upstream and uploads nothing, t
 
 Because the recordings are no longer in the diff, `port-readiness:record` writes a per-rule summary of what moved instead —
 expected findings gained and lost on upstream's own tests, corpus files answered differently, facts changed
-(`--changes <file>`, `conformance/port-readiness/recording/diff.ts`) — and the publish job posts it on the pull request.
+(`--changes <file>`, `conformance/port-readiness/recording/diff.ts`) — and the publish job posts it on the pull request,
+one comment per tool-pack, collapsing that tool-pack's earlier ones.
 When the committed lock names a recording that cannot be read (its fetch failed, or the lock or the cached recording
 fails its schema), the summary warns that it was not compared rather than calling it a first recording.
 
@@ -275,7 +279,7 @@ answers, the nightly `--check` fails and names the difference: pin that package 
 the pack: the recording lists each one with its sha256, and the gates fetch them from upstream at the pinned commit
 (sparse, cached like the corpus), so Ruff's GPL-derived fixtures are read in place and never committed. Test text that
 is not a file of its own (Ruff's test-module strings, the `code` of each ESLint RuleTester case) is kept verbatim in
-`gates.json` (`fixtureTexts.inline`). That makes the recording partly upstream's material, so the upstream's
+`recording.json` (`fixtureTexts.inline`). That makes the recording partly upstream's material, so the upstream's
 `UPSTREAM.md` records it as excerpts under upstream's licence and Apache-2.0 — in the note under the file table, not
 in the table itself, which pack check 6 reads as the files the pack carries and the recording is no longer one of
 them. `REUSE.toml` cannot annotate a file that is not here and says so where the annotations were.

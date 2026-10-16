@@ -376,9 +376,9 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/syntax_errors/return_outside_function.py` | `crates/ruff_linter/resources/test/fixtures/syntax_errors/return_outside_function.py` | verbatim |
 | `upstream/ruff/fixtures/syntax_errors/yield_scope.py` | `crates/ruff_linter/resources/test/fixtures/syntax_errors/yield_scope.py` | verbatim |
 
-> `gates.json` is a rule gate recording, and no file of this pack, so it is recorded here rather than in the table
-> above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md). It
-> carries excerpts of this upstream's tests (`crates/ruff_linter/src/rules/*/mod.rs`,
+> `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
+> table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
+> It carries excerpts of this upstream's tests (`crates/ruff_linter/src/rules/*/mod.rs`,
 > `crates/ruff_linter/src/linter.rs`: their test modules' string literals), redistributed under the licence above,
 > together with Rerail's Apache-2.0; the LICENSE beside this file is this upstream's own, at the pinned commit.
 

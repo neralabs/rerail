@@ -18,7 +18,7 @@ import {
   assetName, buildRecordingLock, gzipRecording, LIFTED_CASE_SOURCES, readCachedRecording, readRecordingLock, recordingFromAsset, recordingLockSchema,
   recordingLockText, writeCachedRecording, RECORDING_LOCK,
 } from "../../../conformance/port-readiness/recording/store.js";
-import { gatesCorpusSchema, gatesRecordingSchema, GATES_CORPUS_FORMAT, GATES_RECORDING_FORMAT, recordingText } from "../../../conformance/port-readiness/recording/schema.js";
+import { gatesCorpusSchema, gatesRecordingSchema, CORPUS_FORMAT, RECORDING_FORMAT, recordingText } from "../../../conformance/port-readiness/recording/schema.js";
 
 const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
 
@@ -27,7 +27,7 @@ const PINS = { repository: "https://github.com/PyCQA/bandit", commit: "a".repeat
 
 function recordingOf(rules: Record<string, unknown>): ReturnType<typeof gatesRecordingSchema.parse> {
   return gatesRecordingSchema.parse({
-    format: GATES_RECORDING_FORMAT,
+    format: RECORDING_FORMAT,
     tool: "bandit",
     adapter: "bandit",
     pins: PINS,
@@ -57,7 +57,7 @@ const rule = (expected: [number, number | null, number | null, number | null][],
 
 function corpusOf(findings: Record<string, [number, number | null, number | null, number | null][]>): ReturnType<typeof gatesCorpusSchema.parse> {
   return gatesCorpusSchema.parse({
-    format: GATES_CORPUS_FORMAT,
+    format: CORPUS_FORMAT,
     tool: "bandit",
     pins: { tasks: "c".repeat(64), corpora: [] },
     rules: Object.keys(findings).sort(),
@@ -67,24 +67,24 @@ function corpusOf(findings: Record<string, [number, number | null, number | null
 }
 
 /** A tool-pack directory with a committed lock for the two recordings, and nothing else. */
-function toolPack(texts: { "gates.json": string; "gates-corpus.json": string }) {
-  const root = mkdtempSync(join(tmpdir(), "gates-store-"));
+function toolPack(texts: { "recording.json": string; "corpus.json": string }) {
+  const root = mkdtempSync(join(tmpdir(), "port-readiness-store-"));
   mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
   writeFileSync(join(root, "package.json"), JSON.stringify({ version: "9.9.9" }));
-  const lock = buildRecordingLock("demo", "bandit", "gate-recordings", "9.9.9", PINS, { "bandit-1.9.4": { "pyproject.toml": "d".repeat(64) } }, texts);
+  const lock = buildRecordingLock("demo", "bandit", "port-readiness-recordings", "9.9.9", PINS, { "bandit-1.9.4": { "pyproject.toml": "d".repeat(64) } }, texts);
   writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(lock));
   return { root, lock, cacheRoot: join(root, "cache"), cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
-const TEXTS = { "gates.json": recordingText(recordingOf({ B301: rule([[1, 0, 1, 17]]) })), "gates-corpus.json": recordingText(corpusOf({ B301: [[3, 0, 3, 9]] })) };
+const TEXTS = { "recording.json": recordingText(recordingOf({ B301: rule([[1, 0, 1, 17]]) })), "corpus.json": recordingText(corpusOf({ B301: [[3, 0, 3, 9]] })) };
 
 test("a lock names each recording by its own digest, under a content-addressed asset name", () => {
   const { lock, cleanup } = toolPack(TEXTS);
   try {
-    assert.equal(lock.files["gates.json"].sha256, digest(TEXTS["gates.json"]));
-    assert.equal(lock.files["gates.json"].asset, assetName("demo", "bandit", "gates.json", digest(TEXTS["gates.json"])));
-    assert.equal(lock.files["gates.json"].format, GATES_RECORDING_FORMAT);
-    assert.equal(lock.files["gates-corpus.json"].format, GATES_CORPUS_FORMAT);
+    assert.equal(lock.files["recording.json"].sha256, digest(TEXTS["recording.json"]));
+    assert.equal(lock.files["recording.json"].asset, assetName("demo", "bandit", "recording.json", digest(TEXTS["recording.json"])));
+    assert.equal(lock.files["recording.json"].format, RECORDING_FORMAT);
+    assert.equal(lock.files["corpus.json"].format, CORPUS_FORMAT);
     // The lock is small enough to review as data, which is the point of taking 71 MB of JSON out of the tree.
     assert.ok(recordingLockText(lock).length < 2000, `${recordingLockText(lock).length} bytes`);
     // It parses back, so what the recorder writes is what the gates read.
@@ -100,7 +100,7 @@ test("a fetch caches by digest, and a second fetch on the same commit downloads 
     let downloads = 0;
     const download = async (asset: { asset: string }) => {
       downloads += 1;
-      return gzipRecording(asset.asset === lock.files["gates.json"].asset ? TEXTS["gates.json"] : TEXTS["gates-corpus.json"]);
+      return gzipRecording(asset.asset === lock.files["recording.json"].asset ? TEXTS["recording.json"] : TEXTS["corpus.json"]);
     };
     // Every downloaded recording's attestation is checked, on the text whose sha256 the lock names.
     const verified: string[] = [];
@@ -111,8 +111,8 @@ test("a fetch caches by digest, and a second fetch on the same commit downloads 
     const first = await fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify });
     assert.deepEqual(first.map((entry) => entry.cached), [false, false]);
     assert.equal(downloads, 2);
-    assert.deepEqual(verified, [lock.files["gates.json"].sha256, lock.files["gates-corpus.json"].sha256]);
-    assert.equal(readCachedRecording(cacheRoot, lock.files["gates.json"].sha256), TEXTS["gates.json"]);
+    assert.deepEqual(verified, [lock.files["recording.json"].sha256, lock.files["corpus.json"].sha256]);
+    assert.equal(readCachedRecording(cacheRoot, lock.files["recording.json"].sha256), TEXTS["recording.json"]);
 
     const second = await fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify });
     assert.deepEqual(second.map((entry) => entry.cached), [true, true]);
@@ -133,7 +133,7 @@ test("an asset whose sha256 is not the one the manifest names fails the fetch, a
     );
     assert.equal(existsSync(join(cacheRoot, "recordings")), false);
     // And the bytes the lock does name still read back.
-    assert.equal(recordingFromAsset(gzipRecording(TEXTS["gates.json"]), lock.files["gates.json"], "demo/bandit"), TEXTS["gates.json"]);
+    assert.equal(recordingFromAsset(gzipRecording(TEXTS["recording.json"]), lock.files["recording.json"], "demo/bandit"), TEXTS["recording.json"]);
   } finally {
     cleanup();
   }
@@ -143,14 +143,14 @@ test("a hand-edited manifest naming a hash the release does not hold fails, and 
   const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
   try {
     // What a fork pull request would commit: a lock pointing at a recording nobody uploaded.
-    const forged = { ...lock, files: { ...lock.files, "gates.json": { ...lock.files["gates.json"], sha256: "f".repeat(64), asset: assetName("demo", "bandit", "gates.json", "f".repeat(64)) } } };
+    const forged = { ...lock, files: { ...lock.files, "recording.json": { ...lock.files["recording.json"], sha256: "f".repeat(64), asset: assetName("demo", "bandit", "recording.json", "f".repeat(64)) } } };
     writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(forged));
-    const release = new Set([lock.files["gates.json"].asset, lock.files["gates-corpus.json"].asset]);
+    const release = new Set([lock.files["recording.json"].asset, lock.files["corpus.json"].asset]);
     const download = async (asset: { asset: string }) => {
-      if (!release.has(asset.asset)) throw new Error(`the release gate-recordings of neralabs/rerail has no asset ${asset.asset}: the recording this commit names was never uploaded (a pull request cannot supply its own; see port-readiness-record.yml)`);
-      return gzipRecording(TEXTS["gates.json"]);
+      if (!release.has(asset.asset)) throw new Error(`the release port-readiness-recordings of neralabs/rerail has no asset ${asset.asset}: the recording this commit names was never uploaded (a pull request cannot supply its own; see port-readiness-record.yml)`);
+      return gzipRecording(TEXTS["recording.json"]);
     };
-    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download }), /has no asset demo-bandit-gates-f{64}\.json\.gz: the recording this commit names was never uploaded/u);
+    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download }), /has no asset demo-bandit-recording-f{64}\.json\.gz: the recording this commit names was never uploaded/u);
   } finally {
     cleanup();
   }
@@ -160,7 +160,7 @@ test("an asset with the right bytes that the record workflow did not attest fail
   const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
   try {
     // What anyone who can write here could upload by hand: the digest the lock names, and no attestation.
-    const download = async (asset: { asset: string }) => gzipRecording(asset.asset === lock.files["gates.json"].asset ? TEXTS["gates.json"] : TEXTS["gates-corpus.json"]);
+    const download = async (asset: { asset: string }) => gzipRecording(asset.asset === lock.files["recording.json"].asset ? TEXTS["recording.json"] : TEXTS["corpus.json"]);
     const verify = async () => {
       throw new Error("no attestation from port-readiness-record.yml");
     };
@@ -171,21 +171,21 @@ test("an asset with the right bytes that the record workflow did not attest fail
   }
 });
 
-test("an asset uploaded by hand when the recordings were lifted is taken without an attestation, and only that one", async () => {
+test("an asset uploaded by hand before the record workflow ran from main is taken without an attestation, and only that one", async () => {
   const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
   try {
-    const download = async (asset: { asset: string }) => gzipRecording(asset.asset === lock.files["gates.json"].asset ? TEXTS["gates.json"] : TEXTS["gates-corpus.json"]);
+    const download = async (asset: { asset: string }) => gzipRecording(asset.asset === lock.files["recording.json"].asset ? TEXTS["recording.json"] : TEXTS["corpus.json"]);
     const verified: string[] = [];
     const verify = async (_text: string, asset: { asset: string }) => {
       verified.push(asset.asset);
       throw new Error("no attestation from port-readiness-record.yml");
     };
-    // Only the recording is lifted: it is cached unverified, and the corpus beside it still has to be attested.
-    const lifted = new Set([lock.files["gates.json"].asset]);
+    // Only the recording was uploaded by hand: it is cached unverified, and the corpus beside it still has to be attested.
+    const lifted = new Set([lock.files["recording.json"].asset]);
     await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify, lifted }), /no attestation from port-readiness-record\.yml/u);
-    assert.deepEqual(verified, [lock.files["gates-corpus.json"].asset]);
-    assert.equal(readCachedRecording(cacheRoot, lock.files["gates.json"].sha256), TEXTS["gates.json"]);
-    assert.equal(readCachedRecording(cacheRoot, lock.files["gates-corpus.json"].sha256), undefined);
+    assert.deepEqual(verified, [lock.files["corpus.json"].asset]);
+    assert.equal(readCachedRecording(cacheRoot, lock.files["recording.json"].sha256), TEXTS["recording.json"]);
+    assert.equal(readCachedRecording(cacheRoot, lock.files["corpus.json"].sha256), undefined);
   } finally {
     cleanup();
   }
@@ -195,16 +195,16 @@ test("a lock that names an asset other than its own tool-pack's recording of tha
   const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
   try {
     // The same bytes under another tool-pack's name: the digest matches, so only the name gives it away.
-    const misnamed = { ...lock, files: { ...lock.files, "gates.json": { ...lock.files["gates.json"], asset: assetName("demo", "ruff", "gates.json", lock.files["gates.json"].sha256) } } };
+    const misnamed = { ...lock, files: { ...lock.files, "recording.json": { ...lock.files["recording.json"], asset: assetName("demo", "ruff", "recording.json", lock.files["recording.json"].sha256) } } };
     writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(misnamed));
     let downloads = 0;
     const download = async () => {
       downloads += 1;
-      return gzipRecording(TEXTS["gates.json"]);
+      return gzipRecording(TEXTS["recording.json"]);
     };
     await assert.rejects(
       fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download, verify: async () => undefined }),
-      /\/files\/gates\.json\/asset is demo-ruff-gates-[0-9a-f]{64}\.json\.gz, and this tool-pack's recording of sha256 [0-9a-f]{12} is demo-bandit-gates-[0-9a-f]{64}\.json\.gz/u,
+      /\/files\/recording\.json\/asset is demo-ruff-recording-[0-9a-f]{64}\.json\.gz, and this tool-pack's recording of sha256 [0-9a-f]{12} is demo-bandit-recording-[0-9a-f]{64}\.json\.gz/u,
     );
     assert.equal(downloads, 0);
   } finally {
@@ -213,7 +213,7 @@ test("a lock that names an asset other than its own tool-pack's recording of tha
 });
 
 test("every asset taken without an attestation is one a committed lock still names", () => {
-  // The hand-uploaded assets the recordings were lifted into: an entry whose tool-pack has been recorded since must go.
+  // The hand-uploaded assets: an entry whose tool-pack has an attested recording since must go.
   const named = new Set<string>();
   for (const pack of readdirSync(join(PACKAGE_ROOT, "packs"))) {
     const upstream = join(PACKAGE_ROOT, "packs", pack, "upstream");
@@ -226,14 +226,14 @@ test("every asset taken without an attestation is one a committed lock still nam
   assert.deepEqual([...LIFTED_ASSETS].filter((asset) => !named.has(asset)), []);
 });
 
-test("every lifted recording whose case sources are pinned together is a lifted asset, so its pin goes with it", () => {
-  assert.deepEqual([...LIFTED_CASE_SOURCES.keys()].filter((asset) => !LIFTED_ASSETS.has(asset) || asset.includes("-gates-corpus-")), []);
+test("every hand-uploaded recording whose case sources are pinned together is a hand-uploaded asset, so its pin goes with it", () => {
+  assert.deepEqual([...LIFTED_CASE_SOURCES.keys()].filter((asset) => !LIFTED_ASSETS.has(asset) || /-corpus-[0-9a-f]{64}\.json\.gz$/u.test(asset)), []);
 });
 
 test("a recording whose cached bytes were tampered with reads as absent, not as a recording", async () => {
   const { cacheRoot } = toolPack(TEXTS);
-  const written = await writeCachedRecording(cacheRoot, TEXTS["gates.json"]);
-  assert.equal(readCachedRecording(cacheRoot, written), TEXTS["gates.json"]);
+  const written = await writeCachedRecording(cacheRoot, TEXTS["recording.json"]);
+  assert.equal(readCachedRecording(cacheRoot, written), TEXTS["recording.json"]);
   writeFileSync(join(cacheRoot, "recordings", `${written}.json`), "{}\n");
   assert.equal(readCachedRecording(cacheRoot, written), undefined);
   rmSync(cacheRoot, { recursive: true, force: true });
@@ -261,8 +261,8 @@ test("the per-rule summary names what moved, and says so plainly when nothing di
   // A first recording has nothing to compare with, and says that rather than listing every rule as a change.
   assert.match(renderRecordingChanges([diffRecordings("demo", "bandit", null, after)]), /first recording/u);
   // A lock whose recording could not be read is neither: the summary warns that what moved is unknown.
-  const uncompared = renderRecordingChanges([diffRecordings("demo", "bandit", { unavailable: "demo-bandit-gates.json.gz is not in the cache" }, after)]);
-  assert.match(uncompared, /^## Gate recordings: ⚠️ 1 tool-pack not compared$/mu);
-  assert.match(uncompared, /`demo\/bandit`: ⚠️ not compared\n\n.*\(demo-bandit-gates\.json\.gz is not in the cache\)/u);
+  const uncompared = renderRecordingChanges([diffRecordings("demo", "bandit", { unavailable: "demo-bandit-recording.json.gz is not in the cache" }, after)]);
+  assert.match(uncompared, /^## Port readiness recordings: ⚠️ 1 tool-pack not compared$/mu);
+  assert.match(uncompared, /`demo\/bandit`: ⚠️ not compared\n\n.*\(demo-bandit-recording\.json\.gz is not in the cache\)/u);
   assert.doesNotMatch(uncompared, /: first recording|✅/u);
 });

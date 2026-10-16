@@ -2875,9 +2875,9 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/typescript-eslint/fixtures/unified-signatures/f8b677b197c6.ts` | `packages/eslint-plugin/tests/rules/unified-signatures.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/unified-signatures/fa8903378699.ts` | `packages/eslint-plugin/tests/rules/unified-signatures.test.ts` | derived |
 
-> `gates.json` is a rule gate recording, and no file of this pack, so it is recorded here rather than in the table
-> above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md). It
-> carries excerpts of this upstream's tests (`packages/eslint-plugin/tests/rules/**/*.test.ts`: the `code` of each
+> `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
+> table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
+> It carries excerpts of this upstream's tests (`packages/eslint-plugin/tests/rules/**/*.test.ts`: the `code` of each
 > RuleTester case), redistributed under the licence above, together with Rerail's Apache-2.0; the LICENSE beside this
 > file is this upstream's own, at the pinned commit.
 
