@@ -3,6 +3,7 @@
 mod differential;
 mod hard_cases;
 mod nodes;
+mod three_valued;
 
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use serde_json::{Value, json};

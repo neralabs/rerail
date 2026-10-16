@@ -237,6 +237,8 @@ struct Generator<'v> {
     /// Captures a parameterized utility's rule may use: its parameters.
     params: Option<Vec<String>>,
     counted: bool,
+    /// Whether the case may hold three-valued leaves (`value`, `testUnknown`).
+    three: bool,
 }
 
 impl Generator<'_> {
@@ -296,8 +298,23 @@ impl Generator<'_> {
         }
     }
 
-    /// A small capture-free rule (stop rules, `ofRule`).
+    /// A small capture-free rule (stop rules, `ofRule`); in a three-valued case it may be unknown.
     fn simple(&mut self, _depth: usize) -> Value {
+        if self.three && self.rng.chance(35) {
+            let mut rule = Map::new();
+            if self.rng.chance(60) {
+                rule.insert("kind".into(), json!(self.rng.pick(&self.vocabulary.kinds)));
+            }
+            if self.rng.chance(60) {
+                rule.insert(
+                    "testUnknown".into(),
+                    json!(self.rng.pick(&self.vocabulary.regexes)),
+                );
+            } else {
+                rule.insert("value".into(), self.value());
+            }
+            return Value::Object(rule);
+        }
         match self.rng.below(4) {
             0 | 1 => json!({ "kind": self.rng.pick(&self.vocabulary.kinds) }),
             2 => json!({ "regex": self.rng.pick(&self.vocabulary.regexes) }),
@@ -322,13 +339,173 @@ impl Generator<'_> {
         inner
     }
 
+    /// A `value` test: over names and calls most values are not known, so these are often
+    /// unknown; `follow` reads names through their bindings.
+    fn value(&mut self) -> Value {
+        let mut test = Map::new();
+        match self.rng.below(8) {
+            0 => {
+                test.insert("truthy".into(), json!(self.rng.chance(50)));
+            }
+            1 => {
+                let eq = match self.rng.below(4) {
+                    0 => json!(self.rng.below(3)),
+                    1 => json!(null),
+                    2 => json!(self.rng.chance(50)),
+                    _ => json!(
+                        self.rng
+                            .pick(&self.vocabulary.regexes)
+                            .trim_start_matches('^')
+                    ),
+                };
+                test.insert("eq".into(), eq);
+            }
+            2 => {
+                test.insert("constant".into(), json!(self.rng.chance(50)));
+            }
+            3 => {
+                let bound = *self.rng.pick(&["gt", "ge", "lt", "le"]);
+                test.insert(bound.into(), json!(self.rng.below(4)));
+            }
+            4 => {
+                test.insert(
+                    "startsWith".into(),
+                    json!(self.rng.pick(&["a", "_", "s", "f"])),
+                );
+            }
+            5 => {
+                test.insert(
+                    "regex".into(),
+                    json!(self.rng.pick(&["^[a-z]", "[0-9]", "^$"])),
+                );
+            }
+            6 => {
+                let types: &[&str] = match self.vocabulary.label {
+                    "python" => &["str", "int", "bool", "NoneType", "list"],
+                    "php" => &["string", "int", "bool", "array", "null"],
+                    _ => &["string", "number", "boolean", "undefined", "object"],
+                };
+                test.insert("type".into(), json!(self.rng.pick(types)));
+            }
+            _ => {
+                test.insert("bitsAny".into(), json!(1 + self.rng.below(3)));
+            }
+        }
+        if self.rng.chance(40) {
+            test.insert("follow".into(), json!(true));
+        }
+        Value::Object(test)
+    }
+
+    /// A `compare` of two captures, in any text mode and collation (the front end refuses the
+    /// combinations a mode does not take).
+    fn compare(&mut self) -> Value {
+        let modes = [
+            "source",
+            "unquoted",
+            "tokens",
+            "node",
+            "index",
+            "value",
+            "key",
+            "name",
+            "member",
+            "reference",
+            "structure",
+        ];
+        let text = *self.rng.pick(&modes);
+        let exact = matches!(text, "tokens" | "node" | "reference" | "structure");
+        let op = if exact {
+            *self.rng.pick(&["eq", "ne"])
+        } else {
+            *self.rng.pick(&["eq", "ne", "lt", "le", "gt", "ge"])
+        };
+        let mut compare = Map::new();
+        compare.insert("left".into(), json!(self.single()));
+        compare.insert("op".into(), json!(op));
+        compare.insert("right".into(), json!(self.single()));
+        compare.insert("text".into(), json!(text));
+        if !exact && text != "index" && self.rng.chance(50) {
+            let collation = *self.rng.pick(&[
+                "ordinal",
+                "fold-lower",
+                "fold-upper",
+                "lowercase-first",
+                "natural",
+                "natural-fold-lower",
+            ]);
+            compare.insert("collation".into(), json!(collation));
+        }
+        Value::Object(compare)
+    }
+
+    /// A `layout` test: the node's lines and start, or a gap to a token, sibling or capture.
+    fn layout(&mut self) -> Value {
+        let lines = |rng: &mut Rng| match rng.below(3) {
+            0 => json!({ "eq": rng.below(2) }),
+            1 => json!({ "max": rng.below(2) }),
+            _ => json!({ "min": 1 }),
+        };
+        match self.rng.below(4) {
+            0 => json!({ "span": lines(&mut self.rng) }),
+            1 => json!({ "start": { "max": self.rng.below(400) } }),
+            _ => {
+                let to = match self.rng.below(3) {
+                    0 => "token".to_owned(),
+                    1 => "sibling".to_owned(),
+                    _ => format!("capture.{}", self.single()),
+                };
+                let mut gap = Map::new();
+                gap.insert("to".into(), json!(to));
+                gap.insert("breaks".into(), lines(&mut self.rng));
+                if self.rng.chance(40) {
+                    gap.insert("blank".into(), json!({ "max": self.rng.below(2) }));
+                }
+                if self.rng.chance(30) {
+                    gap.insert("edge".into(), json!(true));
+                }
+                if self.rng.chance(30) {
+                    gap.insert("comments".into(), json!(true));
+                }
+                let side = *self.rng.pick(&["before", "after"]);
+                json!({ side: gap })
+            }
+        }
+    }
+
     fn rule(&mut self, depth: usize) -> Value {
         let mut rule = Map::new();
         let terms = 1 + self.rng.below(if depth == 0 { 3 } else { 2 });
         for _ in 0..terms {
             let deep = depth < 3;
-            let choice = self.rng.below(if deep { 22 } else { 8 });
+            let base = if deep { 22 } else { 8 };
+            // `compare` and `layout` everywhere; `value` and `testUnknown` in three-valued cases.
+            let extra = if self.three { 6 } else { 2 };
+            let choice = self.rng.below(base + extra);
+            let choice = if choice >= base {
+                100 + choice - base
+            } else {
+                choice
+            };
             match choice {
+                100 => {
+                    if !rule.contains_key("pattern") {
+                        rule.insert("pattern".into(), json!(self.pattern()));
+                    }
+                    rule.insert("compare".into(), self.compare());
+                }
+                101 => {
+                    rule.insert("layout".into(), self.layout());
+                }
+                102 | 103 => {
+                    rule.insert(
+                        "testUnknown".into(),
+                        json!(self.rng.pick(&self.vocabulary.regexes)),
+                    );
+                }
+                _ if choice >= 104 => {
+                    rule.insert("value".into(), self.value());
+                }
                 0..=2 => {
                     let pattern = self.pattern();
                     rule.insert("pattern".into(), json!(pattern));
@@ -425,6 +602,7 @@ impl Generator<'_> {
         self.calls.clear();
         self.plain.clear();
         self.counted = false;
+        self.three = self.rng.chance(50);
         let mut utils = Map::new();
         for index in 0..self.rng.below(3) {
             let name = format!("u{index}");
@@ -469,13 +647,27 @@ enum Outcome {
     Rejected,
     /// The SQL engine refused an operator.
     Unsupported(String),
-    /// Both engines answered alike, with this many violations.
-    Same(usize),
+    /// Both engines answered alike, with this many violations; whether the clause is
+    /// three-valued, and whether a terminal answered unknown somewhere in it.
+    Same {
+        found: usize,
+        three: bool,
+        unknown: bool,
+    },
     Differs {
         native: String,
         sql: String,
     },
 }
+
+/// Time spent evaluating cases, summed over the worker threads: native then SQL, for two-valued
+/// then three-valued clauses.
+static ENGINE_NANOS: [std::sync::atomic::AtomicU64; 4] = [
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+];
 
 fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value) -> Outcome {
     let document = clause_document(
@@ -486,6 +678,9 @@ fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value)
     else {
         return Outcome::Rejected;
     };
+    let three = crate::code_rule_dsl::test_support::grammar_matchers(&compiled)
+        .iter()
+        .any(|grammar| grammar.three_valued);
     let evaluate = |engine: &str| {
         compiled
             .evaluate(
@@ -495,17 +690,33 @@ fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value)
             )
             .map_err(|error| error.reason)
     };
+    let started = Instant::now();
     let native = evaluate("native");
+    let unknowns = &crate::code_rule_dsl::sql::terminals::calls::UNKNOWN_VERDICTS;
+    unknowns.set(0);
+    let between = Instant::now();
     let sql = evaluate("sql");
+    let unknown = unknowns.get() > 0;
+    let at = if three { 2 } else { 0 };
+    ENGINE_NANOS[at].fetch_add(
+        between.duration_since(started).as_nanos() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    ENGINE_NANOS[at + 1].fetch_add(
+        between.elapsed().as_nanos() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     match (&native, &sql) {
         (_, Err(reason)) if reason.contains("Unsupported(") => Outcome::Unsupported(reason.clone()),
-        _ if native == sql => Outcome::Same(
-            native
+        _ if native == sql => Outcome::Same {
+            found: native
                 .ok()
                 .and_then(|output| serde_json::from_str::<Value>(&output).ok())
                 .and_then(|result| result["violations"].as_array().map(Vec::len))
                 .unwrap_or(0),
-        ),
+            three,
+            unknown,
+        },
         _ => Outcome::Differs {
             native: format!("{native:?}"),
             sql: format!("{sql:?}"),
@@ -596,10 +807,12 @@ fn generated_rules_agree_with_the_native_matcher() {
             plain: Vec::new(),
             params: None,
             counted: false,
+            three: false,
         })
         .collect();
     let (mut compared, mut rejected, mut generated) = (0usize, 0usize, 0usize);
     let (mut with_violations, mut violations) = (0usize, 0usize);
+    let (mut three_valued, mut with_unknown) = (0usize, 0usize);
     let mut operators = std::collections::BTreeMap::new();
     let mut unsupported = Vec::new();
     let mut differences = Vec::new();
@@ -631,10 +844,16 @@ fn generated_rules_agree_with_the_native_matcher() {
                     compared += 1;
                     unsupported.push((ast.clone(), reason));
                 }
-                Outcome::Same(found) => {
+                Outcome::Same {
+                    found,
+                    three,
+                    unknown,
+                } => {
                     compared += 1;
                     violations += found;
                     with_violations += usize::from(found > 0);
+                    three_valued += usize::from(three);
+                    with_unknown += usize::from(unknown);
                 }
                 Outcome::Differs { native, sql } => {
                     compared += 1;
@@ -644,12 +863,21 @@ fn generated_rules_agree_with_the_native_matcher() {
         }
     }
     eprintln!(
-        "sql differential: seed {seed:#x}, {compared} cases compared ({generated} generated, {rejected} rejected by the front end), {} differences, {} unsupported, {with_violations} cases with violations ({violations} violations), {:.1}s",
+        "sql differential: seed {seed:#x}, {compared} cases compared ({generated} generated, {rejected} rejected by the front end), {} differences, {} unsupported, {with_violations} cases with violations ({violations} violations), {three_valued} three-valued cases, {with_unknown} with an unknown verdict, {:.1}s",
         differences.len(),
         unsupported.len(),
         started.elapsed().as_secs_f64()
     );
     eprintln!("operators in compared cases: {operators:?}");
+    let seconds =
+        |at: usize| ENGINE_NANOS[at].load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9;
+    eprintln!(
+        "engine time over all threads: two-valued native {:.1}s sql {:.1}s; three-valued native {:.1}s sql {:.1}s",
+        seconds(0),
+        seconds(1),
+        seconds(2),
+        seconds(3)
+    );
     for (ast, reason) in unsupported.iter().take(5) {
         eprintln!("unsupported: {reason}\n  {ast}");
     }

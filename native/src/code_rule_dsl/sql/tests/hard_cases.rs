@@ -246,14 +246,6 @@ fn every_out_of_scope_operator_is_refused_by_name() {
         );
     };
     refused(
-        json!({ "rule": { "kind": "call_expression", "value": { "truthy": true } } }),
-        "three-valued clause",
-    );
-    refused(
-        json!({ "rule": { "pattern": "$F($A)", "compare": { "left": "F", "op": "eq", "right": "A" } } }),
-        "compare",
-    );
-    refused(
         json!({ "rule": { "kind": "call_expression", "resolves": { "global": true } } }),
         "resolves",
     );
