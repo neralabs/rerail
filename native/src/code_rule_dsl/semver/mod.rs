@@ -11,6 +11,7 @@
 
 use regex::{Captures, Regex};
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::fmt;
 use std::sync::LazyLock;
 
@@ -43,7 +44,7 @@ struct Comparator {
 }
 
 /// A comparator operator; `=` reads as `Eq`, like `''`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Op {
     Eq,
     Gt,
@@ -474,6 +475,9 @@ fn parse_range(range: &str) -> Option<SimpleRange> {
         .split(&range)
         .map(|comp| Comparator::parse(&re.gte0.replace(comp.trim_matches(' '), "")))
         .collect::<Option<Vec<_>>>()?;
+    // node-semver's `rangeMap`: each comparator whose operator and version are new, in first-seen
+    // order. Hashed, since a manifest's range is untrusted and may hold any number of them.
+    let mut seen = HashSet::with_capacity(parsed.len());
     let mut comparators: Vec<Comparator> = Vec::with_capacity(parsed.len());
     for comp in parsed.into_iter().flatten() {
         if comp.is_null_set() {
@@ -482,10 +486,7 @@ fn parse_range(range: &str) -> Option<SimpleRange> {
                 comparators: vec![comp],
             });
         }
-        if !comparators
-            .iter()
-            .any(|seen| seen.op == comp.op && seen.semver.version == comp.semver.version)
-        {
+        if seen.insert((comp.op, comp.semver.version.clone())) {
             comparators.push(comp);
         }
     }
@@ -700,7 +701,7 @@ fn compile(source: &str) -> Regex {
 
 #[cfg(test)]
 mod tests {
-    use super::Range;
+    use super::{Op, Range};
 
     /// `[configured, given, subset(new Range(configured), given)]` and `[text, parses]`, recorded
     /// from node-semver 7.8.5.
@@ -730,5 +731,45 @@ mod tests {
             }
         }
         assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    }
+
+    /// A range repeating its comparators keeps each once, in its first place, and answers
+    /// `subset` as it does without the repeats; a null set among them is the range alone.
+    #[test]
+    fn a_range_keeps_each_comparator_once() {
+        let range = Range::parse(">=1.2.0 <2.0.0 >=1.2.0 >1.0.0 <2.0.0").unwrap();
+        let kept = range.set[0]
+            .comparators
+            .iter()
+            .map(|comparator| (comparator.op, comparator.semver.version.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kept,
+            [(Op::Gte, "1.2.0"), (Op::Lt, "2.0.0"), (Op::Gt, "1.0.0")]
+        );
+        assert!(range.is_subset_of(&Range::parse(">=1.0.0 <3.0.0").unwrap()));
+        assert!(!range.is_subset_of(&Range::parse(">=1.3.0").unwrap()));
+        let null = Range::parse(">=1.2.0 >=1.2.0 <0.0.0-0 >=3.0.0").unwrap();
+        assert_eq!(null.set[0].comparators.len(), 1);
+        assert!(null.set[0].key.is_none());
+    }
+
+    /// A manifest's `engines.node` is untrusted, so a range of 50,000 distinct comparators parses
+    /// in time linear in their number: pairwise deduplication makes that over 10⁹ comparisons.
+    #[test]
+    fn a_range_of_many_comparators_parses_quickly() {
+        let text = (0..50_000)
+            .map(|minor| format!(">=1.{minor}.0"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let started = std::time::Instant::now();
+        let range = Range::parse(&text).unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(range.set[0].comparators.len(), 50_000);
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "parsing took {elapsed:?}"
+        );
+        assert!(range.is_subset_of(&Range::parse(">=1.0.0").unwrap()));
     }
 }

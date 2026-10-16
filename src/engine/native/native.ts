@@ -134,6 +134,11 @@ export interface NativeCodeRuleDslWorkspace {
   acceptsPath(path: string): boolean;
   /** Whether a code rule reads `file.package.serverGraph`, so hosts send `package.serverGraph`. */
   readsServerGraph(): boolean;
+  /**
+   * Whether a code rule has an AST clause in a family whose files read their nearest `package.json` (ECMA), so
+   * `package.json` and `tsconfig`/`jsconfig` edits change what it evaluates.
+   */
+  readsPackageManifests(): boolean;
   tryApply(requestJson: string): string | null;
   applyAsync(requestJson: string): Promise<string>;
   applyBufferAsync(request: Buffer): Promise<string>;
@@ -250,9 +255,10 @@ export interface NativeBinding {
    * The files of the package in `folder` (relative to `root`) on disk that are in its Next App Router server module
    * graph, relative to `folder`: reachable from an App Router server file convention by imports that pass no
    * `"use client"` module. With `overlayPath`, that file reads as `overlaySource` (deleted without one). Walked off
-   * the JS thread.
+   * the JS thread; null where the package has no graph (a source or folder cannot be read, or the package is past the
+   * walk's file or byte bounds): a host then sends its files no `serverGraph`.
    */
-  serverGraphAsync(root: string, folder: string, overlayPath?: string | null, overlaySource?: string | null): Promise<string[]>;
+  serverGraphAsync(root: string, folder: string, overlayPath?: string | null, overlaySource?: string | null): Promise<string[] | null>;
   /**
    * The project configuration files the package in `folder` (relative to `root`) reads on disk: its `tsconfig.json`
    * (else `jsconfig.json`), then the `tsconfig*.json`/`jsconfig*.json` bases it extends, relative to `root`.

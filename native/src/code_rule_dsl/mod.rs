@@ -177,10 +177,13 @@ pub fn nearest_package(absolute: String, root: String) -> Option<PackageFacts> {
 
 /// The server graph of the package whose folder (relative to `root`) is `folder`, read on disk
 /// off the JS thread: its files in Next's App Router server module graph, relative to `folder`
-/// (`module_graph::on_disk`). A host asks for it once per walk for a package whose `package`
-/// names `next` when a code rule reads `file.package.serverGraph`, and sends each file of the
-/// package its own membership (`package.serverGraph`). With `overlay_path`, that source reads as
-/// `overlay_source` (deleted without one): an edit or a sample disk does not hold.
+/// (`module_graph::on_disk`); null where the package has none (a source or folder cannot be read,
+/// or it is past the walk's file or byte bounds), so the host sends its files no membership. A
+/// host asks for it once per walk for a package whose `package` names `next` when a code rule
+/// reads `file.package.serverGraph`, and sends each file of the package its own membership
+/// (`package.serverGraph`). With `overlay_path`, that source reads as `overlay_source` (deleted
+/// without one): an edit or a sample disk does not hold. The task is not cancellable; the walk's
+/// bounds limit it.
 #[napi]
 // Only JavaScript calls it; tests drive `ServerGraphTask::members`.
 #[cfg_attr(test, allow(dead_code))]
@@ -221,8 +224,8 @@ impl ServerGraphTask {
         }
     }
 
-    /// The members, as the binding resolves them.
-    pub(crate) fn members(&self) -> Vec<String> {
+    /// The members, as the binding resolves them; `None` without a graph.
+    pub(crate) fn members(&self) -> Option<Vec<String>> {
         let root = std::path::Path::new(&self.root);
         let overlay = self
             .overlay_path
@@ -234,20 +237,23 @@ impl ServerGraphTask {
             &module_graph::config_on_disk(root, &self.folder),
             overlay,
         )
-        .into_iter()
-        .collect()
+        .map(|members| members.into_iter().collect())
     }
 }
 
 impl napi::Task for ServerGraphTask {
-    type Output = Vec<String>;
-    type JsValue = Vec<String>;
+    type Output = Option<Vec<String>>;
+    type JsValue = Option<Vec<String>>;
 
-    fn compute(&mut self) -> Result<Vec<String>> {
+    fn compute(&mut self) -> Result<Option<Vec<String>>> {
         Ok(self.members())
     }
 
-    fn resolve(&mut self, _env: napi::Env, output: Vec<String>) -> Result<Vec<String>> {
+    fn resolve(
+        &mut self,
+        _env: napi::Env,
+        output: Option<Vec<String>>,
+    ) -> Result<Option<Vec<String>>> {
         Ok(output)
     }
 }

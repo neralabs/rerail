@@ -1,8 +1,8 @@
 use super::*;
 
 /// The server graph of a file set (path, text) whose `package.json` entries are its manifests and
-/// whose configuration entries the package's `Config` reads.
-fn graph(folder: &str, files: &[(&str, &str)]) -> Vec<String> {
+/// whose configuration entries the package's `Config` reads; `None` without one.
+fn graph(folder: &str, files: &[(&str, &str)]) -> Option<Vec<String>> {
     let manifests = files
         .iter()
         .filter_map(|(path, _)| {
@@ -22,8 +22,7 @@ fn graph(folder: &str, files: &[(&str, &str)]) -> Vec<String> {
         &|directory| manifests.contains(directory),
         &Config::read(folder, &read),
     )
-    .into_iter()
-    .collect()
+    .map(|members| members.into_iter().collect())
 }
 
 const HOOK: &str =
@@ -93,12 +92,12 @@ fn a_module_imported_only_from_a_client_module_is_client_code() {
         ),
         ("app/adapters/react.ts", HOOK),
     ];
-    assert_eq!(graph("", &files), ["app/page.tsx"]);
+    assert_eq!(graph("", &files).unwrap(), ["app/page.tsx"]);
     // The same module imported by the page too is in the server graph, as Next bundles it there.
     let mut shared = files.to_vec();
     shared[1].1 = "import Widget from './widget';\nimport { useThing } from './adapters/react';\nexport default function Page() { useThing(); return <Widget />; }\n";
     assert_eq!(
-        graph("", &shared),
+        graph("", &shared).unwrap(),
         ["app/adapters/react.ts", "app/page.tsx"]
     );
 }
@@ -137,7 +136,7 @@ fn the_graph_follows_imports_out_of_app_and_through_every_resolution() {
         ("src/components/unused.ts", HOOK),
     ];
     assert_eq!(
-        graph("", &files),
+        graph("", &files).unwrap(),
         [
             "lib/index.ts",
             "src/app/(marketing)/page.tsx",
@@ -175,7 +174,7 @@ fn base_url_resolves_bare_specifiers_and_a_nested_package_is_no_edge() {
         ),
     ];
     assert_eq!(
-        graph("apps/web", &files),
+        graph("apps/web", &files).unwrap(),
         ["app/layout.jsx", "components/nav.jsx"]
     );
 }
@@ -199,11 +198,10 @@ fn write_file(root: &Path, path: &str, bytes: impl AsRef<[u8]>) {
     std::fs::write(file, bytes).unwrap();
 }
 
-/// The members `on_disk` gives the package in `folder` below `root`.
-fn disk_graph(root: &Path, folder: &str) -> Vec<String> {
+/// The members `on_disk` gives the package in `folder` below `root`; `None` without a graph.
+fn disk_graph(root: &Path, folder: &str) -> Option<Vec<String>> {
     on_disk(root, folder, &config_on_disk(root, folder), None)
-        .into_iter()
-        .collect()
+        .map(|members| members.into_iter().collect())
 }
 
 #[test]
@@ -229,7 +227,8 @@ fn on_disk_reads_the_package_and_follows_changes() {
             None,
             None
         )
-        .members(),
+        .members()
+        .unwrap(),
         ["app/hook.ts", "app/page.tsx"]
     );
     // A page that now imports through a client boundary drops the hook module.
@@ -240,6 +239,7 @@ fn on_disk_reads_the_package_and_follows_changes() {
     write("web/app/client.tsx", "'use client';\nimport './hook';\n");
     assert_eq!(
         on_disk(&root, "web", &config_on_disk(&root, "web"), None)
+            .unwrap()
             .into_iter()
             .collect::<Vec<_>>(),
         ["app/page.tsx"]
@@ -254,6 +254,7 @@ fn on_disk_reads_the_package_and_follows_changes() {
             source.map(str::to_owned),
         )
         .members()
+        .unwrap()
     };
     assert_eq!(
         overlaid("web/app/page.tsx", Some("import './hook';\n")),
@@ -327,17 +328,17 @@ fn a_file_set_reads_what_a_disk_walk_reads() {
                 .collect::<Vec<_>>(),
         )
     };
-    assert_eq!(members(&files), ["app/page.tsx"]);
+    assert_eq!(members(&files).unwrap(), ["app/page.tsx"]);
     // Without the root app folder, src/app holds the entries.
     files.remove(1);
-    assert_eq!(members(&files), ["src/app/page.tsx"]);
+    assert_eq!(members(&files).unwrap(), ["src/app/page.tsx"]);
     // A root app folder of no source, or one that is another package, still hides src/app.
     files.push(("app/globals.css".to_owned(), String::new()));
-    assert!(members(&files).is_empty());
+    assert!(members(&files).unwrap().is_empty());
     files.pop();
     files.push(("app/package.json".to_owned(), "{}".to_owned()));
     files.push(("app/x.ts".to_owned(), String::new()));
-    assert!(members(&files).is_empty());
+    assert!(members(&files).unwrap().is_empty());
     files.pop();
     files.pop();
     // A source larger than a disk walk reads imports nothing, here as there.
@@ -347,10 +348,13 @@ fn a_file_set_reads_what_a_disk_walk_reads() {
     );
     files.push(("src/app/layout.tsx".to_owned(), oversized));
     files.push(("lib/hook.ts".to_owned(), HOOK.to_owned()));
-    assert_eq!(members(&files), ["src/app/layout.tsx", "src/app/page.tsx"]);
+    assert_eq!(
+        members(&files).unwrap(),
+        ["src/app/layout.tsx", "src/app/page.tsx"]
+    );
     // Past MAX_GRAPH_FILES sources, no graph.
     files.extend((0..MAX_GRAPH_FILES).map(|index| (format!("lib/f{index}.ts"), String::new())));
-    assert!(members(&files).is_empty());
+    assert!(members(&files).is_none());
 }
 
 /// The `jsxImportSource` the configuration entries `files` give the package in `folder`.
@@ -492,7 +496,7 @@ fn paths_beyond_the_pattern_and_target_bounds_are_ignored() {
         (kept.as_str(), ""),
         (dropped.as_str(), ""),
     ];
-    assert_eq!(graph("", &files), ["app/page.tsx", first, &kept]);
+    assert_eq!(graph("", &files).unwrap(), ["app/page.tsx", first, &kept]);
     // Targets past the first MAX_PATHS_TARGETS of a pattern are not probed.
     let targets = (0..MAX_PATHS_TARGETS + 4)
         .map(|index| format!(r#""./t{index:02}/*""#))
@@ -512,7 +516,10 @@ fn paths_beyond_the_pattern_and_target_bounds_are_ignored() {
         (last.as_str(), ""),
         (past.as_str(), ""),
     ];
-    assert_eq!(graph("", &files), ["app/page.tsx", "t00/a.ts", &last]);
+    assert_eq!(
+        graph("", &files).unwrap(),
+        ["app/page.tsx", "t00/a.ts", &last]
+    );
 }
 
 #[test]
@@ -538,7 +545,7 @@ fn a_specifier_is_read_once_per_module_and_resolved_per_directory() {
         ("app/sub/x.ts", ""),
     ];
     assert_eq!(
-        graph("", &files),
+        graph("", &files).unwrap(),
         ["app/page.tsx", "app/sub/x.ts", "app/sub/y.ts", "app/x.ts"]
     );
 }
@@ -559,7 +566,7 @@ fn only_next_page_extensions_name_entries() {
         ("app/typed.mts", "export {};\n"),
     ];
     assert_eq!(
-        graph("", &files),
+        graph("", &files).unwrap(),
         ["app/helper.mjs", "app/layout.tsx", "app/typed.mts"]
     );
 }
@@ -578,7 +585,10 @@ fn on_disk_decodes_a_source_lossily() {
         b"import './hook';\n// \xff\xfe not UTF-8\nexport default function Page() {}\n",
     );
     write_file(&root, "app/hook.ts", HOOK);
-    assert_eq!(disk_graph(&root, ""), ["app/hook.ts", "app/page.tsx"]);
+    assert_eq!(
+        disk_graph(&root, "").unwrap(),
+        ["app/hook.ts", "app/page.tsx"]
+    );
     std::fs::remove_dir_all(&root).unwrap();
 }
 
@@ -609,14 +619,226 @@ fn on_disk_gives_no_graph_while_a_source_or_folder_cannot_be_read() {
     chmod("lib/a.ts", 0o000);
     // Permissions do not bind the superuser.
     if std::fs::read(root.join("lib/a.ts")).is_err() {
-        assert!(disk_graph(&root, "").is_empty());
+        assert!(disk_graph(&root, "").is_none());
+        // The binding resolves no members (null), not an empty graph.
+        let task = crate::code_rule_dsl::ServerGraphTask::new(
+            root.to_string_lossy().into_owned(),
+            String::new(),
+            None,
+            None,
+        );
+        assert_eq!(task.members(), None);
         chmod("lib/a.ts", 0o644);
-        assert_eq!(disk_graph(&root, ""), complete);
+        assert_eq!(disk_graph(&root, "").unwrap(), complete);
         chmod("parts", 0o000);
-        assert!(disk_graph(&root, "").is_empty());
+        assert!(disk_graph(&root, "").is_none());
         chmod("parts", 0o755);
-        assert_eq!(disk_graph(&root, ""), complete);
+        assert_eq!(disk_graph(&root, "").unwrap(), complete);
     }
     chmod("lib/a.ts", 0o644);
     std::fs::remove_dir_all(&root).unwrap();
+}
+
+const NEXT_MANIFEST: &str = r#"{ "dependencies": { "next": "15" } }"#;
+
+/// The walk reads no folder hosts ignore (`build`, `vendor`) and no nested checkout (a folder
+/// holding `.git`), an overlay there included; a file set skips the same ignored folders.
+#[test]
+fn the_graph_reads_no_ignored_folder_or_nested_checkout() {
+    let root = temp_root("ignored");
+    let files = [
+        ("package.json", NEXT_MANIFEST),
+        (
+            "app/page.tsx",
+            "import '../build/a';\nimport '../vendor/b';\nimport '../checkout/c';\nimport '../lib/d';\nexport default 1;\n",
+        ),
+        ("build/a.ts", ""),
+        ("vendor/b.ts", ""),
+        ("checkout/c.ts", ""),
+        ("lib/d.ts", ""),
+    ];
+    for (path, text) in files {
+        write_file(&root, path, text);
+    }
+    write_file(&root, "checkout/.git", "gitdir: ../.git/modules/checkout\n");
+    assert_eq!(disk_graph(&root, "").unwrap(), ["app/page.tsx", "lib/d.ts"]);
+    let overlaid = |path: &str| {
+        crate::code_rule_dsl::ServerGraphTask::new(
+            root.to_string_lossy().into_owned(),
+            String::new(),
+            Some(path.to_owned()),
+            Some("export {};\n".to_owned()),
+        )
+        .members()
+        .unwrap()
+    };
+    assert_eq!(overlaid("build/a.ts"), ["app/page.tsx", "lib/d.ts"]);
+    assert_eq!(overlaid("checkout/c.ts"), ["app/page.tsx", "lib/d.ts"]);
+    let file_set = files
+        .iter()
+        .filter(|(path, _)| !path.starts_with("checkout/"))
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(graph("", &file_set).unwrap(), ["app/page.tsx", "lib/d.ts"]);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// Past the walk's byte budget a package has no graph, as past its file bound; a source over
+/// 1 MiB, which it does not read, counts nothing.
+#[test]
+fn the_walk_stops_past_its_byte_budget() {
+    let root = temp_root("budget");
+    write_file(&root, "app/page.tsx", "x".repeat(600));
+    write_file(&root, "lib/a.ts", "x".repeat(600));
+    write_file(
+        &root,
+        "lib/big.ts",
+        "x".repeat(MAX_SOURCE_BYTES as usize + 1),
+    );
+    let walked = |mut budget: u64| walk(&root, &root, &mut Vec::new(), &mut budget);
+    assert!(walked(1_200));
+    assert!(!walked(1_199));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// A rewrite that keeps a source's length and modification time (`'use server'` for
+/// `'use client'`) is read again: a file modified a moment ago is not cached, and on unix a
+/// settled one's status-change time or inode moves.
+#[test]
+fn a_rewrite_restoring_length_and_modification_time_is_read_again() {
+    let root = temp_root("restamped");
+    write_file(&root, "package.json", NEXT_MANIFEST);
+    write_file(&root, "app/page.tsx", "import './a';\nexport default 1;\n");
+    write_file(&root, "app/b.ts", "");
+    let rewrite = |directive: &str, modified: SystemTime| {
+        let file = root.join("app/a.ts");
+        std::fs::write(&file, format!("'{directive}';\nimport './b';\n")).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+    };
+    let server = ["app/a.ts", "app/b.ts", "app/page.tsx"];
+    let tick = SystemTime::now();
+    rewrite("use server", tick);
+    assert_eq!(disk_graph(&root, "").unwrap(), server);
+    rewrite("use client", tick);
+    assert_eq!(disk_graph(&root, "").unwrap(), ["app/page.tsx"]);
+    #[cfg(unix)]
+    {
+        let settled = SystemTime::now() - Duration::from_secs(3600);
+        rewrite("use server", settled);
+        assert_eq!(disk_graph(&root, "").unwrap(), server);
+        // Past the status-change time's granularity, as coarse as a scheduler tick.
+        std::thread::sleep(Duration::from_millis(50));
+        rewrite("use client", settled);
+        assert_eq!(disk_graph(&root, "").unwrap(), ["app/page.tsx"]);
+        // A file renamed over the source (as `rsync -t` writes one) is another inode.
+        write_file(&root, "app/a.tmp", "'use server';\nimport './b';\n");
+        std::fs::File::options()
+            .write(true)
+            .open(root.join("app/a.tmp"))
+            .unwrap()
+            .set_modified(settled)
+            .unwrap();
+        std::fs::rename(root.join("app/a.tmp"), root.join("app/a.ts")).unwrap();
+        assert_eq!(disk_graph(&root, "").unwrap(), server);
+    }
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// An `extends` base already read, one past the chain's depth and an entry past the first
+/// `MAX_EXTENDS_ENTRIES` of an array are not read.
+#[test]
+fn extends_reads_each_base_once_within_its_bounds() {
+    let count = |files: &[(&str, String)]| {
+        let reads = std::cell::Cell::new(0);
+        let read = |path: &str| {
+            reads.set(reads.get() + 1);
+            files
+                .iter()
+                .find(|(entry, _)| *entry == path)
+                .map(|(_, text)| text.clone())
+        };
+        let config = Config::read("", &read);
+        (reads.get(), config.files().to_vec())
+    };
+    let base = r#"{ "compilerOptions": { "jsxImportSource": "preact" } }"#.to_owned();
+    // A self-referencing array: the configuration is read once, and the base past the cap never.
+    let selves = vec![r#""./tsconfig.json""#; 2_000].join(", ");
+    let files = [
+        (
+            "tsconfig.json",
+            format!(r#"{{ "extends": [{selves}, "./tsconfig.base.json"] }}"#),
+        ),
+        ("tsconfig.base.json", base.clone()),
+    ];
+    assert_eq!(count(&files), (1, vec!["tsconfig.json".to_owned()]));
+    // Within the cap, a base named twice is read once.
+    let files = [
+        (
+            "tsconfig.json",
+            r#"{ "extends": ["./tsconfig.json", "./tsconfig.base.json", "./tsconfig.base"] }"#
+                .to_owned(),
+        ),
+        ("tsconfig.base.json", base),
+    ];
+    assert_eq!(
+        count(&files),
+        (
+            2,
+            vec!["tsconfig.json".to_owned(), "tsconfig.base.json".to_owned()]
+        )
+    );
+    // A chain longer than MAX_EXTENDS: the base past it is not read.
+    let chain = (0..MAX_EXTENDS + 4)
+        .map(|index| {
+            let name = if index == 0 {
+                "tsconfig.json".to_owned()
+            } else {
+                format!("tsconfig.{index}.json")
+            };
+            (
+                name,
+                format!(r#"{{ "extends": "./tsconfig.{}.json" }}"#, index + 1),
+            )
+        })
+        .collect::<Vec<_>>();
+    let chain = chain
+        .iter()
+        .map(|(name, text)| (name.as_str(), text.clone()))
+        .collect::<Vec<_>>();
+    let (reads, files) = count(&chain);
+    assert_eq!((reads, files.len()), (MAX_EXTENDS + 1, MAX_EXTENDS + 1));
+}
+
+/// A configuration reached through a symlinked folder that leads out of the workspace is not
+/// read; one inside it still is.
+#[cfg(unix)]
+#[test]
+fn extends_through_a_symlinked_folder_reads_nothing_outside_the_workspace() {
+    let base = r#"{ "compilerOptions": { "jsxImportSource": "preact" } }"#;
+    let outside = temp_root("outside");
+    write_file(&outside, "tsconfig.base.json", base);
+    let root = temp_root("symlinked");
+    write_file(
+        &root,
+        "tsconfig.json",
+        r#"{ "extends": "./shared/tsconfig.base.json" }"#,
+    );
+    std::os::unix::fs::symlink(&outside, root.join("shared")).unwrap();
+    let config = config_on_disk(&root, "");
+    assert_eq!(config.jsx_import_source(), None);
+    assert_eq!(config.files(), ["tsconfig.json"]);
+    write_file(&root, "real/tsconfig.base.json", base);
+    std::fs::remove_file(root.join("shared")).unwrap();
+    std::os::unix::fs::symlink(root.join("real"), root.join("shared")).unwrap();
+    assert_eq!(
+        config_on_disk(&root, "").jsx_import_source(),
+        Some("preact")
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+    std::fs::remove_dir_all(&outside).unwrap();
 }

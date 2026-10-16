@@ -80,7 +80,9 @@ pub(crate) struct Manifest {
 /// Which files below a manifest are in their Next app's server module graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ServerGraph {
-    /// Not read: the manifest names no `next` dependency, or no code rule reads the graph.
+    /// Not read: the manifest names no `next`, no code rule reads the graph, or the package has
+    /// none (a source or folder on disk cannot be read, or it is past a bound), so neither
+    /// membership holds for its files.
     Unread,
     /// Derived from the package's files: the members, relative to the manifest's folder, and the
     /// manifest a file below it carries (`Manifest::for_file`) inside the graph and outside it.
@@ -138,20 +140,24 @@ impl Manifest {
         hasher.finalize().into()
     }
 
-    /// This manifest with the server graph its package's files give (`module_graph`).
-    pub(crate) fn with_server_graph(mut self, members: BTreeSet<String>) -> Self {
-        let member = |member| {
-            let mut manifest = self.clone();
-            manifest.server_graph = ServerGraph::Member(member);
-            manifest.digest = manifest.compute_digest();
-            Arc::new(manifest)
-        };
-        let (inside, outside) = (member(true), member(false));
-        self.server_graph = ServerGraph::Members {
-            members: Arc::new(members),
-            inside,
-            outside,
-        };
+    /// This manifest with the server graph its package's files give (`module_graph`); without one
+    /// (`None`) it carries none (`ServerGraph::Unread`).
+    pub(crate) fn with_server_graph(mut self, members: Option<BTreeSet<String>>) -> Self {
+        self.server_graph = ServerGraph::Unread;
+        if let Some(members) = members {
+            let member = |member| {
+                let mut manifest = self.clone();
+                manifest.server_graph = ServerGraph::Member(member);
+                manifest.digest = manifest.compute_digest();
+                Arc::new(manifest)
+            };
+            let (inside, outside) = (member(true), member(false));
+            self.server_graph = ServerGraph::Members {
+                members: Arc::new(members),
+                inside,
+                outside,
+            };
+        }
         self.digest = self.compute_digest();
         self
     }
@@ -189,7 +195,8 @@ impl Manifest {
     }
 
     /// Whether the file at `path` (workspace-relative) is in its Next app's server graph; `None`
-    /// where the manifest carries none (it names no `next`, or nothing read the graph).
+    /// where the manifest carries none (it names no `next`, nothing read the graph, or the
+    /// package has none).
     pub(crate) fn in_server_graph(&self, path: &str) -> Option<bool> {
         match &self.server_graph {
             ServerGraph::Unread => None,
@@ -198,14 +205,6 @@ impl Manifest {
                 self.relative_path(path)
                     .is_some_and(|relative| members.contains(relative)),
             ),
-        }
-    }
-
-    /// The server graph's members, where derived.
-    pub(crate) fn server_graph_members(&self) -> Option<&BTreeSet<String>> {
-        match &self.server_graph {
-            ServerGraph::Members { members, .. } => Some(members),
-            _ => None,
         }
     }
 
@@ -555,14 +554,20 @@ fn manifest_on_disk(directory: &Path, folder: String) -> Option<Manifest> {
 /// `next` carries its package's server graph, read on disk (`module_graph::on_disk`).
 pub(crate) struct Manifests {
     root: PathBuf,
+    /// `root` with its symlinks resolved, `None` where it cannot be: a directory is read only
+    /// where it resolves below it, so a symlinked folder pointing outside the root holds no
+    /// manifest.
+    canonical_root: Option<PathBuf>,
     server_graph: bool,
     directories: HashMap<PathBuf, Option<Arc<Manifest>>>,
 }
 
 impl Manifests {
     pub(crate) fn new(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
         Self {
-            root: root.into(),
+            canonical_root: std::fs::canonicalize(&root).ok(),
+            root,
             server_graph: false,
             directories: HashMap::new(),
         }
@@ -595,7 +600,13 @@ impl Manifests {
                 break;
             }
             unknown.push(ancestor);
-            if let Some(manifest) = manifest_on_disk(ancestor, self.folder(ancestor)) {
+            let contained = self.canonical_root.as_ref().is_some_and(|root| {
+                std::fs::canonicalize(ancestor).is_ok_and(|directory| directory.starts_with(root))
+            });
+            if let Some(manifest) = contained
+                .then(|| manifest_on_disk(ancestor, self.folder(ancestor)))
+                .flatten()
+            {
                 let config = crate::code_rule_dsl::module_graph::config_on_disk(
                     &self.root,
                     manifest.folder(),

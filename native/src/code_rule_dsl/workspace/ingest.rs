@@ -501,6 +501,45 @@ fn refresh_package_context(
 /// removes the one there.
 type ManifestChanges = BTreeMap<String, Option<Arc<Manifest>>>;
 
+/// A request's changes of what server graphs read (`WorkspaceState::graph_entries`), by path:
+/// the entry after it, or `None` where it removes the path.
+type GraphEntryChanges = BTreeMap<String, Option<Option<module_graph::Summary>>>;
+
+/// A request's changes of the workspace's package context besides its files: its manifests,
+/// what server graphs read, and the directories joining (`true`) or leaving (`false`)
+/// `server_graph_directories`. `apply_request` applies them once nothing after can fail, so a
+/// request that fails leaves them as they were.
+#[derive(Default)]
+struct ContextChanges {
+    manifests: ManifestChanges,
+    graph_entries: GraphEntryChanges,
+    server_graph_directories: BTreeMap<String, bool>,
+}
+
+impl ContextChanges {
+    fn apply(self, state: &mut WorkspaceState) {
+        for (directory, change) in self.manifests {
+            match change {
+                Some(manifest) => state.manifests.insert(directory, manifest),
+                None => state.manifests.remove(&directory),
+            };
+        }
+        for (path, entry) in self.graph_entries {
+            match entry {
+                Some(summary) => state.graph_entries.insert(path, summary),
+                None => state.graph_entries.remove(&path),
+            };
+        }
+        for (directory, joined) in self.server_graph_directories {
+            if joined {
+                state.server_graph_directories.insert(directory);
+            } else {
+                state.server_graph_directories.remove(&directory);
+            }
+        }
+    }
+}
+
 /// Expand a `package.json` edit to the ECMA files whose nearest manifest it changes, and give an
 /// ECMA file the host sent no `package` for the workspace's nearest one. As package markers are
 /// the packages of JSON/buffer overlays, the workspace's `package.json` entries (whatever their
@@ -508,13 +547,13 @@ type ManifestChanges = BTreeMap<String, Option<Arc<Manifest>>>;
 /// of the `tsconfig.json`-style entries beside them (a change of one is a change of the
 /// manifest). A resident file follows them while its `package` equals their derivation before
 /// the request, so a host's own fact stays authoritative. The changes are the workspace's once
-/// the request applies.
+/// the request applies (`ContextChanges`).
 fn refresh_manifest_context(
     state: &mut WorkspaceState,
     inputs: &mut Vec<FileInput>,
     unhosted: &HashSet<String>,
     removed: &[String],
-) -> Result<(BTreeSet<String>, ManifestChanges)> {
+) -> Result<(BTreeSet<String>, ContextChanges)> {
     let mut changes = ManifestChanges::new();
     for path in removed {
         if let Some(directory) = manifest_directory(path)
@@ -562,29 +601,43 @@ fn refresh_manifest_context(
             }
         }
     }
+    let mut graph_entries = GraphEntryChanges::new();
+    let mut server_graph_directories = BTreeMap::new();
     if state
         .code_rules
         .iter()
         .any(|code_rule| code_rule.reads_server_graph())
     {
         for path in removed {
-            state.graph_entries.remove(path);
+            graph_entries.insert(path.clone(), None);
         }
         for input in inputs.iter() {
             if unhosted.contains(&input.path) {
                 let summary = module_graph::summarize_bounded(&input.path, &input.source);
-                state.graph_entries.insert(input.path.clone(), summary);
+                graph_entries.insert(input.path.clone(), Some(summary));
             } else if !package_manifests(&input.language) {
-                state.graph_entries.insert(input.path.clone(), None);
+                graph_entries.insert(input.path.clone(), Some(None));
             }
         }
         if !unhosted.is_empty() || !state.server_graph_directories.is_empty() || !changes.is_empty()
         {
-            refresh_server_graphs(state, inputs, unhosted, removed, &mut changes)?;
+            server_graph_directories = refresh_server_graphs(
+                state,
+                inputs,
+                unhosted,
+                removed,
+                &graph_entries,
+                &mut changes,
+            );
         }
     }
     if changes.is_empty() && unhosted.is_empty() {
-        return Ok((BTreeSet::new(), changes));
+        let context = ContextChanges {
+            manifests: changes,
+            graph_entries,
+            server_graph_directories,
+        };
+        return Ok((BTreeSet::new(), context));
     }
     let manifests = &state.manifests;
     let before = |directory: &str| manifests.get(directory);
@@ -642,7 +695,12 @@ fn refresh_manifest_context(
         inputs.push(input);
         refreshed.insert(path);
     }
-    Ok((refreshed, changes))
+    let context = ContextChanges {
+        manifests: changes,
+        graph_entries,
+        server_graph_directories,
+    };
+    Ok((refreshed, context))
 }
 
 /// Gives each workspace manifest naming `next` the server graph of the files the workspace holds
@@ -652,14 +710,17 @@ fn refresh_manifest_context(
 /// request changes what it reads (its manifest, a source below it, a project configuration
 /// anywhere, since one may be another's `extends` base), removals included. A manifest whose
 /// graph the request changes is a change of the manifest, so the files that read it are
-/// evaluated again.
+/// evaluated again. `graph_entries` are the request's changes of what the graphs read; returns
+/// the directories joining (`true`) or leaving `server_graph_directories`.
 fn refresh_server_graphs(
-    state: &mut WorkspaceState,
+    state: &WorkspaceState,
     inputs: &[FileInput],
     unhosted: &HashSet<String>,
     removed: &[String],
+    graph_entries: &GraphEntryChanges,
     changes: &mut ManifestChanges,
-) -> Result<()> {
+) -> BTreeMap<String, bool> {
+    let mut directories = BTreeMap::new();
     let after = state
         .manifests
         .iter()
@@ -690,13 +751,16 @@ fn refresh_server_graphs(
         .any(|path| module_graph::is_module_config(path));
     for (directory, manifest) in after {
         let Some(manifest) = manifest.filter(|manifest| manifest.has_server_graph()) else {
-            state.server_graph_directories.remove(&directory);
+            if state.server_graph_directories.contains(&directory) {
+                directories.insert(directory, false);
+            }
             continue;
         };
         // The workspace derives the graph for files it gives `package`: ones of this request,
         // or, when the manifest changes, ones it already holds (a manifest that gains `next`
         // after its sources arrived).
-        let needed = state.server_graph_directories.contains(&directory)
+        let derived = state.server_graph_directories.contains(&directory);
+        let needed = derived
             || unhosted.iter().any(|path| path_is_below(path, &directory))
             || (changes.contains_key(&directory) && derives_package_below(state, &directory));
         // A nested manifest created or removed moves the boundary of this package's files, and any
@@ -706,8 +770,10 @@ fn refresh_server_graphs(
         } else {
             format!("{directory}/app")
         };
-        let touched = changes.contains_key(&directory)
-            || manifest.server_graph_members().is_none()
+        // A graph not derived yet is derived; a derived one, an absent one (`None`: past a
+        // bound) included, stays as it is until the request changes what it reads.
+        let touched = !derived
+            || changes.contains_key(&directory)
             || configs_changed
             || changes
                 .keys()
@@ -719,7 +785,7 @@ fn refresh_server_graphs(
         if !needed || !touched {
             continue;
         }
-        state.server_graph_directories.insert(directory.clone());
+        directories.insert(directory.clone(), true);
         let start = if directory.is_empty() {
             String::new()
         } else {
@@ -728,13 +794,22 @@ fn refresh_server_graphs(
         let config = module_graph::Config::read(&directory, &|path| {
             module_config_text(state, inputs, removed, path)
         });
+        // The workspace's entries, the request's changes applied.
+        let entries = state
+            .graph_entries
+            .range(start.clone()..)
+            .take_while(|(path, _)| path_is_below(path, &directory))
+            .filter(|(path, _)| !graph_entries.contains_key(*path))
+            .map(|(path, summary)| (path.as_str(), summary.clone()))
+            .chain(
+                graph_entries
+                    .range(start..)
+                    .take_while(|(path, _)| path_is_below(path, &directory))
+                    .filter_map(|(path, entry)| Some((path.as_str(), entry.as_ref()?.clone()))),
+            );
         let members = module_graph::from_summaries(
             &directory,
-            state
-                .graph_entries
-                .range(start..)
-                .take_while(|(path, _)| path_is_below(path, &directory))
-                .map(|(path, summary)| (path.as_str(), summary.clone())),
+            entries,
             &|folder| manifest_directories.contains(folder),
             &config,
         );
@@ -749,7 +824,7 @@ fn refresh_server_graphs(
             changes.insert(directory, Some(updated));
         }
     }
-    Ok(())
+    directories
 }
 
 /// Whether the workspace holds a file below `directory` whose `package` it derived from its own
@@ -827,19 +902,9 @@ pub(super) fn apply_request(
         .map(|(index, wire)| wire.into_input(index))
         .collect::<Result<Vec<_>>>()?;
     let mut refreshed = refresh_package_context(state, &mut inputs, &unhosted, &request.removed)?;
-    let (repackaged, manifest_changes) =
+    let (repackaged, context_changes) =
         refresh_manifest_context(state, &mut inputs, &unhosted_packages, &request.removed)?;
     refreshed.extend(repackaged);
-    for input in &inputs {
-        if module_graph::is_module_config(&input.path) {
-            state
-                .module_configs
-                .insert(input.path.clone(), Arc::clone(&input.source));
-        }
-    }
-    for path in &request.removed {
-        state.module_configs.remove(path);
-    }
     let mut released_candidates = false;
     let mut store_busy = false;
     if state.storage.is_some() {
@@ -861,6 +926,18 @@ pub(super) fn apply_request(
             }
         }
     }
+    // Nothing below fails: the request's context changes are the workspace's now.
+    for input in &inputs {
+        if module_graph::is_module_config(&input.path) {
+            state
+                .module_configs
+                .insert(input.path.clone(), Arc::clone(&input.source));
+        }
+    }
+    for path in &request.removed {
+        state.module_configs.remove(path);
+    }
+    context_changes.apply(state);
     for path in request.removed {
         state.versions.remove(&path);
         // This reaches both resident and evicted producer state.
@@ -893,12 +970,6 @@ pub(super) fn apply_request(
         }
         state.dirty_files.insert(path.clone());
         CrossFileScheduler::forget(state, &path);
-    }
-    for (directory, change) in manifest_changes {
-        match change {
-            Some(manifest) => state.manifests.insert(directory, manifest),
-            None => state.manifests.remove(&directory),
-        };
     }
     state.result_page_index = None;
     state.revision = request.revision;

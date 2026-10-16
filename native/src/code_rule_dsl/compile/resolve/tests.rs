@@ -4014,6 +4014,42 @@ fn file_jsx_runtime_reads_pragmas_then_imports_then_the_manifest() {
     ));
 }
 
+/// A JSX pragma is read in its comment's value, without the `//`, `/*` and `*/` around it
+/// (Babel's `comment.value`), however tightly they close it.
+#[test]
+fn file_jsx_runtime_reads_a_pragma_without_its_comment_delimiters() {
+    let runtime = |runtimes: &[&str], manifest: &str, source: &str| {
+        !matched(
+            json!({ "jsxRuntime": runtimes }),
+            &[("a.tsx", source), ("package.json", manifest)],
+        )
+        .is_empty()
+    };
+    let react = r#"{ "dependencies": { "react": "19" } }"#;
+    let preact = r#"{ "dependencies": { "preact": "10" } }"#;
+    let plain = "export const a = <div />;\n";
+    for comment in [
+        "/* @jsxImportSource preact*/",
+        "/*@jsxImportSource preact*/",
+        "//@jsxImportSource preact",
+    ] {
+        assert!(
+            runtime(&["other"], react, &format!("{comment}\n{plain}")),
+            "{comment}"
+        );
+    }
+    assert!(runtime(
+        &["react"],
+        preact,
+        &format!("/*@jsx React*/\n{plain}")
+    ));
+    assert!(runtime(
+        &["react"],
+        preact,
+        &format!("/*@jsx React.createElement*/\n{plain}")
+    ));
+}
+
 /// The package's `tsconfig.json` (else `jsconfig.json`) `jsxImportSource` names its JSX runtime
 /// before its dependencies do, through relative `extends`; a file's own pragma or imports still
 /// win. An editor edit of the configuration gives the fresh snapshot's answer.

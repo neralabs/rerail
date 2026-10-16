@@ -1166,7 +1166,8 @@ pub(crate) fn jsx_import_source_runtime(source: &str) -> Option<JsxRuntime> {
 
 /// The JSX runtime an ECMA file's own text names: a `@jsxImportSource` pragma naming React or a
 /// React wrapper (React's) or another JSX library (`Other`), else a `@jsx` pragma naming `React` or
-/// `React.…` (React's), each from the first comment that has one, as eslint-plugin-react reads its
+/// `React.…` (React's), each from the first comment that has one, read in the comment's text
+/// without its `//`, `/*` and `*/` (Babel's `comment.value`), as eslint-plugin-react reads its
 /// pragma; else a top-level static import of `h` or `createElement` from another JSX library.
 /// A pragma naming anything else is no evidence either way (Emotion's `@jsx jsx` renders React), so
 /// `None` where the text names no runtime, and the file's manifest decides
@@ -1178,7 +1179,16 @@ pub(crate) fn jsx_runtime_in_source<D: ast_grep_core::Doc>(
         let comments = root
             .dfs()
             .filter(|node| node.kind() == "comment")
-            .map(|node| node.text().into_owned())
+            .map(|node| {
+                let text = node.text();
+                let value = match text.strip_prefix("//") {
+                    Some(line) => line,
+                    None => text
+                        .strip_prefix("/*")
+                        .map_or(&*text, |block| block.strip_suffix("*/").unwrap_or(block)),
+                };
+                value.to_owned()
+            })
             .collect::<Vec<_>>();
         let pragma = |pattern: &regex::Regex| {
             comments

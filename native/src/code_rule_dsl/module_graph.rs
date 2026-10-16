@@ -23,7 +23,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::code_rule_dsl::language::adapter::package_manifests;
 use crate::code_rule_dsl::language::{dialect_by_label, label_of_path};
@@ -31,12 +31,37 @@ use crate::code_rule_dsl::language::{dialect_by_label, label_of_path};
 /// The package a manifest's `dependsOn` must name for its files to have a server graph.
 pub(crate) const NEXT: &str = "next";
 
-/// A package with more source files than this on disk gets no server graph: no file is in one.
+/// A package with more source files than this on disk gets no server graph: neither membership
+/// holds for its files.
 const MAX_GRAPH_FILES: usize = 20_000;
+/// A package whose sources read on disk total more bytes than this gets no server graph, as past
+/// `MAX_GRAPH_FILES`: the host's audit budget (`AUDIT_MAX_SOURCE_BYTES`).
+const MAX_GRAPH_BYTES: u64 = 512 * 1024 * 1024;
+/// The folders a server graph does not read, beside hidden ones: the host's
+/// `IGNORED_DIRECTORIES` (code-rule-enforcer.ts), which its repository walk skips.
+const IGNORED_DIRECTORIES: [&str; 14] = [
+    ".git",
+    ".hg",
+    ".svn",
+    ".rerail",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "dist",
+    "build",
+    ".next",
+    ".turbo",
+    "coverage",
+    "target",
+    "vendor",
+];
 /// A source larger than this is not read for imports; it imports nothing.
 const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 /// How many `extends` a configuration chain follows.
 const MAX_EXTENDS: usize = 8;
+/// How many entries of one configuration's `extends` array are followed, the first ones; later
+/// ones are not read.
+const MAX_EXTENDS_ENTRIES: usize = 16;
 /// How many `paths` patterns a configuration maps, the first by pattern text (the order
 /// `serde_json` keeps an object's keys in); later ones map nothing.
 const MAX_PATHS_PATTERNS: usize = 64;
@@ -216,7 +241,7 @@ impl Config {
         paths_dir: &mut Option<String>,
         depth: usize,
     ) {
-        if depth > MAX_EXTENDS || !seen.insert(path.to_owned()) {
+        if !seen.insert(path.to_owned()) {
             return;
         }
         self.files.push(path.to_owned());
@@ -225,8 +250,14 @@ impl Config {
         };
         let directory = parent(path);
         let bases = match config.get("extends") {
+            // At the chain's depth bound no base is read.
+            _ if depth >= MAX_EXTENDS => Vec::new(),
             Some(Value::String(base)) => vec![base.as_str()],
-            Some(Value::Array(bases)) => bases.iter().filter_map(Value::as_str).collect(),
+            Some(Value::Array(bases)) => bases
+                .iter()
+                .take(MAX_EXTENDS_ENTRIES)
+                .filter_map(Value::as_str)
+                .collect(),
             _ => Vec::new(),
         };
         for base in bases {
@@ -243,7 +274,8 @@ impl Config {
             if !base.ends_with(".json") {
                 base.push_str(".json");
             }
-            if !is_module_config(&base) {
+            // A base the chain read already (a cycle, or an entry repeated) is not read again.
+            if !is_module_config(&base) || seen.contains(&base) {
                 continue;
             }
             if let Some(text) = read(&base) {
@@ -522,93 +554,145 @@ fn strip_outside_strings(text: &str, skip: impl Fn(&[u8], usize) -> Option<usize
     out
 }
 
-/// One summary read from disk, kept while the file's modification time and length stand.
-type CachedSummary = (SystemTime, u64, Arc<Summary>);
+/// What a cached summary stands on: the file's modification time and length and, on unix, its
+/// status-change time and inode, which a rewrite restoring the modification time (an archive's
+/// extraction, `rsync -t`) still moves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Stamp {
+    modified: SystemTime,
+    length: u64,
+    #[cfg(unix)]
+    changed: (i64, i64),
+    #[cfg(unix)]
+    file: (u64, u64),
+}
+
+impl Stamp {
+    /// `None` where the file system gives no modification time: such a file's summary is never
+    /// cached.
+    fn of(metadata: &std::fs::Metadata) -> Option<Self> {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        Some(Self {
+            modified: metadata.modified().ok()?,
+            length: metadata.len(),
+            #[cfg(unix)]
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+            #[cfg(unix)]
+            file: (metadata.dev(), metadata.ino()),
+        })
+    }
+}
+
+/// One summary read from disk, kept while the file's `Stamp` stands.
+type CachedSummary = (Stamp, Arc<Summary>);
 
 /// Summaries of files on disk, by absolute path, across calls.
 static DISK_SUMMARIES: LazyLock<Mutex<HashMap<PathBuf, CachedSummary>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 /// The disk cache is dropped whole beyond this many entries.
 const MAX_CACHED_SUMMARIES: usize = 200_000;
+/// A file modified less than this long before it is read is not cached: a rewrite within the
+/// same timestamp tick (up to 2 s on FAT) would leave its stamp unchanged.
+const SETTLED_AFTER: Duration = Duration::from_secs(2);
 
 /// The server graph of the package whose folder (workspace-relative) is `folder`, read on disk
-/// below `root` with its `config`: its source files outside `node_modules`, hidden folders and
-/// nested packages. `overlay` replaces one source's text with a host's (`None`: deleted), for a
-/// source being edited that disk does not hold yet. Where a folder or source cannot be read the
-/// package has no graph rather than a partial one, as past `MAX_GRAPH_FILES`; the failure is not
-/// cached, so the next call reads it again.
+/// below `root` with its `config`: its source files outside hidden folders, the host's ignored
+/// ones (`IGNORED_DIRECTORIES`), nested packages and nested checkouts (a folder holding `.git`).
+/// `overlay` replaces one source's text with a host's (`None`: deleted), for a source being
+/// edited that disk does not hold yet. `None` where the package has no graph rather than a
+/// partial one: a folder or source cannot be read, or it holds more than `MAX_GRAPH_FILES`
+/// sources or `MAX_GRAPH_BYTES` of them. The failure is not cached, so the next call reads it
+/// again. The walk is not cancellable; those bounds limit it.
 pub(crate) fn on_disk(
     root: &Path,
     folder: &str,
     config: &Config,
     overlay: Option<(&str, Option<&str>)>,
-) -> BTreeSet<String> {
+) -> Option<BTreeSet<String>> {
     let directory = if folder.is_empty() {
         root.to_path_buf()
     } else {
         root.join(folder)
     };
     let mut sources = Vec::new();
-    if !walk(&directory, &directory, &mut sources) {
-        return BTreeSet::new();
+    let mut budget = MAX_GRAPH_BYTES;
+    if !walk(&directory, &directory, &mut sources, &mut budget) {
+        return None;
     }
-    let mut cache = DISK_SUMMARIES.lock();
-    if cache.len() > MAX_CACHED_SUMMARIES {
-        cache.clear();
-    }
-    let mut files = BTreeMap::new();
-    for (relative, absolute, metadata) in sources {
-        let path = join(folder, &relative);
-        // The overlay's text replaces this source's below; disk's is not read.
-        if overlay.is_some_and(|(overlaid, _)| overlaid == path) {
-            continue;
-        }
-        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-        let summary = match cache.get(&absolute) {
-            Some((time, length, summary)) if *time == modified && *length == metadata.len() => {
-                Arc::clone(summary)
+    // The cache's lock is held only to sort its hits from its misses: the misses are read and
+    // summarized once it is released, so a cold walk holds up no other caller.
+    let mut hits = Vec::with_capacity(sources.len());
+    let mut misses = Vec::new();
+    {
+        let cache = DISK_SUMMARIES.lock();
+        for (relative, absolute, metadata) in sources {
+            let path = join(folder, &relative);
+            // The overlay's text replaces this source's below; disk's is not read.
+            if overlay.is_some_and(|(overlaid, _)| overlaid == path) {
+                continue;
             }
-            _ => {
-                let source = if metadata.len() > MAX_SOURCE_BYTES {
-                    String::new()
-                } else {
-                    match std::fs::read(&absolute) {
-                        // As the host decodes a file it reads: invalid UTF-8 becomes
-                        // replacement characters.
-                        Ok(bytes) => String::from_utf8(bytes).unwrap_or_else(|error| {
-                            String::from_utf8_lossy(error.as_bytes()).into_owned()
-                        }),
-                        Err(error) if gone(&error) => continue,
-                        Err(_) => return BTreeSet::new(),
-                    }
-                };
-                let Some(summary) = summarize(&path, &source) else {
-                    continue;
-                };
-                let summary = Arc::new(summary);
-                cache.insert(absolute, (modified, metadata.len(), Arc::clone(&summary)));
-                summary
+            let stamp = Stamp::of(&metadata);
+            match (stamp, cache.get(&absolute)) {
+                (Some(stamp), Some((cached, summary))) if stamp == *cached => {
+                    hits.push((path, Arc::clone(summary)));
+                }
+                _ => misses.push((path, absolute, metadata.len(), stamp)),
+            }
+        }
+    }
+    let mut files = hits
+        .into_iter()
+        .map(|(path, summary)| (path, (*summary).clone()))
+        .collect::<BTreeMap<_, _>>();
+    let now = SystemTime::now();
+    let mut read = Vec::new();
+    for (path, absolute, length, stamp) in misses {
+        let source = if length > MAX_SOURCE_BYTES {
+            String::new()
+        } else {
+            match std::fs::read(&absolute) {
+                // As the host decodes a file it reads: invalid UTF-8 becomes replacement
+                // characters.
+                Ok(bytes) => String::from_utf8(bytes)
+                    .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
+                Err(error) if gone(&error) => continue,
+                Err(_) => return None,
             }
         };
-        files.insert(path, (*summary).clone());
+        let Some(summary) = summarize(&path, &source) else {
+            continue;
+        };
+        let settled = |stamp: &Stamp| {
+            now.duration_since(stamp.modified)
+                .is_ok_and(|age| age >= SETTLED_AFTER)
+        };
+        if let Some(stamp) = stamp.filter(settled) {
+            read.push((absolute, (stamp, Arc::new(summary.clone()))));
+        }
+        files.insert(path, summary);
     }
-    drop(cache);
+    if !read.is_empty() {
+        let mut cache = DISK_SUMMARIES.lock();
+        if cache.len() > MAX_CACHED_SUMMARIES {
+            cache.clear();
+        }
+        cache.extend(read);
+    }
     let mut root_app = directory.join("app").is_dir();
     if let Some((path, source)) = overlay {
         files.remove(path);
         if let Some(relative) = relative_to(folder, path)
             && let Some(source) = source
         {
-            // As the walk reads it: not below a nested package, `node_modules` or a hidden folder.
+            // As the walk reads it: not below a folder it skips, a nested package or checkout.
             let mut names = relative.split('/').collect::<Vec<_>>();
             names.pop();
             let walked = !names.iter().enumerate().any(|(depth, name)| {
-                *name == "node_modules"
-                    || name.starts_with('.')
-                    || directory
-                        .join(names[..=depth].join("/"))
-                        .join("package.json")
-                        .exists()
+                let below = directory.join(names[..=depth].join("/"));
+                skipped_folder(name)
+                    || below.join("package.json").exists()
+                    || below.join(".git").exists()
             });
             // A file there makes the folder present whether or not the graph reads it as a source.
             root_app |= relative.starts_with("app/");
@@ -620,9 +704,9 @@ pub(crate) fn on_disk(
     // The walk read one source past the bound, so an overlay's deletion can bring the package
     // back within it; past it, the package has no graph, as a file set has none.
     if files.len() > MAX_GRAPH_FILES {
-        return BTreeSet::new();
+        return None;
     }
-    server_graph(folder, &files, config, root_app)
+    Some(server_graph(folder, &files, config, root_app))
 }
 
 /// The summary of the ECMA source at `path`, read as a disk walk reads it: a source over 1 MiB
@@ -639,8 +723,12 @@ pub(crate) fn summarize_bounded(path: &str, source: &str) -> Option<Summary> {
 }
 
 /// The configuration of the package whose folder (workspace-relative) is `folder`, read on disk
-/// below `root` (`Config::read`): regular files of at most 1 MiB.
+/// below `root` (`Config::read`): regular files of at most 1 MiB whose canonical path lies below
+/// the root's, so a symlinked folder on the way leads nowhere outside the workspace.
 pub(crate) fn config_on_disk(root: &Path, folder: &str) -> Config {
+    let Ok(canonical_root) = root.canonicalize() else {
+        return Config::default();
+    };
     let read = |path: &str| {
         // Only a path of plain names below `root`: `join` reads an absolute or prefixed one (a
         // Windows drive or UNC share) in place of the workspace.
@@ -652,20 +740,34 @@ pub(crate) fn config_on_disk(root: &Path, folder: &str) -> Config {
         }
         let file = root.join(path);
         let metadata = std::fs::symlink_metadata(&file).ok()?;
-        (metadata.is_file() && metadata.len() <= MAX_SOURCE_BYTES)
+        if !metadata.is_file() || metadata.len() > MAX_SOURCE_BYTES {
+            return None;
+        }
+        let file = file.canonicalize().ok()?;
+        file.starts_with(&canonical_root)
             .then(|| std::fs::read_to_string(file).ok())
             .flatten()
     };
     Config::read(folder, &read)
 }
 
-/// Collects the ECMA source files below `directory` (paths relative to `top`); `false` where a
-/// folder or entry cannot be read (one deleted since its folder was listed is absent), or more
-/// than one past `MAX_GRAPH_FILES` (`on_disk` decides the bound once an overlay applies).
+/// Whether a server graph skips a folder of this name: a hidden one, or one the host's walk
+/// ignores (`IGNORED_DIRECTORIES`).
+fn skipped_folder(name: &str) -> bool {
+    name.starts_with('.') || IGNORED_DIRECTORIES.contains(&name)
+}
+
+/// Collects the ECMA source files below `directory` (paths relative to `top`), skipping the
+/// folders `skipped_folder` names, nested packages and nested checkouts (a folder holding
+/// `.git`); `false` where a folder or entry cannot be read (one deleted since its folder was
+/// listed is absent), more than one past `MAX_GRAPH_FILES` (`on_disk` decides the bound once an
+/// overlay applies), or the sources it would read (of at most 1 MiB) total more than `budget`
+/// bytes, which it counts down.
 fn walk(
     top: &Path,
     directory: &Path,
     sources: &mut Vec<(String, PathBuf, std::fs::Metadata)>,
+    budget: &mut u64,
 ) -> bool {
     let entries = match std::fs::read_dir(directory) {
         Ok(entries) => entries,
@@ -685,11 +787,13 @@ fn walk(
         };
         let path = entry.path();
         if kind.is_dir() {
-            if name == "node_modules" || name.starts_with('.') || path.join("package.json").exists()
+            if skipped_folder(&name)
+                || path.join("package.json").exists()
+                || path.join(".git").exists()
             {
                 continue;
             }
-            if !walk(top, &path, sources) {
+            if !walk(top, &path, sources, budget) {
                 return false;
             }
         } else if kind.is_file() && ecma_label(&name).is_some() {
@@ -701,6 +805,12 @@ fn walk(
                 Err(error) if gone(&error) => continue,
                 Err(_) => return false,
             };
+            if metadata.len() <= MAX_SOURCE_BYTES {
+                let Some(left) = budget.checked_sub(metadata.len()) else {
+                    return false;
+                };
+                *budget = left;
+            }
             let relative = path
                 .strip_prefix(top)
                 .map(|relative| {
@@ -724,13 +834,13 @@ fn gone(error: &std::io::Error) -> bool {
 }
 
 /// The server graph of the package in `folder` over a file set's entries: `sources` gives the
-/// set's paths and texts (`from_summaries`).
+/// set's paths and texts (`from_summaries`); `None` where the package has no graph.
 pub(crate) fn in_file_set<'s>(
     folder: &str,
     sources: impl Iterator<Item = (&'s str, &'s str)>,
     manifest: &dyn Fn(&str) -> bool,
     config: &Config,
-) -> BTreeSet<String> {
+) -> Option<BTreeSet<String>> {
     let entries = sources
         .filter(|(path, _)| relative_to(folder, path).is_some())
         .map(|(path, source)| (path, summarize_bounded(path, source)));
@@ -741,14 +851,15 @@ pub(crate) fn in_file_set<'s>(
 /// summary (`summarize_bounded`; `None` for a file of no ECMA dialect), `manifest` whether a
 /// directory holds a `package.json`, `config` the package's configuration. It reads the files a
 /// disk walk reads (`walk`): a file below a nested `package.json` belongs to that package, and one
-/// in `node_modules` or a hidden folder to none; past `MAX_GRAPH_FILES` sources the package has no
-/// graph. Any entry below `app/` marks the root app folder present, as the folder does on disk.
+/// in a folder `skipped_folder` names to none; past `MAX_GRAPH_FILES` sources the package has no
+/// graph (`None`). A file set holds no nested checkout's `.git`, and its host bounds its bytes.
+/// Any entry below `app/` marks the root app folder present, as the folder does on disk.
 pub(crate) fn from_summaries<'s>(
     folder: &str,
     entries: impl Iterator<Item = (&'s str, Option<Summary>)>,
     manifest: &dyn Fn(&str) -> bool,
     config: &Config,
-) -> BTreeSet<String> {
+) -> Option<BTreeSet<String>> {
     let walked = |path: &str, relative: &str| {
         let mut directory = parent(path);
         while directory.len() > folder.len() {
@@ -759,9 +870,7 @@ pub(crate) fn from_summaries<'s>(
         }
         let mut names = relative.split('/').collect::<Vec<_>>();
         names.pop();
-        !names
-            .iter()
-            .any(|name| *name == "node_modules" || name.starts_with('.'))
+        !names.iter().any(|name| skipped_folder(name))
     };
     let mut files = BTreeMap::new();
     let mut root_app = false;
@@ -774,11 +883,11 @@ pub(crate) fn from_summaries<'s>(
             continue;
         };
         if files.len() >= MAX_GRAPH_FILES {
-            return BTreeSet::new();
+            return None;
         }
         files.insert(path.to_owned(), summary);
     }
-    server_graph(folder, &files, config, root_app)
+    Some(server_graph(folder, &files, config, root_app))
 }
 
 /// `path` relative to `folder`; `None` outside it.

@@ -3795,3 +3795,238 @@ fn selector_indexes_skip_only_error_free_tapes_that_cannot_match() {
     assert!(!skipped(&narrowed, "lambda.py"));
     narrowed.close();
 }
+
+/// A Next package with no server graph (one of its folders cannot be read on disk, or a file set
+/// holds more sources than `module_graph::MAX_GRAPH_FILES`) gives its files no membership:
+/// neither `serverGraph: true` nor `serverGraph: false` holds, rather than every file outside.
+#[test]
+fn a_package_without_a_server_graph_gives_its_files_no_membership() {
+    let next = r#"{ "dependencies": { "next": "16" } }"#;
+    let page = "export default function Page() {}\n";
+    // The file-set path: one source past the bound.
+    let mut files = vec![
+        json!({ "path": "package.json", "language": "json", "source": next }),
+        json!({ "path": "app/page.tsx", "language": "tsx", "source": page }),
+    ];
+    files.extend((0..20_000).map(|index| {
+        json!({ "path": format!("lib/m{index}.ts"), "language": "typescript",
+            "source": "export {};\n" })
+    }));
+    let snapshot = json!({ "facts": [], "files": files,
+        "format": "rerail.repository-snapshot/v1", "revision": 0 });
+    let (snapshot, _) =
+        crate::code_rule_dsl::eval::parse_snapshot(&snapshot.to_string(), true).unwrap();
+    let package = snapshot.files[1]
+        .package
+        .as_ref()
+        .expect("the page's manifest");
+    assert_eq!(package.in_server_graph("app/page.tsx"), None);
+    // The disk path: a folder of the package cannot be read.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = TempDir::new("unread-server-graph");
+        let root = directory.0.join("repo");
+        for (path, source) in [
+            ("package.json", next),
+            ("app/page.tsx", page),
+            ("app/locked/x.ts", "export {};\n"),
+        ] {
+            let file = root.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, source).unwrap();
+        }
+        let membership = || {
+            crate::code_rule_dsl::package_manifest::Manifests::new(root.clone())
+                .reading_server_graphs(true)
+                .of_file(&root.join("app/page.tsx"))
+                .expect("the page's manifest")
+                .in_server_graph("app/page.tsx")
+        };
+        let locked = root.join("app/locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unread = membership();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(unread, None);
+        assert_eq!(membership(), Some(true));
+    }
+}
+
+/// A folder below the root whose path resolves outside it (a committed `vendor -> /home/user`)
+/// holds no manifest: the lookup reads nothing there and goes on to the folders above it.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_folder_pointing_outside_the_root_holds_no_manifest() {
+    let directory = TempDir::new("manifest-outside-root");
+    let root = directory.0.join("repo");
+    let outside = directory.0.join("outside");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(outside.join("app")).unwrap();
+    std::fs::write(
+        outside.join("package.json"),
+        r#"{ "type": "module", "dependencies": { "next": "16" } }"#,
+    )
+    .unwrap();
+    std::fs::write(outside.join("x.js"), "").unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("vendor")).unwrap();
+    // A symlink to a folder inside the root still reads its manifest.
+    std::fs::create_dir_all(root.join("inner")).unwrap();
+    std::fs::write(root.join("inner/package.json"), r#"{ "type": "module" }"#).unwrap();
+    std::os::unix::fs::symlink(root.join("inner"), root.join("alias")).unwrap();
+    let package = |path: &str| {
+        crate::code_rule_dsl::package_manifest::Manifests::new(root.clone())
+            .reading_server_graphs(true)
+            .of_file(&root.join(path))
+            .map(|manifest| manifest.to_wire())
+    };
+    assert_eq!(package("vendor/x.js"), None);
+    assert_eq!(
+        package("alias/x.js"),
+        Some(json!({ "folder": "alias", "type": "module" }))
+    );
+    std::fs::write(root.join("package.json"), "{}").unwrap();
+    assert_eq!(
+        package("vendor/x.js"),
+        Some(json!({ "folder": "", "type": "unset" }))
+    );
+}
+
+/// A clean tree's reuse follows the configuration a nested package's `extends` reaches outside
+/// it: editing the base's `jsxImportSource` leaves the tree's key as it was, but each restored
+/// file's results are keyed by its context (`file_context`), whose package digest carries the
+/// `jsxImportSource` read again, so the file is evaluated again rather than restored.
+#[test]
+fn a_reused_directory_follows_a_configuration_base_outside_it() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "jsx-other",
+        json!([{
+            "id": "other",
+            "violation": { "anchor": "witness.span", "code": "OTHER", "message": "other JSX" },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "jsxRuntime": ["other"] }, "rule": { "kind": "program" } } }
+        }]),
+    );
+    let base = |source: &str| {
+        format!("{{ \"compilerOptions\": {{ \"jsxImportSource\": \"{source}\" }} }}\n")
+    };
+    let preact = base("preact");
+    let directory = backdated_repository(
+        "reuse-outside-base",
+        &[
+            ("tsconfig.base.json", preact.as_bytes()),
+            (
+                "packages/web/package.json",
+                br#"{ "dependencies": { "react": "19" } }"#,
+            ),
+            (
+                "packages/web/tsconfig.json",
+                br#"{ "extends": "../../tsconfig.base.json" }"#,
+            ),
+            ("packages/web/src/a.ts", b"export const a = 1;\n"),
+        ],
+    );
+    let root = directory.0.join("repo");
+    let index = || {
+        let mut workspace = storage_workspace(&root, directory.store());
+        workspace.add_code_rule(&code_rule, None).unwrap();
+        let indexed = index_workspace(&workspace);
+        let violations = located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES));
+        workspace.completion_task().compute().unwrap();
+        workspace.close();
+        (indexed, violations)
+    };
+    let other = vec![("packages/web/src/a.ts".to_owned(), "other".to_owned(), 0)];
+    let (indexed, violations) = index();
+    assert_eq!(violations, other, "{indexed}");
+    let (indexed, violations) = index();
+    assert_eq!(violations, other, "{indexed}");
+    assert_eq!(indexed["restoredFiles"], json!(1), "{indexed}");
+    // The edit dirties only the root tree; `packages/` stays clean.
+    std::fs::write(root.join("tsconfig.base.json"), base("react")).unwrap();
+    let (indexed, violations) = index();
+    assert_eq!(violations, vec![], "{indexed}");
+    assert_eq!(indexed["restoredFiles"], json!(0), "{indexed}");
+}
+
+/// A request that fails after the workspace derived its package context (here, the store refuses
+/// a removal that is no repository path) leaves that context as it was: later server graphs read
+/// only what the workspace accepted.
+#[test]
+fn a_request_that_fails_partway_leaves_the_package_context_unchanged() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "server-graph-atomic",
+        json!([{ "id": "server",
+            "violation": { "anchor": "witness.span", "code": "SERVER", "message": "server" },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "package": { "serverGraph": true } }, "rule": { "kind": "program" } } } }]),
+    );
+    let directory = TempDir::new("context-atomic");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let workspace = stored_workspace(&store, "/context-atomic", &code_rule);
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let next = r#"{ "dependencies": { "next": "16" } }"#;
+    let page = |import: &str| format!("import '{import}';\nexport default function Page() {{}}\n");
+    let reported = || {
+        let mut reported = located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+            .into_iter()
+            .map(|(path, _, _)| path)
+            .collect::<Vec<_>>();
+        reported.sort();
+        reported
+    };
+    apply_host(
+        &workspace,
+        1,
+        json!([
+            file("package.json", "json", next),
+            file("app/page.tsx", "tsx", &page("./a")),
+            file("app/a.ts", "typescript", "export const a = 1;\n"),
+            file("lib/b.ts", "typescript", "export const b = 1;\n"),
+        ]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/a.ts", "app/page.tsx"]);
+    let context = || {
+        let state = workspace.state.lock().unwrap();
+        (
+            state.graph_entries.keys().cloned().collect::<Vec<_>>(),
+            state.server_graph_directories.clone(),
+            state.module_configs.clone(),
+            state
+                .manifests
+                .iter()
+                .map(|(directory, manifest)| (directory.clone(), *manifest.digest()))
+                .collect::<Vec<_>>(),
+        )
+    };
+    let before = context();
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": 2, "removed": ["../escape.ts"], "files": [
+            file("app/page.tsx", "tsx", &page("../lib/b")),
+            file("tsconfig.json", "json", "{}"),
+            file("web/package.json", "json", next),
+            file("web/app/page.tsx", "tsx", &page("./c")),
+        ] })
+        .to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    task.compute().unwrap_err();
+    assert!(
+        context() == before,
+        "the failed request changed the context"
+    );
+    // A later request deriving the graph again reads the page the workspace holds.
+    apply_host(
+        &workspace,
+        3,
+        json!([file("lib/c.ts", "typescript", "export const c = 1;\n")]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/a.ts", "app/page.tsx"]);
+    workspace.close();
+}
