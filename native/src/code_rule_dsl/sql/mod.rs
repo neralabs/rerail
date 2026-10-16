@@ -13,4 +13,6 @@ mod terminals;
 #[cfg(test)]
 mod tests;
 
-pub(super) use exec::{SqlError, SqlMatch, compile, environment};
+pub(super) use exec::{
+    ClauseRun, Compiled, Session, SqlError, SqlMatch, Stats, compile, compile_each, environment,
+};

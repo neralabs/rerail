@@ -3,6 +3,7 @@
 mod differential;
 mod hard_cases;
 mod nodes;
+mod probe;
 
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use serde_json::{Value, json};
@@ -38,6 +39,38 @@ pub(super) fn same(compiled: &CompiledCodeRuleDsl, snapshot: &Value) -> Value {
     let sql = evaluate(compiled, snapshot, "sql");
     assert_eq!(native, sql, "native and SQL disagree");
     native
+}
+
+/// The roots `grammar` matches in each of `docs`, by the SQL engine in batches of `batch` files on
+/// one session.
+pub(super) fn probe_sql(
+    grammar: &crate::code_rule_dsl::matcher::GrammarMatcher,
+    docs: &[crate::code_rule_dsl::tape::TapeDoc],
+    batch: usize,
+) -> (
+    Vec<Vec<u32>>,
+    std::time::Duration,
+    crate::code_rule_dsl::sql::Stats,
+) {
+    use crate::code_rule_dsl::sql::ClauseRun;
+    let started = std::time::Instant::now();
+    let compiled = crate::code_rule_dsl::sql::compile(&[grammar]).expect("compiles");
+    let mut session = compiled.session().expect("a session");
+    let mut roots = Vec::with_capacity(docs.len());
+    for chunk in docs.chunks(batch.max(1)) {
+        let run = ClauseRun {
+            statement: 0,
+            files: (0..chunk.len()).map(|file| (file, None)).collect(),
+        };
+        let found = session.run(chunk.to_vec(), &[run]).expect("runs");
+        roots.extend(
+            found
+                .into_iter()
+                .flatten()
+                .map(|matches| matches.into_iter().map(|found| found.root).collect()),
+        );
+    }
+    (roots, started.elapsed(), session.stats())
 }
 
 /// The statements one batch runs for a sample clause set: each clause's frames, and the stages

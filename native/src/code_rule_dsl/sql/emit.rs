@@ -12,8 +12,11 @@
 use super::plan::{CallReturn, CallSlot, OfRule, Op, Slot, SlotKind, Statement, Stop, Walk};
 use std::fmt::Write;
 
-/// Where the driver substitutes the statement's file list (`n.file IN (…)` of the root frame).
+/// Where the driver substitutes the statement's whole files (`n.file IN (…)` of the root frame).
 pub(super) const FILES: &str = "/*FILES*/";
+/// Where the driver substitutes the statement's selected roots, `(file, node)` rows, in files
+/// whose roots an anchor index narrowed (the root frame's second branch).
+pub(super) const ROOTS: &str = "/*ROOTS*/";
 /// Where the driver substitutes the prefix of the statement's own tables.
 pub(super) const NAMESPACE: &str = "/*NS*/";
 
@@ -170,10 +173,15 @@ impl<'s> Emitter<'s> {
             Some(kinds) if kinds.is_empty() => " AND 0".to_owned(),
             Some(kinds) => format!(" AND n.kind IN ({})", list(kinds)),
         };
+        // Every root of the clause's kinds in the whole files, then the selected roots of those
+        // kinds in the narrowed files.
         let root = self.frame(
             "r",
             &format!(
-                "SELECT ROW_NUMBER() OVER (), n.file, n.id{nulls} FROM node n WHERE n.file IN ({FILES}){kinds}"
+                "SELECT ROW_NUMBER() OVER (), file, id{nulls} FROM (\
+                 SELECT n.file AS file, n.id AS id FROM node n WHERE n.file IN ({FILES}){kinds} \
+                 UNION ALL SELECT n.file, n.id FROM ({ROOTS}) r CROSS JOIN node n \
+                 ON n.file = r.file AND n.id = r.node WHERE 1{kinds})"
             ),
         );
         self.op(&statement.op, &root)
