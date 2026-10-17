@@ -289,8 +289,16 @@ pub(super) fn compile_document(
     if clauses.is_empty() {
         return Err(invalid("/clauses must not be empty"));
     }
+    let shared_utils = collect_defines(clauses, capabilities)?;
+    let shared_origins = shared_utils
+        .iter()
+        .map(|(language, utils)| {
+            util_origins(utils, language, utils.keys()).map(|origins| (language.clone(), origins))
+        })
+        .collect::<Result<_>>()?;
     let defines = Defines {
-        utils: collect_defines(clauses, capabilities)?,
+        utils: shared_utils,
+        origins: shared_origins,
         options,
     };
     let mut compiled = Vec::with_capacity(clauses.len());
@@ -756,7 +764,17 @@ fn compile_query_as(
             .map_err(|error| invalid(error.to_string()))?;
             let calls = crate::code_rule_dsl::calls::CallsCollector::new(salt, seed);
             let mut bindable = BTreeSet::new();
-            let origins = util_origins(&utils, language_name)?;
+            let local_origins = util_origins(&utils, language_name, local.keys())?;
+            let shared_origins = defines.origins.get(language_name);
+            let origins = utils
+                .keys()
+                .map(|id| {
+                    *local_origins
+                        .get(id)
+                        .or_else(|| shared_origins.and_then(|origins| origins.get(id)))
+                        .expect("every utility has a local or shared origin")
+                })
+                .collect::<Vec<_>>();
             for (dialect, language) in &grammars {
                 let mut gaps = Vec::new();
                 let table = Arc::new(UtilTable::new(
@@ -1360,7 +1378,11 @@ fn declared_captures(
 }
 
 /// Each utility's `UtilOrigin`, in `utils` order: a digest of it and of every utility it reaches.
-fn util_origins(utils: &BTreeMap<String, UtilDef>, language: &str) -> Result<Vec<UtilOrigin>> {
+fn util_origins<'a>(
+    utils: &BTreeMap<String, UtilDef>,
+    language: &str,
+    roots: impl Iterator<Item = &'a String>,
+) -> Result<BTreeMap<String, UtilOrigin>> {
     use sha2::{Digest, Sha256};
     // Serialize each potentially large utility body once. The prior implementation recursively
     // serialized every reached body again for every utility root.
@@ -1372,9 +1394,9 @@ fn util_origins(utils: &BTreeMap<String, UtilDef>, language: &str) -> Result<Vec
                 .map_err(|error| invalid(error.to_string()))
         })
         .collect::<Result<BTreeMap<_, _>>>()?;
-    utils
-        .iter()
-        .map(|(id, util)| {
+    roots
+        .map(|id| {
+            let util = &utils[id];
             let mut reached = reachable(std::iter::once(util.rule), utils);
             reached.insert(id.clone());
             // Preserve the existing JSON digest byte for byte: `[language,id,[utility...]]`.
@@ -1402,9 +1424,12 @@ fn util_origins(utils: &BTreeMap<String, UtilDef>, language: &str) -> Result<Vec
                 .expect("utility origin JSON");
                 assert_eq!(body, expected);
             }
-            Ok(UtilOrigin {
-                digest: Sha256::digest(&body).into(),
-            })
+            Ok((
+                id.clone(),
+                UtilOrigin {
+                    digest: Sha256::digest(&body).into(),
+                },
+            ))
         })
         .collect()
 }

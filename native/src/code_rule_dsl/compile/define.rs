@@ -9,7 +9,7 @@ use super::refuse_unavailable_semantics;
 use super::utils::{UtilDef, UtilIds, UtilScope, reject_util_cycles, util_map};
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown, required_str};
 use crate::code_rule_dsl::language::CodeRuleLanguage;
-use crate::code_rule_dsl::matcher::UtilTable;
+use crate::code_rule_dsl::matcher::{UtilOrigin, UtilTable};
 use crate::code_rule_dsl::model::Capabilities;
 use napi::Result;
 use serde_json::Value;
@@ -25,6 +25,7 @@ pub(super) type SharedUtils<'a> = BTreeMap<String, BTreeMap<String, UtilDef<'a>>
 /// What the document's defines hold: shared utilities and options.
 pub(super) struct Defines<'a> {
     pub(super) utils: SharedUtils<'a>,
+    pub(super) origins: BTreeMap<String, BTreeMap<String, UtilOrigin>>,
     pub(super) options: Options,
 }
 
