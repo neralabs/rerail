@@ -572,8 +572,23 @@ fn binding_rules(rule: &serde_json::Map<String, Value>) -> Vec<(String, &Value)>
 }
 
 /// The utility calls a walk has followed, each with the names visible where it runs.
-struct Calls {
+pub(super) struct CompareWalk {
     walked: BTreeSet<(String, BTreeSet<String>, bool)>,
+    names: UtilitySummary<String, BTreeSet<String>>,
+}
+
+impl CompareWalk {
+    pub(super) fn new() -> Self {
+        Self {
+            walked: BTreeSet::new(),
+            names: UtilitySummary::new(),
+        }
+    }
+
+    pub(super) fn enter_utility(&mut self, id: &str, scopes: &[Scope]) -> bool {
+        let (names, fresh) = visible_names(scopes);
+        self.walked.insert((id.to_owned(), names, fresh))
+    }
 }
 
 /// Every `compare` and `within` in a validated rule, with the scopes it sits in. A utility the rule
@@ -585,20 +600,10 @@ pub(super) fn compare_sites<'a>(
     utils: &BTreeMap<String, UtilDef<'a>>,
     pattern_names: PatternNames<'_>,
     mut scopes: Vec<Scope>,
+    walk: &mut CompareWalk,
     sites: &mut Vec<CompareSite<'a>>,
 ) {
-    let mut calls = Calls {
-        walked: BTreeSet::new(),
-    };
-    walk_sites(
-        rule,
-        path,
-        utils,
-        pattern_names,
-        &mut calls,
-        &mut scopes,
-        sites,
-    );
+    walk_sites(rule, path, utils, pattern_names, walk, &mut scopes, sites);
 }
 
 /// What a call's comparisons can see: the names of the scopes back to the nearest stop rule, and
@@ -619,7 +624,7 @@ fn walk_sites<'a>(
     path: &str,
     utils: &BTreeMap<String, UtilDef<'a>>,
     pattern_names: PatternNames<'_>,
-    calls: &mut Calls,
+    calls: &mut CompareWalk,
     scopes: &mut Vec<Scope>,
     sites: &mut Vec<CompareSite<'a>>,
 ) {
@@ -629,17 +634,11 @@ fn walk_sites<'a>(
     let enter = |sub: &'a Value,
                  sub_path: String,
                  fresh: bool,
-                 calls: &mut Calls,
+                 calls: &mut CompareWalk,
                  scopes: &mut Vec<Scope>,
                  sites: &mut Vec<CompareSite<'a>>| {
         let mut names = BTreeSet::new();
-        scope_names(
-            sub,
-            utils,
-            pattern_names,
-            &mut UtilitySummary::new(),
-            &mut names,
-        );
+        scope_names(sub, utils, pattern_names, &mut calls.names, &mut names);
         scopes.push(Scope { fresh, names });
         walk_sites(sub, &sub_path, utils, pattern_names, calls, scopes, sites);
         scopes.pop();

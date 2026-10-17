@@ -41,7 +41,7 @@ use super::violations;
 use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
 pub(super) use ast_rule::compile_ast_rule;
 use ast_rule::validate_ast_rule;
-use compare::{binding_site_index, bound_elsewhere, compare_sites, frame_scope};
+use compare::{CompareWalk, binding_site_index, bound_elsewhere, compare_sites, frame_scope};
 use define::{CLAUSE_KINDS, Defines, collect_defines, is_define};
 use dialect::language_capability;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
@@ -972,29 +972,34 @@ fn compile_query_as(
                     .unwrap_or_default()
             };
             let mut sites = Vec::new();
+            let mut compare_walk = CompareWalk::new();
             compare_sites(
                 rule,
                 &rule_path,
                 &utils,
                 &pattern_names,
                 Vec::new(),
+                &mut compare_walk,
                 &mut sites,
             );
             // A parameterized utility's comparisons read its frame only: its parameters and its own.
-            for util in utils.values() {
+            for (id, util) in &utils {
                 let scopes = if util.params.is_empty() {
                     Vec::new()
                 } else {
                     frame_scope(util, &utils, &pattern_names)
                 };
-                compare_sites(
-                    util.rule,
-                    &util.rule_path,
-                    &utils,
-                    &pattern_names,
-                    scopes,
-                    &mut sites,
-                );
+                if compare_walk.enter_utility(id, &scopes) {
+                    compare_sites(
+                        util.rule,
+                        &util.rule_path,
+                        &utils,
+                        &pattern_names,
+                        scopes,
+                        &mut compare_walk,
+                        &mut sites,
+                    );
+                }
             }
             for (name, constraint) in &constraints {
                 let constraint_path = format!("{constraints_path}/{name}");
@@ -1004,6 +1009,7 @@ fn compile_query_as(
                     &utils,
                     &pattern_names,
                     Vec::new(),
+                    &mut compare_walk,
                     &mut sites,
                 );
             }
