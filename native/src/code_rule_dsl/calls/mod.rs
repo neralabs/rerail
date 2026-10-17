@@ -79,6 +79,7 @@ pub(crate) struct CallsTest {
 }
 
 /// A term found while compiling a query's rules, before its seed query is compiled.
+#[derive(Clone)]
 pub(crate) struct FoundTerm {
     pub(crate) key: Arc<str>,
     pub(crate) seed_key: Arc<str>,
@@ -111,6 +112,12 @@ impl CallsCollector {
         let mut seen = std::collections::HashSet::new();
         found.retain(|term| seen.insert(Arc::clone(&term.key)));
         found
+    }
+
+    /// Adds terms emitted by an already compiled utility stage. The root and constraints can then
+    /// add their terms before `take` deduplicates the complete query in first-seen order.
+    pub(crate) fn extend(&self, found: impl IntoIterator<Item = FoundTerm>) {
+        self.found.borrow_mut().extend(found);
     }
 
     /// Records the `calls` value at `path` and returns its test, in `language`, at `call_kinds`

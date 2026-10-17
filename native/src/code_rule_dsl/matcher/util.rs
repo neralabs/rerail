@@ -2,7 +2,7 @@ use super::AstMatcher;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 
 /// `matches` recursion deeper than this fails the clause for the file instead of risking the stack.
 /// Utilities recurse only through relations, so real rules recurse as deep as the syntax they walk.
@@ -112,8 +112,6 @@ pub(crate) struct UtilTable {
     pub(crate) draft: OnceLock<Vec<AstMatcher>>,
     /// Whether a compile-time walk reached a utility before either was filled.
     pub(crate) unfilled: AtomicBool,
-    /// The distinct parameterized calls compiled so far.
-    instances: Mutex<BTreeSet<(usize, CallArgs)>>,
 }
 
 impl UtilTable {
@@ -131,7 +129,6 @@ impl UtilTable {
             rules: OnceLock::new(),
             draft: OnceLock::new(),
             unfilled: AtomicBool::new(false),
-            instances: Mutex::new(BTreeSet::new()),
         }
     }
 
@@ -148,16 +145,6 @@ impl UtilTable {
             .flatten()
             .zip(&self.framed)
             .filter_map(|(rule, framed)| (!framed).then_some(rule))
-    }
-
-    /// Records a call; false once more than `MAX_UTIL_INSTANCES` distinct ones were recorded.
-    pub(crate) fn record_instance(&self, index: usize, args: &[(String, String)]) -> bool {
-        let mut instances = self
-            .instances
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        instances.insert((index, args.to_vec()));
-        instances.len() <= MAX_UTIL_INSTANCES
     }
 }
 

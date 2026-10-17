@@ -26,6 +26,7 @@ fn compile_rule(
         transform: None,
         conflicts: None,
         captures: Default::default(),
+        instances: Default::default(),
         calls: None,
     };
     crate::code_rule_dsl::compile::compile_ast_rule(rule, language, path, gaps, &utils)

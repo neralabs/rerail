@@ -42,13 +42,14 @@ use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern
 pub(super) use ast_rule::compile_ast_rule;
 use ast_rule::validate_ast_rule;
 use compare::{CompareWalk, binding_site_index, bound_elsewhere, compare_sites, frame_scope};
-use define::{CLAUSE_KINDS, Defines, collect_defines, is_define};
+use define::{CLAUSE_KINDS, CompiledUtilityStage, Defines, collect_defines, is_define};
 use dialect::language_capability;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use napi::Result;
 use regex::Regex;
 use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 pub(super) use utils::UtilScope;
@@ -300,6 +301,10 @@ pub(super) fn compile_document(
         utils: shared_utils,
         origins: shared_origins,
         options,
+        compiled: Default::default(),
+        utility_cache_hits: Default::default(),
+        utility_cache_misses: Default::default(),
+        utility_matcher_compilations: Default::default(),
     };
     let mut compiled = Vec::with_capacity(clauses.len());
     let mut required_ast = BTreeSet::new();
@@ -336,6 +341,16 @@ pub(super) fn compile_document(
         .into_iter()
         .map(|(language, grammar)| json!({ "engine": "ast-grep-core", "grammar": grammar, "language": language }))
         .collect::<Vec<_>>();
+    if std::env::var_os("RERAIL_CODE_RULE_PROFILE").is_some() {
+        eprintln!(
+            "RERAIL_COMPILE_UTILITIES {}",
+            json!({
+                "cacheHits": defines.utility_cache_hits.get(),
+                "cacheMisses": defines.utility_cache_misses.get(),
+                "matcherCompilations": defines.utility_matcher_compilations.get(),
+            })
+        );
+    }
     Ok((
         id,
         rule_mode,
@@ -762,7 +777,7 @@ fn compile_query_as(
                 ast.get("languageOptions"),
             ))
             .map_err(|error| invalid(error.to_string()))?;
-            let calls = crate::code_rule_dsl::calls::CallsCollector::new(salt, seed);
+            let calls = crate::code_rule_dsl::calls::CallsCollector::new(salt.clone(), seed);
             let mut bindable = BTreeSet::new();
             let local_origins = util_origins(&utils, language_name, local.keys())?;
             let shared_origins = defines.origins.get(language_name);
@@ -776,12 +791,110 @@ fn compile_query_as(
                 })
                 .collect::<Vec<_>>();
             for (dialect, language) in &grammars {
-                let mut gaps = Vec::new();
-                let table = Arc::new(UtilTable::new(
-                    utils.keys().cloned().collect(),
-                    utils.values().map(|util| !util.params.is_empty()).collect(),
-                    origins.iter().cloned().map(Some).collect(),
-                ));
+                // Stage one compiles an immutable utility graph. Its key includes every input that
+                // can shape a utility matcher; source paths are included because cached `calls`
+                // terms and diagnostics retain them. Stage two below links this query's root and
+                // constraints to the reusable table.
+                let utility_key: [u8; 32] = Sha256::digest(
+                    serde_json::to_vec(&(
+                        language_name,
+                        dialect,
+                        utils
+                            .iter()
+                            .map(|(id, util)| {
+                                (id, &util.params, util.rule, &util.path, &util.rule_path)
+                            })
+                            .collect::<Vec<_>>(),
+                        ast.get("languageOptions"),
+                        ast.get("transform"),
+                        seed,
+                    ))
+                    .map_err(|error| invalid(error.to_string()))?,
+                )
+                .into();
+                let cached = defines.compiled.borrow().get(&utility_key).cloned();
+                let stage = if let Some(cached) = cached {
+                    defines
+                        .utility_cache_hits
+                        .set(defines.utility_cache_hits.get() + 1);
+                    cached
+                } else {
+                    defines
+                        .utility_cache_misses
+                        .set(defines.utility_cache_misses.get() + 1);
+                    let table = Arc::new(UtilTable::new(
+                        utils.keys().cloned().collect(),
+                        utils.values().map(|util| !util.params.is_empty()).collect(),
+                        origins.iter().cloned().map(Some).collect(),
+                    ));
+                    let utility_conflicts = std::cell::RefCell::new(BTreeSet::new());
+                    let utility_calls =
+                        crate::code_rule_dsl::calls::CallsCollector::new(salt.clone(), seed);
+                    let utility_scope = UtilScope {
+                        table: Arc::downgrade(&table),
+                        ids: &util_ids,
+                        options: options.clone(),
+                        python: python.clone(),
+                        transform: transform.clone(),
+                        conflicts: Some(&utility_conflicts),
+                        captures: Default::default(),
+                        instances: Default::default(),
+                        calls: Some(&utility_calls),
+                    };
+                    let compile_utils = |gaps: &mut Vec<String>| {
+                        utils
+                            .values()
+                            .map(|util| {
+                                compile_ast_rule(
+                                    util.rule,
+                                    *language,
+                                    &util.rule_path,
+                                    gaps,
+                                    &utility_scope,
+                                )
+                            })
+                            .collect::<Result<Vec<_>>>()
+                    };
+                    // The draft resolves capture summaries across references. Only this immutable
+                    // stage repeats; every later query with the same context reuses its result.
+                    let mut gaps = Vec::new();
+                    let mut first_gaps = Vec::new();
+                    let mut compiled_utils = compile_utils(&mut first_gaps)?;
+                    let passes = if table.was_unfilled() { 2 } else { 1 };
+                    defines
+                        .utility_matcher_compilations
+                        .set(defines.utility_matcher_compilations.get() + utils.len() * passes);
+                    if table.was_unfilled() {
+                        if table.draft.set(compiled_utils).is_err() {
+                            unreachable!("a fresh table is drafted once");
+                        }
+                        compiled_utils = compile_utils(&mut gaps)?;
+                    } else {
+                        gaps.extend(first_gaps);
+                    }
+                    if table.rules.set(compiled_utils).is_err() {
+                        unreachable!("a fresh table is filled once");
+                    }
+                    let instances = utility_scope.instances();
+                    drop(utility_scope);
+                    let stage = Arc::new(CompiledUtilityStage {
+                        table,
+                        gaps,
+                        conflicts: utility_conflicts.into_inner(),
+                        calls: utility_calls.take(),
+                        instances,
+                    });
+                    defines
+                        .compiled
+                        .borrow_mut()
+                        .insert(utility_key, Arc::clone(&stage));
+                    stage
+                };
+                conflicts
+                    .borrow_mut()
+                    .extend(stage.conflicts.iter().cloned());
+                calls.extend(stage.calls.iter().cloned());
+                let table = Arc::clone(&stage.table);
                 let scope = UtilScope {
                     table: Arc::downgrade(&table),
                     ids: &util_ids,
@@ -790,40 +903,24 @@ fn compile_query_as(
                     transform: transform.clone(),
                     conflicts: Some(&conflicts),
                     captures: Default::default(),
+                    instances: std::cell::RefCell::new(stage.instances.clone()),
                     calls: Some(&calls),
                 };
-                let compile_utils = |gaps: &mut Vec<String>| {
-                    utils
-                        .values()
-                        .map(|util| {
-                            compile_ast_rule(util.rule, *language, &util.rule_path, gaps, &scope)
-                        })
-                        .collect::<Result<Vec<_>>>()
-                };
-                // A utility's terms are ordered by what the utilities they call bind, and its
-                // `parse` exports what they export, so utilities that met one not compiled yet are
-                // compiled again against this first compilation.
-                let mut first_gaps = Vec::new();
-                let mut compiled_utils = compile_utils(&mut first_gaps)?;
-                if table.was_unfilled() {
-                    if table.draft.set(compiled_utils).is_err() {
-                        unreachable!("a fresh table is drafted once");
-                    }
-                    compiled_utils = compile_utils(&mut gaps)?;
-                } else {
-                    gaps.extend(first_gaps);
-                }
                 // A parameterized utility's captures are its frame's; its calls report what returns.
-                for (util, def) in compiled_utils.iter().zip(utils.values()) {
+                for (util, def) in table
+                    .rules
+                    .get()
+                    .expect("a cached utility stage is filled")
+                    .iter()
+                    .zip(utils.values())
+                {
                     if def.params.is_empty() {
                         collect_variables(util, &mut variables);
                     } else {
                         collect_variables(util, &mut framed_variables);
                     }
                 }
-                if table.rules.set(compiled_utils).is_err() {
-                    unreachable!("a fresh table is filled once");
-                }
+                let mut gaps = stage.gaps.clone();
                 let mut matcher = compile_ast_rule(rule, *language, &rule_path, &mut gaps, &scope)?;
                 collect_variables(&matcher, &mut variables);
                 let mut compiled_constraints = Vec::with_capacity(constraints.len());

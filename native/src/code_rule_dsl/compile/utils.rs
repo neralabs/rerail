@@ -228,12 +228,18 @@ impl UtilScope<'_> {
         args: &[(String, String)],
         path: &str,
     ) -> Result<()> {
-        match self.table.upgrade() {
-            Some(table) if !table.record_instance(index, args) => Err(invalid(format!(
+        let mut instances = self.instances.borrow_mut();
+        instances.insert((index, args.to_vec()));
+        if instances.len() > MAX_UTIL_INSTANCES {
+            return Err(invalid(format!(
                 "{path}: more than {MAX_UTIL_INSTANCES} distinct parameterized utility calls in one query"
-            ))),
-            _ => Ok(()),
+            )));
         }
+        Ok(())
+    }
+
+    pub(super) fn instances(&self) -> BTreeSet<(usize, crate::code_rule_dsl::matcher::CallArgs)> {
+        self.instances.borrow().clone()
     }
 }
 
@@ -253,6 +259,8 @@ pub(crate) struct UtilScope<'a> {
     /// What the rule's terms bind and read, each utility summarized once per compilation of the
     /// table, for capture ordering and `all` order checks.
     pub(in crate::code_rule_dsl) captures: RefCell<CaptureAnalysis>,
+    /// Distinct parameterized calls belong to one query, not its reusable utility table.
+    pub(crate) instances: RefCell<BTreeSet<(usize, crate::code_rule_dsl::matcher::CallArgs)>>,
     /// Where the query collects its `calls` terms; `None` where `calls` is not supported.
     pub(crate) calls: Option<&'a crate::code_rule_dsl::calls::CallsCollector>,
 }

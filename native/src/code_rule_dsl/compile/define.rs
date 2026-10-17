@@ -13,6 +13,7 @@ use crate::code_rule_dsl::matcher::{UtilOrigin, UtilTable};
 use crate::code_rule_dsl::model::Capabilities;
 use napi::Result;
 use serde_json::Value;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -23,10 +24,24 @@ pub(super) const CLAUSE_KINDS: [&str; 4] = ["forbid", "require_each", "budget", 
 pub(super) type SharedUtils<'a> = BTreeMap<String, BTreeMap<String, UtilDef<'a>>>;
 
 /// What the document's defines hold: shared utilities and options.
+pub(super) struct CompiledUtilityStage {
+    pub(super) table: Arc<UtilTable>,
+    pub(super) gaps: Vec<String>,
+    pub(super) conflicts: BTreeSet<super::order::AllOrderConflict>,
+    pub(super) calls: Vec<crate::code_rule_dsl::calls::FoundTerm>,
+    pub(super) instances: BTreeSet<(usize, crate::code_rule_dsl::matcher::CallArgs)>,
+}
+
 pub(super) struct Defines<'a> {
     pub(super) utils: SharedUtils<'a>,
     pub(super) origins: BTreeMap<String, BTreeMap<String, UtilOrigin>>,
     pub(super) options: Options,
+    /// Context-independent utility compilation followed by query-specific root linking. Entries
+    /// are scoped to one document, so source paths and capability validation remain its own.
+    pub(super) compiled: RefCell<BTreeMap<[u8; 32], Arc<CompiledUtilityStage>>>,
+    pub(super) utility_cache_hits: Cell<usize>,
+    pub(super) utility_cache_misses: Cell<usize>,
+    pub(super) utility_matcher_compilations: Cell<usize>,
 }
 
 /// Whether a clause is a define.
@@ -151,6 +166,7 @@ fn check_dialects<'u>(
             transform: None,
             conflicts: Some(&ignored),
             captures: Default::default(),
+            instances: Default::default(),
             calls: Some(&calls),
         };
         let compile = |gaps: &mut BTreeMap<&'u str, Vec<String>>| {

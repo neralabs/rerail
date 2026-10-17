@@ -125,8 +125,42 @@ A final sample of `serverplan_state_tripwires` found this distribution:
 
 No remaining phase has the original 66.8 percent concentration.
 
-Shared utilities still compile into matchers for each query. Query options can change their meaning, so unconditional matcher reuse is not correct.
+## Two-stage utility compilation
 
-A future cache can use the utility identity, dialect, options, transforms, and caller frame as its key. That change needs a separate semantic design.
+A later top-down profile found that utility matcher compilation used 71.2 percent of active compilation samples.
 
-Clause compilation is also serial. Parallel clause compilation can decrease wall time, but it must preserve deterministic errors and output order.
+The catalog compiled 22,519 utility matchers from 11,552 reachable utility slots. Most queries compiled their complete utility table twice.
+
+The new first stage compiles and stores an immutable utility table. Its cache key includes all inputs that can change the matcher:
+
+- The language and grammar dialect.
+- The utility bodies, parameters, dependency closure, and source paths.
+- The language options and transforms.
+- Whether the query is a `calls` seed.
+
+The stored stage also holds grammar gaps, ordering conflicts, `calls` terms, and parameterized-call instances.
+
+The second stage links the query root and constraints to that table. Query-specific conflicts, calls, and parameter limits remain separate.
+
+Parameterized-call accounting moved from `UtilTable` to `UtilScope`. Thus, two queries can share a table without sharing their limits.
+
+The complete catalog had these cache results:
+
+- 383 cache hits.
+- 348 cache misses.
+- 14,742 utility matcher compilations.
+- 34.5 percent fewer utility matcher compilations.
+
+Median process CPU decreased from 8.29 seconds to 5.94 seconds. This is a 28.3 percent decrease.
+
+Median peak RSS decreased from 1.381 GiB to 0.969 GiB. This is a 29.8 percent decrease.
+
+Wall time varied from 11.40 to 17.45 seconds because the process did not receive continuous CPU time. The median was 14.58 seconds.
+
+The sampled utility-compilation share decreased from 71.2 percent to 55.8 percent. Regex construction remained the largest nested operation at 40.3 percent.
+
+The complete native test run passed 1,062 tests and ignored 19 tests. The allocator purge test failed against the local shim.
+
+Clause compilation remains serial. Parallel clause compilation must preserve deterministic errors and output order.
+
+Exact utility-graph cache keys do not share partial closures. A later change can compile shared dependency components independently.
