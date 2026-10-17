@@ -46,14 +46,37 @@ use define::{CLAUSE_KINDS, CompiledUtilityStage, Defines, collect_defines, is_de
 use dialect::language_capability;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use napi::Result;
-use regex::Regex;
+use rayon::prelude::*;
+use serde::Serialize;
 use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{self, Write};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 pub(super) use utils::UtilScope;
 use utils::{UtilDef, UtilIds, reachable, reject_util_cycles, rule_map, util_map};
+
+struct DigestWriter<'a>(&'a mut Sha256);
+
+impl Write for DigestWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn digest_json(value: &impl Serialize) -> Result<[u8; 32]> {
+    let mut digest = Sha256::new();
+    serde_json::to_writer(DigestWriter(&mut digest), value)
+        .map_err(|error| invalid(error.to_string()))?;
+    Ok(digest.finalize().into())
+}
 
 /// Parses a code-rule document. An object with two equal keys is an error: a plain `Value` keeps the
 /// last one, so the first term would vanish silently (ast-grep 0.45.3 rejects such a rule).
@@ -302,34 +325,70 @@ pub(super) fn compile_document(
         origins: shared_origins,
         options,
         compiled: Default::default(),
+        stage_locks: Default::default(),
         utility_cache_hits: Default::default(),
         utility_cache_misses: Default::default(),
         utility_matcher_compilations: Default::default(),
     };
+    struct ClauseOutput {
+        index: usize,
+        id: String,
+        clause: Option<CompiledClause>,
+        required_ast: BTreeSet<(String, String)>,
+        requires_llm: bool,
+    }
+    // Compile clauses in parallel, but inspect their results in source order. Thus, errors,
+    // duplicate-id reports, required capabilities, and final clause order stay deterministic.
+    let outputs = clauses
+        .par_iter()
+        .enumerate()
+        .map(|(index, clause)| {
+            let path = format!("/clauses/{index}");
+            let mut required_ast = BTreeSet::new();
+            let mut requires_llm = false;
+            let compiled_clause = if is_define(clause) {
+                None
+            } else {
+                Some(compile_clause(
+                    clause,
+                    &path,
+                    capabilities,
+                    &defines,
+                    &mut required_ast,
+                    &mut requires_llm,
+                )?)
+            };
+            let id = match &compiled_clause {
+                Some(clause) => clause.id.clone(),
+                None => required_str(clause, "id", &path)?.to_owned(),
+            };
+            Ok(ClauseOutput {
+                index,
+                id,
+                clause: compiled_clause,
+                required_ast,
+                requires_llm,
+            })
+        })
+        .collect::<Vec<Result<ClauseOutput>>>();
     let mut compiled = Vec::with_capacity(clauses.len());
     let mut required_ast = BTreeSet::new();
     let mut requires_llm = false;
     let mut ids = BTreeSet::new();
-    for (index, clause) in clauses.iter().enumerate() {
-        let path = format!("/clauses/{index}");
-        let id = if is_define(clause) {
-            required_str(clause, "id", &path)?.to_owned()
-        } else {
-            let value = compile_clause(
-                clause,
-                &path,
-                capabilities,
-                &defines,
-                &mut required_ast,
-                &mut requires_llm,
-            )?;
-            let id = value.id.clone();
-            compiled.push(value);
-            id
-        };
-        if !ids.insert(id.clone()) {
-            return Err(invalid(format!("duplicate clause id `{id}` at {path}")));
+    for output in outputs {
+        let output = output?;
+        let path = format!("/clauses/{}", output.index);
+        if !ids.insert(output.id.clone()) {
+            return Err(invalid(format!(
+                "duplicate clause id `{}` at {path}",
+                output.id
+            )));
         }
+        if let Some(clause) = output.clause {
+            compiled.push(clause);
+        }
+        required_ast.extend(output.required_ast);
+        requires_llm |= output.requires_llm;
     }
 
     if compiled.is_empty() {
@@ -342,12 +401,15 @@ pub(super) fn compile_document(
         .map(|(language, grammar)| json!({ "engine": "ast-grep-core", "grammar": grammar, "language": language }))
         .collect::<Vec<_>>();
     if std::env::var_os("RERAIL_CODE_RULE_PROFILE").is_some() {
+        let (regex_hits, regex_misses) = crate::code_rule_dsl::regex_cache::stats();
         eprintln!(
             "RERAIL_COMPILE_UTILITIES {}",
             json!({
-                "cacheHits": defines.utility_cache_hits.get(),
-                "cacheMisses": defines.utility_cache_misses.get(),
-                "matcherCompilations": defines.utility_matcher_compilations.get(),
+                "cacheHits": defines.utility_cache_hits.load(Ordering::Relaxed),
+                "cacheMisses": defines.utility_cache_misses.load(Ordering::Relaxed),
+                "matcherCompilations": defines.utility_matcher_compilations.load(Ordering::Relaxed),
+                "regexCacheHits": regex_hits,
+                "regexCacheMisses": regex_misses,
             })
         );
     }
@@ -593,7 +655,7 @@ fn compile_query_as(
                 }
             };
             Ok(Query::Regex {
-                regex: Regex::new(pattern)
+                regex: crate::code_rule_dsl::regex_cache::compile(pattern)
                     .map_err(|error| invalid(format!("{path}/regex/pattern: {error}")))?,
                 source,
             })
@@ -768,15 +830,17 @@ fn compile_query_as(
             let conflicts = std::cell::RefCell::new(BTreeSet::new());
             // `calls` terms of the rule and its utilities; a term's seed depends on the utilities
             // and language options its inner rule reads, so they salt its key.
-            let salt = serde_json::to_string(&(
-                language_name,
-                utils
-                    .iter()
-                    .map(|(id, util)| (id, &util.params, util.rule))
-                    .collect::<Vec<_>>(),
-                ast.get("languageOptions"),
-            ))
-            .map_err(|error| invalid(error.to_string()))?;
+            let salt = format!(
+                "{:x}",
+                Sha256::digest(digest_json(&(
+                    language_name,
+                    utils
+                        .iter()
+                        .map(|(id, util)| (id, &util.params, util.rule))
+                        .collect::<Vec<_>>(),
+                    ast.get("languageOptions"),
+                ))?)
+            );
             let calls = crate::code_rule_dsl::calls::CallsCollector::new(salt.clone(), seed);
             let mut bindable = BTreeSet::new();
             let local_origins = util_origins(&utils, language_name, local.keys())?;
@@ -795,33 +859,29 @@ fn compile_query_as(
                 // can shape a utility matcher; source paths are included because cached `calls`
                 // terms and diagnostics retain them. Stage two below links this query's root and
                 // constraints to the reusable table.
-                let utility_key: [u8; 32] = Sha256::digest(
-                    serde_json::to_vec(&(
-                        language_name,
-                        dialect,
-                        utils
-                            .iter()
-                            .map(|(id, util)| {
-                                (id, &util.params, util.rule, &util.path, &util.rule_path)
-                            })
-                            .collect::<Vec<_>>(),
-                        ast.get("languageOptions"),
-                        ast.get("transform"),
-                        seed,
-                    ))
-                    .map_err(|error| invalid(error.to_string()))?,
-                )
-                .into();
-                let cached = defines.compiled.borrow().get(&utility_key).cloned();
+                let utility_key = digest_json(&(
+                    &salt,
+                    dialect,
+                    utils
+                        .iter()
+                        .map(|(id, util)| (id, &util.path, &util.rule_path))
+                        .collect::<Vec<_>>(),
+                    ast.get("transform"),
+                    seed,
+                ))?;
+                let stage_lock = defines
+                    .stage_locks
+                    .lock()
+                    .entry(utility_key)
+                    .or_insert_with(|| Arc::new(parking_lot::Mutex::new(())))
+                    .clone();
+                let _stage_guard = stage_lock.lock();
+                let cached = defines.compiled.lock().get(&utility_key).cloned();
                 let stage = if let Some(cached) = cached {
-                    defines
-                        .utility_cache_hits
-                        .set(defines.utility_cache_hits.get() + 1);
+                    defines.utility_cache_hits.fetch_add(1, Ordering::Relaxed);
                     cached
                 } else {
-                    defines
-                        .utility_cache_misses
-                        .set(defines.utility_cache_misses.get() + 1);
+                    defines.utility_cache_misses.fetch_add(1, Ordering::Relaxed);
                     let table = Arc::new(UtilTable::new(
                         utils.keys().cloned().collect(),
                         utils.values().map(|util| !util.params.is_empty()).collect(),
@@ -863,7 +923,7 @@ fn compile_query_as(
                     let passes = if table.was_unfilled() { 2 } else { 1 };
                     defines
                         .utility_matcher_compilations
-                        .set(defines.utility_matcher_compilations.get() + utils.len() * passes);
+                        .fetch_add(utils.len() * passes, Ordering::Relaxed);
                     if table.was_unfilled() {
                         if table.draft.set(compiled_utils).is_err() {
                             unreachable!("a fresh table is drafted once");
@@ -884,11 +944,13 @@ fn compile_query_as(
                         calls: utility_calls.take(),
                         instances,
                     });
-                    defines
-                        .compiled
-                        .borrow_mut()
-                        .insert(utility_key, Arc::clone(&stage));
-                    stage
+                    let mut compiled = defines.compiled.lock();
+                    if let Some(existing) = compiled.get(&utility_key) {
+                        Arc::clone(existing)
+                    } else {
+                        compiled.insert(utility_key, Arc::clone(&stage));
+                        stage
+                    }
                 };
                 conflicts
                     .borrow_mut()

@@ -82,6 +82,11 @@ pub(super) fn is_rule_key(key: &str) -> bool {
 
 type RelationConstructor = fn(Box<Related>, StopBy) -> AstMatcher;
 
+pub(super) fn compile_regex(source: &str, path: &str) -> Result<Regex> {
+    crate::code_rule_dsl::regex_cache::compile(source)
+        .map_err(|_| invalid(format!("{path}: Parsing text matcher fails.")))
+}
+
 pub(super) const AST_RELATIONS: [(&str, RelationConstructor); 4] = [
     ("inside", AstMatcher::Inside),
     ("has", AstMatcher::Has),
@@ -147,8 +152,7 @@ pub(super) fn validate_ast_rule(
             "maxRegexPatternBytes",
             limits.max_regex_pattern_bytes,
         )?;
-        Regex::new(source)
-            .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
+        compile_regex(source, &format!("{path}/regex"))?;
     }
     if let Some(nth) = rule.get("nthChild") {
         validate_nth_child(nth, &format!("{path}/nthChild"), limits, utils)?;
@@ -456,9 +460,10 @@ pub(crate) fn compile_ast_rule(
         });
     }
     if let Some(regex) = rule.get("regex").and_then(Value::as_str) {
-        terms.push(AstMatcher::Regex(Regex::new(regex).map_err(|_| {
-            invalid(format!("{path}/regex: Parsing text matcher fails."))
-        })?));
+        terms.push(AstMatcher::Regex(compile_regex(
+            regex,
+            &format!("{path}/regex"),
+        )?));
     }
     if let Some(capture) = rule.get("capture") {
         terms.push(

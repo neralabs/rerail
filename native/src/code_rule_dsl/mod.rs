@@ -16,6 +16,7 @@ mod placement;
 #[cfg(feature = "code-rule-profile")]
 mod profile;
 mod query;
+mod regex_cache;
 mod scope;
 mod soundness;
 mod suppress;

@@ -12,10 +12,11 @@ use crate::code_rule_dsl::language::CodeRuleLanguage;
 use crate::code_rule_dsl::matcher::{UtilOrigin, UtilTable};
 use crate::code_rule_dsl::model::Capabilities;
 use napi::Result;
+use parking_lot::Mutex;
 use serde_json::Value;
-use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 
 /// The constraint forms a clause other than a define holds.
 pub(super) const CLAUSE_KINDS: [&str; 4] = ["forbid", "require_each", "budget", "llm"];
@@ -38,10 +39,11 @@ pub(super) struct Defines<'a> {
     pub(super) options: Options,
     /// Context-independent utility compilation followed by query-specific root linking. Entries
     /// are scoped to one document, so source paths and capability validation remain its own.
-    pub(super) compiled: RefCell<BTreeMap<[u8; 32], Arc<CompiledUtilityStage>>>,
-    pub(super) utility_cache_hits: Cell<usize>,
-    pub(super) utility_cache_misses: Cell<usize>,
-    pub(super) utility_matcher_compilations: Cell<usize>,
+    pub(super) compiled: Mutex<BTreeMap<[u8; 32], Arc<CompiledUtilityStage>>>,
+    pub(super) stage_locks: Mutex<BTreeMap<[u8; 32], Arc<Mutex<()>>>>,
+    pub(super) utility_cache_hits: AtomicUsize,
+    pub(super) utility_cache_misses: AtomicUsize,
+    pub(super) utility_matcher_compilations: AtomicUsize,
 }
 
 /// Whether a clause is a define.

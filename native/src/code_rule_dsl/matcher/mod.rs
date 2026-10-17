@@ -183,7 +183,7 @@ impl Constrained {
 
 #[derive(Clone)]
 pub(super) enum AstMatcher {
-    Pattern(Pattern),
+    Pattern(Arc<Pattern>),
     Kind(KindMatcher),
     Regex(Regex),
     All(Vec<AstMatcher>),

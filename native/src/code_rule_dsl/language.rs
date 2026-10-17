@@ -36,7 +36,11 @@ use ast_grep_core::{
     tree_sitter::{StrDoc, TSLanguage},
 };
 use ast_grep_language::{LanguageExt, SupportLang};
+use parking_lot::Mutex;
+use rustc_hash::FxHashMap;
+use sha2::{Digest, Sha256};
 use std::borrow::Cow;
+use std::sync::{Arc, LazyLock};
 
 /// Rerail's grammar dialect. `ast_grep_language::SupportLang` is closed, while Blade (parsed by
 /// Rerail's port of Forte, `blade::forte`) is part of Rerail's supported source surface.
@@ -493,6 +497,13 @@ pub(crate) enum PatternSource<'a> {
     Contextual { context: &'a str, selector: &'a str },
 }
 
+type PatternKey = [u8; 32];
+type CompiledPattern = (Arc<Pattern>, GrammarDialect);
+type PatternPrograms = FxHashMap<PatternKey, CompiledPattern>;
+static PATTERNS: LazyLock<Mutex<PatternPrograms>> =
+    LazyLock::new(|| Mutex::new(FxHashMap::default()));
+const MAX_PATTERNS: usize = 4_096;
+
 /// A rule's pattern compiled for `language`, with the dialect its source was parsed as. A Blade
 /// pattern that holds no Blade construct (Blade reads it as text alone, `sprintf($F, $$$A)`) is
 /// PHP: it is parsed with PHP's grammar and matches the template's embedded program
@@ -500,49 +511,80 @@ pub(crate) enum PatternSource<'a> {
 pub(crate) fn rule_pattern(
     source: PatternSource<'_>,
     language: GrammarDialect,
-) -> Result<(Pattern, GrammarDialect), PatternError> {
+) -> Result<(Arc<Pattern>, GrammarDialect), PatternError> {
+    let mut digest = Sha256::new();
+    digest.update([language as u8]);
     let text = match &source {
-        PatternSource::Plain(text) => text,
-        PatternSource::Contextual { context, .. } => context,
+        PatternSource::Plain(context) => {
+            digest.update([0]);
+            digest.update((context.len() as u64).to_le_bytes());
+            digest.update(context.as_bytes());
+            *context
+        }
+        PatternSource::Contextual { context, selector } => {
+            digest.update([1]);
+            digest.update((context.len() as u64).to_le_bytes());
+            digest.update(context.as_bytes());
+            digest.update((selector.len() as u64).to_le_bytes());
+            digest.update(selector.as_bytes());
+            *context
+        }
     };
+    let key: PatternKey = digest.finalize().into();
+    if let Some(compiled) = PATTERNS.lock().get(&key).cloned() {
+        return Ok(compiled);
+    }
     let php = adapter::with_adapter!(
         Family::of(language),
         A => <A as adapter::SyntaxRules>::embeds_pattern(text)
     );
-    if !php {
+    let (mut pattern, dialect) = if !php {
         let pattern = match source {
             PatternSource::Plain(text) => Pattern::try_new(text, language)?,
             PatternSource::Contextual { context, selector } => {
                 Pattern::contextual(context, selector, language)?
             }
         };
-        return Ok((pattern, language));
-    }
-    let dialect = GrammarDialect::Php;
-    let mut pattern = match source {
-        PatternSource::Plain(text) => Pattern::try_new(text, dialect)?,
-        PatternSource::Contextual { context, selector } => {
-            // The selected node's own kind restricts what it matches; `Pattern::contextual`
-            // records it in PHP's numbering, so the pattern is built from the node itself.
-            let root = dialect.ast_grep(dialect.pre_process_pattern(context));
-            let kind = ast_grep_core::matcher::KindMatcher::try_new(selector, dialect)?;
-            let Some(node) = root.root().find(&kind) else {
-                return Err(PatternError::NoSelectorInContext {
-                    context: context.to_owned(),
-                    selector: selector.to_owned(),
-                });
-            };
-            let pattern = Pattern::from(node.get_node().clone());
-            if matches!(pattern.node, PatternNode::MetaVar { .. }) {
-                return Err(PatternError::Parse(format!(
-                    "the selector `{selector}` selects a metavariable, which matches the selected kind only in a pattern of the template's own grammar; select the node around it"
-                )));
+        (pattern, language)
+    } else {
+        let dialect = GrammarDialect::Php;
+        let pattern = match source {
+            PatternSource::Plain(text) => Pattern::try_new(text, dialect)?,
+            PatternSource::Contextual { context, selector } => {
+                // The selected node's own kind restricts what it matches. Build the pattern from
+                // that node before its PHP kind numbers move into Blade's combined catalog.
+                let root = dialect.ast_grep(dialect.pre_process_pattern(context));
+                let kind = ast_grep_core::matcher::KindMatcher::try_new(selector, dialect)?;
+                let Some(node) = root.root().find(&kind) else {
+                    return Err(PatternError::NoSelectorInContext {
+                        context: context.to_owned(),
+                        selector: selector.to_owned(),
+                    });
+                };
+                let pattern = Pattern::from(node.get_node().clone());
+                if matches!(pattern.node, PatternNode::MetaVar { .. }) {
+                    return Err(PatternError::Parse(format!(
+                        "the selector `{selector}` selects a metavariable, which matches the selected kind only in a pattern of the template's own grammar; select the node around it"
+                    )));
+                }
+                pattern
             }
-            pattern
-        }
+        };
+        (pattern, dialect)
     };
-    shift_kinds(&mut pattern.node, &BLADE_EMBEDDED);
-    Ok((pattern, dialect))
+    if php {
+        shift_kinds(&mut pattern.node, &BLADE_EMBEDDED);
+    }
+    let compiled = (Arc::new(pattern), dialect);
+    let mut patterns = PATTERNS.lock();
+    if let Some(existing) = patterns.get(&key) {
+        return Ok(existing.clone());
+    }
+    if patterns.len() == MAX_PATTERNS {
+        patterns.clear();
+    }
+    patterns.insert(key, compiled.clone());
+    Ok(compiled)
 }
 
 /// Whether Blade reads `source` as text alone, with no directive, echo, `@php`, component, HTML

@@ -21,7 +21,7 @@ impl TextRegex {
     /// Compiles a pattern: Rust syntax, or Rust syntax with backreferences. `None` for anything
     /// else (look-around, atomic groups, conditionals, a malformed pattern).
     pub(crate) fn new(pattern: &str) -> Option<Self> {
-        if let Ok(regex) = Regex::new(pattern) {
+        if let Ok(regex) = crate::code_rule_dsl::regex_cache::compile(pattern) {
             return Some(Self::Plain(regex));
         }
         // Only a pattern whose one fault is a backreference goes on.
