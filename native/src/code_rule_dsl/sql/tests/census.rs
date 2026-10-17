@@ -303,3 +303,82 @@ fn recursion_in(rule: &crate::code_rule_dsl::matcher::AstMatcher) -> bool {
     }
     false
 }
+
+/// Diagnosis of the differential's slowest case (`RERAIL_SQL_DIFF_SKIP`): each statement's rows
+/// over growing prefixes of a Python fixture, against the file's node count. Run by hand:
+/// `cargo test --release sql::tests::census::the_slow_case_rows -- --ignored --nocapture`.
+#[test]
+#[ignore = "a diagnosis, run by hand"]
+fn the_slow_case_rows() {
+    use crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE;
+    use crate::code_rule_dsl::test_support::{clause_document, compile_document_with};
+    use serde_json::{Value, json};
+    let rule = json!({
+        "follows": { "count": { "max": 3, "min": 2, "precedes": { "kind": "if_statement", "pattern": "a == (\"a\" \"b\")", "stopBy": "end" } } },
+        "inside": {
+            "has": { "count": { "as": "N", "max": 0, "offset": 0, "precedes": { "nthChild": "2n+1", "stopBy": "end" } }, "stopBy": "end" },
+            "not": { "pattern": "j := $A" },
+            "stopBy": { "kind": "named_expression" },
+        },
+        "not": { "kind": "pass_statement" },
+    });
+    let document = clause_document(json!({
+        "id": "slow", "forbid": { "ast": { "language": "python", "rule": rule } },
+        "violation": { "anchor": "witness.span", "code": "X", "message": "x" },
+    }));
+    let mut capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
+    capabilities["limits"]["maxWitnesses"] = json!(100_000_000);
+    capabilities["limits"]["maxVisitedNodes"] = json!(1_000_000_000_000u64);
+    let compiled = compile_document_with(document, &capabilities).expect("compiles");
+    let source = std::fs::read_to_string(format!(
+        "{}/python/scope/usage/F841.py",
+        crate::code_rule_dsl::fixtures_dir!()
+    ))
+    .expect("fixture");
+    let lines: Vec<&str> = source.lines().collect();
+    for take in [10, 20, 40] {
+        let prefix = lines[..take.min(lines.len())].join("\n") + "\n";
+        let doc = super::differential::tape(
+            crate::code_rule_dsl::language::dialect_by_label("python").expect("python"),
+            &prefix,
+        );
+        // Nodes, (node, ancestor) pairs, and the descendants of each distinct node summed.
+        let root = ast_grep_core::AstGrep::doc(doc.clone());
+        let count = doc.transducer_len();
+        let mut pairs = 0usize;
+        let mut below = 0usize;
+        for id in 0..count as u32 {
+            let node = crate::code_rule_dsl::matcher::node_at(&root, id);
+            pairs += node.ancestors().count();
+            below += node.dfs().count() - 1;
+        }
+        let input = super::snapshot(&[("python", "a.py", &prefix)]);
+        STATEMENT_PROFILE.set(Some(Default::default()));
+        let started = std::time::Instant::now();
+        let sql = compiled
+            .evaluate(input.to_string(), "report".to_owned(), Some("sql".to_owned()))
+            .expect("sql");
+        let sql_time = started.elapsed();
+        let profile = STATEMENT_PROFILE.take().unwrap_or_default();
+        let started = std::time::Instant::now();
+        let native = compiled
+            .evaluate(input.to_string(), "report".to_owned(), Some("native".to_owned()))
+            .expect("native");
+        assert_eq!(native, sql);
+        let mut rows: Vec<(usize, u64, String)> = profile
+            .into_iter()
+            .map(|(sql, (nanos, rows, _))| (rows, nanos, sql))
+            .collect();
+        rows.sort_by(|a, b| b.0.cmp(&a.0));
+        let total: usize = rows.iter().map(|row| row.0).sum();
+        eprintln!(
+            "{take} lines: {count} nodes, {pairs} (node, ancestor) pairs, {below} (node, descendant) pairs; sql {:.2}s, native {:.3}s, {total} rows written",
+            sql_time.as_secs_f64(),
+            started.elapsed().as_secs_f64()
+        );
+        for (rows, nanos, sql) in rows.iter().take(8) {
+            let shown: String = sql.chars().take(260).collect();
+            eprintln!("  {rows:>10} rows {:>8.3}s  {shown}", *nanos as f64 / 1e9);
+        }
+    }
+}
