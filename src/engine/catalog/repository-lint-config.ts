@@ -59,8 +59,8 @@ interface TslintReplacement {
 /**
  * The TSLint rules read from `tslint.json`, by typescript-eslint's TSLint migration table. TSLint 5.20.1's
  * `no-unused-expression` never reports a conditional whose branches are both used (`allowTernary`), and
- * `allow-fast-null-checks` allows `e && e.f()` and `e || f()`; `allow-new` needs no option, since the ESLint rule never
- * reports `new`.
+ * `allow-fast-null-checks` allows `e && e.f()` and `e || f()` (as `allowShortCircuit`, which also allows `e ?? f()`,
+ * which TSLint reports); `allow-new` needs no option, since the ESLint rule never reports `new`.
  */
 const TSLINT_RULES: Readonly<Record<string, TslintReplacement>> = {
   "no-unused-expression": {
