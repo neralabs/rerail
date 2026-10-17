@@ -1008,3 +1008,82 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     });
   });
 });
+
+// NER-1945: rxjs's tslint.json allows short-circuit calls (`"no-unused-expression": [true, "allow-fast-null-checks"]`),
+// and typescript-eslint's no-unused-expressions steered agents into dropping the condition of `!seen && startTimer()`.
+describe("proposeLintConfigSettings for short-circuit calls", () => {
+  const UNUSED_EXPRESSIONS = "typescript-eslint-no-unused-expressions";
+
+  it("configures typescript-eslint's no-unused-expressions from an ESLint config's allowShortCircuit and allowTernary", async () => {
+    const root = await repository({ ".eslintrc.json": JSON.stringify({ rules: { "@typescript-eslint/no-unused-expressions": ["error", { allowShortCircuit: true, allowTernary: true }] } }) });
+    expect(readRepositoryLintConfig(root, bundle, ["typescript"])).toEqual({
+      settings: [{
+        ruleId: UNUSED_EXPRESSIONS,
+        folder: "",
+        on: null,
+        config: { allowShortCircuit: true, allowTernary: true },
+        because: ".eslintrc.json: \"@typescript-eslint/no-unused-expressions\": [\"error\",{\"allowShortCircuit\":true,\"allowTernary\":true}]",
+      }],
+      notes: [],
+    });
+  });
+
+  it("takes tslint.json's no-unused-expression allow-fast-null-checks as allowShortCircuit, as rxjs sets it", async () => {
+    const root = await repository({
+      "tslint.json": "{\n  // rxjs\n  \"extends\": [\"tslint-etc\"],\n  \"rules\": { \"no-unused-expression\": [true, \"allow-fast-null-checks\"] }\n}\n",
+    });
+    expect(readRepositoryLintConfig(root, bundle, ["typescript"])).toEqual({
+      settings: [{
+        ruleId: UNUSED_EXPRESSIONS,
+        folder: "",
+        on: null,
+        config: { allowTernary: true, allowShortCircuit: true },
+        because: "tslint.json: \"no-unused-expression\": [true,\"allow-fast-null-checks\"]",
+      }],
+      notes: ["tslint.json: only its own no-unused-expression rule is read, not extends."],
+    });
+    // TSLint lints TypeScript only; nothing else in a pack being set up is a TSLint rule's port.
+    expect(readRepositoryLintConfig(root, bundle, ["javascript", "python"])).toEqual({ settings: [], notes: [] });
+  });
+
+  // TSLint 5.20.1's no-unused-expression never reports a conditional whose branches are both used: allowTernary.
+  it("turns the port off for tslint.json's false, and sets allowTernary for true", async () => {
+    for (const value of ["false", "[false, \"allow-fast-null-checks\"]"]) {
+      const off = await repository({ "tslint.json": `{ "rules": { "no-unused-expression": ${value} } }` });
+      expect(readRepositoryLintConfig(off, bundle, ["typescript"]).settings).toMatchObject([{ ruleId: UNUSED_EXPRESSIONS, folder: "", on: false, config: null }]);
+    }
+    for (const value of ["true", "[true]", "[true, \"allow-new\"]"]) {
+      const on = await repository({ "tslint.json": `{ "rules": { "no-unused-expression": ${value} } }` });
+      expect(readRepositoryLintConfig(on, bundle, ["typescript"])).toMatchObject({ settings: [{ ruleId: UNUSED_EXPRESSIONS, on: null, config: { allowTernary: true } }], notes: [] });
+    }
+  });
+
+  it("uses no tslint.json entry for a rule the ESLint config sets", async () => {
+    const root = await repository({
+      ".eslintrc.json": JSON.stringify({ rules: { "@typescript-eslint/no-unused-expressions": "error" } }),
+      "tslint.json": "{ \"rules\": { \"no-unused-expression\": [true, \"allow-fast-null-checks\"] } }",
+    });
+    expect(readRepositoryLintConfig(root, bundle, ["typescript"])).toEqual({
+      settings: [],
+      notes: [`${UNUSED_EXPRESSIONS}: tslint.json: "no-unused-expression": [true,"allow-fast-null-checks"] is not used: .eslintrc.json sets "@typescript-eslint/no-unused-expressions".`],
+    });
+  });
+
+  it("maps no tslint.json option the port has none for, and reads no other form of the rule's entry", async () => {
+    const tagged = await repository({ "tslint.json": "{ \"rules\": { \"no-unused-expression\": [true, \"allow-fast-null-checks\", \"allow-tagged-template\"] } }" });
+    expect(readRepositoryLintConfig(tagged, bundle, ["typescript"])).toEqual({
+      settings: [],
+      notes: [`${UNUSED_EXPRESSIONS}: option not mapped ("allow-tagged-template" is not a TSLint option Rerail maps); it keeps its default options. From tslint.json: "no-unused-expression": [true,"allow-fast-null-checks","allow-tagged-template"].`],
+    });
+    const object = await repository({ "tslint.json": "{ \"rules\": { \"no-unused-expression\": { \"severity\": \"off\" } } }" });
+    expect(readRepositoryLintConfig(object, bundle, ["typescript"])).toEqual({
+      settings: [],
+      notes: [`${UNUSED_EXPRESSIONS}: tslint.json: "no-unused-expression": {"severity":"off"} is not read: Rerail reads true, false or a list starting with one.`],
+    });
+  });
+
+  it("reports a tslint.yaml TSLint uses as not read", async () => {
+    const root = await repository({ "tslint.yaml": "rules:\n  no-unused-expression: false\n" });
+    expect(readRepositoryLintConfig(root, bundle, ["typescript"])).toEqual({ settings: [], notes: ["tslint.yaml is not read: Rerail reads JSON lint configs only."] });
+  });
+});
