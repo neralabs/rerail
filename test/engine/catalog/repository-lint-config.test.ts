@@ -206,7 +206,7 @@ describe("readLintConfigFiles", () => {
   it("reads .eslintrc.json as JSONC, noting what besides its top-level rules it does not read", async () => {
     const root = await repository({ ".eslintrc.json": "{\n  // ours\n  \"extends\": [\"airbnb\"],\n  \"rules\": { \"no-console\": \"off\", },\n}\n" });
     const files = readLintConfigFiles(root);
-    expect(files.eslint).toEqual({ file: ".eslintrc.json", rules: { "no-console": "off" }, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), eslintrc: true });
+    expect(files.eslint).toEqual({ file: ".eslintrc.json", rules: { "no-console": "off" }, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), presets: ".eslintrc.json extends", eslintrc: true });
     expect(files.notes.map(note => note.text)).toEqual([".eslintrc.json: only its own rules are read, not extends."]);
   });
 
@@ -1030,6 +1030,8 @@ describe("proposeLintConfigSettings for short-circuit calls", () => {
 
   it("takes tslint.json's no-unused-expression allow-fast-null-checks as allowShortCircuit, as rxjs sets it", async () => {
     const root = await repository({
+      // rxjs's .eslintrc names typescript-eslint's plugin, which turns no rule on, and extends no preset.
+      ".eslintrc": JSON.stringify({ parser: "@typescript-eslint/parser", plugins: ["@typescript-eslint"], rules: { curly: 2 } }),
       "tslint.json": "{\n  // rxjs\n  \"extends\": [\"tslint-etc\"],\n  \"rules\": { \"no-unused-expression\": [true, \"allow-fast-null-checks\"] }\n}\n",
     });
     expect(readRepositoryLintConfig(root, bundle, ["typescript"])).toEqual({
@@ -1040,10 +1042,13 @@ describe("proposeLintConfigSettings for short-circuit calls", () => {
         config: { allowTernary: true, allowShortCircuit: true },
         because: "tslint.json: \"no-unused-expression\": [true,\"allow-fast-null-checks\"]",
       }],
-      notes: ["tslint.json: only its own no-unused-expression rule is read, not extends."],
+      notes: [
+        ".eslintrc: only its own rules are read, not plugins.",
+        `${UNUSED_EXPRESSIONS}: tslint.json: only its own "no-unused-expression" entry is read, not extends.`,
+      ],
     });
     // TSLint lints TypeScript only; nothing else in a pack being set up is a TSLint rule's port.
-    expect(readRepositoryLintConfig(root, bundle, ["javascript", "python"])).toEqual({ settings: [], notes: [] });
+    expect(readRepositoryLintConfig(root, bundle, ["javascript", "python"])).toEqual({ settings: [], notes: [".eslintrc: only its own rules are read, not plugins."] });
   });
 
   // TSLint 5.20.1's no-unused-expression never reports a conditional whose branches are both used: allowTernary.
@@ -1067,6 +1072,34 @@ describe("proposeLintConfigSettings for short-circuit calls", () => {
       settings: [],
       notes: [`${UNUSED_EXPRESSIONS}: tslint.json: "no-unused-expression": [true,"allow-fast-null-checks"] is not used: .eslintrc.json sets "@typescript-eslint/no-unused-expressions".`],
     });
+  });
+
+  it("uses no tslint.json entry where the ESLint config may set the rule through a preset it does not read, or cannot be read", async () => {
+    const TSLINT = "{ \"extends\": [\"tslint:recommended\"], \"rules\": { \"no-unused-expression\": false } }";
+    const because = "tslint.json: \"no-unused-expression\": false is not used";
+    const eslintrc = await repository({ ".eslintrc.json": JSON.stringify({ extends: ["plugin:@typescript-eslint/recommended"] }), "tslint.json": TSLINT });
+    expect(readRepositoryLintConfig(eslintrc, bundle, ["typescript"])).toEqual({
+      settings: [],
+      notes: [
+        ".eslintrc.json: only its own rules are read, not extends.",
+        `${UNUSED_EXPRESSIONS}: ${because}: .eslintrc.json extends, which Rerail does not read, may set "@typescript-eslint/no-unused-expressions".`,
+      ],
+    });
+    const override = await repository({
+      ".eslintrc.json": JSON.stringify({ overrides: [{ files: ["src/**"], extends: ["plugin:@typescript-eslint/recommended"] }] }),
+      "tslint.json": TSLINT,
+    });
+    expect(readRepositoryLintConfig(override, bundle, ["typescript"]).settings).toEqual([]);
+    const flat = await repository({
+      "eslint.config.mjs": "import tseslint from \"typescript-eslint\";\nexport default [...tseslint.configs.recommended];\n",
+      "tslint.json": TSLINT,
+    });
+    expect(readRepositoryLintConfig(flat, bundle, ["typescript"])).toMatchObject({
+      settings: [],
+      notes: expect.arrayContaining([`${UNUSED_EXPRESSIONS}: ${because}: tseslint.configs.recommended, which Rerail does not read, may set "@typescript-eslint/no-unused-expressions".`]),
+    });
+    const unreadable = await repository({ "eslint.config.mjs": "let rules = {};\nexport default [{ rules }];\n", "tslint.json": TSLINT });
+    expect(readRepositoryLintConfig(unreadable, bundle, ["typescript"]).notes).toContain(`${UNUSED_EXPRESSIONS}: ${because}: eslint.config.mjs is not statically readable.`);
   });
 
   it("maps no tslint.json option the port has none for, and reads no other form of the rule's entry", async () => {

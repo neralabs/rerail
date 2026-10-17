@@ -45,6 +45,8 @@ export interface FlatConfigRead {
   readonly entries: readonly FlatConfigEntry[];
   /** What the config holds that is not read, for the person. */
   readonly notes: readonly string[];
+  /** The config elements not read (a shared config, an imported value), as the file writes them; any may set any rule. */
+  readonly unread: readonly string[];
 }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -163,7 +165,7 @@ class FlatConfigReader {
     if (this.#unread.length > 0) {
       this.#notes.push(`the rules of ${this.#unread.join(", ")} are not read: Rerail does not run code to find them.`);
     }
-    return { entries: this.#entries, notes: this.#notes };
+    return { entries: this.#entries, notes: this.#notes, unread: this.#unread };
   }
 
   /** The value of `module.exports = <value>` where `module` is CommonJS's own, not a binding of the file. */
