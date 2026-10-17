@@ -36,7 +36,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 const HASH_SHA256: i64 = 1;
@@ -74,19 +74,6 @@ pub(crate) fn unix_seconds() -> StoreResult<i64> {
     #[cfg(test)]
     let seconds = seconds + CLOCK_OFFSET.get();
     Ok(seconds)
-}
-
-#[cfg(test)]
-static SEARCH_INDEX_FAMILY_WRITES: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-pub(crate) fn reset_search_index_family_writes() {
-    SEARCH_INDEX_FAMILY_WRITES.store(0, Ordering::Relaxed);
-}
-
-#[cfg(test)]
-pub(crate) fn search_index_family_writes() -> usize {
-    SEARCH_INDEX_FAMILY_WRITES.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]

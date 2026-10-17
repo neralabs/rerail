@@ -625,10 +625,6 @@ impl Related {
         })
     }
 
-    pub(crate) fn rule(&self) -> &AstMatcher {
-        &self.rule
-    }
-
     /// Whether the rule's verdict at a node is the node's alone: it mentions no capture and
     /// reads nothing beyond the node's tree and values (`node_local`).
     fn chains(&self) -> bool {

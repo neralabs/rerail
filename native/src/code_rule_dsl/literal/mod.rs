@@ -499,20 +499,7 @@ pub(crate) struct SubDoc {
     pub(crate) tree: Arc<SubTree>,
 }
 
-impl SubDoc {
-    /// The node at a preorder ordinal of the tree.
-    pub(crate) fn node_at(&self, ordinal: u32) -> SubNode<'_> {
-        SubNode {
-            tree: &self.tree,
-            index: ordinal,
-        }
-    }
-}
-
-/// A sub-tree node's preorder ordinal, from its node id (`SubNode::node_id`).
-pub(crate) fn sub_ordinal(node_id: usize) -> u32 {
-    (node_id & ((1 << 24) - 1)) as u32
-}
+impl SubDoc {}
 
 impl Doc for SubDoc {
     type Source = SubSource;

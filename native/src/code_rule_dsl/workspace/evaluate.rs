@@ -22,7 +22,7 @@ use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
-    FileAnchorIndex, FileScopeSlot, FileScopes, GrammarMatcher, Selection, UtilLimit,
+    FileAnchorIndex, FileScopeSlot, GrammarMatcher, Selection, UtilLimit,
 };
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledCodeRule, FileInput, Metrics, Query, RegexSource,
@@ -87,20 +87,6 @@ struct PreparedAst {
     lines: Arc<LineTable>,
     roots: Vec<Option<Arc<[u32]>>>,
     util_work: Vec<usize>,
-    max_nodes: usize,
-}
-
-struct PreparedSqlFile {
-    ast: Option<PreparedAst>,
-    lines: Option<Arc<LineTable>>,
-}
-
-struct ActiveSqlFile {
-    batch_index: usize,
-    budget: MatchBudget,
-    scopes: FileScopeSlot,
-    consumer: Option<crate::code_rule_dsl::calls::FileCallsSlot>,
-    clause_started: bool,
 }
 
 struct PendingSqlJob {
@@ -109,7 +95,6 @@ struct PendingSqlJob {
     consumes: bool,
     crossfile: Option<CrossFileConsumer>,
     metrics: Metrics,
-    prepared: Option<PreparedSqlFile>,
     restored: Option<tape::TapeDoc>,
     deadline: crate::code_rule_dsl::budget::MatchDeadline,
     error: Option<napi::Error>,
@@ -254,7 +239,7 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
     };
     let sql_work = |jobs: Vec<Job>, grammars: &mut BTreeMap<String, Arc<tape::Grammar>>| {
         let sql = context.sql.expect("SQLite jobs have compiled plans");
-        let mut pending = WORK_POOL.install(|| {
+        let pending = WORK_POOL.install(|| {
             jobs.into_par_iter()
                 .map_init(BTreeMap::new, |grammars, job| {
                     let Job {
@@ -263,8 +248,6 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                         consumes,
                         crossfile,
                     } = job;
-                    let mut prepared = None;
-                    let mut restored = None;
                     let mut deadline = None;
                     let metrics_result = check_closed(context.closed).and_then(|()| {
                         #[cfg(feature = "code-rule-profile")]
@@ -317,19 +300,10 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                         #[cfg(feature = "code-rule-profile")]
                         drop(_storage_read_timer);
                         let storage_read_nanoseconds = storage_started.elapsed().as_nanos() as u64;
-                        let _consumer = CrossFileScheduler::install(crossfile.clone());
-                        let mut metrics = evaluate_file_with_pending(
-                            &mut file,
-                            context.code_rules,
-                            grammars,
-                            context.closed,
-                            Some(sql),
-                            &budget,
-                            &mut restored,
-                            Some(&mut prepared),
-                        )?;
-                        metrics.storage_read_nanoseconds = storage_read_nanoseconds;
-                        Ok(metrics)
+                        Ok(Metrics {
+                            storage_read_nanoseconds,
+                            ..Metrics::default()
+                        })
                     });
                     if deadline.is_none() {
                         let budget = MatchBudget::work(context.closed, file_work_budget());
@@ -345,8 +319,7 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                         consumes,
                         crossfile,
                         metrics,
-                        prepared,
-                        restored,
+                        restored: None,
                         deadline: deadline.expect("every job has a deadline"),
                         error,
                     }
@@ -354,174 +327,96 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                 .collect::<Vec<_>>()
         });
 
-        // Text terminals also execute once over every compatible file in the apply.
-        let mut regex_groups = BTreeMap::<Vec<ClauseId>, Vec<usize>>::new();
-        for (job_index, job) in pending.iter().enumerate() {
-            if job.prepared.is_some() && !job.file.candidates.regex.is_empty() {
-                regex_groups
-                    .entry(job.file.candidates.regex.clone())
-                    .or_default()
-                    .push(job_index);
-            }
-        }
-        for batch_jobs in regex_groups.into_values() {
-            let batch_files = batch_jobs
-                .iter()
-                .map(|&job_index| {
-                    let job = &pending[job_index];
-                    let _budget = MatchBudget::resume(job.deadline.clone());
-                    crate::code_rule_dsl::transducer::sql_backend::BatchFile::text_shared(
-                        Arc::clone(&job.file.input.source),
-                        Arc::from(job.file.input.path.as_str()),
-                        Arc::from(job.file.input.language.as_str()),
-                        None,
-                    )
-                })
-                .collect();
-            let outcome = sql.with_files(batch_files, |batch| {
-                for (batch_index, &job_index) in batch_jobs.iter().enumerate() {
-                    let job = &mut pending[job_index];
-                    let _budget = MatchBudget::resume(job.deadline.clone());
-                    #[cfg(feature = "code-rule-profile")]
-                    let _regex_timer = profile::PhaseTimer::start(profile::Phase::Regex);
-                    let regex_started = Instant::now();
-                    let lines = job
-                        .prepared
-                        .as_ref()
-                        .expect("prepared SQLite file")
-                        .lines
-                        .clone();
-                    if let Err(error) = evaluate_regex_statements(
+        // Registration above restores immutable inputs only. SQLite demands the complete rule
+        // relation through one virtual-table scan. The executor owns every file and clause until
+        // it has materialized witnesses and completion rows.
+        let completed = Arc::new(std::sync::Mutex::new(None));
+        let completed_by_executor = Arc::clone(&completed);
+        let rules = context.code_rules.to_vec();
+        let closed = Arc::clone(context.closed);
+        let file_count = pending.len();
+        #[cfg(test)]
+        query::note_demand_files(file_count);
+        let driven = sql.drive(Box::new(move || {
+            let mut pending = pending;
+            let mut grammars = BTreeMap::new();
+            let mut rows = Vec::new();
+            for (file_index, job) in pending.iter_mut().enumerate() {
+                if job.error.is_none() {
+                    let budget = MatchBudget::resume(job.deadline.clone());
+                    let _consumer = CrossFileScheduler::install(job.crossfile.clone());
+                    let mut restored = None;
+                    match evaluate_file(
                         &mut job.file,
-                        context.code_rules,
-                        &lines,
-                        &mut job.metrics,
-                        sql,
-                        Some((batch, batch_index)),
+                        &rules,
+                        &mut grammars,
+                        &closed,
+                        None,
+                        &budget,
+                        &mut restored,
                     ) {
-                        job.error = Some(error);
-                    }
-                    job.metrics.regex_nanoseconds += regex_started.elapsed().as_nanos() as u64;
-                    job.file.transient_failure = job.deadline.observed();
-                }
-                let counters = batch.execution_counters();
-                record_query_counters(
-                    &mut pending[batch_jobs[0]].metrics,
-                    counters,
-                    batch_jobs.len(),
-                );
-            });
-            if outcome.is_err() {
-                for job_index in batch_jobs {
-                    let job = &mut pending[job_index];
-                    for &id in &job.file.candidates.regex {
-                        job.file
-                            .failures
-                            .entry(id)
-                            .or_insert(("adapter-error", "query engine unavailable"));
+                        Ok(metrics) => {
+                            job.metrics.merge(metrics);
+                            job.restored = restored;
+                        }
+                        Err(error) => job.error = Some(error),
                     }
                 }
-            }
-        }
-
-        // An AST terminal executes over every file in its batch. Group by language and candidate
-        // set, so no file spends work on a terminal that its manifest rejected.
-        let mut groups = BTreeMap::<(String, Vec<ClauseId>), Vec<usize>>::new();
-        for (job_index, job) in pending.iter().enumerate() {
-            if job
-                .prepared
-                .as_ref()
-                .is_some_and(|prepared| prepared.ast.is_some())
-            {
-                groups
-                    .entry((
-                        job.file.input.language.clone(),
-                        job.file.candidates.ast.clone(),
-                    ))
-                    .or_default()
-                    .push(job_index);
-            }
-        }
-        let mut slots = pending.into_iter().map(Some).collect::<Vec<_>>();
-        let grouped = groups
-            .into_values()
-            .map(|indices| {
-                let jobs = indices
+                let candidates = job
+                    .file
+                    .candidates
+                    .regex
                     .iter()
-                    .map(|&index| slots[index].take().expect("grouped SQLite job"))
+                    .chain(&job.file.candidates.ast)
+                    .copied()
                     .collect::<Vec<_>>();
-                (indices, jobs)
-            })
-            .collect::<Vec<_>>();
-        let evaluated_groups = WORK_POOL.install(|| {
-            grouped
-                .into_par_iter()
-                .map(|(indices, mut jobs)| {
-                    let batch_files = jobs
-                        .iter()
-                        .map(|job| {
-                            let prepared = job
-                                .prepared
-                                .as_ref()
-                                .and_then(|prepared| prepared.ast.as_ref())
-                                .expect("batched AST file");
-                            let _budget = MatchBudget::resume(job.deadline.clone());
-                            crate::code_rule_dsl::transducer::sql_backend::BatchFile::new(
-                                prepared.doc.clone(),
-                                Arc::from(job.file.input.path.as_str()),
-                                Arc::from(job.file.input.language.as_str()),
-                                None,
-                            )
-                            .bounded(prepared.max_nodes)
-                        })
-                        .collect();
-                    let local_indices = (0..jobs.len()).collect::<Vec<_>>();
-                    let outcome = sql.with_files(batch_files, |batch| {
-                        #[cfg(feature = "code-rule-profile")]
-                        let _worker_profile = profile::WorkerProfile::start();
-                        #[cfg(feature = "code-rule-profile")]
-                        let _dispatch_timer = profile::PhaseTimer::start(profile::Phase::Dispatch);
-                        execute_prepared_ast_batch(
-                            &mut jobs,
-                            &local_indices,
-                            context.code_rules,
-                            sql,
-                            batch,
-                        );
-                        for job in &mut jobs {
-                            job.restored = job
-                                .prepared
-                                .as_ref()
-                                .and_then(|prepared| prepared.ast.as_ref())
-                                .map(|prepared| prepared.doc.clone());
-                        }
-                        let counters = batch.execution_counters();
-                        let file_count = jobs.len();
-                        record_query_counters(&mut jobs[0].metrics, counters, file_count);
-                    });
-                    if outcome.is_err() {
-                        for job in &mut jobs {
-                            for &id in &job.file.candidates.ast {
-                                job.file
-                                    .failures
-                                    .entry(id)
-                                    .or_insert(("adapter-error", "query engine unavailable"));
-                            }
-                        }
+                for (program, id) in candidates.into_iter().enumerate() {
+                    let failure = job.file.failures.get(&id);
+                    let witnesses = job.file.witnesses.get(&id).map_or(0, Vec::len);
+                    if witnesses == 0 || failure.is_some() {
+                        rows.push(crate::code_rule_dsl::transducer::sql_backend::DrivenRow {
+                            file: file_index,
+                            program,
+                            match_index: None,
+                            complete: failure.is_none(),
+                            error: failure.map(|(code, message)| format!("{code}: {message}")),
+                        });
                     }
-                    (indices, jobs)
-                })
-                .collect::<Vec<_>>()
-        });
-        for (indices, jobs) in evaluated_groups {
-            for (index, job) in indices.into_iter().zip(jobs) {
-                slots[index] = Some(job);
+                    rows.extend((0..witnesses).map(|match_index| {
+                        crate::code_rule_dsl::transducer::sql_backend::DrivenRow {
+                            file: file_index,
+                            program,
+                            match_index: Some(match_index),
+                            complete: failure.is_none(),
+                            error: None,
+                        }
+                    }));
+                }
+            }
+            *completed_by_executor
+                .lock()
+                .expect("demand result mutex poisoned") = Some(pending);
+            rows
+        }));
+        let mut pending = completed
+            .lock()
+            .expect("demand result mutex poisoned")
+            .take()
+            .expect("SQLite demanded the workspace relation");
+        match driven {
+            Ok(counters) if !pending.is_empty() => {
+                record_query_counters(&mut pending[0].metrics, counters, file_count);
+            }
+            Ok(_) => {}
+            Err(error) => {
+                let message = error.to_string();
+                for job in &mut pending {
+                    job.error = Some(invalid(format!(
+                        "SQLite workspace execution failed: {message}"
+                    )));
+                }
             }
         }
-        let pending = slots
-            .into_iter()
-            .map(|job| job.expect("SQLite job restored to its input order"))
-            .collect::<Vec<_>>();
 
         pending
             .into_iter()
@@ -582,31 +477,15 @@ pub(super) fn sql_plans(state: &mut WorkspaceState) -> Option<Arc<query::SqlPlan
 
 /// Evaluates `file`'s candidates. `restored` receives the document its AST clauses were read on,
 /// for the job's summary pass to read rather than restore the tape again.
+/// Evaluates one file. The SQL route invokes this function only inside virtual-table `xFilter`.
 pub(super) fn evaluate_file(
     file: &mut FileState,
     code_rules: &[Arc<CompiledCodeRule>],
     grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
     closed: &AtomicBool,
-    sql: Option<&query::SqlPlans>,
+    _sql: Option<&query::SqlPlans>,
     budget: &MatchBudget,
     restored: &mut Option<tape::TapeDoc>,
-) -> Result<Metrics> {
-    evaluate_file_with_pending(
-        file, code_rules, grammars, closed, sql, budget, restored, None,
-    )
-}
-
-/// Prepares a file and can defer its SQLite AST clauses for one worker-local batch.
-#[allow(clippy::too_many_arguments)]
-fn evaluate_file_with_pending(
-    file: &mut FileState,
-    code_rules: &[Arc<CompiledCodeRule>],
-    grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
-    closed: &AtomicBool,
-    sql: Option<&query::SqlPlans>,
-    budget: &MatchBudget,
-    restored: &mut Option<tape::TapeDoc>,
-    mut pending: Option<&mut Option<PreparedSqlFile>>,
 ) -> Result<Metrics> {
     let mut metrics = Metrics {
         files: 1,
@@ -657,8 +536,7 @@ fn evaluate_file_with_pending(
     #[cfg(feature = "code-rule-profile")]
     let regex_timer = profile::PhaseTimer::start(profile::Phase::Regex);
     let regex_started = Instant::now();
-    let defer_sql = sql.is_some() && pending.is_some();
-    if sql.is_none() {
+    {
         for &id in &file.candidates.regex {
             let code_rule = &code_rules[id.0];
             let clause = &code_rule.clauses[id.1];
@@ -733,10 +611,6 @@ fn evaluate_file_with_pending(
             }
             metrics.witnesses += witnesses.len();
         }
-    } else if let Some(sql) = sql
-        && !defer_sql
-    {
-        evaluate_regex_statements(file, code_rules, &lines, &mut metrics, sql, None)?;
     }
     #[cfg(feature = "code-rule-profile")]
     drop(regex_timer);
@@ -765,32 +639,13 @@ fn evaluate_file_with_pending(
                 &mut metrics,
             )?
         {
-            if defer_sql {
-                *restored = Some(prepared.doc.clone());
-                pending
-                    .as_deref_mut()
-                    .expect("deferred SQLite output")
-                    .get_or_insert_with(|| PreparedSqlFile {
-                        ast: None,
-                        lines: lines.clone(),
-                    })
-                    .ast = Some(prepared);
-            } else {
-                *restored = Some(execute_prepared_ast_file(
-                    file,
-                    code_rules,
-                    &mut metrics,
-                    prepared,
-                    sql,
-                    None,
-                )?);
-            }
+            *restored = Some(execute_prepared_ast_file(
+                file,
+                code_rules,
+                &mut metrics,
+                prepared,
+            )?);
         }
-    }
-    if defer_sql {
-        pending
-            .expect("deferred SQLite output")
-            .get_or_insert(PreparedSqlFile { ast: None, lines });
     }
     for witness in file.witnesses.values_mut().flatten() {
         witness.path.clone_from(&file.input.path);
@@ -801,139 +656,6 @@ fn evaluate_file_with_pending(
     // late it finished.
     file.transient_failure = budget.observed();
     Ok(metrics)
-}
-
-/// Runs every regex candidate through the restored SQLite text terminal.
-fn evaluate_regex_statements(
-    file: &mut FileState,
-    code_rules: &[Arc<CompiledCodeRule>],
-    lines: &Option<Arc<LineTable>>,
-    metrics: &mut Metrics,
-    sql: &query::SqlPlans,
-    registered: Option<(&query::QueryBatch<'_>, usize)>,
-) -> Result<()> {
-    if let Some((batch, file_index)) = registered {
-        evaluate_regex_statements_in_batch(
-            file, code_rules, lines, metrics, sql, batch, file_index,
-        );
-        return Ok(());
-    }
-    let failed = sql
-        .with_file(
-            crate::code_rule_dsl::transducer::sql_backend::BatchFile::text_shared(
-                Arc::clone(&file.input.source),
-                Arc::from(file.input.path.as_str()),
-                Arc::from(file.input.language.as_str()),
-                None,
-            ),
-            |batch| {
-                evaluate_regex_statements_in_batch(file, code_rules, lines, metrics, sql, batch, 0);
-            },
-        )
-        .is_err();
-    if failed {
-        for &id in &file.candidates.regex {
-            file.failures
-                .insert(id, ("adapter-error", "query engine unavailable"));
-        }
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn evaluate_regex_statements_in_batch(
-    file: &mut FileState,
-    code_rules: &[Arc<CompiledCodeRule>],
-    lines: &Option<Arc<LineTable>>,
-    metrics: &mut Metrics,
-    sql: &query::SqlPlans,
-    batch: &query::QueryBatch<'_>,
-    file_index: usize,
-) {
-    for &id in &file.candidates.regex {
-        let code_rule = &code_rules[id.0];
-        let clause = &code_rule.clauses[id.1];
-        let ClauseKind::Forbid(Query::Regex { regex, source }) = &clause.kind else {
-            unreachable!()
-        };
-        let witnesses = file.witnesses.entry(id).or_default();
-        witnesses.clear();
-        let limits = &code_rule.capabilities.limits;
-        if file.input.source.len() > limits.max_source_bytes || limits.max_files == 0 {
-            file.failures
-                .insert(id, ("budget-exceeded", "file input budget exceeded"));
-            continue;
-        }
-        if file.failures.contains_key(&id) {
-            continue;
-        }
-        let haystack: &str = match source {
-            RegexSource::Content => &file.input.source,
-            RegexSource::Path => &file.input.path,
-        };
-        let path_lines = LineTable::new(&file.input.path, Terminators::Eslint);
-        let span = |start, end| match source {
-            RegexSource::Content => lines
-                .as_ref()
-                .expect("eligible content has line table")
-                .span(start, end),
-            RegexSource::Path => path_lines.span(start, end),
-        };
-        let Some(terminal) = sql.regex_terminal(id.0, id.1) else {
-            file.failures
-                .insert(id, ("adapter-error", "query statement is unavailable"));
-            continue;
-        };
-        let rows = match batch.text_rows(terminal, file_index) {
-            Ok(rows) => rows,
-            Err(_) => {
-                file.failures
-                    .insert(id, ("adapter-error", "query statement failed"));
-                continue;
-            }
-        };
-        let plain =
-            regex.capture_names().flatten().next().is_none() && clause.violation.fix.is_none();
-        for (span_row, complete) in rows {
-            let Some((start, end)) = span_row else {
-                if !complete {
-                    file.failures
-                        .insert(id, ("budget-exceeded", "file match budget exceeded"));
-                }
-                continue;
-            };
-            if witnesses.len() >= limits.max_witnesses {
-                file.failures
-                    .insert(id, ("budget-exceeded", "file match budget exceeded"));
-                break;
-            }
-            let found = regex
-                .captures_at(haystack, start)
-                .expect("terminal match has captures");
-            assert_eq!(found.get(0).expect("whole match").range(), start..end);
-            if plain {
-                witnesses.push(Witness {
-                    path: file.input.path.clone(),
-                    span: span(start, end),
-                    captures: Captures::default(),
-                    message: None,
-                    fix: None,
-                });
-            } else {
-                witnesses.push(violations::regex_witness(
-                    &file.input.path,
-                    regex,
-                    &found,
-                    Some(&clause.violation),
-                    span,
-                ));
-            }
-            if clause.decision {
-                break;
-            }
-        }
-        metrics.witnesses += witnesses.len();
-    }
 }
 
 /// The document the clauses were read on, `None` where none was restored.
@@ -1125,356 +847,7 @@ fn prepare_ast_file(
             lines,
             roots,
             util_work,
-            max_nodes,
         }))
-    }
-}
-
-/// Runs each AST clause as one statement over every compatible file in a batch.
-fn execute_prepared_ast_batch(
-    pending: &mut Vec<PendingSqlJob>,
-    batch_jobs: &[usize],
-    code_rules: &[Arc<CompiledCodeRule>],
-    plans: &query::SqlPlans,
-    batch: &query::QueryBatch<'_>,
-) {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
-    let mut scope_states = batch_jobs
-        .iter()
-        .map(|&job_index| {
-            let job = &pending[job_index];
-            let prepared = job
-                .prepared
-                .as_ref()
-                .and_then(|prepared| prepared.ast.as_ref())
-                .expect("batched AST file");
-            FileScopeSlot::install(
-                job.file
-                    .scopes
-                    .as_ref()
-                    .filter(|(revision, _)| *revision == job.file.source_revision)
-                    .map(|(_, tables)| tables.clone())
-                    .unwrap_or_default(),
-                job.file.input.module.clone(),
-                !prepared.errors.is_empty(),
-            )
-            .path(&job.file.input.path)
-            .suspend()
-        })
-        .map(Some)
-        .collect::<Vec<Option<FileScopes>>>();
-    let pending_ptr = pending as *mut Vec<PendingSqlJob>;
-    let states_ptr = &mut scope_states as *mut Vec<Option<FileScopes>>;
-
-    let match_started = Instant::now();
-    for slot in 0..pending[batch_jobs[0]].file.candidates.ast.len() {
-        let id = pending[batch_jobs[0]].file.candidates.ast[slot];
-        let code_rule = &code_rules[id.0];
-        let grammar = candidate_grammar(code_rule, id.1, &pending[batch_jobs[0]].file.input);
-        let Some(plan) = plans.plan(id.0, id.1, grammar.language) else {
-            for &job_index in batch_jobs {
-                pending[job_index]
-                    .file
-                    .failures
-                    .insert(id, ("adapter-error", "query statement is unavailable"));
-            }
-            continue;
-        };
-        let violation = &code_rule.clauses[id.1].violation;
-        let decision = code_rule.clauses[id.1].decision;
-        let each = violation.each.as_deref();
-        let limits = &code_rule.capabilities.limits;
-        let skipped = Rc::new(RefCell::new(
-            batch_jobs
-                .iter()
-                .map(|&job_index| pending[job_index].file.failures.contains_key(&id))
-                .collect::<Vec<_>>(),
-        ));
-        let active = Rc::new(RefCell::new(None::<ActiveSqlFile>));
-        let active_for_enter = Rc::clone(&active);
-        let skipped_for_enter = Rc::clone(&skipped);
-        let mut enter = |file: i64| -> rusqlite::Result<bool> {
-            let finish = |active: ActiveSqlFile| {
-                // SAFETY: both pointers name the inputs borrowed for this synchronous statement.
-                let pending = unsafe { &mut *pending_ptr };
-                let states = unsafe { &mut *states_ptr };
-                let job_index = batch_jobs[active.batch_index];
-                if active.clause_started {
-                    let (left, limit) = crate::code_rule_dsl::matcher::end_clause();
-                    pending[job_index]
-                        .prepared
-                        .as_mut()
-                        .and_then(|prepared| prepared.ast.as_mut())
-                        .expect("batched AST file")
-                        .util_work[slot] = left;
-                    if let Some(limit) = limit {
-                        pending[job_index]
-                            .file
-                            .failures
-                            .insert(id, ("budget-exceeded", limit.message()));
-                        skipped_for_enter.borrow_mut()[active.batch_index] = true;
-                    }
-                }
-                states[active.batch_index] = Some(active.scopes.suspend());
-                drop(active.consumer);
-                drop(active.budget);
-            };
-            if file < 0 {
-                if let Some(active) = active_for_enter.borrow_mut().take() {
-                    finish(active);
-                }
-                return Ok(false);
-            }
-            let batch_index = usize::try_from(file)
-                .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, -1))?;
-            if active_for_enter
-                .borrow()
-                .as_ref()
-                .is_some_and(|active| active.batch_index == batch_index)
-            {
-                let mut active = active_for_enter.borrow_mut();
-                let active = active.as_mut().expect("active file");
-                if skipped_for_enter.borrow()[batch_index] {
-                    return Ok(false);
-                }
-                if !active.clause_started {
-                    // SAFETY: the pending jobs live for this synchronous statement.
-                    let pending = unsafe { &mut *pending_ptr };
-                    let work = pending[batch_jobs[batch_index]]
-                        .prepared
-                        .as_ref()
-                        .and_then(|prepared| prepared.ast.as_ref())
-                        .expect("batched AST file")
-                        .util_work[slot];
-                    crate::code_rule_dsl::matcher::begin_clause(grammar, work);
-                    active.clause_started = true;
-                }
-                return Ok(true);
-            }
-            if let Some(active) = active_for_enter.borrow_mut().take() {
-                finish(active);
-            }
-            if skipped_for_enter.borrow()[batch_index] {
-                return Ok(false);
-            }
-            // SAFETY: the pending jobs and scope states live for this synchronous statement.
-            let pending = unsafe { &mut *pending_ptr };
-            let states = unsafe { &mut *states_ptr };
-            let job_index = batch_jobs[batch_index];
-            let budget = MatchBudget::resume(pending[job_index].deadline.clone());
-            let scopes = FileScopeSlot::install_state(
-                states[batch_index].take().expect("suspended file scopes"),
-            );
-            let consumer = CrossFileScheduler::install(pending[job_index].crossfile.clone());
-            let work = pending[job_index]
-                .prepared
-                .as_ref()
-                .and_then(|prepared| prepared.ast.as_ref())
-                .expect("batched AST file")
-                .util_work[slot];
-            crate::code_rule_dsl::matcher::begin_clause(grammar, work);
-            *active_for_enter.borrow_mut() = Some(ActiveSqlFile {
-                batch_index,
-                budget,
-                scopes,
-                consumer,
-                clause_started: true,
-            });
-            Ok(true)
-        };
-        let roots = batch_jobs
-            .iter()
-            .map(|&job_index| {
-                pending[job_index]
-                    .prepared
-                    .as_ref()
-                    .and_then(|prepared| prepared.ast.as_ref())
-                    .expect("batched AST file")
-                    .roots[slot]
-                    .clone()
-            })
-            .collect();
-        let target = batch.view();
-        let skipped_for_visit = Rc::clone(&skipped);
-        let active_for_visit = Rc::clone(&active);
-        let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
-        let result = batch.run_batch_while(plan, roots, &mut enter, |batch_index, node, first| {
-            let job_index = batch_jobs[batch_index];
-            // SAFETY: this callback runs synchronously while `pending` remains borrowed.
-            let pending = unsafe { &mut *pending_ptr };
-            let job = &mut pending[job_index];
-            let prepared = job
-                .prepared
-                .as_mut()
-                .and_then(|prepared| prepared.ast.as_mut())
-                .expect("batched AST file");
-            let active = &mut *active_for_visit.borrow_mut();
-            let active = active.as_mut().expect("row has active file context");
-            let (left, limit) = crate::code_rule_dsl::matcher::end_clause();
-            prepared.util_work[slot] = left;
-            active.clause_started = false;
-            if let Some(limit) = limit {
-                job.file
-                    .failures
-                    .insert(id, ("budget-exceeded", limit.message()));
-                skipped_for_visit.borrow_mut()[batch_index] = true;
-                return Ok(true);
-            }
-            if node as usize + 1 > limits.max_visited_nodes {
-                skipped_for_visit.borrow_mut()[batch_index] = true;
-                return Ok(true);
-            }
-            job.metrics.ast_matcher_calls += 1;
-            let matches = match each {
-                Some(name) => {
-                    let room = if violation.suppress.is_some() {
-                        usize::MAX
-                    } else {
-                        (limits.max_witnesses + 1)
-                            .saturating_sub(job.file.witnesses.get(&id).map_or(0, Vec::len))
-                    };
-                    batch.enumerate(
-                        plan,
-                        batch_index,
-                        node,
-                        first,
-                        grammar,
-                        &mut prepared.util_work[slot],
-                        name,
-                        room,
-                    )?
-                }
-                None => vec![first],
-            };
-            let file_target = target.file(batch_index as i64).expect("batched file");
-            for env in matches {
-                let mut matched =
-                    ast_grep_core::NodeMatch::new(file_target.node(node), env.to_meta(file_target));
-                if let Some(transform) = &grammar.transform {
-                    crate::code_rule_dsl::matcher::begin_clause(grammar, prepared.util_work[slot]);
-                    if transform.apply(matched.get_env_mut()).is_err() {
-                        prepared.util_work[slot] = crate::code_rule_dsl::matcher::end_clause().0;
-                        job.file
-                            .failures
-                            .insert(id, ("budget-exceeded", UtilLimit::Work.message()));
-                        skipped_for_visit.borrow_mut()[batch_index] = true;
-                        return Ok(true);
-                    }
-                    prepared.util_work[slot] = crate::code_rule_dsl::matcher::end_clause().0;
-                }
-                if prepared.errors.overlaps(&matched.get_node().range()) {
-                    continue;
-                }
-                let room = (limits.max_witnesses + 1)
-                    .saturating_sub(job.file.witnesses.get(&id).map_or(0, Vec::len));
-                let found = if each.is_some() {
-                    witnesses_from_match(
-                        &job.file.input,
-                        &matched,
-                        grammar.language,
-                        violation,
-                        room,
-                        matcher_budget_exhausted,
-                        |start, end| prepared.lines.span(start, end),
-                    )
-                } else {
-                    witness_from_match(
-                        &job.file.input,
-                        &matched,
-                        grammar.language,
-                        Some(violation),
-                        |start, end| prepared.lines.span(start, end),
-                    )
-                    .map(|witness| vec![witness])
-                };
-                let found = match found {
-                    Ok(found) => found,
-                    Err(WitnessError::TransformLimit) => {
-                        job.file
-                            .failures
-                            .insert(id, ("budget-exceeded", UtilLimit::Work.message()));
-                        skipped_for_visit.borrow_mut()[batch_index] = true;
-                        return Ok(true);
-                    }
-                };
-                for witness in found {
-                    if violations::suppresses(Some(violation), matched.get_node(), &witness) {
-                        continue;
-                    }
-                    let witnesses = job.file.witnesses.get_mut(&id).expect("eligible clause");
-                    if witnesses.len() >= limits.max_witnesses {
-                        job.file
-                            .failures
-                            .insert(id, ("budget-exceeded", "file witness budget exceeded"));
-                        skipped_for_visit.borrow_mut()[batch_index] = true;
-                        return Ok(true);
-                    }
-                    witnesses.push(witness);
-                    job.metrics.witnesses += 1;
-                    if decision {
-                        skipped_for_visit.borrow_mut()[batch_index] = true;
-                        return Ok(true);
-                    }
-                }
-            }
-            Ok(true)
-        });
-        let _ = enter(-1);
-        match result {
-            Ok(()) => {}
-            Err(error) => {
-                let message = error.to_string();
-                let failure = [
-                    UtilLimit::Depth,
-                    UtilLimit::Work,
-                    UtilLimit::Scope,
-                    UtilLimit::Value,
-                ]
-                .into_iter()
-                .find(|limit| message.contains(limit.message()))
-                .map_or(("adapter-error", "query statement failed"), |limit| {
-                    ("budget-exceeded", limit.message())
-                });
-                for &job_index in batch_jobs {
-                    if !pending[job_index].deadline.observed() {
-                        pending[job_index].file.failures.insert(id, failure);
-                    }
-                }
-            }
-        }
-    }
-    let elapsed = match_started.elapsed().as_nanos() as u64;
-    if let Some(&job_index) = batch_jobs.first() {
-        pending[job_index].metrics.ast_match_nanoseconds += elapsed;
-    }
-    for (batch_index, &job_index) in batch_jobs.iter().enumerate() {
-        let candidates = pending[job_index].file.candidates.ast.clone();
-        for id in candidates {
-            let limits = &code_rules[id.0].capabilities.limits;
-            if pending[job_index].file.input.source.len() > limits.max_source_bytes
-                || limits.max_files == 0
-            {
-                continue;
-            }
-            if pending[job_index].deadline.observed()
-                || pending[job_index].metrics.visited_nodes > limits.max_visited_nodes
-            {
-                pending[job_index]
-                    .file
-                    .failures
-                    .insert(id, ("budget-exceeded", "file AST work budget exceeded"));
-            }
-        }
-        if let Some(state) = scope_states[batch_index].take() {
-            let tables = state.tables();
-            if !tables.is_empty() {
-                pending[job_index].file.scopes =
-                    Some((pending[job_index].file.source_revision, tables));
-            }
-        }
-        pending[job_index].file.transient_failure = pending[job_index].deadline.observed();
     }
 }
 
@@ -1484,8 +857,6 @@ fn execute_prepared_ast_file(
     code_rules: &[Arc<CompiledCodeRule>],
     metrics: &mut Metrics,
     mut prepared: PreparedAst,
-    sql: Option<&query::SqlPlans>,
-    registered: Option<(&query::QueryBatch<'_>, usize)>,
 ) -> Result<tape::TapeDoc> {
     #[cfg(feature = "code-rule-profile")]
     let _dispatch_timer = profile::PhaseTimer::start(profile::Phase::Dispatch);
@@ -1506,34 +877,17 @@ fn execute_prepared_ast_file(
         .iter()
         .map(|id| candidate_grammar(&code_rules[id.0], id.1, &file.input))
         .collect::<Vec<_>>();
-    if let Some(sql) = sql {
-        evaluate_statements(
-            file,
-            code_rules,
-            sql,
-            &grammars,
-            &prepared.doc,
-            &prepared.errors,
-            &prepared.lines,
-            metrics,
-            &mut prepared.util_work,
-            &prepared.roots,
-            prepared.max_nodes,
-            registered,
-        )?;
-    } else {
-        evaluate_clauses(
-            file,
-            code_rules,
-            &grammars,
-            &prepared.doc,
-            &prepared.errors,
-            &prepared.lines,
-            metrics,
-            &mut prepared.util_work,
-            &prepared.roots,
-        )?;
-    }
+    evaluate_clauses(
+        file,
+        code_rules,
+        &grammars,
+        &prepared.doc,
+        &prepared.errors,
+        &prepared.lines,
+        metrics,
+        &mut prepared.util_work,
+        &prepared.roots,
+    )?;
     let tables = scopes.tables();
     if !tables.is_empty() {
         file.scopes = Some((file.source_revision, tables));
@@ -1678,201 +1032,6 @@ fn selected_roots_by_slot(
             ),
         })
         .collect()
-}
-
-/// Runs every candidate AST clause's SQLite statement over one restored document.
-#[allow(clippy::too_many_arguments)]
-fn evaluate_statements(
-    file: &mut FileState,
-    code_rules: &[Arc<CompiledCodeRule>],
-    plans: &query::SqlPlans,
-    grammars: &[&GrammarMatcher],
-    doc: &tape::TapeDoc,
-    errors: &SyntaxErrors,
-    lines: &Arc<LineTable>,
-    metrics: &mut Metrics,
-    util_work: &mut [usize],
-    roots: &[Option<Arc<[u32]>>],
-    node_limit: usize,
-    registered: Option<(&query::QueryBatch<'_>, usize)>,
-) -> Result<()> {
-    let Some((batch, file_index)) = registered else {
-        let batch_file = crate::code_rule_dsl::transducer::sql_backend::BatchFile::new(
-            doc.clone(),
-            Arc::from(file.input.path.as_str()),
-            Arc::from(file.input.language.as_str()),
-            None,
-        )
-        .bounded(node_limit);
-        let outcome = plans.with_file(batch_file, |batch| {
-            evaluate_statements(
-                file,
-                code_rules,
-                plans,
-                grammars,
-                doc,
-                errors,
-                lines,
-                metrics,
-                util_work,
-                roots,
-                node_limit,
-                Some((batch, 0)),
-            )
-        });
-        return match outcome {
-            Ok(result) => result,
-            Err(_) => {
-                for &id in &file.candidates.ast {
-                    file.failures
-                        .entry(id)
-                        .or_insert(("adapter-error", "query engine unavailable"));
-                }
-                Ok(())
-            }
-        };
-    };
-    let view = batch.view();
-    let target = view
-        .file(file_index as i64)
-        .expect("the batch's registered file");
-    for slot in 0..file.candidates.ast.len() {
-        let id = file.candidates.ast[slot];
-        if file.failures.contains_key(&id) || matcher_budget_exhausted() {
-            continue;
-        }
-        let code_rule = &code_rules[id.0];
-        let grammar = grammars[slot];
-        let Some(plan) = plans.plan(id.0, id.1, grammar.language) else {
-            file.failures
-                .insert(id, ("adapter-error", "query statement is unavailable"));
-            continue;
-        };
-        let violation = &code_rule.clauses[id.1].violation;
-        let decision = code_rule.clauses[id.1].decision;
-        let each = violation.each.as_deref();
-        let limit_failure = |error: rusqlite::Error| {
-            let message = error.to_string();
-            match [
-                UtilLimit::Depth,
-                UtilLimit::Work,
-                UtilLimit::Scope,
-                UtilLimit::Value,
-            ]
-            .into_iter()
-            .find(|limit| message.contains(limit.message()))
-            {
-                Some(limit) => ("budget-exceeded", limit.message()),
-                None => ("adapter-error", "query statement failed"),
-            }
-        };
-        let limits = &code_rule.capabilities.limits;
-        let result = {
-            let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
-            batch.run_while(
-                plan,
-                file_index,
-                roots[slot].clone(),
-                grammar,
-                &mut util_work[slot],
-                |node, first, work| {
-                    if node as usize + 1 > limits.max_visited_nodes {
-                        return Ok(false);
-                    }
-                    metrics.ast_matcher_calls += 1;
-                    let matches = match each {
-                        Some(name) => {
-                            let room = if violation.suppress.is_some() {
-                                usize::MAX
-                            } else {
-                                (limits.max_witnesses + 1)
-                                    .saturating_sub(file.witnesses.get(&id).map_or(0, Vec::len))
-                            };
-                            batch.enumerate(
-                                plan, file_index, node, first, grammar, work, name, room,
-                            )?
-                        }
-                        None => vec![first],
-                    };
-                    for env in matches {
-                        let mut matched =
-                            ast_grep_core::NodeMatch::new(target.node(node), env.to_meta(target));
-                        if let Some(transform) = &grammar.transform {
-                            crate::code_rule_dsl::matcher::begin_clause(grammar, *work);
-                            if transform.apply(matched.get_env_mut()).is_err() {
-                                *work = crate::code_rule_dsl::matcher::end_clause().0;
-                                file.failures
-                                    .insert(id, ("budget-exceeded", UtilLimit::Work.message()));
-                                return Ok(false);
-                            }
-                            *work = crate::code_rule_dsl::matcher::end_clause().0;
-                        }
-                        if errors.overlaps(&matched.get_node().range()) {
-                            continue;
-                        }
-                        let room = (limits.max_witnesses + 1)
-                            .saturating_sub(file.witnesses.get(&id).map_or(0, Vec::len));
-                        let found = if each.is_some() {
-                            witnesses_from_match(
-                                &file.input,
-                                &matched,
-                                grammar.language,
-                                violation,
-                                room,
-                                matcher_budget_exhausted,
-                                |start, end| lines.span(start, end),
-                            )
-                        } else {
-                            witness_from_match(
-                                &file.input,
-                                &matched,
-                                grammar.language,
-                                Some(violation),
-                                |start, end| lines.span(start, end),
-                            )
-                            .map(|witness| vec![witness])
-                        };
-                        let found = match found {
-                            Ok(found) => found,
-                            Err(WitnessError::TransformLimit) => {
-                                file.failures
-                                    .insert(id, ("budget-exceeded", UtilLimit::Work.message()));
-                                return Ok(false);
-                            }
-                        };
-                        for witness in found {
-                            if violations::suppresses(Some(violation), matched.get_node(), &witness)
-                            {
-                                continue;
-                            }
-                            let witnesses = file.witnesses.get_mut(&id).expect("eligible clause");
-                            if witnesses.len() >= limits.max_witnesses {
-                                file.failures.insert(
-                                    id,
-                                    ("budget-exceeded", "file witness budget exceeded"),
-                                );
-                                return Ok(false);
-                            }
-                            witnesses.push(witness);
-                            metrics.witnesses += 1;
-                            if decision {
-                                return Ok(false);
-                            }
-                        }
-                    }
-                    Ok(true)
-                },
-            )
-        };
-        match result {
-            Ok(()) => {}
-            Err(_) if matcher_budget_observed() => continue,
-            Err(error) => {
-                file.failures.insert(id, limit_failure(error));
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Runs every candidate AST clause (`matcher::run_clause`) over one restored document and records

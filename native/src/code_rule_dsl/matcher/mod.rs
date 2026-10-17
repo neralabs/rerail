@@ -10,8 +10,7 @@ mod compare;
 mod count;
 mod each;
 mod exported;
-pub(super) mod facts;
-mod format_args;
+pub(super) mod format_args;
 mod layout;
 mod memo;
 mod nth_child;
@@ -57,7 +56,7 @@ pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
 pub(super) use relation::{set_answers_off, set_same_key_off};
 #[cfg(test)]
 pub(super) use resolve::TABLE_BUILDS;
-pub(super) use resolve::{FileScopeSlot, FileScopes, Resolves, Unresolved};
+pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
 pub(crate) use resolve::{
     calls_tables, file_eslint_directives, file_lines, file_module, file_noqa, file_nosec,
     file_phpcs, file_phpstan, file_psalm, table_reading,
@@ -825,26 +824,4 @@ impl EachScope {
     pub(super) fn record<D: Doc>(&self, env: &MetaVarEnv<'_, D>, name: &str) -> bool {
         self.0.record(each::binding_range(env, name))
     }
-}
-
-/// A predicate's explicit verdict for the restored SQL query engine.
-pub(super) enum Verdict<'tree, D: Doc> {
-    Match(MetaVarEnv<'tree, D>),
-    NoMatch,
-    Unknown,
-}
-
-/// Whether matching `term` never adds a binding.
-pub(super) fn binds_nothing(term: &AstMatcher) -> bool {
-    term.binds_nothing()
-}
-
-/// Whether a relation's rule can bind a capture.
-pub(super) fn may_bind(term: &AstMatcher) -> bool {
-    relation::may_bind(term)
-}
-
-/// Whether an active `violation.each` enumeration excludes this environment.
-pub(super) fn each_excluded<D: Doc>(env: &MetaVarEnv<'_, D>) -> bool {
-    each::active() && each::excluded(env)
 }

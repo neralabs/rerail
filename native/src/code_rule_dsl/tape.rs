@@ -49,26 +49,6 @@ pub(super) fn take_table_reservation() -> usize {
     TABLE_RESERVATION.replace(0)
 }
 
-#[cfg(test)]
-thread_local! {
-    static ANCHOR_SIBLINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-pub(super) fn anchor_siblings() -> usize {
-    ANCHOR_SIBLINGS.get()
-}
-
-#[cfg(test)]
-pub(super) fn reset_anchor_siblings() {
-    ANCHOR_SIBLINGS.set(0);
-}
-
-#[cfg(test)]
-fn count_anchor_sibling() {
-    ANCHOR_SIBLINGS.set(ANCHOR_SIBLINGS.get() + 1);
-}
-
 /// Deterministic grammar-wide codes: kind code is the dialect's kind id, field code its field id
 /// (zero means no field), both as `GrammarDialect::kinds` numbers them; a Blade tape also holds
 /// the PHP its template embeds (`blade::view`), its codes following Blade's.
@@ -1404,13 +1384,7 @@ impl TapeDoc {
         None
     }
 
-    /// The structurally adjacent previous sibling, named or anonymous.
-    pub(super) fn transducer_prev_sibling(&self, node: u32) -> Option<u32> {
-        let prev = self.data[node as usize].prev;
-        (prev != NONE).then_some(prev)
-    }
-
-    /// The whole source, for packed CPU and Metal backends.
+    /// The whole source for packed CPU and Metal backends.
     pub(super) fn transducer_source(&self) -> &[u8] {
         self.source.as_bytes()
     }
@@ -1431,10 +1405,6 @@ impl TapeDoc {
 
     pub(super) fn transducer_has_supertype(&self, _node: u32, _kind: u16) -> bool {
         false
-    }
-
-    pub(super) fn source_text(&self) -> &str {
-        &self.source
     }
 
     /// The node at a preorder ordinal: `root.adopt(doc.node(ordinal))` is the node ast-grep
@@ -1504,11 +1474,7 @@ impl<'a> TapeNode<'a> {
             return container.children().find(|child| child.rec().end > start);
         }
         let start = self.rec().start;
-        let ends_after = |node: &Self| {
-            #[cfg(test)]
-            count_anchor_sibling();
-            node.rec().end > start
-        };
+        let ends_after = |node: &Self| node.rec().end > start;
         let mut anchor = match self.parent() {
             Some(_) => *self,
             None => self.children().next()?,

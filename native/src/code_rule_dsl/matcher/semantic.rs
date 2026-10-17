@@ -33,14 +33,6 @@ pub(in crate::code_rule_dsl) enum Semantic {
 }
 
 impl Semantic {
-    pub(crate) fn exports(&self) -> Option<(&[String], bool)> {
-        match self {
-            Self::Parse(test) => Some((test.exports.as_slice(), true)),
-            Self::FormatArgs(test) => Some((test.exports.as_slice(), false)),
-            _ => None,
-        }
-    }
-
     pub(super) fn binds_nothing(&self) -> bool {
         match self {
             Self::Resolves(_) | Self::Value(_) | Self::Layout(_) | Self::Host(_) => true,

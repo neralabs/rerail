@@ -1,15 +1,11 @@
 //! Query-independent tape search index: publication, backlog cursor, and kind presence.
 
-#[cfg(test)]
-use super::SEARCH_INDEX_FAMILY_WRITES;
 use super::{
     CODEC_ZSTD, ContentStore, HashKey, MAX_PUBLICATION_BATCH, SearchKindLookup, StoreError,
     StoreResult, StoredKindPresence, TapeId, TapeSearchIndex, UnindexedTape,
 };
 use rusqlite::{TransactionBehavior, params};
 use std::io::Cursor;
-#[cfg(test)]
-use std::sync::atomic::Ordering;
 
 /// The maintenance backlog: stored tapes of one grammar version and tape format after a keyset
 /// cursor that have no search index yet, with the source and tape frames needed to build one.
@@ -105,8 +101,6 @@ impl ContentStore {
             // idempotent without a point lookup or stale FTS segments.
             remove_kind.execute([index.tape_id.0])?;
             put_kind.execute(params![index.tape_id.0, index.kind_tokens])?;
-            #[cfg(test)]
-            SEARCH_INDEX_FAMILY_WRITES.fetch_add(1, Ordering::Relaxed);
             put_set.execute(params![
                 index.tape_id.0,
                 index.index_version,
