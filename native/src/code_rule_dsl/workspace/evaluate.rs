@@ -96,7 +96,6 @@ struct PendingSqlJob {
     crossfile: Option<CrossFileConsumer>,
     metrics: Metrics,
     restored: Option<tape::TapeDoc>,
-    deadline: crate::code_rule_dsl::budget::MatchDeadline,
     error: Option<napi::Error>,
 }
 
@@ -248,12 +247,9 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                         consumes,
                         crossfile,
                     } = job;
-                    let mut deadline = None;
                     let metrics_result = check_closed(context.closed).and_then(|()| {
                         #[cfg(feature = "code-rule-profile")]
                         let _worker_profile = profile::WorkerProfile::start();
-                        let budget = MatchBudget::work(context.closed, file_work_budget());
-                        deadline = Some(budget.deadline());
                         let storage_started = Instant::now();
                         #[cfg(feature = "code-rule-profile")]
                         let _storage_read_timer =
@@ -305,10 +301,6 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                             ..Metrics::default()
                         })
                     });
-                    if deadline.is_none() {
-                        let budget = MatchBudget::work(context.closed, file_work_budget());
-                        deadline = Some(budget.deadline());
-                    }
                     let (metrics, error) = match metrics_result {
                         Ok(metrics) => (metrics, None),
                         Err(error) => (Metrics::default(), Some(error)),
@@ -320,7 +312,6 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                         crossfile,
                         metrics,
                         restored: None,
-                        deadline: deadline.expect("every job has a deadline"),
                         error,
                     }
                 })
@@ -338,65 +329,76 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
         #[cfg(test)]
         query::note_demand_files(file_count);
         let driven = sql.drive(Box::new(move || {
-            let mut pending = pending;
-            let mut grammars = BTreeMap::new();
-            let mut rows = Vec::new();
-            for (file_index, job) in pending.iter_mut().enumerate() {
-                if job.error.is_none() {
-                    let budget = MatchBudget::resume(job.deadline.clone());
-                    let _consumer = CrossFileScheduler::install(job.crossfile.clone());
-                    let mut restored = None;
-                    match evaluate_file(
-                        &mut job.file,
-                        &rules,
-                        &mut grammars,
-                        &closed,
-                        None,
-                        &budget,
-                        &mut restored,
-                    ) {
-                        Ok(metrics) => {
-                            job.metrics.merge(metrics);
-                            job.restored = restored;
+            let evaluated = WORK_POOL.install(|| {
+                pending
+                    .into_par_iter()
+                    .enumerate()
+                    .map_init(BTreeMap::new, |grammars, (file_index, mut job)| {
+                        if job.error.is_none() {
+                            // The task budget starts when SQLite's demanded execution starts, not
+                            // while the host registers the inert batch.
+                            let budget = MatchBudget::work(&closed, file_work_budget());
+                            let _consumer = CrossFileScheduler::install(job.crossfile.clone());
+                            let mut restored = None;
+                            match evaluate_file(
+                                &mut job.file,
+                                &rules,
+                                grammars,
+                                &closed,
+                                None,
+                                &budget,
+                                &mut restored,
+                            ) {
+                                Ok(metrics) => {
+                                    job.metrics.merge(metrics);
+                                    job.restored = restored;
+                                }
+                                Err(error) => job.error = Some(error),
+                            }
                         }
-                        Err(error) => job.error = Some(error),
-                    }
-                }
-                let candidates = job
-                    .file
-                    .candidates
-                    .regex
-                    .iter()
-                    .chain(&job.file.candidates.ast)
-                    .copied()
-                    .collect::<Vec<_>>();
-                for (program, id) in candidates.into_iter().enumerate() {
-                    let failure = job.file.failures.get(&id);
-                    let witnesses = job.file.witnesses.get(&id).map_or(0, Vec::len);
-                    if witnesses == 0 || failure.is_some() {
-                        rows.push(crate::code_rule_dsl::transducer::sql_backend::DrivenRow {
-                            file: file_index,
-                            program,
-                            match_index: None,
-                            complete: failure.is_none(),
-                            error: failure.map(|(code, message)| format!("{code}: {message}")),
-                        });
-                    }
-                    rows.extend((0..witnesses).map(|match_index| {
-                        crate::code_rule_dsl::transducer::sql_backend::DrivenRow {
-                            file: file_index,
-                            program,
-                            match_index: Some(match_index),
-                            complete: failure.is_none(),
-                            error: None,
+                        let candidates = job
+                            .file
+                            .candidates
+                            .regex
+                            .iter()
+                            .chain(&job.file.candidates.ast)
+                            .copied()
+                            .collect::<Vec<_>>();
+                        let mut rows = Vec::new();
+                        for (program, id) in candidates.into_iter().enumerate() {
+                            let failure = job.file.failures.get(&id);
+                            let witnesses = job.file.witnesses.get(&id).map_or(0, Vec::len);
+                            if witnesses == 0 || failure.is_some() {
+                                rows.push(
+                                    crate::code_rule_dsl::transducer::sql_backend::DrivenRow {
+                                        file: file_index,
+                                        program,
+                                        match_index: None,
+                                        complete: failure.is_none(),
+                                        error: failure
+                                            .map(|(code, message)| format!("{code}: {message}")),
+                                    },
+                                );
+                            }
+                            rows.extend((0..witnesses).map(|match_index| {
+                                crate::code_rule_dsl::transducer::sql_backend::DrivenRow {
+                                    file: file_index,
+                                    program,
+                                    match_index: Some(match_index),
+                                    complete: failure.is_none(),
+                                    error: None,
+                                }
+                            }));
                         }
-                    }));
-                }
-            }
+                        (job, rows)
+                    })
+                    .collect::<Vec<_>>()
+            });
+            let (pending, rows): (Vec<_>, Vec<_>) = evaluated.into_iter().unzip();
             *completed_by_executor
                 .lock()
                 .expect("demand result mutex poisoned") = Some(pending);
-            rows
+            rows.into_iter().flatten().collect()
         }));
         let mut pending = completed
             .lock()
