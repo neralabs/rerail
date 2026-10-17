@@ -698,14 +698,22 @@ fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value)
     let sql = evaluate("sql");
     let unknown = unknowns.get() > 0;
     let at = if three { 2 } else { 0 };
+    let (native_time, sql_time) = (between.duration_since(started), between.elapsed());
     ENGINE_NANOS[at].fetch_add(
-        between.duration_since(started).as_nanos() as u64,
+        native_time.as_nanos() as u64,
         std::sync::atomic::Ordering::Relaxed,
     );
     ENGINE_NANOS[at + 1].fetch_add(
-        between.elapsed().as_nanos() as u64,
+        sql_time.as_nanos() as u64,
         std::sync::atomic::Ordering::Relaxed,
     );
+    if sql_time.max(native_time).as_secs() >= 5 {
+        eprintln!(
+            "slow case: native {:.1}s, sql {:.1}s: {ast}",
+            native_time.as_secs_f64(),
+            sql_time.as_secs_f64()
+        );
+    }
     match (&native, &sql) {
         (_, Err(reason)) if reason.contains("Unsupported(") => Outcome::Unsupported(reason.clone()),
         _ if native == sql => Outcome::Same {

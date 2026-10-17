@@ -538,7 +538,11 @@ impl<'p> Lowerer<'p> {
                     // A count over any other term counts nothing and holds nowhere.
                     return Ok((Op::Never, bound.clone()));
                 };
-                let (sub, _) = self.lower(related.rule(), scope, bound)?;
+                let (sub, _) = if self.three {
+                    self.walked(related.rule(), scope, bound)?
+                } else {
+                    self.lower(related.rule(), scope, bound)?
+                };
                 let mut out = bound.clone();
                 let bind = count.binding.as_ref().map(|binding| {
                     let slot = self.slot(scope, &binding.name, SlotKind::Count);
