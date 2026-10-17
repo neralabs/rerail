@@ -231,18 +231,46 @@ export interface TimedApply {
   result: EngineResult;
 }
 
+/** Which engine matches the rules' AST clauses (`--engine`), and the files per SQL batch (`--sql-batch`). */
+export interface Matcher {
+  engine: "native" | "sql";
+  sqlBatchSize?: number;
+}
+
+export const nativeMatcher: Matcher = { engine: "native" };
+
+const refusalSchema = z.object({ ruleId: z.string(), clauseId: z.string(), language: z.string(), reason: z.string() });
+export const engineReportSchema = z.union([
+  z.object({ engine: z.literal("native") }),
+  z.object({
+    engine: z.literal("sql"),
+    batchSize: z.number().int(),
+    clauses: z.number().int(),
+    compiled: z.number().int(),
+    ran: z.number().int(),
+    refused: z.array(refusalSchema),
+    statements: z.object({ count: z.number(), rows: z.number() }).passthrough(),
+  }),
+]);
+export type EngineReport = z.infer<typeof engineReportSchema>;
+
 /** One native code-rule workspace without a content store: files are applied in revisions, every result covers every resident file. */
 export class RuleWorkspace {
   readonly #workspace: NativeCodeRuleDslWorkspace;
   #revision = 0;
 
-  constructor(engine: Engine, rules: readonly PortedRule[]) {
-    this.#workspace = new engine.binding.CodeRuleDslWorkspace();
+  constructor(engine: Engine, rules: readonly PortedRule[], matcher: Matcher = nativeMatcher) {
+    this.#workspace = new engine.binding.CodeRuleDslWorkspace(matcher);
     for (const rule of rules) this.#workspace.addCodeRule(rule.compiled);
   }
 
   accepts(path: string): boolean {
     return this.#workspace.acceptsPath(path);
+  }
+
+  /** The engine's report: on SQL, the clauses it refuses and why, and how many it compiled and ran. */
+  engineReport(): EngineReport {
+    return engineReportSchema.parse(JSON.parse(this.#workspace.engineReport()));
   }
 
   async apply(files: readonly SourceFile[], removed: readonly string[] = []): Promise<TimedApply> {

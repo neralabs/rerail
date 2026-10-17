@@ -23,6 +23,12 @@ checkout at the oracles' commit. `--addon <path>` chooses the native build, so t
   failures and blind files. It writes the sorted violation and failure lines to `whole-tree-<run>.lines.txt` and their
   sha256 is the run's digest. It also writes the blind files to `whole-tree-<run>.blind.txt` and everything to
   `whole-tree.json`. It exits 1 when the runs' digests differ.
+  `--engine sql [--sql-batch N]` matches the AST clauses on the set-based SQL engine
+  (`docs/sql-set-composition-design.md`), N files per batch (default 64), through the workspace option
+  `new CodeRuleDslWorkspace({ engine: "sql", sqlBatchSize })`. A clause the engine refuses fails on every file it reads
+  with `sql-unsupported`; the run prints each refused clause and its reason, and how many clauses compiled and ran. The
+  lines of the clauses that ran go to `whole-tree-<run>.ran.txt`, with their own digest, to compare with native's lines
+  for the same clauses.
 - `profile --output <dir> [--jobs N] [--repeat N]` times single-file applies for a parse and a text baseline, all rules,
   and each rule alone. `profile.md` ranks rules by their own cost and lists the slowest files and those over 500 ms.
 - `conformance` compares each rule with its linter's recorded findings over the tree and each mutation. Codes the

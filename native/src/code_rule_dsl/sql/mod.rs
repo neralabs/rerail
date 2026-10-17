@@ -4,16 +4,21 @@
 //! the production engine and the parity oracle; the evaluator selects this one at run time
 //! (`eval::Engine::Sql`).
 
+pub(super) mod crossfile;
 mod emit;
 mod exec;
 mod lower;
 mod nodes;
 mod plan;
 mod recursion;
+pub(super) mod select_when;
 mod terminals;
 #[cfg(test)]
 mod tests;
 
 #[cfg(test)]
 pub(super) use exec::compile;
-pub(super) use exec::{SqlError, SqlMatch, compile_each, environment};
+pub(super) use exec::{
+    ClauseRun, Compiled, Session, SqlError, SqlMatch, Stats, compile_each, compile_enumerating,
+    environment,
+};

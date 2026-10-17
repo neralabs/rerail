@@ -1,6 +1,7 @@
 //! Cross-file clauses over `evidence` relations: projection of a witness, and the violations of
 //! `require_each` and `budget` over the rows every file of the relation's domain produced.
 
+use super::Engine;
 use super::output::{failure, violation_from_witness, violation_id};
 use crate::code_rule_dsl::matcher::exported_span;
 use crate::code_rule_dsl::model::{
@@ -8,6 +9,7 @@ use crate::code_rule_dsl::model::{
     ProjectionSource, Query, ViolationSpec,
 };
 use crate::code_rule_dsl::query::crossfile::{self, Relation, Requirement};
+use crate::code_rule_dsl::sql::SqlError;
 use crate::code_rule_dsl::violations::{self, NodeGroup, Witness};
 use ast_grep_core::Doc;
 use ast_grep_core::matcher::NodeMatch;
@@ -155,14 +157,39 @@ fn incomplete(clause: &CompiledClause, paths: &BTreeSet<String>, message: &str) 
         .collect()
 }
 
+/// A cross-file clause's answer, or its `runtime` failure where `interrupted` stopped it or the SQL
+/// engine failed.
+fn answered<T>(
+    clause: &CompiledClause,
+    answer: std::result::Result<std::result::Result<T, crossfile::Interrupted>, SqlError>,
+) -> std::result::Result<T, Value> {
+    match answer {
+        Ok(Ok(answer)) => Ok(answer),
+        Ok(Err(crossfile::Interrupted)) => Err(failure(
+            &clause.id,
+            "runtime",
+            "cross-file check interrupted",
+            None,
+        )),
+        Err(error) => Err(failure(
+            &clause.id,
+            "runtime",
+            &format!("cross-file check failed: {error}"),
+            None,
+        )),
+    }
+}
+
 /// `require_each` over evidence: a subject without evidence is a violation at the subject's
 /// witness when the evidence is complete, and unknown (`source-incomplete`) when it is not. Subjects
-/// in files whose rows are unknown are unknown too.
+/// in files whose rows are unknown are unknown too. `engine` answers the anti-join: natively
+/// (`query::crossfile`) or in SQL (`sql::crossfile`).
 pub(crate) fn require_each(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     (subject_query, subject): (&FactQuery, Rows),
     (evidence_query, evidence): (&FactQuery, &Rows),
+    engine: Engine,
 ) -> Evaluation {
     let mut evaluation = Evaluation::default();
     evaluation.failures.extend(incomplete(
@@ -170,21 +197,34 @@ pub(crate) fn require_each(
         &subject.incomplete,
         "subject evidence in this file is incomplete",
     ));
-    let answers = match crossfile::require_each(
-        (&subject_query.alias, &relation(&subject)),
+    let (subjects, evidences) = (relation(&subject), relation(evidence));
+    let subject_side = (subject_query.alias.as_str(), &subjects);
+    let evidence_side = (evidence_query.alias.as_str(), &evidences);
+    let (subject_predicate, predicate) = (
         subject_query.predicate.as_ref(),
-        (&evidence_query.alias, &relation(evidence)),
         evidence_query.predicate.as_ref(),
-        crate::code_rule_dsl::budget::matcher_budget_exhausted,
-    ) {
+    );
+    let interrupted = crate::code_rule_dsl::budget::matcher_budget_exhausted;
+    let answer = match engine {
+        Engine::Native => Ok(crossfile::require_each(
+            subject_side,
+            subject_predicate,
+            evidence_side,
+            predicate,
+            interrupted,
+        )),
+        Engine::Sql => crate::code_rule_dsl::sql::crossfile::require_each(
+            subject_side,
+            subject_predicate,
+            evidence_side,
+            predicate,
+            interrupted,
+        ),
+    };
+    let answers = match answered(clause, answer) {
         Ok(answers) => answers,
-        Err(crossfile::Interrupted) => {
-            evaluation.failures.push(failure(
-                &clause.id,
-                "runtime",
-                "cross-file check interrupted",
-                None,
-            ));
+        Err(failure) => {
+            evaluation.failures.push(failure);
             return evaluation;
         }
     };
@@ -228,12 +268,14 @@ pub(crate) fn require_each(
 /// witness, with `count` and `subjectId` (the group key), unless a `rerail-ignore` marks that
 /// witness (`Side::Counted`; marked rows still count). With some file unknown the counts are
 /// lower bounds: one over the maximum is still a violation (reported with `partial`), one within
-/// it is unknown, never clean.
+/// it is unknown, never clean. `engine` counts the groups: natively (`query::crossfile`) or in SQL
+/// (`sql::crossfile`).
 pub(crate) fn budget(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     query: &FactQuery,
     rows: Rows,
+    engine: Engine,
 ) -> Evaluation {
     let ClauseKind::Budget {
         group_by,
@@ -245,22 +287,31 @@ pub(crate) fn budget(
         unreachable!("budget checks only");
     };
     let mut evaluation = Evaluation::default();
-    let groups = match crossfile::budget(
-        (&query.alias, &relation(&rows)),
-        query.predicate.as_ref(),
-        group_by,
-        distinct,
-        *maximum,
-        crate::code_rule_dsl::budget::matcher_budget_exhausted,
-    ) {
+    let counted = relation(&rows);
+    let side = (query.alias.as_str(), &counted);
+    let interrupted = crate::code_rule_dsl::budget::matcher_budget_exhausted;
+    let answer = match engine {
+        Engine::Native => Ok(crossfile::budget(
+            side,
+            query.predicate.as_ref(),
+            group_by,
+            distinct,
+            *maximum,
+            interrupted,
+        )),
+        Engine::Sql => crate::code_rule_dsl::sql::crossfile::budget(
+            side,
+            query.predicate.as_ref(),
+            group_by,
+            distinct,
+            *maximum,
+            interrupted,
+        ),
+    };
+    let groups = match answered(clause, answer) {
         Ok(groups) => groups,
-        Err(crossfile::Interrupted) => {
-            evaluation.failures.push(failure(
-                &clause.id,
-                "runtime",
-                "cross-file check interrupted",
-                None,
-            ));
+        Err(failure) => {
+            evaluation.failures.push(failure);
             return evaluation;
         }
     };
@@ -538,6 +589,7 @@ mod tests {
     #[test]
     fn cross_file_clauses_stop_at_the_evaluation_budget() {
         use crate::code_rule_dsl::budget::MatchBudget;
+        use crate::code_rule_dsl::eval::Engine;
         use crate::code_rule_dsl::eval::evidence::{Rows, budget};
         use crate::code_rule_dsl::model::ClauseKind;
         use crate::code_rule_dsl::violations::Witness;
@@ -591,14 +643,22 @@ mod tests {
             }],
             incomplete: Default::default(),
         };
-        let within = budget(&compiled.inner, clause, query, rows());
-        assert_eq!(within.violations.len(), 1);
+        for engine in [Engine::Native, Engine::Sql] {
+            let within = budget(&compiled.inner, clause, query, rows(), engine);
+            assert_eq!(within.violations.len(), 1, "{engine:?}");
 
-        let expired = MatchBudget::expired_for_test();
-        let late = budget(&compiled.inner, clause, query, rows());
-        assert!(late.violations.is_empty(), "a late check answered");
-        assert_eq!(late.failures.len(), 1);
-        assert_eq!(late.failures[0]["code"], "runtime", "{:?}", late.failures);
-        assert!(expired.observed(), "the overrun was not recorded");
+            let expired = MatchBudget::expired_for_test();
+            let late = budget(&compiled.inner, clause, query, rows(), engine);
+            assert!(
+                late.violations.is_empty(),
+                "{engine:?}: a late check answered"
+            );
+            assert_eq!(late.failures.len(), 1, "{engine:?}");
+            assert_eq!(late.failures[0]["code"], "runtime", "{:?}", late.failures);
+            assert!(
+                expired.observed(),
+                "{engine:?}: the overrun was not recorded"
+            );
+        }
     }
 }

@@ -20,6 +20,7 @@ mod ingest;
 mod memory;
 mod persisted;
 mod results;
+mod sql;
 mod storage;
 
 use super::json::invalid;
@@ -443,6 +444,11 @@ struct WorkspaceState {
     result_page_index: Option<ResultPageIndex>,
     /// Cross-file adapters and their shared derived state.
     crossfile: crossfile::CrossFileScheduler,
+    /// How the workspace matches its AST clauses (`sql::EngineOptions`).
+    engine: sql::EngineOptions,
+    /// The code rules compiled for the SQL engine, on the first apply on it: the rules are fixed
+    /// by then.
+    sql: Option<Arc<sql::SqlEngine>>,
 }
 
 fn check_closed(closed: &AtomicBool) -> Result<()> {

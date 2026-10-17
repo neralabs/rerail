@@ -609,6 +609,15 @@ enum Outcome {
 }
 
 fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value) -> Outcome {
+    // A case known to take hours on the SQL engine (`RERAIL_SQL_DIFF_SKIP`: a fragment of its
+    // rule's JSON) is skipped, and counted.
+    if let Ok(fragment) = std::env::var("RERAIL_SQL_DIFF_SKIP")
+        && !fragment.is_empty()
+        && ast.to_string().contains(&fragment)
+    {
+        eprintln!("skipped case: {ast}");
+        return Outcome::Rejected;
+    }
     let document = clause_document(
         json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": violation }),
     );

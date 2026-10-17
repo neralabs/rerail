@@ -8,6 +8,10 @@
 //! Frames are tables rather than one statement's CTEs because SQLite copies a CTE's whole
 //! definition into every reference (`resolveFromTermToCte`), CTEs it references included: a rule
 //! whose frames are each read twice would expand exponentially with its depth.
+//!
+//! A frame that numbers its rows afresh inserts NULL as `k`, so SQLite assigns the next rowid and
+//! appends: a `ROW_NUMBER() OVER ()` would buffer every row in an ephemeral table first and
+//! insert them by seeking.
 
 use super::lower::{INTERNAL, ORIGIN};
 use super::plan::{
@@ -16,8 +20,11 @@ use super::plan::{
 use std::collections::BTreeSet;
 use std::fmt::Write;
 
-/// Where the driver substitutes the statement's file list (`n.file IN (…)` of the root frame).
+/// Where the driver substitutes the statement's whole files (`n.file IN (…)` of the root frame).
 pub(super) const FILES: &str = "/*FILES*/";
+/// Where the driver substitutes the statement's selected roots, `(file, node)` rows, in files
+/// whose roots an anchor index narrowed (the root frame's second branch).
+pub(super) const ROOTS: &str = "/*ROOTS*/";
 /// Where the driver substitutes the prefix of the statement's own tables.
 pub(super) const NAMESPACE: &str = "/*NS*/";
 /// Where the driver substitutes the prefix of a `violation.each` enumeration's tables: `x`, the
@@ -326,10 +333,15 @@ impl<'s> Emitter<'s> {
             Some(kinds) if kinds.is_empty() => " AND 0".to_owned(),
             Some(kinds) => format!(" AND n.kind IN ({})", list(kinds)),
         };
+        // Every root of the clause's kinds in the whole files, then the selected roots of those
+        // kinds in the narrowed files.
         let root = self.frame(
             "r",
             &format!(
-                "SELECT ROW_NUMBER() OVER (), n.file, n.id{nulls} FROM node n WHERE n.file IN ({FILES}){kinds}"
+                "SELECT NULL, file, id{nulls} FROM (\
+                 SELECT n.file AS file, n.id AS id FROM node n WHERE n.file IN ({FILES}){kinds} \
+                 UNION ALL SELECT n.file, n.id FROM ({ROOTS}) r CROSS JOIN node n \
+                 ON n.file = r.file AND n.id = r.node WHERE 1{kinds})"
             ),
         );
         self.op(&statement.op, &root)
@@ -897,7 +909,7 @@ impl<'s> Emitter<'s> {
         );
         self.create(&name, &columns);
         self.statements.push(format!(
-            "{with}INSERT INTO {name} SELECT ROW_NUMBER() OVER (), c.file, c.node{}, c.pk, {order} \
+            "{with}INSERT INTO {name} SELECT NULL, c.file, c.node{}, c.pk, {order} \
              FROM ({source}) c JOIN {input} f ON f.k = c.pk",
             self.physical_of("f")
         ));
@@ -953,7 +965,7 @@ impl<'s> Emitter<'s> {
                 );
                 self.create(&siblings, &columns);
                 self.statements.push(format!(
-                    "INSERT INTO {siblings} SELECT ROW_NUMBER() OVER (), c.file, c.id{}, f.k, c.id FROM {input} f \
+                    "INSERT INTO {siblings} SELECT NULL, c.file, c.id{}, f.k, c.id FROM {input} f \
                      JOIN node fn ON fn.file = f.file AND fn.id = f.node \
                      JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
                     self.physical_of("f")
