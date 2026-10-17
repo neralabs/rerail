@@ -1100,6 +1100,27 @@ describe("proposeLintConfigSettings for short-circuit calls", () => {
     });
     const unreadable = await repository({ "eslint.config.mjs": "let rules = {};\nexport default [{ rules }];\n", "tslint.json": TSLINT });
     expect(readRepositoryLintConfig(unreadable, bundle, ["typescript"]).notes).toContain(`${UNUSED_EXPRESSIONS}: ${because}: eslint.config.mjs is not statically readable.`);
+    const nested = await repository({
+      ".eslintrc.json": JSON.stringify({ overrides: [{ files: "src/**", overrides: [{ files: "*.ts", extends: ["plugin:@typescript-eslint/recommended"] }] }] }),
+      "tslint.json": TSLINT,
+    });
+    expect(readRepositoryLintConfig(nested, bundle, ["typescript"]).notes).toContain(`${UNUSED_EXPRESSIONS}: ${because}: .eslintrc.json overrides[0].overrides, which Rerail does not read, may set "@typescript-eslint/no-unused-expressions".`);
+  });
+
+  it("uses no tslint.json entry where ESLint uses a config Rerail names but does not read", async () => {
+    const TSLINT = "{ \"rules\": { \"no-unused-expression\": false } }";
+    for (const [files, config] of [
+      [{ ".eslintrc.js": "module.exports = { extends: [\"plugin:@typescript-eslint/recommended\"] };\n" }, ".eslintrc.js"],
+      [{ ".eslintrc.yml": "extends:\n  - plugin:@typescript-eslint/recommended\n" }, ".eslintrc.yml"],
+      [{ ".eslintrc.json": "[]" }, ".eslintrc.json"],
+      [{ "package.json": JSON.stringify({ name: "app", eslintConfig: "plugin:@typescript-eslint/recommended" }) }, "package.json eslintConfig"],
+    ] as const) {
+      const root = await repository({ ...files, "tslint.json": TSLINT });
+      expect(readLintConfigFiles(root)).toMatchObject({ eslint: undefined, eslintNotRead: config });
+      const proposed = readRepositoryLintConfig(root, bundle, ["typescript"]);
+      expect(proposed.settings).toEqual([]);
+      expect(proposed.notes).toContain(`${UNUSED_EXPRESSIONS}: tslint.json: "no-unused-expression": false is not used: ${config}, which Rerail does not read, may set "@typescript-eslint/no-unused-expressions".`);
+    }
   });
 
   it("maps no tslint.json option the port has none for, and reads no other form of the rule's entry", async () => {

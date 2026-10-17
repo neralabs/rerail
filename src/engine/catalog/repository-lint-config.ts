@@ -263,6 +263,8 @@ export interface RuffSelection {
 /** What `readLintConfigFiles` read at a repository root. */
 export interface LintConfigFiles {
   readonly eslint: LintConfigRules | undefined;
+  /** The config ESLint uses where Rerail names it but does not read it (`.eslintrc.js`, YAML, not a JSON object). */
+  readonly eslintNotRead?: string;
   readonly oxlint: LintConfigRules | undefined;
   readonly ruff: RuffSelection | undefined;
   /** `tslint.json`'s top-level `rules`, and its keys that are not read (`extends`, `defaultSeverity`). */
@@ -342,7 +344,7 @@ function topLevelRules(file: string, config: z.infer<typeof configFile>, unread:
   const presets = [
     ...(Object.hasOwn(config, "extends") ? [`${file} extends`] : []),
     ...(Array.isArray(config.overrides) ? config.overrides : []).flatMap((override: unknown, index) =>
-      (typeof override === "object" && override !== null && Object.hasOwn(override, "extends") ? [`${file} overrides[${index}].extends`] : [])),
+      (typeof override === "object" && override !== null ? ["extends", "overrides"].filter(key => Object.hasOwn(override, key)).map(key => `${file} overrides[${index}].${key}`) : [])),
   ];
   return {
     file,
@@ -495,7 +497,13 @@ function flatRules(file: string, read: FlatConfigRead): LintConfigRules {
   return { file, rules, scoped, unresolved, shadowed, optionsUnknown, ...(read.unread.length > 0 ? { presets: read.unread.join(", ") } : {}) };
 }
 
-function readEslint(root: string, notes: Notes): LintConfigRules | undefined {
+/** ESLint's config as read, and the config ESLint uses that Rerail names but does not read (code, YAML, not a JSON object). */
+interface EslintRead {
+  readonly rules?: LintConfigRules;
+  readonly notRead?: string;
+}
+
+function readEslint(root: string, notes: Notes): EslintRead {
   const flat = ESLINT_FLAT_CONFIGS.filter(name => readRootFile(root, name).present);
   const legacy = ESLINTRC_FILES.filter(name => readRootFile(root, name).present);
   if (flat.length > 0) {
@@ -512,50 +520,52 @@ function readEslint(root: string, notes: Notes): LintConfigRules | undefined {
       return { file: used, rules: {}, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), unreadable: why };
     };
     const read = readRootFile(root, used);
-    if (read.present && read.text === undefined) return unreadable(NOT_A_FILE.replace(/\.$/u, ""));
+    if (read.present && read.text === undefined) return { rules: unreadable(NOT_A_FILE.replace(/\.$/u, "")) };
     let config: FlatConfigRead;
     try {
       config = readEslintFlatConfig(read.present ? read.text! : "", used);
     } catch (error) {
       if (!(error instanceof LintConfigFormatError)) throw error;
-      return unreadable(error.message);
+      return { rules: unreadable(error.message) };
     }
     for (const note of config.notes) notes.push({ linter: "eslint", text: `${used}: ${note}` });
     ignored();
-    return flatRules(used, config);
+    return { rules: flatRules(used, config) };
   }
   const used = legacy[0];
   if (used !== undefined) {
     for (const name of legacy.slice(1)) notes.push({ linter: "eslint", text: `${name} is not read: ESLint uses ${used} instead.` });
     if (ESLINTRC_CODE.has(used)) {
       notes.push({ linter: "eslint", text: `${used} is not read: ${NEVER_RUN}` });
-      return undefined;
+      return { notRead: used };
     }
     if (used.endsWith(".yaml") || used.endsWith(".yml")) {
       notes.push({ linter: "eslint", text: `${used} is not read: Rerail reads JSON lint configs only.` });
-      return undefined;
+      return { notRead: used };
     }
     const config = jsoncFile(root, used, "eslint", notes);
-    return config === undefined ? undefined : topLevelRules(used, config, ESLINT_UNREAD, "eslint", notes);
+    const rules = config === undefined ? undefined : topLevelRules(used, config, ESLINT_UNREAD, "eslint", notes);
+    return rules === undefined ? { notRead: used } : { rules };
   }
   // Without a config file, ESLint reads `package.json`'s `eslintConfig`.
   const manifest = readRootFile(root, "package.json");
-  if (!manifest.present || manifest.text === undefined) return undefined;
+  if (!manifest.present || manifest.text === undefined) return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(manifest.text);
   } catch {
     // An unreadable manifest is not an ESLint config; the matcher skips it the same way.
-    return undefined;
+    return {};
   }
   const eslintConfig = z.looseObject({ eslintConfig: z.unknown().optional() }).safeParse(parsed).data?.eslintConfig;
-  if (eslintConfig === undefined) return undefined;
+  if (eslintConfig === undefined) return {};
   const config = configFile.safeParse(eslintConfig);
   if (!config.success) {
     notes.push({ linter: "eslint", text: "package.json eslintConfig is not read: it is not an object." });
-    return undefined;
+    return { notRead: "package.json eslintConfig" };
   }
-  return topLevelRules("package.json eslintConfig", config.data, ESLINT_UNREAD, "eslint", notes);
+  const rules = topLevelRules("package.json eslintConfig", config.data, ESLINT_UNREAD, "eslint", notes);
+  return rules === undefined ? { notRead: "package.json eslintConfig" } : { rules };
 }
 
 function readOxlint(root: string, notes: Notes): LintConfigRules | undefined {
@@ -734,7 +744,7 @@ export function readLintConfigFiles(root: string): LintConfigFiles {
   const oxlint = readOxlint(root, notes);
   const ruff = readRuff(root, notes);
   const tslint = readTslint(root, notes);
-  return { eslint, oxlint, ruff, tslint, notes };
+  return { eslint: eslint.rules, ...(eslint.notRead === undefined ? {} : { eslintNotRead: eslint.notRead }), oxlint, ruff, tslint, notes };
 }
 
 /**
@@ -1029,7 +1039,7 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
       const because = entryText(tslint.file, key, value);
       // A repository with both linters is moving to ESLint, whose config is the one that counts where it sets the rule,
       // or may set it: through presets Rerail does not read, or anywhere in a file it cannot read.
-      const eslintSets = eslint === undefined ? undefined
+      const eslintSets = eslint === undefined ? (files.eslintNotRead === undefined ? undefined : `${files.eslintNotRead}, which Rerail does not read, may set ${JSON.stringify(replacement.eslint)}`)
         : eslint.unreadable !== undefined ? `${eslint.file} is not statically readable`
         : Object.hasOwn(eslint.rules, replacement.eslint) || eslint.unresolved.has(replacement.eslint) || eslint.scoped.some(entry => entry.key === replacement.eslint)
           ? `${eslint.file} sets ${JSON.stringify(replacement.eslint)}`
