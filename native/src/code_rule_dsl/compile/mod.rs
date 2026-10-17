@@ -1362,20 +1362,46 @@ fn declared_captures(
 /// Each utility's `UtilOrigin`, in `utils` order: a digest of it and of every utility it reaches.
 fn util_origins(utils: &BTreeMap<String, UtilDef>, language: &str) -> Result<Vec<UtilOrigin>> {
     use sha2::{Digest, Sha256};
+    // Serialize each potentially large utility body once. The prior implementation recursively
+    // serialized every reached body again for every utility root.
+    let encoded = utils
+        .iter()
+        .map(|(id, util)| {
+            serde_json::to_vec(&(id, &util.params, util.rule))
+                .map(|body| (id.as_str(), body))
+                .map_err(|error| invalid(error.to_string()))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
     utils
         .iter()
         .map(|(id, util)| {
             let mut reached = reachable(std::iter::once(util.rule), utils);
             reached.insert(id.clone());
-            let body = serde_json::to_vec(&(
-                language,
-                id,
-                reached
-                    .iter()
-                    .map(|id| (id, &utils[id].params, utils[id].rule))
-                    .collect::<Vec<_>>(),
-            ))
-            .map_err(|error| invalid(error.to_string()))?;
+            // Preserve the existing JSON digest byte for byte: `[language,id,[utility...]]`.
+            let mut body =
+                serde_json::to_vec(&(language, id)).map_err(|error| invalid(error.to_string()))?;
+            assert_eq!(body.pop(), Some(b']'));
+            body.extend_from_slice(b",[");
+            for (index, reached) in reached.iter().enumerate() {
+                if index != 0 {
+                    body.push(b',');
+                }
+                body.extend_from_slice(&encoded[reached.as_str()]);
+            }
+            body.extend_from_slice(b"]]");
+            #[cfg(test)]
+            {
+                let expected = serde_json::to_vec(&(
+                    language,
+                    id,
+                    reached
+                        .iter()
+                        .map(|id| (id, &utils[id].params, utils[id].rule))
+                        .collect::<Vec<_>>(),
+                ))
+                .expect("utility origin JSON");
+                assert_eq!(body, expected);
+            }
             Ok(UtilOrigin {
                 digest: Sha256::digest(&body).into(),
             })
