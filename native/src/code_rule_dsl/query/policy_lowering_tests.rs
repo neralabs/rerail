@@ -6,6 +6,10 @@ use serde_json::json;
 use std::sync::Arc;
 
 fn code_rule(rule: serde_json::Value) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
+    code_rule_ast(json!({ "language": "python", "rule": rule }))
+}
+
+fn code_rule_ast(ast: serde_json::Value) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     CodeRuleDslRuntime::compile(
         json!({
             "format": "rerail.policy/v1",
@@ -14,7 +18,7 @@ fn code_rule(rule: serde_json::Value) -> crate::code_rule_dsl::CompiledCodeRuleD
             "mode": "block",
             "clauses": [{
                 "id": "ast-match",
-                "forbid": { "ast": { "language": "python", "rule": rule } },
+                "forbid": { "ast": ast },
                 "violation": { "anchor": "witness.span", "code": "X", "message": "x" }
             }]
         })
@@ -579,6 +583,166 @@ fn compiled_nth_child_uses_named_sibling_order_and_reverse_order() {
             ]
         ),
         vec![11]
+    );
+}
+
+fn execute_capture_sql(
+    plan: &SqlCatalogPlan,
+    matches: &[(usize, i64, i64)],
+    captures: &[(usize, i64, i64, &str, i64, i64, &str, &str)],
+) -> Vec<i64> {
+    let connection = Connection::open_in_memory().expect("in-memory SQLite");
+    connection
+        .execute_batch(
+            "CREATE TABLE rerail_matches(
+                batch INTEGER, row_kind INTEGER, producer_id INTEGER, file_index INTEGER,
+                task_index INTEGER, match_index INTEGER, capture_index INTEGER,
+                capture_occurrence INTEGER, capture_sequence_start INTEGER,
+                capture_sequence_count INTEGER, node INTEGER, related_node INTEGER,
+                axis_kind INTEGER, axis_order INTEGER, fact_kind INTEGER, document_id INTEGER,
+                mapped_document_id INTEGER, start_ordinal INTEGER, output_label TEXT,
+                capture_label TEXT, text_value TEXT, start_byte INTEGER, end_byte INTEGER,
+                verdict INTEGER, complete INTEGER, work_used INTEGER, error_code TEXT,
+                field_id INTEGER, related_named INTEGER, source_text TEXT,
+                structural_key TEXT, capture_kind INTEGER
+            );
+            INSERT INTO rerail_matches(batch, row_kind, complete) VALUES (1, 1, 1);",
+        )
+        .expect("typed packed relation");
+    for producer in 0..plan.terminals().len() {
+        connection
+            .execute(
+                "INSERT INTO rerail_matches(batch, row_kind, producer_id, file_index, verdict, complete)
+                 VALUES (1, 2, ?1, 0, 1, 1)",
+                [producer as i64],
+            )
+            .expect("producer status");
+    }
+    for (producer, match_index, node) in matches {
+        connection
+            .execute(
+                "INSERT INTO rerail_matches(
+                    batch, row_kind, producer_id, file_index, task_index, match_index,
+                    node, start_ordinal, complete
+                 ) VALUES (1, 3, ?1, 0, ?2, ?2, ?3, ?3, 1)",
+                params![*producer as i64, match_index, node],
+            )
+            .expect("terminal match");
+    }
+    for (producer, match_index, capture_index, label, occurrence, node, text, structure) in captures
+    {
+        connection
+            .execute(
+                "INSERT INTO rerail_matches(
+                    batch, row_kind, producer_id, file_index, match_index, capture_index,
+                    capture_occurrence, capture_sequence_start, capture_sequence_count,
+                    node, capture_label, source_text, structural_key, capture_kind, complete
+                 ) VALUES (1, 4, ?1, 0, ?2, ?3, ?4, 0, 1, ?5, ?6, ?7, ?8, 1, 1)",
+                params![
+                    *producer as i64,
+                    match_index,
+                    capture_index,
+                    occurrence,
+                    node,
+                    label,
+                    text,
+                    structure
+                ],
+            )
+            .expect("capture row");
+    }
+    let mut statement = connection.prepare(plan.sql()).expect("executable SQL plan");
+    statement
+        .query_map([1_i64], |row| row.get(10))
+        .expect("query capture rows")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("typed output rows")
+}
+
+#[test]
+fn compiled_capture_constraints_run_on_the_bound_node() {
+    let compiled = code_rule_ast(json!({
+        "language": "python",
+        "rule": { "pattern": "$A" },
+        "constraints": { "A": { "kind": "identifier" } }
+    }));
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("a capture constraint lowers into SQL");
+
+    assert_eq!(
+        execute_capture_sql(
+            &plan,
+            &[(0, 0, 10), (1, 0, 20)],
+            &[(0, 0, 0, "A", 0, 20, "item", "identifier:item")]
+        ),
+        vec![10]
+    );
+    assert!(
+        execute_capture_sql(
+            &plan,
+            &[(0, 0, 10), (1, 0, 21)],
+            &[(0, 0, 0, "A", 0, 20, "item", "identifier:item")]
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn repeated_pattern_captures_require_structural_equality() {
+    let compiled = code_rule(json!({ "pattern": "$A + $A" }));
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("a repeated capture pattern lowers into SQL");
+
+    let matches = [(0, 0, 10)];
+    assert_eq!(
+        execute_capture_sql(
+            &plan,
+            &matches,
+            &[
+                (0, 0, 0, "A", 0, 20, "item", "identifier:item"),
+                (0, 0, 1, "A", 1, 21, "item", "identifier:item")
+            ]
+        ),
+        vec![10]
+    );
+    assert!(
+        execute_capture_sql(
+            &plan,
+            &matches,
+            &[
+                (0, 0, 0, "A", 0, 20, "item", "identifier:item"),
+                (0, 0, 1, "A", 1, 21, "other", "identifier:other")
+            ]
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn compiled_count_applies_exact_bounds_to_the_complete_axis() {
+    let compiled = code_rule(json!({
+        "count": {
+            "has": { "kind": "if_statement", "stopBy": "end" },
+            "min": 2,
+            "max": 2
+        }
+    }));
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("a bounded descendant count lowers into SQL");
+
+    assert_eq!(
+        execute_navigation_sql(
+            &plan,
+            &[(0, &[0, 10]), (2, &[2, 3, 12])],
+            &[
+                (0, 1, 0, 0, true),
+                (1, 2, 0, 0, true),
+                (1, 3, 1, 0, true),
+                (10, 11, 0, 0, true),
+                (11, 12, 0, 0, true)
+            ]
+        ),
+        vec![0]
     );
 }
 
