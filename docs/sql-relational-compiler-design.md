@@ -587,6 +587,18 @@ Ports must use named clean commits and must include their parity tests.
 4. Publish only the returned violation rows.
 5. Remove temporary stubs and dead-code allowances.
 
+## Compiler contract suite
+
+`native/src/code_rule_dsl/query/lowering_contract.rs` contains 108 hand-written lowering forms.
+Each form declares its required terminal kinds and normalized SQL constructs.
+
+The suite covers atomic tests, boolean composition, navigation, captures, utilities, semantic facts, clauses, and outputs.
+It also rejects callback-shaped SQL fragments.
+
+The current tests make sure that the contract is complete and internally consistent.
+The relational compiler must compare its explained plan with each contract case when that API exists.
+Matcher-oracle tests remain necessary because an SQL shape does not prove semantic parity.
+
 ## Architecture gates
 
 The production cutover must satisfy these gates:

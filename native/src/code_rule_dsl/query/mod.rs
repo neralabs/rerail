@@ -319,4 +319,6 @@ pub(in crate::code_rule_dsl) fn regex_matches(
 }
 
 #[cfg(test)]
+mod lowering_contract;
+#[cfg(test)]
 mod tests;
