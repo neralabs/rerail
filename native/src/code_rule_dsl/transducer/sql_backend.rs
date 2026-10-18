@@ -431,3 +431,100 @@ unsafe impl VTabCursor for MatchCursor<'_> {
         Ok(self.position as i64 + 1)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{MatchRegistry, PackedDemand, register_module};
+    use crate::code_rule_dsl::packed::ExecutionBackend;
+    use rusqlite::Connection;
+    use std::sync::Arc;
+
+    fn empty_demand() -> PackedDemand {
+        PackedDemand::new(
+            ExecutionBackend::CpuJit,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("valid empty demand")
+    }
+
+    #[test]
+    fn expanded_relation_has_one_typed_schema() {
+        let connection = Connection::open_in_memory().expect("SQLite connection");
+        register_module(&connection, Arc::new(MatchRegistry::default()))
+            .expect("virtual table module");
+        let columns = connection
+            .prepare("SELECT name FROM pragma_table_xinfo('rerail_matches') ORDER BY cid")
+            .expect("schema query")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("schema rows")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("schema values");
+        assert_eq!(
+            columns,
+            [
+                "batch",
+                "row_kind",
+                "producer_id",
+                "file_index",
+                "task_index",
+                "match_index",
+                "capture_index",
+                "capture_occurrence",
+                "capture_sequence_start",
+                "capture_sequence_count",
+                "node",
+                "related_node",
+                "axis_kind",
+                "axis_order",
+                "fact_kind",
+                "document_id",
+                "mapped_document_id",
+                "start_ordinal",
+                "output_label",
+                "capture_label",
+                "text_value",
+                "start_byte",
+                "end_byte",
+                "verdict",
+                "complete",
+                "work_used",
+                "error_code",
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_batch_is_inert_until_sql_demands_one_explicit_batch_status() {
+        let connection = Connection::open_in_memory().expect("SQLite connection");
+        let registry = Arc::new(MatchRegistry::default());
+        register_module(&connection, Arc::clone(&registry)).expect("virtual table module");
+        let token = registry.register(empty_demand());
+        assert_eq!(registry.query_execution_counters(token), Some((0, 0)));
+
+        let rows = connection
+            .prepare(
+                "SELECT row_kind, producer_id, file_index, complete, error_code \
+                 FROM rerail_matches WHERE batch = ?1 ORDER BY rowid",
+            )
+            .expect("expanded relation query")
+            .query_map([token], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            })
+            .expect("batch rows")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("batch relation");
+
+        assert_eq!(rows, vec![(1, None, None, 1, None)]);
+        assert_eq!(registry.query_execution_counters(token), Some((1, 1)));
+    }
+}

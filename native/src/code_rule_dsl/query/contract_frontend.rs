@@ -558,4 +558,18 @@ mod tests {
         assert!(lower("all(kind), regex)").is_err());
         assert!(lower("invented(kind)").is_err());
     }
+
+    #[test]
+    fn relational_ir_preserves_terminal_and_navigation_meaning() {
+        assert_ne!(
+            lower("pattern(named terminal)").expect("named pattern"),
+            lower("pattern(internal tree)").expect("structural pattern"),
+            "different terminal specifications must not collapse to one feature list"
+        );
+        assert_ne!(
+            lower("has(kind, stopBy=neighbor)").expect("descendant relation"),
+            lower("inside(kind, stopBy=neighbor)").expect("ancestor relation"),
+            "different navigation axes must remain explicit in relational IR"
+        );
+    }
 }
