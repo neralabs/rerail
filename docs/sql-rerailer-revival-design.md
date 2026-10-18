@@ -5,6 +5,9 @@
 This document defines the new NER-1562 implementation direction.
 It supersedes the earlier plan to put the complete rule language inside the packed executor.
 
+[`sql-relational-compiler-design.md`](sql-relational-compiler-design.md) defines the exact compiler boundary.
+A complete clause lowers into relational SQL plus terminal programs, not one complete packed program.
+
 The packed executor remains important.
 It becomes a terminal and bulk-fact producer for the SQL rule engine.
 SQLite owns higher-level rule composition.

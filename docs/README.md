@@ -22,6 +22,7 @@
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md) and
   [content-store-bulk-publication-design.md](content-store-bulk-publication-design.md): the machine-wide source store
 - [sql-rerailer-revival-design.md](sql-rerailer-revival-design.md): the active SQL rule-engine design
+- [sql-relational-compiler-design.md](sql-relational-compiler-design.md): the callback-free relational compiler and packed terminal boundary
 - [sql-engine-shape-analysis.md](sql-engine-shape-analysis.md): the measured SQL topology problems and proposed corrections
 - [ner-1562-landing-pad.md](ner-1562-landing-pad.md): the packed executor port boundary and source refs
 - [sql-driven-transducer-execution.md](sql-driven-transducer-execution.md): history of the deleted callback-shaped SQL engine

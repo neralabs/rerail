@@ -1,6 +1,8 @@
 # SQL-driven transducer execution
 
-Status: production has one engine shape: compiled clauses lower to verified packed programs; the workspace prepares one immutable sparse batch; SQLite demands it through the terminal virtual table; the first `xFilter` executes it once; a materialized SQL relation checks completion and orders extracted rows; the workspace publishes only those rows. The semantic matcher is a test oracle only. Unsupported lowering, workspace tape preparation, and result publication currently fail at their typed stage; production never falls back.
+Status: production has one engine shape. Compiled clauses lower into relational SQL plus verified terminal programs. The workspace prepares one immutable sparse batch. SQLite demands it through the terminal virtual table. The first `xFilter` executes it once. A materialized SQL relation evaluates clauses and extracts ordered violations. The workspace publishes only those rows. The semantic matcher is a test oracle only. Unsupported lowering, workspace tape preparation, and result publication currently fail at their typed stage. Production never falls back.
+
+[`sql-relational-compiler-design.md`](sql-relational-compiler-design.md) defines the compiler boundary and the packed terminal registry.
 
 ## Design decision
 
@@ -17,14 +19,14 @@ SQLite extracts violations from the relation in the same statement.
 The required boundary is:
 
 ```text
-workspace files + verified programs + sparse task grid
+relational SQL plan + workspace files + terminal programs + sparse task grid
   -> register inert batch descriptor
   -> execute one SQL statement
     -> rerail_matches(:batch) xFilter
       -> execute every demanded file/program task as one batch
-      -> evaluate structural and semantic relations in the batch executor
-      -> materialize ordered match, capture, and completion rows once
-    -> SQLite joins, groups, checks completion, and extracts violations
+      -> materialize typed terminal, capture, fact, and completion rows once
+    -> SQLite evaluates relations, joins, counts, and clause outcomes
+    -> SQLite extracts ordered violations
   -> publish the final SQL rows
 ```
 
@@ -122,7 +124,7 @@ The batch executor can use both constraints as filters only when one execution s
 
 SQLite calls `xFilter` when the SQL plan first reads `rerail_matches(:batch)`.
 The cursor calls the selected packed backend once for the sparse batch.
-The backend evaluates complete relation programs, including navigation, captures, alternatives, and semantic operations.
+The backend executes terminal and fact-producing programs for the SQL plan.
 A `OnceLock` stores the normalized output relation and its failure state.
 A later scan of the same batch reads the stored relation and does not execute it again.
 
@@ -199,13 +201,13 @@ SQL can then implement these higher-level operations:
 - Incremental invalidation joins by tape and catalog identity.
 - Stable output order with explicit logical keys.
 
-SQL scalar functions are suitable for pure operations on one value.
-Examples include hash comparison, collation, and violation formatting.
-A scalar function must not run a matcher, walk a tree, extend an environment, or enter another SQL statement.
+SQLite built-in expressions can perform pure operations on one value.
+Examples include comparison, collation, and text formatting.
+The production statement must not call a custom scalar function.
 
 `rerail_nodes`, `rerail_facts`, and the `tq_*` callback family are not production execution boundaries.
-They remain historical reference machinery until the virtual-table cutover removes them.
-The packed relation program must contain the semantics that those callbacks currently implement.
+They remain deleted historical machinery.
+Relational SQL replaces their composition logic, and packed programs replace their terminal and fact callbacks.
 
 Use the virtual table for batched relation execution and typed output extraction.
 The virtual table selects the CPU, CPU-JIT, Metal, or Metal-JIT backend inside `xFilter`.
@@ -239,10 +241,10 @@ The SQL statement owns these actions:
 
 The packed backend owns these actions inside `xFilter`:
 
-- Structural relation execution.
-- Ordered matcher control flow.
-- Capture state and rollback.
-- Semantic operations declared by the verified program.
+- Terminal-program execution.
+- Ordered pattern control flow.
+- Pattern capture state and rollback.
+- Typed fact production declared by verified programs.
 - Per-task limits and completion status.
 - Materialization of typed output rows.
 
@@ -266,8 +268,8 @@ The production path must not contain these shapes:
 1. Restore the all-program production access path in `rerail_matches(batch)`.
 2. Make one `OnceLock` own all rows and status for the sparse batch.
 3. Route one SQL statement through one materialized terminal CTE.
-4. Lower complete Rerail AST relations into verified packed programs.
-5. Add missing semantic operations to the program and every selected backend.
+4. Lower complete Rerail clauses into callback-free relational SQL plans.
+5. Generate verified terminal and fact programs that those plans reference.
 6. Move `violation.each` alternatives into one ordered batch output.
 7. Remove clause scheduling from `workspace/evaluate.rs`.
 8. Reject any production plan that references `tq_*`, `rerail_nodes`, or `rerail_facts`.
@@ -293,7 +295,8 @@ The sparse grid replaces compatibility-group scheduling.
 A missing pair means that SQL eligibility rejected that task before registration.
 A present pair retains its own limits, selected roots, and deterministic order key.
 
-Registration can parse, restore, and verify immutable inputs.
+Workspace preparation can parse, restore, and verify immutable inputs.
+Registration stores the completed immutable descriptor only.
 Registration must not evaluate a rule or produce a match, capture, fact, or violation.
 
 ## Virtual-table state
@@ -322,10 +325,12 @@ Batch release removes the registry entry after the SQL statement closes its curs
 
 ## Row and order contract
 
-The existing 13-column relation remains the boundary.
-No new persistent schema is required for this cutover.
+The existing 13-column relation is a transitional match schema.
+The final boundary also needs producer status, navigation, fact, and document-map rows.
+[`sql-relational-compiler-design.md`](sql-relational-compiler-design.md) defines these logical row families.
+This change does not require a new persistent storage schema.
 
-`(file_index, program_index)` identifies one task.
+`(file_index, program_index)` identifies one transitional terminal task.
 `match_index` orders matches within that task.
 `capture_index` orders captures within one match.
 `output_label` identifies the program output path.
@@ -357,8 +362,9 @@ The benchmark must report virtual-table filters, batch executions, tasks, output
 ## Correctness boundaries
 
 The fixed-word compiler still supports only exact Smart root terminals.
-The virtual table can expose all future transducer outputs, but it cannot add missing compiler semantics.
-Structural patterns, metavariable equality, ellipses, alternatives, and relations need compiler support first.
+The virtual table can expose future terminal outputs, but it cannot add missing compiler semantics.
+Structural patterns, metavariable equality, and ellipses need terminal-compiler support.
+Alternatives and relations need relational SQL lowering plus their required terminal programs.
 
 SQLite must not infer absence from missing index rows, cancellation, resource exhaustion, or backend failure.
 Those states keep `complete=0`.
