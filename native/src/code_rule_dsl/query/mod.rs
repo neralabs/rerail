@@ -7,6 +7,7 @@
 
 pub(in crate::code_rule_dsl) mod crossfile;
 mod relational;
+mod relational_ir;
 pub(in crate::code_rule_dsl) mod select_when;
 
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -250,6 +251,8 @@ pub(in crate::code_rule_dsl) fn regex_matches(
     (matches, true)
 }
 
+#[cfg(test)]
+mod contract_frontend;
 #[cfg(test)]
 mod lowering_contract;
 #[cfg(test)]

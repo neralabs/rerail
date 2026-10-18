@@ -8,6 +8,8 @@
 //! to make an implementation pass. Add separate tests from real compiled policies as each public
 //! compiler API becomes available.
 
+use super::contract_frontend;
+use super::relational_ir::{SqlOperation as SqlShape, TerminalKind as Terminal};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -19,86 +21,6 @@ enum Family {
     Utility,
     Semantic,
     ClauseOutput,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum Terminal {
-    Pattern,
-    Kind,
-    Regex,
-    Text,
-    Value,
-    Navigation,
-    Equality,
-    Fact,
-    Parse,
-    CallSeed,
-    Transform,
-}
-
-/// SQL constructs that the generated statement must contain after normalization.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum SqlShape {
-    /// The one `rerail_matches(:batch)` scan in `WITH packed AS MATERIALIZED`.
-    PackedMaterialized,
-    /// A join to explicit producer completion or failure rows.
-    StatusJoin,
-    ScanTerminal,
-    ScanCapture,
-    ScanNavigation,
-    ScanFact,
-    InnerJoin,
-    LeftJoin,
-    OrderedUnion,
-    AntiJoin,
-    Exists,
-    RecursiveCte,
-    GroupBy,
-    Having,
-    WindowRank,
-    MinPosition,
-    Distinct,
-    CaseTruth,
-    Bindings,
-    MapDocument,
-    Projection,
-    OrderBy,
-    WhereFilter,
-    FileFilter,
-    CrossFileJoin,
-}
-
-impl SqlShape {
-    /// A required fragment in normalized SQL. Aliases and compiler-assigned identifiers can vary.
-    const fn fragment(self) -> &'static str {
-        match self {
-            Self::PackedMaterialized => "WITH packed AS MATERIALIZED",
-            Self::StatusJoin => "JOIN producer_status",
-            Self::ScanTerminal => "FROM terminal_match",
-            Self::ScanCapture => "JOIN capture",
-            Self::ScanNavigation => "JOIN navigation",
-            Self::ScanFact => "JOIN fact",
-            Self::InnerJoin => "INNER JOIN",
-            Self::LeftJoin => "LEFT JOIN",
-            Self::OrderedUnion => "UNION ALL /* branch_order */",
-            Self::AntiJoin => "NOT EXISTS",
-            Self::Exists => "EXISTS",
-            Self::RecursiveCte => "WITH RECURSIVE",
-            Self::GroupBy => "GROUP BY",
-            Self::Having => "HAVING",
-            Self::WindowRank => "row_number() OVER (ORDER BY",
-            Self::MinPosition => "min(axis_order)",
-            Self::Distinct => "DISTINCT",
-            Self::CaseTruth => "CASE verdict",
-            Self::Bindings => "JOIN environment_binding",
-            Self::MapDocument => "JOIN document_map",
-            Self::Projection => "SELECT /* violation projection */",
-            Self::OrderBy => "ORDER BY",
-            Self::WhereFilter => "WHERE",
-            Self::FileFilter => "JOIN batch_file",
-            Self::CrossFileJoin => "JOIN /* cross-file relation */",
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -1002,7 +924,11 @@ fn assert_compiler_contract(mut explain: impl FnMut(&str) -> Result<ExplainedLow
 #[test]
 fn relational_compiler_matches_all_hand_written_forms() {
     assert_compiler_contract(|form| {
-        Err(format!("relational lowering is not implemented for {form}"))
+        let ir = contract_frontend::lower(form)?;
+        Ok(ExplainedLowering {
+            terminals: ir.terminals().to_vec(),
+            sql: ir.operations().to_vec(),
+        })
     });
 }
 
