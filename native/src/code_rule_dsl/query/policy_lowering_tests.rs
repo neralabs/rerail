@@ -1,10 +1,27 @@
 use super::relational::{SqlCatalogPlan, SqlShape, TerminalKind};
-use crate::code_rule_dsl::test_support::compile_typescript_ast;
+use crate::code_rule_dsl::CodeRuleDslRuntime;
+use crate::code_rule_dsl::test_support::CAPABILITIES;
 use serde_json::json;
 use std::sync::Arc;
 
 fn code_rule(rule: serde_json::Value) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
-    compile_typescript_ast(json!({ "rule": rule })).expect("valid test policy")
+    CodeRuleDslRuntime::compile(
+        json!({
+            "format": "rerail.policy/v1",
+            "id": "lowering",
+            "revision": 1,
+            "mode": "block",
+            "clauses": [{
+                "id": "ast-match",
+                "forbid": { "ast": { "language": "python", "rule": rule } },
+                "violation": { "anchor": "witness.span", "code": "X", "message": "x" }
+            }]
+        })
+        .to_string(),
+        "json".to_owned(),
+        CAPABILITIES.to_owned(),
+    )
+    .expect("valid test policy")
 }
 
 #[test]
@@ -14,10 +31,8 @@ fn compiled_kind_policy_lowers_to_sql_and_one_terminal() {
         .expect("kind policy has complete relational lowering");
 
     assert_eq!(plan.terminals().len(), 1);
-    assert_eq!(plan.terminals()[0].id(), 0);
     assert_eq!(plan.terminals()[0].kind(), TerminalKind::Kind);
-    assert_eq!(plan.terminals()[0].language(), "typescript");
-    assert_eq!(plan.terminals()[0].source(), "kind(identifier)");
+    assert_eq!(plan.terminals()[0].language(), "python");
     assert_eq!(
         plan.shape(),
         &[
@@ -29,7 +44,6 @@ fn compiled_kind_policy_lowers_to_sql_and_one_terminal() {
         ]
     );
     assert_eq!(plan.clause_count(), 1);
-    assert!(plan.unsupported().is_empty());
     assert!(!plan.sql().contains("tq_"));
     assert!(!plan.sql().contains("rerail_nodes"));
     assert!(!plan.sql().contains("rerail_facts"));
@@ -56,7 +70,7 @@ fn unsupported_inventory_reports_every_operation_in_source_order() {
         ]
     }));
     let second = code_rule(json!({
-        "has": { "kind": "call_expression", "stopBy": "end" }
+        "has": { "kind": "call", "stopBy": "end" }
     }));
     let error = SqlCatalogPlan::compile(&[Arc::clone(&first.inner), Arc::clone(&second.inner)])
         .expect_err("phase-one compiler reports unsupported relational operators");
@@ -64,9 +78,9 @@ fn unsupported_inventory_reports_every_operation_in_source_order() {
     assert_eq!(
         error.unsupported(),
         &[
-            "dialects/ast-match/typescript/rule/all: ordered conjunction",
-            "dialects/ast-match/typescript/rule/all/1: regex terminal",
-            "dialects/ast-match/typescript/rule/has: descendant relation",
+            "lowering/ast-match/python/rule/all: ordered conjunction",
+            "lowering/ast-match/python/rule/all/1: regex terminal",
+            "lowering/ast-match/python/rule/has: descendant relation",
         ]
     );
 }

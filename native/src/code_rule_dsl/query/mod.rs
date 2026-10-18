@@ -10,8 +10,8 @@ mod relational;
 pub(in crate::code_rule_dsl) mod select_when;
 
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::model::{Anchor, ClauseKind, CompiledCodeRule, Query};
-use crate::code_rule_dsl::packed::{ExecutionBackend, Program};
+use crate::code_rule_dsl::model::CompiledCodeRule;
+use crate::code_rule_dsl::packed::ExecutionBackend;
 use crate::code_rule_dsl::tape::TapeDoc;
 use crate::code_rule_dsl::transducer::sql_backend::{
     MatchRegistry, PackedDemand, TerminalRow, register_module,
@@ -21,14 +21,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 type ClauseId = (usize, usize);
-
-#[derive(Clone)]
-struct PackedProgramPlan {
-    clause: ClauseId,
-    language: GrammarDialect,
-    program: Program,
-    result_limit: u32,
-}
 
 /// One file's immutable input to the packed batch. `tasks` contains only demanded clauses; an
 /// empty roots vector is a demanded task with a complete negative result.
@@ -60,47 +52,66 @@ pub(super) struct QueryCounters {
 /// The immutable SQL route for one catalog. Lowering failures are retained in source order and
 /// fail the apply before registration; they never select another executor.
 pub(super) struct SqlPlans {
-    programs: Result<Vec<PackedProgramPlan>, String>,
+    plan: Result<relational::SqlCatalogPlan, String>,
 }
 
 impl SqlPlans {
     pub(super) fn compile(code_rules: &[Arc<CompiledCodeRule>]) -> Self {
         Self {
-            programs: lower_catalog(code_rules),
+            plan: relational::SqlCatalogPlan::compile(code_rules).map_err(|error| {
+                format!(
+                    "SQL relational lowering failed: {}",
+                    error.unsupported().join("; ")
+                )
+            }),
         }
     }
 
     pub(super) fn verify_lowered(&self) -> Result<(), String> {
-        self.programs.as_ref().map(|_| ()).map_err(Clone::clone)
+        self.plan.as_ref().map(|_| ()).map_err(Clone::clone)
     }
 
-    /// Builds one immutable sparse batch and executes the one SQL statement that owns it.
+    /// Executes a completed relational catalog plan. Phase 1 creates the plan but does not yet
+    /// pack its terminal descriptors into the expanded virtual-table relation.
     pub(super) fn execute(&self, files: Vec<PackedFileInput>) -> Result<QueryOutcome, String> {
-        let plans = self.programs.as_ref().map_err(Clone::clone)?;
-        let programs = plans
+        let plan = self.plan.as_ref().map_err(Clone::clone)?;
+        let programs = plan
+            .terminals()
             .iter()
-            .map(|plan| plan.program.clone())
+            .map(|terminal| terminal.program().clone())
             .collect::<Vec<_>>();
-        let result_limits = plans
+        let result_limits = plan
+            .terminals()
             .iter()
-            .map(|plan| plan.result_limit)
+            .map(relational::TerminalPlan::result_limit)
             .collect::<Vec<_>>();
         let mut tapes = Vec::with_capacity(files.len());
         let mut anchors = Vec::with_capacity(files.len());
         let mut task_grid = Vec::with_capacity(files.len());
         for file in files {
-            let mut file_anchors = Vec::with_capacity(plans.len());
-            let mut demanded = Vec::with_capacity(plans.len());
-            for plan in plans {
-                let roots = (plan.language == file.language)
-                    .then(|| file.tasks.get(&plan.clause))
-                    .flatten();
-                demanded.push(roots.is_some());
-                file_anchors.push(roots.cloned().unwrap_or_default());
+            let mut file_anchors = Vec::with_capacity(programs.len());
+            let mut file_tasks = Vec::with_capacity(programs.len());
+            for terminal in plan.terminals() {
+                let mut roots = terminal
+                    .clauses()
+                    .iter()
+                    .filter_map(|clause| file.tasks.get(clause))
+                    .flatten()
+                    .copied()
+                    .collect::<Vec<_>>();
+                roots.sort_unstable();
+                roots.dedup();
+                let demanded = terminal.dialect() == file.language
+                    && terminal
+                        .clauses()
+                        .iter()
+                        .any(|clause| file.tasks.contains_key(clause));
+                file_tasks.push(demanded);
+                file_anchors.push(roots);
             }
             tapes.push(file.tape);
             anchors.push(file_anchors);
-            task_grid.push(demanded);
+            task_grid.push(file_tasks);
         }
         let demand = PackedDemand::new(
             production_backend(),
@@ -111,77 +122,8 @@ impl SqlPlans {
             result_limits,
         )
         .map_err(|error| format!("packed batch verification failed: {error:?}"))?;
-        drive(demand).map_err(|error| error.to_string())
+        drive_sql(demand, plan.sql()).map_err(|error| error.to_string())
     }
-}
-
-fn lower_catalog(code_rules: &[Arc<CompiledCodeRule>]) -> Result<Vec<PackedProgramPlan>, String> {
-    let mut programs = Vec::new();
-    for (rule_index, code_rule) in code_rules.iter().enumerate() {
-        for (clause_index, clause) in code_rule.clauses.iter().enumerate() {
-            let ClauseKind::Forbid(Query::Ast { matchers, calls }) = &clause.kind else {
-                return Err(format!(
-                    "{} / {}: packed lowering does not support this clause relation",
-                    code_rule.id, clause.id
-                ));
-            };
-            let violation = &clause.violation;
-            if !calls.is_empty()
-                || clause.synthetic
-                || clause.decision
-                || violation.anchor != Anchor::Span
-                || violation.message_template.is_some()
-                || violation.fix.is_some()
-                || !violation.node_regexes.is_empty()
-                || violation.each.is_some()
-                || violation.fix_range.is_some()
-                || violation.suppress.is_some()
-                || violation.group_transform.is_some()
-                || !violation.project.is_empty()
-            {
-                return Err(format!(
-                    "{} / {}: packed lowering does not support this clause output contract",
-                    code_rule.id, clause.id
-                ));
-            }
-            let result_limit =
-                u32::try_from(code_rule.capabilities.limits.max_witnesses).map_err(|_| {
-                    format!(
-                        "{} / {}: packed result limit exceeds u32",
-                        code_rule.id, clause.id
-                    )
-                })?;
-            for matcher in matchers {
-                if matcher.file.is_some()
-                    || !matcher.applies
-                    || matcher.three_valued
-                    || matcher.transform.is_some()
-                {
-                    return Err(format!(
-                        "{} / {} / {:?}: packed lowering does not support this matcher contract",
-                        code_rule.id,
-                        clause.id,
-                        crate::code_rule_dsl::language::label(matcher.language)
-                    ));
-                }
-                let program = Program::lower_matcher(&matcher.matcher).map_err(|error| {
-                    format!(
-                        "{} / {} / {:?}: packed lowering failed: {error:?}",
-                        code_rule.id,
-                        clause.id,
-                        crate::code_rule_dsl::language::label(matcher.language)
-                    )
-                })?;
-                programs.push(PackedProgramPlan {
-                    clause: (rule_index, clause_index),
-                    language: matcher.language,
-                    program,
-                    result_limit,
-                });
-            }
-        }
-    }
-    Ok(programs)
 }
 
 fn production_backend() -> ExecutionBackend {
@@ -195,7 +137,15 @@ fn production_backend() -> ExecutionBackend {
     }
 }
 
+#[cfg(test)]
 fn drive(demand: PackedDemand) -> rusqlite::Result<QueryOutcome> {
+    drive_sql(
+        demand,
+        "WITH terminal AS MATERIALIZED (SELECT batch, file_index, program_index, match_index, start_ordinal, output_label, capture_index, capture_label, capture_node, start_byte, end_byte, complete, error_code FROM rerail_matches WHERE batch = ?1) SELECT batch, file_index, program_index, match_index, start_ordinal, output_label, capture_index, capture_label, capture_node, start_byte, end_byte, complete, error_code FROM terminal ORDER BY file_index, program_index, match_index, capture_index",
+    )
+}
+
+fn drive_sql(demand: PackedDemand, sql: &str) -> rusqlite::Result<QueryOutcome> {
     let slot = CONNECTION.with(Arc::clone);
     let mut slot = slot
         .lock()
@@ -203,7 +153,7 @@ fn drive(demand: PackedDemand) -> rusqlite::Result<QueryOutcome> {
     if slot.is_none() {
         *slot = Some(QueryConnection::open()?);
     }
-    slot.as_ref().expect("opened connection").drive(demand)
+    slot.as_ref().expect("opened connection").drive(demand, sql)
 }
 
 struct QueryConnection {
@@ -222,29 +172,10 @@ impl QueryConnection {
         })
     }
 
-    fn drive(&self, demand: PackedDemand) -> rusqlite::Result<QueryOutcome> {
+    fn drive(&self, demand: PackedDemand, sql: &str) -> rusqlite::Result<QueryOutcome> {
         let token = self.registry.register(demand);
         let result = (|| {
-            let mut statement = self.connection.prepare_cached(
-                "WITH terminal AS MATERIALIZED (\
-                   SELECT batch, file_index, program_index, match_index, start_ordinal, \
-                          output_label, capture_index, capture_label, capture_node, start_byte, \
-                          end_byte, complete, error_code \
-                   FROM rerail_matches WHERE batch = ?1\
-                 ), complete_pairs AS MATERIALIZED (\
-                   SELECT file_index, program_index, min(complete) AS complete \
-                   FROM terminal GROUP BY file_index, program_index\
-                 ), extracted AS MATERIALIZED (\
-                   SELECT t.* FROM terminal t \
-                   JOIN complete_pairs c USING (file_index, program_index) \
-                   WHERE t.match_index IS NULL OR c.complete = 1\
-                 ) \
-                 SELECT batch, file_index, program_index, match_index, start_ordinal, \
-                        output_label, capture_index, capture_label, capture_node, start_byte, \
-                        end_byte, complete, error_code \
-                 FROM extracted \
-                 ORDER BY file_index, program_index, match_index, capture_index",
-            )?;
+            let mut statement = self.connection.prepare_cached(sql)?;
             let rows = statement
                 .query_map([token], TerminalRow::from_sql_row)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;

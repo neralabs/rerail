@@ -1545,7 +1545,7 @@ fn compile_clauses(clauses: Vec<Value>) -> CompiledCodeRuleDsl {
 fn sqlite_never_falls_back_to_the_semantic_matcher() {
     let compiled = compile_clauses(vec![clause(
         "debugger",
-        json!({ "kind": "debugger_statement" }),
+        json!({ "all": [{ "kind": "debugger_statement" }, { "regex": "debugger" }] }),
     )]);
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace
@@ -1570,15 +1570,15 @@ fn sqlite_never_falls_back_to_the_semantic_matcher() {
         .compute()
         .expect_err("unlowered rules must fail closed");
     assert!(
-        error.reason.contains("packed lowering failed"),
+        error.reason.contains("SQL relational lowering failed"),
         "{}",
         error.reason
     );
 }
 
 #[test]
-fn sqlite_reaches_workspace_batch_preparation_after_packed_lowering() {
-    let compiled = compile_clauses(vec![clause("identifier", json!({ "pattern": "foo" }))]);
+fn sqlite_reaches_workspace_batch_preparation_after_relational_lowering() {
+    let compiled = compile_clauses(vec![clause("identifier", json!({ "kind": "identifier" }))]);
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace
         .set_execution_engine("sqlite".to_owned())

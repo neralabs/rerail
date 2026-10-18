@@ -1036,17 +1036,14 @@ impl Program {
         )
     }
 
-    /// Lowers one compiler matcher into a verified packed program. Unsupported operations fail;
-    /// this function never retains or invokes the semantic matcher at execution time.
-    pub(super) fn lower_matcher(
-        matcher: &crate::code_rule_dsl::matcher::AstMatcher,
-    ) -> Result<Self, Error> {
-        match matcher {
-            crate::code_rule_dsl::matcher::AstMatcher::Pattern(pattern) => {
-                Self::compile_ast_grep_literal(pattern)
-            }
-            _ => Err(Error::UnsupportedFeature("complete AST matcher lowering")),
-        }
+    pub(super) fn compile_kind(kind: u16) -> Result<Self, Error> {
+        Self::new(
+            vec![word(KIND, 0, kind), word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
+            vec![b"match".to_vec(), b"kind".to_vec()],
+            Vec::new(),
+            vec![0, 1],
+            Vec::new(),
+        )
     }
 
     /// Compiles the exact root-terminal subset of ast-grep patterns. Structural patterns and
