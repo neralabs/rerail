@@ -71,7 +71,6 @@ pub(super) struct Job {
 #[derive(Clone, Copy)]
 pub(super) struct JobContext<'a> {
     pub(super) code_rules: &'a [Arc<CompiledCodeRule>],
-    pub(super) sql: Option<&'a query::SqlPlans>,
     pub(super) storage: Option<&'a StorageContext>,
     pub(super) closed: &'a Arc<AtomicBool>,
     /// Extract each Python file's call summary (a code rule holds `calls` terms).
@@ -79,6 +78,59 @@ pub(super) struct JobContext<'a> {
 }
 
 type Evaluated = Vec<(String, FileState, Result<Metrics>)>;
+
+/// Prepares immutable tapes and the complete sparse file/program task grid. This stage may parse
+/// and restore files, but it must not execute a rule or construct a witness.
+fn prepare_packed_inputs(
+    _jobs: &mut [Job],
+    _context: &JobContext<'_>,
+) -> Result<Vec<query::PackedFileInput>> {
+    Err(invalid(
+        "packed workspace tape and sparse-task preparation is not implemented",
+    ))
+}
+
+/// Publishes only rows that the SQL statement returned. It must not invoke a matcher, recover a
+/// missing relation, or infer absence without an explicit complete row.
+fn publish_sql_outcome(_jobs: &mut Vec<Job>, outcome: query::QueryOutcome) -> Result<Evaluated> {
+    let counters = outcome.counters;
+    if counters.statements != 1
+        || counters.terminal_executions != 1
+        || counters.virtual_table_filters != 1
+    {
+        return Err(invalid("packed SQL batch did not execute exactly once"));
+    }
+    if counters.scalar_callbacks != 0
+        || counters.node_rows != 0
+        || counters.environments != 0
+        || counters.fact_builds != 0
+        || counters.fact_hits != 0
+    {
+        return Err(invalid("packed SQL batch used a prohibited callback path"));
+    }
+    if counters.rows != outcome.rows.len()
+        || outcome
+            .rows
+            .iter()
+            .any(|row| !row.is_complete() && row.error_code().is_none())
+    {
+        return Err(invalid("packed SQL relation has invalid completion rows"));
+    }
+    Err(invalid(
+        "packed SQL relation publication is not implemented",
+    ))
+}
+
+pub(super) fn run_sql_jobs(
+    jobs: &mut Vec<Job>,
+    context: &JobContext<'_>,
+    sql: &query::SqlPlans,
+) -> Result<Evaluated> {
+    sql.verify_lowered().map_err(invalid)?;
+    let input = prepare_packed_inputs(jobs, context)?;
+    let outcome = sql.execute(input).map_err(invalid)?;
+    publish_sql_outcome(jobs, outcome)
+}
 
 /// One restored AST file after parsing and anchor selection, before clause execution.
 struct PreparedAst {
@@ -190,7 +242,7 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                 context.code_rules,
                 grammars,
                 closed,
-                context.sql,
+                None,
                 &budget,
                 &mut restored,
             )?;
@@ -212,12 +264,6 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
         CrossFileScheduler::retain_scopes(&mut file, consumes);
         (path, file, work)
     };
-    if context.sql.is_some() {
-        return Err(invalid(
-            "SQL execution requires complete verified packed lowering; the semantic matcher is not a production fallback",
-        ));
-    }
-
     Ok(if jobs.len() < WORKER_THREADS {
         let mut grammars = BTreeMap::new();
         jobs.into_iter()

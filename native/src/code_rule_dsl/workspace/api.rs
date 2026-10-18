@@ -5,7 +5,7 @@
 use super::ExecutionEngine;
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
-use super::evaluate::{Job, JobContext, evaluate_file, run_jobs, sql_plans};
+use super::evaluate::{Job, JobContext, evaluate_file, run_jobs, run_sql_jobs, sql_plans};
 use super::global::{compile_query_plan, compile_relation_producer, evaluate_global};
 use super::index::{RepositoryIndexOptions, WorkspaceIndexTask, reusable_directories};
 use super::ingest::{
@@ -794,11 +794,27 @@ impl WorkspaceApplyTask {
         let code_rules = state.code_rules.clone();
         let sql = sql_plans(&mut state);
         let storage = state.storage.clone();
+        if let Some(sql) = sql.as_deref() {
+            let context = JobContext {
+                code_rules: &code_rules,
+                storage: storage.as_ref(),
+                closed: &self.closed,
+                summarize: false,
+            };
+            let error = match run_sql_jobs(&mut jobs, &context, sql) {
+                Err(error) => error,
+                Ok(_) => invalid("packed SQL apply publication handoff is not implemented"),
+            };
+            for Job { path, file, .. } in jobs {
+                state.dirty_files.insert(path.clone());
+                state.insert_file(path, file);
+            }
+            return Err(error);
+        }
         let producer_batch =
             CrossFileScheduler::prepare(&mut state, &mut jobs, &code_rules, deferred);
         let context = JobContext {
             code_rules: &code_rules,
-            sql: sql.as_deref(),
             storage: storage.as_ref(),
             closed: &self.closed,
             summarize: CrossFileScheduler::summarizes(&producer_batch),

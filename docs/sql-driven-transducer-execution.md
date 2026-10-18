@@ -1,6 +1,6 @@
 # SQL-driven transducer execution
 
-Status: production has one engine shape: SQLite demands a verified packed batch through the terminal virtual table. The semantic matcher is a test oracle only. A construct without packed lowering fails; production never falls back.
+Status: production has one engine shape: compiled clauses lower to verified packed programs; the workspace prepares one immutable sparse batch; SQLite demands it through the terminal virtual table; the first `xFilter` executes it once; a materialized SQL relation checks completion and orders extracted rows; the workspace publishes only those rows. The semantic matcher is a test oracle only. Unsupported lowering, workspace tape preparation, and result publication currently fail at their typed stage; production never falls back.
 
 ## Design decision
 

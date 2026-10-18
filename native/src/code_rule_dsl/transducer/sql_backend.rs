@@ -1,8 +1,4 @@
 //! SQL-demanded packed batch relation.
-#![allow(
-    dead_code,
-    reason = "the packed lowering layer calls this boundary; the deleted matcher callback must not keep it artificially live"
-)]
 //!
 //! Registration stores immutable verified programs, tapes, limits, and a sparse task grid. SQLite
 //! calls `xFilter` with the batch token. The first call executes the packed backend and stores its
@@ -36,6 +32,7 @@ pub(in crate::code_rule_dsl) struct PackedDemand {
     programs: Vec<Program>,
     files: Vec<TapeDoc>,
     anchors: Vec<Vec<Vec<u32>>>,
+    task_grid: Vec<Vec<bool>>,
     result_limits: Vec<u32>,
 }
 
@@ -45,10 +42,13 @@ impl PackedDemand {
         programs: Vec<Program>,
         files: Vec<TapeDoc>,
         anchors: Vec<Vec<Vec<u32>>>,
+        task_grid: Vec<Vec<bool>>,
         result_limits: Vec<u32>,
     ) -> Result<Self, PackedError> {
         if anchors.len() != files.len()
+            || task_grid.len() != files.len()
             || anchors.iter().any(|file| file.len() != programs.len())
+            || task_grid.iter().any(|file| file.len() != programs.len())
             || result_limits.len() != programs.len()
         {
             return Err(PackedError::InvalidAnchor);
@@ -58,11 +58,12 @@ impl PackedDemand {
             programs,
             files,
             anchors,
+            task_grid,
             result_limits,
         })
     }
 
-    fn execute(self, token: i64) -> Result<Vec<MatchRow>, PackedError> {
+    fn execute(self, token: i64) -> Result<Vec<TerminalRow>, PackedError> {
         let execution = execute_with_backend_packed_result_limits(
             self.backend,
             &self.programs,
@@ -73,19 +74,28 @@ impl PackedDemand {
         let mut rows = Vec::new();
         for file in 0..execution.file_count() {
             for program in 0..execution.program_count() {
+                if !self.task_grid[file][program] {
+                    continue;
+                }
                 let (results, error) = execution.program_results(file, program)?;
                 if let Some(error) = error {
-                    rows.push(MatchRow::status(token, file, program, false, Some(error)));
+                    rows.push(TerminalRow::status(
+                        token,
+                        file,
+                        program,
+                        false,
+                        Some(error),
+                    ));
                     continue;
                 }
                 if results.is_empty() {
-                    rows.push(MatchRow::status(token, file, program, true, None));
+                    rows.push(TerminalRow::status(token, file, program, true, None));
                     continue;
                 }
                 for (match_index, result) in results.into_iter().enumerate() {
                     let captures = result.captures().collect::<Vec<_>>();
                     if captures.is_empty() {
-                        rows.push(MatchRow {
+                        rows.push(TerminalRow {
                             batch: token,
                             file: file as i64,
                             program: program as i64,
@@ -105,7 +115,7 @@ impl PackedDemand {
                     } else {
                         for (capture_index, capture) in captures.into_iter().enumerate() {
                             let span = capture.span();
-                            rows.push(MatchRow {
+                            rows.push(TerminalRow {
                                 batch: token,
                                 file: file as i64,
                                 program: program as i64,
@@ -133,8 +143,8 @@ impl PackedDemand {
     }
 }
 
-#[derive(Clone)]
-struct MatchRow {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::code_rule_dsl) struct TerminalRow {
     batch: i64,
     file: i64,
     program: i64,
@@ -150,7 +160,7 @@ struct MatchRow {
     error_code: Option<String>,
 }
 
-impl MatchRow {
+impl TerminalRow {
     fn status(
         batch: i64,
         file: usize,
@@ -176,16 +186,44 @@ impl MatchRow {
     }
 }
 
+impl TerminalRow {
+    pub(in crate::code_rule_dsl) fn is_complete(&self) -> bool {
+        self.complete != 0
+    }
+
+    pub(in crate::code_rule_dsl) fn error_code(&self) -> Option<&str> {
+        self.error_code.as_deref()
+    }
+
+    pub(in crate::code_rule_dsl) fn from_sql_row(row: &rusqlite::Row<'_>) -> SqlResult<Self> {
+        Ok(Self {
+            batch: row.get(0)?,
+            file: row.get(1)?,
+            program: row.get(2)?,
+            match_index: row.get(3)?,
+            start_ordinal: row.get(4)?,
+            output_label: row.get(5)?,
+            capture_index: row.get(6)?,
+            capture_label: row.get(7)?,
+            capture_node: row.get(8)?,
+            start_byte: row.get(9)?,
+            end_byte: row.get(10)?,
+            complete: row.get(11)?,
+            error_code: row.get(12)?,
+        })
+    }
+}
+
 struct MatchBatch {
     token: i64,
     demand: Mutex<Option<PackedDemand>>,
-    rows: OnceLock<Result<Arc<Vec<MatchRow>>, String>>,
+    rows: OnceLock<Result<Arc<Vec<TerminalRow>>, String>>,
     executions: AtomicUsize,
     filters: AtomicUsize,
 }
 
 impl MatchBatch {
-    fn rows(&self) -> SqlResult<Arc<Vec<MatchRow>>> {
+    fn rows(&self) -> SqlResult<Arc<Vec<TerminalRow>>> {
         self.rows
             .get_or_init(|| {
                 self.executions.fetch_add(1, Ordering::Relaxed);
@@ -333,7 +371,7 @@ unsafe impl<'vtab> VTab<'vtab> for MatchTable {
 struct MatchCursor<'vtab> {
     base: ffi::sqlite3_vtab_cursor,
     registry: Arc<MatchRegistry>,
-    rows: Arc<Vec<MatchRow>>,
+    rows: Arc<Vec<TerminalRow>>,
     position: usize,
     phantom: PhantomData<&'vtab MatchTable>,
 }

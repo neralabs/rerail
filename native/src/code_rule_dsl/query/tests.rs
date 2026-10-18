@@ -1,4 +1,4 @@
-use super::{SqlPlans, regex_matches};
+use super::{drive, regex_matches};
 use crate::code_rule_dsl::budget::{MatchBudget, set_shortcuts_off};
 use crate::code_rule_dsl::packed::ExecutionBackend;
 use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file};
@@ -17,11 +17,12 @@ fn sqlite_demands_the_complete_packed_batch_once() {
         Vec::new(),
         Vec::new(),
         Vec::new(),
+        Vec::new(),
     )
     .expect("verified empty packed batch");
-    let counters = SqlPlans::compile(&[])
-        .drive(demand)
-        .expect("SQL-demanded packed batch");
+    let outcome = drive(demand).expect("SQL-demanded packed batch");
+    let counters = outcome.counters;
+    assert!(outcome.rows.is_empty());
     assert_eq!(counters.rows, 0);
     assert_eq!(counters.terminal_executions, 1);
     assert_eq!(counters.virtual_table_filters, 1);

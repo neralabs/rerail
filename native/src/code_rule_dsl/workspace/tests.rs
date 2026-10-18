@@ -1570,7 +1570,39 @@ fn sqlite_never_falls_back_to_the_semantic_matcher() {
         .compute()
         .expect_err("unlowered rules must fail closed");
     assert!(
-        error.reason.contains("complete verified packed lowering"),
+        error.reason.contains("packed lowering failed"),
+        "{}",
+        error.reason
+    );
+}
+
+#[test]
+fn sqlite_reaches_workspace_batch_preparation_after_packed_lowering() {
+    let compiled = compile_clauses(vec![clause("identifier", json!({ "pattern": "foo" }))]);
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace
+        .set_execution_engine("sqlite".to_owned())
+        .expect("SQLite is selected");
+    workspace
+        .add_code_rule(&compiled, None)
+        .expect("rule is added");
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({
+            "revision": 1,
+            "files": [{ "path": "src/a.ts", "language": "typescript", "source": "foo;" }],
+            "removed": [],
+        })
+        .to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    let error = task
+        .compute()
+        .expect_err("workspace packed input preparation is deliberately incomplete");
+    assert!(
+        error.reason.contains("sparse-task preparation"),
         "{}",
         error.reason
     );

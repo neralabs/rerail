@@ -1036,6 +1036,19 @@ impl Program {
         )
     }
 
+    /// Lowers one compiler matcher into a verified packed program. Unsupported operations fail;
+    /// this function never retains or invokes the semantic matcher at execution time.
+    pub(super) fn lower_matcher(
+        matcher: &crate::code_rule_dsl::matcher::AstMatcher,
+    ) -> Result<Self, Error> {
+        match matcher {
+            crate::code_rule_dsl::matcher::AstMatcher::Pattern(pattern) => {
+                Self::compile_ast_grep_literal(pattern)
+            }
+            _ => Err(Error::UnsupportedFeature("complete AST matcher lowering")),
+        }
+    }
+
     /// Compiles the exact root-terminal subset of ast-grep patterns. Structural patterns and
     /// metavariables are rejected rather than delegated to ast-grep inside the transducer.
     pub(super) fn compile_ast_grep_literal(pattern: &Pattern) -> Result<Self, Error> {
