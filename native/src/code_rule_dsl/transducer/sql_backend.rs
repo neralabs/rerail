@@ -63,130 +63,311 @@ impl PackedDemand {
         })
     }
 
-    fn execute(self, token: i64) -> Result<Vec<TerminalRow>, PackedError> {
-        let execution = execute_with_backend_packed_result_limits(
+    fn execute(self, token: i64) -> Vec<PackedRow> {
+        let execution = match execute_with_backend_packed_result_limits(
             self.backend,
             &self.programs,
             &self.files,
             &self.anchors,
             Some(&self.result_limits),
-        )?;
+        ) {
+            Ok(execution) => execution,
+            Err(error) => {
+                let message = format!("{error:?}");
+                let mut rows = vec![PackedRow::batch_status(token, false, Some(message.clone()))];
+                for (file, tasks) in self.task_grid.iter().enumerate() {
+                    for (producer, demanded) in tasks.iter().copied().enumerate() {
+                        if demanded {
+                            rows.push(PackedRow::producer_status(
+                                token,
+                                file,
+                                producer,
+                                false,
+                                None,
+                                Some(message.clone()),
+                            ));
+                        }
+                    }
+                }
+                return rows;
+            }
+        };
         let mut rows = Vec::new();
+        let mut batch_error = None;
         for file in 0..execution.file_count() {
             for program in 0..execution.program_count() {
                 if !self.task_grid[file][program] {
                     continue;
                 }
-                let (results, error) = execution.program_results(file, program)?;
+                let (results, error) = match execution.program_results(file, program) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let message = format!("{error:?}");
+                        batch_error.get_or_insert_with(|| message.clone());
+                        rows.push(PackedRow::producer_status(
+                            token,
+                            file,
+                            program,
+                            false,
+                            None,
+                            Some(message),
+                        ));
+                        continue;
+                    }
+                };
                 if let Some(error) = error {
-                    rows.push(TerminalRow::status(
+                    let message = format!("{error:?}");
+                    batch_error.get_or_insert_with(|| message.clone());
+                    rows.push(PackedRow::producer_status(
                         token,
                         file,
                         program,
                         false,
-                        Some(error),
+                        None,
+                        Some(message),
                     ));
                     continue;
                 }
-                if results.is_empty() {
-                    rows.push(TerminalRow::status(token, file, program, true, None));
-                    continue;
-                }
+                rows.push(PackedRow::producer_status(
+                    token,
+                    file,
+                    program,
+                    true,
+                    Some(!results.is_empty()),
+                    None,
+                ));
                 for (match_index, result) in results.into_iter().enumerate() {
+                    rows.push(PackedRow::terminal_match(TerminalMatchData {
+                        batch: token,
+                        file,
+                        producer: program,
+                        match_index,
+                        task_index: result.task_ordinal(),
+                        start_ordinal: result.local_ordinal(),
+                        node: result.start_node(),
+                        output_label: self.programs[program]
+                            .label_name(result.label())
+                            .map(str::to_owned),
+                    }));
                     let captures = result.captures().collect::<Vec<_>>();
-                    if captures.is_empty() {
-                        rows.push(TerminalRow {
+                    for (capture_index, capture) in captures.iter().copied().enumerate() {
+                        let label = capture.label();
+                        let occurrence = captures[..capture_index]
+                            .iter()
+                            .filter(|candidate| candidate.label() == label)
+                            .count();
+                        let sequence_start = captures
+                            .iter()
+                            .position(|candidate| candidate.label() == label)
+                            .expect("the current capture has a sequence");
+                        let sequence_count = captures
+                            .iter()
+                            .filter(|candidate| candidate.label() == label)
+                            .count();
+                        let span = capture.span();
+                        rows.push(PackedRow::capture(CaptureData {
                             batch: token,
-                            file: file as i64,
-                            program: program as i64,
-                            match_index: Some(match_index as i64),
-                            start_ordinal: Some(result.task_ordinal() as i64),
-                            output_label: self.programs[program]
-                                .label_name(result.label())
+                            file,
+                            producer: program,
+                            match_index,
+                            capture_index,
+                            occurrence,
+                            sequence_start,
+                            sequence_count,
+                            node: capture.node(),
+                            capture_label: self.programs[program]
+                                .label_name(label)
                                 .map(str::to_owned),
-                            capture_index: None,
-                            capture_label: None,
-                            capture_node: None,
-                            start_byte: None,
-                            end_byte: None,
-                            complete: 1,
-                            error_code: None,
-                        });
-                    } else {
-                        for (capture_index, capture) in captures.into_iter().enumerate() {
-                            let span = capture.span();
-                            rows.push(TerminalRow {
-                                batch: token,
-                                file: file as i64,
-                                program: program as i64,
-                                match_index: Some(match_index as i64),
-                                start_ordinal: Some(result.task_ordinal() as i64),
-                                output_label: self.programs[program]
-                                    .label_name(result.label())
-                                    .map(str::to_owned),
-                                capture_index: Some(capture_index as i64),
-                                capture_label: self.programs[program]
-                                    .label_name(capture.label())
-                                    .map(str::to_owned),
-                                capture_node: Some(capture.node() as i64),
-                                start_byte: Some(span.start as i64),
-                                end_byte: Some(span.end as i64),
-                                complete: 1,
-                                error_code: None,
-                            });
-                        }
+                            text_value: capture
+                                .transformed_text()
+                                .map(|text| String::from_utf8_lossy(text).into_owned()),
+                            start_byte: span.start,
+                            end_byte: span.end,
+                        }));
                     }
                 }
             }
         }
-        Ok(rows)
+        rows.insert(
+            0,
+            PackedRow::batch_status(token, batch_error.is_none(), batch_error),
+        );
+        rows
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub(in crate::code_rule_dsl) enum RowKind {
+    BatchStatus = 1,
+    ProducerStatus = 2,
+    TerminalMatch = 3,
+    Capture = 4,
+    Navigation = 5,
+    Fact = 6,
+    DocumentMap = 7,
+}
+
+const ALL_ROW_KINDS: [RowKind; 7] = [
+    RowKind::BatchStatus,
+    RowKind::ProducerStatus,
+    RowKind::TerminalMatch,
+    RowKind::Capture,
+    RowKind::Navigation,
+    RowKind::Fact,
+    RowKind::DocumentMap,
+];
+
+struct TerminalMatchData {
+    batch: i64,
+    file: usize,
+    producer: usize,
+    match_index: usize,
+    task_index: u32,
+    start_ordinal: u32,
+    node: u32,
+    output_label: Option<String>,
+}
+
+struct CaptureData {
+    batch: i64,
+    file: usize,
+    producer: usize,
+    match_index: usize,
+    capture_index: usize,
+    occurrence: usize,
+    sequence_start: usize,
+    sequence_count: usize,
+    node: u32,
+    capture_label: Option<String>,
+    text_value: Option<String>,
+    start_byte: usize,
+    end_byte: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct TerminalRow {
+pub(in crate::code_rule_dsl) struct PackedRow {
     batch: i64,
-    file: i64,
-    program: i64,
+    row_kind: RowKind,
+    producer_id: Option<i64>,
+    file_index: Option<i64>,
+    task_index: Option<i64>,
     match_index: Option<i64>,
+    capture_index: Option<i64>,
+    capture_occurrence: Option<i64>,
+    capture_sequence_start: Option<i64>,
+    capture_sequence_count: Option<i64>,
+    node: Option<i64>,
+    related_node: Option<i64>,
+    axis_kind: Option<i64>,
+    axis_order: Option<i64>,
+    fact_kind: Option<i64>,
+    document_id: Option<i64>,
+    mapped_document_id: Option<i64>,
     start_ordinal: Option<i64>,
     output_label: Option<String>,
-    capture_index: Option<i64>,
     capture_label: Option<String>,
-    capture_node: Option<i64>,
+    text_value: Option<String>,
     start_byte: Option<i64>,
     end_byte: Option<i64>,
+    verdict: Option<i64>,
     complete: i64,
+    work_used: Option<i64>,
     error_code: Option<String>,
 }
 
-impl TerminalRow {
-    fn status(
-        batch: i64,
-        file: usize,
-        program: usize,
-        complete: bool,
-        error: Option<PackedError>,
-    ) -> Self {
+impl PackedRow {
+    fn blank(batch: i64, row_kind: RowKind) -> Self {
+        debug_assert!(ALL_ROW_KINDS.contains(&row_kind));
         Self {
             batch,
-            file: file as i64,
-            program: program as i64,
+            row_kind,
+            producer_id: None,
+            file_index: None,
+            task_index: None,
             match_index: None,
+            capture_index: None,
+            capture_occurrence: None,
+            capture_sequence_start: None,
+            capture_sequence_count: None,
+            node: None,
+            related_node: None,
+            axis_kind: None,
+            axis_order: None,
+            fact_kind: None,
+            document_id: None,
+            mapped_document_id: None,
             start_ordinal: None,
             output_label: None,
-            capture_index: None,
             capture_label: None,
-            capture_node: None,
+            text_value: None,
             start_byte: None,
             end_byte: None,
-            complete: i64::from(complete),
-            error_code: error.map(|error| format!("{error:?}")),
+            verdict: None,
+            complete: 1,
+            work_used: None,
+            error_code: None,
         }
     }
-}
 
-impl TerminalRow {
+    fn batch_status(batch: i64, complete: bool, error: Option<String>) -> Self {
+        let mut row = Self::blank(batch, RowKind::BatchStatus);
+        row.complete = i64::from(complete);
+        row.error_code = error;
+        row
+    }
+
+    fn producer_status(
+        batch: i64,
+        file: usize,
+        producer: usize,
+        complete: bool,
+        verdict: Option<bool>,
+        error: Option<String>,
+    ) -> Self {
+        let mut row = Self::blank(batch, RowKind::ProducerStatus);
+        row.file_index = Some(file as i64);
+        row.producer_id = Some(producer as i64);
+        row.complete = i64::from(complete);
+        row.verdict = verdict.map(i64::from);
+        row.error_code = error;
+        row
+    }
+
+    fn terminal_match(data: TerminalMatchData) -> Self {
+        let mut row = Self::blank(data.batch, RowKind::TerminalMatch);
+        row.file_index = Some(data.file as i64);
+        row.producer_id = Some(data.producer as i64);
+        row.task_index = Some(data.task_index as i64);
+        row.match_index = Some(data.match_index as i64);
+        row.start_ordinal = Some(data.start_ordinal as i64);
+        row.node = Some(data.node as i64);
+        row.output_label = data.output_label;
+        row
+    }
+
+    fn capture(data: CaptureData) -> Self {
+        let mut row = Self::blank(data.batch, RowKind::Capture);
+        row.file_index = Some(data.file as i64);
+        row.producer_id = Some(data.producer as i64);
+        row.match_index = Some(data.match_index as i64);
+        row.capture_index = Some(data.capture_index as i64);
+        row.capture_occurrence = Some(data.occurrence as i64);
+        row.capture_sequence_start = Some(data.sequence_start as i64);
+        row.capture_sequence_count = Some(data.sequence_count as i64);
+        row.node = Some(data.node as i64);
+        row.capture_label = data.capture_label;
+        row.text_value = data.text_value;
+        row.start_byte = Some(data.start_byte as i64);
+        row.end_byte = Some(data.end_byte as i64);
+        row
+    }
+
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) const fn row_kind(&self) -> RowKind {
+        self.row_kind
+    }
+
     pub(in crate::code_rule_dsl) fn is_complete(&self) -> bool {
         self.complete != 0
     }
@@ -196,20 +377,50 @@ impl TerminalRow {
     }
 
     pub(in crate::code_rule_dsl) fn from_sql_row(row: &rusqlite::Row<'_>) -> SqlResult<Self> {
+        let row_kind = match row.get::<_, i64>(1)? {
+            1 => RowKind::BatchStatus,
+            2 => RowKind::ProducerStatus,
+            3 => RowKind::TerminalMatch,
+            4 => RowKind::Capture,
+            5 => RowKind::Navigation,
+            6 => RowKind::Fact,
+            7 => RowKind::DocumentMap,
+            value => {
+                return Err(rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Integer,
+                    format!("unknown rerail_matches row kind {value}").into(),
+                ));
+            }
+        };
         Ok(Self {
             batch: row.get(0)?,
-            file: row.get(1)?,
-            program: row.get(2)?,
-            match_index: row.get(3)?,
-            start_ordinal: row.get(4)?,
-            output_label: row.get(5)?,
+            row_kind,
+            producer_id: row.get(2)?,
+            file_index: row.get(3)?,
+            task_index: row.get(4)?,
+            match_index: row.get(5)?,
             capture_index: row.get(6)?,
-            capture_label: row.get(7)?,
-            capture_node: row.get(8)?,
-            start_byte: row.get(9)?,
-            end_byte: row.get(10)?,
-            complete: row.get(11)?,
-            error_code: row.get(12)?,
+            capture_occurrence: row.get(7)?,
+            capture_sequence_start: row.get(8)?,
+            capture_sequence_count: row.get(9)?,
+            node: row.get(10)?,
+            related_node: row.get(11)?,
+            axis_kind: row.get(12)?,
+            axis_order: row.get(13)?,
+            fact_kind: row.get(14)?,
+            document_id: row.get(15)?,
+            mapped_document_id: row.get(16)?,
+            start_ordinal: row.get(17)?,
+            output_label: row.get(18)?,
+            capture_label: row.get(19)?,
+            text_value: row.get(20)?,
+            start_byte: row.get(21)?,
+            end_byte: row.get(22)?,
+            verdict: row.get(23)?,
+            complete: row.get(24)?,
+            work_used: row.get(25)?,
+            error_code: row.get(26)?,
         })
     }
 }
@@ -217,30 +428,23 @@ impl TerminalRow {
 struct MatchBatch {
     token: i64,
     demand: Mutex<Option<PackedDemand>>,
-    rows: OnceLock<Result<Arc<Vec<TerminalRow>>, String>>,
+    rows: OnceLock<Arc<Vec<PackedRow>>>,
     executions: AtomicUsize,
     filters: AtomicUsize,
 }
 
 impl MatchBatch {
-    fn rows(&self) -> SqlResult<Arc<Vec<TerminalRow>>> {
-        self.rows
-            .get_or_init(|| {
-                self.executions.fetch_add(1, Ordering::Relaxed);
-                let demand = self
-                    .demand
-                    .lock()
-                    .expect("packed demand mutex poisoned")
-                    .take()
-                    .expect("a demanded packed batch executes once");
-                demand
-                    .execute(self.token)
-                    .map(Arc::new)
-                    .map_err(|error| format!("packed batch failed: {error:?}"))
-            })
-            .as_ref()
-            .map(Arc::clone)
-            .map_err(|error| rusqlite::Error::ModuleError(error.clone()))
+    fn rows(&self) -> SqlResult<Arc<Vec<PackedRow>>> {
+        Ok(Arc::clone(self.rows.get_or_init(|| {
+            self.executions.fetch_add(1, Ordering::Relaxed);
+            let demand = self
+                .demand
+                .lock()
+                .expect("packed demand mutex poisoned")
+                .take()
+                .expect("a demanded packed batch executes once");
+            Arc::new(demand.execute(self.token))
+        })))
     }
 }
 
@@ -325,7 +529,7 @@ unsafe impl<'vtab> VTab<'vtab> for MatchTable {
     ) -> SqlResult<(Cow<'static, CStr>, Self)> {
         db.config(VTabConfig::DirectOnly)?;
         Ok((
-            Cow::Borrowed(c"CREATE TABLE x(batch HIDDEN,file_index,program_index,match_index,start_ordinal,output_label,capture_index,capture_label,capture_node,start_byte,end_byte,complete,error_code)"),
+            Cow::Borrowed(c"CREATE TABLE x(batch INTEGER HIDDEN,row_kind INTEGER NOT NULL,producer_id INTEGER,file_index INTEGER,task_index INTEGER,match_index INTEGER,capture_index INTEGER,capture_occurrence INTEGER,capture_sequence_start INTEGER,capture_sequence_count INTEGER,node INTEGER,related_node INTEGER,axis_kind INTEGER,axis_order INTEGER,fact_kind INTEGER,document_id INTEGER,mapped_document_id INTEGER,start_ordinal INTEGER,output_label TEXT,capture_label TEXT,text_value TEXT,start_byte INTEGER,end_byte INTEGER,verdict INTEGER,complete INTEGER NOT NULL,work_used INTEGER,error_code TEXT)"),
             Self {
                 base: ffi::sqlite3_vtab::default(),
                 registry: Arc::clone(aux.ok_or_else(|| {
@@ -371,7 +575,7 @@ unsafe impl<'vtab> VTab<'vtab> for MatchTable {
 struct MatchCursor<'vtab> {
     base: ffi::sqlite3_vtab_cursor,
     registry: Arc<MatchRegistry>,
-    rows: Arc<Vec<TerminalRow>>,
+    rows: Arc<Vec<PackedRow>>,
     position: usize,
     phantom: PhantomData<&'vtab MatchTable>,
 }
@@ -411,18 +615,32 @@ unsafe impl VTabCursor for MatchCursor<'_> {
         let row = &self.rows[self.position];
         match column {
             0 => context.set_result(&row.batch),
-            1 => context.set_result(&row.file),
-            2 => context.set_result(&row.program),
-            3 => context.set_result(&row.match_index),
-            4 => context.set_result(&row.start_ordinal),
-            5 => context.set_result(&row.output_label.as_deref()),
+            1 => context.set_result(&(row.row_kind as i64)),
+            2 => context.set_result(&row.producer_id),
+            3 => context.set_result(&row.file_index),
+            4 => context.set_result(&row.task_index),
+            5 => context.set_result(&row.match_index),
             6 => context.set_result(&row.capture_index),
-            7 => context.set_result(&row.capture_label.as_deref()),
-            8 => context.set_result(&row.capture_node),
-            9 => context.set_result(&row.start_byte),
-            10 => context.set_result(&row.end_byte),
-            11 => context.set_result(&row.complete),
-            12 => context.set_result(&row.error_code.as_deref()),
+            7 => context.set_result(&row.capture_occurrence),
+            8 => context.set_result(&row.capture_sequence_start),
+            9 => context.set_result(&row.capture_sequence_count),
+            10 => context.set_result(&row.node),
+            11 => context.set_result(&row.related_node),
+            12 => context.set_result(&row.axis_kind),
+            13 => context.set_result(&row.axis_order),
+            14 => context.set_result(&row.fact_kind),
+            15 => context.set_result(&row.document_id),
+            16 => context.set_result(&row.mapped_document_id),
+            17 => context.set_result(&row.start_ordinal),
+            18 => context.set_result(&row.output_label.as_deref()),
+            19 => context.set_result(&row.capture_label.as_deref()),
+            20 => context.set_result(&row.text_value.as_deref()),
+            21 => context.set_result(&row.start_byte),
+            22 => context.set_result(&row.end_byte),
+            23 => context.set_result(&row.verdict),
+            24 => context.set_result(&row.complete),
+            25 => context.set_result(&row.work_used),
+            26 => context.set_result(&row.error_code.as_deref()),
             _ => Err(rusqlite::Error::InvalidColumnIndex(column as usize)),
         }
     }
@@ -525,6 +743,14 @@ mod tests {
             .expect("batch relation");
 
         assert_eq!(rows, vec![(1, None, None, 1, None)]);
-        assert_eq!(registry.query_execution_counters(token), Some((1, 1)));
+        let repeated = connection
+            .query_row(
+                "SELECT count(*) FROM rerail_matches WHERE batch = ?1",
+                [token],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("second cursor reads the materialized relation");
+        assert_eq!(repeated, 1);
+        assert_eq!(registry.query_execution_counters(token), Some((1, 2)));
     }
 }

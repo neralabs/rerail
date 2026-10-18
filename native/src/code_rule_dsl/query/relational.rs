@@ -51,7 +51,7 @@ impl TerminalPlan {
 
 pub(super) struct SqlCatalogPlan {
     terminals: Vec<TerminalPlan>,
-    ir: RelationalIr,
+    clause_irs: Vec<RelationalIr>,
     sql: String,
     #[cfg(test)]
     clause_terminal_ids: Vec<Vec<usize>>,
@@ -92,8 +92,16 @@ impl SqlCatalogPlan {
                     builder.current_result_limit =
                         u32::try_from(code_rule.capabilities.limits.max_witnesses)
                             .unwrap_or(u32::MAX);
-                    builder.lower_matcher(&matcher.matcher, matcher.language, &at, &mut terminals);
+                    let mut ir = RelationalIr::empty();
+                    builder.lower_matcher(
+                        &matcher.matcher,
+                        matcher.language,
+                        &at,
+                        &mut terminals,
+                        &mut ir,
+                    );
                     builder.clause_terminal_ids.push(terminals);
+                    builder.clause_irs.push(ir);
                 }
             }
         }
@@ -111,24 +119,32 @@ impl SqlCatalogPlan {
 
     #[cfg(test)]
     pub(super) fn shape(&self) -> &[SqlShape] {
-        self.ir.operations()
+        self.clause_irs
+            .first()
+            .expect("a test SQL plan has one clause")
+            .operations()
     }
 
     pub(super) fn verify(&self) -> Result<(), String> {
-        self.ir.validate()?;
-        if self
-            .terminals
-            .iter()
-            .any(|terminal| !self.ir.terminals().contains(&terminal.kind))
-        {
+        for ir in &self.clause_irs {
+            ir.validate()?;
+        }
+        if self.terminals.iter().enumerate().any(|(id, terminal)| {
+            let semantic_key = format!("terminal:{id}");
+            !self
+                .clause_irs
+                .iter()
+                .any(|ir| ir.contains_terminal_spec(terminal.kind, &semantic_key))
+        }) {
             return Err("SQL catalog terminal is absent from relational IR producers".to_owned());
         }
-        let normalized = self.ir.normalized_sql();
-        for prohibited in ["tq_", "rerail_nodes", "rerail_facts", "GrammarMatcher"] {
-            if normalized.contains(prohibited) {
-                return Err(format!(
-                    "relational IR contains prohibited SQL `{prohibited}`"
-                ));
+        for normalized in self.clause_irs.iter().map(RelationalIr::normalized_sql) {
+            for prohibited in ["tq_", "rerail_nodes", "rerail_facts", "GrammarMatcher"] {
+                if normalized.contains(prohibited) {
+                    return Err(format!(
+                        "relational IR contains prohibited SQL `{prohibited}`"
+                    ));
+                }
             }
         }
         if self.sql.trim().is_empty() {
@@ -174,7 +190,7 @@ enum TerminalIdentity {
 struct Builder {
     terminals: Vec<TerminalPlan>,
     terminal_ids: HashMap<TerminalIdentity, usize>,
-    ir: RelationalIr,
+    clause_irs: Vec<RelationalIr>,
     clause_terminal_ids: Vec<Vec<usize>>,
     unsupported: Vec<String>,
     current_clause: (usize, usize),
@@ -188,6 +204,7 @@ impl Builder {
         language: GrammarDialect,
         at: &str,
         terminals: &mut Vec<usize>,
+        ir: &mut RelationalIr,
     ) {
         match matcher {
             AstMatcher::Kind(kind) => {
@@ -205,8 +222,8 @@ impl Builder {
                     if !terminals.contains(&id) {
                         terminals.push(id);
                     }
-                    self.ir.terminal(TerminalKind::Kind);
-                    self.ir.operation(SqlOperation::ScanTerminal);
+                    ir.terminal_spec(TerminalKind::Kind, format!("terminal:{id}"));
+                    ir.operation(SqlOperation::ScanTerminal);
                 }
             }
             AstMatcher::All(items) => {
@@ -214,7 +231,13 @@ impl Builder {
                 self.unsupported
                     .push(format!("{operation}: ordered conjunction"));
                 for (index, item) in items.iter().enumerate() {
-                    self.lower_matcher(item, language, &format!("{operation}/{index}"), terminals);
+                    self.lower_matcher(
+                        item,
+                        language,
+                        &format!("{operation}/{index}"),
+                        terminals,
+                        ir,
+                    );
                 }
             }
             AstMatcher::Regex(regex) => match Program::compile_regex(regex) {
@@ -228,8 +251,8 @@ impl Builder {
                     if !terminals.contains(&id) {
                         terminals.push(id);
                     }
-                    self.ir.terminal(TerminalKind::Regex);
-                    self.ir.operation(SqlOperation::ScanTerminal);
+                    ir.terminal_spec(TerminalKind::Regex, format!("terminal:{id}"));
+                    ir.operation(SqlOperation::ScanTerminal);
                 }
                 Err(error) => self
                     .unsupported
@@ -244,6 +267,7 @@ impl Builder {
                     language,
                     &format!("{operation}/rule"),
                     terminals,
+                    ir,
                 );
             }
             AstMatcher::Pattern(pattern) => match Program::compile_ast_grep_literal(pattern) {
@@ -257,9 +281,9 @@ impl Builder {
                     if !terminals.contains(&id) {
                         terminals.push(id);
                     }
-                    self.ir.terminal(TerminalKind::Pattern);
-                    self.ir.operation(SqlOperation::ScanTerminal);
-                    self.ir.operation(SqlOperation::ScanCapture);
+                    ir.terminal_spec(TerminalKind::Pattern, format!("terminal:{id}"));
+                    ir.operation(SqlOperation::ScanTerminal);
+                    ir.operation(SqlOperation::ScanCapture);
                 }
                 Err(error) => self
                     .unsupported
@@ -270,13 +294,19 @@ impl Builder {
                 self.unsupported
                     .push(format!("{operation}: ordered alternatives"));
                 for (index, item) in items.iter().enumerate() {
-                    self.lower_matcher(item, language, &format!("{operation}/{index}"), terminals);
+                    self.lower_matcher(
+                        item,
+                        language,
+                        &format!("{operation}/{index}"),
+                        terminals,
+                        ir,
+                    );
                 }
             }
             AstMatcher::Not(item) => {
                 let operation = format!("{at}/not");
                 self.unsupported.push(format!("{operation}: negation"));
-                self.lower_matcher(item, language, &format!("{operation}/rule"), terminals);
+                self.lower_matcher(item, language, &format!("{operation}/rule"), terminals, ir);
             }
             AstMatcher::Inside(item, _) => {
                 let operation = format!("{at}/inside");
@@ -287,6 +317,7 @@ impl Builder {
                     language,
                     &format!("{operation}/rule"),
                     terminals,
+                    ir,
                 );
             }
             AstMatcher::Precedes(item, _) => {
@@ -298,6 +329,7 @@ impl Builder {
                     language,
                     &format!("{operation}/rule"),
                     terminals,
+                    ir,
                 );
             }
             AstMatcher::Follows(item, _) => {
@@ -309,6 +341,7 @@ impl Builder {
                     language,
                     &format!("{operation}/rule"),
                     terminals,
+                    ir,
                 );
             }
             AstMatcher::Field(relation) => {
@@ -320,6 +353,7 @@ impl Builder {
                     language,
                     &format!("{operation}/rule"),
                     terminals,
+                    ir,
                 );
             }
             AstMatcher::Constrained(core) => {
@@ -331,6 +365,7 @@ impl Builder {
                     language,
                     &format!("{operation}/rule"),
                     terminals,
+                    ir,
                 );
                 for (name, constraint) in &core.constraints {
                     self.lower_matcher(
@@ -338,6 +373,7 @@ impl Builder {
                         language,
                         &format!("{operation}/{name}"),
                         terminals,
+                        ir,
                     );
                 }
             }
@@ -401,23 +437,25 @@ impl Builder {
                 .expect("a successfully lowered clause has a terminal");
             writeln!(
                 clauses,
-                ", clause_{ordinal} AS (\n  SELECT m.* FROM terminal_match m\n  INNER JOIN producer_status s USING (producer_id, file_index)\n  WHERE m.producer_id = {terminal} AND s.complete = 1\n)"
+                ", clause_{ordinal} AS (\n  SELECT m.* FROM terminal_match m\n  INNER JOIN producer_status s USING (producer_id, file_index)\n  CROSS JOIN batch_status b\n  WHERE m.producer_id = {terminal} AND s.complete = 1 AND b.complete = 1\n)"
             )
             .expect("write SQL");
         }
         let sql = format!(
-            "WITH packed AS MATERIALIZED (\n  SELECT * FROM rerail_matches WHERE batch = :batch\n),\nproducer_status AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 1\n),\nterminal_match AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 2\n)\n{clauses}\nSELECT * FROM ({})\nORDER BY file_index, producer_id, match_index, capture_index",
+            "WITH packed AS MATERIALIZED (\n  SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code FROM rerail_matches WHERE batch = :batch\n),\nbatch_status AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 1\n),\nproducer_status AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 2\n),\nterminal_match AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 3\n),\ncapture AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 4\n),\nnavigation AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 5\n),\nfact AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 6\n),\ndocument_map AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 7\n)\n{clauses}\nSELECT * FROM ({})\nORDER BY file_index, producer_id, match_index, capture_index",
             (0..self.clause_terminal_ids.len())
                 .map(|ordinal| format!("SELECT * FROM clause_{ordinal}"))
                 .collect::<Vec<_>>()
                 .join(" UNION ALL ")
         );
-        let mut ir = self.ir;
-        ir.operation(SqlOperation::Projection);
-        ir.operation(SqlOperation::OrderBy);
+        let mut clause_irs = self.clause_irs;
+        for ir in &mut clause_irs {
+            ir.operation(SqlOperation::Projection);
+            ir.operation(SqlOperation::OrderBy);
+        }
         SqlCatalogPlan {
             terminals: self.terminals,
-            ir,
+            clause_irs,
             sql,
             #[cfg(test)]
             clause_terminal_ids: self.clause_terminal_ids,

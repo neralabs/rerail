@@ -15,7 +15,7 @@ use crate::code_rule_dsl::model::CompiledCodeRule;
 use crate::code_rule_dsl::packed::ExecutionBackend;
 use crate::code_rule_dsl::tape::TapeDoc;
 use crate::code_rule_dsl::transducer::sql_backend::{
-    MatchRegistry, PackedDemand, TerminalRow, register_module,
+    MatchRegistry, PackedDemand, PackedRow, register_module,
 };
 use rusqlite::Connection;
 use std::collections::BTreeMap;
@@ -33,7 +33,7 @@ pub(super) struct PackedFileInput {
 
 /// Rows returned by SQL after completion filtering and stable ordering.
 pub(super) struct QueryOutcome {
-    pub(super) rows: Vec<TerminalRow>,
+    pub(super) rows: Vec<PackedRow>,
     pub(super) counters: QueryCounters,
 }
 
@@ -142,7 +142,7 @@ fn production_backend() -> ExecutionBackend {
 fn drive(demand: PackedDemand) -> rusqlite::Result<QueryOutcome> {
     drive_sql(
         demand,
-        "WITH terminal AS MATERIALIZED (SELECT batch, file_index, program_index, match_index, start_ordinal, output_label, capture_index, capture_label, capture_node, start_byte, end_byte, complete, error_code FROM rerail_matches WHERE batch = ?1) SELECT batch, file_index, program_index, match_index, start_ordinal, output_label, capture_index, capture_label, capture_node, start_byte, end_byte, complete, error_code FROM terminal ORDER BY file_index, program_index, match_index, capture_index",
+        "SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code FROM rerail_matches WHERE batch = ?1 ORDER BY rowid",
     )
 }
 
@@ -178,7 +178,7 @@ impl QueryConnection {
         let result = (|| {
             let mut statement = self.connection.prepare_cached(sql)?;
             let rows = statement
-                .query_map([token], TerminalRow::from_sql_row)?
+                .query_map([token], PackedRow::from_sql_row)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             let (terminal_executions, virtual_table_filters) = self
                 .registry

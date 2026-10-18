@@ -325,19 +325,20 @@ Batch release removes the registry entry after the SQL statement closes its curs
 
 ## Row and order contract
 
-The existing 13-column relation is a transitional match schema.
-The final boundary also needs producer status, navigation, fact, and document-map rows.
+The virtual table exposes one 27-column tagged relation.
+Its row kinds are batch status, producer status, terminal match, capture, navigation, fact, and document map.
 [`sql-relational-compiler-design.md`](sql-relational-compiler-design.md) defines these logical row families.
+The current executor emits the first four kinds; later producers will emit the other three.
 This change does not require a new persistent storage schema.
 
-`(file_index, program_index)` identifies one transitional terminal task.
+`(producer_id, file_index, task_index)` identifies one demanded terminal task.
 `match_index` orders matches within that task.
-`capture_index` orders captures within one match.
+Separate capture rows carry capture slot, occurrence, and sequence ordinals.
 `output_label` identifies the program output path.
 
-Every task emits at least one row.
-A complete negative task emits one status row with a null `match_index`.
-An incomplete task emits `complete=0` and an `error_code`.
+Every demanded task emits one producer-status row.
+A complete negative task has no terminal-match row and has `complete=1` in its status row.
+An incomplete task has `complete=0` and an `error_code`.
 SQL cannot infer absence without a complete status row.
 
 The final SQL order uses explicit catalog, file, program, match, output, and capture keys.

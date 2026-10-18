@@ -15,6 +15,21 @@ pub(super) enum TerminalKind {
     Transform,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) struct TerminalSpec {
+    kind: TerminalKind,
+    semantic_key: String,
+}
+
+impl TerminalSpec {
+    fn new(kind: TerminalKind, semantic_key: impl Into<String>) -> Self {
+        Self {
+            kind,
+            semantic_key: semantic_key.into(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum SqlOperation {
     PackedMaterialized,
@@ -119,8 +134,73 @@ impl SqlOperation {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+enum RelationNode {
+    Seed,
+    Producer(TerminalSpec),
+    Apply {
+        operation: SqlOperation,
+        inputs: Vec<RelationNode>,
+    },
+}
+
+impl RelationNode {
+    fn collect_terminals(&self, terminals: &mut Vec<TerminalKind>) {
+        match self {
+            Self::Seed => {}
+            Self::Producer(spec) => {
+                if !terminals.contains(&spec.kind) {
+                    terminals.push(spec.kind);
+                }
+            }
+            Self::Apply { inputs, .. } => {
+                for input in inputs {
+                    input.collect_terminals(terminals);
+                }
+            }
+        }
+    }
+
+    fn collect_operations(&self, operations: &mut Vec<SqlOperation>) {
+        if let Self::Apply { operation, inputs } = self {
+            for input in inputs {
+                input.collect_operations(operations);
+            }
+            if !operations.contains(operation) {
+                operations.push(*operation);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn insert_before(&mut self, target: SqlOperation, inserted: &[SqlOperation]) -> bool {
+        let Self::Apply { operation, inputs } = self else {
+            return false;
+        };
+        if *operation == target {
+            let original = std::mem::take(inputs);
+            let mut replacement = RelationNode::Apply {
+                operation: inserted[0],
+                inputs: original,
+            };
+            for operation in &inserted[1..] {
+                replacement = RelationNode::Apply {
+                    operation: *operation,
+                    inputs: vec![replacement],
+                };
+            }
+            *inputs = vec![replacement];
+            return true;
+        }
+        inputs
+            .iter_mut()
+            .any(|input| input.insert_before(target, inserted))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct RelationalIr {
-    terminals: Vec<TerminalKind>,
+    roots: Vec<RelationNode>,
+    terminal_kinds: Vec<TerminalKind>,
     operations: Vec<SqlOperation>,
 }
 
@@ -133,27 +213,90 @@ impl Default for RelationalIr {
 impl RelationalIr {
     pub(super) fn empty() -> Self {
         Self {
-            terminals: Vec::new(),
+            roots: Vec::new(),
+            terminal_kinds: Vec::new(),
             operations: vec![SqlOperation::PackedMaterialized, SqlOperation::StatusJoin],
         }
     }
 
+    #[cfg(test)]
     pub(super) fn terminal(&mut self, terminal: TerminalKind) {
-        if !self.terminals.contains(&terminal) {
-            self.terminals.push(terminal);
-        }
+        self.terminal_spec(terminal, format!("{terminal:?}"));
+    }
+
+    pub(super) fn terminal_spec(
+        &mut self,
+        terminal: TerminalKind,
+        semantic_key: impl Into<String>,
+    ) {
+        self.roots.push(RelationNode::Producer(TerminalSpec::new(
+            terminal,
+            semantic_key,
+        )));
+        self.refresh_explanation();
     }
 
     pub(super) fn operation(&mut self, operation: SqlOperation) {
-        if !self.operations.contains(&operation) {
-            self.operations.push(operation);
+        assert!(
+            !matches!(
+                operation,
+                SqlOperation::PackedMaterialized | SqlOperation::StatusJoin
+            ),
+            "packed scan and status join are statement prelude operations"
+        );
+        let inputs = if self.roots.is_empty() {
+            vec![RelationNode::Seed]
+        } else {
+            std::mem::take(&mut self.roots)
+        };
+        self.roots.push(RelationNode::Apply { operation, inputs });
+        self.refresh_explanation();
+    }
+
+    #[cfg(test)]
+    pub(super) fn insert_operations_before(
+        &mut self,
+        target: SqlOperation,
+        inserted: &[SqlOperation],
+    ) -> Result<(), String> {
+        if inserted.is_empty() {
+            return Ok(());
         }
+        if !self
+            .roots
+            .iter_mut()
+            .any(|root| root.insert_before(target, inserted))
+        {
+            return Err(format!("relational IR has no {target:?} operation"));
+        }
+        self.refresh_explanation();
+        Ok(())
     }
 
+    #[cfg(test)]
     pub(super) fn terminals(&self) -> &[TerminalKind] {
-        &self.terminals
+        &self.terminal_kinds
     }
 
+    pub(super) fn contains_terminal_spec(&self, kind: TerminalKind, semantic_key: &str) -> bool {
+        fn contains(node: &RelationNode, kind: TerminalKind, semantic_key: &str) -> bool {
+            match node {
+                RelationNode::Seed => false,
+                RelationNode::Producer(spec) => {
+                    spec.kind == kind && spec.semantic_key == semantic_key
+                }
+                RelationNode::Apply { inputs, .. } => inputs
+                    .iter()
+                    .any(|input| contains(input, kind, semantic_key)),
+            }
+        }
+
+        self.roots
+            .iter()
+            .any(|root| contains(root, kind, semantic_key))
+    }
+
+    #[cfg(test)]
     pub(super) fn operations(&self) -> &[SqlOperation] {
         &self.operations
     }
@@ -179,10 +322,26 @@ impl RelationalIr {
         if ALL_SQL_OPERATIONS.len() != ALL_SQL_OPERATIONS.iter().collect::<BTreeSet<_>>().len() {
             return Err("relational IR SQL catalog contains duplicate operations".to_owned());
         }
-        let unique = self.operations().iter().copied().collect::<BTreeSet<_>>();
-        if unique.len() != self.operations().len() {
-            return Err("relational IR contains a duplicate normalized SQL operation".to_owned());
+        let mut terminals = Vec::new();
+        let mut operations = vec![SqlOperation::PackedMaterialized, SqlOperation::StatusJoin];
+        for root in &self.roots {
+            root.collect_terminals(&mut terminals);
+            root.collect_operations(&mut operations);
+        }
+        if terminals != self.terminal_kinds || operations != self.operations {
+            return Err("relational IR explanation does not match its expression graph".to_owned());
         }
         Ok(())
+    }
+
+    fn refresh_explanation(&mut self) {
+        let mut terminals = Vec::new();
+        let mut operations = vec![SqlOperation::PackedMaterialized, SqlOperation::StatusJoin];
+        for root in &self.roots {
+            root.collect_terminals(&mut terminals);
+            root.collect_operations(&mut operations);
+        }
+        self.terminal_kinds = terminals;
+        self.operations = operations;
     }
 }

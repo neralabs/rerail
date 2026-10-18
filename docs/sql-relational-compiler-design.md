@@ -20,8 +20,10 @@ compiled clause
 The semantic matcher remains a test-only oracle.
 Production has no matcher fallback and no second execution shape.
 
-The current implementation does not complete this design.
-`PackedProgramPlan` and `Program::lower_matcher` still attempt whole-matcher lowering.
+The current implementation establishes this boundary for kind, literal-pattern, and regex terminals.
+Each lowered clause owns an operand-bearing expression graph with semantic terminal identities.
+The generated SQL is still an atomic clause skeleton; it does not yet render Boolean or navigation nodes.
+The compact-contract frontend is separate from the production frontend and still uses transitional operation classification.
 The workspace tape-preparation and result-publication stages also remain incomplete.
 
 ## Decision
@@ -266,9 +268,10 @@ Each producer status identifies completion, verdict, work use, and failure.
 A physical virtual-table schema can use a tagged union of nullable columns.
 The SQL statement creates one typed CTE for each logical row family.
 
-The current 13-column match schema is not sufficient for this compiler.
-It lacks producer kinds, navigation rows, fact rows, and document mappings.
-The schema must expand before complete relational lowering.
+The virtual table now exposes one 27-column tagged relation for all seven row families.
+Current packed terminals emit batch status, producer status, terminal matches, and capture sequences.
+The navigation, fact, and document-map tags and columns are reserved, but their producers are not implemented.
+Complete relational lowering must not treat an unimplemented row family as an empty result.
 
 ## One-statement execution
 
@@ -554,6 +557,11 @@ Ports must use named clean commits and must include their parity tests.
 3. Add navigation and fact rows.
 4. Add typed capture-sequence rows.
 5. Preserve one `xFilter` and one terminal execution.
+
+Implemented boundary: the tagged schema, stable producer ordinals, batch and producer status,
+typed capture-sequence columns, inert registration, and one-execution publication.
+The schema includes navigation, fact, and document-map rows.
+The producer lowerers that populate those rows belong to Phases 3 and 4.
 
 ### Phase 3: Lower the structural core
 

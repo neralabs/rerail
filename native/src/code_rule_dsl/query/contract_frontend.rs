@@ -12,14 +12,19 @@ pub(super) fn lower(source: &str) -> Result<RelationalIr, String> {
     let mut ir = RelationalIr::empty();
     match operation {
         "pattern" => {
-            terminal(&mut ir, T::Pattern, &[S::ScanTerminal, S::ScanCapture]);
+            terminal_spec(
+                &mut ir,
+                T::Pattern,
+                source,
+                &[S::ScanTerminal, S::ScanCapture],
+            );
             if source.contains('$') {
                 ir.operation(S::Bindings);
             }
         }
-        "kind" => terminal(&mut ir, T::Kind, &[S::ScanTerminal]),
-        "regex" => terminal(&mut ir, T::Regex, &[S::ScanTerminal]),
-        "text" => terminal(&mut ir, T::Text, &[S::ScanTerminal]),
+        "kind" => terminal_spec(&mut ir, T::Kind, source, &[S::ScanTerminal]),
+        "regex" => terminal_spec(&mut ir, T::Regex, source, &[S::ScanTerminal]),
+        "text" => terminal_spec(&mut ir, T::Text, source, &[S::ScanTerminal]),
         "value" => {
             terminal(&mut ir, T::Value, &[S::ScanTerminal]);
             if source == "value(flow)" {
@@ -423,7 +428,8 @@ fn lower_terms(source: &str, ir: &mut RelationalIr) {
 }
 
 fn lower_navigation(source: &str, ir: &mut RelationalIr) {
-    terminal(ir, T::Navigation, &[S::ScanNavigation]);
+    let axis = source.split_once('(').map_or(source, |(axis, _)| axis);
+    terminal_spec(ir, T::Navigation, axis, &[S::ScanNavigation]);
     terminal(ir, T::Kind, &[S::ScanTerminal]);
     ir.operation(S::InnerJoin);
     if source.contains("stopBy=pattern") {
@@ -510,6 +516,11 @@ fn terminal(ir: &mut RelationalIr, terminal_kind: T, sql: &[S]) {
     operations(ir, sql);
 }
 
+fn terminal_spec(ir: &mut RelationalIr, terminal_kind: T, semantic_key: &str, sql: &[S]) {
+    ir.terminal_spec(terminal_kind, semantic_key);
+    operations(ir, sql);
+}
+
 fn terminals(ir: &mut RelationalIr, terminal_kinds: &[T], sql: &[S]) {
     for terminal_kind in terminal_kinds {
         ir.terminal(*terminal_kind);
@@ -524,19 +535,8 @@ fn operations(ir: &mut RelationalIr, operations: &[S]) {
 }
 
 fn insert_before(ir: &mut RelationalIr, before: S, operations: &[S]) {
-    let mut reordered = RelationalIr::empty();
-    for terminal_kind in ir.terminals() {
-        reordered.terminal(*terminal_kind);
-    }
-    for operation in ir.operations().iter().skip(2) {
-        if *operation == before {
-            for inserted in operations {
-                reordered.operation(*inserted);
-            }
-        }
-        reordered.operation(*operation);
-    }
-    *ir = reordered;
+    ir.insert_operations_before(before, operations)
+        .expect("the compact form created the target relation");
 }
 
 #[cfg(test)]
