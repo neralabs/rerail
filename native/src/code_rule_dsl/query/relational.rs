@@ -1,4 +1,4 @@
-use super::relational_ir::{RelationalIr, SqlOperation};
+use super::relational_ir::{RelationalIr, SqlOperation, qualified_row_columns};
 use crate::code_rule_dsl::language::{GrammarDialect, label};
 use crate::code_rule_dsl::matcher::AstMatcher;
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Query};
@@ -110,7 +110,11 @@ impl SqlCatalogPlan {
                 unsupported: builder.unsupported,
             });
         }
-        Ok(builder.finish())
+        let plan = builder.finish()?;
+        plan.verify().map_err(|error| LoweringError {
+            unsupported: vec![format!("generated relational plan: {error}")],
+        })?;
+        Ok(plan)
     }
 
     pub(super) fn terminals(&self) -> &[TerminalPlan] {
@@ -150,6 +154,14 @@ impl SqlCatalogPlan {
         if self.sql.trim().is_empty() {
             return Err("SQL catalog plan has no statement".to_owned());
         }
+        for prohibited in ["tq_", "rerail_nodes", "rerail_facts", "GrammarMatcher"] {
+            if self.sql.contains(prohibited) {
+                return Err(format!("generated SQL contains prohibited `{prohibited}`"));
+            }
+        }
+        if self.sql.matches("rerail_matches").count() != 1 {
+            return Err("generated SQL must contain one packed relation scan".to_owned());
+        }
         Ok(())
     }
 
@@ -181,6 +193,7 @@ impl LoweringError {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum TerminalIdentity {
+    Universe(GrammarDialect),
     Kind(GrammarDialect, u16),
     Pattern(GrammarDialect, String),
     Regex(GrammarDialect, String),
@@ -228,16 +241,24 @@ impl Builder {
             }
             AstMatcher::All(items) => {
                 let operation = format!("{at}/all");
-                self.unsupported
-                    .push(format!("{operation}: ordered conjunction"));
+                let mut parts = Vec::with_capacity(items.len());
                 for (index, item) in items.iter().enumerate() {
+                    let mut part = RelationalIr::empty();
                     self.lower_matcher(
                         item,
                         language,
                         &format!("{operation}/{index}"),
                         terminals,
-                        ir,
+                        &mut part,
                     );
+                    parts.push(part);
+                }
+                match RelationalIr::combine(SqlOperation::InnerJoin, parts) {
+                    Ok(mut combined) => {
+                        combined.operation(SqlOperation::CaseTruth);
+                        *ir = combined;
+                    }
+                    Err(error) => self.unsupported.push(format!("{operation}: {error}")),
                 }
             }
             AstMatcher::Regex(regex) => match Program::compile_regex(regex) {
@@ -291,22 +312,51 @@ impl Builder {
             },
             AstMatcher::Any(items) => {
                 let operation = format!("{at}/any");
-                self.unsupported
-                    .push(format!("{operation}: ordered alternatives"));
+                let mut parts = Vec::with_capacity(items.len());
                 for (index, item) in items.iter().enumerate() {
+                    let mut part = RelationalIr::empty();
                     self.lower_matcher(
                         item,
                         language,
                         &format!("{operation}/{index}"),
                         terminals,
-                        ir,
+                        &mut part,
                     );
+                    parts.push(part);
+                }
+                match RelationalIr::combine(SqlOperation::OrderedUnion, parts) {
+                    Ok(mut combined) => {
+                        combined.operation(SqlOperation::WindowRank);
+                        combined.operation(SqlOperation::CaseTruth);
+                        *ir = combined;
+                    }
+                    Err(error) => self.unsupported.push(format!("{operation}: {error}")),
                 }
             }
             AstMatcher::Not(item) => {
                 let operation = format!("{at}/not");
-                self.unsupported.push(format!("{operation}: negation"));
-                self.lower_matcher(item, language, &format!("{operation}/rule"), terminals, ir);
+                let universe_id = self.universe_terminal(language);
+                if !terminals.contains(&universe_id) {
+                    terminals.push(universe_id);
+                }
+                let mut universe = RelationalIr::empty();
+                universe.terminal_spec(TerminalKind::Universe, format!("terminal:{universe_id}"));
+                universe.operation(SqlOperation::ScanTerminal);
+                let mut excluded = RelationalIr::empty();
+                self.lower_matcher(
+                    item,
+                    language,
+                    &format!("{operation}/rule"),
+                    terminals,
+                    &mut excluded,
+                );
+                match RelationalIr::combine(SqlOperation::AntiJoin, vec![universe, excluded]) {
+                    Ok(mut combined) => {
+                        combined.operation(SqlOperation::CaseTruth);
+                        *ir = combined;
+                    }
+                    Err(error) => self.unsupported.push(format!("{operation}: {error}")),
+                }
             }
             AstMatcher::Inside(item, _) => {
                 let operation = format!("{at}/inside");
@@ -377,7 +427,9 @@ impl Builder {
                     );
                 }
             }
-            AstMatcher::Never => {}
+            AstMatcher::Never => self
+                .unsupported
+                .push(format!("{at}: never matcher is not lowered")),
             AstMatcher::NthChild(_)
             | AstMatcher::Util(_)
             | AstMatcher::Call(_)
@@ -391,6 +443,15 @@ impl Builder {
                 .unsupported
                 .push(format!("{at}: test-only unknown operation")),
         }
+    }
+
+    fn universe_terminal(&mut self, language: GrammarDialect) -> usize {
+        self.intern_terminal(
+            TerminalIdentity::Universe(language),
+            TerminalKind::Universe,
+            language,
+            Program::compile_universe().expect("the universe terminal is a verified program"),
+        )
     }
 
     fn kind_terminal(&mut self, language: GrammarDialect, kind: u16) -> usize {
@@ -429,36 +490,37 @@ impl Builder {
         id
     }
 
-    fn finish(self) -> SqlCatalogPlan {
+    fn finish(self) -> Result<SqlCatalogPlan, LoweringError> {
+        let mut clause_irs = self.clause_irs;
         let mut clauses = String::new();
-        for (ordinal, terminals) in self.clause_terminal_ids.iter().enumerate() {
-            let terminal = terminals
-                .first()
-                .expect("a successfully lowered clause has a terminal");
+        for (ordinal, ir) in clause_irs.iter_mut().enumerate() {
+            ir.operation(SqlOperation::Projection);
+            ir.operation(SqlOperation::OrderBy);
+            let (relations, result) =
+                ir.render_clause_relations(ordinal)
+                    .map_err(|error| LoweringError {
+                        unsupported: vec![format!("clause {ordinal}: {error}")],
+                    })?;
+            let projection = qualified_row_columns("result");
             writeln!(
                 clauses,
-                ", clause_{ordinal} AS (\n  SELECT m.* FROM terminal_match m\n  INNER JOIN producer_status s USING (producer_id, file_index)\n  CROSS JOIN batch_status b\n  WHERE m.producer_id = {terminal} AND s.complete = 1 AND b.complete = 1\n)"
+                ",\n{relations},\nclause_{ordinal} AS (\n  SELECT {projection} FROM {result} result\n  CROSS JOIN batch_status batch\n  WHERE batch.complete = 1\n    AND NOT EXISTS (\n      SELECT 1 FROM producer_status undecided\n      WHERE undecided.complete <> 1 OR undecided.verdict IS NULL\n    )\n)"
             )
             .expect("write SQL");
         }
         let sql = format!(
             "WITH packed AS MATERIALIZED (\n  SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code FROM rerail_matches WHERE batch = :batch\n),\nbatch_status AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 1\n),\nproducer_status AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 2\n),\nterminal_match AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 3\n),\ncapture AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 4\n),\nnavigation AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 5\n),\nfact AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 6\n),\ndocument_map AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 7\n)\n{clauses}\nSELECT * FROM ({})\nORDER BY file_index, producer_id, match_index, capture_index",
-            (0..self.clause_terminal_ids.len())
+            (0..clause_irs.len())
                 .map(|ordinal| format!("SELECT * FROM clause_{ordinal}"))
                 .collect::<Vec<_>>()
                 .join(" UNION ALL ")
         );
-        let mut clause_irs = self.clause_irs;
-        for ir in &mut clause_irs {
-            ir.operation(SqlOperation::Projection);
-            ir.operation(SqlOperation::OrderBy);
-        }
-        SqlCatalogPlan {
+        Ok(SqlCatalogPlan {
             terminals: self.terminals,
             clause_irs,
             sql,
             #[cfg(test)]
             clause_terminal_ids: self.clause_terminal_ids,
-        }
+        })
     }
 }

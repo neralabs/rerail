@@ -571,6 +571,13 @@ The producer lowerers that populate those rows belong to Phases 3 and 4.
 4. Lower constraints, equality, and counts.
 5. Prove complete outcome parity with the semantic matcher.
 
+The compiler now completes items 1 and 2 for the supported atomic terminals.
+`All` joins the operands on the file and node identities.
+`Any` keeps the first successful branch for each node.
+`Not` uses a verified universe terminal and a SQL anti-join.
+SQL rejects incomplete or unknown producer status before it returns a clause row.
+Navigation, binding environments, constraints, counts, and matcher parity remain incomplete.
+
 ### Phase 4: Lower utilities and semantic facts
 
 1. Lower utility components and parameterized calls.

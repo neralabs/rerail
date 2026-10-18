@@ -1053,6 +1053,16 @@ impl Program {
         )
     }
 
+    pub(super) fn compile_universe() -> Result<Self, Error> {
+        Self::new(
+            vec![word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
+            vec![b"match".to_vec(), b"universe".to_vec()],
+            Vec::new(),
+            vec![0, 1],
+            Vec::new(),
+        )
+    }
+
     pub(super) fn compile_kind(kind: u16) -> Result<Self, Error> {
         Self::new(
             vec![word(KIND, 0, kind), word(CAPTURE, 0, 0), word(EMIT, 0, 1)],

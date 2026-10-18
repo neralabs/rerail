@@ -1568,9 +1568,9 @@ fn sqlite_never_falls_back_to_the_semantic_matcher() {
     };
     let error = task
         .compute()
-        .expect_err("unlowered rules must fail closed");
+        .expect_err("workspace packed input preparation is deliberately incomplete");
     assert!(
-        error.reason.contains("SQL relational lowering failed"),
+        error.reason.contains("sparse-task preparation"),
         "{}",
         error.reason
     );

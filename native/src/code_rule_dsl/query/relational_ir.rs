@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum TerminalKind {
+    Universe,
     Pattern,
     Kind,
     Regex,
@@ -59,7 +60,8 @@ pub(super) enum SqlOperation {
     CrossFileJoin,
 }
 
-const ALL_TERMINAL_KINDS: [TerminalKind; 11] = [
+const ALL_TERMINAL_KINDS: [TerminalKind; 12] = [
+    TerminalKind::Universe,
     TerminalKind::Pattern,
     TerminalKind::Kind,
     TerminalKind::Regex,
@@ -143,6 +145,16 @@ enum RelationNode {
     },
 }
 
+impl TerminalSpec {
+    fn producer_id(&self) -> Result<usize, String> {
+        self.semantic_key
+            .strip_prefix("terminal:")
+            .ok_or_else(|| "production terminal has no producer identity".to_owned())?
+            .parse()
+            .map_err(|_| "production terminal has an invalid producer identity".to_owned())
+    }
+}
+
 impl RelationNode {
     fn collect_terminals(&self, terminals: &mut Vec<TerminalKind>) {
         match self {
@@ -197,6 +209,150 @@ impl RelationNode {
     }
 }
 
+const ROW_COLUMNS: &str = "batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code";
+
+struct SqlRenderer {
+    clause: usize,
+    next_relation: usize,
+    ctes: Vec<String>,
+}
+
+impl SqlRenderer {
+    fn new(clause: usize) -> Self {
+        Self {
+            clause,
+            next_relation: 0,
+            ctes: Vec::new(),
+        }
+    }
+
+    fn render(&mut self, node: &RelationNode) -> Result<String, String> {
+        let RelationNode::Apply { operation, inputs } = node else {
+            return Err("a clause root must be an executable relation".to_owned());
+        };
+        match operation {
+            SqlOperation::ScanTerminal => self.render_terminal(inputs),
+            SqlOperation::ScanCapture
+            | SqlOperation::CaseTruth
+            | SqlOperation::WindowRank
+            | SqlOperation::Projection
+            | SqlOperation::OrderBy => self.render_transparent(inputs),
+            SqlOperation::InnerJoin => self.render_all(inputs),
+            SqlOperation::OrderedUnion => self.render_any(inputs),
+            SqlOperation::AntiJoin => self.render_not(inputs),
+            unsupported => Err(format!(
+                "SQL rendering is not implemented for {unsupported:?}"
+            )),
+        }
+    }
+
+    fn render_terminal(&mut self, inputs: &[RelationNode]) -> Result<String, String> {
+        let [RelationNode::Producer(spec)] = inputs else {
+            return Err("a terminal scan must have one producer operand".to_owned());
+        };
+        let producer = spec.producer_id()?;
+        let name = self.next_name("term");
+        self.ctes.push(format!(
+            "{name} AS (\n  SELECT match.* FROM terminal_match match\n  INNER JOIN producer_status status USING (producer_id, file_index)\n  WHERE match.producer_id = {producer} AND status.complete = 1\n)"
+        ));
+        Ok(name)
+    }
+
+    fn render_transparent(&mut self, inputs: &[RelationNode]) -> Result<String, String> {
+        let [input] = inputs else {
+            return Err("a unary relational operation must have one operand".to_owned());
+        };
+        self.render(input)
+    }
+
+    fn render_all(&mut self, inputs: &[RelationNode]) -> Result<String, String> {
+        if inputs.len() < 2 {
+            return Err("ordered conjunction requires at least two operands".to_owned());
+        }
+        let relations = inputs
+            .iter()
+            .map(|input| self.render(input))
+            .collect::<Result<Vec<_>, _>>()?;
+        let name = self.next_name("relation");
+        let mut sql = format!(
+            "{name} AS (\n  SELECT left_input.* FROM {} left_input",
+            relations[0]
+        );
+        for (index, relation) in relations.iter().enumerate().skip(1) {
+            let alias = if index == 1 {
+                "right_input".to_owned()
+            } else {
+                format!("input_{index}")
+            };
+            sql.push_str(&format!(
+                "\n  INNER JOIN {relation} {alias}\n    ON {alias}.file_index = left_input.file_index AND {alias}.node = left_input.node"
+            ));
+        }
+        sql.push_str("\n)");
+        self.ctes.push(sql);
+        Ok(name)
+    }
+
+    fn render_any(&mut self, inputs: &[RelationNode]) -> Result<String, String> {
+        if inputs.len() < 2 {
+            return Err("ordered alternatives require at least two operands".to_owned());
+        }
+        let relations = inputs
+            .iter()
+            .map(|input| self.render(input))
+            .collect::<Result<Vec<_>, _>>()?;
+        let relation_name = self.peek_name("relation");
+        let candidates = format!("{relation_name}_candidates");
+        let branches = relations
+            .iter()
+            .enumerate()
+            .map(|(branch, relation)| {
+                format!("SELECT {branch} AS branch_order, branch.* FROM {relation} branch")
+            })
+            .collect::<Vec<_>>()
+            .join("\n  UNION ALL\n  ");
+        self.ctes
+            .push(format!("{candidates} AS (\n  {branches}\n)"));
+        let name = self.next_name("relation");
+        debug_assert_eq!(name, relation_name);
+        self.ctes.push(format!(
+            "{name} AS (\n  SELECT candidate.* FROM {candidates} candidate\n  WHERE NOT EXISTS (\n    SELECT 1 FROM {candidates} earlier\n    WHERE earlier.file_index = candidate.file_index AND earlier.node = candidate.node\n      AND earlier.branch_order < candidate.branch_order\n  )\n)"
+        ));
+        Ok(name)
+    }
+
+    fn render_not(&mut self, inputs: &[RelationNode]) -> Result<String, String> {
+        let [universe, excluded] = inputs else {
+            return Err("negation requires universe and excluded operands".to_owned());
+        };
+        let universe = self.render(universe)?;
+        let excluded = self.render(excluded)?;
+        let name = self.next_name("relation");
+        self.ctes.push(format!(
+            "{name} AS (\n  SELECT universe.* FROM {universe} universe\n  WHERE NOT EXISTS (\n    SELECT 1 FROM {excluded} excluded\n    WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node\n  )\n)"
+        ));
+        Ok(name)
+    }
+
+    fn peek_name(&self, family: &str) -> String {
+        format!("clause_{}_{family}_{}", self.clause, self.next_relation)
+    }
+
+    fn next_name(&mut self, family: &str) -> String {
+        let name = self.peek_name(family);
+        self.next_relation += 1;
+        name
+    }
+}
+
+pub(super) fn qualified_row_columns(alias: &str) -> String {
+    ROW_COLUMNS
+        .split(", ")
+        .map(|column| format!("{alias}.{column}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct RelationalIr {
     roots: Vec<RelationNode>,
@@ -234,6 +390,28 @@ impl RelationalIr {
             semantic_key,
         )));
         self.refresh_explanation();
+    }
+
+    pub(super) fn combine(operation: SqlOperation, parts: Vec<Self>) -> Result<Self, String> {
+        if parts.is_empty() {
+            return Err(format!(
+                "{operation:?} requires at least one relational operand"
+            ));
+        }
+        let mut inputs = Vec::with_capacity(parts.len());
+        for part in parts {
+            if part.roots.len() != 1 {
+                return Err("a relational operand must have exactly one root".to_owned());
+            }
+            inputs.extend(part.roots);
+        }
+        let mut combined = Self {
+            roots: vec![RelationNode::Apply { operation, inputs }],
+            terminal_kinds: Vec::new(),
+            operations: Vec::new(),
+        };
+        combined.refresh_explanation();
+        Ok(combined)
     }
 
     pub(super) fn operation(&mut self, operation: SqlOperation) {
@@ -299,6 +477,18 @@ impl RelationalIr {
     #[cfg(test)]
     pub(super) fn operations(&self) -> &[SqlOperation] {
         &self.operations
+    }
+
+    pub(super) fn render_clause_relations(
+        &self,
+        clause_ordinal: usize,
+    ) -> Result<(String, String), String> {
+        if self.roots.len() != 1 {
+            return Err("a clause must have exactly one relational root".to_owned());
+        }
+        let mut renderer = SqlRenderer::new(clause_ordinal);
+        let result = renderer.render(&self.roots[0])?;
+        Ok((renderer.ctes.join(",\n"), result))
     }
 
     pub(super) fn normalized_sql(&self) -> String {

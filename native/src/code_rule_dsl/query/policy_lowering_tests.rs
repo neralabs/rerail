@@ -1,6 +1,7 @@
 use super::relational::{SqlCatalogPlan, SqlShape, TerminalKind};
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::test_support::CAPABILITIES;
+use rusqlite::{Connection, params};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -117,6 +118,64 @@ fn cte(sql: &str, name: &str) -> String {
     normalized(&rest[..end])
 }
 
+fn execute_boolean_sql(
+    plan: &SqlCatalogPlan,
+    batch_complete: bool,
+    producers: &[(usize, bool, Option<bool>, &[i64])],
+) -> Vec<(i64, i64)> {
+    let connection = Connection::open_in_memory().expect("in-memory SQLite");
+    connection
+        .execute_batch(
+            "CREATE TABLE rerail_matches(
+                batch INTEGER, row_kind INTEGER, producer_id INTEGER, file_index INTEGER,
+                task_index INTEGER, match_index INTEGER, capture_index INTEGER,
+                capture_occurrence INTEGER, capture_sequence_start INTEGER,
+                capture_sequence_count INTEGER, node INTEGER, related_node INTEGER,
+                axis_kind INTEGER, axis_order INTEGER, fact_kind INTEGER, document_id INTEGER,
+                mapped_document_id INTEGER, start_ordinal INTEGER, output_label TEXT,
+                capture_label TEXT, text_value TEXT, start_byte INTEGER, end_byte INTEGER,
+                verdict INTEGER, complete INTEGER, work_used INTEGER, error_code TEXT
+            );",
+        )
+        .expect("typed packed relation");
+    connection
+        .execute(
+            "INSERT INTO rerail_matches(batch, row_kind, complete) VALUES (1, 1, ?1)",
+            [i64::from(batch_complete)],
+        )
+        .expect("batch status");
+    for (producer, complete, verdict, nodes) in producers {
+        connection
+            .execute(
+                "INSERT INTO rerail_matches(batch, row_kind, producer_id, file_index, verdict, complete)
+                 VALUES (1, 2, ?1, 0, ?2, ?3)",
+                params![
+                    *producer as i64,
+                    verdict.map(i64::from),
+                    i64::from(*complete)
+                ],
+            )
+            .expect("producer status");
+        for (match_index, node) in nodes.iter().enumerate() {
+            connection
+                .execute(
+                    "INSERT INTO rerail_matches(
+                        batch, row_kind, producer_id, file_index, task_index, match_index,
+                        node, start_ordinal, complete
+                     ) VALUES (1, 3, ?1, 0, ?2, ?2, ?3, ?3, 1)",
+                    params![*producer as i64, match_index as i64, node],
+                )
+                .expect("terminal match");
+        }
+    }
+    let mut statement = connection.prepare(plan.sql()).expect("executable SQL plan");
+    statement
+        .query_map([1_i64], |row| Ok((row.get(2)?, row.get(10)?)))
+        .expect("query relational rows")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("typed output rows")
+}
+
 #[test]
 fn compiled_ordered_all_has_exact_relational_sql() {
     let compiled = code_rule(json!({
@@ -144,6 +203,17 @@ fn compiled_ordered_all_has_exact_relational_sql() {
     assert_eq!(
         cte(plan.sql(), "clause_0_relation_2 AS"),
         "clause_0_relation_2 AS ( SELECT left_input.* FROM clause_0_term_0 left_input INNER JOIN clause_0_term_1 right_input ON right_input.file_index = left_input.file_index AND right_input.node = left_input.node )"
+    );
+    assert_eq!(
+        execute_boolean_sql(
+            &plan,
+            true,
+            &[
+                (0, true, Some(true), &[10, 20]),
+                (1, true, Some(true), &[20]),
+            ],
+        ),
+        vec![(0, 20)]
     );
 }
 
@@ -177,6 +247,17 @@ fn compiled_ordered_any_preserves_branch_identity_in_exact_sql() {
     );
     assert!(plan.sql().contains("0 AS branch_order"));
     assert!(plan.sql().contains("1 AS branch_order"));
+    assert_eq!(
+        execute_boolean_sql(
+            &plan,
+            true,
+            &[
+                (0, true, Some(true), &[10]),
+                (1, true, Some(true), &[10, 20]),
+            ],
+        ),
+        vec![(0, 10), (1, 20)]
+    );
 }
 
 #[test]
@@ -203,6 +284,33 @@ fn compiled_not_uses_completion_guarded_relational_antijoin() {
         "clause_0_relation_2 AS ( SELECT universe.* FROM clause_0_term_0 universe WHERE NOT EXISTS ( SELECT 1 FROM clause_0_term_1 excluded WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node ) )"
     );
     assert!(plan.sql().contains("batch.complete = 1"));
+    assert_eq!(
+        execute_boolean_sql(
+            &plan,
+            true,
+            &[
+                (0, true, Some(true), &[10, 20]),
+                (1, true, Some(true), &[20]),
+            ],
+        ),
+        vec![(0, 10)]
+    );
+    assert!(
+        execute_boolean_sql(
+            &plan,
+            true,
+            &[(0, true, Some(true), &[10, 20]), (1, false, None, &[]),],
+        )
+        .is_empty()
+    );
+    assert!(
+        execute_boolean_sql(
+            &plan,
+            true,
+            &[(0, true, Some(true), &[10, 20]), (1, true, None, &[]),],
+        )
+        .is_empty()
+    );
 }
 
 #[test]
