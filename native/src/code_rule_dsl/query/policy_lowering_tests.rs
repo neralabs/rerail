@@ -72,6 +72,27 @@ fn compiled_literal_pattern_lowers_to_a_verified_terminal() {
 }
 
 #[test]
+fn compiled_regex_lowers_to_a_verified_terminal() {
+    let compiled = code_rule(json!({ "regex": "^unsafe$" }));
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("node regex has complete relational lowering");
+
+    assert_eq!(plan.terminals().len(), 1);
+    assert_eq!(plan.terminals()[0].kind(), TerminalKind::Regex);
+    assert_eq!(plan.terminals()[0].language(), "python");
+    assert_eq!(
+        plan.shape(),
+        &[
+            SqlShape::PackedMaterialized,
+            SqlShape::StatusJoin,
+            SqlShape::ScanTerminal,
+            SqlShape::Projection,
+            SqlShape::OrderBy,
+        ]
+    );
+}
+
+#[test]
 fn equal_terminals_share_identity_without_merging_clauses() {
     let first = code_rule(json!({ "kind": "identifier" }));
     let second = code_rule(json!({ "kind": "identifier" }));
