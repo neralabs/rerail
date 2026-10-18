@@ -6,6 +6,7 @@
 //! deterministic extraction. No host callback or semantic matcher is an execution dependency.
 
 pub(in crate::code_rule_dsl) mod crossfile;
+mod relational;
 pub(in crate::code_rule_dsl) mod select_when;
 
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -320,5 +321,7 @@ pub(in crate::code_rule_dsl) fn regex_matches(
 
 #[cfg(test)]
 mod lowering_contract;
+#[cfg(test)]
+mod policy_lowering_tests;
 #[cfg(test)]
 mod tests;
