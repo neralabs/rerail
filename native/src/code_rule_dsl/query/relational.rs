@@ -167,6 +167,7 @@ impl LoweringError {
 enum TerminalIdentity {
     Kind(GrammarDialect, u16),
     Pattern(GrammarDialect, String),
+    Regex(GrammarDialect, String),
 }
 
 #[derive(Default)]
@@ -216,7 +217,24 @@ impl Builder {
                     self.lower_matcher(item, language, &format!("{operation}/{index}"), terminals);
                 }
             }
-            AstMatcher::Regex(_) => self.unsupported.push(format!("{at}: regex terminal")),
+            AstMatcher::Regex(regex) => match Program::compile_regex(regex) {
+                Ok(program) => {
+                    let id = self.intern_terminal(
+                        TerminalIdentity::Regex(language, regex.as_str().to_owned()),
+                        TerminalKind::Regex,
+                        language,
+                        program,
+                    );
+                    if !terminals.contains(&id) {
+                        terminals.push(id);
+                    }
+                    self.ir.terminal(TerminalKind::Regex);
+                    self.ir.operation(SqlOperation::ScanTerminal);
+                }
+                Err(error) => self
+                    .unsupported
+                    .push(format!("{at}: regex terminal is not lowered: {error:?}")),
+            },
             AstMatcher::Has(item, _) => {
                 let operation = format!("{at}/has");
                 self.unsupported

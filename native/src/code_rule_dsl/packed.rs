@@ -1036,6 +1036,23 @@ impl Program {
         )
     }
 
+    pub(super) fn compile_regex(regex: &Regex) -> Result<Self, Error> {
+        Self::new(
+            vec![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
+            vec![
+                regex.as_str().as_bytes().to_vec(),
+                b"match".to_vec(),
+                b"regex".to_vec(),
+            ],
+            vec![TextPredicate::Regex {
+                source: 0,
+                compiled: regex.clone(),
+            }],
+            vec![1, 2],
+            Vec::new(),
+        )
+    }
+
     pub(super) fn compile_kind(kind: u16) -> Result<Self, Error> {
         Self::new(
             vec![word(KIND, 0, kind), word(CAPTURE, 0, 0), word(EMIT, 0, 1)],

@@ -122,7 +122,6 @@ fn unsupported_inventory_reports_every_operation_in_source_order() {
         error.unsupported(),
         &[
             "lowering/ast-match/python/rule/all: ordered conjunction",
-            "lowering/ast-match/python/rule/all/1: regex terminal",
             "lowering/ast-match/python/rule/has: descendant relation",
         ]
     );
