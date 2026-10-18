@@ -14,7 +14,6 @@ use super::relational_ir::TerminalKind;
 pub(super) use super::relational_ir::{SqlOperation as SqlShape, TerminalKind};
 
 pub(super) struct TerminalPlan {
-    #[cfg(test)]
     kind: TerminalKind,
     language: GrammarDialect,
     program: Program,
@@ -117,8 +116,12 @@ impl SqlCatalogPlan {
 
     pub(super) fn verify(&self) -> Result<(), String> {
         self.ir.validate()?;
-        if !self.terminals.is_empty() && self.ir.terminals().is_empty() {
-            return Err("SQL catalog terminals have no relational IR producers".to_owned());
+        if self
+            .terminals
+            .iter()
+            .any(|terminal| !self.ir.terminals().contains(&terminal.kind))
+        {
+            return Err("SQL catalog terminal is absent from relational IR producers".to_owned());
         }
         let normalized = self.ir.normalized_sql();
         for prohibited in ["tq_", "rerail_nodes", "rerail_facts", "GrammarMatcher"] {
@@ -160,10 +163,17 @@ impl LoweringError {
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum TerminalIdentity {
+    Kind(GrammarDialect, u16),
+    Pattern(GrammarDialect, String),
+}
+
 #[derive(Default)]
 struct Builder {
     terminals: Vec<TerminalPlan>,
-    terminal_ids: HashMap<(GrammarDialect, u16), usize>,
+    terminal_ids: HashMap<TerminalIdentity, usize>,
+    ir: RelationalIr,
     clause_terminal_ids: Vec<Vec<usize>>,
     unsupported: Vec<String>,
     current_clause: (usize, usize),
@@ -194,6 +204,8 @@ impl Builder {
                     if !terminals.contains(&id) {
                         terminals.push(id);
                     }
+                    self.ir.terminal(TerminalKind::Kind);
+                    self.ir.operation(SqlOperation::ScanTerminal);
                 }
             }
             AstMatcher::All(items) => {
@@ -216,7 +228,25 @@ impl Builder {
                     terminals,
                 );
             }
-            AstMatcher::Pattern(_) => self.unsupported.push(format!("{at}: pattern terminal")),
+            AstMatcher::Pattern(pattern) => match Program::compile_ast_grep_literal(pattern) {
+                Ok(program) => {
+                    let identity = TerminalIdentity::Pattern(
+                        language,
+                        program.canonical_digest(label(language).unwrap_or("unknown"), b""),
+                    );
+                    let id =
+                        self.intern_terminal(identity, TerminalKind::Pattern, language, program);
+                    if !terminals.contains(&id) {
+                        terminals.push(id);
+                    }
+                    self.ir.terminal(TerminalKind::Pattern);
+                    self.ir.operation(SqlOperation::ScanTerminal);
+                    self.ir.operation(SqlOperation::ScanCapture);
+                }
+                Err(error) => self
+                    .unsupported
+                    .push(format!("{at}: pattern terminal is not lowered: {error:?}")),
+            },
             AstMatcher::Any(items) => {
                 let operation = format!("{at}/any");
                 self.unsupported
@@ -310,7 +340,22 @@ impl Builder {
     }
 
     fn kind_terminal(&mut self, language: GrammarDialect, kind: u16) -> usize {
-        if let Some(id) = self.terminal_ids.get(&(language, kind)).copied() {
+        self.intern_terminal(
+            TerminalIdentity::Kind(language, kind),
+            TerminalKind::Kind,
+            language,
+            Program::compile_kind(kind).expect("a kind terminal is a verified program"),
+        )
+    }
+
+    fn intern_terminal(
+        &mut self,
+        identity: TerminalIdentity,
+        kind: TerminalKind,
+        language: GrammarDialect,
+        program: Program,
+    ) -> usize {
+        if let Some(id) = self.terminal_ids.get(&identity).copied() {
             let terminal = &mut self.terminals[id];
             if !terminal.clauses.contains(&self.current_clause) {
                 terminal.clauses.push(self.current_clause);
@@ -320,14 +365,13 @@ impl Builder {
         }
         let id = self.terminals.len();
         self.terminals.push(TerminalPlan {
-            #[cfg(test)]
-            kind: TerminalKind::Kind,
+            kind,
             language,
-            program: Program::compile_kind(kind).expect("a kind terminal is a verified program"),
+            program,
             clauses: vec![self.current_clause],
             result_limit: self.current_result_limit,
         });
-        self.terminal_ids.insert((language, kind), id);
+        self.terminal_ids.insert(identity, id);
         id
     }
 
@@ -350,20 +394,12 @@ impl Builder {
                 .collect::<Vec<_>>()
                 .join(" UNION ALL ")
         );
+        let mut ir = self.ir;
+        ir.operation(SqlOperation::Projection);
+        ir.operation(SqlOperation::OrderBy);
         SqlCatalogPlan {
             terminals: self.terminals,
-            ir: {
-                let mut ir = RelationalIr::empty();
-                ir.terminal(TerminalKind::Kind);
-                for operation in [
-                    SqlOperation::ScanTerminal,
-                    SqlOperation::Projection,
-                    SqlOperation::OrderBy,
-                ] {
-                    ir.operation(operation);
-                }
-                ir
-            },
+            ir,
             sql,
             #[cfg(test)]
             clause_terminal_ids: self.clause_terminal_ids,

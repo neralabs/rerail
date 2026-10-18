@@ -124,6 +124,12 @@ pub(super) struct RelationalIr {
     operations: Vec<SqlOperation>,
 }
 
+impl Default for RelationalIr {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 impl RelationalIr {
     pub(super) fn empty() -> Self {
         Self {
