@@ -595,8 +595,15 @@ Each form declares its required terminal kinds and normalized SQL constructs.
 The suite covers atomic tests, boolean composition, navigation, captures, utilities, semantic facts, clauses, and outputs.
 It also rejects callback-shaped SQL fragments.
 
-The current tests make sure that the contract is complete and internally consistent.
-The relational compiler must compare its explained plan with each contract case when that API exists.
+Fixture-validation tests make sure that the contract is complete and internally consistent.
+They do not claim that lowering exists.
+
+An ignored TDD test requires exact terminal and SQL-shape equality for all 108 forms.
+It fails with an explicit implementation error when it runs now.
+Connect this test to `SqlCatalogPlan::explain` when that API exists.
+
+Do not rewrite a hand-written form into an easier equivalent to make the implementation pass.
+Add separate TDD cases from real compiled policies as each compiler API becomes available.
 Matcher-oracle tests remain necessary because an SQL shape does not prove semantic parity.
 
 ## Architecture gates

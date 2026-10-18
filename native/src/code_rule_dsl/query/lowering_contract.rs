@@ -3,6 +3,10 @@
 //! These cases define the required lowering boundary before the compiler exists. Each case names
 //! the terminal programs that SQL can demand and the SQL constructs that must compose their rows.
 //! The cases do not permit a whole matcher, relation, or clause to become one opaque program.
+//!
+//! The compact forms are stable contract inputs. Do not rewrite a form into an easier equivalent
+//! to make an implementation pass. Add separate tests from real compiled policies as each public
+//! compiler API becomes available.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -976,8 +980,35 @@ fn cases() -> Vec<LoweringCase> {
     ]
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct ExplainedLowering {
+    terminals: Vec<Terminal>,
+    sql: Vec<SqlShape>,
+}
+
+/// Runs the stable hand-written suite against a compiler plan-explanation adapter.
+///
+/// The adapter can normalize aliases and compiler-assigned identifiers. It cannot remove or
+/// replace a required terminal or SQL construct from the contract.
+fn assert_compiler_contract(mut explain: impl FnMut(&str) -> Result<ExplainedLowering, String>) {
+    for case in cases() {
+        let actual = explain(case.form)
+            .unwrap_or_else(|error| panic!("{} (`{}`): {error}", case.name, case.form));
+        assert_eq!(actual.terminals, case.terminals, "{} terminals", case.name);
+        assert_eq!(actual.sql, case.sql, "{} SQL shape", case.name);
+    }
+}
+
 #[test]
-fn lowering_contract_has_108_hand_written_forms() {
+#[ignore = "TDD: connect this contract to SqlCatalogPlan::explain as that API is introduced"]
+fn relational_compiler_matches_all_hand_written_forms() {
+    assert_compiler_contract(|form| {
+        Err(format!("relational lowering is not implemented for {form}"))
+    });
+}
+
+#[test]
+fn lowering_contract_fixture_has_108_hand_written_forms() {
     let cases = cases();
     assert_eq!(cases.len(), 108);
 
@@ -1009,7 +1040,7 @@ fn lowering_contract_has_108_hand_written_forms() {
 }
 
 #[test]
-fn desired_sql_shapes_are_callback_free() {
+fn lowering_contract_fixture_sql_shapes_are_callback_free() {
     for case in cases() {
         let shape = case
             .sql
@@ -1038,7 +1069,7 @@ fn desired_sql_shapes_are_callback_free() {
 }
 
 #[test]
-fn lowering_contract_covers_each_main_family() {
+fn lowering_contract_fixture_covers_each_main_family() {
     let counts = cases()
         .into_iter()
         .fold(BTreeMap::new(), |mut counts, case| {
@@ -1060,7 +1091,7 @@ fn lowering_contract_covers_each_main_family() {
 }
 
 #[test]
-fn lowering_contract_uses_all_terminal_and_sql_shapes() {
+fn lowering_contract_fixture_uses_all_terminal_and_sql_shapes() {
     let cases = cases();
     let terminals = cases
         .iter()
