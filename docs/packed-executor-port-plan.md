@@ -128,8 +128,7 @@ Rerail ships native engines for macOS, Linux, and Windows on arm64 and x64.
 Metal can improve only supported macOS systems.
 
 This platform limit does not require CPU-first development.
-The current matcher can remain the production path where Metal is unavailable.
-The later CPU JIT port will give those targets the packed fast path.
+Platforms without Metal use the packed CPU JIT backend. They do not use the semantic matcher.
 
 ## Port boundary
 
@@ -150,7 +149,7 @@ The module owns these items:
 The existing compiler owns rule meaning.
 The SQL compiler lowers complete `GrammarMatcher` clauses into relational plans.
 During development, the terminal compiler lowers completed operations into test-only packed programs.
-The current matcher remains the production path until SQL supports the complete public rule contract.
+The matcher is a test-only semantic oracle. Production is SQL-first and fails unsupported packed lowering without fallback.
 
 Partial coverage is a migration state, not a product capability.
 Every valid `rerail.policy/v1` AST clause must lower without a host callback.

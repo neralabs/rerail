@@ -21,7 +21,7 @@ const expected = {
 function usage() {
   return `Usage: npm run benchmark:data-layer-full-scan -- \\
   --repository <nera-data-layer checkout> \\
-  --policies <archived tempo-oracles/data-layer directory> [options]
+  --policies <archived data-layer policy directory> [options]
 
 Options:
   --native <addon>  no-file-deadline addon (default: native/target/no-file-deadline)
@@ -135,7 +135,6 @@ if (files.length !== expected.files || sourceBytes !== expected.sourceBytes) {
 }
 
 const workspace = new binding.CodeRuleDslWorkspace();
-workspace.setExecutionEngine("sqlite");
 for (const policy of policies) workspace.addCodeRule(policy.compiled);
 const accepted = files.filter(file => workspace.acceptsPath(file.path));
 if (accepted.length !== expected.files) {

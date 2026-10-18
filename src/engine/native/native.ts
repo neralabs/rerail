@@ -124,7 +124,6 @@ export interface NativeCodeRuleDslWorkspace {
    */
   addCodeRule(compiled: NativeCompiledCodeRuleDsl, placement?: string): void;
   /** Selects file-local execution before the first apply. */
-  setExecutionEngine(engine: "matcher" | "sqlite"): void;
   acceptsPath(path: string): boolean;
   tryApply(requestJson: string): string | null;
   applyAsync(requestJson: string): Promise<string>;

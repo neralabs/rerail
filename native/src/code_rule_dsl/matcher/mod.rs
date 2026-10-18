@@ -215,7 +215,7 @@ pub(super) enum AstMatcher {
     TestUnknown(Regex),
 }
 
-/// The matcher: production matches every AST rule with it (`run_clause`).
+/// Test-only semantic oracle for AST rules. Production lowers rules to packed programs.
 impl Matcher for AstMatcher {
     fn match_node_with_env<'tree, D: Doc>(
         &self,

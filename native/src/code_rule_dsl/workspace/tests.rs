@@ -1542,36 +1542,11 @@ fn compile_clauses(clauses: Vec<Value>) -> CompiledCodeRuleDsl {
 }
 
 #[test]
-fn sqlite_engine_runs_a_workspace_end_to_end() {
-    let clauses = vec![
-        clause("debugger", json!({ "kind": "debugger_statement" })),
-        clause(
-            "global-alert",
-            json!({ "kind": "identifier", "resolves": { "global": ["alert"] } }),
-        ),
-        json!({
-            "id": "call-arguments",
-            "forbid": { "ast": {
-                "language": "typescript",
-                "rule": {
-                    "kind": "call_expression",
-                    "has": { "kind": "identifier", "pattern": "$A" }
-                }
-            } },
-            "violation": {
-                "anchor": "capture.A",
-                "code": "CALL_ARGUMENT",
-                "each": "A",
-                "message": "$A"
-            },
-        }),
-        json!({
-            "id": "secret",
-            "forbid": { "regex": { "source": "file.content", "pattern": "secret" } },
-            "violation": { "anchor": "witness.span", "code": "SECRET", "message": "secret" },
-        }),
-    ];
-    let compiled = compile_clauses(clauses.clone());
+fn sqlite_never_falls_back_to_the_semantic_matcher() {
+    let compiled = compile_clauses(vec![clause(
+        "debugger",
+        json!({ "kind": "debugger_statement" }),
+    )]);
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace
         .set_execution_engine("sqlite".to_owned())
@@ -1579,44 +1554,25 @@ fn sqlite_engine_runs_a_workspace_end_to_end() {
     workspace
         .add_code_rule(&compiled, None)
         .expect("rule is added");
-    let profile: Value = serde_json::from_str(&workspace.memory_profile().unwrap()).unwrap();
-    assert_eq!(profile["executionEngine"], "sqlite");
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let files = Value::Array(
-        (0..600)
-            .map(|index| {
-                json!({
-                    "path": format!("src/{index}.ts"),
-                    "language": "typescript",
-                    "source": if index == 0 {
-                        "debugger; const value = 'secret';\n"
-                    } else {
-                        "alert(one, two); function f(alert) { alert(); debugger; }\n"
-                    },
-                })
-            })
-            .collect(),
-    );
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
-        request_json: json!({ "revision": 1, "files": files.clone(), "removed": [] }).to_string(),
+        request_json: json!({
+            "revision": 1,
+            "files": [{ "path": "src/a.ts", "language": "typescript", "source": "debugger;" }],
+            "removed": [],
+        })
+        .to_string(),
         request_buffer: None,
         request_direct: None,
     };
-    let output = task.compute().expect("SQLite workspace applies");
-    let evaluation =
-        serde_json::from_str::<Value>(&output).expect("result is JSON")["evaluation"].clone();
-    assert_eq!(evaluation["failures"], json!([]), "{evaluation}");
+    let error = task
+        .compute()
+        .expect_err("unlowered rules must fail closed");
     assert!(
-        crate::code_rule_dsl::query::max_registered_files() >= 600,
-        "all 600 files use shared SQLite batches"
-    );
-    assert_eq!(
-        evaluation["violations"],
-        stateless(clauses, files)["violations"]
+        error.reason.contains("complete verified packed lowering"),
+        "{}",
+        error.reason
     );
 }
 

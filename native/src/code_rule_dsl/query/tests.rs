@@ -1,40 +1,28 @@
 use super::{SqlPlans, regex_matches};
 use crate::code_rule_dsl::budget::{MatchBudget, set_shortcuts_off};
+use crate::code_rule_dsl::packed::ExecutionBackend;
 use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file};
-use crate::code_rule_dsl::transducer::sql_backend::DrivenRow;
+use crate::code_rule_dsl::transducer::sql_backend::PackedDemand;
 use crate::code_rule_dsl::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use regex::Regex;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::AtomicBool;
 
 #[test]
-fn sqlite_demands_the_complete_batch_once() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let called = Arc::clone(&calls);
+fn sqlite_demands_the_complete_packed_batch_once() {
+    let demand = PackedDemand::new(
+        ExecutionBackend::CpuJit,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("verified empty packed batch");
     let counters = SqlPlans::compile(&[])
-        .drive(Box::new(move || {
-            called.fetch_add(1, Ordering::Relaxed);
-            vec![
-                DrivenRow {
-                    file: 0,
-                    program: 1,
-                    match_index: Some(0),
-                    complete: true,
-                    error: None,
-                },
-                DrivenRow {
-                    file: 2,
-                    program: 3,
-                    match_index: None,
-                    complete: false,
-                    error: Some("budget-exceeded".to_owned()),
-                },
-            ]
-        }))
-        .expect("SQL-demanded batch");
-    assert_eq!(calls.load(Ordering::Relaxed), 1);
-    assert_eq!(counters.rows, 2);
+        .drive(demand)
+        .expect("SQL-demanded packed batch");
+    assert_eq!(counters.rows, 0);
     assert_eq!(counters.terminal_executions, 1);
     assert_eq!(counters.virtual_table_filters, 1);
     assert_eq!(counters.scalar_callbacks, 0);

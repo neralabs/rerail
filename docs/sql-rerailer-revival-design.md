@@ -9,7 +9,7 @@ The packed executor remains important.
 It becomes a terminal and bulk-fact producer for the SQL rule engine.
 SQLite owns higher-level rule composition.
 
-The current native matcher remains the semantic oracle until the SQL path supports the complete public rule contract.
+The native matcher is a test-only semantic oracle. Production uses the SQL-demanded packed path and fails unsupported lowering without fallback.
 There is no production route for a partial SQL rule language.
 
 ## Decision

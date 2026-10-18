@@ -615,13 +615,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const storePath = contentStorePath();
     assertContentStoreOwner(storePath);
     const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
-    const executionEngine = process.env.RERAIL_CODE_RULE_ENGINE;
-    if (executionEngine !== undefined) {
-      if (executionEngine !== "matcher" && executionEngine !== "sqlite") {
-        throw new Error("RERAIL_CODE_RULE_ENGINE must equal matcher or sqlite");
-      }
-      workspace.setExecutionEngine(executionEngine);
-    }
     let storage: Promise<boolean>;
     try {
       for (const codeRule of snapshot.codeRules) workspace.addCodeRule(codeRule.executable, JSON.stringify(codeRule.placement));

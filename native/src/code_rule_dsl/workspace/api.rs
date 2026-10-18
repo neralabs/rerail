@@ -1,6 +1,8 @@
 //! The N-API surface: the `CodeRuleDslWorkspace` class, the lease that guards its state, and the
 //! storage, apply, completion and result page async tasks.
 
+#[cfg(test)]
+use super::ExecutionEngine;
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
 use super::evaluate::{Job, JobContext, evaluate_file, run_jobs, sql_plans};
@@ -18,7 +20,7 @@ use super::results::{
     ResultText, profile_result, replace_global_changes, serialize_result, serialize_result_page,
 };
 use super::storage::{attach_storage, unix_seconds};
-use super::{CandidateSets, ExecutionEngine, FILE_WORK_BUDGET, WorkspaceState, check_closed};
+use super::{CandidateSets, FILE_WORK_BUDGET, WorkspaceState, check_closed};
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
@@ -73,22 +75,21 @@ impl CodeRuleDslWorkspace {
         }
     }
 
-    /// Selects the file-local execution engine. This must be called before evaluation starts.
-    #[napi]
+    /// Tests can select the semantic oracle. Production always uses SQLite and the packed virtual
+    /// table, with no engine selector and no matcher fallback.
+    #[cfg(test)]
     pub fn set_execution_engine(&self, engine: String) -> Result<()> {
         let engine = match engine.as_str() {
             "matcher" => ExecutionEngine::Matcher,
             "sqlite" => ExecutionEngine::Sqlite,
-            _ => return Err(invalid("execution engine must equal matcher or sqlite")),
+            _ => return Err(invalid("test engine must equal matcher or sqlite")),
         };
         let mut state = self
             .state
             .try_lock()
             .map_err(|_| invalid("policy workspace is evaluating"))?;
         if self.closed.load(Ordering::Acquire) || state.revision != 0 {
-            return Err(invalid(
-                "execution engine must be selected before workspace evaluation",
-            ));
+            return Err(invalid("test engine must be selected before evaluation"));
         }
         state.execution_engine = engine;
         state.sql_plans = None;

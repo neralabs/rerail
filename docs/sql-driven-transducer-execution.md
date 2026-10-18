@@ -1,8 +1,6 @@
 # SQL-driven transducer execution
 
-Status: Rerail includes the restored SQLite rule engine and the terminal virtual table.
-The current production route does not yet use the required virtual-table shape.
-The matcher remains the default engine.
+Status: production has one engine shape: SQLite demands a verified packed batch through the terminal virtual table. The semantic matcher is a test oracle only. A construct without packed lowering fails; production never falls back.
 
 ## Design decision
 
@@ -34,15 +32,9 @@ This design is not a pre-execution pipeline.
 Rust does no rule work before SQLite asks for the virtual table.
 SQLite owns demand, execution lifetime, relational composition, and result extraction.
 
-## Run Rerail with SQLite
+## Production engine
 
-Set the environment variable before you start Rerail:
-
-```sh
-RERAIL_CODE_RULE_ENGINE=sqlite rerail
-```
-
-The workspace memory profile reports `"executionEngine":"sqlite"` when the selection is active. An unsupported SQL clause reports an `adapter-error`. Rerail does not retry the clause with the matcher.
+Rerail always uses SQLite in production. There is no runtime engine selector. The workspace memory profile reports `"executionEngine":"sqlite"`. An unsupported packed clause reports an `adapter-error`; Rerail does not retry it with the matcher.
 
 ## Current file filter
 

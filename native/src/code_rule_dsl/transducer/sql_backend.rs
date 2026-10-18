@@ -1,8 +1,17 @@
-//! SQL-demanded batch relation.
+//! SQL-demanded packed batch relation.
+#![allow(
+    dead_code,
+    reason = "the packed lowering layer calls this boundary; the deleted matcher callback must not keep it artificially live"
+)]
 //!
-//! Registration stores one inert executor. SQLite calls `xFilter` with its token. The first call
-//! executes the complete batch and stores normalized rows. Later scans read the same rows.
+//! Registration stores immutable verified programs, tapes, limits, and a sparse task grid. SQLite
+//! calls `xFilter` with the batch token. The first call executes the packed backend and stores its
+//! normalized relation. No host callback or semantic matcher can be registered here.
 
+use super::super::packed::{
+    Error as PackedError, ExecutionBackend, Program, execute_with_backend_packed_result_limits,
+};
+use super::super::tape::TapeDoc;
 use rusqlite::ffi;
 use rusqlite::vtab::{
     Context, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConfig, VTabConnection,
@@ -20,12 +29,108 @@ const MODULE_NAME: &CStr = c"rerail_matches";
 const BATCH_COLUMN: c_int = 0;
 const USE_BATCH: c_int = 1;
 
-pub(in crate::code_rule_dsl) struct DrivenRow {
-    pub(in crate::code_rule_dsl) file: usize,
-    pub(in crate::code_rule_dsl) program: usize,
-    pub(in crate::code_rule_dsl) match_index: Option<usize>,
-    pub(in crate::code_rule_dsl) complete: bool,
-    pub(in crate::code_rule_dsl) error: Option<String>,
+/// Everything `xFilter` needs to execute one sparse packed batch. Construction verifies programs
+/// before registration; this value contains no callback and cannot enter the semantic matcher.
+pub(in crate::code_rule_dsl) struct PackedDemand {
+    backend: ExecutionBackend,
+    programs: Vec<Program>,
+    files: Vec<TapeDoc>,
+    anchors: Vec<Vec<Vec<u32>>>,
+    result_limits: Vec<u32>,
+}
+
+impl PackedDemand {
+    pub(in crate::code_rule_dsl) fn new(
+        backend: ExecutionBackend,
+        programs: Vec<Program>,
+        files: Vec<TapeDoc>,
+        anchors: Vec<Vec<Vec<u32>>>,
+        result_limits: Vec<u32>,
+    ) -> Result<Self, PackedError> {
+        if anchors.len() != files.len()
+            || anchors.iter().any(|file| file.len() != programs.len())
+            || result_limits.len() != programs.len()
+        {
+            return Err(PackedError::InvalidAnchor);
+        }
+        Ok(Self {
+            backend,
+            programs,
+            files,
+            anchors,
+            result_limits,
+        })
+    }
+
+    fn execute(self, token: i64) -> Result<Vec<MatchRow>, PackedError> {
+        let execution = execute_with_backend_packed_result_limits(
+            self.backend,
+            &self.programs,
+            &self.files,
+            &self.anchors,
+            Some(&self.result_limits),
+        )?;
+        let mut rows = Vec::new();
+        for file in 0..execution.file_count() {
+            for program in 0..execution.program_count() {
+                let (results, error) = execution.program_results(file, program)?;
+                if let Some(error) = error {
+                    rows.push(MatchRow::status(token, file, program, false, Some(error)));
+                    continue;
+                }
+                if results.is_empty() {
+                    rows.push(MatchRow::status(token, file, program, true, None));
+                    continue;
+                }
+                for (match_index, result) in results.into_iter().enumerate() {
+                    let captures = result.captures().collect::<Vec<_>>();
+                    if captures.is_empty() {
+                        rows.push(MatchRow {
+                            batch: token,
+                            file: file as i64,
+                            program: program as i64,
+                            match_index: Some(match_index as i64),
+                            start_ordinal: Some(result.task_ordinal() as i64),
+                            output_label: self.programs[program]
+                                .label_name(result.label())
+                                .map(str::to_owned),
+                            capture_index: None,
+                            capture_label: None,
+                            capture_node: None,
+                            start_byte: None,
+                            end_byte: None,
+                            complete: 1,
+                            error_code: None,
+                        });
+                    } else {
+                        for (capture_index, capture) in captures.into_iter().enumerate() {
+                            let span = capture.span();
+                            rows.push(MatchRow {
+                                batch: token,
+                                file: file as i64,
+                                program: program as i64,
+                                match_index: Some(match_index as i64),
+                                start_ordinal: Some(result.task_ordinal() as i64),
+                                output_label: self.programs[program]
+                                    .label_name(result.label())
+                                    .map(str::to_owned),
+                                capture_index: Some(capture_index as i64),
+                                capture_label: self.programs[program]
+                                    .label_name(capture.label())
+                                    .map(str::to_owned),
+                                capture_node: Some(capture.node() as i64),
+                                start_byte: Some(span.start as i64),
+                                end_byte: Some(span.end as i64),
+                                complete: 1,
+                                error_code: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Ok(rows)
+    }
 }
 
 #[derive(Clone)]
@@ -34,44 +139,70 @@ struct MatchRow {
     file: i64,
     program: i64,
     match_index: Option<i64>,
+    start_ordinal: Option<i64>,
+    output_label: Option<String>,
+    capture_index: Option<i64>,
+    capture_label: Option<String>,
+    capture_node: Option<i64>,
+    start_byte: Option<i64>,
+    end_byte: Option<i64>,
     complete: i64,
     error_code: Option<String>,
 }
 
-type DemandExecutor = Box<dyn FnOnce() -> Vec<DrivenRow> + Send>;
+impl MatchRow {
+    fn status(
+        batch: i64,
+        file: usize,
+        program: usize,
+        complete: bool,
+        error: Option<PackedError>,
+    ) -> Self {
+        Self {
+            batch,
+            file: file as i64,
+            program: program as i64,
+            match_index: None,
+            start_ordinal: None,
+            output_label: None,
+            capture_index: None,
+            capture_label: None,
+            capture_node: None,
+            start_byte: None,
+            end_byte: None,
+            complete: i64::from(complete),
+            error_code: error.map(|error| format!("{error:?}")),
+        }
+    }
+}
 
 struct MatchBatch {
     token: i64,
-    demand: Mutex<Option<DemandExecutor>>,
-    rows: OnceLock<Arc<Vec<MatchRow>>>,
+    demand: Mutex<Option<PackedDemand>>,
+    rows: OnceLock<Result<Arc<Vec<MatchRow>>, String>>,
     executions: AtomicUsize,
     filters: AtomicUsize,
 }
 
 impl MatchBatch {
-    fn rows(&self) -> Arc<Vec<MatchRow>> {
-        Arc::clone(self.rows.get_or_init(|| {
-            self.executions.fetch_add(1, Ordering::Relaxed);
-            let execute = self
-                .demand
-                .lock()
-                .expect("demand executor mutex poisoned")
-                .take()
-                .expect("a demanded batch executes once");
-            Arc::new(
-                execute()
-                    .into_iter()
-                    .map(|row| MatchRow {
-                        batch: self.token,
-                        file: row.file as i64,
-                        program: row.program as i64,
-                        match_index: row.match_index.map(|index| index as i64),
-                        complete: i64::from(row.complete),
-                        error_code: row.error,
-                    })
-                    .collect(),
-            )
-        }))
+    fn rows(&self) -> SqlResult<Arc<Vec<MatchRow>>> {
+        self.rows
+            .get_or_init(|| {
+                self.executions.fetch_add(1, Ordering::Relaxed);
+                let demand = self
+                    .demand
+                    .lock()
+                    .expect("packed demand mutex poisoned")
+                    .take()
+                    .expect("a demanded packed batch executes once");
+                demand
+                    .execute(self.token)
+                    .map(Arc::new)
+                    .map_err(|error| format!("packed batch failed: {error:?}"))
+            })
+            .as_ref()
+            .map(Arc::clone)
+            .map_err(|error| rusqlite::Error::ModuleError(error.clone()))
     }
 }
 
@@ -82,7 +213,7 @@ pub(in crate::code_rule_dsl) struct MatchRegistry {
 }
 
 impl MatchRegistry {
-    pub(in crate::code_rule_dsl) fn register_demand(&self, execute: DemandExecutor) -> i64 {
+    pub(in crate::code_rule_dsl) fn register(&self, demand: PackedDemand) -> i64 {
         let token = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         self.batches
             .lock()
@@ -91,7 +222,7 @@ impl MatchRegistry {
                 token,
                 Arc::new(MatchBatch {
                     token,
-                    demand: Mutex::new(Some(execute)),
+                    demand: Mutex::new(Some(demand)),
                     rows: OnceLock::new(),
                     executions: AtomicUsize::new(0),
                     filters: AtomicUsize::new(0),
@@ -224,7 +355,7 @@ unsafe impl VTabCursor for MatchCursor<'_> {
             rusqlite::Error::ModuleError("rerail_matches batch is missing".to_owned())
         })?;
         batch.filters.fetch_add(1, Ordering::Relaxed);
-        self.rows = batch.rows();
+        self.rows = batch.rows()?;
         self.position = 0;
         Ok(())
     }
@@ -245,7 +376,13 @@ unsafe impl VTabCursor for MatchCursor<'_> {
             1 => context.set_result(&row.file),
             2 => context.set_result(&row.program),
             3 => context.set_result(&row.match_index),
-            4..=10 => context.set_result(&Option::<i64>::None),
+            4 => context.set_result(&row.start_ordinal),
+            5 => context.set_result(&row.output_label.as_deref()),
+            6 => context.set_result(&row.capture_index),
+            7 => context.set_result(&row.capture_label.as_deref()),
+            8 => context.set_result(&row.capture_node),
+            9 => context.set_result(&row.start_byte),
+            10 => context.set_result(&row.end_byte),
             11 => context.set_result(&row.complete),
             12 => context.set_result(&row.error_code.as_deref()),
             _ => Err(rusqlite::Error::InvalidColumnIndex(column as usize)),

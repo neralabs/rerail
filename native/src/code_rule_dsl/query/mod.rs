@@ -1,13 +1,17 @@
 //! SQL-owned workspace execution.
+#![expect(
+    dead_code,
+    reason = "the packed lowering layer calls this boundary; the deleted matcher adapter must not keep it artificially live"
+)]
 //!
-//! The host registers one inert closure for an apply. SQLite opens `rerail_matches(batch)`, whose
-//! `xFilter` invokes that closure once and materializes its completion rows. No scalar callback,
-//! node-walk table, fact table, nested statement, or clause statement exists in this engine.
+//! The host registers one immutable packed batch. SQLite opens `rerail_matches(batch)`, whose
+//! `xFilter` executes that batch once and materializes its typed relation. No host execution
+//! callback, semantic matcher, scalar callback, node-walk table, or nested statement exists.
 
 pub(in crate::code_rule_dsl) mod crossfile;
 pub(in crate::code_rule_dsl) mod select_when;
 
-use crate::code_rule_dsl::transducer::sql_backend::{DrivenRow, MatchRegistry, register_module};
+use crate::code_rule_dsl::transducer::sql_backend::{MatchRegistry, PackedDemand, register_module};
 use rusqlite::Connection;
 use std::sync::Arc;
 
@@ -35,10 +39,7 @@ impl SqlPlans {
     }
 
     /// Executes one inert batch only when SQLite opens its virtual table.
-    pub(super) fn drive(
-        &self,
-        execute: Box<dyn FnOnce() -> Vec<DrivenRow> + Send>,
-    ) -> rusqlite::Result<QueryCounters> {
+    pub(super) fn drive(&self, demand: PackedDemand) -> rusqlite::Result<QueryCounters> {
         let slot = CONNECTION.with(Arc::clone);
         let mut slot = slot
             .lock()
@@ -46,7 +47,7 @@ impl SqlPlans {
         if slot.is_none() {
             *slot = Some(QueryConnection::open()?);
         }
-        slot.as_ref().expect("opened connection").drive(execute)
+        slot.as_ref().expect("opened connection").drive(demand)
     }
 }
 
@@ -66,11 +67,8 @@ impl QueryConnection {
         })
     }
 
-    fn drive(
-        &self,
-        execute: Box<dyn FnOnce() -> Vec<DrivenRow> + Send>,
-    ) -> rusqlite::Result<QueryCounters> {
-        let token = self.registry.register_demand(execute);
+    fn drive(&self, demand: PackedDemand) -> rusqlite::Result<QueryCounters> {
+        let token = self.registry.register(demand);
         let result = (|| {
             let mut statement = self.connection.prepare_cached(
                 "WITH terminal AS MATERIALIZED (\
@@ -133,20 +131,6 @@ pub(super) fn release_connections() {
         }
         true
     });
-}
-
-#[cfg(test)]
-static MAX_REGISTERED_FILES: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
-#[cfg(test)]
-pub(super) fn max_registered_files() -> usize {
-    MAX_REGISTERED_FILES.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-#[cfg(test)]
-pub(super) fn note_demand_files(files: usize) {
-    MAX_REGISTERED_FILES.fetch_max(files, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// A regex clause's ordered byte ranges, bounded by `limit` and the active deadline.

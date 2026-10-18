@@ -174,16 +174,35 @@ impl std::ops::DerefMut for Witnesses {
     }
 }
 
-#[derive(Clone, Copy, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum ExecutionEngine {
-    #[default]
+    /// The semantic matcher is a test oracle. Production has no engine selector or fallback.
+    #[cfg(test)]
     Matcher,
     Sqlite,
+}
+
+#[allow(
+    clippy::derivable_impls,
+    reason = "tests default to the matcher oracle; production defaults to SQLite"
+)]
+impl Default for ExecutionEngine {
+    fn default() -> Self {
+        #[cfg(test)]
+        {
+            Self::Matcher
+        }
+        #[cfg(not(test))]
+        {
+            Self::Sqlite
+        }
+    }
 }
 
 impl ExecutionEngine {
     fn as_str(self) -> &'static str {
         match self {
+            #[cfg(test)]
             Self::Matcher => "matcher",
             Self::Sqlite => "sqlite",
         }
