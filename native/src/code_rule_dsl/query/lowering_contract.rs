@@ -925,6 +925,12 @@ fn assert_compiler_contract(mut explain: impl FnMut(&str) -> Result<ExplainedLow
 fn relational_compiler_matches_all_hand_written_forms() {
     assert_compiler_contract(|form| {
         let ir = contract_frontend::lower(form)?;
+        let normalized_sql = ir.normalized_sql();
+        for operation in ir.operations() {
+            if !normalized_sql.contains(operation.fragment()) {
+                return Err(format!("normalized SQL omits `{}`", operation.fragment()));
+            }
+        }
         Ok(ExplainedLowering {
             terminals: ir.terminals().to_vec(),
             sql: ir.operations().to_vec(),

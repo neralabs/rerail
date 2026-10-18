@@ -69,7 +69,7 @@ impl SqlPlans {
     }
 
     pub(super) fn verify_lowered(&self) -> Result<(), String> {
-        self.plan.as_ref().map(|_| ()).map_err(Clone::clone)
+        self.plan.as_ref().map_err(Clone::clone)?.verify()
     }
 
     /// Executes a completed relational catalog plan. Phase 1 creates the plan but does not yet

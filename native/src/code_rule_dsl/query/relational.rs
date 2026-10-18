@@ -1,3 +1,4 @@
+use super::relational_ir::{RelationalIr, SqlOperation};
 use crate::code_rule_dsl::language::{GrammarDialect, label};
 use crate::code_rule_dsl::matcher::AstMatcher;
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Query};
@@ -7,21 +8,10 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
+#[cfg(not(test))]
+use super::relational_ir::TerminalKind;
 #[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) enum TerminalKind {
-    Kind,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum SqlShape {
-    PackedMaterialized,
-    StatusJoin,
-    ScanTerminal,
-    Projection,
-    OrderBy,
-}
+pub(super) use super::relational_ir::{SqlOperation as SqlShape, TerminalKind};
 
 pub(super) struct TerminalPlan {
     #[cfg(test)]
@@ -62,8 +52,7 @@ impl TerminalPlan {
 
 pub(super) struct SqlCatalogPlan {
     terminals: Vec<TerminalPlan>,
-    #[cfg(test)]
-    shape: Vec<SqlShape>,
+    ir: RelationalIr,
     sql: String,
     #[cfg(test)]
     clause_terminal_ids: Vec<Vec<usize>>,
@@ -123,7 +112,26 @@ impl SqlCatalogPlan {
 
     #[cfg(test)]
     pub(super) fn shape(&self) -> &[SqlShape] {
-        &self.shape
+        self.ir.operations()
+    }
+
+    pub(super) fn verify(&self) -> Result<(), String> {
+        self.ir.validate()?;
+        if !self.terminals.is_empty() && self.ir.terminals().is_empty() {
+            return Err("SQL catalog terminals have no relational IR producers".to_owned());
+        }
+        let normalized = self.ir.normalized_sql();
+        for prohibited in ["tq_", "rerail_nodes", "rerail_facts", "GrammarMatcher"] {
+            if normalized.contains(prohibited) {
+                return Err(format!(
+                    "relational IR contains prohibited SQL `{prohibited}`"
+                ));
+            }
+        }
+        if self.sql.trim().is_empty() {
+            return Err("SQL catalog plan has no statement".to_owned());
+        }
+        Ok(())
     }
 
     pub(super) fn sql(&self) -> &str {
@@ -344,14 +352,18 @@ impl Builder {
         );
         SqlCatalogPlan {
             terminals: self.terminals,
-            #[cfg(test)]
-            shape: vec![
-                SqlShape::PackedMaterialized,
-                SqlShape::StatusJoin,
-                SqlShape::ScanTerminal,
-                SqlShape::Projection,
-                SqlShape::OrderBy,
-            ],
+            ir: {
+                let mut ir = RelationalIr::empty();
+                ir.terminal(TerminalKind::Kind);
+                for operation in [
+                    SqlOperation::ScanTerminal,
+                    SqlOperation::Projection,
+                    SqlOperation::OrderBy,
+                ] {
+                    ir.operation(operation);
+                }
+                ir
+            },
             sql,
             #[cfg(test)]
             clause_terminal_ids: self.clause_terminal_ids,

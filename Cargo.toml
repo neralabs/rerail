@@ -2,6 +2,9 @@
 members = ["native"]
 resolver = "2"
 
+[patch.crates-io]
+block = { path = "native/vendor/block-0.1.6" }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

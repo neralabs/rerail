@@ -44,6 +44,48 @@ pub(super) enum SqlOperation {
     CrossFileJoin,
 }
 
+const ALL_TERMINAL_KINDS: [TerminalKind; 11] = [
+    TerminalKind::Pattern,
+    TerminalKind::Kind,
+    TerminalKind::Regex,
+    TerminalKind::Text,
+    TerminalKind::Value,
+    TerminalKind::Navigation,
+    TerminalKind::Equality,
+    TerminalKind::Fact,
+    TerminalKind::Parse,
+    TerminalKind::CallSeed,
+    TerminalKind::Transform,
+];
+
+const ALL_SQL_OPERATIONS: [SqlOperation; 25] = [
+    SqlOperation::PackedMaterialized,
+    SqlOperation::StatusJoin,
+    SqlOperation::ScanTerminal,
+    SqlOperation::ScanCapture,
+    SqlOperation::ScanNavigation,
+    SqlOperation::ScanFact,
+    SqlOperation::InnerJoin,
+    SqlOperation::LeftJoin,
+    SqlOperation::OrderedUnion,
+    SqlOperation::AntiJoin,
+    SqlOperation::Exists,
+    SqlOperation::RecursiveCte,
+    SqlOperation::GroupBy,
+    SqlOperation::Having,
+    SqlOperation::WindowRank,
+    SqlOperation::MinPosition,
+    SqlOperation::Distinct,
+    SqlOperation::CaseTruth,
+    SqlOperation::Bindings,
+    SqlOperation::MapDocument,
+    SqlOperation::Projection,
+    SqlOperation::OrderBy,
+    SqlOperation::WhereFilter,
+    SqlOperation::FileFilter,
+    SqlOperation::CrossFileJoin,
+];
+
 impl SqlOperation {
     pub(super) const fn fragment(self) -> &'static str {
         match self {
@@ -125,8 +167,14 @@ impl RelationalIr {
         if self.operations.get(1) != Some(&SqlOperation::StatusJoin) {
             return Err("relational IR must join producer status before evaluation".to_owned());
         }
-        let unique = self.operations.iter().copied().collect::<BTreeSet<_>>();
-        if unique.len() != self.operations.len() {
+        if ALL_TERMINAL_KINDS.len() != ALL_TERMINAL_KINDS.iter().collect::<BTreeSet<_>>().len() {
+            return Err("relational IR terminal catalog contains duplicate kinds".to_owned());
+        }
+        if ALL_SQL_OPERATIONS.len() != ALL_SQL_OPERATIONS.iter().collect::<BTreeSet<_>>().len() {
+            return Err("relational IR SQL catalog contains duplicate operations".to_owned());
+        }
+        let unique = self.operations().iter().copied().collect::<BTreeSet<_>>();
+        if unique.len() != self.operations().len() {
             return Err("relational IR contains a duplicate normalized SQL operation".to_owned());
         }
         Ok(())
