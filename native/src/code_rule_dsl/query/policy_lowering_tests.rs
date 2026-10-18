@@ -1,6 +1,12 @@
 use super::relational::{SqlCatalogPlan, SqlShape, TerminalKind};
 use crate::code_rule_dsl::CodeRuleDslRuntime;
-use crate::code_rule_dsl::test_support::CAPABILITIES;
+use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::packed::ExecutionBackend;
+use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
+use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file};
+use crate::code_rule_dsl::transducer::sql_backend::{
+    MatchRegistry, PackedDemand, ProducerKind, register_module,
+};
 use rusqlite::{Connection, params};
 use serde_json::json;
 use std::sync::Arc;
@@ -139,7 +145,8 @@ fn execute_boolean_sql(
                 mapped_document_id INTEGER, start_ordinal INTEGER, output_label TEXT,
                 capture_label TEXT, text_value TEXT, start_byte INTEGER, end_byte INTEGER,
                 verdict INTEGER, complete INTEGER, work_used INTEGER, error_code TEXT,
-                field_id INTEGER, related_named INTEGER
+                field_id INTEGER, related_named INTEGER, source_text TEXT,
+                structural_key TEXT, named_leaf INTEGER, capture_kind INTEGER, capture_named INTEGER, equality_occurrence INTEGER
             );",
         )
         .expect("typed packed relation");
@@ -335,7 +342,8 @@ fn execute_navigation_sql(
                 mapped_document_id INTEGER, start_ordinal INTEGER, output_label TEXT,
                 capture_label TEXT, text_value TEXT, start_byte INTEGER, end_byte INTEGER,
                 verdict INTEGER, complete INTEGER, work_used INTEGER, error_code TEXT,
-                field_id INTEGER, related_named INTEGER
+                field_id INTEGER, related_named INTEGER, source_text TEXT,
+                structural_key TEXT, named_leaf INTEGER, capture_kind INTEGER, capture_named INTEGER, equality_occurrence INTEGER
             );
             INSERT INTO rerail_matches(batch, row_kind, complete) VALUES (1, 1, 1);",
         )
@@ -586,10 +594,13 @@ fn compiled_nth_child_uses_named_sibling_order_and_reverse_order() {
     );
 }
 
+type CaptureFixture<'a> = (usize, i64, i64, &'a str, i64, i64, &'a str, &'a str);
+
 fn execute_capture_sql(
     plan: &SqlCatalogPlan,
     matches: &[(usize, i64, i64)],
-    captures: &[(usize, i64, i64, &str, i64, i64, &str, &str)],
+    captures: &[CaptureFixture<'_>],
+    edges: &[(i64, i64, i64)],
 ) -> Vec<i64> {
     let connection = Connection::open_in_memory().expect("in-memory SQLite");
     connection
@@ -604,7 +615,7 @@ fn execute_capture_sql(
                 capture_label TEXT, text_value TEXT, start_byte INTEGER, end_byte INTEGER,
                 verdict INTEGER, complete INTEGER, work_used INTEGER, error_code TEXT,
                 field_id INTEGER, related_named INTEGER, source_text TEXT,
-                structural_key TEXT, capture_kind INTEGER
+                structural_key TEXT, named_leaf INTEGER, capture_kind INTEGER, capture_named INTEGER, equality_occurrence INTEGER
             );
             INSERT INTO rerail_matches(batch, row_kind, complete) VALUES (1, 1, 1);",
         )
@@ -636,8 +647,8 @@ fn execute_capture_sql(
                 "INSERT INTO rerail_matches(
                     batch, row_kind, producer_id, file_index, match_index, capture_index,
                     capture_occurrence, capture_sequence_start, capture_sequence_count,
-                    node, capture_label, source_text, structural_key, capture_kind, complete
-                 ) VALUES (1, 4, ?1, 0, ?2, ?3, ?4, 0, 1, ?5, ?6, ?7, ?8, 1, 1)",
+                    node, capture_label, source_text, structural_key, named_leaf, capture_kind, complete
+                 ) VALUES (1, 4, ?1, 0, ?2, ?3, ?4, 0, 1, ?5, ?6, ?7, ?8, 1, 1, 1)",
                 params![
                     *producer as i64,
                     match_index,
@@ -650,6 +661,30 @@ fn execute_capture_sql(
                 ],
             )
             .expect("capture row");
+    }
+    if !edges.is_empty() {
+        let navigation = plan
+            .terminals()
+            .iter()
+            .position(|terminal| terminal.kind() == TerminalKind::Navigation)
+            .expect("navigation producer");
+        for (match_index, (parent, child, child_order)) in edges.iter().enumerate() {
+            connection
+                .execute(
+                    "INSERT INTO rerail_matches(
+                        batch, row_kind, producer_id, file_index, match_index, node,
+                        related_node, axis_kind, axis_order, field_id, related_named, complete
+                     ) VALUES (1, 5, ?1, 0, ?2, ?3, ?4, 1, ?5, 0, 1, 1)",
+                    params![
+                        navigation as i64,
+                        match_index as i64,
+                        parent,
+                        child,
+                        child_order
+                    ],
+                )
+                .expect("navigation edge");
+        }
     }
     let mut statement = connection.prepare(plan.sql()).expect("executable SQL plan");
     statement
@@ -673,7 +708,8 @@ fn compiled_capture_constraints_run_on_the_bound_node() {
         execute_capture_sql(
             &plan,
             &[(0, 0, 10), (1, 0, 20)],
-            &[(0, 0, 0, "A", 0, 20, "item", "identifier:item")]
+            &[(0, 0, 0, "A", 0, 20, "item", "identifier:item")],
+            &[]
         ),
         vec![10]
     );
@@ -681,9 +717,31 @@ fn compiled_capture_constraints_run_on_the_bound_node() {
         execute_capture_sql(
             &plan,
             &[(0, 0, 10), (1, 0, 21)],
-            &[(0, 0, 0, "A", 0, 20, "item", "identifier:item")]
+            &[(0, 0, 0, "A", 0, 20, "item", "identifier:item")],
+            &[]
         )
         .is_empty()
+    );
+}
+
+#[test]
+fn navigation_preserves_the_first_related_capture_environment() {
+    let compiled = code_rule_ast(json!({
+        "language": "python",
+        "rule": { "has": { "pattern": "$A", "stopBy": "end" } },
+        "constraints": { "A": { "kind": "identifier" } }
+    }));
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("a related capture environment lowers into SQL");
+
+    assert_eq!(
+        execute_capture_sql(
+            &plan,
+            &[(0, 0, 0), (2, 0, 2), (3, 0, 2)],
+            &[(2, 0, 0, "A", 0, 2, "item", "identifier:item")],
+            &[(0, 2, 0)]
+        ),
+        vec![0]
     );
 }
 
@@ -701,7 +759,8 @@ fn repeated_pattern_captures_require_structural_equality() {
             &[
                 (0, 0, 0, "A", 0, 20, "item", "identifier:item"),
                 (0, 0, 1, "A", 1, 21, "item", "identifier:item")
-            ]
+            ],
+            &[]
         ),
         vec![10]
     );
@@ -712,10 +771,209 @@ fn repeated_pattern_captures_require_structural_equality() {
             &[
                 (0, 0, 0, "A", 0, 20, "item", "identifier:item"),
                 (0, 0, 1, "A", 1, 21, "other", "identifier:other")
-            ]
+            ],
+            &[]
         )
         .is_empty()
     );
+}
+
+#[test]
+fn packed_repeated_capture_pattern_and_sql_equality_execute_together() {
+    let compiled = code_rule(json!({ "pattern": "$A + $A" }));
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("a repeated capture pattern lowers into SQL");
+    let source = Arc::new("x + x\ny + z\n".to_owned());
+    let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
+    let image = TapeImage::parse(&grammar, &source, &|| false)
+        .expect("parser completed")
+        .expect("tape image");
+    let tape =
+        TapeDoc::restore(Arc::clone(&source), grammar, &image, &|| false).expect("restored tape");
+    let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+    let demand = PackedDemand::new(
+        ExecutionBackend::CpuJit,
+        plan.terminals()
+            .iter()
+            .map(|terminal| terminal.program().clone())
+            .collect(),
+        vec![tape],
+        vec![vec![roots]],
+        vec![vec![true]],
+        vec![u32::MAX],
+    )
+    .and_then(|demand| demand.with_producer_kinds(vec![ProducerKind::Pattern]))
+    .expect("immutable pattern demand");
+    let connection = Connection::open_in_memory().expect("in-memory SQLite");
+    let registry = Arc::new(MatchRegistry::default());
+    register_module(&connection, Arc::clone(&registry)).expect("packed virtual table");
+    let token = registry.register(demand);
+    let nodes = connection
+        .prepare(plan.sql())
+        .expect("executable SQL plan")
+        .query_map([token], |row| row.get::<_, i64>(10))
+        .expect("SQL-only repeated capture query")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("typed results");
+    assert_eq!(nodes.len(), 1, "only x + x has equal repeated captures");
+    assert_eq!(registry.query_execution_counters(token), Some((1, 1)));
+}
+
+fn sql_ranges(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    source: &str,
+) -> Vec<(usize, usize)> {
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("policy has complete structural SQL lowering");
+    let source = Arc::new(source.to_owned());
+    let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
+    let image = TapeImage::parse(&grammar, &source, &|| false)
+        .expect("parser completed")
+        .expect("tape image");
+    let tape =
+        TapeDoc::restore(Arc::clone(&source), grammar, &image, &|| false).expect("restored tape");
+    let spans = (0..tape.transducer_len() as u32)
+        .map(|node| tape.transducer_span(node))
+        .collect::<Vec<_>>();
+    let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+    let anchors = plan
+        .terminals()
+        .iter()
+        .map(|terminal| {
+            if terminal.kind() == TerminalKind::Navigation {
+                vec![0]
+            } else {
+                roots.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    let producer_kinds = plan
+        .terminals()
+        .iter()
+        .map(|terminal| terminal.producer_kind())
+        .collect::<Vec<_>>();
+    let demand = PackedDemand::new(
+        ExecutionBackend::CpuJit,
+        plan.terminals()
+            .iter()
+            .map(|terminal| terminal.program().clone())
+            .collect(),
+        vec![tape],
+        vec![anchors],
+        vec![vec![true; plan.terminals().len()]],
+        plan.terminals()
+            .iter()
+            .map(|terminal| terminal.result_limit())
+            .collect(),
+    )
+    .and_then(|demand| demand.with_producer_kinds(producer_kinds))
+    .expect("immutable structural demand");
+    let connection = Connection::open_in_memory().expect("in-memory SQLite");
+    let registry = Arc::new(MatchRegistry::default());
+    register_module(&connection, Arc::clone(&registry)).expect("packed virtual table");
+    let token = registry.register(demand);
+    let nodes = connection
+        .prepare(plan.sql())
+        .expect("executable SQL plan")
+        .query_map([token], |row| row.get::<_, i64>(10))
+        .expect("SQL structural query")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("typed SQL nodes");
+    assert_eq!(registry.query_execution_counters(token), Some((1, 1)));
+    nodes
+        .into_iter()
+        .map(|node| {
+            let span = &spans[node as usize];
+            (span.start, span.end)
+        })
+        .collect()
+}
+
+fn oracle_ranges(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    source: &str,
+) -> Vec<(usize, usize)> {
+    let result = evaluate_file(compiled, "python", "a.py", source);
+    assert_eq!(result["failures"], json!([]), "{result}");
+    result["violations"]
+        .as_array()
+        .expect("violations")
+        .iter()
+        .map(|violation| {
+            (
+                violation["span"]["startByte"].as_u64().expect("start") as usize,
+                violation["span"]["endByte"].as_u64().expect("end") as usize,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn sql_structural_core_matches_the_matcher_oracle() {
+    let cases = [
+        (
+            code_rule(json!({ "pattern": "f($$$A)" })),
+            "f(a, b)\ng(c)\nf(# comment\n  d, e)\n",
+        ),
+        (code_rule(json!({ "pattern": "$A + $A" })), "x + x\ny + z\n"),
+        (
+            code_rule_ast(json!({
+                "language": "python",
+                "rule": { "pattern": "$A" },
+                "constraints": { "A": { "kind": "identifier" } }
+            })),
+            "x\n1\n",
+        ),
+        (
+            code_rule(json!({
+                "kind": "function_definition",
+                "count": {
+                    "has": { "kind": "return_statement", "stopBy": "end" },
+                    "min": 2,
+                    "max": 2
+                }
+            })),
+            "def two():\n return 1\n return 2\n\ndef one():\n return 1\n",
+        ),
+        (
+            code_rule(json!({
+                "pattern": "$F($$$)",
+                "count": {
+                    "has": {
+                        "pattern": "$F",
+                        "kind": "identifier",
+                        "stopBy": "end"
+                    },
+                    "min": 3
+                }
+            })),
+            "f(g, g)\nf(f, f)\ng(g)\n",
+        ),
+        (
+            code_rule(json!({
+                "kind": "if_statement",
+                "count": {
+                    "inside": { "kind": "if_statement", "stopBy": "end" },
+                    "min": 2
+                }
+            })),
+            "if a:\n if b:\n  if c:\n   pass\n",
+        ),
+        (
+            code_rule_ast(json!({
+                "language": "python",
+                "rule": { "has": { "pattern": "$A", "stopBy": "end" } },
+                "constraints": { "A": { "kind": "identifier" } }
+            })),
+            "f(1)\ng(x)\n",
+        ),
+    ];
+    for (compiled, source) in cases {
+        assert_eq!(
+            sql_ranges(&compiled, source),
+            oracle_ranges(&compiled, source)
+        );
+    }
 }
 
 #[test]
@@ -744,18 +1002,99 @@ fn compiled_count_applies_exact_bounds_to_the_complete_axis() {
         ),
         vec![0]
     );
+    assert!(
+        execute_boolean_sql(
+            &plan,
+            true,
+            &[
+                (0, true, Some(true), &[0]),
+                (1, false, None, &[]),
+                (2, true, Some(true), &[2, 3]),
+            ]
+        )
+        .is_empty(),
+        "an incomplete axis cannot prove a count bound"
+    );
+}
+
+#[test]
+fn compiled_count_uses_each_axis_direction_and_inclusive_stop_order() {
+    for (relation, source, related, edges) in [
+        (
+            "inside",
+            3,
+            vec![1, 2],
+            vec![(1, 2, 0, 0, true), (2, 3, 0, 0, true)],
+        ),
+        (
+            "precedes",
+            10,
+            vec![11, 12],
+            vec![
+                (9, 10, 0, 0, true),
+                (9, 11, 1, 0, true),
+                (9, 12, 2, 0, true),
+            ],
+        ),
+        (
+            "follows",
+            12,
+            vec![10, 11],
+            vec![
+                (9, 10, 0, 0, true),
+                (9, 11, 1, 0, true),
+                (9, 12, 2, 0, true),
+            ],
+        ),
+    ] {
+        let compiled = code_rule(json!({
+            "count": {
+                (relation): { "kind": "identifier", "stopBy": "end" },
+                "min": 2
+            }
+        }));
+        let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+            .expect("axis count lowers into SQL");
+        assert_eq!(
+            execute_navigation_sql(&plan, &[(0, &[source]), (2, &related)], &edges),
+            vec![source],
+            "{relation}"
+        );
+    }
+
+    let compiled = code_rule(json!({
+        "count": {
+            "has": {
+                "kind": "return_statement",
+                "stopBy": { "kind": "function_definition" }
+            },
+            "max": 0
+        }
+    }));
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("completion-aware stopped count lowers into SQL");
+    assert_eq!(
+        execute_navigation_sql(
+            &plan,
+            &[(0, &[0]), (2, &[4]), (3, &[1])],
+            &[(0, 1, 0, 0, true), (1, 2, 0, 0, true), (0, 4, 1, 0, true)]
+        ),
+        vec![0],
+        "the stop at node 1 hides the later preorder match at node 4"
+    );
 }
 
 #[test]
 fn unsupported_inventory_reports_every_operation_in_source_order() {
     let compiled = code_rule(json!({
-        "count": { "has": { "kind": "if_statement", "stopBy": "end" }, "min": 2 }
+        "kind": "integer",
+        "value": { "eq": 1 }
     }));
     let error = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect_err("the compiler reports unsupported relational operators");
 
     assert_eq!(
         error.unsupported(),
-        &["lowering/ast-match/python/rule: matcher operation is not lowered"]
+        &["lowering/ast-match/python/rule/all/1: matcher operation is not lowered"]
     );
 }

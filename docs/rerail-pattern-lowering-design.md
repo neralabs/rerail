@@ -697,6 +697,12 @@ The executor never calls `GrammarMatcher` for an unsupported nested operation.
 11. Add Metal lowering only after the Rust interpreter passes the pattern corpus.
 12. Design tape version 5 separately from the executor port.
 
+The current implementation stores a verified immutable `PackedPattern` tree in a packed `Program`.
+The first `xFilter` runs this bounded producer against demanded roots.
+The producer implements Smart terminals, metavariables, ellipses, rollback probes, and repeated-capture equality.
+It emits typed single and multi-capture rows without a `GrammarMatcher` call.
+Metal lowering remains incomplete, so the pattern producer currently runs on the CPU inside `xFilter`.
+
 The first implementation must not support SCM.
 It must not parse pattern source inside an executor.
 It must not infer pattern structure from source strings after `PatternNode` exists.

@@ -3,7 +3,7 @@
 use super::tape::TapeDoc;
 use ast_grep_core::MatchStrictness;
 use ast_grep_core::matcher::{Pattern, PatternNode};
-use ast_grep_core::meta_var::MetaVarEnv;
+use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::{Doc, Node};
 use regex::Regex;
 use sha2::{Digest as _, Sha256};
@@ -70,7 +70,7 @@ const FORK: u8 = 0x30;
 const GOTO: u8 = 0x31;
 const EMIT: u8 = 0x40;
 
-const NAMED: u8 = 1;
+pub(super) const NAMED: u8 = 1;
 const GREEDY: u8 = 1;
 const EXTRA: u8 = 2;
 const MISSING: u8 = 8;
@@ -514,6 +514,46 @@ impl TextPredicate {
     }
 }
 
+#[derive(Clone, Debug)]
+enum PackedPattern {
+    Terminal {
+        text: String,
+        named: bool,
+        kind: u16,
+    },
+    Single {
+        name: Option<String>,
+        named: bool,
+    },
+    Ellipsis(Option<String>),
+    Internal {
+        kind: u16,
+        children: Vec<PackedPattern>,
+    },
+}
+
+pub(super) struct AstPatternCapture {
+    pub(super) label: String,
+    pub(super) occurrence: usize,
+    pub(super) node: u32,
+    pub(super) multi: bool,
+}
+
+#[derive(Clone, Default)]
+struct PatternBindings {
+    values: BTreeMap<String, Vec<u32>>,
+    multi: BTreeSet<String>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum PatternVerdict {
+    Matched,
+    SkipGoal,
+    SkipBoth,
+    SkipCandidate,
+    NoMatch,
+}
+
 #[derive(Clone)]
 pub(super) struct Program {
     words: Vec<u32>,
@@ -527,6 +567,7 @@ pub(super) struct Program {
     directives: Vec<Directive>,
     output_program: output::OutputProgram,
     tree_sitter_query: bool,
+    ast_pattern: Option<PackedPattern>,
 }
 
 #[derive(Clone)]
@@ -995,6 +1036,266 @@ pub(super) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
     opcode as u32 | ((mode as u32) << 8) | ((operand as u32) << 16)
 }
 
+impl PackedPattern {
+    fn lower(node: &PatternNode) -> Self {
+        match node {
+            PatternNode::Terminal {
+                text,
+                is_named,
+                kind_id,
+            } => Self::Terminal {
+                text: text.clone(),
+                named: *is_named,
+                kind: *kind_id,
+            },
+            PatternNode::MetaVar { meta_var } => match meta_var {
+                MetaVariable::Capture(name, named) => Self::Single {
+                    name: Some(name.clone()),
+                    named: *named,
+                },
+                MetaVariable::Dropped(named) => Self::Single {
+                    name: None,
+                    named: *named,
+                },
+                MetaVariable::Multiple => Self::Ellipsis(None),
+                MetaVariable::MultiCapture(name) => Self::Ellipsis(Some(name.clone())),
+            },
+            PatternNode::Internal { kind_id, children } => Self::Internal {
+                kind: *kind_id,
+                children: children.iter().map(Self::lower).collect(),
+            },
+        }
+    }
+
+    fn is_trivial(&self) -> bool {
+        matches!(self, Self::Terminal { named: false, .. })
+    }
+
+    fn exact(tape: &TapeDoc, left: u32, right: u32) -> bool {
+        if left == right {
+            return true;
+        }
+        if tape.transducer_is_named_leaf(left) || tape.transducer_is_named_leaf(right) {
+            return tape.transducer_text(left) == tape.transducer_text(right);
+        }
+        if tape.transducer_kind(left) != tape.transducer_kind(right) {
+            return false;
+        }
+        let left = tape.transducer_children(left).collect::<Vec<_>>();
+        let right = tape.transducer_children(right).collect::<Vec<_>>();
+        left.len() == right.len()
+            && left
+                .into_iter()
+                .zip(right)
+                .all(|(left, right)| Self::exact(tape, left, right))
+    }
+
+    fn bind_single(bindings: &mut PatternBindings, name: &str, node: u32, tape: &TapeDoc) -> bool {
+        match bindings.values.get(name) {
+            Some(bound) => bound.len() == 1 && Self::exact(tape, bound[0], node),
+            None => {
+                bindings.values.insert(name.to_owned(), vec![node]);
+                true
+            }
+        }
+    }
+
+    fn bind_multi(
+        bindings: &mut PatternBindings,
+        name: &str,
+        nodes: Vec<u32>,
+        tape: &TapeDoc,
+    ) -> bool {
+        match bindings.values.get(name) {
+            Some(bound) => {
+                let bound = bound
+                    .iter()
+                    .copied()
+                    .filter(|node| tape.transducer_flags(*node) & NAMED != 0)
+                    .collect::<Vec<_>>();
+                let candidate = nodes
+                    .iter()
+                    .copied()
+                    .filter(|node| tape.transducer_flags(*node) & NAMED != 0)
+                    .collect::<Vec<_>>();
+                bound.len() == candidate.len()
+                    && bound
+                        .into_iter()
+                        .zip(candidate)
+                        .all(|(left, right)| Self::exact(tape, left, right))
+            }
+            None => {
+                bindings.multi.insert(name.to_owned());
+                bindings.values.insert(name.to_owned(), nodes);
+                true
+            }
+        }
+    }
+
+    fn one(
+        &self,
+        node: u32,
+        tape: &TapeDoc,
+        bindings: &mut PatternBindings,
+        root: bool,
+    ) -> PatternVerdict {
+        match self {
+            Self::Terminal { text, named, kind } => {
+                if ast_grep_core::matcher::kind_utils::are_kinds_matching(
+                    *kind,
+                    tape.transducer_kind(node),
+                ) && (!named || tape.transducer_text(node) == text.as_bytes())
+                {
+                    PatternVerdict::Matched
+                } else if tape.transducer_flags(node) & EXTRA != 0
+                    || tape.transducer_flags(node) & NAMED == 0
+                {
+                    PatternVerdict::SkipCandidate
+                } else {
+                    PatternVerdict::NoMatch
+                }
+            }
+            Self::Single { name, named } => {
+                if !root && tape.transducer_flags(node) & EXTRA != 0 {
+                    return PatternVerdict::SkipCandidate;
+                }
+                if *named && tape.transducer_flags(node) & NAMED == 0 {
+                    return PatternVerdict::NoMatch;
+                }
+                if name
+                    .as_ref()
+                    .is_none_or(|name| Self::bind_single(bindings, name, node, tape))
+                {
+                    PatternVerdict::Matched
+                } else {
+                    PatternVerdict::NoMatch
+                }
+            }
+            Self::Ellipsis(name) if root => {
+                if name
+                    .as_ref()
+                    .is_none_or(|name| Self::bind_multi(bindings, name, vec![node], tape))
+                {
+                    PatternVerdict::Matched
+                } else {
+                    PatternVerdict::NoMatch
+                }
+            }
+            Self::Ellipsis(_) => PatternVerdict::SkipGoal,
+            Self::Internal { kind, children } => {
+                if !ast_grep_core::matcher::kind_utils::are_kinds_matching(
+                    *kind,
+                    tape.transducer_kind(node),
+                ) {
+                    return PatternVerdict::NoMatch;
+                }
+                let candidates = tape.transducer_children(node).collect::<Vec<_>>();
+                if Self::children(children, &candidates, tape, bindings) {
+                    PatternVerdict::Matched
+                } else {
+                    PatternVerdict::NoMatch
+                }
+            }
+        }
+    }
+
+    fn children(
+        goals: &[Self],
+        candidates: &[u32],
+        tape: &TapeDoc,
+        bindings: &mut PatternBindings,
+    ) -> bool {
+        if candidates.is_empty() {
+            return false;
+        }
+        let (mut goal, mut candidate) = (0_usize, 0_usize);
+        while goal < goals.len() {
+            if let Self::Ellipsis(name) = &goals[goal] {
+                let name = name.clone();
+                goal += 1;
+                if goal == goals.len() {
+                    return name.as_ref().is_none_or(|name| {
+                        Self::bind_multi(bindings, name, candidates[candidate..].to_vec(), tape)
+                    });
+                }
+                let mut skipped_anonymous = 0_usize;
+                while goal < goals.len() && goals[goal].is_trivial() {
+                    goal += 1;
+                    skipped_anonymous += 1;
+                }
+                if goal == goals.len() {
+                    let end = candidates.len().saturating_sub(skipped_anonymous);
+                    return name.as_ref().is_none_or(|name| {
+                        Self::bind_multi(bindings, name, candidates[candidate..end].to_vec(), tape)
+                    });
+                }
+                if matches!(goals[goal], Self::Ellipsis(_)) {
+                    if candidate == candidates.len() {
+                        return false;
+                    }
+                    let captured = vec![candidates[candidate]];
+                    candidate += 1;
+                    if name
+                        .as_ref()
+                        .is_some_and(|name| !Self::bind_multi(bindings, name, captured, tape))
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+                let start = candidate;
+                loop {
+                    let Some(&node) = candidates.get(candidate) else {
+                        return false;
+                    };
+                    let mut probe = bindings.clone();
+                    if goals[goal].one(node, tape, &mut probe, false) == PatternVerdict::Matched {
+                        let end = candidate.saturating_sub(skipped_anonymous);
+                        if name.as_ref().is_some_and(|name| {
+                            !Self::bind_multi(bindings, name, candidates[start..end].to_vec(), tape)
+                        }) {
+                            return false;
+                        }
+                        break;
+                    }
+                    candidate += 1;
+                }
+            }
+            loop {
+                let Some(&node) = candidates.get(candidate) else {
+                    return goals[goal..]
+                        .iter()
+                        .all(|goal| matches!(goal, Self::Ellipsis(_)));
+                };
+                match goals[goal].one(node, tape, bindings, false) {
+                    PatternVerdict::Matched => break,
+                    PatternVerdict::SkipGoal => {
+                        goal += 1;
+                        if goal == goals.len() {
+                            return true;
+                        }
+                    }
+                    PatternVerdict::SkipBoth => {
+                        goal += 1;
+                        candidate += 1;
+                        if goal == goals.len() {
+                            return true;
+                        }
+                    }
+                    PatternVerdict::SkipCandidate => candidate += 1,
+                    PatternVerdict::NoMatch => return false,
+                }
+            }
+            goal += 1;
+            candidate += 1;
+            if goal == goals.len() {
+                return true;
+            }
+        }
+        true
+    }
+}
+
 impl Program {
     fn sibling_requirement(&self, pc: u16) -> SiblingRequirement {
         match self.words.get(usize::from(pc)).map(|word| split(*word).0) {
@@ -1065,6 +1366,7 @@ impl Program {
             && self.directives.is_empty()
             && self.output_program.instructions.is_empty()
             && !self.tree_sitter_query
+            && self.ast_pattern.is_none()
     }
 
     pub(super) fn compile_navigation() -> Result<Self, Error> {
@@ -1097,39 +1399,50 @@ impl Program {
         )
     }
 
-    /// Compiles the exact root-terminal subset of ast-grep patterns. Structural patterns and
-    /// metavariables are rejected rather than delegated to ast-grep inside the transducer.
-    pub(super) fn compile_ast_grep_literal(pattern: &Pattern) -> Result<Self, Error> {
+    pub(super) fn compile_ast_grep_pattern(pattern: &Pattern) -> Result<Self, Error> {
         if !matches!(pattern.strictness, MatchStrictness::Smart) {
             return Err(Error::UnsupportedPattern);
         }
-        let PatternNode::Terminal {
-            text,
-            is_named,
-            kind_id,
-        } = &pattern.node
-        else {
-            return Err(Error::UnsupportedPattern);
-        };
-        let mut words = vec![word(KIND, 0, *kind_id)];
-        let predicates = if *is_named {
-            words.push(word(TEXT, 0, 0));
-            vec![TextPredicate::Equal(0)]
-        } else {
-            Vec::new()
-        };
-        words.extend([word(CAPTURE, 0, 0), word(EMIT, 0, 1)]);
-        Self::new(
-            words,
-            vec![
-                text.as_bytes().to_vec(),
-                b"match".to_vec(),
-                b"ast-grep-literal".to_vec(),
-            ],
-            predicates,
-            vec![1, 2],
-            Vec::new(),
-        )
+        let mut program = Self::compile_navigation()?;
+        program.ast_pattern = Some(PackedPattern::lower(&pattern.node));
+        program.validate()?;
+        Ok(program)
+    }
+
+    pub(super) fn is_ast_pattern(&self) -> bool {
+        self.ast_pattern.is_some()
+    }
+
+    pub(super) fn execute_ast_pattern(
+        &self,
+        tape: &TapeDoc,
+        root: u32,
+    ) -> Result<Option<Vec<AstPatternCapture>>, Error> {
+        let pattern = self.ast_pattern.as_ref().ok_or(Error::UnsupportedPattern)?;
+        if root as usize >= tape.transducer_len() {
+            return Err(Error::InvalidAnchor);
+        }
+        let mut bindings = PatternBindings::default();
+        if pattern.one(root, tape, &mut bindings, true) != PatternVerdict::Matched {
+            return Ok(None);
+        }
+        let PatternBindings { values, multi } = bindings;
+        let captures = values
+            .into_iter()
+            .flat_map(|(name, nodes)| {
+                let multi = multi.contains(&name);
+                nodes
+                    .into_iter()
+                    .enumerate()
+                    .map(move |(occurrence, node)| AstPatternCapture {
+                        label: name.clone(),
+                        occurrence,
+                        node,
+                        multi,
+                    })
+            })
+            .collect();
+        Ok(Some(captures))
     }
 
     pub(super) fn new(
@@ -1172,6 +1485,7 @@ impl Program {
                 instructions: Vec::new(),
             },
             tree_sitter_query: false,
+            ast_pattern: None,
         };
         program.validate()?;
         Ok(program)
@@ -1185,6 +1499,13 @@ impl Program {
         digest.update((scm_source.len() as u64).to_le_bytes());
         digest.update(Sha256::digest(scm_source));
         digest.update([u8::from(self.tree_sitter_query)]);
+        if let Some(pattern) = &self.ast_pattern {
+            let pattern = format!("{pattern:?}");
+            digest.update((pattern.len() as u64).to_le_bytes());
+            digest.update(pattern.as_bytes());
+        } else {
+            digest.update(0_u64.to_le_bytes());
+        }
         digest.update((self.words.len() as u64).to_le_bytes());
         for word in &self.words {
             digest.update(word.to_le_bytes());

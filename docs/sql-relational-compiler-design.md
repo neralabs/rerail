@@ -268,8 +268,9 @@ Each producer status identifies completion, verdict, work use, and failure.
 A physical virtual-table schema can use a tagged union of nullable columns.
 The SQL statement creates one typed CTE for each logical row family.
 
-The virtual table now exposes one 29-column tagged relation for all seven row families.
+The virtual table now exposes one 35-column tagged relation for all seven row families.
 Current producers emit batch status, producer status, terminal matches, capture sequences, and navigation edges.
+Capture rows identify single and multi-captures, named nodes, equality order, source text, and structural identity.
 Navigation edges include the grammar field identity and the named-node flag.
 The fact and document-map tags and columns are reserved, but their producers are not implemented.
 Complete relational lowering must not treat an unimplemented row family as an empty result.
@@ -378,16 +379,19 @@ The engine does not need one complete corpus-wide node table.
 Captures are relational rows, not host environment objects.
 A terminal match has a local capture sequence with explicit slot and occurrence order.
 
-SQL joins compatible capture rows across terms.
-A packed equality terminal supplies structural equality when byte equality is insufficient.
+SQL joins compatible capture environments across terms.
+Repeated single captures use text equality for named leaves and structural equality for other nodes.
+Repeated multi-captures compare their named-node sequences in order.
+Capture constraints run against each bound single node and merge new bindings into the input environment.
 
 ### Counts
 
 SQL counts rows only after every required producer reports completion.
-Unknown walks retain lower and upper bounds when the rule contract requires them.
+The count relation supports all navigation axes, `stopBy`, minimum bounds, maximum bounds, and count bindings.
+An incomplete producer cannot prove a count bound.
 
-`distinct` uses explicit value or capture keys.
-It never uses physical row identity.
+The current count relation counts accepted related nodes.
+The compiler does not lower `distinct` count forms yet.
 
 ### Utilities
 
@@ -572,14 +576,17 @@ The producer lowerers that populate those rows belong to Phases 3 and 4.
 4. Lower constraints, equality, and counts.
 5. Prove complete outcome parity with the semantic matcher.
 
-The compiler now completes items 1, 2, and 3 for the supported atomic terminals.
+The compiler now completes items 1 through 4 for the supported atomic terminals.
 `All` joins the operands on the file and node identities.
 `Any` keeps the first successful branch for each node.
 `Not` uses a verified universe terminal and a SQL anti-join.
 A bounded navigation producer emits one immutable parent-child edge relation for each demanded file.
 SQL derives ancestor, descendant, sibling, field, stop-rule, and `nthChild` results from these edges.
 SQL rejects incomplete or unknown producer status before it returns a clause row.
-Binding environments, constraints, counts, and matcher parity remain incomplete.
+The structural IR now carries JSON binding environments through Boolean and navigation relations.
+SQL now applies capture constraints, repeated-capture equality, and bounded relation counts.
+Representative structural policies produce the same ranges as the semantic matcher.
+Item 5 remains incomplete because the parity matrix does not cover all structural combinations.
 
 ### Phase 4: Lower utilities and semantic facts
 

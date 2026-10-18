@@ -30,6 +30,7 @@ const USE_BATCH: c_int = 1;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::code_rule_dsl) enum ProducerKind {
     Terminal,
+    Pattern,
     Navigation,
 }
 
@@ -78,15 +79,16 @@ impl PackedDemand {
     ) -> Result<Self, PackedError> {
         if producer_kinds.len() != self.programs.len()
             || producer_kinds.iter().enumerate().any(|(producer, kind)| {
-                *kind == ProducerKind::Navigation
-                    && (!self.programs[producer].is_navigation_descriptor()
-                        || self
-                            .task_grid
-                            .iter()
-                            .zip(&self.anchors)
-                            .any(|(tasks, anchors)| {
-                                tasks[producer] && anchors[producer].as_slice() != [0]
-                            }))
+                (*kind == ProducerKind::Pattern && !self.programs[producer].is_ast_pattern())
+                    || (*kind == ProducerKind::Navigation
+                        && (!self.programs[producer].is_navigation_descriptor()
+                            || self
+                                .task_grid
+                                .iter()
+                                .zip(&self.anchors)
+                                .any(|(tasks, anchors)| {
+                                    tasks[producer] && anchors[producer].as_slice() != [0]
+                                })))
             })
         {
             return Err(PackedError::InvalidAnchor);
@@ -129,6 +131,109 @@ impl PackedDemand {
         for file in 0..execution.file_count() {
             for program in 0..execution.program_count() {
                 if !self.task_grid[file][program] {
+                    continue;
+                }
+                if self.producer_kinds[program] == ProducerKind::Pattern {
+                    let tape = &self.files[file];
+                    let mut match_index = 0_usize;
+                    let mut failed = None;
+                    for (task_index, root) in
+                        self.anchors[file][program].iter().copied().enumerate()
+                    {
+                        if match_index >= self.result_limits[program] as usize {
+                            break;
+                        }
+                        match self.programs[program].execute_ast_pattern(tape, root) {
+                            Ok(Some(captures)) => {
+                                rows.push(PackedRow::terminal_match(TerminalMatchData {
+                                    batch: token,
+                                    file,
+                                    producer: program,
+                                    match_index,
+                                    task_index: task_index as u32,
+                                    start_ordinal: root,
+                                    node: root,
+                                    output_label: Some("ast-grep-pattern".to_owned()),
+                                }));
+                                let mut equality_occurrences = HashMap::<&str, usize>::new();
+                                for (capture_index, capture) in captures.iter().enumerate() {
+                                    let label = &capture.label;
+                                    let node = capture.node;
+                                    let span = tape.transducer_span(node);
+                                    let sequence_start = captures
+                                        .iter()
+                                        .position(|candidate| candidate.label == *label)
+                                        .expect("the current capture has a sequence");
+                                    let sequence_count = captures
+                                        .iter()
+                                        .filter(|candidate| candidate.label == *label)
+                                        .count();
+                                    let capture_named = tape.transducer_flags(node)
+                                        & super::super::packed::NAMED
+                                        != 0;
+                                    let equality_occurrence = if capture_named {
+                                        let occurrence =
+                                            equality_occurrences.entry(label.as_str()).or_default();
+                                        let value = *occurrence;
+                                        *occurrence += 1;
+                                        value as i64
+                                    } else {
+                                        -1
+                                    };
+                                    rows.push(PackedRow::capture(CaptureData {
+                                        batch: token,
+                                        file,
+                                        producer: program,
+                                        match_index,
+                                        capture_index,
+                                        occurrence: capture.occurrence,
+                                        sequence_start,
+                                        sequence_count,
+                                        node,
+                                        capture_label: Some(label.clone()),
+                                        text_value: None,
+                                        source_text: tape
+                                            .transducer_source()
+                                            .get(span.clone())
+                                            .map(|text| String::from_utf8_lossy(text).into_owned()),
+                                        structural_key: tape.transducer_structural_key(node),
+                                        named_leaf: tape.transducer_is_named_leaf(node),
+                                        capture_kind: if capture.multi { 2 } else { 1 },
+                                        capture_named,
+                                        equality_occurrence,
+                                        start_byte: span.start,
+                                        end_byte: span.end,
+                                    }));
+                                }
+                                match_index += 1;
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                failed = Some(format!("{error:?}"));
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(message) = failed {
+                        batch_error.get_or_insert_with(|| message.clone());
+                        rows.push(PackedRow::producer_status(
+                            token,
+                            file,
+                            program,
+                            false,
+                            None,
+                            Some(message),
+                        ));
+                    } else {
+                        rows.push(PackedRow::producer_status(
+                            token,
+                            file,
+                            program,
+                            true,
+                            Some(match_index != 0),
+                            None,
+                        ));
+                    }
                     continue;
                 }
                 if self.producer_kinds[program] == ProducerKind::Navigation {
@@ -247,6 +352,10 @@ impl PackedDemand {
                             .filter(|candidate| candidate.label() == label)
                             .count();
                         let span = capture.span();
+                        let source_text = self.files[file]
+                            .transducer_source()
+                            .get(span.clone())
+                            .map(|text| String::from_utf8_lossy(text).into_owned());
                         rows.push(PackedRow::capture(CaptureData {
                             batch: token,
                             file,
@@ -263,6 +372,15 @@ impl PackedDemand {
                             text_value: capture
                                 .transformed_text()
                                 .map(|text| String::from_utf8_lossy(text).into_owned()),
+                            source_text,
+                            structural_key: self.files[file]
+                                .transducer_structural_key(capture.node()),
+                            named_leaf: self.files[file].transducer_is_named_leaf(capture.node()),
+                            capture_kind: 1,
+                            capture_named: self.files[file].transducer_flags(capture.node())
+                                & super::super::packed::NAMED
+                                != 0,
+                            equality_occurrence: 0,
                             start_byte: span.start,
                             end_byte: span.end,
                         }));
@@ -323,6 +441,12 @@ struct CaptureData {
     node: u32,
     capture_label: Option<String>,
     text_value: Option<String>,
+    source_text: Option<String>,
+    structural_key: String,
+    named_leaf: bool,
+    capture_kind: i64,
+    capture_named: bool,
+    equality_occurrence: i64,
     start_byte: usize,
     end_byte: usize,
 }
@@ -358,6 +482,12 @@ pub(in crate::code_rule_dsl) struct PackedRow {
     error_code: Option<String>,
     field_id: Option<i64>,
     related_named: Option<i64>,
+    source_text: Option<String>,
+    structural_key: Option<String>,
+    named_leaf: Option<i64>,
+    capture_kind: Option<i64>,
+    capture_named: Option<i64>,
+    equality_occurrence: Option<i64>,
 }
 
 impl PackedRow {
@@ -393,6 +523,12 @@ impl PackedRow {
             error_code: None,
             field_id: None,
             related_named: None,
+            source_text: None,
+            structural_key: None,
+            named_leaf: None,
+            capture_kind: None,
+            capture_named: None,
+            equality_occurrence: None,
         }
     }
 
@@ -470,6 +606,12 @@ impl PackedRow {
         row.node = Some(data.node as i64);
         row.capture_label = data.capture_label;
         row.text_value = data.text_value;
+        row.source_text = data.source_text;
+        row.structural_key = Some(data.structural_key);
+        row.named_leaf = Some(i64::from(data.named_leaf));
+        row.capture_kind = Some(data.capture_kind);
+        row.capture_named = Some(i64::from(data.capture_named));
+        row.equality_occurrence = Some(data.equality_occurrence);
         row.start_byte = Some(data.start_byte as i64);
         row.end_byte = Some(data.end_byte as i64);
         row
@@ -535,6 +677,12 @@ impl PackedRow {
             error_code: row.get(26)?,
             field_id: row.get(27)?,
             related_named: row.get(28)?,
+            source_text: row.get(29)?,
+            structural_key: row.get(30)?,
+            named_leaf: row.get(31)?,
+            capture_kind: row.get(32)?,
+            capture_named: row.get(33)?,
+            equality_occurrence: row.get(34)?,
         })
     }
 }
@@ -643,7 +791,7 @@ unsafe impl<'vtab> VTab<'vtab> for MatchTable {
     ) -> SqlResult<(Cow<'static, CStr>, Self)> {
         db.config(VTabConfig::DirectOnly)?;
         Ok((
-            Cow::Borrowed(c"CREATE TABLE x(batch INTEGER HIDDEN,row_kind INTEGER NOT NULL,producer_id INTEGER,file_index INTEGER,task_index INTEGER,match_index INTEGER,capture_index INTEGER,capture_occurrence INTEGER,capture_sequence_start INTEGER,capture_sequence_count INTEGER,node INTEGER,related_node INTEGER,axis_kind INTEGER,axis_order INTEGER,fact_kind INTEGER,document_id INTEGER,mapped_document_id INTEGER,start_ordinal INTEGER,output_label TEXT,capture_label TEXT,text_value TEXT,start_byte INTEGER,end_byte INTEGER,verdict INTEGER,complete INTEGER NOT NULL,work_used INTEGER,error_code TEXT,field_id INTEGER,related_named INTEGER)"),
+            Cow::Borrowed(c"CREATE TABLE x(batch INTEGER HIDDEN,row_kind INTEGER NOT NULL,producer_id INTEGER,file_index INTEGER,task_index INTEGER,match_index INTEGER,capture_index INTEGER,capture_occurrence INTEGER,capture_sequence_start INTEGER,capture_sequence_count INTEGER,node INTEGER,related_node INTEGER,axis_kind INTEGER,axis_order INTEGER,fact_kind INTEGER,document_id INTEGER,mapped_document_id INTEGER,start_ordinal INTEGER,output_label TEXT,capture_label TEXT,text_value TEXT,start_byte INTEGER,end_byte INTEGER,verdict INTEGER,complete INTEGER NOT NULL,work_used INTEGER,error_code TEXT,field_id INTEGER,related_named INTEGER,source_text TEXT,structural_key TEXT,named_leaf INTEGER,capture_kind INTEGER,capture_named INTEGER,equality_occurrence INTEGER)"),
             Self {
                 base: ffi::sqlite3_vtab::default(),
                 registry: Arc::clone(aux.ok_or_else(|| {
@@ -757,6 +905,12 @@ unsafe impl VTabCursor for MatchCursor<'_> {
             26 => context.set_result(&row.error_code.as_deref()),
             27 => context.set_result(&row.field_id),
             28 => context.set_result(&row.related_named),
+            29 => context.set_result(&row.source_text.as_deref()),
+            30 => context.set_result(&row.structural_key.as_deref()),
+            31 => context.set_result(&row.named_leaf),
+            32 => context.set_result(&row.capture_kind),
+            33 => context.set_result(&row.capture_named),
+            34 => context.set_result(&row.equality_occurrence),
             _ => Err(rusqlite::Error::InvalidColumnIndex(column as usize)),
         }
     }
@@ -871,6 +1025,12 @@ mod tests {
                 "error_code",
                 "field_id",
                 "related_named",
+                "source_text",
+                "structural_key",
+                "named_leaf",
+                "capture_kind",
+                "capture_named",
+                "equality_occurrence",
             ]
         );
     }
