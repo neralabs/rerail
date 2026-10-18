@@ -197,6 +197,7 @@ const output = {
     failures: result.failures.length,
     failuresByCode,
     metrics: result.metrics,
+    ...(result.profile === undefined ? {} : { profile: result.profile }),
   },
 };
 const json = `${JSON.stringify(output, null, 2)}\n`;
