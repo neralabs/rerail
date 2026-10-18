@@ -106,11 +106,16 @@ pub struct Health {
     pub engine_version: String,
 }
 
+#[cfg(not(feature = "no-file-deadline"))]
+const KERNEL_VERSION: &str = "1";
+#[cfg(feature = "no-file-deadline")]
+const KERNEL_VERSION: &str = "1+no-file-deadline";
+
 #[napi]
 pub fn health() -> Health {
     Health {
         ok: true,
-        engine_version: "1".to_owned(),
+        engine_version: KERNEL_VERSION.to_owned(),
     }
 }
 

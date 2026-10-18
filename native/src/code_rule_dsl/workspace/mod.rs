@@ -52,7 +52,12 @@ type CandidateSets =
 /// to 900 (TypeScript packs) times a millisecond, so this is about 55 to 260 ms of their work; a
 /// file whose work polls rarely runs longer (a generated 29,000-line TanStack Query module spends
 /// 17,327 units in 520 ms under the TypeScript packs).
+#[cfg(not(feature = "no-file-deadline"))]
 const FILE_WORK_BUDGET: u64 = 50_000;
+/// Benchmark-only: no production evaluation can reach this limit. This reproduces the historical
+/// whole-tree full scan without dropping findings from expensive files.
+#[cfg(feature = "no-file-deadline")]
+const FILE_WORK_BUDGET: u64 = u64::MAX;
 /// Persisted per-file clause results are reused only under a key covering every input the result
 /// depends on: source content, file context (`file_context`) and engine build (`candidate_catalog`).
 const REUSE_LOCAL_RESULTS: bool = true;

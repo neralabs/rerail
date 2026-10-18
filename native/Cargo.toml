@@ -10,6 +10,9 @@ crate-type = ["cdylib"]
 [features]
 code-rule-profile = []
 bench-backends = []
+# Benchmark-only: runs every file to semantic completion instead of enforcing the production work
+# budget. The full data-layer benchmark refuses an addon without this feature's kernel marker.
+no-file-deadline = []
 [dependencies]
 ast-grep-core = "=0.45.3"
 # Python, TypeScript and TSX are not ast-grep's: Rerail builds them from its patched vendored

@@ -60,23 +60,29 @@ Reusing the policy SCC plan and its completed cycle check reduced single-thread 
 
 A sample after the origin fix still showed string-map comparisons, SHA-256 work, utility-reference discovery, and comparison analysis. The retained matcher representation is now the main memory cost. No temporary process-global artifact cache remains.
 
-## Complete data-layer execution
+## Canonical data-layer full scan
 
-The production-budget whole-tree run used the SQLite-demanded route and four Rayon workers. Each of three runs produced the same result digest, counts, and metrics.
+The canonical benchmark uses the benchmark-only `no-file-deadline` build, the SQLite-demanded route, and four Rayon workers. `benchmark/data-layer-full-scan.mjs` verifies the engine marker and all fixed input counts before it runs.
 
-| Metric | Median |
-| --- | ---: |
-| `applyAsync` wall time | 14.833 s |
-| Apply CPU time | 46.471 s |
-| Peak RSS | 3.419 GB |
-| Violations | 14,974 |
-| Failures | 7,953 |
-| Visited nodes | 27,196,611 |
-| Witnesses | 31,217 |
+| Metric | Historical SQLite | Current SQLite |
+| --- | ---: | ---: |
+| `applyAsync` wall time | 1,404.741 s | 17.189 s |
+| Apply CPU time | 2,300.265 s | 53.547 s |
+| Peak RSS | 15.1 GiB | 3.467 GB |
+| Violations | 18,264 | 18,264 |
+| Failures | 23 | 19 |
+| Visited nodes | 27,196,611 | 27,196,611 |
+| Witnesses | 38,308 | 38,459 |
 
-The three `applyAsync` times were 15.917, 14.833, and 12.432 seconds. All failures were retained in the result; this was not an unlimited-work build.
+The current run used the exact 12-policy, 829-clause catalog and the exact 5,725-file, 95,697,853-byte checkout. Catalog compilation took 1.666 seconds of wall time and 3.204 CPU-seconds. The result digest was `89b4a2d3c20f19e431236de2e87444e9d633f622fedaf0d50f4f596b4b34d507`.
 
-The historical unlimited-work result of 1,404.7 seconds is not a direct semantic comparison because it disabled the file work budget. The historical production-budget control took 194.8 seconds and returned 126,142 failures. The current run completed in less time and returned fewer failures, but its result set differs from the historical engine.
+Current `applyAsync` wall time is 98.8 percent lower than the reproduced historical result. Apply CPU is 97.7 percent lower. The equal violation count does not establish complete output parity: failure and witness counts differ.
+
+## Production-budget diagnostic (not the benchmark)
+
+An earlier production-budget diagnostic used the SQLite-demanded route and four Rayon workers. Its median `applyAsync` time was 14.833 seconds, apply CPU was 46.471 seconds, and peak RSS was 3.419 GB. It returned 14,974 violations, 7,953 failures, 27,196,611 visited nodes, and 31,217 witnesses.
+
+That diagnostic is not the NER-1562 full-scan benchmark. The file work budget stopped expensive evaluations and changed the result set.
 
 ## Parity limitation
 
