@@ -50,6 +50,28 @@ fn compiled_kind_policy_lowers_to_sql_and_one_terminal() {
 }
 
 #[test]
+fn compiled_literal_pattern_lowers_to_a_verified_terminal() {
+    let compiled = code_rule(json!({ "pattern": "foo" }));
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("literal pattern has complete relational lowering");
+
+    assert_eq!(plan.terminals().len(), 1);
+    assert_eq!(plan.terminals()[0].kind(), TerminalKind::Pattern);
+    assert_eq!(plan.terminals()[0].language(), "python");
+    assert_eq!(
+        plan.shape(),
+        &[
+            SqlShape::PackedMaterialized,
+            SqlShape::StatusJoin,
+            SqlShape::ScanTerminal,
+            SqlShape::ScanCapture,
+            SqlShape::Projection,
+            SqlShape::OrderBy,
+        ]
+    );
+}
+
+#[test]
 fn equal_terminals_share_identity_without_merging_clauses() {
     let first = code_rule(json!({ "kind": "identifier" }));
     let second = code_rule(json!({ "kind": "identifier" }));
