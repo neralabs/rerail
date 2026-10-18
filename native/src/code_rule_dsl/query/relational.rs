@@ -1,8 +1,12 @@
-use super::relational_ir::{RelationalIr, SqlOperation, qualified_row_columns};
+use super::relational_ir::{
+    NavigationAxis, NavigationSpec, NavigationStop, NthChildSpec, RelationalIr, SqlOperation,
+    qualified_row_columns,
+};
 use crate::code_rule_dsl::language::{GrammarDialect, label};
-use crate::code_rule_dsl::matcher::AstMatcher;
+use crate::code_rule_dsl::matcher::{AstMatcher, StopBy};
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Query};
 use crate::code_rule_dsl::packed::Program;
+use crate::code_rule_dsl::transducer::sql_backend::ProducerKind;
 use ast_grep_core::matcher::Matcher;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -46,6 +50,14 @@ impl TerminalPlan {
 
     pub(super) const fn result_limit(&self) -> u32 {
         self.result_limit
+    }
+
+    pub(super) const fn producer_kind(&self) -> ProducerKind {
+        if matches!(self.kind, TerminalKind::Navigation) {
+            ProducerKind::Navigation
+        } else {
+            ProducerKind::Terminal
+        }
     }
 }
 
@@ -194,6 +206,7 @@ impl LoweringError {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum TerminalIdentity {
     Universe(GrammarDialect),
+    Navigation(GrammarDialect),
     Kind(GrammarDialect, u16),
     Pattern(GrammarDialect, String),
     Regex(GrammarDialect, String),
@@ -279,18 +292,17 @@ impl Builder {
                     .unsupported
                     .push(format!("{at}: regex terminal is not lowered: {error:?}")),
             },
-            AstMatcher::Has(item, _) => {
-                let operation = format!("{at}/has");
-                self.unsupported
-                    .push(format!("{operation}: descendant relation"));
-                self.lower_matcher(
-                    item.rule(),
-                    language,
-                    &format!("{operation}/rule"),
-                    terminals,
-                    ir,
-                );
-            }
+            AstMatcher::Has(item, stop) => self.lower_navigation(
+                NavigationAxis::Descendant,
+                item.rule(),
+                stop,
+                None,
+                false,
+                language,
+                &format!("{at}/has"),
+                terminals,
+                ir,
+            ),
             AstMatcher::Pattern(pattern) => match Program::compile_ast_grep_literal(pattern) {
                 Ok(program) => {
                     let identity = TerminalIdentity::Pattern(
@@ -358,54 +370,54 @@ impl Builder {
                     Err(error) => self.unsupported.push(format!("{operation}: {error}")),
                 }
             }
-            AstMatcher::Inside(item, _) => {
-                let operation = format!("{at}/inside");
-                self.unsupported
-                    .push(format!("{operation}: ancestor relation"));
-                self.lower_matcher(
-                    item.rule(),
-                    language,
-                    &format!("{operation}/rule"),
-                    terminals,
-                    ir,
-                );
-            }
-            AstMatcher::Precedes(item, _) => {
-                let operation = format!("{at}/precedes");
-                self.unsupported
-                    .push(format!("{operation}: following-sibling relation"));
-                self.lower_matcher(
-                    item.rule(),
-                    language,
-                    &format!("{operation}/rule"),
-                    terminals,
-                    ir,
-                );
-            }
-            AstMatcher::Follows(item, _) => {
-                let operation = format!("{at}/follows");
-                self.unsupported
-                    .push(format!("{operation}: preceding-sibling relation"));
-                self.lower_matcher(
-                    item.rule(),
-                    language,
-                    &format!("{operation}/rule"),
-                    terminals,
-                    ir,
-                );
-            }
-            AstMatcher::Field(relation) => {
-                let operation = format!("{at}/field");
-                self.unsupported
-                    .push(format!("{operation}: field relation"));
-                self.lower_matcher(
-                    &relation.rule,
-                    language,
-                    &format!("{operation}/rule"),
-                    terminals,
-                    ir,
-                );
-            }
+            AstMatcher::Inside(item, stop) => self.lower_navigation(
+                NavigationAxis::Ancestor,
+                item.rule(),
+                stop,
+                None,
+                false,
+                language,
+                &format!("{at}/inside"),
+                terminals,
+                ir,
+            ),
+            AstMatcher::Precedes(item, stop) => self.lower_navigation(
+                NavigationAxis::FollowingSibling,
+                item.rule(),
+                stop,
+                None,
+                false,
+                language,
+                &format!("{at}/precedes"),
+                terminals,
+                ir,
+            ),
+            AstMatcher::Follows(item, stop) => self.lower_navigation(
+                NavigationAxis::PrecedingSibling,
+                item.rule(),
+                stop,
+                None,
+                false,
+                language,
+                &format!("{at}/follows"),
+                terminals,
+                ir,
+            ),
+            AstMatcher::Field(relation) => self.lower_navigation(
+                if relation.inside {
+                    NavigationAxis::Ancestor
+                } else {
+                    NavigationAxis::Descendant
+                },
+                &relation.rule,
+                &relation.stop,
+                Some(relation.field),
+                !relation.inside,
+                language,
+                &format!("{at}/field"),
+                terminals,
+                ir,
+            ),
             AstMatcher::Constrained(core) => {
                 let operation = format!("{at}/constraints");
                 self.unsupported
@@ -427,11 +439,46 @@ impl Builder {
                     );
                 }
             }
+            AstMatcher::NthChild(nth) => {
+                let universe_id = self.universe_terminal(language);
+                let navigation_id = self.navigation_terminal(language);
+                for id in [universe_id, navigation_id] {
+                    if !terminals.contains(&id) {
+                        terminals.push(id);
+                    }
+                }
+                let mut source = RelationalIr::empty();
+                source.terminal_spec(TerminalKind::Universe, format!("terminal:{universe_id}"));
+                source.operation(SqlOperation::ScanTerminal);
+                let of_rule = nth.of_rule.as_ref().map(|rule| {
+                    let mut lowered = RelationalIr::empty();
+                    self.lower_matcher(
+                        rule,
+                        language,
+                        &format!("{at}/nthChild/ofRule"),
+                        terminals,
+                        &mut lowered,
+                    );
+                    lowered
+                });
+                match RelationalIr::nth_child(
+                    NthChildSpec {
+                        step: nth.position.step,
+                        offset: nth.position.offset,
+                        reverse: nth.reverse,
+                        producer: navigation_id,
+                    },
+                    source,
+                    of_rule,
+                ) {
+                    Ok(lowered) => *ir = lowered,
+                    Err(error) => self.unsupported.push(format!("{at}/nthChild: {error}")),
+                }
+            }
             AstMatcher::Never => self
                 .unsupported
                 .push(format!("{at}: never matcher is not lowered")),
-            AstMatcher::NthChild(_)
-            | AstMatcher::Util(_)
+            AstMatcher::Util(_)
             | AstMatcher::Call(_)
             | AstMatcher::Compare(_)
             | AstMatcher::Count(_)
@@ -443,6 +490,78 @@ impl Builder {
                 .unsupported
                 .push(format!("{at}: test-only unknown operation")),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_navigation(
+        &mut self,
+        axis: NavigationAxis,
+        related: &AstMatcher,
+        stop: &StopBy,
+        field: Option<u16>,
+        field_stop_children_only: bool,
+        language: GrammarDialect,
+        at: &str,
+        terminals: &mut Vec<usize>,
+        ir: &mut RelationalIr,
+    ) {
+        let universe_id = self.universe_terminal(language);
+        let navigation_id = self.navigation_terminal(language);
+        for id in [universe_id, navigation_id] {
+            if !terminals.contains(&id) {
+                terminals.push(id);
+            }
+        }
+        let mut source = RelationalIr::empty();
+        source.terminal_spec(TerminalKind::Universe, format!("terminal:{universe_id}"));
+        source.operation(SqlOperation::ScanTerminal);
+        let mut related_ir = RelationalIr::empty();
+        self.lower_matcher(
+            related,
+            language,
+            &format!("{at}/rule"),
+            terminals,
+            &mut related_ir,
+        );
+        let (stop_kind, stop_ir) = match stop {
+            StopBy::Neighbor => (NavigationStop::Neighbor, None),
+            StopBy::End => (NavigationStop::End, None),
+            StopBy::Rule(rule) => {
+                let mut lowered = RelationalIr::empty();
+                self.lower_matcher(
+                    rule,
+                    language,
+                    &format!("{at}/stopBy"),
+                    terminals,
+                    &mut lowered,
+                );
+                (NavigationStop::Rule, Some(lowered))
+            }
+        };
+        match RelationalIr::navigate(
+            NavigationSpec {
+                axis,
+                stop: stop_kind,
+                field,
+                field_stop_children_only,
+                producer: navigation_id,
+            },
+            source,
+            related_ir,
+            stop_ir,
+        ) {
+            Ok(lowered) => *ir = lowered,
+            Err(error) => self.unsupported.push(format!("{at}: {error}")),
+        }
+    }
+
+    fn navigation_terminal(&mut self, language: GrammarDialect) -> usize {
+        self.intern_terminal(
+            TerminalIdentity::Navigation(language),
+            TerminalKind::Navigation,
+            language,
+            Program::compile_navigation().expect("the navigation producer is verified"),
+        )
     }
 
     fn universe_terminal(&mut self, language: GrammarDialect) -> usize {
@@ -509,7 +628,7 @@ impl Builder {
             .expect("write SQL");
         }
         let sql = format!(
-            "WITH packed AS MATERIALIZED (\n  SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code FROM rerail_matches WHERE batch = :batch\n),\nbatch_status AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 1\n),\nproducer_status AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 2\n),\nterminal_match AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 3\n),\ncapture AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 4\n),\nnavigation AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 5\n),\nfact AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 6\n),\ndocument_map AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 7\n)\n{clauses}\nSELECT * FROM ({})\nORDER BY file_index, producer_id, match_index, capture_index",
+            "WITH RECURSIVE packed AS MATERIALIZED (\n  SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code, field_id, related_named FROM rerail_matches WHERE batch = :batch\n),\nbatch_status AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 1\n),\nproducer_status AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 2\n),\nterminal_match AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 3\n),\ncapture AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 4\n),\nnavigation AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 5\n),\nfact AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 6\n),\ndocument_map AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 7\n)\n{clauses}\nSELECT * FROM ({})\nORDER BY file_index, producer_id, match_index, capture_index",
             (0..clause_irs.len())
                 .map(|ordinal| format!("SELECT * FROM clause_{ordinal}"))
                 .collect::<Vec<_>>()

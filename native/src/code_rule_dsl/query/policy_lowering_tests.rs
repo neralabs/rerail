@@ -134,7 +134,8 @@ fn execute_boolean_sql(
                 axis_kind INTEGER, axis_order INTEGER, fact_kind INTEGER, document_id INTEGER,
                 mapped_document_id INTEGER, start_ordinal INTEGER, output_label TEXT,
                 capture_label TEXT, text_value TEXT, start_byte INTEGER, end_byte INTEGER,
-                verdict INTEGER, complete INTEGER, work_used INTEGER, error_code TEXT
+                verdict INTEGER, complete INTEGER, work_used INTEGER, error_code TEXT,
+                field_id INTEGER, related_named INTEGER
             );",
         )
         .expect("typed packed relation");
@@ -440,6 +441,24 @@ fn compiled_ancestor_and_descendant_relations_execute_stop_semantics() {
         ),
         vec![1]
     );
+    assert!(
+        execute_navigation_sql(
+            &has,
+            &[(0, &[0]), (2, &[4]), (3, &[1])],
+            &[(0, 1, 0, 0, true), (1, 2, 0, 0, true), (0, 4, 1, 0, true)]
+        )
+        .is_empty(),
+        "a preorder stop node must also cut later descendant branches"
+    );
+    assert_eq!(
+        execute_navigation_sql(
+            &has,
+            &[(0, &[0]), (2, &[1]), (3, &[1])],
+            &[(0, 1, 0, 0, true), (0, 4, 1, 0, true)]
+        ),
+        vec![0],
+        "the stop node is an inclusive relation candidate"
+    );
 }
 
 #[test]
@@ -486,6 +505,21 @@ fn compiled_field_relation_uses_the_grammar_field_identity() {
         )
         .is_empty()
     );
+
+    let compiled = code_rule(json!({
+        "inside": { "field": "body", "kind": "function_definition", "stopBy": "end" }
+    }));
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("inverse field navigation lowers into SQL");
+    let field = compared_field_id(plan.sql());
+    assert_eq!(
+        execute_navigation_sql(
+            &plan,
+            &[(0, &[3]), (2, &[1])],
+            &[(1, 2, 0, field, true), (2, 3, 0, field + 1, true)]
+        ),
+        vec![3]
+    );
 }
 
 #[test]
@@ -510,6 +544,42 @@ fn compiled_nth_child_uses_named_sibling_order_and_reverse_order() {
             expected
         );
     }
+
+    let compiled = code_rule(json!({
+        "nthChild": { "position": 2, "ofRule": { "kind": "identifier" } }
+    }));
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("filtered nth-child navigation lowers into SQL");
+    assert_eq!(
+        execute_navigation_sql(
+            &plan,
+            &[(0, &[10, 11, 12]), (2, &[11, 12])],
+            &[
+                (9, 10, 0, 0, true),
+                (9, 11, 1, 0, true),
+                (9, 12, 2, 0, true)
+            ]
+        ),
+        vec![12]
+    );
+
+    let compiled = code_rule(json!({
+        "nthChild": { "position": 1, "ofRule": { "kind": "identifier" } }
+    }));
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("filtered first-child navigation lowers into SQL");
+    assert_eq!(
+        execute_navigation_sql(
+            &plan,
+            &[(0, &[10, 11, 12]), (2, &[11, 12])],
+            &[
+                (9, 10, 0, 0, true),
+                (9, 11, 1, 0, true),
+                (9, 12, 2, 0, true)
+            ]
+        ),
+        vec![11]
+    );
 }
 
 #[test]

@@ -15,7 +15,7 @@ use crate::code_rule_dsl::model::CompiledCodeRule;
 use crate::code_rule_dsl::packed::ExecutionBackend;
 use crate::code_rule_dsl::tape::TapeDoc;
 use crate::code_rule_dsl::transducer::sql_backend::{
-    MatchRegistry, PackedDemand, PackedRow, register_module,
+    MatchRegistry, PackedDemand, PackedRow, ProducerKind, register_module,
 };
 use rusqlite::Connection;
 use std::collections::BTreeMap;
@@ -107,6 +107,10 @@ impl SqlPlans {
                         .clauses()
                         .iter()
                         .any(|clause| file.tasks.contains_key(clause));
+                if demanded && terminal.producer_kind() == ProducerKind::Navigation {
+                    roots.clear();
+                    roots.push(0);
+                }
                 file_tasks.push(demanded);
                 file_anchors.push(roots);
             }
@@ -114,6 +118,11 @@ impl SqlPlans {
             anchors.push(file_anchors);
             task_grid.push(file_tasks);
         }
+        let producer_kinds = plan
+            .terminals()
+            .iter()
+            .map(relational::TerminalPlan::producer_kind)
+            .collect();
         let demand = PackedDemand::new(
             production_backend(),
             programs,
@@ -122,6 +131,7 @@ impl SqlPlans {
             task_grid,
             result_limits,
         )
+        .and_then(|demand| demand.with_producer_kinds(producer_kinds))
         .map_err(|error| format!("packed batch verification failed: {error:?}"))?;
         drive_sql(demand, plan.sql()).map_err(|error| error.to_string())
     }
@@ -142,7 +152,7 @@ fn production_backend() -> ExecutionBackend {
 fn drive(demand: PackedDemand) -> rusqlite::Result<QueryOutcome> {
     drive_sql(
         demand,
-        "SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code FROM rerail_matches WHERE batch = ?1 ORDER BY rowid",
+        "SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code, field_id, related_named FROM rerail_matches WHERE batch = ?1 ORDER BY rowid",
     )
 }
 

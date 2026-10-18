@@ -27,9 +27,16 @@ const USE_BATCH: c_int = 1;
 
 /// Everything `xFilter` needs to execute one sparse packed batch. Construction verifies programs
 /// before registration; this value contains no callback and cannot enter the semantic matcher.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::code_rule_dsl) enum ProducerKind {
+    Terminal,
+    Navigation,
+}
+
 pub(in crate::code_rule_dsl) struct PackedDemand {
     backend: ExecutionBackend,
     programs: Vec<Program>,
+    producer_kinds: Vec<ProducerKind>,
     files: Vec<TapeDoc>,
     anchors: Vec<Vec<Vec<u32>>>,
     task_grid: Vec<Vec<bool>>,
@@ -53,14 +60,39 @@ impl PackedDemand {
         {
             return Err(PackedError::InvalidAnchor);
         }
+        let producer_kinds = vec![ProducerKind::Terminal; programs.len()];
         Ok(Self {
             backend,
             programs,
+            producer_kinds,
             files,
             anchors,
             task_grid,
             result_limits,
         })
+    }
+
+    pub(in crate::code_rule_dsl) fn with_producer_kinds(
+        mut self,
+        producer_kinds: Vec<ProducerKind>,
+    ) -> Result<Self, PackedError> {
+        if producer_kinds.len() != self.programs.len()
+            || producer_kinds.iter().enumerate().any(|(producer, kind)| {
+                *kind == ProducerKind::Navigation
+                    && (!self.programs[producer].is_navigation_descriptor()
+                        || self
+                            .task_grid
+                            .iter()
+                            .zip(&self.anchors)
+                            .any(|(tasks, anchors)| {
+                                tasks[producer] && anchors[producer].as_slice() != [0]
+                            }))
+            })
+        {
+            return Err(PackedError::InvalidAnchor);
+        }
+        self.producer_kinds = producer_kinds;
+        Ok(self)
     }
 
     fn execute(self, token: i64) -> Vec<PackedRow> {
@@ -97,6 +129,56 @@ impl PackedDemand {
         for file in 0..execution.file_count() {
             for program in 0..execution.program_count() {
                 if !self.task_grid[file][program] {
+                    continue;
+                }
+                if self.producer_kinds[program] == ProducerKind::Navigation {
+                    let tape = &self.files[file];
+                    let mut edge_index = 0_usize;
+                    let mut failed = false;
+                    for parent in 0..tape.transducer_len() as u32 {
+                        for (child_order, child) in tape.transducer_children(parent).enumerate() {
+                            if edge_index >= 1 << 26 {
+                                failed = true;
+                                break;
+                            }
+                            rows.push(PackedRow::navigation(
+                                token,
+                                file,
+                                program,
+                                edge_index,
+                                parent,
+                                child,
+                                child_order,
+                                tape.transducer_field(child),
+                                tape.transducer_flags(child) & 1 != 0,
+                            ));
+                            edge_index += 1;
+                        }
+                        if failed {
+                            break;
+                        }
+                    }
+                    if failed {
+                        let message = format!("{:?}", PackedError::WorkLimit);
+                        batch_error.get_or_insert_with(|| message.clone());
+                        rows.push(PackedRow::producer_status(
+                            token,
+                            file,
+                            program,
+                            false,
+                            None,
+                            Some(message),
+                        ));
+                    } else {
+                        rows.push(PackedRow::producer_status(
+                            token,
+                            file,
+                            program,
+                            true,
+                            Some(edge_index != 0),
+                            None,
+                        ));
+                    }
                     continue;
                 }
                 let (results, error) = match execution.program_results(file, program) {
@@ -274,6 +356,8 @@ pub(in crate::code_rule_dsl) struct PackedRow {
     complete: i64,
     work_used: Option<i64>,
     error_code: Option<String>,
+    field_id: Option<i64>,
+    related_named: Option<i64>,
 }
 
 impl PackedRow {
@@ -307,6 +391,8 @@ impl PackedRow {
             complete: 1,
             work_used: None,
             error_code: None,
+            field_id: None,
+            related_named: None,
         }
     }
 
@@ -331,6 +417,32 @@ impl PackedRow {
         row.complete = i64::from(complete);
         row.verdict = verdict.map(i64::from);
         row.error_code = error;
+        row
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn navigation(
+        batch: i64,
+        file: usize,
+        producer: usize,
+        edge_index: usize,
+        parent: u32,
+        child: u32,
+        child_order: usize,
+        field: u16,
+        named: bool,
+    ) -> Self {
+        let mut row = Self::blank(batch, RowKind::Navigation);
+        row.file_index = Some(file as i64);
+        row.producer_id = Some(producer as i64);
+        row.task_index = Some(0);
+        row.match_index = Some(edge_index as i64);
+        row.node = Some(parent as i64);
+        row.related_node = Some(child as i64);
+        row.axis_kind = Some(1);
+        row.axis_order = Some(child_order as i64);
+        row.field_id = Some(i64::from(field));
+        row.related_named = Some(i64::from(named));
         row
     }
 
@@ -421,6 +533,8 @@ impl PackedRow {
             complete: row.get(24)?,
             work_used: row.get(25)?,
             error_code: row.get(26)?,
+            field_id: row.get(27)?,
+            related_named: row.get(28)?,
         })
     }
 }
@@ -529,7 +643,7 @@ unsafe impl<'vtab> VTab<'vtab> for MatchTable {
     ) -> SqlResult<(Cow<'static, CStr>, Self)> {
         db.config(VTabConfig::DirectOnly)?;
         Ok((
-            Cow::Borrowed(c"CREATE TABLE x(batch INTEGER HIDDEN,row_kind INTEGER NOT NULL,producer_id INTEGER,file_index INTEGER,task_index INTEGER,match_index INTEGER,capture_index INTEGER,capture_occurrence INTEGER,capture_sequence_start INTEGER,capture_sequence_count INTEGER,node INTEGER,related_node INTEGER,axis_kind INTEGER,axis_order INTEGER,fact_kind INTEGER,document_id INTEGER,mapped_document_id INTEGER,start_ordinal INTEGER,output_label TEXT,capture_label TEXT,text_value TEXT,start_byte INTEGER,end_byte INTEGER,verdict INTEGER,complete INTEGER NOT NULL,work_used INTEGER,error_code TEXT)"),
+            Cow::Borrowed(c"CREATE TABLE x(batch INTEGER HIDDEN,row_kind INTEGER NOT NULL,producer_id INTEGER,file_index INTEGER,task_index INTEGER,match_index INTEGER,capture_index INTEGER,capture_occurrence INTEGER,capture_sequence_start INTEGER,capture_sequence_count INTEGER,node INTEGER,related_node INTEGER,axis_kind INTEGER,axis_order INTEGER,fact_kind INTEGER,document_id INTEGER,mapped_document_id INTEGER,start_ordinal INTEGER,output_label TEXT,capture_label TEXT,text_value TEXT,start_byte INTEGER,end_byte INTEGER,verdict INTEGER,complete INTEGER NOT NULL,work_used INTEGER,error_code TEXT,field_id INTEGER,related_named INTEGER)"),
             Self {
                 base: ffi::sqlite3_vtab::default(),
                 registry: Arc::clone(aux.ok_or_else(|| {
@@ -641,6 +755,8 @@ unsafe impl VTabCursor for MatchCursor<'_> {
             24 => context.set_result(&row.complete),
             25 => context.set_result(&row.work_used),
             26 => context.set_result(&row.error_code.as_deref()),
+            27 => context.set_result(&row.field_id),
+            28 => context.set_result(&row.related_named),
             _ => Err(rusqlite::Error::InvalidColumnIndex(column as usize)),
         }
     }
@@ -652,8 +768,10 @@ unsafe impl VTabCursor for MatchCursor<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MatchRegistry, PackedDemand, register_module};
-    use crate::code_rule_dsl::packed::ExecutionBackend;
+    use super::{MatchRegistry, PackedDemand, ProducerKind, RowKind, register_module};
+    use crate::code_rule_dsl::language::GrammarDialect;
+    use crate::code_rule_dsl::packed::{ExecutionBackend, Program};
+    use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
     use rusqlite::Connection;
     use std::sync::Arc;
 
@@ -667,6 +785,46 @@ mod tests {
             Vec::new(),
         )
         .expect("valid empty demand")
+    }
+
+    #[test]
+    fn demanded_navigation_producer_emits_typed_parent_child_edges() {
+        let source = Arc::new("f(a, b)\n".to_owned());
+        let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
+        let image = TapeImage::parse(&grammar, &source, &|| false)
+            .expect("parser completed")
+            .expect("tape image");
+        let tape = TapeDoc::restore(Arc::clone(&source), grammar, &image, &|| false)
+            .expect("restored tape");
+        let node_count = tape.transducer_len();
+        let demand = PackedDemand::new(
+            ExecutionBackend::CpuJit,
+            vec![Program::compile_navigation().expect("verified navigation producer")],
+            vec![tape],
+            vec![vec![vec![0]]],
+            vec![vec![true]],
+            vec![u32::MAX],
+        )
+        .and_then(|demand| demand.with_producer_kinds(vec![ProducerKind::Navigation]))
+        .expect("typed navigation demand");
+        let rows = demand.execute(7);
+        let navigation = rows
+            .iter()
+            .filter(|row| row.row_kind == RowKind::Navigation)
+            .collect::<Vec<_>>();
+        assert_eq!(navigation.len(), node_count - 1, "{rows:?}");
+        assert!(navigation.iter().all(|row| {
+            row.node.is_some()
+                && row.related_node.is_some()
+                && row.axis_order.is_some()
+                && row.field_id.is_some()
+                && row.related_named.is_some()
+        }));
+        assert!(rows.iter().any(|row| {
+            row.row_kind == RowKind::ProducerStatus
+                && row.producer_id == Some(0)
+                && row.complete == 1
+        }));
     }
 
     #[test]
@@ -711,6 +869,8 @@ mod tests {
                 "complete",
                 "work_used",
                 "error_code",
+                "field_id",
+                "related_named",
             ]
         );
     }

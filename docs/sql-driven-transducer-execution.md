@@ -325,10 +325,13 @@ Batch release removes the registry entry after the SQL statement closes its curs
 
 ## Row and order contract
 
-The virtual table exposes one 27-column tagged relation.
+The virtual table exposes one 29-column tagged relation.
 Its row kinds are batch status, producer status, terminal match, capture, navigation, fact, and document map.
 [`sql-relational-compiler-design.md`](sql-relational-compiler-design.md) defines these logical row families.
-The current executor emits the first four kinds; later producers will emit the other three.
+The current executor emits status, terminal-match, capture, and navigation rows.
+One navigation producer emits typed parent-child edges with grammar field and named-node data.
+SQL derives navigation semantics from those edges.
+Later producers will emit fact and document-map rows.
 This change does not require a new persistent storage schema.
 
 `(producer_id, file_index, task_index)` identifies one demanded terminal task.

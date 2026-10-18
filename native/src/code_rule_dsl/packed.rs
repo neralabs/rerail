@@ -1053,6 +1053,30 @@ impl Program {
         )
     }
 
+    pub(super) fn is_navigation_descriptor(&self) -> bool {
+        self.words == [word(STOP, 0, 0)]
+            && self.strings.is_empty()
+            && self.predicates.is_empty()
+            && self.value_programs.is_empty()
+            && self.capture_predicates.is_empty()
+            && self.capture_programs.is_empty()
+            && self.labels.is_empty()
+            && self.longs.is_empty()
+            && self.directives.is_empty()
+            && self.output_program.instructions.is_empty()
+            && !self.tree_sitter_query
+    }
+
+    pub(super) fn compile_navigation() -> Result<Self, Error> {
+        Self::new(
+            vec![word(STOP, 0, 0)],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
     pub(super) fn compile_universe() -> Result<Self, Error> {
         Self::new(
             vec![word(CAPTURE, 0, 0), word(EMIT, 0, 1)],

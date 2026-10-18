@@ -20,11 +20,11 @@ compiled clause
 The semantic matcher remains a test-only oracle.
 Production has no matcher fallback and no second execution shape.
 
-The current implementation establishes this boundary for kind, literal-pattern, and regex terminals.
-Each lowered clause owns an operand-bearing expression graph with semantic terminal identities.
-The generated SQL is still an atomic clause skeleton; it does not yet render Boolean or navigation nodes.
+The current implementation establishes this boundary for kind, literal-pattern, regex, Boolean, and navigation operations.
+Each lowered clause owns an operand-bearing expression graph with semantic producer identities.
+SQL renders ordered Boolean operations, navigation axes, field relations, stop rules, and `nthChild` positions.
 The compact-contract frontend is separate from the production frontend and still uses transitional operation classification.
-The workspace tape-preparation and result-publication stages also remain incomplete.
+The workspace tape-preparation and result-publication stages remain incomplete.
 
 ## Decision
 
@@ -268,9 +268,10 @@ Each producer status identifies completion, verdict, work use, and failure.
 A physical virtual-table schema can use a tagged union of nullable columns.
 The SQL statement creates one typed CTE for each logical row family.
 
-The virtual table now exposes one 27-column tagged relation for all seven row families.
-Current packed terminals emit batch status, producer status, terminal matches, and capture sequences.
-The navigation, fact, and document-map tags and columns are reserved, but their producers are not implemented.
+The virtual table now exposes one 29-column tagged relation for all seven row families.
+Current producers emit batch status, producer status, terminal matches, capture sequences, and navigation edges.
+Navigation edges include the grammar field identity and the named-node flag.
+The fact and document-map tags and columns are reserved, but their producers are not implemented.
 Complete relational lowering must not treat an unimplemented row family as an empty result.
 
 ## One-statement execution
@@ -571,12 +572,14 @@ The producer lowerers that populate those rows belong to Phases 3 and 4.
 4. Lower constraints, equality, and counts.
 5. Prove complete outcome parity with the semantic matcher.
 
-The compiler now completes items 1 and 2 for the supported atomic terminals.
+The compiler now completes items 1, 2, and 3 for the supported atomic terminals.
 `All` joins the operands on the file and node identities.
 `Any` keeps the first successful branch for each node.
 `Not` uses a verified universe terminal and a SQL anti-join.
+A bounded navigation producer emits one immutable parent-child edge relation for each demanded file.
+SQL derives ancestor, descendant, sibling, field, stop-rule, and `nthChild` results from these edges.
 SQL rejects incomplete or unknown producer status before it returns a clause row.
-Navigation, binding environments, constraints, counts, and matcher parity remain incomplete.
+Binding environments, constraints, counts, and matcher parity remain incomplete.
 
 ### Phase 4: Lower utilities and semantic facts
 
