@@ -885,7 +885,7 @@ mod tests {
     }
 
     fn run_git(directory: &Path, arguments: &[&str]) {
-        let output = std::process::Command::new("git")
+        let output = std::process::Command::new("/usr/bin/git")
             .arg("-C")
             .arg(directory)
             .args(arguments)

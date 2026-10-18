@@ -183,8 +183,8 @@ fn within(count: Option<&BindingCount>) -> Names {
 
 /// The captures a parsed tree's rule may bind: not under `not`, `count` or a stop rule, which bind
 /// in environments of their own. A nested parse's exports pass through, and so do those of the
-/// utilities the rule calls, at any depth: a utility compiled before the table was filled reads its
-/// draft (`UtilTable::draft`).
+/// utilities the rule calls, at any depth. During recursive SCC finalization, a utility reads the
+/// transient draft owned by its target `UtilityNode`.
 pub(in crate::code_rule_dsl) fn parse_exported(matcher: &AstMatcher, names: &mut Names) {
     exported_in(matcher, &mut UtilitySummary::new(), names);
 }
@@ -223,7 +223,7 @@ fn exported_in(
 
 /// What a utility's rule exports, in the utility's own names.
 fn utility_exported(util: &UtilRef, summaries: &mut UtilitySummary<usize, Names>) -> Names {
-    summaries.summarize(util.index, Names::new(), |summaries| {
+    summaries.summarize(util.key(), Names::new(), |summaries| {
         let mut names = Names::new();
         util.with_target(|rule| exported_in(rule, summaries, &mut names));
         names

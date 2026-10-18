@@ -1,8 +1,9 @@
 //! `parse`: a rule over the tree a sub-grammar parses from a string literal, and `capture`, which
 //! binds a node of that tree.
 
+use super::artifacts::CompilerArtifacts;
 use super::ast_rule::{
-    AST_RELATIONS, StopSpec, compile_ast_rule, compile_regex, relation_rule, validate_ast_rule,
+    AST_RELATIONS, StopSpec, compile_ast_rule, relation_rule, validate_ast_rule,
 };
 use super::compare::{count_bounds, parse_comparison};
 use super::order::order_by_captures;
@@ -56,6 +57,7 @@ pub(super) fn validate_parse(
     path: &str,
     limits: &Limits,
     utils: &UtilIds,
+    artifacts: &CompilerArtifacts,
 ) -> Result<Grammar> {
     let parse = object(value, path)?;
     let name = non_empty_str(parse.get("grammar"), &format!("{path}/grammar"))?;
@@ -77,7 +79,7 @@ pub(super) fn validate_parse(
         )));
     }
     let rule = sub_rule(parse);
-    validate_sub_rule(&rule, path, grammar, true, limits, utils)?;
+    validate_sub_rule(&rule, path, grammar, true, limits, utils, artifacts)?;
     Ok(grammar)
 }
 
@@ -98,6 +100,7 @@ pub(super) fn validate_sub_rule(
     hosted: bool,
     limits: &Limits,
     utils: &UtilIds,
+    artifacts: &CompilerArtifacts,
 ) -> Result<()> {
     let rule = object(value, path)?;
     for key in rule.keys() {
@@ -141,7 +144,9 @@ pub(super) fn validate_sub_rule(
             "maxRegexPatternBytes",
             limits.max_regex_pattern_bytes,
         )?;
-        compile_regex(source, &format!("{path}/regex"))?;
+        artifacts
+            .regex(source)
+            .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
     }
     if let Some(capture) = rule.get("capture") {
         capture_name(capture, &format!("{path}/capture"))?;
@@ -175,11 +180,11 @@ pub(super) fn validate_sub_rule(
         if let Some(value) = rule.get(key) {
             let mut single = Map::new();
             single.insert(key.to_owned(), value.clone());
-            validate_ast_rule(&Value::Object(single), path, limits, utils)?;
+            validate_ast_rule(&Value::Object(single), path, limits, utils, artifacts)?;
         }
     }
     if let Some(host) = rule.get("host") {
-        validate_ast_rule(host, &format!("{path}/host"), limits, utils)?;
+        validate_ast_rule(host, &format!("{path}/host"), limits, utils, artifacts)?;
     }
     if let Some(resolves) = rule.get("resolves") {
         validate_resolves(resolves, &format!("{path}/resolves"))?;
@@ -200,7 +205,7 @@ pub(super) fn validate_sub_rule(
         }
     }
     if let Some(parse) = rule.get("parse") {
-        let nested = validate_parse(parse, &format!("{path}/parse"), limits, utils)?;
+        let nested = validate_parse(parse, &format!("{path}/parse"), limits, utils, artifacts)?;
         if nested != Grammar::Annotation {
             return Err(invalid(format!(
                 "{path}/parse/grammar: a string inside an annotation parses as an annotation"
@@ -223,12 +228,21 @@ pub(super) fn validate_sub_rule(
                     hosted,
                     limits,
                     utils,
+                    artifacts,
                 )?;
             }
         }
     }
     if let Some(not) = rule.get("not") {
-        validate_sub_rule(not, &format!("{path}/not"), grammar, hosted, limits, utils)?;
+        validate_sub_rule(
+            not,
+            &format!("{path}/not"),
+            grammar,
+            hosted,
+            limits,
+            utils,
+            artifacts,
+        )?;
     }
     for (key, _) in AST_RELATIONS {
         if let Some(relation) = rule.get(key) {
@@ -239,6 +253,7 @@ pub(super) fn validate_sub_rule(
                 hosted,
                 limits,
                 utils,
+                artifacts,
             )?;
         }
     }
@@ -258,6 +273,7 @@ pub(super) fn validate_sub_rule(
             hosted,
             limits,
             utils,
+            artifacts,
         )?;
     }
     Ok(())
@@ -270,6 +286,7 @@ fn validate_sub_relation(
     hosted: bool,
     limits: &Limits,
     utils: &UtilIds,
+    artifacts: &CompilerArtifacts,
 ) -> Result<()> {
     let (stop, field, nested) = relation_rule(relation, path)?;
     if field.is_some() {
@@ -285,9 +302,10 @@ fn validate_sub_relation(
             hosted,
             limits,
             utils,
+            artifacts,
         )?;
     }
-    validate_sub_rule(&nested, path, grammar, hosted, limits, utils)
+    validate_sub_rule(&nested, path, grammar, hosted, limits, utils, artifacts)
 }
 
 /// A capture's name: a metavariable name without `$`.
@@ -332,6 +350,7 @@ pub(super) fn compile_parse(
             grammar,
             path,
             utils.transform.as_ref(),
+            utils.artifacts,
             Some(&host),
             gaps,
         )?
@@ -408,6 +427,7 @@ pub(super) fn compile_sub_rule(
     grammar: Grammar,
     path: &str,
     transform: Option<&Arc<Transform>>,
+    artifacts: &CompilerArtifacts,
     host: Option<&Hosting>,
     gaps: &mut Vec<String>,
 ) -> Result<AstMatcher> {
@@ -421,10 +441,9 @@ pub(super) fn compile_sub_rule(
         ));
     }
     if let Some(regex) = rule.get("regex").and_then(Value::as_str) {
-        terms.push(AstMatcher::Regex(compile_regex(
-            regex,
-            &format!("{path}/regex"),
-        )?));
+        terms.push(AstMatcher::Regex(artifacts.regex(regex).map_err(|_| {
+            invalid(format!("{path}/regex: Parsing text matcher fails."))
+        })?));
     }
     if let Some(capture) = rule.get("capture") {
         terms.push(AstMatcher::Semantic(Semantic::Capture(
@@ -450,6 +469,7 @@ pub(super) fn compile_sub_rule(
                     grammar,
                     &format!("{path}/{key}/{index}"),
                     transform,
+                    artifacts,
                     host,
                     gaps,
                 )
@@ -476,6 +496,7 @@ pub(super) fn compile_sub_rule(
             grammar,
             &format!("{path}/not"),
             transform,
+            artifacts,
             host,
             gaps,
         )?)));
@@ -488,6 +509,7 @@ pub(super) fn compile_sub_rule(
                 grammar,
                 &format!("{path}/{key}"),
                 transform,
+                artifacts,
                 host,
                 gaps,
             )?;
@@ -511,6 +533,7 @@ pub(super) fn compile_sub_rule(
             grammar,
             &format!("{count_path}/{}", spec.key),
             transform,
+            artifacts,
             host,
             gaps,
         )?;
@@ -599,6 +622,7 @@ fn compile_sub_relation(
     grammar: Grammar,
     path: &str,
     transform: Option<&Arc<Transform>>,
+    artifacts: &CompilerArtifacts,
     host: Option<&Hosting>,
     gaps: &mut Vec<String>,
 ) -> Result<(AstMatcher, StopBy)> {
@@ -611,12 +635,13 @@ fn compile_sub_relation(
             grammar,
             &format!("{path}/stopBy"),
             transform,
+            artifacts,
             host,
             gaps,
         )?)),
     };
     Ok((
-        compile_sub_rule(&nested, grammar, path, transform, host, gaps)?,
+        compile_sub_rule(&nested, grammar, path, transform, artifacts, host, gaps)?,
         stop,
     ))
 }

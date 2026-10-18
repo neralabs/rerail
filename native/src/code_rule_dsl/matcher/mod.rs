@@ -75,7 +75,7 @@ pub(crate) use transform::{
     line_table_constructions, note_line_table_construction, reset_line_table_constructions,
 };
 pub(super) use util::{
-    CallArgs, MAX_UTIL_INSTANCES, UtilCall, UtilLimit, UtilOrigin, UtilRef, UtilTable,
+    CallArgs, MAX_UTIL_INSTANCES, UtilCall, UtilLimit, UtilOrigin, UtilRef, UtilTable, UtilityNode,
     UtilitySummary,
 };
 use util::{
@@ -546,13 +546,13 @@ pub(super) fn reads_values(
             .as_ref()
             .is_some_and(|rule| reads_values(rule, seen)),
         AstMatcher::Util(util) => {
-            seen.insert(util.index)
+            seen.insert(util.key())
                 && util
                     .with_target(|rule| reads_values(rule, seen))
                     .unwrap_or(false)
         }
         AstMatcher::Call(call) => {
-            seen.insert(call.util.index)
+            seen.insert(call.util.key())
                 && call
                     .util
                     .with_target(|rule| reads_values(rule, seen))

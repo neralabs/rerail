@@ -20,6 +20,7 @@ pub(super) fn validate(
     path: &str,
     limits: &Limits,
     utils: &UtilIds,
+    artifacts: &CompilerArtifacts,
 ) -> Result<()> {
     if let Some(resolves) = rule.get("resolves") {
         validate_resolves(resolves, &format!("{path}/resolves"))?;
@@ -33,6 +34,7 @@ pub(super) fn validate(
                     &format!("{path}/resolves/binding/{key}"),
                     limits,
                     utils,
+                    artifacts,
                 )?;
             }
         }
@@ -41,16 +43,22 @@ pub(super) fn validate(
         validate_value(value, &format!("{path}/value"), limits)?;
     }
     if let Some(binds) = rule.get("binds") {
-        validate_binds(binds, &format!("{path}/binds"), limits, utils)?;
+        validate_binds(binds, &format!("{path}/binds"), limits, utils, artifacts)?;
     }
     if let Some(arguments) = rule.get("arguments") {
         validate_arguments(arguments, &format!("{path}/arguments"))?;
     }
     if let Some(parse) = rule.get("parse") {
-        validate_parse(parse, &format!("{path}/parse"), limits, utils)?;
+        validate_parse(parse, &format!("{path}/parse"), limits, utils, artifacts)?;
     }
     if let Some(format_args) = rule.get("formatArgs") {
-        validate_format_args(format_args, &format!("{path}/formatArgs"), limits, utils)?;
+        validate_format_args(
+            format_args,
+            &format!("{path}/formatArgs"),
+            limits,
+            utils,
+            artifacts,
+        )?;
     }
     if let Some(layout) = rule.get("layout") {
         validate_layout(layout, &format!("{path}/layout"))?;
@@ -58,7 +66,7 @@ pub(super) fn validate(
     if let Some(calls) = rule.get("calls") {
         let calls_path = format!("{path}/calls");
         let inner = crate::code_rule_dsl::calls::split(calls, &calls_path)?.inner;
-        validate_ast_rule(&inner, &calls_path, limits, utils)?;
+        validate_ast_rule(&inner, &calls_path, limits, utils, artifacts)?;
     }
     if rule.contains_key("capture") {
         return Err(invalid(format!(

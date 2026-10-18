@@ -1,3 +1,4 @@
+use super::artifacts::CompilerArtifacts;
 use super::ast_rule::{compile_ast_rule, validate_ast_rule};
 use super::utils::{UtilIds, UtilScope};
 use crate::code_rule_dsl::json::{invalid, reject_unknown};
@@ -53,9 +54,10 @@ pub(super) fn validate_nth_child(
     path: &str,
     limits: &Limits,
     utils: &UtilIds,
+    artifacts: &CompilerArtifacts,
 ) -> Result<()> {
     if let (_, Some(rule), _) = shape(value, path)? {
-        validate_ast_rule(rule, &format!("{path}/ofRule"), limits, utils)?;
+        validate_ast_rule(rule, &format!("{path}/ofRule"), limits, utils, artifacts)?;
     }
     Ok(())
 }

@@ -1,4 +1,5 @@
 use super::AstMatcher;
+use parking_lot::Mutex;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -91,60 +92,75 @@ pub(crate) struct UtilOrigin {
     pub(crate) digest: [u8; 32],
 }
 
-/// The `utils` of one ast query compiled for one grammar, indexed by `UtilRef::index`. Filled once,
-/// after every utility compiled, so utilities can refer to each other and to themselves.
-pub(crate) struct UtilTable {
+/// One compiled utility component. References point directly to components, not to positions in a
+/// query-specific table. A table owns the components reachable from one query; several tables can
+/// own the same component without rebuilding its matcher.
+pub(crate) struct UtilityNode {
     #[cfg_attr(not(feature = "code-rule-profile"), allow(dead_code))]
-    pub(crate) names: Vec<String>,
-    /// Whether each utility has parameters: it runs in a frame of its own, never in its caller's
-    /// environment, so its captures are not the query's.
-    pub(crate) framed: Vec<bool>,
-    /// What each utility compiles from (`UtilOrigin`); `None` in a define's validation table.
-    pub(crate) origins: Vec<Option<UtilOrigin>>,
-    /// Each utility's memo scope (`UtilRef::scope`), worked out on first use.
-    scopes: Vec<OnceLock<Option<Scope>>>,
-    /// Each utility's memo identity (`UtilRef::memo_term`), worked out on first use.
-    memo_terms: Vec<OnceLock<(usize, usize)>>,
-    pub(crate) rules: OnceLock<Vec<AstMatcher>>,
-    /// A first compilation of the utilities, which compile-time walks read while `rules` is being
-    /// compiled: what a utility binds or exports does not depend on the order of its terms, which is
-    /// all that differs between the two.
-    pub(crate) draft: OnceLock<Vec<AstMatcher>>,
-    /// Whether a compile-time walk reached a utility before either was filled.
+    pub(crate) name: String,
+    /// A parameterized utility runs in a private frame.
+    pub(crate) framed: bool,
+    /// What this utility and its dependency closure compile from.
+    pub(crate) origin: Option<UtilOrigin>,
+    /// The final matcher for this component.
+    pub(crate) rule: OnceLock<AstMatcher>,
+    /// A first matcher used only while a recursive component reaches its capture-summary fixpoint.
+    pub(crate) draft: Mutex<Option<Arc<AstMatcher>>>,
+    /// Whether compilation tried to read this component before either matcher was available.
     pub(crate) unfilled: AtomicBool,
+    /// Runtime analyses belong to the immutable component and are shared by every query table.
+    scope: OnceLock<Option<Scope>>,
+    memo_term: OnceLock<(usize, usize)>,
+}
+
+impl UtilityNode {
+    pub(crate) fn new(name: String, framed: bool, origin: Option<UtilOrigin>) -> Self {
+        Self {
+            name,
+            framed,
+            origin,
+            rule: OnceLock::new(),
+            draft: Mutex::new(None),
+            unfilled: AtomicBool::new(false),
+            scope: OnceLock::new(),
+            memo_term: OnceLock::new(),
+        }
+    }
+}
+
+/// The ordered view of utilities visible to one query. Ordering remains part of diagnostics and
+/// parameterized-call accounting, but references inside matchers are independent of this order.
+pub(crate) struct UtilTable {
+    #[cfg(test)]
+    pub(crate) names: Vec<String>,
+    pub(crate) nodes: Vec<Arc<UtilityNode>>,
 }
 
 impl UtilTable {
-    pub(crate) fn new(
-        names: Vec<String>,
-        framed: Vec<bool>,
-        origins: Vec<Option<UtilOrigin>>,
-    ) -> Self {
+    pub(crate) fn new(nodes: Vec<Arc<UtilityNode>>) -> Self {
+        #[cfg(test)]
+        let names = nodes.iter().map(|node| node.name.clone()).collect();
         Self {
-            scopes: names.iter().map(|_| OnceLock::new()).collect(),
-            memo_terms: names.iter().map(|_| OnceLock::new()).collect(),
+            #[cfg(test)]
             names,
-            framed,
-            origins,
-            rules: OnceLock::new(),
-            draft: OnceLock::new(),
-            unfilled: AtomicBool::new(false),
+            nodes,
         }
     }
 
-    /// Whether a walk met a utility it could not read yet.
-    pub(crate) fn was_unfilled(&self) -> bool {
-        self.unfilled.load(Ordering::Relaxed)
+    pub(crate) fn rule_by_key(&self, key: usize) -> Option<&AstMatcher> {
+        self.nodes
+            .iter()
+            .find(|node| Arc::as_ptr(node) as usize == key)?
+            .rule
+            .get()
     }
 
     /// The compiled utilities that run in their caller's environment (no parameters).
     pub(crate) fn shared_rules(&self) -> impl Iterator<Item = &AstMatcher> {
-        self.rules
-            .get()
-            .into_iter()
-            .flatten()
-            .zip(&self.framed)
-            .filter_map(|(rule, framed)| (!framed).then_some(rule))
+        self.nodes
+            .iter()
+            .filter(|node| !node.framed)
+            .filter_map(|node| node.rule.get())
     }
 }
 
@@ -355,8 +371,7 @@ impl<K: Ord + Clone, T: Clone + PartialEq> Default for UtilitySummary<K, T> {
 
 #[derive(Clone)]
 pub(crate) struct UtilRef {
-    pub(crate) table: Weak<UtilTable>,
-    pub(crate) index: usize,
+    pub(crate) node: Weak<UtilityNode>,
 }
 
 impl UtilRef {
@@ -365,21 +380,21 @@ impl UtilRef {
     /// clause of a file reaching an equal utility shares them; else its table and index. `None`
     /// where its table is gone.
     pub(super) fn memo_term(&self) -> Option<(usize, usize)> {
-        let table = self.table.upgrade()?;
-        let term = table.memo_terms.get(self.index)?.get_or_init(|| {
+        let node = self.node.upgrade()?;
+        let term = node.memo_term.get_or_init(|| {
             let shared = self.scope().flatten().is_some();
-            match table.origins.get(self.index).cloned().flatten() {
+            match node.origin {
                 Some(origin) if shared => {
                     let word = |bytes: &[u8]| {
                         usize::from_le_bytes(bytes.try_into().expect("eight digest bytes"))
                     };
-                    // Table addresses never have the top bit set: the two kinds never collide.
+                    // Heap addresses never have the top bit set: the two kinds never collide.
                     (
                         word(&origin.digest[..8]) | 1 << (usize::BITS - 1),
                         word(&origin.digest[8..16]),
                     )
                 }
-                _ => (self.table.as_ptr() as usize, self.index),
+                _ => (self.node.as_ptr() as usize, 0),
             }
         });
         Some(*term)
@@ -389,8 +404,8 @@ impl UtilRef {
     /// caller's bindings. `Some(None)` where it holds a term that reads more (`context_free`),
     /// `None` where its table is gone.
     pub(super) fn scope(&self) -> Option<Option<Scope>> {
-        let table = self.table.upgrade()?;
-        let scope = table.scopes.get(self.index)?.get_or_init(|| {
+        let node = self.node.upgrade()?;
+        let scope = node.scope.get_or_init(|| {
             self.with_target(|rule| {
                 context_free(rule, &mut BTreeMap::new()).then(|| {
                     super::CaptureAnalysis::default()
@@ -410,7 +425,7 @@ impl UtilRef {
     /// being read, which a reference back counts as context-free (its cycle is as free as its
     /// other utilities).
     fn context_free_within(&self, read: &mut BTreeMap<(usize, usize), Option<bool>>) -> bool {
-        let key = (self.table.as_ptr() as usize, self.index);
+        let key = (self.key(), 0);
         if let Some(known) = read.get(&key) {
             return known.unwrap_or(true);
         }
@@ -474,33 +489,43 @@ impl UtilRef {
     /// The referenced rule, or its draft while the table is being compiled; `None` before the draft
     /// is filled (which the table records) or after the table is dropped.
     pub(crate) fn with_target<T>(&self, visit: impl FnOnce(&AstMatcher) -> T) -> Option<T> {
-        let table = self.table.upgrade()?;
-        let Some(rules) = table.rules.get().or_else(|| table.draft.get()) else {
-            table.unfilled.store(true, Ordering::Relaxed);
+        let node = self.node.upgrade()?;
+        if let Some(rule) = node.rule.get() {
+            return Some(visit(rule));
+        }
+        let draft = node.draft.lock().clone();
+        let Some(rule) = draft else {
+            node.unfilled.store(true, Ordering::Relaxed);
             return None;
         };
-        Some(visit(rules.get(self.index)?))
+        Some(visit(&rule))
     }
 
     /// What `with_target` reads, as a summary key: the table, the utility, and which of the table's
     /// compilations is filled (none, the draft, the rules). A summary under this key holds in a
     /// walk that spans the table's compilation steps.
     pub(crate) fn summary_key(&self) -> (usize, usize, u8) {
-        let filled = self.table.upgrade().map_or(0, |table| {
-            if table.rules.get().is_some() {
+        let filled = self.node.upgrade().map_or(0, |node| {
+            if node.rule.get().is_some() {
                 2
             } else {
-                u8::from(table.draft.get().is_some())
+                u8::from(node.draft.lock().is_some())
             }
         });
-        (self.table.as_ptr() as usize, self.index, filled)
+        (self.key(), 0, filled)
+    }
+
+    /// Stable for the life of the component. Compiler and matcher summaries use it instead of a
+    /// query table position.
+    pub(crate) fn key(&self) -> usize {
+        self.node.as_ptr() as usize
     }
 
     #[cfg_attr(not(feature = "code-rule-profile"), allow(dead_code))]
     pub(crate) fn name(&self) -> String {
-        self.table
+        self.node
             .upgrade()
-            .and_then(|table| table.names.get(self.index).cloned())
+            .map(|node| node.name.clone())
             .unwrap_or_default()
     }
 }

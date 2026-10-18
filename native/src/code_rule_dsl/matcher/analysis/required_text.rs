@@ -156,7 +156,7 @@ fn needs(matcher: &AstMatcher, utilities: &mut Utilities, reach: Reach) -> Vec<C
 }
 
 fn util_needs(util: &UtilRef, utilities: &mut Utilities, reach: Reach) -> Vec<Clause> {
-    let key = (util.table.as_ptr() as usize, util.index);
+    let key = (util.key(), 0);
     if let Some(clauses) = utilities.read.get(&key) {
         return clauses.clone();
     }

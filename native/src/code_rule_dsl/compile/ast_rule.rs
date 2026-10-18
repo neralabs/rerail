@@ -1,5 +1,6 @@
 mod semantic;
 
+use super::artifacts::CompilerArtifacts;
 use super::compare::{count_bounds, parse_comparison};
 use super::dialect::grammar_gap;
 use super::nth_child::{compile_nth_child, validate_nth_child};
@@ -8,7 +9,7 @@ use super::utils::{UtilIds, UtilScope, is_metavariable_name};
 use crate::code_rule_dsl::json::{
     bounded_text, invalid, non_empty_str, object, reject_unknown, required_str,
 };
-use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
+use crate::code_rule_dsl::language::{GrammarDialect, PatternSource};
 use crate::code_rule_dsl::matcher::{
     AstMatcher, CallArgs, CompareText, Count, FieldRelation, Reading, Related, StopBy, UtilCall,
     UtilRef,
@@ -17,6 +18,7 @@ use crate::code_rule_dsl::model::Limits;
 use ast_grep_core::Language;
 use ast_grep_core::matcher::{KindMatcher, Pattern, PatternNode};
 use napi::Result;
+#[cfg(test)]
 use regex::Regex;
 use serde_json::Value;
 
@@ -82,11 +84,6 @@ pub(super) fn is_rule_key(key: &str) -> bool {
 
 type RelationConstructor = fn(Box<Related>, StopBy) -> AstMatcher;
 
-pub(super) fn compile_regex(source: &str, path: &str) -> Result<Regex> {
-    crate::code_rule_dsl::regex_cache::compile(source)
-        .map_err(|_| invalid(format!("{path}: Parsing text matcher fails.")))
-}
-
 pub(super) const AST_RELATIONS: [(&str, RelationConstructor); 4] = [
     ("inside", AstMatcher::Inside),
     ("has", AstMatcher::Has),
@@ -101,6 +98,7 @@ pub(super) fn validate_ast_rule(
     path: &str,
     limits: &Limits,
     utils: &UtilIds,
+    artifacts: &CompilerArtifacts,
 ) -> Result<()> {
     let rule = object(value, path)?;
     if rule.contains_key("host") {
@@ -152,15 +150,17 @@ pub(super) fn validate_ast_rule(
             "maxRegexPatternBytes",
             limits.max_regex_pattern_bytes,
         )?;
-        compile_regex(source, &format!("{path}/regex"))?;
+        artifacts
+            .regex(source)
+            .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
     }
     if let Some(nth) = rule.get("nthChild") {
-        validate_nth_child(nth, &format!("{path}/nthChild"), limits, utils)?;
+        validate_nth_child(nth, &format!("{path}/nthChild"), limits, utils, artifacts)?;
     }
     for (key, _) in AST_RELATIONS {
         if let Some(relation) = rule.get(key) {
             let relation_path = format!("{path}/{key}");
-            let field = validate_relation(relation, &relation_path, limits, utils)?;
+            let field = validate_relation(relation, &relation_path, limits, utils, artifacts)?;
             // ast-grep-config 0.45.3 `Precedes`/`Follows`: `FieldNotSupported`.
             if field.is_some() && !matches!(key, "inside" | "has") {
                 return Err(invalid(format!(
@@ -173,7 +173,7 @@ pub(super) fn validate_ast_rule(
         let count_path = format!("{path}/count");
         let spec = count_bounds(count, &count_path)?;
         let relation_path = format!("{count_path}/{}", spec.key);
-        if validate_relation(spec.relation, &relation_path, limits, utils)?.is_some() {
+        if validate_relation(spec.relation, &relation_path, limits, utils, artifacts)?.is_some() {
             return Err(invalid(format!(
                 "{relation_path}/field: field is not supported in count"
             )));
@@ -188,17 +188,23 @@ pub(super) fn validate_ast_rule(
                 return Err(invalid(format!("{path}/{key} must not be empty")));
             }
             for (index, item) in items.iter().enumerate() {
-                validate_ast_rule(item, &format!("{path}/{key}/{index}"), limits, utils)?;
+                validate_ast_rule(
+                    item,
+                    &format!("{path}/{key}/{index}"),
+                    limits,
+                    utils,
+                    artifacts,
+                )?;
             }
         }
     }
     if let Some(not) = rule.get("not") {
-        validate_ast_rule(not, &format!("{path}/not"), limits, utils)?;
+        validate_ast_rule(not, &format!("{path}/not"), limits, utils, artifacts)?;
     }
     if let Some(compare) = rule.get("compare") {
         parse_comparison(compare, &format!("{path}/compare"))?;
     }
-    semantic::validate(rule, path, limits, utils)?;
+    semantic::validate(rule, path, limits, utils, artifacts)?;
     if let Some(matches) = rule.get("matches") {
         call_arguments(matches, &format!("{path}/matches"), utils)?;
     }
@@ -286,12 +292,13 @@ fn validate_relation<'a>(
     path: &str,
     limits: &Limits,
     utils: &UtilIds,
+    artifacts: &CompilerArtifacts,
 ) -> Result<Option<&'a str>> {
     let (stop, field, nested) = relation_rule(relation, path)?;
     if let StopSpec::Rule(stop) = stop {
-        validate_ast_rule(stop, &format!("{path}/stopBy"), limits, utils)?;
+        validate_ast_rule(stop, &format!("{path}/stopBy"), limits, utils, artifacts)?;
     }
-    validate_ast_rule(&nested, path, limits, utils)?;
+    validate_ast_rule(&nested, path, limits, utils, artifacts)?;
     Ok(field)
 }
 
@@ -413,7 +420,7 @@ pub(crate) fn compile_ast_rule(
                 },
             )
         };
-        terms.push(match rule_pattern(source, language) {
+        terms.push(match utils.artifacts.pattern(source, language) {
             Ok((compiled, parsed_as)) if !compiled.has_error() => {
                 match literal_dollar_name(&compiled, written, parsed_as) {
                     Some(name) => grammar_gap(
@@ -460,9 +467,8 @@ pub(crate) fn compile_ast_rule(
         });
     }
     if let Some(regex) = rule.get("regex").and_then(Value::as_str) {
-        terms.push(AstMatcher::Regex(compile_regex(
-            regex,
-            &format!("{path}/regex"),
+        terms.push(AstMatcher::Regex(utils.artifacts.regex(regex).map_err(
+            |_| invalid(format!("{path}/regex: Parsing text matcher fails.")),
         )?));
     }
     if let Some(capture) = rule.get("capture") {
@@ -583,23 +589,18 @@ pub(crate) fn compile_ast_rule(
     if let Some(matches) = rule.get("matches") {
         let matches_path = format!("{path}/matches");
         let (id, arguments) = call_arguments(matches, &matches_path, utils.ids)?;
-        let index = utils
-            .ids
-            .keys()
-            .position(|known| *known == id)
-            .ok_or_else(|| {
-                invalid(format!(
-                    "{matches_path}: utility rule `{id}` is not defined"
-                ))
-            })?;
+        let (_, target) = utils.targets.get(id).ok_or_else(|| {
+            invalid(format!(
+                "{matches_path}: utility rule `{id}` is not defined"
+            ))
+        })?;
         let util = UtilRef {
-            table: utils.table.clone(),
-            index,
+            node: target.clone(),
         };
         terms.push(match arguments {
             None => AstMatcher::Util(util),
             Some(args) => {
-                utils.instance(index, &args, &matches_path)?;
+                utils.instance(target.as_ptr() as usize, &args, &matches_path)?;
                 AstMatcher::Call(Box::new(UtilCall { util, args }))
             }
         });

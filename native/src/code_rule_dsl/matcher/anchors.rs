@@ -197,10 +197,11 @@ impl AnchorPlan {
     }
 
     fn compile_util(util: &UtilRef, inlining: &mut Inlining) -> Self {
-        if let Some(plan) = inlining.completed.get(&util.index) {
+        let key = util.key();
+        if let Some(plan) = inlining.completed.get(&key) {
             return plan.clone();
         }
-        if inlining.budget == 0 || !inlining.visiting.insert(util.index) {
+        if inlining.budget == 0 || !inlining.visiting.insert(key) {
             return Self::unrestricted();
         }
         inlining.budget -= 1;
@@ -228,8 +229,8 @@ impl AnchorPlan {
                 condition: Condition::Utility(Arc::new(plan)),
             }
         };
-        inlining.visiting.remove(&util.index);
-        inlining.completed.insert(util.index, plan.clone());
+        inlining.visiting.remove(&key);
+        inlining.completed.insert(key, plan.clone());
         plan
     }
 

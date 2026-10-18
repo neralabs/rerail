@@ -483,7 +483,7 @@ fn framed_variables(
     util: &UtilRef,
     summaries: &mut UtilitySummary<usize, BTreeMap<String, Capture>>,
 ) -> BTreeMap<String, Capture> {
-    summaries.summarize(util.index, BTreeMap::new(), |summaries| {
+    summaries.summarize(util.key(), BTreeMap::new(), |summaries| {
         #[cfg(test)]
         record_walk(Walk::CaptureVariables);
         let mut summary = BTreeMap::new();

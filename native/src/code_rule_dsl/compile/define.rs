@@ -2,21 +2,20 @@
 //! reports nothing. Its `utils` are visible to every ast query of its `language`, as if each query
 //! that names one listed it in its own `utils`: the query compiles it with its own options.
 
-use super::ast_rule::{compile_ast_rule, validate_ast_rule};
+use super::ast_rule::validate_ast_rule;
 use super::config::Options;
-use super::dialect::language_capability;
 use super::refuse_unavailable_semantics;
-use super::utils::{UtilDef, UtilIds, UtilScope, reject_util_cycles, util_map};
+use super::utils::{UtilDef, UtilIds, reject_util_cycles, util_map};
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown, required_str};
 use crate::code_rule_dsl::language::CodeRuleLanguage;
-use crate::code_rule_dsl::matcher::{UtilOrigin, UtilTable};
+use crate::code_rule_dsl::matcher::{UtilOrigin, UtilityNode};
 use crate::code_rule_dsl::model::Capabilities;
 use napi::Result;
 use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, OnceLock};
 
 /// The constraint forms a clause other than a define holds.
 pub(super) const CLAUSE_KINDS: [&str; 4] = ["forbid", "require_each", "budget", "llm"];
@@ -24,23 +23,31 @@ pub(super) const CLAUSE_KINDS: [&str; 4] = ["forbid", "require_each", "budget", 
 /// Each language's shared utilities, by id.
 pub(super) type SharedUtils<'a> = BTreeMap<String, BTreeMap<String, UtilDef<'a>>>;
 
-/// What the document's defines hold: shared utilities and options.
-pub(super) struct CompiledUtilityStage {
-    pub(super) table: Arc<UtilTable>,
-    pub(super) gaps: Vec<String>,
+/// One immutable compiled utility SCC and the diagnostics it emitted. The component key includes
+/// every member and dependency semantic input, so its direct node references are reusable in any
+/// query closure with the same context.
+pub(super) struct CompiledUtilityComponent {
+    pub(super) nodes: BTreeMap<String, Arc<UtilityNode>>,
+    pub(super) gaps: BTreeMap<String, Vec<String>>,
     pub(super) conflicts: BTreeSet<super::order::AllOrderConflict>,
     pub(super) calls: Vec<crate::code_rule_dsl::calls::FoundTerm>,
     pub(super) instances: BTreeSet<(usize, crate::code_rule_dsl::matcher::CallArgs)>,
 }
 
+type ComponentResult = std::result::Result<Arc<CompiledUtilityComponent>, String>;
+type ComponentCell = Arc<OnceLock<ComponentResult>>;
+
 pub(super) struct Defines<'a> {
+    pub(super) artifacts: Arc<super::artifacts::CompilerArtifacts>,
     pub(super) utils: SharedUtils<'a>,
     pub(super) origins: BTreeMap<String, BTreeMap<String, UtilOrigin>>,
+    /// Policy-level SCC plans. A query with no local utilities filters this stable plan to its
+    /// reachable shared closure instead of traversing the same utility graph again.
+    pub(super) components: BTreeMap<String, Vec<Vec<String>>>,
     pub(super) options: Options,
-    /// Context-independent utility compilation followed by query-specific root linking. Entries
-    /// are scoped to one document, so source paths and capability validation remain its own.
-    pub(super) compiled: Mutex<BTreeMap<[u8; 32], Arc<CompiledUtilityStage>>>,
-    pub(super) stage_locks: Mutex<BTreeMap<[u8; 32], Arc<Mutex<()>>>>,
+    /// Immutable SCC artifacts followed by query-specific root linking. Entries are scoped to one
+    /// document, so source paths and deterministic validation remain its own.
+    pub(super) compiled: Mutex<BTreeMap<[u8; 32], ComponentCell>>,
     pub(super) utility_cache_hits: AtomicUsize,
     pub(super) utility_cache_misses: AtomicUsize,
     pub(super) utility_matcher_compilations: AtomicUsize,
@@ -56,6 +63,7 @@ pub(super) fn is_define(clause: &Value) -> bool {
 pub(super) fn collect_defines<'a>(
     clauses: &'a [Value],
     capabilities: &Capabilities,
+    artifacts: &super::artifacts::CompilerArtifacts,
 ) -> Result<SharedUtils<'a>> {
     let mut shared = SharedUtils::new();
     for (index, clause) in clauses.iter().enumerate() {
@@ -130,99 +138,24 @@ pub(super) fn collect_defines<'a>(
             CodeRuleLanguage::parse(language).expect("a define's language was parsed above");
         for util in utils.values() {
             refuse_unavailable_semantics(util.rule, &util.rule_path, code_rule_language)?;
-            validate_ast_rule(util.rule, &util.rule_path, &capabilities.limits, &ids)?;
+            validate_ast_rule(
+                util.rule,
+                &util.rule_path,
+                &capabilities.limits,
+                &ids,
+                artifacts,
+            )?;
         }
         reject_util_cycles(utils)?;
-        check_dialects(language, utils, &ids, capabilities)?;
     }
     Ok(shared)
-}
-
-/// Compiles the shared utilities of one language for each of its dialects: each must be whole in
-/// at least one, as a query's rule must.
-fn check_dialects<'u>(
-    language: &str,
-    utils: &'u BTreeMap<String, UtilDef<'u>>,
-    ids: &UtilIds,
-    capabilities: &Capabilities,
-) -> Result<()> {
-    let (grammars, _) = language_capability(language, capabilities)?;
-    let mut rejections = BTreeMap::<&str, Vec<(String, &str)>>::new();
-    let mut whole = BTreeSet::new();
-    // An `all` ordering conflict depends on what the callers bind; the queries that call a shared
-    // utility settle it there.
-    let ignored = std::cell::RefCell::new(BTreeSet::new());
-    // A shared utility's `calls` terms are the calling queries' (their seeds carry its rule).
-    let calls = crate::code_rule_dsl::calls::CallsCollector::new(String::new(), false);
-    for (dialect, grammar) in &grammars {
-        let table = Arc::new(UtilTable::new(
-            utils.keys().cloned().collect(),
-            utils.values().map(|util| !util.params.is_empty()).collect(),
-            vec![None; utils.len()],
-        ));
-        let scope = UtilScope {
-            table: Arc::downgrade(&table),
-            ids,
-            options: None,
-            python: None,
-            transform: None,
-            conflicts: Some(&ignored),
-            captures: Default::default(),
-            instances: Default::default(),
-            calls: Some(&calls),
-        };
-        let compile = |gaps: &mut BTreeMap<&'u str, Vec<String>>| {
-            utils
-                .iter()
-                .map(|(id, util)| {
-                    let gaps = gaps.entry(id.as_str()).or_default();
-                    compile_ast_rule(util.rule, *grammar, &util.rule_path, gaps, &scope)
-                })
-                .collect::<Result<Vec<_>>>()
-        };
-        let mut gaps = BTreeMap::new();
-        let compiled = compile(&mut gaps)?;
-        if table.was_unfilled() {
-            if table.draft.set(compiled).is_err() {
-                unreachable!("a fresh table is drafted once");
-            }
-            gaps.clear();
-            compile(&mut gaps)?;
-        }
-        for (id, gaps) in gaps {
-            match gaps.into_iter().next() {
-                Some(reason) => rejections.entry(id).or_default().push((reason, *dialect)),
-                None => {
-                    whole.insert(id);
-                }
-            }
-        }
-    }
-    let Some((_, rejections)) = rejections
-        .into_iter()
-        .find(|(id, reasons)| !whole.contains(id) && !reasons.is_empty())
-    else {
-        return Ok(());
-    };
-    let (first, _) = &rejections[0];
-    let message = if rejections.iter().all(|(reason, _)| reason == first) {
-        let dialects = rejections.iter().map(|(_, dialect)| *dialect);
-        let dialects = dialects.collect::<Vec<_>>().join(", ");
-        let plural = if rejections.len() > 1 { "s" } else { "" };
-        format!("{first} ({dialects} grammar{plural})")
-    } else {
-        let each = rejections
-            .iter()
-            .map(|(reason, dialect)| format!("{reason} ({dialect} grammar)"));
-        each.collect::<Vec<_>>().join("; ")
-    };
-    Err(invalid(message))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::code_rule_dsl::test_support::*;
     use serde_json::{Value, json};
+    use std::sync::Arc;
 
     fn document(clauses: Value) -> Value {
         json!({ "format": "rerail.policy/v1", "id": "shared", "revision": 1, "mode": "steer", "clauses": clauses })
@@ -406,6 +339,75 @@ mod tests {
             rule
         ]))
         .unwrap_or_else(|error| panic!("{}", error.reason));
+    }
+
+    #[test]
+    fn define_validation_leaves_caller_capture_checks_to_query_linking() {
+        compile(json!([
+            { "id": "shared", "define": { "language": "typescript", "utils": {
+                "reads-caller": {
+                    "compare": { "left": "X", "op": "eq", "right": "X" }
+                }
+            } } },
+            query(
+                "q",
+                "typescript",
+                json!({
+                    "rule": { "all": [
+                        { "pattern": "$X" },
+                        { "matches": "reads-caller" }
+                    ] }
+                })
+            ),
+        ]))
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+    }
+
+    #[test]
+    fn different_closures_share_their_common_compiled_component() {
+        let compiled = compile(json!([
+            { "id": "shared", "define": { "language": "typescript", "utils": {
+                "a": { "kind": "identifier", "regex": "^a$" },
+                "b": { "matches": "a" },
+                "c": { "matches": "a" },
+            } } },
+            query("b", "typescript", json!({ "rule": { "matches": "b" } })),
+            query("c", "typescript", json!({ "rule": { "matches": "c" } })),
+        ]))
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        let matchers = compiled
+            .inner
+            .clauses
+            .iter()
+            .flat_map(|clause| match &clause.kind {
+                crate::code_rule_dsl::model::ClauseKind::Forbid(
+                    crate::code_rule_dsl::model::Query::Ast { matchers, .. },
+                ) => matchers.iter().collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let left = matchers
+            .iter()
+            .filter(|matcher| matcher.utils.names == ["a", "b"])
+            .collect::<Vec<_>>();
+        let right = matchers
+            .iter()
+            .filter(|matcher| matcher.utils.names == ["a", "c"])
+            .collect::<Vec<_>>();
+        assert_eq!(left.len(), 3);
+        assert_eq!(right.len(), 3);
+        for (left, right) in left.into_iter().zip(right) {
+            assert!(Arc::ptr_eq(&left.utils.nodes[0], &right.utils.nodes[0]));
+            let a = Arc::as_ptr(&left.utils.nodes[0]) as usize;
+            for dependency in [&left.utils.nodes[1], &right.utils.nodes[1]] {
+                let crate::code_rule_dsl::matcher::AstMatcher::Util(reference) =
+                    dependency.rule.get().expect("compiled component")
+                else {
+                    panic!("one-term utility is a direct reference");
+                };
+                assert_eq!(reference.key(), a);
+            }
+        }
     }
 
     #[test]

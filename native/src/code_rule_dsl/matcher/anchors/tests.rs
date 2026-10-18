@@ -18,14 +18,18 @@ fn compile_rule(
     gaps: &mut Vec<String>,
 ) -> napi::Result<AstMatcher> {
     let ids = std::collections::BTreeMap::new();
+    let targets = std::collections::BTreeMap::new();
+    let captures = std::cell::RefCell::new(Default::default());
+    let artifacts = crate::code_rule_dsl::compile::artifacts::CompilerArtifacts::default();
     let utils = crate::code_rule_dsl::compile::UtilScope {
-        table: std::sync::Weak::new(),
+        artifacts: &artifacts,
+        targets: &targets,
         ids: &ids,
         options: None,
         python: None,
         transform: None,
         conflicts: None,
-        captures: Default::default(),
+        captures: &captures,
         instances: Default::default(),
         calls: None,
     };

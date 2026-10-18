@@ -1,14 +1,8 @@
-use parking_lot::Mutex;
 use regex_syntax::hir::{Hir, Look, literal::Extractor};
-use rustc_hash::FxHashMap;
-use std::sync::LazyLock;
 
 const MAX_PATTERN_BYTES: usize = 16 * 1024;
 const MAX_PREFIXES: usize = 64;
 const MAX_PREFIX_CHARS: usize = 8;
-const MAX_PROBES: usize = 4_096;
-static PROBES: LazyLock<Mutex<FxHashMap<String, TextProbe>>> =
-    LazyLock::new(|| Mutex::new(FxHashMap::default()));
 
 /// Necessary conditions only: passing this probe never replaces regex matching.
 /// All lengths are UTF-8 byte lengths, as in the regex engine's HIR properties.
@@ -21,22 +15,6 @@ pub(super) struct TextProbe {
 
 impl TextProbe {
     pub(super) fn compile(pattern: &str) -> Self {
-        if let Some(probe) = PROBES.lock().get(pattern).cloned() {
-            return probe;
-        }
-        let probe = Self::compile_uncached(pattern);
-        let mut probes = PROBES.lock();
-        if let Some(existing) = probes.get(pattern) {
-            return existing.clone();
-        }
-        if probes.len() == MAX_PROBES {
-            probes.clear();
-        }
-        probes.insert(pattern.to_owned(), probe.clone());
-        probe
-    }
-
-    fn compile_uncached(pattern: &str) -> Self {
         // Parsing and extraction are optional optimizations. Bound their work,
         // and leave authoritative syntax/size validation to the actual matcher.
         if pattern.len() > MAX_PATTERN_BYTES {

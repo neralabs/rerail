@@ -1,3 +1,4 @@
+use super::artifacts::CompilerArtifacts;
 use super::ast_rule::{compile_ast_rule, validate_ast_rule};
 use super::resolve::{BINDING_KEYS, OCCURRENCE_KEY};
 use super::utils::{UtilIds, UtilScope};
@@ -271,13 +272,14 @@ pub(super) fn validate_binds(
     path: &str,
     limits: &Limits,
     utils: &UtilIds,
+    artifacts: &CompilerArtifacts,
 ) -> Result<()> {
     let binds = object(value, path)?;
     reject_unknown(binds, &binds_keys(), path)?;
     validate_filter(binds, path)?;
     for key in BINDING_KEYS.iter().chain(&[OCCURRENCE_KEY]) {
         if let Some(sub) = binds.get(*key) {
-            validate_ast_rule(sub, &format!("{path}/{key}"), limits, utils)?;
+            validate_ast_rule(sub, &format!("{path}/{key}"), limits, utils, artifacts)?;
         }
     }
     if let Some(redefines) = binds.get("redefines") {
@@ -290,7 +292,13 @@ pub(super) fn validate_binds(
         }
         for key in BINDING_KEYS {
             if let Some(sub) = redefines.get(*key) {
-                validate_ast_rule(sub, &format!("{redefines_path}/{key}"), limits, utils)?;
+                validate_ast_rule(
+                    sub,
+                    &format!("{redefines_path}/{key}"),
+                    limits,
+                    utils,
+                    artifacts,
+                )?;
             }
         }
     }

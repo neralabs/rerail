@@ -1,4 +1,5 @@
 mod arguments;
+pub(super) mod artifacts;
 mod ast_rule;
 #[cfg(test)]
 mod binding_tests;
@@ -30,7 +31,7 @@ use super::language::adapter::{Refusal, gate};
 use super::language::{CodeRuleLanguage, Semantic, Support};
 use super::matcher::{
     AnchorPlan, AstMatcher, Capture, Constrained, GrammarMatcher, Reading, RequiredText,
-    UtilOrigin, UtilTable, collect_variables, reads_values,
+    UtilOrigin, UtilTable, UtilityNode, collect_variables, reads_values,
 };
 use super::model::{
     Anchor, Capabilities, ClauseKind, CodeRuleScope, CompiledClause, Limits, Query, RegexSource,
@@ -39,44 +40,26 @@ use super::model::{
 use super::soundness::sound_under_errors;
 use super::violations;
 use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
+use artifacts::CompilerArtifacts;
 pub(super) use ast_rule::compile_ast_rule;
 use ast_rule::validate_ast_rule;
 use compare::{CompareWalk, binding_site_index, bound_elsewhere, compare_sites, frame_scope};
-use define::{CLAUSE_KINDS, CompiledUtilityStage, Defines, collect_defines, is_define};
+use define::{CLAUSE_KINDS, CompiledUtilityComponent, Defines, collect_defines, is_define};
 use dialect::language_capability;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use napi::Result;
 use rayon::prelude::*;
-use serde::Serialize;
+use regex::Regex;
 use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{self, Write};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 pub(super) use utils::UtilScope;
-use utils::{UtilDef, UtilIds, reachable, reject_util_cycles, rule_map, util_map};
-
-struct DigestWriter<'a>(&'a mut Sha256);
-
-impl Write for DigestWriter<'_> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.update(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-fn digest_json(value: &impl Serialize) -> Result<[u8; 32]> {
-    let mut digest = Sha256::new();
-    serde_json::to_writer(DigestWriter(&mut digest), value)
-        .map_err(|error| invalid(error.to_string()))?;
-    Ok(digest.finalize().into())
-}
+use utils::{
+    UtilDef, UtilIds, called_utilities, reachable, reject_util_cycles, rule_map, util_map,
+    utility_components,
+};
 
 /// Parses a code-rule document. An object with two equal keys is an error: a plain `Value` keeps the
 /// last one, so the first term would vanish silently (ast-grep 0.45.3 rejects such a rule).
@@ -313,23 +296,30 @@ pub(super) fn compile_document(
     if clauses.is_empty() {
         return Err(invalid("/clauses must not be empty"));
     }
-    let shared_utils = collect_defines(clauses, capabilities)?;
+    let artifacts = Arc::new(CompilerArtifacts::default());
+    let shared_utils = collect_defines(clauses, capabilities, &artifacts)?;
     let shared_origins = shared_utils
         .iter()
         .map(|(language, utils)| {
             util_origins(utils, language, utils.keys()).map(|origins| (language.clone(), origins))
         })
         .collect::<Result<_>>()?;
+    let shared_components = shared_utils
+        .iter()
+        .map(|(language, utils)| (language.clone(), utility_components(utils)))
+        .collect();
     let defines = Defines {
+        artifacts,
         utils: shared_utils,
         origins: shared_origins,
+        components: shared_components,
         options,
         compiled: Default::default(),
-        stage_locks: Default::default(),
         utility_cache_hits: Default::default(),
         utility_cache_misses: Default::default(),
         utility_matcher_compilations: Default::default(),
     };
+    compile_defined_components(&defines, capabilities)?;
     struct ClauseOutput {
         index: usize,
         id: String,
@@ -337,8 +327,9 @@ pub(super) fn compile_document(
         required_ast: BTreeSet<(String, String)>,
         requires_llm: bool,
     }
-    // Compile clauses in parallel, but inspect their results in source order. Thus, errors,
-    // duplicate-id reports, required capabilities, and final clause order stay deterministic.
+    // Components are single-flight; clauses are independent consumers. Collect by indexed parallel
+    // iteration, then inspect source order so errors, duplicate ids, capabilities and output remain
+    // deterministic.
     let outputs = clauses
         .par_iter()
         .enumerate()
@@ -401,15 +392,12 @@ pub(super) fn compile_document(
         .map(|(language, grammar)| json!({ "engine": "ast-grep-core", "grammar": grammar, "language": language }))
         .collect::<Vec<_>>();
     if std::env::var_os("RERAIL_CODE_RULE_PROFILE").is_some() {
-        let (regex_hits, regex_misses) = crate::code_rule_dsl::regex_cache::stats();
         eprintln!(
             "RERAIL_COMPILE_UTILITIES {}",
             json!({
-                "cacheHits": defines.utility_cache_hits.load(Ordering::Relaxed),
-                "cacheMisses": defines.utility_cache_misses.load(Ordering::Relaxed),
-                "matcherCompilations": defines.utility_matcher_compilations.load(Ordering::Relaxed),
-                "regexCacheHits": regex_hits,
-                "regexCacheMisses": regex_misses,
+                "cacheHits": defines.utility_cache_hits.load(std::sync::atomic::Ordering::Relaxed),
+                "cacheMisses": defines.utility_cache_misses.load(std::sync::atomic::Ordering::Relaxed),
+                "matcherCompilations": defines.utility_matcher_compilations.load(std::sync::atomic::Ordering::Relaxed),
             })
         );
     }
@@ -420,6 +408,54 @@ pub(super) fn compile_document(
         compiled,
         json!({ "ast": ast, "llm": requires_llm }),
     ))
+}
+
+/// Validates every shared utility in each dialect and primes the same SCC cache production queries
+/// use. Each language is planned once. `components_only` still checks dialect completeness for each
+/// utility and its dependency closure independently, so unrelated utilities need not share a dialect.
+fn compile_defined_components(defines: &Defines<'_>, capabilities: &Capabilities) -> Result<()> {
+    let results = defines
+        .utils
+        .par_iter()
+        .map(|(language, utils)| {
+            let calls = utils
+                .iter()
+                .map(|(id, util)| {
+                    let matches = if util.params.is_empty() {
+                        Value::String(id.clone())
+                    } else {
+                        let arguments = util
+                            .params
+                            .iter()
+                            .map(|param| (param.clone(), Value::String(format!("${param}"))))
+                            .collect::<Map<_, _>>();
+                        Value::Object(Map::from_iter([(id.clone(), Value::Object(arguments))]))
+                    };
+                    json!({ "matches": matches })
+                })
+                .collect::<Vec<_>>();
+            let query = json!({
+                "ast": {
+                    "language": language,
+                    "rule": { "any": calls },
+                }
+            });
+            compile_query_as(
+                &query,
+                &format!("/__define_validation/{language}"),
+                capabilities,
+                defines,
+                &mut BTreeSet::new(),
+                false,
+                true,
+            )
+            .map(|_| ())
+        })
+        .collect::<Vec<_>>();
+    for result in results {
+        result?;
+    }
+    Ok(())
 }
 
 fn compile_clause(
@@ -605,7 +641,15 @@ fn compile_query(
     defines: &Defines,
     required_ast: &mut BTreeSet<(String, String)>,
 ) -> Result<Query> {
-    compile_query_as(value, path, capabilities, defines, required_ast, false)
+    compile_query_as(
+        value,
+        path,
+        capabilities,
+        defines,
+        required_ast,
+        false,
+        false,
+    )
 }
 
 /// `compile_query`, for a `calls` term's seed query where `seed`: its rules cannot hold `calls`.
@@ -616,6 +660,7 @@ fn compile_query_as(
     defines: &Defines,
     required_ast: &mut BTreeSet<(String, String)>,
     seed: bool,
+    components_only: bool,
 ) -> Result<Query> {
     let query = object(value, path)?;
     reject_unknown(query, &["regex", "ast", "select_when"], path)?;
@@ -655,7 +700,7 @@ fn compile_query_as(
                 }
             };
             Ok(Query::Regex {
-                regex: crate::code_rule_dsl::regex_cache::compile(pattern)
+                regex: Regex::new(pattern)
                     .map_err(|error| invalid(format!("{path}/regex/pattern: {error}")))?,
                 source,
             })
@@ -771,16 +816,30 @@ fn compile_query_as(
             let limits = &capabilities.limits;
             for util in local.values() {
                 refuse_unavailable_semantics(util.rule, &util.rule_path, code_rule_language)?;
-                validate_ast_rule(util.rule, &util.rule_path, limits, &util_ids)?;
+                validate_ast_rule(
+                    util.rule,
+                    &util.rule_path,
+                    limits,
+                    &util_ids,
+                    &defines.artifacts,
+                )?;
             }
             refuse_unavailable_semantics(rule, &rule_path, code_rule_language)?;
-            validate_ast_rule(rule, &rule_path, limits, &util_ids)?;
+            validate_ast_rule(rule, &rule_path, limits, &util_ids, &defines.artifacts)?;
             for (name, constraint) in &constraints {
                 let constraint_path = format!("{constraints_path}/{name}");
                 refuse_unavailable_semantics(constraint, &constraint_path, code_rule_language)?;
-                validate_ast_rule(constraint, &constraint_path, limits, &util_ids)?;
+                validate_ast_rule(
+                    constraint,
+                    &constraint_path,
+                    limits,
+                    &util_ids,
+                    &defines.artifacts,
+                )?;
             }
-            reject_util_cycles(&utils)?;
+            if !local.is_empty() {
+                reject_util_cycles(&utils)?;
+            }
             let transform_path = format!("{path}/ast/transform");
             let transform = ast
                 .get("transform")
@@ -830,159 +889,313 @@ fn compile_query_as(
             let conflicts = std::cell::RefCell::new(BTreeSet::new());
             // `calls` terms of the rule and its utilities; a term's seed depends on the utilities
             // and language options its inner rule reads, so they salt its key.
-            let salt = format!(
-                "{:x}",
-                Sha256::digest(digest_json(&(
-                    language_name,
-                    utils
-                        .iter()
-                        .map(|(id, util)| (id, &util.params, util.rule))
-                        .collect::<Vec<_>>(),
-                    ast.get("languageOptions"),
-                ))?)
-            );
+            let salt = serde_json::to_string(&(
+                language_name,
+                utils
+                    .iter()
+                    .map(|(id, util)| (id, &util.params, util.rule))
+                    .collect::<Vec<_>>(),
+                ast.get("languageOptions"),
+            ))
+            .map_err(|error| invalid(error.to_string()))?;
             let calls = crate::code_rule_dsl::calls::CallsCollector::new(salt.clone(), seed);
             let mut bindable = BTreeSet::new();
-            let local_origins = util_origins(&utils, language_name, local.keys())?;
+            let local_origins = if local.is_empty() {
+                BTreeMap::new()
+            } else {
+                util_origins(&utils, language_name, local.keys())?
+            };
             let shared_origins = defines.origins.get(language_name);
             let origins = utils
                 .keys()
                 .map(|id| {
-                    *local_origins
-                        .get(id)
-                        .or_else(|| shared_origins.and_then(|origins| origins.get(id)))
-                        .expect("every utility has a local or shared origin")
+                    (
+                        id.clone(),
+                        *local_origins
+                            .get(id)
+                            .or_else(|| shared_origins.and_then(|origins| origins.get(id)))
+                            .expect("every utility has a local or shared origin"),
+                    )
                 })
-                .collect::<Vec<_>>();
+                .collect::<BTreeMap<_, _>>();
+            let components = if local.is_empty() {
+                defines
+                    .components
+                    .get(language_name)
+                    .into_iter()
+                    .flatten()
+                    .filter(|component| component.iter().all(|id| utils.contains_key(id)))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            } else {
+                utility_components(&utils)
+            };
+            // Define validation can name many roots in one synthetic query. Keep each root's
+            // dependency closure separate so each utility can be whole in a different dialect.
+            let validation_closures = components_only.then(|| {
+                called_utilities(rule)
+                    .into_iter()
+                    .map(|id| {
+                        let mut closure = reachable(std::iter::once(utils[&id].rule), &utils);
+                        closure.insert(id.clone());
+                        (id, closure)
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            });
+            let mut validation_whole = BTreeSet::new();
+            let mut validation_rejections = BTreeMap::<String, Vec<(String, String)>>::new();
             for (dialect, language) in &grammars {
-                // Stage one compiles an immutable utility graph. Its key includes every input that
-                // can shape a utility matcher; source paths are included because cached `calls`
-                // terms and diagnostics retain them. Stage two below links this query's root and
-                // constraints to the reusable table.
-                let utility_key = digest_json(&(
-                    &salt,
-                    dialect,
-                    utils
+                let capture_analysis = std::cell::RefCell::new(Default::default());
+                let mut nodes = BTreeMap::<String, Arc<UtilityNode>>::new();
+                let mut component_keys = BTreeMap::<String, [u8; 32]>::new();
+                let mut artifacts = Vec::<Arc<CompiledUtilityComponent>>::new();
+                for component in &components {
+                    let members = component.iter().collect::<BTreeSet<_>>();
+                    let dependency_keys = component
                         .iter()
-                        .map(|(id, util)| (id, &util.path, &util.rule_path))
-                        .collect::<Vec<_>>(),
-                    ast.get("transform"),
-                    seed,
-                ))?;
-                let stage_lock = defines
-                    .stage_locks
-                    .lock()
-                    .entry(utility_key)
-                    .or_insert_with(|| Arc::new(parking_lot::Mutex::new(())))
-                    .clone();
-                let _stage_guard = stage_lock.lock();
-                let cached = defines.compiled.lock().get(&utility_key).cloned();
-                let stage = if let Some(cached) = cached {
-                    defines.utility_cache_hits.fetch_add(1, Ordering::Relaxed);
-                    cached
-                } else {
-                    defines.utility_cache_misses.fetch_add(1, Ordering::Relaxed);
-                    let table = Arc::new(UtilTable::new(
-                        utils.keys().cloned().collect(),
-                        utils.values().map(|util| !util.params.is_empty()).collect(),
-                        origins.iter().cloned().map(Some).collect(),
-                    ));
-                    let utility_conflicts = std::cell::RefCell::new(BTreeSet::new());
-                    let utility_calls =
-                        crate::code_rule_dsl::calls::CallsCollector::new(salt.clone(), seed);
-                    let utility_scope = UtilScope {
-                        table: Arc::downgrade(&table),
-                        ids: &util_ids,
-                        options: options.clone(),
-                        python: python.clone(),
-                        transform: transform.clone(),
-                        conflicts: Some(&utility_conflicts),
-                        captures: Default::default(),
-                        instances: Default::default(),
-                        calls: Some(&utility_calls),
-                    };
-                    let compile_utils = |gaps: &mut Vec<String>| {
-                        utils
-                            .values()
-                            .map(|util| {
-                                compile_ast_rule(
-                                    util.rule,
-                                    *language,
-                                    &util.rule_path,
-                                    gaps,
-                                    &utility_scope,
-                                )
-                            })
-                            .collect::<Result<Vec<_>>>()
-                    };
-                    // The draft resolves capture summaries across references. Only this immutable
-                    // stage repeats; every later query with the same context reuses its result.
-                    let mut gaps = Vec::new();
-                    let mut first_gaps = Vec::new();
-                    let mut compiled_utils = compile_utils(&mut first_gaps)?;
-                    let passes = if table.was_unfilled() { 2 } else { 1 };
-                    defines
-                        .utility_matcher_compilations
-                        .fetch_add(utils.len() * passes, Ordering::Relaxed);
-                    if table.was_unfilled() {
-                        if table.draft.set(compiled_utils).is_err() {
-                            unreachable!("a fresh table is drafted once");
+                        .flat_map(|id| called_utilities(utils[id].rule))
+                        .filter(|id| !members.contains(&id))
+                        .filter_map(|id| component_keys.get(&id).copied())
+                        .collect::<BTreeSet<_>>();
+                    let utility_key: [u8; 32] = Sha256::digest(
+                        serde_json::to_vec(&(
+                            language_name,
+                            dialect,
+                            component
+                                .iter()
+                                .map(|id| {
+                                    let util = &utils[id];
+                                    (id, origins[id].digest, &util.path, &util.rule_path)
+                                })
+                                .collect::<Vec<_>>(),
+                            dependency_keys,
+                            ast.get("languageOptions"),
+                            ast.get("transform"),
+                            seed,
+                        ))
+                        .map_err(|error| invalid(error.to_string()))?,
+                    )
+                    .into();
+                    let (cell, cached) = {
+                        let mut compiled = defines.compiled.lock();
+                        match compiled.entry(utility_key) {
+                            std::collections::btree_map::Entry::Occupied(entry) => {
+                                (Arc::clone(entry.get()), true)
+                            }
+                            std::collections::btree_map::Entry::Vacant(entry) => {
+                                let cell = Arc::new(std::sync::OnceLock::new());
+                                entry.insert(Arc::clone(&cell));
+                                (cell, false)
+                            }
                         }
-                        compiled_utils = compile_utils(&mut gaps)?;
+                    };
+                    if cached {
+                        defines
+                            .utility_cache_hits
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     } else {
-                        gaps.extend(first_gaps);
+                        defines
+                            .utility_cache_misses
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
-                    if table.rules.set(compiled_utils).is_err() {
-                        unreachable!("a fresh table is filled once");
+                    let artifact = cell
+                        .get_or_init(|| {
+                            let mut compile = || -> Result<Arc<CompiledUtilityComponent>> {
+                                let component_nodes = component
+                                    .iter()
+                                    .map(|id| {
+                                        let util = &utils[id];
+                                        (
+                                            id.clone(),
+                                            Arc::new(UtilityNode::new(
+                                                id.clone(),
+                                                !util.params.is_empty(),
+                                                Some(origins[id]),
+                                            )),
+                                        )
+                                    })
+                                    .collect::<BTreeMap<_, _>>();
+                                nodes.extend(
+                                    component_nodes
+                                        .iter()
+                                        .map(|(id, node)| (id.clone(), Arc::clone(node))),
+                                );
+                                let targets = util_ids
+                                    .keys()
+                                    .enumerate()
+                                    .filter_map(|(index, id)| {
+                                        nodes
+                                            .get(*id)
+                                            .map(|node| (*id, (index, Arc::downgrade(node))))
+                                    })
+                                    .collect::<BTreeMap<_, _>>();
+                                let utility_conflicts = std::cell::RefCell::new(BTreeSet::new());
+                                let component_salt = format!("{:x}", Sha256::digest(utility_key));
+                                let utility_calls =
+                                    crate::code_rule_dsl::calls::CallsCollector::new(
+                                        component_salt,
+                                        seed,
+                                    );
+                                let utility_scope = UtilScope {
+                                    artifacts: &defines.artifacts,
+                                    targets: &targets,
+                                    ids: &util_ids,
+                                    options: options.clone(),
+                                    python: python.clone(),
+                                    transform: transform.clone(),
+                                    conflicts: Some(&utility_conflicts),
+                                    captures: &capture_analysis,
+                                    instances: Default::default(),
+                                    calls: Some(&utility_calls),
+                                };
+                                let mut gaps = BTreeMap::<String, Vec<String>>::new();
+                                let mut first = Vec::with_capacity(component.len());
+                                for id in component {
+                                    let util = &utils[id];
+                                    let matcher = compile_ast_rule(
+                                        util.rule,
+                                        *language,
+                                        &util.rule_path,
+                                        gaps.entry(id.clone()).or_default(),
+                                        &utility_scope,
+                                    )?;
+                                    first.push((id, matcher));
+                                }
+                                defines.utility_matcher_compilations.fetch_add(
+                                    component.len(),
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                let recursive = component_nodes.values().any(|node| {
+                                    node.unfilled.load(std::sync::atomic::Ordering::Relaxed)
+                                });
+                                if recursive {
+                                    for (id, matcher) in first {
+                                        *component_nodes[id.as_str()].draft.lock() =
+                                            Some(Arc::new(matcher));
+                                        gaps.entry(id.clone()).or_default().clear();
+                                    }
+                                    for id in component {
+                                        let util = &utils[id];
+                                        let matcher = compile_ast_rule(
+                                            util.rule,
+                                            *language,
+                                            &util.rule_path,
+                                            gaps.entry(id.clone()).or_default(),
+                                            &utility_scope,
+                                        )?;
+                                        component_nodes[id].rule.set(matcher).unwrap_or_else(
+                                            |_| unreachable!("a fresh component is filled once"),
+                                        );
+                                    }
+                                    for id in component {
+                                        component_nodes[id].draft.lock().take();
+                                    }
+                                    defines.utility_matcher_compilations.fetch_add(
+                                        component.len(),
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    );
+                                } else {
+                                    for (id, matcher) in first {
+                                        component_nodes[id.as_str()]
+                                            .rule
+                                            .set(matcher)
+                                            .unwrap_or_else(|_| {
+                                                unreachable!("a fresh component is filled once")
+                                            });
+                                    }
+                                }
+                                let instances = utility_scope.instances();
+                                drop(utility_scope);
+                                Ok(Arc::new(CompiledUtilityComponent {
+                                    nodes: component_nodes,
+                                    gaps,
+                                    conflicts: utility_conflicts.into_inner(),
+                                    calls: utility_calls.take(),
+                                    instances,
+                                }))
+                            };
+                            compile().map_err(|error| error.reason)
+                        })
+                        .clone()
+                        .map_err(invalid)?;
+                    nodes.extend(
+                        artifact
+                            .nodes
+                            .iter()
+                            .map(|(id, node)| (id.clone(), Arc::clone(node))),
+                    );
+                    component_keys.extend(component.iter().map(|id| (id.clone(), utility_key)));
+                    artifacts.push(artifact);
+                }
+                if let Some(validation_closures) = &validation_closures {
+                    for (root, closure) in validation_closures {
+                        let reason = components
+                            .iter()
+                            .zip(&artifacts)
+                            .flat_map(|(component, artifact)| {
+                                component
+                                    .iter()
+                                    .filter(|id| closure.contains(*id))
+                                    .flat_map(|id| artifact.gaps[id].iter())
+                            })
+                            .next();
+                        match reason {
+                            Some(reason) => validation_rejections
+                                .entry(root.clone())
+                                .or_default()
+                                .push((reason.clone(), (*dialect).to_owned())),
+                            None => {
+                                validation_whole.insert(root.clone());
+                            }
+                        }
                     }
-                    let instances = utility_scope.instances();
-                    drop(utility_scope);
-                    let stage = Arc::new(CompiledUtilityStage {
-                        table,
-                        gaps,
-                        conflicts: utility_conflicts.into_inner(),
-                        calls: utility_calls.take(),
-                        instances,
-                    });
-                    let mut compiled = defines.compiled.lock();
-                    if let Some(existing) = compiled.get(&utility_key) {
-                        Arc::clone(existing)
-                    } else {
-                        compiled.insert(utility_key, Arc::clone(&stage));
-                        stage
+                    continue;
+                }
+                let table = Arc::new(UtilTable::new(
+                    utils.keys().map(|id| Arc::clone(&nodes[id])).collect(),
+                ));
+                let targets = util_ids
+                    .keys()
+                    .enumerate()
+                    .map(|(index, id)| (*id, (index, Arc::downgrade(&table.nodes[index]))))
+                    .collect::<BTreeMap<_, _>>();
+                let mut gaps = BTreeMap::<String, Vec<String>>::new();
+                let mut component_instances = BTreeSet::new();
+                for artifact in &artifacts {
+                    conflicts
+                        .borrow_mut()
+                        .extend(artifact.conflicts.iter().cloned());
+                    calls.extend(artifact.calls.iter().cloned());
+                    component_instances.extend(artifact.instances.iter().cloned());
+                    for (id, reasons) in &artifact.gaps {
+                        gaps.entry(id.clone()).or_default().extend(reasons.clone());
                     }
-                };
-                conflicts
-                    .borrow_mut()
-                    .extend(stage.conflicts.iter().cloned());
-                calls.extend(stage.calls.iter().cloned());
-                let table = Arc::clone(&stage.table);
+                }
                 let scope = UtilScope {
-                    table: Arc::downgrade(&table),
+                    artifacts: &defines.artifacts,
+                    targets: &targets,
                     ids: &util_ids,
                     options: options.clone(),
                     python: python.clone(),
                     transform: transform.clone(),
                     conflicts: Some(&conflicts),
-                    captures: Default::default(),
-                    instances: std::cell::RefCell::new(stage.instances.clone()),
+                    captures: &capture_analysis,
+                    instances: std::cell::RefCell::new(component_instances),
                     calls: Some(&calls),
                 };
                 // A parameterized utility's captures are its frame's; its calls report what returns.
-                for (util, def) in table
-                    .rules
-                    .get()
-                    .expect("a cached utility stage is filled")
-                    .iter()
-                    .zip(utils.values())
-                {
+                for (node, def) in table.nodes.iter().zip(utils.values()) {
+                    let util = node
+                        .rule
+                        .get()
+                        .expect("a cached utility component is filled");
                     if def.params.is_empty() {
                         collect_variables(util, &mut variables);
                     } else {
                         collect_variables(util, &mut framed_variables);
                     }
                 }
-                let mut gaps = stage.gaps.clone();
+                let mut gaps = gaps.into_values().flatten().collect::<Vec<_>>();
                 let mut matcher = compile_ast_rule(rule, *language, &rule_path, &mut gaps, &scope)?;
                 collect_variables(&matcher, &mut variables);
                 let mut compiled_constraints = Vec::with_capacity(constraints.len());
@@ -999,7 +1212,7 @@ fn compile_query_as(
                     compiled_constraints.push((name.clone(), constraint));
                 }
                 match gaps.into_iter().next() {
-                    Some(reason) => rejections.push((reason, *dialect)),
+                    Some(reason) => rejections.push((reason, (*dialect).to_owned())),
                     None => whole = true,
                 }
                 if !compiled_constraints.is_empty() && !matches!(matcher, AstMatcher::Never) {
@@ -1036,20 +1249,35 @@ fn compile_query_as(
                     });
                 }
             }
-            if !whole {
+            let rejection_message = |rejections: &[(String, String)]| {
                 let (first, _) = &rejections[0];
-                let message = if rejections.iter().all(|(reason, _)| reason == first) {
-                    let dialects = rejections.iter().map(|(_, dialect)| *dialect);
+                if rejections.iter().all(|(reason, _)| reason == first) {
+                    let dialects = rejections.iter().map(|(_, dialect)| dialect.as_str());
                     let dialects = dialects.collect::<Vec<_>>().join(", ");
                     let plural = if rejections.len() > 1 { "s" } else { "" };
                     format!("{first} ({dialects} grammar{plural})")
                 } else {
-                    let each = rejections
+                    rejections
                         .iter()
-                        .map(|(reason, dialect)| format!("{reason} ({dialect} grammar)"));
-                    each.collect::<Vec<_>>().join("; ")
-                };
-                return Err(invalid(message));
+                        .map(|(reason, dialect)| format!("{reason} ({dialect} grammar)"))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                }
+            };
+            if let Some(validation_closures) = validation_closures {
+                if let Some((id, _)) = validation_closures
+                    .iter()
+                    .find(|(id, _)| !validation_whole.contains(*id))
+                {
+                    return Err(invalid(rejection_message(&validation_rejections[id])));
+                }
+                return Ok(Query::Ast {
+                    matchers: Vec::new(),
+                    calls: Vec::new(),
+                });
+            }
+            if !whole {
+                return Err(invalid(rejection_message(&rejections)));
             }
             // ast-grep-config's check: a constraint must name a metavariable the rule, a utility,
             // or a constraint defines. Constraints only ever read single-node captures, so one on
@@ -1315,6 +1543,7 @@ fn compile_query_as(
                     defines,
                     required_ast,
                     true,
+                    false,
                 )?;
                 terms.push(Arc::new(super::model::CallsTerm {
                     key: found.key,

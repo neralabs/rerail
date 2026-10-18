@@ -515,7 +515,7 @@ pub(super) fn compile_file_condition(
             };
             let at = format!("{at}/{name}");
             let pattern = bounded_text(Some(value), &at, "maxRegexPatternBytes", max_regex_bytes)?;
-            crate::code_rule_dsl::regex_cache::compile(pattern)
+            regex::Regex::new(pattern)
                 .map(Some)
                 .map_err(|error| invalid(format!("{at}: {error}")))
         };

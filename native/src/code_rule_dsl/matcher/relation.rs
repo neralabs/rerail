@@ -831,7 +831,7 @@ fn node_kinds(
 ) -> Option<BTreeSet<u16>> {
     let util_kinds =
         |util: &super::UtilRef, utilities: &mut BTreeMap<(usize, usize), Option<BTreeSet<u16>>>| {
-            let key = (util.table.as_ptr() as usize, util.index);
+            let key = (util.key(), 0);
             if let Some(known) = utilities.get(&key) {
                 return known.clone();
             }

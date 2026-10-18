@@ -1,6 +1,6 @@
 use super::order::AllOrderConflict;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
-use crate::code_rule_dsl::matcher::{CaptureAnalysis, MAX_UTIL_INSTANCES, Transform, UtilTable};
+use crate::code_rule_dsl::matcher::{CaptureAnalysis, MAX_UTIL_INSTANCES, Transform, UtilityNode};
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use napi::Result;
 use serde_json::Value;
@@ -143,6 +143,91 @@ fn called_ids<'a>(value: &'a Value, ids: &mut Vec<&'a str>) {
     }
 }
 
+/// Utility ids named directly by a rule.
+pub(super) fn called_utilities(rule: &Value) -> BTreeSet<String> {
+    let mut ids = Vec::new();
+    called_ids(rule, &mut ids);
+    ids.into_iter().map(str::to_owned).collect()
+}
+
+/// Strongly connected utility components in dependency-first order. Members are sorted by id.
+/// An acyclic utility is a component of one. A recursive component is finalized as one unit.
+pub(super) fn utility_components(utils: &BTreeMap<String, UtilDef<'_>>) -> Vec<Vec<String>> {
+    struct Tarjan<'a> {
+        utils: &'a BTreeMap<String, UtilDef<'a>>,
+        next: usize,
+        indices: BTreeMap<String, usize>,
+        low: BTreeMap<String, usize>,
+        stack: Vec<String>,
+        active: BTreeSet<String>,
+        components: Vec<Vec<String>>,
+    }
+
+    impl Tarjan<'_> {
+        fn visit(&mut self, id: &str) {
+            let index = self.next;
+            self.next += 1;
+            self.indices.insert(id.to_owned(), index);
+            self.low.insert(id.to_owned(), index);
+            self.stack.push(id.to_owned());
+            self.active.insert(id.to_owned());
+
+            let mut dependencies = Vec::new();
+            called_ids(self.utils[id].rule, &mut dependencies);
+            dependencies.sort_unstable();
+            dependencies.dedup();
+            for dependency in dependencies {
+                if !self.utils.contains_key(dependency) {
+                    continue;
+                }
+                if !self.indices.contains_key(dependency) {
+                    self.visit(dependency);
+                    let dependency_low = self.low[dependency];
+                    self.low
+                        .entry(id.to_owned())
+                        .and_modify(|low| *low = (*low).min(dependency_low));
+                } else if self.active.contains(dependency) {
+                    let dependency_index = self.indices[dependency];
+                    self.low
+                        .entry(id.to_owned())
+                        .and_modify(|low| *low = (*low).min(dependency_index));
+                }
+            }
+
+            if self.low[id] == self.indices[id] {
+                let mut component = Vec::new();
+                loop {
+                    let member = self.stack.pop().expect("an active utility is on the stack");
+                    self.active.remove(&member);
+                    let complete = member == id;
+                    component.push(member);
+                    if complete {
+                        break;
+                    }
+                }
+                component.sort();
+                self.components.push(component);
+            }
+        }
+    }
+
+    let mut tarjan = Tarjan {
+        utils,
+        next: 0,
+        indices: BTreeMap::new(),
+        low: BTreeMap::new(),
+        stack: Vec::new(),
+        active: BTreeSet::new(),
+        components: Vec::new(),
+    };
+    for id in utils.keys() {
+        if !tarjan.indices.contains_key(id) {
+            tarjan.visit(id);
+        }
+    }
+    tarjan.components
+}
+
 /// The shared utilities `roots` reach through `matches`, directly or through each other.
 pub(super) fn reachable<'a>(
     roots: impl IntoIterator<Item = &'a Value>,
@@ -245,7 +330,9 @@ impl UtilScope<'_> {
 
 /// The utilities a rule's `matches` may name while compiling it for one grammar.
 pub(crate) struct UtilScope<'a> {
-    pub(crate) table: Weak<UtilTable>,
+    pub(crate) artifacts: &'a super::artifacts::CompilerArtifacts,
+    /// Direct compiled-component targets, with the query-order index used only for call limits.
+    pub(crate) targets: &'a BTreeMap<&'a str, (usize, Weak<UtilityNode>)>,
     pub(crate) ids: &'a UtilIds<'a>,
     /// The query's `languageOptions`, which its `resolves` terms read.
     pub(crate) options: Option<Arc<LanguageOptions>>,
@@ -258,7 +345,7 @@ pub(crate) struct UtilScope<'a> {
     pub(crate) conflicts: Option<&'a RefCell<BTreeSet<AllOrderConflict>>>,
     /// What the rule's terms bind and read, each utility summarized once per compilation of the
     /// table, for capture ordering and `all` order checks.
-    pub(in crate::code_rule_dsl) captures: RefCell<CaptureAnalysis>,
+    pub(in crate::code_rule_dsl) captures: &'a RefCell<CaptureAnalysis>,
     /// Distinct parameterized calls belong to one query, not its reusable utility table.
     pub(crate) instances: RefCell<BTreeSet<(usize, crate::code_rule_dsl::matcher::CallArgs)>>,
     /// Where the query collects its `calls` terms; `None` where `calls` is not supported.

@@ -66,12 +66,12 @@ fn walk(matcher: &AstMatcher, negated: bool, seen: &mut BTreeSet<usize>, out: &m
             }
         }
         AstMatcher::Util(util) => {
-            if seen.insert(util.index * 2 + usize::from(negated)) {
+            if seen.insert(util.key() * 2 + usize::from(negated)) {
                 util.with_target(|rule| walk(rule, negated, seen, out));
             }
         }
         AstMatcher::Call(call) => {
-            if seen.insert(call.util.index * 2 + usize::from(negated)) {
+            if seen.insert(call.util.key() * 2 + usize::from(negated)) {
                 call.util.with_target(|rule| walk(rule, negated, seen, out));
             }
         }

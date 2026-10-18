@@ -1,6 +1,7 @@
 //! `formatArgs`: a format call's arguments no field of its template consumes, and its fields no
 //! argument fills.
 
+use super::artifacts::CompilerArtifacts;
 use super::ast_rule::{compile_ast_rule, validate_ast_rule};
 use super::parse::{capture_name, compile_sub_rule, validate_sub_rule};
 use super::utils::{UtilIds, UtilScope};
@@ -48,6 +49,7 @@ pub(super) fn validate_format_args(
     path: &str,
     limits: &Limits,
     utils: &UtilIds,
+    artifacts: &CompilerArtifacts,
 ) -> Result<()> {
     let test = object(value, path)?;
     reject_unknown(test, KEYS, path)?;
@@ -62,7 +64,7 @@ pub(super) fn validate_format_args(
         return Err(invalid(format!("{path} must hold unused, missing or both")));
     }
     if let Some(unused) = test.get("unused") {
-        validate_ast_rule(unused, &format!("{path}/unused"), limits, utils)?;
+        validate_ast_rule(unused, &format!("{path}/unused"), limits, utils, artifacts)?;
     }
     if let Some(missing) = test.get("missing") {
         validate_sub_rule(
@@ -72,6 +74,7 @@ pub(super) fn validate_format_args(
             false,
             limits,
             utils,
+            artifacts,
         )?;
     }
     Ok(())
@@ -99,6 +102,7 @@ pub(super) fn compile_format_args(
                 style.grammar(),
                 &format!("{path}/missing"),
                 utils.transform.as_ref(),
+                utils.artifacts,
                 None,
                 gaps,
             )

@@ -3,6 +3,7 @@ use crate::code_rule_dsl::matcher::{Reading, Separator, Source, StringCase, Tran
 use crate::code_rule_dsl::model::Limits;
 use ast_grep_core::meta_var::MetaVariable;
 use napi::Result;
+use regex::Regex;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -120,7 +121,7 @@ fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Resul
                 "maxRegexPatternBytes",
                 limits.max_regex_pattern_bytes,
             )?;
-            let regex = crate::code_rule_dsl::regex_cache::compile(pattern)
+            let regex = Regex::new(pattern)
                 .map_err(|_| invalid(format!("{at}/replace: Parsing text matcher fails.")))?;
             let by = string_within_limit(
                 body.get("by")

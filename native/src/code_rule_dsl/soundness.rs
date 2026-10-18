@@ -114,7 +114,7 @@ fn optional_utility_captures(
     outward: bool,
     memo: &mut SoundMemo<BTreeSet<String>>,
 ) -> BTreeSet<String> {
-    memo.summarize((util.index, under_any, outward), BTreeSet::new(), |memo| {
+    memo.summarize((util.key(), under_any, outward), BTreeSet::new(), |memo| {
         #[cfg(test)]
         record_walk(Walk::OptionalCaptures);
         let mut found = BTreeSet::new();
@@ -227,7 +227,7 @@ fn utility_sound(
     optional: &BTreeSet<String>,
     memo: &mut SoundMemo<bool>,
 ) -> bool {
-    memo.summarize((util.index, negated, outside), true, |memo| {
+    memo.summarize((util.key(), negated, outside), true, |memo| {
         #[cfg(test)]
         record_walk(Walk::SoundVerdict);
         util.with_target(|rule| sound(rule, negated, outside, optional, memo))
@@ -273,7 +273,7 @@ fn leaves_witness(matcher: &AstMatcher, memo: &mut UtilitySummary<usize, bool>) 
 }
 
 fn utility_leaves_witness(util: &UtilRef, memo: &mut UtilitySummary<usize, bool>) -> bool {
-    memo.summarize(util.index, false, |memo| {
+    memo.summarize(util.key(), false, |memo| {
         util.with_target(|rule| leaves_witness(rule, memo))
             .unwrap_or(false)
     })

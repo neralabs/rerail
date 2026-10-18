@@ -128,10 +128,10 @@ pub(super) fn ast_captures<'a>(
                 ast_captures(rule, utils, summaries, names);
             }
         }
-        AstMatcher::Util(util) => names.extend(utility_captures(util.index, utils, summaries)),
+        AstMatcher::Util(util) => names.extend(utility_captures(util.key(), utils, summaries)),
         // A call returns the parameters its utility binds, under the caller's names.
         AstMatcher::Call(call) => {
-            let inner = utility_captures(call.util.index, utils, summaries);
+            let inner = utility_captures(call.util.key(), utils, summaries);
             names.extend(call.outward(inner));
         }
         AstMatcher::Constrained(core) => {
@@ -152,7 +152,7 @@ fn utility_captures<'a>(
     utils: &'a UtilTable,
     summaries: &mut CaptureSummaries<'a>,
 ) -> BTreeSet<&'a str> {
-    let Some(rule) = utils.rules.get().and_then(|rules| rules.get(index)) else {
+    let Some(rule) = utils.rule_by_key(index) else {
         return BTreeSet::new();
     };
     summaries.summarize(index, BTreeSet::new(), |summaries| {
@@ -216,13 +216,13 @@ fn parse_exports<'a>(
             parse_exports(&relation.rule, utils, summaries, exported, bound);
         }
         AstMatcher::Util(util) => {
-            let (inner_exported, inner_bound) = utility_exports(util.index, utils, summaries);
+            let (inner_exported, inner_bound) = utility_exports(util.key(), utils, summaries);
             exported.extend(inner_exported);
             bound.extend(inner_bound);
         }
         // A call returns the parameters its utility exports or binds, under the caller's names.
         AstMatcher::Call(call) => {
-            let (inner_exported, inner_bound) = utility_exports(call.util.index, utils, summaries);
+            let (inner_exported, inner_bound) = utility_exports(call.util.key(), utils, summaries);
             exported.extend(call.outward(inner_exported));
             bound.extend(call.outward(inner_bound));
         }
@@ -242,7 +242,7 @@ fn utility_exports<'a>(
     utils: &'a UtilTable,
     summaries: &mut ExportSummaries<'_, 'a>,
 ) -> Exports<'a> {
-    let Some(rule) = utils.rules.get().and_then(|rules| rules.get(index)) else {
+    let Some(rule) = utils.rule_by_key(index) else {
         return Exports::default();
     };
     let ExportSummaries {
@@ -316,11 +316,11 @@ fn node_regexes_in<'a>(
                 node_regexes_in(item, utils, summaries, regexes);
             }
         }
-        AstMatcher::Util(util) => node_regexes_utility(util.index, utils, summaries, regexes),
+        AstMatcher::Util(util) => node_regexes_utility(util.key(), utils, summaries, regexes),
         // A parameterized utility still tests the caller's witness. Its private frame changes
         // capture names, not which regexes describe that node.
         AstMatcher::Call(call) => {
-            node_regexes_utility(call.util.index, utils, summaries, regexes);
+            node_regexes_utility(call.util.key(), utils, summaries, regexes);
         }
         AstMatcher::Constrained(core) => node_regexes_in(&core.rule, utils, summaries, regexes),
         AstMatcher::Pattern(_)
@@ -351,7 +351,7 @@ fn node_regexes_utility<'a>(
     summaries: &mut UtilitySummary<usize, UtilityRegexes<'a>>,
     regexes: &mut Vec<&'a Regex>,
 ) {
-    let Some(rule) = utils.rules.get().and_then(|rules| rules.get(index)) else {
+    let Some(rule) = utils.rule_by_key(index) else {
         return;
     };
     let summary = summaries.summarize(index, UtilityRegexes::default(), |summaries| {
