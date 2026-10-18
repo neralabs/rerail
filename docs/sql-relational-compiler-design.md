@@ -598,8 +598,8 @@ It also rejects callback-shaped SQL fragments.
 Fixture-validation tests make sure that the contract is complete and internally consistent.
 They do not claim that lowering exists.
 
-An ignored TDD test requires exact terminal and SQL-shape equality for all 108 forms.
-It fails with an explicit implementation error when it runs now.
+An active TDD test requires exact terminal and SQL-shape equality for all 108 forms.
+It fails with an explicit implementation error until the relational compiler exists.
 Connect this test to `SqlCatalogPlan::explain` when that API exists.
 
 Do not rewrite a hand-written form into an easier equivalent to make the implementation pass.

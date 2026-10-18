@@ -1000,7 +1000,6 @@ fn assert_compiler_contract(mut explain: impl FnMut(&str) -> Result<ExplainedLow
 }
 
 #[test]
-#[ignore = "TDD: connect this contract to SqlCatalogPlan::explain as that API is introduced"]
 fn relational_compiler_matches_all_hand_written_forms() {
     assert_compiler_contract(|form| {
         Err(format!("relational lowering is not implemented for {form}"))
