@@ -5,12 +5,13 @@
 //! matcher's order of the steps, the first that is not true deciding.
 
 use super::{Bound, INTERNAL, Lowerer, unsupported};
-use crate::code_rule_dsl::literal::Grammar;
 use crate::code_rule_dsl::matcher::{
     AstMatcher, BindingFilter, BindingTest, Binds, CaptureAnalysis, FormatArgs, ParseTest,
     Semantic, may_bind,
 };
-use crate::code_rule_dsl::sql::plan::{AllTerm, Export, Op, SlotId, SlotKind, Source, Unsupported, Walk};
+use crate::code_rule_dsl::sql::plan::{
+    AllTerm, Export, Op, SlotId, SlotKind, Source, Unsupported, Walk,
+};
 use crate::code_rule_dsl::sql::terminals::{
     Binder, BindingSites, BindsCandidates, BindsOthers, Exported, FactTerm, FormatPart,
     FormatSides, Occurrences, Parsed, Terminal, Verdicts,
@@ -29,7 +30,11 @@ pub(super) struct TreeContext {
 
 /// The captures a binding filter reads ranges of (`bindings.within`).
 fn filter_reads(filter: &BindingFilter, out: &mut BTreeSet<String>) {
-    if let Some(within) = filter.bindings.as_ref().and_then(|count| count.within.as_ref()) {
+    if let Some(within) = filter
+        .bindings
+        .as_ref()
+        .and_then(|count| count.within.as_ref())
+    {
         out.insert(within.clone());
     }
 }
@@ -84,7 +89,12 @@ impl Lowerer<'_> {
         let leaf = matcher.clone();
         let columns = binds.clone();
         self.fact(
-            move || Box::new(Binder { leaf, binds: columns }),
+            move || {
+                Box::new(Binder {
+                    leaf,
+                    binds: columns,
+                })
+            },
             None,
             scope,
             &reads,
@@ -253,7 +263,12 @@ impl Lowerer<'_> {
     /// `binds` (`Binds::match_node`): the bindings the name node names, in order; the first
     /// whose filters hold and whose sub-rules match binds, and an unknown one leaves the answer
     /// open unless a later one matches.
-    fn binds(&mut self, test: &Binds, scope: usize, bound: &Bound) -> Result<(Op, Bound), Unsupported> {
+    fn binds(
+        &mut self,
+        test: &Binds,
+        scope: usize,
+        bound: &Bound,
+    ) -> Result<(Op, Bound), Unsupported> {
         let mut reads = BTreeSet::new();
         filter_reads(&test.filter, &mut reads);
         if let Some(redefines) = &test.redefines {
@@ -513,9 +528,6 @@ impl Lowerer<'_> {
         scope: usize,
         bound: &Bound,
     ) -> Result<(Op, Bound), Unsupported> {
-        if test.grammar == Grammar::Annotation {
-            return unsupported("parse annotation");
-        }
         if self.tree.is_some() {
             return unsupported("parse inside parse");
         }

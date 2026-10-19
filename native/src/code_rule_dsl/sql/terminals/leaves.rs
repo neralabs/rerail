@@ -208,7 +208,7 @@ impl Verdicts for FormatSides {
             } => match self.1 {
                 FormatPart::Verdict => {
                     return Ok(vec![Verdict::holds(vec![integer(
-                        tree_file(&tree).unwrap_or(-1),
+                        tree_file(&tree, None).unwrap_or(-1),
                     )])]);
                 }
                 FormatPart::Unused => (
@@ -225,7 +225,7 @@ impl Verdicts for FormatSides {
                     let fields = missing_fields(&root.root(), &missing)
                         .map(|(index, _, known)| (integer(index), known))
                         .collect();
-                    (tree_file(&tree), fields, missing.incomplete)
+                    (tree_file(&tree, None), fields, missing.incomplete)
                 }
             },
         };
@@ -257,20 +257,20 @@ impl Verdicts for FormatSides {
     }
 }
 
-/// `parse`'s tree at a node (`ParseTest::text_tree`): false, unknown, or true with the tree's
-/// number among the batch's documents.
+/// `parse`'s tree at a node (`ParseTest::tree_at`): false, unknown, or true with the tree's
+/// number among the batch's documents (an annotation's read in its file's table).
 pub(in crate::code_rule_dsl::sql) struct Parsed(pub(in crate::code_rule_dsl::sql) ParseTest);
 
 impl Verdicts for Parsed {
     fn rows<'t>(&self, node: Node<'t, TapeDoc>, _env: &MetaVarEnv<'t, TapeDoc>) -> Rows {
-        Ok(match self.0.text_tree(&node) {
-            Some(LiteralParsed::Tree(tree)) => {
+        Ok(match self.0.tree_at(&node) {
+            Some((LiteralParsed::Tree(tree), table)) => {
                 vec![Verdict::holds(vec![integer(
-                    tree_file(&tree).unwrap_or(-1),
+                    tree_file(&tree, table).unwrap_or(-1),
                 )])]
             }
-            Some(LiteralParsed::Unknown) => vec![Verdict::unknown()],
-            Some(LiteralParsed::NotString) | None => Vec::new(),
+            Some((LiteralParsed::Unknown, _)) => vec![Verdict::unknown()],
+            Some((LiteralParsed::NotString, _)) | None => Vec::new(),
         })
     }
 }

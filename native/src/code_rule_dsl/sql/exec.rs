@@ -40,6 +40,8 @@ pub(in crate::code_rule_dsl) struct SubFile {
     pub(super) facts: NodeFacts,
     /// The batch file the literal is in.
     pub(super) host: usize,
+    /// An annotation's: the file's scope table its names are read in (`ParseTest::tree_at`).
+    pub(super) table: Option<Arc<crate::code_rule_dsl::scope::ScopeTable>>,
 }
 
 /// The batch's parsed trees, each once by its tree (parsed trees are remembered per file).
@@ -123,12 +125,13 @@ impl Batch {
         self.subfiles.lock().files.get(index).cloned()
     }
 
-    /// The number of `tree`, a tree parsed from a node of file `host`: a document of the batch
-    /// from now on.
+    /// The number of `tree`, a tree parsed from a node of file `host` (an annotation's, with the
+    /// table its names are read in): a document of the batch from now on.
     pub(super) fn add_subfile(
         &self,
         host: usize,
         tree: &Arc<crate::code_rule_dsl::literal::SubTree>,
+        table: Option<Arc<crate::code_rule_dsl::scope::ScopeTable>>,
     ) -> u32 {
         let key = Arc::as_ptr(tree) as usize;
         let mut subfiles = self.subfiles.lock();
@@ -140,7 +143,12 @@ impl Batch {
         });
         let facts = NodeFacts::of_tree(&root);
         let file = (self.files.len() + subfiles.files.len()) as u32;
-        subfiles.files.push(Arc::new(SubFile { root, facts, host }));
+        subfiles.files.push(Arc::new(SubFile {
+            root,
+            facts,
+            host,
+            table,
+        }));
         subfiles.index.insert(key, file);
         file
     }

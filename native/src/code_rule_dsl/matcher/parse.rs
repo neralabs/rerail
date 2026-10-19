@@ -18,7 +18,7 @@ use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::SubDoc;
 use crate::code_rule_dsl::literal::{self, Grammar, LiteralHost, Parsed};
-use crate::code_rule_dsl::scope::Reading;
+use crate::code_rule_dsl::scope::{Reading, ScopeTable};
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::{AstGrep, Matcher};
@@ -158,17 +158,8 @@ impl ParseTest {
         node: Node<'t, D>,
         env: &mut Cow<MetaVarEnv<'t, D>>,
     ) -> Option<Node<'t, D>> {
-        if !self.host_kinds.contains(&node.kind_id()) {
-            return None;
-        }
-        if self.grammar == Grammar::Annotation {
-            // A string type definition's tree is the table's; any other string has none.
-            let table = file_table(&node, GrammarDialect::Python, self.reading)?;
-            let tree = Arc::clone(&table.annotation_at(&node.range())?.tree);
-            let _tables = SubTables::enter(table);
-            return self.match_tree(node, env, tree);
-        }
-        let tree = match parsed_tree(&node, self.grammar)? {
+        let (tree, table) = self.tree_at(&node)?;
+        let tree = match tree {
             Parsed::Tree(tree) => tree,
             Parsed::NotString => return None,
             Parsed::Unknown => {
@@ -176,16 +167,28 @@ impl ParseTest {
                 return None;
             }
         };
+        // An annotation's names are read in its file's table.
+        let _tables = table.map(SubTables::enter);
         self.match_tree(node, env, tree)
     }
 
-    /// `match_node`'s step before its tree's rule, for the SQL engine: the tree of a text
-    /// grammar's literal at `node`; `None` where the node holds none (or the budget ran out).
-    pub(crate) fn text_tree<D: Doc>(&self, node: &Node<'_, D>) -> Option<Parsed> {
-        if !self.host_kinds.contains(&node.kind_id()) || self.grammar == Grammar::Annotation {
+    /// `match_node`'s step before its tree's rule, which the SQL engine's terminal reads too: the
+    /// tree at `node`, and for an annotation the file's table its names are read in; `None` where
+    /// the node holds no literal of the grammar (or the budget ran out).
+    pub(crate) fn tree_at<D: Doc>(
+        &self,
+        node: &Node<'_, D>,
+    ) -> Option<(Parsed, Option<Arc<ScopeTable>>)> {
+        if !self.host_kinds.contains(&node.kind_id()) {
             return None;
         }
-        parsed_tree(node, self.grammar)
+        if self.grammar == Grammar::Annotation {
+            // A string type definition's tree is the table's; any other string has none.
+            let table = file_table(node, GrammarDialect::Python, self.reading)?;
+            let tree = Arc::clone(&table.annotation_at(&node.range())?.tree);
+            return Some((Parsed::Tree(tree), Some(table)));
+        }
+        Some((parsed_tree(node, self.grammar)?, None))
     }
 
     /// Matches the rule on the tree's root, exporting its captures.

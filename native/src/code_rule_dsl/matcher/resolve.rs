@@ -858,10 +858,10 @@ thread_local! {
 }
 
 /// Keeps a file's table readable from the nodes of its parsed annotations while they are matched.
-pub(super) struct SubTables;
+pub(crate) struct SubTables;
 
 impl SubTables {
-    pub(super) fn enter(table: Arc<ScopeTable>) -> Self {
+    pub(crate) fn enter(table: Arc<ScopeTable>) -> Self {
         SUB_TABLES.with_borrow_mut(|tables| tables.push(table));
         Self
     }

@@ -12,8 +12,8 @@
 use super::Terminal;
 use crate::code_rule_dsl::literal::{ID_FLAG, SubDoc};
 use crate::code_rule_dsl::matcher::{
-    AstMatcher, FileScopeSlot, ParkedScopes, export_text, exported_span, exported_text, leaf_env,
-    leaf_verdict, node_at,
+    AstMatcher, FileScopeSlot, ParkedScopes, SubTables, export_text, exported_span, exported_text,
+    leaf_env, leaf_verdict, node_at,
 };
 use crate::code_rule_dsl::soundness::SyntaxErrors;
 use crate::code_rule_dsl::sql::exec::{Batch, BatchFile, BatchSlot};
@@ -189,15 +189,13 @@ pub(in crate::code_rule_dsl::sql) fn values_of<D: Doc>(
                     })
                     .map_or(Value::Null, Value::Integer),
             ),
-            SlotKind::Text => {
-                match (exported_text(env, name), exported_span(env, name)) {
-                    (Some(text), Some(span)) => {
-                        values.push(Value::Text(text));
-                        values.push(Value::Text(format!("{}:{}", span.start, span.end)));
-                    }
-                    _ => values.extend([Value::Null, Value::Null]),
+            SlotKind::Text => match (exported_text(env, name), exported_span(env, name)) {
+                (Some(text), Some(span)) => {
+                    values.push(Value::Text(text));
+                    values.push(Value::Text(format!("{}:{}", span.start, span.end)));
                 }
-            }
+                _ => values.extend([Value::Null, Value::Null]),
+            },
             SlotKind::List => values.extend([Value::Null, Value::Null, Value::Null, Value::Null]),
         }
     }
@@ -359,14 +357,15 @@ thread_local! {
 }
 
 /// The batch's number of `tree`, parsed from a node of the file whose keys are being evaluated
-/// (`exec::Batch::add_subfile`).
+/// (`exec::Batch::add_subfile`); an annotation's with the table its names are read in.
 pub(in crate::code_rule_dsl::sql) fn tree_file(
     tree: &Arc<crate::code_rule_dsl::literal::SubTree>,
+    table: Option<Arc<crate::code_rule_dsl::scope::ScopeTable>>,
 ) -> Option<i64> {
     EVALUATING.with_borrow(|evaluating| {
         evaluating
             .as_ref()
-            .map(|(batch, host)| i64::from(batch.add_subfile(*host, tree)))
+            .map(|(batch, host)| i64::from(batch.add_subfile(*host, tree, table)))
     })
 }
 
@@ -414,10 +413,11 @@ fn evaluate(batch: &Arc<Batch>, term: &FactTerm, keys: BTreeSet<String>) -> Resu
             answered_all?;
         } else if let Some(sub) = batch.subfile(index) {
             // A parsed tree's node: read with its host file's scopes, as the matcher reads it
-            // while matching the host.
+            // while matching the host, and an annotation's in its file's table.
             let host = &batch.files[sub.host];
             let root = &sub.root;
             let at = |id: u32| root.adopt(root.root().get_doc().node(id));
+            let _tables = sub.table.clone().map(SubTables::enter);
             let answered_all = with_scopes(sub.host, host, || -> Result<()> {
                 for (ek, node) in keys {
                     if node >= sub.facts.len() {

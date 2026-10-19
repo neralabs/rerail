@@ -60,6 +60,7 @@ use regex::Regex;
 pub(super) use relation::{FieldRelation, Related, StopBy, may_bind, stop_rule};
 #[cfg(test)]
 pub(super) use relation::{set_answers_off, set_same_key_off};
+pub(crate) use resolve::SubTables;
 #[cfg(test)]
 pub(super) use resolve::TABLE_BUILDS;
 pub(super) use resolve::{FileScopeSlot, ParkedScopes, Resolves, Unresolved};
