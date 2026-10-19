@@ -148,11 +148,11 @@ test("a golden fails outside the document's scope with upstream findings, or whe
   assert.deepEqual(result.results.map((entry) => entry.status), ["mismatch", "agree", "mismatch", "mismatch"]);
   assert.match(result.results[2]!.reason, /^the pinned corpus has no t1\/src\/gone\.ts with sha256 0+$/u);
   assert.match(result.results[3]!.reason, /upstream's own parser rejects it/u);
-  // A golden corpus.json does not answer says so, so the fix (re-record) is plain.
+  // A golden corpus.json does not answer says so, so the fix (record the tool-pack again) is plain.
   const unrecorded = goldensGate(engine, adapter, "no-debugger", compiled({}), [
-    { golden: golden("t1", "src/new.ts"), file: corpusFile("t1", "src/new.ts"), expected: null, excluded: "corpus.json has no answer for it with this sha256: re-record the tool-pack" },
+    { golden: golden("t1", "src/new.ts"), file: corpusFile("t1", "src/new.ts"), expected: null, excluded: "corpus.json has no answer for it with this sha256, so the tool-pack needs recording again" },
   ]);
-  assert.equal(unrecorded.results[0]!.reason, "it has no expected answer: corpus.json has no answer for it with this sha256: re-record the tool-pack");
+  assert.equal(unrecorded.results[0]!.reason, "it has no expected answer: corpus.json has no answer for it with this sha256, so the tool-pack needs recording again");
 });
 
 test("a golden the engine could not fully read is an engine gap, which does not fail the rule", () => {

@@ -104,7 +104,9 @@ whose sha256 is not the one the lock names fails the run.
 check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to promote. The
 recording is stale when pins disagree between `gates.yaml`, `recording.lock`, `recording.json` and `conformance.json`, a
 runtime's pins (`package.json`, `pyproject.toml`, `.python-version`) differ from the ones the lock records, the kept
-LICENSE is not the recorded one, or a rule is not recorded (`corpus-pins` and the recording checks). `corpus-complete` fails when a file `corpus.json` answers for was not fetched with its
+LICENSE is not the recorded one, or a rule is not recorded (`corpus-pins` and the recording checks); each of them says how
+to record it again (recording/routes.ts): in a pull request a maintainer adds the `record-port-readiness` label, since CI
+takes only what `port-readiness-record.yml` records. `corpus-complete` fails when a file `corpus.json` answers for was not fetched with its
 recorded sha256 (a download or git fetch failed); those results are not cached. `bundled-load` loads every document in
 the pack's `rules/` together through rerail's bundled-rule loader, on every run, so a conflict between rules (a
 duplicate id) fails it.

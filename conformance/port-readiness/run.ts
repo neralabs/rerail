@@ -567,7 +567,7 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
     const upstreamFiles = await adapter.lintCorpus(corpusFiles, names);
     const byPlace = new Map<string, UpstreamFile>(upstreamFiles.map((entry) => [`${entry.file.task}\0${entry.file.path}`, entry]));
     const cases = new Map<string, UpstreamCase[]>(names.filter((name) => adapter.rule(name) !== undefined).map((name) => [name, adapter.cases(name)]));
-    const gaps = await provenGaps(engine, manifest.known_gaps, [...cases.values()].flat(), (files) => adapter.parserVerdicts(files));
+    const gaps = await provenGaps(engine, manifest.known_gaps, [...cases.values()].flat(), (files) => adapter.parserVerdicts(files), { pack, tool });
     await mkdir(join(cacheRoot, "tmp"), { recursive: true });
     const scratch = mkdtempSync(join(cacheRoot, "tmp", "gates-"));
     const integrity = [...gaps.problems];

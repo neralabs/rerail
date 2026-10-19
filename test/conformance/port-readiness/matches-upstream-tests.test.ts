@@ -134,6 +134,8 @@ const probing = {
     evaluateFile: (_path: string, language: string) => ({ status: "failed", violations: [], failures: language === "typescript" ? [partial] : [] }),
   }),
 } as unknown as Engine;
+/** The tool-pack a gap's problems name when it must be recorded again. */
+const TOOL_PACK = { pack: "typescript", tool: "typescript-eslint" };
 const parsersAccept = async (files: unknown[]) => files.map(() => [{ parser: "ts", syntax: [], grammar: [] }, { parser: "babel", syntax: [], grammar: [] }]);
 
 test("a known gap is proven under the file type of the fixtures it names", async () => {
@@ -145,7 +147,7 @@ test("a known gap is proven under the file type of the fixtures it names", async
     { ...gap(["test/rules/q/x.tsx.lint"]), id: "tsx" },
     { ...gap(["test/rules/q/x.ts.lint", "test/rules/q/x.tsx.lint"]), id: "mixed" },
     { ...gap(["test/rules/q/elsewhere.ts.lint"]), id: "stray" },
-  ], cases, parsersAccept);
+  ], cases, parsersAccept, TOOL_PACK);
   assert.deepEqual([...proven.proven.keys()], ["jsx"]);
   assert.equal(proven.proven.get("jsx")!.probePath, "probe.ts");
   assert.deepEqual(proven.problems, [
@@ -176,13 +178,13 @@ test("a known gap holds only when its probe is in every file it names and indepe
   ], cases, async (files) => files.map((file) => {
     asked.push(file);
     return verdicts[file.source] ?? [];
-  }));
+  }), TOOL_PACK);
   assert.deepEqual([...proven.proven.keys()], ["paren-target"]);
   assert.deepEqual(proven.problems, [
     "known gap elsewhere: the probe does not occur in test/rules/q/b.ts.lint",
     "known gap not-source: independent parsers do not read the probe as valid source (invalid-source), so the parse failure is not the engine's",
     "known gap disputed: independent parsers do not read the probe as valid source (parsers-disagree), so the parse failure is not the engine's",
-    "known gap unrecorded: no independent parser verdict on the probe is recorded; record the tool-pack again",
+    "known gap unrecorded: no independent parser verdict on the probe is recorded, so the tool-pack needs recording again: in a pull request, a maintainer adds the record-port-readiness label (or runs port-readiness-record.yml by hand with the pull request's number and head sha); locally, npm run port-readiness:record -- --pack typescript --tool typescript-eslint",
   ]);
   assert.deepEqual(Object.fromEntries(proven.kinds), { "paren-target": "valid-source", "not-source": "invalid-source", disputed: "parsers-disagree", unrecorded: "not-recorded" });
   // The probe is read as the gates recorder read it: under the fixtures' file type, as a script when they all are.

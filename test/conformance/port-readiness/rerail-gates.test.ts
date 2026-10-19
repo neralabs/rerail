@@ -7,7 +7,7 @@ import { afterEach, describe, it } from "vitest";
 
 import { CACHE_FORMAT, readCached, resultPath, ruleKey, toolPackKey, writeCached, type SharedKeyInputs } from "../../../conformance/port-readiness/cache.js";
 import { engineReadsGoldensCheck } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
-import { sparseDirectoryPattern } from "../../../conformance/port-readiness/recorded-adapter.js";
+import { sparseDirectoryPattern, staleMessage } from "../../../conformance/port-readiness/recorded-adapter.js";
 import type { CommandOptions, CommandResult, CommandRunner } from "../../../conformance/port-readiness/process.js";
 import { renderMarkdown } from "../../../conformance/port-readiness/report.js";
 import { blockingFailures, isCachedPack, isCachedRule, packDocuments, type CachedRule, type GatesReport, type RuleReport } from "../../../conformance/port-readiness/run.js";
@@ -85,6 +85,9 @@ function report(rules: RuleReport[], unmapped: GatesReport["unmapped"] = []): Ga
 
 const noUngated = { checks: [], notGated: [], pending: [] };
 
+/** How python/bandit gets recorded, as a message that asks for a recording says it. */
+const ROUTES = "in a pull request, a maintainer adds the record-port-readiness label (or runs port-readiness-record.yml by hand with the pull request's number and head sha); locally, npm run port-readiness:record -- --pack python --tool bandit";
+
 describe("location-based blocking", () => {
   it("a failing shipped rule blocks; a failing candidate does not", () => {
     assert.equal(blockingFailures(report([rule("a", "shipped"), rule("b", "candidate", { loads: "schema" })])), 0);
@@ -128,9 +131,14 @@ describe("location-based blocking", () => {
     assert.doesNotMatch(renderSummary(summarize([report([rule("a", "shipped")])], noUngated, [gated[0]!])), /judged/u);
   });
 
-  it("a planned tool-pack with no report blocks", () => {
+  it("a planned tool-pack with no report blocks, and says the logs have why", () => {
     const summary = summarize([], noUngated, gated, [{ pack: "python", tool: "ruff" }]);
     assert.deepEqual(summary.blocking.map((row) => [row.pack, row.rule, row.check]), [["python/ruff", "(every rule)", "report"]]);
+    // A leg failed (in its fetch, its gates or a timeout) or its shards disagree in the merge; a recording the record
+    // workflow never made is one way a leg fails, before it judges anything.
+    assert.equal(summary.blocking[0]!.why, "no report: a leg failed or its shards disagree; the logs say why (one cause: its lock names a recording port-readiness-record.yml never made)");
+    // The comment cuts a why to 160 characters, and this one has nothing to cut.
+    assert.ok(summary.blocking[0]!.why.length <= 160);
     assert.deepEqual(summary.notJudged, ["python/bandit"]);
     assert.equal(summary.pass, false);
   });
@@ -170,6 +178,28 @@ describe("location-based blocking", () => {
     ]);
     assert.equal(summary.pass, false);
     assert.equal(summarize([{ ...report([rule("a", "shipped")]), knownGaps: knownGaps.slice(0, 1) }], noUngated, []).pass, true);
+  });
+
+  it("a known gap with no recorded parser verdict on its probe says the tool-pack needs recording again, and how", () => {
+    const knownGaps: GatesReport["knownGaps"] = [{ id: "unrecorded", proven: false, kind: "not-recorded", excused: 0 }];
+    const summary = summarize([{ ...report([rule("a", "shipped")]), knownGaps }], noUngated, []);
+    assert.deepEqual(summary.blocking.map((row) => [row.check, row.why]), [["known-gap", `known gap unrecorded does not hold: no independent parser verdict on its probe is recorded, so the tool-pack needs recording again: ${ROUTES}`]]);
+    assert.deepEqual(summary.toolPacks.map((entry) => entry.needsRecording), [true]);
+  });
+
+  it("a tool-pack whose recording is stale needs recording again, and says how; one failing another tool-pack check does not", () => {
+    const failing = (id: string, detail: string): GatesReport => ({ ...report([rule("a", "shipped")]), toolPackChecks: { pass: false, checks: [{ id, ok: false, detail }] } });
+    const stale = summarize([failing("pins-agree", `gates.yaml upstream.version 1.9.5 but recording.lock pins.version 1.9.4: ${staleMessage("python", "bandit")}`)], noUngated, []);
+    assert.deepEqual(stale.toolPacks.map((entry) => entry.needsRecording), [true]);
+    // The job summary is all a fork pull request gets, so the line is there as well as in the comment.
+    // The job summary of a push to main and of the nightly has it too, where there is no pull request to label.
+    assert.match(renderSummary(stale), /^`python\/bandit` needs recording again: in a pull request, a maintainer adds the `record-port-readiness` label \(or runs `port-readiness-record\.yml` by hand with the pull request's number and head sha\), and that run comments on the pull request with what comes next; on `main`, a maintainer runs `port-readiness-record\.yml` from `main` with `pr` and `sha` empty\.$/mu);
+    const duplicate = summarize([failing("bundled-load", "Duplicate bundled rule id: x")], noUngated, []);
+    assert.deepEqual(duplicate.toolPacks.map((entry) => entry.needsRecording), [false]);
+    assert.doesNotMatch(renderSummary(duplicate), /needs recording again/u);
+    // An edited case source is restored, not recorded again: recording refuses one that differs from upstream's.
+    const edited = summarize([failing("case-sources", "1 case source(s) differ: fixtures/x.py is 0123456789ab, recorded ba9876543210: restore each edited one to upstream's bytes (git checkout origin/main -- packs/python/upstream/bandit/<file>), or delete it so recording copies it again")], noUngated, []);
+    assert.deepEqual(edited.toolPacks.map((entry) => entry.needsRecording), [false]);
   });
 
   it("documents come from rules/ (shipped) and candidates/** without probes or conformance manifests (candidate)", () => {

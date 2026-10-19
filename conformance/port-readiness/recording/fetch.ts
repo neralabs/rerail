@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ProcessCommandRunner, runChecked } from "../process.js";
+import { recordingRoutes } from "./routes.js";
 import { CORPUS_FILE, RECORDING_FILE } from "./schema.js";
 import { LIFTED_ASSETS, readCachedRecording, readRecordingLock, recordingCachePath, recordingFromAsset, writeCachedRecording, type LockedFile, type RecordingLock } from "./store.js";
 
@@ -78,14 +79,14 @@ async function githubJson<T>(url: string, token: string | undefined): Promise<T>
 /**
  * One asset's bytes from the release the lock names. The asset is found by name in the release, then read through its
  * own API url with `accept: application/octet-stream`, which is the one form that works whether or not the repository
- * is public.
+ * is public. `pack` is the lock's, for the message.
  */
-async function downloadAsset(asset: LockedFile, lock: RecordingLock, options: FetchOptions): Promise<Buffer> {
+async function downloadAsset(asset: LockedFile, lock: RecordingLock, pack: string, options: FetchOptions): Promise<Buffer> {
   const repository = options.repository ?? DEFAULT_REPOSITORY;
   const release = await githubJson<{ assets?: ReleaseAsset[] }>(`https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(lock.release)}`, options.token);
   const found = (release.assets ?? []).find((entry) => entry.name === asset.asset);
   if (found === undefined) {
-    throw new Error(`the release ${lock.release} of ${repository} has no asset ${asset.asset}: the recording this commit names was never uploaded (a pull request cannot supply its own; see port-readiness-record.yml)`);
+    throw new Error(`the release ${lock.release} of ${repository} has no asset ${asset.asset}: the recording this commit names was never uploaded (CI takes only a recording port-readiness-record.yml uploaded and attested, never a local one): ${recordingRoutes(pack, lock.tool)}`);
   }
   const response = await fetch(found.url, {
     headers: {
@@ -101,8 +102,9 @@ async function downloadAsset(asset: LockedFile, lock: RecordingLock, options: Fe
  * Fail unless port-readiness-record.yml, run from main, attested this recording. The subject is the recording's text,
  * whose sha256 the lock and the asset's name carry, so an asset uploaded before the attestation was made is covered
  * by it too. `gh attestation verify` checks the Sigstore signature, the signer workflow and the ref it ran from.
+ * `pack` and `tool` are the tool-pack's, for the message.
  */
-async function verifyAttestation(text: string, asset: LockedFile, options: FetchOptions): Promise<void> {
+async function verifyAttestation(text: string, asset: LockedFile, pack: string, tool: string, options: FetchOptions): Promise<void> {
   const repository = options.repository ?? DEFAULT_REPOSITORY;
   const directory = await mkdtemp(join(tmpdir(), "gates-attestation-"));
   try {
@@ -114,7 +116,8 @@ async function verifyAttestation(text: string, asset: LockedFile, options: Fetch
       "--signer-workflow", `${repository}/${RECORD_WORKFLOW}`, "--source-ref", RECORD_REF, "--deny-self-hosted-runners",
     ], { env });
   } catch (error) {
-    throw new Error(`the release's ${asset.asset} is not verified as recorded by ${RECORD_WORKFLOW} on ${RECORD_REF}, and no other asset is taken (not one uploaded by hand or by another workflow; verifying needs the GitHub CLI, signed in or given GITHUB_TOKEN): ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`the release's ${asset.asset} is not verified as recorded by ${RECORD_WORKFLOW} on ${RECORD_REF}, and no other asset is taken (not one uploaded by hand or by another workflow; verifying needs the GitHub CLI, signed in or given GITHUB_TOKEN).`
+      + ` If that workflow did not record it, the tool-pack needs recording again: ${recordingRoutes(pack, tool)}. The check said: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -127,8 +130,8 @@ async function verifyAttestation(text: string, asset: LockedFile, options: Fetch
  */
 export async function fetchToolPackRecordings(root: string, cacheRoot: string, pack: string, tool: string, options: FetchOptions = {}): Promise<FetchedRecording[]> {
   const lock = readRecordingLock(root, pack, tool);
-  const download = options.download ?? ((asset: LockedFile, forLock: RecordingLock) => downloadAsset(asset, forLock, options));
-  const verify = options.verify ?? ((text: string, asset: LockedFile) => verifyAttestation(text, asset, options));
+  const download = options.download ?? ((asset: LockedFile, forLock: RecordingLock) => downloadAsset(asset, forLock, pack, options));
+  const verify = options.verify ?? ((text: string, asset: LockedFile) => verifyAttestation(text, asset, pack, tool, options));
   const lifted = options.lifted ?? LIFTED_ASSETS;
   const fetched: FetchedRecording[] = [];
   for (const file of [RECORDING_FILE, CORPUS_FILE] as const) {

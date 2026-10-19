@@ -4,6 +4,7 @@ import type { CompiledPolicy, Engine, EngineEvaluation } from "../engine.js";
 import { formatSpan, spanKey, startKey, unmatched } from "../spans.js";
 import type { CorpusFile } from "../corpus.js";
 import { SYSTEMATIC_FILES, type Golden } from "../goldens.js";
+import { recordingRoutes } from "../recording/routes.js";
 import type { Check, KnownGap, PackAdapter, ParserVerdict, RealCodeGap, Span, SpanParts, UpstreamCase } from "../types.js";
 
 /** How matches-upstream-tests judges, recorded in every report so a reader knows what "identical" and "excused" meant on that run. */
@@ -156,12 +157,14 @@ export interface ProvenGap {
  * (`cases`), the engine must still fail to parse the probe under the file type those files share, and the independent
  * parsers' verdicts on the probe (`parserVerdicts`, recorded as the gates recorder read it) must be valid source, so the
  * failure is the engine's. A gap that does not hold excuses nothing; `kinds` is each judged probe's parser verdict.
+ * `toolPack` is what a gap with no recorded verdict says to record again.
  */
 export async function provenGaps(
   engine: Engine,
   gaps: KnownGap[],
   cases: Pick<UpstreamCase, "fixture" | "path" | "parsedAs" | "source" | "script">[],
   parserVerdicts: PackAdapter["parserVerdicts"],
+  toolPack: { pack: string; tool: string },
 ): Promise<{ proven: Map<string, ProvenGap>; problems: string[]; kinds: Map<string, GapCandidate["verdict"] | "not-recorded"> }> {
   const proven = new Map<string, ProvenGap>();
   const problems: string[] = [];
@@ -198,7 +201,7 @@ export async function provenGaps(
     kinds.set(gap.id, kind);
     if (kind !== "valid-source") {
       problems.push(kind === "not-recorded"
-        ? `known gap ${gap.id}: no independent parser verdict on the probe is recorded; record the tool-pack again`
+        ? `known gap ${gap.id}: no independent parser verdict on the probe is recorded, so the tool-pack needs recording again: ${recordingRoutes(toolPack.pack, toolPack.tool)}`
         : `known gap ${gap.id}: independent parsers do not read the probe as valid source (${kind}), so the parse failure is not the engine's`);
       continue;
     }

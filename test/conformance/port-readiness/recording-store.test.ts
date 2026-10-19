@@ -140,7 +140,7 @@ test("an asset whose sha256 is not the one the manifest names fails the fetch, a
   }
 });
 
-test("a hand-edited manifest naming a hash the release does not hold fails, and says a pull request cannot supply its own", async () => {
+test("a hand-edited manifest naming a hash the release does not hold fails, and says the recording was never uploaded", async () => {
   const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
   try {
     // What a fork pull request would commit: a lock pointing at a recording nobody uploaded.
@@ -148,7 +148,8 @@ test("a hand-edited manifest naming a hash the release does not hold fails, and 
     writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(forged));
     const release = new Set([lock.files["recording.json"].asset, lock.files["corpus.json"].asset]);
     const download = async (asset: { asset: string }) => {
-      if (!release.has(asset.asset)) throw new Error(`the release port-readiness-recordings of neralabs/rerail has no asset ${asset.asset}: the recording this commit names was never uploaded (a pull request cannot supply its own; see port-readiness-record.yml)`);
+      // fetch.ts's message begins so, and goes on to say how to get one recorded (recording-requests.test.ts).
+      if (!release.has(asset.asset)) throw new Error(`the release port-readiness-recordings of neralabs/rerail has no asset ${asset.asset}: the recording this commit names was never uploaded`);
       return gzipRecording(TEXTS["recording.json"]);
     };
     await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download }), /has no asset demo-bandit-recording-f{64}\.json\.gz: the recording this commit names was never uploaded/u);

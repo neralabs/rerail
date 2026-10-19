@@ -2,8 +2,10 @@ import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { notJudgedNote, renderComment, unmappedCandidatesLine } from "./comment.js";
+import { notJudgedNote, recordingNeededLine, renderComment, unmappedCandidatesLine } from "./comment.js";
 import type { CommandRunner } from "./process.js";
+import { staleMessage } from "./recorded-adapter.js";
+import { recordingRoutes } from "./recording/routes.js";
 import { cell, firstFailure, gateTitle } from "./report.js";
 import { blockingFailures, gatedToolPacks, REPORT_FORMAT, unusedGapLine, type GatesReport } from "./run.js";
 import { BLOCKING_GATES } from "./types.js";
@@ -42,8 +44,27 @@ export interface Summary {
   /** Candidates that pass every gate: the signal to promote them into rules/ (a reviewer still decides). */
   promotable: { toolPack: string; rule: string; upstreamRule: string; startsOn: boolean; startReason: string }[];
   onOff: { pack: string; rule: string; packJson: boolean; upstreamStatus: boolean; reason: string }[];
-  toolPacks: { toolPack: string; shipped: string; candidates: string; failedGate: Record<string, number>; integrity: string[]; gapCandidates: number; toolPackChecks: boolean }[];
+  /** `needsRecording`: the report says the tool-pack must be recorded again (needsRecording below). */
+  toolPacks: { toolPack: string; shipped: string; candidates: string; failedGate: Record<string, number>; integrity: string[]; gapCandidates: number; toolPackChecks: boolean; needsRecording: boolean }[];
   pass: boolean;
+}
+
+/**
+ * Whether a report says its tool-pack must be recorded again: a check failed whose detail ends with staleMessage (the
+ * recording checks and corpus-pins do; case-sources with an edited case source ends with how to restore it instead,
+ * since recording refuses one), or a listed known gap has no parser verdict on its probe recorded.
+ */
+function needsRecording(report: GatesReport): boolean {
+  const stale = staleMessage(report.pack, report.tool);
+  return report.toolPackChecks.checks.some((check) => !check.ok && check.detail.endsWith(stale))
+    || report.knownGaps.some((gap) => !gap.proven && gap.kind === "not-recorded");
+}
+
+/** Why a listed known gap that is not proven blocks: what to record when no verdict on its probe is, else the report. */
+function unprovenGapLine(report: GatesReport, gap: GatesReport["knownGaps"][number]): string {
+  return gap.kind === "not-recorded"
+    ? `known gap ${gap.id} does not hold: no independent parser verdict on its probe is recorded, so the tool-pack needs recording again: ${recordingRoutes(report.pack, report.tool)}`
+    : `known gap ${gap.id} does not hold (the report's run integrity says why); remove it or correct it`;
 }
 
 /** Every `<pack>--<tool>.json` tool-pack report in `directory`. */
@@ -103,10 +124,12 @@ export function summarize(reports: GatesReport[], ungated: UngatedResult, gated:
     }
     // A listed known gap that does not hold, or excused nothing across every shard, is a stale gates.yaml entry.
     for (const gap of report.knownGaps.filter((entry) => !entry.proven || entry.excused === 0)) {
-      blocking.push({ pack: report.toolPack, rule: "-", stoppedAt: "Known gaps", check: "known-gap", why: gap.proven ? unusedGapLine(gap.id) : `known gap ${gap.id} does not hold (the report's run integrity says why); remove it or correct it` });
+      blocking.push({ pack: report.toolPack, rule: "-", stoppedAt: "Known gaps", check: "known-gap", why: gap.proven ? unusedGapLine(gap.id) : unprovenGapLine(report, gap) });
     }
   }
-  for (const toolPack of missingReports) blocking.push({ pack: toolPack, rule: "(every rule)", stoppedAt: "Run", check: "report", why: "the gated tool-pack has no report in the directory" });
+  // A leg failed (its fetch, its gates, a timeout) or its shards disagree in the merge, so why is only in the logs. A
+  // recording the lock names that the record workflow did not make fails the fetch, before the gates run.
+  for (const toolPack of missingReports) blocking.push({ pack: toolPack, rule: "(every rule)", stoppedAt: "Run", check: "report", why: "no report: a leg failed or its shards disagree; the logs say why (one cause: its lock names a recording port-readiness-record.yml never made)" });
   // The plan finds tool-packs as gatedToolPacks does, so one it planned that is not gated is a bug in the plan.
   for (const toolPack of [...plannedNames].filter((name) => !gatedNames.includes(name))) {
     blocking.push({ pack: toolPack, rule: "(every rule)", stoppedAt: "Run", check: "plan", why: "planned, but not a gated tool-pack (no gates.yaml): the plan is wrong" });
@@ -156,6 +179,7 @@ export function summarize(reports: GatesReport[], ungated: UngatedResult, gated:
       integrity: report.integrity,
       gapCandidates: report.gapCandidates.length,
       toolPackChecks: report.toolPackChecks.pass,
+      needsRecording: needsRecording(report),
     })),
     pass: blocking.length === 0 && reports.every((report) => blockingFailures(report) === 0),
   };
@@ -170,12 +194,15 @@ function table(header: string[], rows: string[][], limit = TABLE_ROWS): string[]
 /** The summary as Markdown, under GitHub's step-summary limit. */
 export function renderSummary(summary: Summary): string {
   const notJudged = notJudgedNote(summary);
+  const recording = recordingNeededLine(summary);
   const lines = [
     "# Port readiness",
     "",
     `**${notJudged === undefined ? "" : `In ${notJudged.scope}: `}${summary.shipped.pass} of ${summary.shipped.rules} shipped rules pass; ${summary.blocking.length} blocking failure(s); ${summary.promotable.length} candidate(s) ready to promote (${summary.candidates.pass} of ${summary.candidates.rules} pass every gate).**`,
     "",
     ...(notJudged === undefined ? [] : [notJudged.line, ""]),
+    // A fork pull request gets no comment, so the job summary says it too.
+    ...(recording === undefined ? [] : [recording, ""]),
     "## Blocking failures",
     "",
     ...(summary.blocking.length === 0 ? ["None."] : table(["Pack", "Rule", "Stopped at", "Check", "Why"], summary.blocking.map((row) => [row.pack, row.rule, row.stoppedAt, row.check, row.why]))),

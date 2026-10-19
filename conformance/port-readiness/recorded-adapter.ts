@@ -6,6 +6,7 @@ import { checkoutPinned, type CorpusFile } from "./corpus.js";
 import { readGatesManifest, recordedRuntimes, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { cleanVerdicts, CORPUS_FILE, RECORDING_FILE, gatesCorpusSchema, gatesRecordingSchema, spanOf, type GatesCorpusRecording, type GatesRecording } from "./recording/schema.js";
+import { recordingRoutes } from "./recording/routes.js";
 import { caseSourcesDigest, LIFTED_CASE_SOURCES, LIFTED_RUNTIMES, readCachedRecording, readRecordingLock, RECORDING_LOCK, type RecordingLock } from "./recording/store.js";
 import { banditSpan } from "./span-units/bandit.js";
 import { eslintSpan } from "./span-units/eslint.js";
@@ -20,9 +21,9 @@ const canonical = (value: unknown): string => JSON.stringify(value, (_key, inner
 /** Where the recorder's runtimes and their pins are committed, relative to the repository root. */
 export const RUNTIMES_DIRECTORY = "conformance/recorders/port-readiness/runtimes";
 
-/** What a failing tool-pack check tells the reader to do. */
+/** What a failing tool-pack check tells the reader to do: record the tool-pack again, by either route. */
 export function staleMessage(pack: string, tool: string): string {
-  return `the recording is stale: run npm run port-readiness:record -- --pack ${pack} --tool ${tool}`;
+  return `the recording is stale: ${recordingRoutes(pack, tool)}`;
 }
 
 const SPAN_UNITS: Record<GatesRecording["adapter"], (source: string, startByte: number, endByte: number, parts: SpanParts) => Span> = {
@@ -235,6 +236,9 @@ export function toolPackChecks(
     for (const testCase of rule.cases) if (testCase.file !== null) recordedDigests.set(testCase.file, (recordedDigests.get(testCase.file) ?? new Set()).add(testCase.sha256));
   }
   const sourceMismatches: string[] = [];
+  // A committed case source whose bytes are not upstream's: recording again refuses it (writeRecording), so it is
+  // restored, or deleted for the recorder to copy again, before anything is recorded.
+  const editedSources: string[] = [];
   // A recording uploaded by hand before cases carried a sha256 pins its case sources as one digest instead
   // (liftedCaseSources, by the lock's asset name); any other recording without a case's sha256 is stale.
   const undigested: [file: string, actual: string][] = [];
@@ -245,16 +249,19 @@ export function toolPackChecks(
     if (digests.size > 1) sourceMismatches.push(`${file} has cases that disagree about its sha256`);
     else if (actual === null) sourceMismatches.push(`${file} is not committed`);
     else if (recorded === undefined) undigested.push([file, actual]);
-    else if (actual !== recorded) sourceMismatches.push(`${file} is ${actual.slice(0, 12)}, recorded ${recorded.slice(0, 12)}`);
+    else if (actual !== recorded) editedSources.push(`${file} is ${actual.slice(0, 12)}, recorded ${recorded.slice(0, 12)}`);
   }
   const pinned = liftedAsset === undefined ? undefined : liftedCaseSources.get(liftedAsset);
   if (undigested.length > 0 && pinned === undefined) {
     sourceMismatches.push(...undigested.map(([file]) => `${file} has no recorded sha256`));
   } else if (undigested.length > 0 && caseSourcesDigest(undigested) !== pinned) {
-    sourceMismatches.push(`the ${undigested.length} case source(s) ${liftedAsset} records no sha256 for are ${caseSourcesDigest(undigested).slice(0, 12)} together, pinned ${pinned!.slice(0, 12)} in recording/store.ts's LIFTED_CASE_SOURCES (git log -p -- packs/${pack}/upstream/${tool}/fixtures shows what changed)`);
+    editedSources.push(`the ${undigested.length} case source(s) ${liftedAsset} records no sha256 for are ${caseSourcesDigest(undigested).slice(0, 12)} together, pinned ${pinned!.slice(0, 12)} in recording/store.ts's LIFTED_CASE_SOURCES (git log -p -- packs/${pack}/upstream/${tool}/fixtures shows what changed)`);
   }
+  // The edited ones lead, since recording again waits on them.
+  const differing = [...editedSources, ...sourceMismatches];
+  const restore = `restore each edited one to upstream's bytes (git checkout origin/main -- packs/${pack}/upstream/${tool}/<file>), or delete it so recording copies it again`;
   const liftedNote = undigested.length === 0 ? "" : ` (${undigested.length} of them pinned together: ${RECORDING_FILE} was uploaded by hand before cases carried a sha256)`;
-  checks.push({ id: "case-sources", ok: sourceMismatches.length === 0, detail: sourceMismatches.length === 0 ? `${recordedDigests.size} committed case source(s) are the bytes upstream's answers were recorded on${liftedNote}` : `${sourceMismatches.length} case source(s) differ: ${sourceMismatches.slice(0, 3).join("; ")}: ${stale}` });
+  checks.push({ id: "case-sources", ok: differing.length === 0, detail: differing.length === 0 ? `${recordedDigests.size} committed case source(s) are the bytes upstream's answers were recorded on${liftedNote}` : `${differing.length} case source(s) differ: ${differing.slice(0, 3).join("; ")}: ${editedSources.length === 0 ? stale : restore}` });
 
   // A narrowing may only leave types out: a type upstream does not lint would hold the ports to nothing upstream checks.
   const inScope = manifest.rerail.in_scope;
@@ -315,6 +322,8 @@ export function createRecordedAdapter(
   const verdictsByKey = new Map<string, ParserVerdict[]>(recording.parserVerdicts.map((entry) => [`${entry.path}\0${entry.script}\0${entry.sha256}`, entry.verdicts ?? silent]));
   const corpusVerdicts = new Map<string, ParserVerdict[]>((corpus?.files ?? []).map((file) => [`${file.path}\0${file.sha256}`, file.verdicts ?? corpusSilent]));
   const corpusByPlace = new Map((corpus?.files ?? []).map((file) => [`${file.task}\0${file.path}`, file]));
+  // One string for every corpus file corpus.json does not answer: the corpus has many, and a golden among them fails on it.
+  const unanswered = `${CORPUS_FILE} has no answer for it with this sha256, so the tool-pack needs recording again: ${recordingRoutes(manifest.rerail.pack, recording.tool)}`;
 
   return {
     identity: recording.identity,
@@ -386,7 +395,7 @@ export function createRecordedAdapter(
         const recorded = corpusByPlace.get(`${file.task}\0${file.path}`);
         if (recorded === undefined || recorded.sha256 !== file.sha256) {
           // Without upstream's recorded answer the file has no ground truth; treating it as silent would invent agreement.
-          return { file, excluded: `${CORPUS_FILE} has no answer for it with this sha256: re-record the tool-pack (docs/port-readiness.md, "Goldens")`, findings: new Map() };
+          return { file, excluded: unanswered, findings: new Map() };
         }
         const findings = new Map<string, Span[]>(Object.entries(recorded.findings).filter(([rule]) => asked.has(rule)).map(([rule, spans]) => [rule, spans.map(spanOf)]));
         return { file, excluded: recorded.excluded, findings };

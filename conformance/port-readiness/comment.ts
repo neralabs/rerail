@@ -7,6 +7,7 @@
  * counts, keeps every list collapsed, groups candidates by the gate they stop at, and drops detail (longest lists
  * first) until it fits. The job summary and the uploaded reports always have everything.
  */
+import { RECORD_LABEL } from "./recording/routes.js";
 import { cell } from "./report.js";
 import type { BlockingRow, Summary } from "./summary.js";
 
@@ -55,6 +56,20 @@ export function notJudgedNote(summary: Summary): { scope: string; line: string }
   };
 }
 
+/**
+ * The line naming the tool-packs whose report says they must be recorded again (Summary.toolPacks' needsRecording), and
+ * how a pull request gets that, or main, whose job summary has the line too; undefined when none does. The recording
+ * run's own comment says what to do after it.
+ */
+export function recordingNeededLine(summary: Summary): string | undefined {
+  const names = summary.toolPacks.filter((entry) => entry.needsRecording).map((entry) => `\`${entry.toolPack}\``);
+  if (names.length === 0) return undefined;
+  const listed = names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names.at(-1)!}`;
+  return `${listed} ${names.length === 1 ? "needs" : "need"} recording again: in a pull request, a maintainer adds the \`${RECORD_LABEL}\` label`
+    + " (or runs `port-readiness-record.yml` by hand with the pull request's number and head sha), and that run comments on the pull request with what comes next;"
+    + " on `main`, a maintainer runs `port-readiness-record.yml` from `main` with `pr` and `sha` empty.";
+}
+
 /** Rows of `rows` grouped by first failing gate, in the order the gates run, each group a table. */
 function byGate(rows: (BlockingRow & { toolPack: string })[], limit: number): string[] {
   const groups = new Map<string, (BlockingRow & { toolPack: string })[]>();
@@ -76,6 +91,7 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
   const blocking = summary.blocking.length;
   const ready = summary.promotable.length;
   const notJudged = notJudgedNote(summary);
+  const recording = recordingNeededLine(summary);
   const verdict = `${summary.pass ? "✅ every shipped rule passes" : `❌ ${blocking} blocking failure${blocking === 1 ? "" : "s"}`}${ready === 0 ? "" : ` · 🟢 ${ready} candidate${ready === 1 ? "" : "s"} ready to promote`}${notJudged === undefined ? "" : ` · in ${notJudged.scope}`}`;
   const commit = context.commit === undefined || context.commit === "" ? "" : ` at \`${context.commit.slice(0, 10)}\``;
   const run = context.runUrl === undefined || context.runUrl === "" ? "" : ` · [job summary and reports](${context.runUrl})`;
@@ -90,6 +106,7 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
     `Shipped rules (\`rules/\`) must pass every gate; candidates (\`candidates/\`) are only reported${commit}${run}.`,
     "",
     ...(notJudged === undefined ? [] : [notJudged.line, ""]),
+    ...(recording === undefined ? [] : [recording, ""]),
     ...table(
       ["Tool-pack", "Shipped rules passing", "Candidates ready to promote"],
       [

@@ -37,6 +37,8 @@ known_gaps: []
 `;
 
 const SOURCE = "import pickle\npickle.loads(b'')\n";
+/** What an edited case source says to do, written out here so a change to its wording is a change to this test. */
+const RESTORE = "restore each edited one to upstream's bytes (git checkout origin/main -- packs/demo/upstream/bandit/<file>), or delete it so recording copies it again";
 const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 function recording(caseDigest: string | undefined) {
@@ -104,21 +106,25 @@ test("a committed case source with its recorded bytes passes case-sources", () =
   assert.equal(check.ok, true, check.detail);
 });
 
-test("an edited, missing or unpinned case source fails case-sources as a stale recording", () => {
+test("an edited case source fails case-sources and says to restore it; a missing or unpinned one, as a stale recording", () => {
   // What a pull request would commit to make the rule agree: the construct behind upstream's finding trimmed out.
+  // Recording again refuses committed case sources that differ from upstream's, so the fix is the bytes, not a recording.
   const edited = caseSources("import pickle\n", digest(SOURCE));
   assert.equal(edited.ok, false);
   assert.match(edited.detail, /fixtures\/pickle\.py is [0-9a-f]{12}, recorded [0-9a-f]{12}/u);
-  assert.ok(edited.detail.endsWith(staleMessage("demo", "bandit")), edited.detail);
+  assert.ok(edited.detail.endsWith(RESTORE), edited.detail);
+  assert.ok(!edited.detail.includes(staleMessage("demo", "bandit")), edited.detail);
 
   const missing = caseSources(null, digest(SOURCE));
   assert.equal(missing.ok, false);
   assert.match(missing.detail, /fixtures\/pickle\.py is not committed/u);
+  assert.ok(missing.detail.endsWith(staleMessage("demo", "bandit")), missing.detail);
 
   // A recording made before cases carried a digest pins nothing, so it is stale rather than trusted.
   const unpinned = caseSources(SOURCE, undefined);
   assert.equal(unpinned.ok, false);
   assert.match(unpinned.detail, /fixtures\/pickle\.py has no recorded sha256/u);
+  assert.ok(unpinned.detail.endsWith(staleMessage("demo", "bandit")), unpinned.detail);
 });
 
 test("a hand-uploaded recording without per-case sha256 passes only while its case sources are the ones pinned when it was recorded", () => {
@@ -133,7 +139,7 @@ test("a hand-uploaded recording without per-case sha256 passes only while its ca
   const edited = caseSources("import pickle\n", undefined, pinned);
   assert.equal(edited.ok, false);
   assert.match(edited.detail, /the 1 case source\(s\) demo-bandit-recording-b{64}\.json\.gz records no sha256 for are [0-9a-f]{12} together, pinned [0-9a-f]{12}/u);
-  assert.ok(edited.detail.endsWith(staleMessage("demo", "bandit")), edited.detail);
+  assert.ok(edited.detail.endsWith(RESTORE), edited.detail);
 
   const missing = caseSources(null, undefined, pinned);
   assert.equal(missing.ok, false);

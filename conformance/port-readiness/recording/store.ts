@@ -25,6 +25,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import { z } from "zod";
 
 import { toolPackDirectory } from "../manifest.js";
+import { recordingRoutes } from "./routes.js";
 import { CORPUS_FILE, CORPUS_FORMAT, RECORDING_FILE, RECORDING_FORMAT } from "./schema.js";
 
 const sha256 = (bytes: string | Buffer): string => createHash("sha256").update(bytes).digest("hex");
@@ -167,7 +168,7 @@ export function recordingLockPath(root: string, pack: string, tool: string): str
  */
 export function readRecordingLock(root: string, pack: string, tool: string): RecordingLock {
   const path = recordingLockPath(root, pack, tool);
-  if (!existsSync(path)) throw new Error(`packs/${pack}/upstream/${tool}/${RECORDING_LOCK} is missing: run npm run port-readiness:record -- --pack ${pack} --tool ${tool}`);
+  if (!existsSync(path)) throw new Error(`packs/${pack}/upstream/${tool}/${RECORDING_LOCK} is missing: ${recordingRoutes(pack, tool)}`);
   const parsed = recordingLockSchema.safeParse(JSON.parse(readFileSync(path, "utf8")));
   if (!parsed.success) throw new Error(`packs/${pack}/upstream/${tool}/${RECORDING_LOCK}: ${parsed.error.issues.slice(0, 5).map((issue) => `/${issue.path.map(String).join("/")}: ${issue.message}`).join("; ")}`);
   for (const [file, locked] of Object.entries(parsed.data.files)) {

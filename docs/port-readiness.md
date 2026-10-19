@@ -35,9 +35,22 @@ report shows every failure, not only the first.
 
 Tool-pack checks come before any gate. When one fails, every rule of the tool-pack fails with it: a shipped rule blocks
 and a candidate is not ready to promote. They fail when the recording is stale (`corpus-pins` and the recording checks),
-when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`), when a task or
+when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`: restore upstream's
+bytes, or delete the file for a recording to copy again, since recording refuses a committed case source that differs
+from upstream's), when a task or
 corpus a golden names could not be fetched (`corpus-complete`, usually a failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
 loader (`bundled-load`, for example two documents with one id).
+
+A check that fails for want of a recording says how to get one: in a pull request, a maintainer adds the
+`record-port-readiness` label (or runs `port-readiness-record.yml` by hand with the pull request's number and head
+`sha`); locally, `npm run port-readiness:record`, whose recording only the gates on that machine take (see
+"Recording"). A lock that names a recording `port-readiness-record.yml` never made, such as one recorded locally and
+committed, fails the leg's fetch before any gate runs: the comment then shows only that the tool-pack has no report, and
+the leg's log says why. A recording made in the pull request cannot fix a change to the recorder's runtimes
+(`conformance/recorders/port-readiness/runtimes/`), a fork's change to the upstream its `gates.yaml` pins, or a new
+tool-pack: the record run takes the runtimes and its list of tool-packs from `main`, and refuses a fork's new pins.
+Such a change (a new tool-pack with its entry in `port-readiness-record.yml`'s `TOOL_PACKS`) lands on `main` first,
+and then a maintainer records `main` (`port-readiness-record.yml` from `main` with `pr` and `sha` empty).
 
 Known parser gaps (`known_gaps` in `gates.yaml`) excuse an upstream test file that differs where the engine reported a
 parse failure on it, and nothing else. A gap holds when its probe occurs in every file it names, the engine still fails
@@ -185,8 +198,11 @@ the earlier comments as outdated, so the pull request keeps its history. The com
 shortening long lists; the job summary and the uploaded reports have everything. When the pull request judged only some
 tool-packs, the comment and the job summary say how many of them the counts cover, and a line names the rest: "Not
 judged on this change", with main's verdict standing for them. A pull request that judged none gets no new comment
-unless a not-gated check fails, but its earlier comments are still collapsed as outdated. The job summary reads top to
-bottom:
+unless a not-gated check fails, but its earlier comments are still collapsed as outdated. When a tool-pack's recording
+is stale, or a listed known gap has no parser verdict on its probe recorded, the comment and the job summary name the
+tool-pack under the headline and say a maintainer adds the `record-port-readiness` label (on `main`, runs
+`port-readiness-record.yml` with `pr` and `sha` empty); the comment cuts a check's detail short, and a fork's pull
+request gets no comment at all. The job summary reads top to bottom:
 
 1. The headline: shipped rules passing, blocking failures, candidates passing every gate.
 2. **Blocking failures:** each shipped rule that fails, the gate it stopped at, the check and why, and each listed

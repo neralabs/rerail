@@ -11,6 +11,7 @@ import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 import { DEFAULT_CACHE_ROOT } from "../../port-readiness/corpus.js";
 import { ProcessCommandRunner } from "../../port-readiness/process.js";
 import { renderRecordingChanges } from "../../port-readiness/recording/diff.js";
+import { mainRecordingRoutes, RECORD_LABEL } from "../../port-readiness/recording/routes.js";
 import { RECORDING_LOCK } from "../../port-readiness/recording/store.js";
 import { diffRecording, recordToolPack, writeRecording } from "./record.js";
 
@@ -64,13 +65,16 @@ async function main(): Promise<number> {
       process.stdout.write(`${label}: the recording is current (${summary})\n`);
       return 0;
     }
-    process.stdout.write(`${label}: the recording is stale; run npm run port-readiness:record -- --pack ${values.pack} --tool ${values.tool}\n${problems.map((problem) => `  ${problem}`).join("\n")}\n`);
+    // The nightly's drift check prints this on main, where no pull request is to label.
+    process.stdout.write(`${label}: the recording is stale: ${mainRecordingRoutes(values.pack, values.tool)}\n${problems.map((problem) => `  ${problem}`).join("\n")}\n`);
     return 1;
   }
   const written = await writeRecording(root, values.pack, values.tool, recorded, { cacheRoot, ...(values.release === undefined ? {} : { release: values.release }) });
   process.stdout.write(`${label}: recorded ${summary}; copied ${written.missing.length} case sources\n`);
   for (const asset of written.assets) process.stdout.write(`  ${asset.name} (${(asset.bytes / 1024 / 1024).toFixed(1)} MB gzipped)\n`);
-  process.stdout.write(`  ${RECORDING_LOCK} names them; the recordings are in ${cacheRoot}/recordings/ and the assets to upload in ${cacheRoot}/recordings/upload/\n`);
+  // Read in the record workflow's log as well as on a contributor's machine, so it says what CI takes, not what to do.
+  process.stdout.write(`  ${RECORDING_LOCK} names them; the recordings are in ${cacheRoot}/recordings/ and their assets in ${cacheRoot}/recordings/upload/;`
+    + ` CI takes a recording only once port-readiness-record.yml has made, uploaded and attested it (a maintainer starts it on a pull request with the ${RECORD_LABEL} label)\n`);
 
   // The per-rule summary replaces the recording's own diff, which is no longer in the tree to read.
   const changes = [written.changes];

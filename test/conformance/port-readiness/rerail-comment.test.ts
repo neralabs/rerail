@@ -70,3 +70,12 @@ test("candidates with no conformance entry are listed as not judged, apart from 
   assert.match(section, /<summary>1 candidate is not judged: no conformance\.json entry maps it to an upstream rule, so no gate ran<\/summary>/u);
   assert.match(section, /^- python: `packs\/python\/candidates\/rules\/ruff-a005-stdlib-module-shadowing\.json`$/mu);
 });
+
+test("a tool-pack that needs recording again gets a line naming the label, and none does without one", () => {
+  const base = summary(10, 2);
+  const flagged = (toolPack: string) => ({ ...base.toolPacks[0]!, toolPack, needsRecording: true });
+  const text = renderComment({ ...base, toolPacks: [flagged("python/ruff")] });
+  assert.match(text, /^`python\/ruff` needs recording again: in a pull request, a maintainer adds the `record-port-readiness` label \(or runs `port-readiness-record\.yml` by hand with the pull request's number and head sha\), and that run comments on the pull request with what comes next; on `main`, a maintainer runs `port-readiness-record\.yml` from `main` with `pr` and `sha` empty\.$/mu);
+  assert.doesNotMatch(renderComment(base), /needs recording again/u);
+  assert.match(renderComment({ ...base, toolPacks: [flagged("python/ruff"), flagged("python/bandit")] }), /^`python\/ruff` and `python\/bandit` need recording again: /mu);
+});
