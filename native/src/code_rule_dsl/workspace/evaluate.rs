@@ -1283,8 +1283,18 @@ impl<'c> SqlFile<'c> {
             let mut runs = Vec::with_capacity(read.slots.len());
             {
                 let anchors = read.anchor_index(metrics);
-                for (&(slot, grammar), &gate) in read.slots.iter().zip(&read.runs) {
-                    if !gate {
+                // A clause the file gates exclude (its `when.sourceType`, its `file.jsxRuntime`,
+                // read once the document is: `run_clause`) matches nothing.
+                let admitted = {
+                    let gates = FileGates::new(&file.input, read.root.root());
+                    read.slots
+                        .iter()
+                        .zip(&read.runs)
+                        .map(|(&(_, grammar), &runs)| runs && gates.admit(grammar))
+                        .collect::<Vec<_>>()
+                };
+                for (&(slot, grammar), &admitted) in read.slots.iter().zip(&admitted) {
+                    if !admitted {
                         runs.push(None);
                         continue;
                     }

@@ -452,9 +452,14 @@ impl SqlFiles {
                         used.len() - 1
                     }
                 };
+                // A document the query's file gates exclude (read once the document is:
+                // `run_clause`) matches nothing.
+                let admitted =
+                    FileGates::new(file, ast_grep_core::AstGrep::doc(doc.clone()).root())
+                        .admit(grammar);
                 inputs.push((
                     doc.clone(),
-                    Some(statement),
+                    admitted.then_some(statement),
                     // As the stateless evaluator installs a file's scopes: nothing cached; and
                     // its call-graph closure (`FileCallsSlot::for_path`).
                     crate::code_rule_dsl::sql::FileContext {
