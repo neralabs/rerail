@@ -9,6 +9,7 @@ mod nodes;
 mod probe;
 mod recursion;
 mod setops;
+mod setup;
 mod three_valued;
 
 use crate::code_rule_dsl::CompiledCodeRuleDsl;

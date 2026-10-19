@@ -203,8 +203,9 @@ fn run_census() {
 }
 
 /// The corpus files the benchmark evaluates: the tracked Python files of a nera-data-layer
-/// checkout (`RERAIL_DATA_LAYER_CORPUS`), as a snapshot's files; only those `RERAIL_CORPUS_FILES`
-/// lists (comma-separated paths in the checkout) where it is set.
+/// checkout (`RERAIL_DATA_LAYER_CORPUS`), as a snapshot's files. `RERAIL_CORPUS_FILES` keeps some:
+/// a number `n`, about `n` of them evenly spaced in path order; otherwise a file listing the paths
+/// to keep, one per line.
 fn corpus_files(root: &std::path::Path) -> Vec<serde_json::Value> {
     let listed = std::process::Command::new("git")
         .arg("-C")
@@ -216,13 +217,25 @@ fn corpus_files(root: &std::path::Path) -> Vec<serde_json::Value> {
         .expect("paths")
         .split('\0')
         .filter(|path| path.ends_with(".py"))
-        .filter(|path| {
-            std::env::var("RERAIL_CORPUS_FILES")
-                .map_or(true, |only| only.split(',').any(|listed| listed == *path))
-        })
         .map(str::to_owned)
         .collect();
     paths.sort();
+    match std::env::var("RERAIL_CORPUS_FILES") {
+        Ok(wanted) if wanted.parse::<usize>().is_ok() => {
+            let wanted: usize = wanted.parse().expect("a count");
+            if wanted > 0 && wanted < paths.len() {
+                let stride = paths.len().div_ceil(wanted);
+                paths = paths.into_iter().step_by(stride).collect();
+            }
+        }
+        // A file listing the paths to keep, one per line.
+        Ok(list) => {
+            let list = std::fs::read_to_string(&list).expect("RERAIL_CORPUS_FILES list");
+            let keep: std::collections::HashSet<&str> = list.lines().map(str::trim).collect();
+            paths.retain(|path| keep.contains(path.as_str()));
+        }
+        Err(_) => {}
+    }
     paths
         .into_iter()
         .filter_map(|path| {
@@ -418,6 +431,15 @@ fn run_corpus() {
         differ.len(),
         started.elapsed().as_secs_f64()
     );
+    {
+        use std::sync::atomic::Ordering::Relaxed;
+        let bytes = crate::code_rule_dsl::sql::nodes::FACT_BYTES.load(Relaxed);
+        let nodes = crate::code_rule_dsl::sql::nodes::FACT_NODES.load(Relaxed).max(1);
+        eprintln!(
+            "node facts: {:.1} B/node beside the tape records ({bytes} B over {nodes} nodes)",
+            bytes as f64 / nodes as f64
+        );
+    }
     for (clause, native, sql) in differ.iter().take(3) {
         let cut = |text: &str| text.chars().take(1500).collect::<String>();
         eprintln!(
