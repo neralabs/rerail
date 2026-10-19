@@ -33,7 +33,7 @@ pub(crate) struct Comparison {
     pub(crate) commute: Vec<String>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CompareOp {
     Lt,
     Le,
@@ -45,7 +45,7 @@ pub(crate) enum CompareOp {
 
 /// How texts are ordered. Every collation compares UTF-16 code units after its fold, as
 /// JavaScript's `<` does, so JavaScript linters' orderings port exactly.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Collation {
     Ordinal,
     /// `toLowerCase()` first.
@@ -60,7 +60,7 @@ pub(crate) enum Collation {
     NaturalFoldLower,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CompareText {
     /// The captured node's source text.
     Source,

@@ -2,6 +2,7 @@ use super::relational::{SqlCatalogPlan, SqlShape, TerminalKind};
 use super::relational_ir::{normalized_binding_compatibility, qualified_row_columns};
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::model::Anchor;
 use crate::code_rule_dsl::packed::ExecutionBackend;
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
 use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file};
@@ -229,10 +230,8 @@ fn compiled_ordered_all_has_exact_relational_sql() {
         ]
     );
     let verdict = "CASE WHEN left_input.verdict = 0 OR right_input.verdict = 0 THEN 0 WHEN left_input.verdict IS NULL OR right_input.verdict IS NULL THEN NULL ELSE 1 END";
-    let columns = qualified_row_columns("left_input").replace(
-        "left_input.verdict",
-        &format!("{verdict} AS verdict"),
-    );
+    let columns = qualified_row_columns("left_input")
+        .replace("left_input.verdict", &format!("{verdict} AS verdict"));
     assert_eq!(
         cte(plan.sql(), "clause_0_relation_2 AS"),
         format!(
@@ -882,8 +881,8 @@ fn phase_two_comparison_and_value_have_relational_sql_and_ordered_catalogs() {
         "kind": "identifier",
         "value": { "follow": true, "eq": 1 }
     }));
-    let value = SqlCatalogPlan::compile(&[Arc::clone(&value.inner)])
-        .expect("flow-dependent value lowers");
+    let value =
+        SqlCatalogPlan::compile(&[Arc::clone(&value.inner)]).expect("flow-dependent value lowers");
     assert_eq!(
         value
             .terminals()
@@ -892,7 +891,10 @@ fn phase_two_comparison_and_value_have_relational_sql_and_ordered_catalogs() {
             .collect::<Vec<_>>(),
         vec![TerminalKind::Kind, TerminalKind::Value]
     );
-    assert_eq!(value.terminals()[1].producer_kind(), ProducerKind::ValueFact);
+    assert_eq!(
+        value.terminals()[1].producer_kind(),
+        ProducerKind::ValueFact
+    );
     let descriptor = value.terminals()[1]
         .value_fact()
         .expect("value catalog entry has one immutable descriptor");
@@ -918,10 +920,8 @@ fn phase_two_comparison_value_and_truth_sql_equal_the_oracle() {
             }),
             "x + x\nx + y\n",
         ),
-        (
-            json!({ "kind": "integer", "value": { "eq": 1 } }),
-            "1\n2\n",
-        ),
+        (json!({ "kind": "integer", "value": { "eq": 1 } }), "1\n2\n"),
+        (json!({ "value": { "eq": 1 } }), "1 + 0\nTrue\n1.0\n2\n"),
         (
             json!({ "kind": "identifier", "value": { "follow": true, "eq": 1 } }),
             "known = 1\nknown\nunknown\n",
@@ -1052,10 +1052,12 @@ pub(super) fn sql_ranges(
     let registry = Arc::new(MatchRegistry::default());
     register_module(&connection, Arc::clone(&registry)).expect("packed virtual table");
     let token = registry.register(demand);
-    let nodes = connection
+    let rows = connection
         .prepare(plan.sql())
         .expect("executable SQL plan")
-        .query_map([token], |row| row.get::<_, i64>(10))
+        .query_map([token], |row| {
+            Ok((row.get::<_, i64>(10)?, row.get::<_, String>(35)?))
+        })
         .expect("SQL structural query")
         .collect::<rusqlite::Result<Vec<_>>>()
         .expect("typed SQL nodes");
@@ -1068,9 +1070,21 @@ pub(super) fn sql_ranges(
         registry.query_execution_counters(token),
         Some(expected_executions)
     );
-    let mut ranges = nodes
+    let anchor = &compiled.inner.clauses[0].violation.anchor;
+    let mut ranges = rows
         .into_iter()
-        .map(|node| {
+        .map(|(node, bindings)| {
+            let node = match anchor {
+                Anchor::Capture(label) => serde_json::from_str::<serde_json::Value>(&bindings)
+                    .expect("JSON binding environment")
+                    .as_array()
+                    .expect("binding array")
+                    .iter()
+                    .find(|binding| binding["label"] == *label && binding["kind"] == 1)
+                    .and_then(|binding| binding["node"].as_i64())
+                    .unwrap_or(node),
+                Anchor::Span | Anchor::Start | Anchor::End | Anchor::FileStart => node,
+            };
             let span = &spans[node as usize];
             (span.start, span.end)
         })

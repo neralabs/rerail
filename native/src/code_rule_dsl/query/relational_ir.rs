@@ -1,3 +1,5 @@
+use super::super::matcher::{Collation, CompareOp, CompareText};
+use num_traits::FromPrimitive as _;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -176,8 +178,34 @@ pub(super) struct CountSpec {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ComparisonSpec {
+    pub(super) left: String,
+    pub(super) op: CompareOp,
+    pub(super) right: String,
+    pub(super) collation: Collation,
+    pub(super) text: CompareText,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum ValueLiteral {
+    Null,
+    Bool(bool),
+    Integer(String),
+    Float(String),
+    String(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ValuePredicateSpec {
+    pub(super) producer: usize,
+    pub(super) language: super::super::language::GrammarDialect,
+    pub(super) eq: ValueLiteral,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum RelationNode {
     Seed,
+    Empty,
     Producer(TerminalSpec),
     Apply {
         operation: SqlOperation,
@@ -204,6 +232,14 @@ enum RelationNode {
         related: Box<RelationNode>,
         stop: Option<Box<RelationNode>>,
     },
+    Compare {
+        spec: ComparisonSpec,
+        source: Box<RelationNode>,
+    },
+    Value {
+        spec: ValuePredicateSpec,
+        source: Box<RelationNode>,
+    },
     PrefixChoice {
         source: Box<RelationNode>,
         branch: usize,
@@ -229,6 +265,20 @@ impl RelationNode {
             inputs: vec![left, right],
         };
         match self {
+            Self::Compare { spec, source } => Self::Compare {
+                spec,
+                source: Box::new(match *source {
+                    Self::Seed => input,
+                    nested => nested.apply_after(input),
+                }),
+            },
+            Self::Value { spec, source } => Self::Value {
+                spec,
+                source: Box::new(match *source {
+                    Self::Seed => input,
+                    nested => nested.apply_after(input),
+                }),
+            },
             Self::Count {
                 spec,
                 source,
@@ -325,15 +375,16 @@ impl RelationNode {
                 source, of_rule, ..
             } => source.can_bind() || of_rule.as_deref().is_some_and(Self::can_bind),
             Self::Constrain { .. } | Self::Count { .. } => true,
+            Self::Compare { source, .. } | Self::Value { source, .. } => source.can_bind(),
             Self::PrefixChoice { source, .. } => source.can_bind(),
             Self::MergeChoices(inputs) => inputs.iter().any(Self::can_bind),
-            Self::Seed | Self::Rendered(_) => false,
+            Self::Seed | Self::Empty | Self::Rendered(_) => false,
         }
     }
 
     fn collect_terminals(&self, terminals: &mut Vec<TerminalKind>) {
         match self {
-            Self::Seed | Self::Rendered(_) => {}
+            Self::Seed | Self::Empty | Self::Rendered(_) => {}
             Self::Producer(spec) => {
                 if !terminals.contains(&spec.kind) {
                     terminals.push(spec.kind);
@@ -379,6 +430,13 @@ impl RelationNode {
                 source.collect_terminals(terminals);
                 for (_, constraint) in constraints {
                     constraint.collect_terminals(terminals);
+                }
+            }
+            Self::Compare { source, .. } => source.collect_terminals(terminals),
+            Self::Value { source, .. } => {
+                source.collect_terminals(terminals);
+                if !terminals.contains(&TerminalKind::Value) {
+                    terminals.push(TerminalKind::Value);
                 }
             }
             Self::Count {
@@ -462,6 +520,22 @@ impl RelationNode {
                     operations.push(SqlOperation::OrderedUnion);
                 }
             }
+            Self::Compare { source, .. } => {
+                source.collect_operations(operations);
+                for operation in [SqlOperation::Bindings, SqlOperation::WhereFilter] {
+                    if !operations.contains(&operation) {
+                        operations.push(operation);
+                    }
+                }
+            }
+            Self::Value { source, .. } => {
+                source.collect_operations(operations);
+                for operation in [SqlOperation::ScanFact, SqlOperation::CaseTruth] {
+                    if !operations.contains(&operation) {
+                        operations.push(operation);
+                    }
+                }
+            }
             Self::Count {
                 source,
                 related,
@@ -483,7 +557,7 @@ impl RelationNode {
                     }
                 }
             }
-            Self::Seed | Self::Producer(_) | Self::Rendered(_) => {}
+            Self::Seed | Self::Empty | Self::Producer(_) | Self::Rendered(_) => {}
         }
     }
 }
@@ -529,6 +603,15 @@ impl SqlRenderer {
                     related,
                     stop,
                 } => self.render_count(spec, source, related, stop.as_deref()),
+                RelationNode::Compare { spec, source } => self.render_comparison(spec, source),
+                RelationNode::Value { spec, source } => self.render_value(spec, source),
+                RelationNode::Empty => {
+                    let name = self.next_name("empty");
+                    self.ctes.push(format!(
+                        "{name} AS (\n  SELECT terminal_match.*, json('[]') AS bindings, '' AS choice_order FROM terminal_match WHERE 0\n)"
+                    ));
+                    Ok(name)
+                }
                 RelationNode::PrefixChoice { source, branch } => {
                     let source = self.render(source)?;
                     let name = self.next_name("choice");
@@ -619,7 +702,7 @@ impl SqlRenderer {
         };
         let producer = spec.producer_id()?;
         let name = self.next_name("term");
-        let columns = qualified_row_columns("match");
+        let columns = qualified_row_columns_with_verdict("match", "1");
         self.ctes.push(format!(
             "{name} AS (\n  SELECT {columns}, COALESCE((\n    SELECT json_group_array(json_object('label', captured.capture_label, 'occurrence', captured.capture_occurrence, 'node', captured.node, 'text', captured.source_text, 'structure', captured.structural_key, 'leaf', captured.named_leaf, 'kind', captured.capture_kind, 'named', captured.capture_named, 'equality_occurrence', captured.equality_occurrence))\n    FROM capture captured\n    WHERE captured.producer_id = match.producer_id AND captured.file_index = match.file_index\n      AND captured.match_index = match.match_index AND captured.capture_label <> 'match'\n    ORDER BY captured.capture_index\n  ), json('[]')) AS bindings, '' AS choice_order\n  FROM terminal_match match\n  INNER JOIN producer_status status USING (producer_id, file_index)\n  WHERE match.producer_id = {producer} AND status.complete = 1\n    AND NOT EXISTS (\n      SELECT 1 FROM capture first\n      JOIN capture repeated ON repeated.producer_id = first.producer_id AND repeated.file_index = first.file_index\n        AND repeated.match_index = first.match_index AND repeated.capture_label = first.capture_label\n        AND repeated.capture_index > first.capture_index\n      WHERE first.producer_id = match.producer_id AND first.file_index = match.file_index\n        AND first.match_index = match.match_index AND first.capture_label <> 'match'\n        AND first.capture_kind = 1 AND repeated.capture_kind = 1\n        AND NOT {}\n    )\n)",
             Self::capture_equality("first", "repeated")
@@ -644,16 +727,33 @@ impl SqlRenderer {
             .collect::<Result<Vec<_>, _>>()?;
         let name = self.next_name("relation");
         if !inputs.iter().any(RelationNode::can_bind) {
+            let aliases = (0..relations.len())
+                .map(|index| match index {
+                    0 => "left_input".to_owned(),
+                    1 => "right_input".to_owned(),
+                    _ => format!("input_{index}"),
+                })
+                .collect::<Vec<_>>();
+            let verdict = format!(
+                "CASE WHEN {} THEN 0 WHEN {} THEN NULL ELSE 1 END",
+                aliases
+                    .iter()
+                    .map(|alias| format!("{alias}.verdict = 0"))
+                    .collect::<Vec<_>>()
+                    .join(" OR "),
+                aliases
+                    .iter()
+                    .map(|alias| format!("{alias}.verdict IS NULL"))
+                    .collect::<Vec<_>>()
+                    .join(" OR ")
+            );
+            let columns = qualified_row_columns_with_verdict("left_input", &verdict);
             let mut sql = format!(
-                "{name} AS (\n  SELECT left_input.* FROM {} left_input",
+                "{name} AS (\n  SELECT {columns}, left_input.bindings, left_input.choice_order FROM {} left_input",
                 relations[0]
             );
             for (index, relation) in relations.iter().enumerate().skip(1) {
-                let alias = if index == 1 {
-                    "right_input".to_owned()
-                } else {
-                    format!("input_{index}")
-                };
+                let alias = &aliases[index];
                 sql.push_str(&format!(
                     "\n  INNER JOIN {relation} {alias}\n    ON {alias}.file_index = left_input.file_index AND {alias}.node = left_input.node"
                 ));
@@ -662,7 +762,33 @@ impl SqlRenderer {
             self.ctes.push(sql);
             return Ok(name);
         }
-        let columns = qualified_row_columns("left_input");
+        let aliases = relations
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                if index == 0 {
+                    "left_input".to_owned()
+                } else if index == 1 {
+                    "right_input".to_owned()
+                } else {
+                    format!("input_{index}")
+                }
+            })
+            .collect::<Vec<_>>();
+        let verdict = format!(
+            "CASE WHEN {} THEN 0 WHEN {} THEN NULL ELSE 1 END",
+            aliases
+                .iter()
+                .map(|alias| format!("{alias}.verdict = 0"))
+                .collect::<Vec<_>>()
+                .join(" OR "),
+            aliases
+                .iter()
+                .map(|alias| format!("{alias}.verdict IS NULL"))
+                .collect::<Vec<_>>()
+                .join(" OR ")
+        );
+        let columns = qualified_row_columns_with_verdict("left_input", &verdict);
         let merged = Self::merged_bindings(
             &relations
                 .iter()
@@ -733,18 +859,24 @@ impl SqlRenderer {
             .map(|input| self.render(input))
             .collect::<Result<Vec<_>, _>>()?;
         let name = self.next_name("relation");
+        let union = format!("{name}_branches");
         let branches = relations
             .iter()
             .enumerate()
             .map(|(branch, relation)| {
                 let columns = qualified_row_columns("branch");
+                let blocks = i64::from(inputs[branch].can_bind());
                 format!(
-                    "SELECT {columns}, branch.bindings, printf('%08d/', {branch}) || branch.choice_order AS choice_order FROM {relation} branch"
+                    "SELECT {columns}, branch.bindings, printf('%08d/', {branch}) || branch.choice_order AS choice_order, {branch} AS branch_order, {blocks} AS unknown_blocks FROM {relation} branch"
                 )
             })
             .collect::<Vec<_>>()
             .join("\n  UNION ALL\n  ");
-        self.ctes.push(format!("{name} AS (\n  {branches}\n)"));
+        self.ctes.push(format!("{union} AS (\n  {branches}\n)"));
+        let columns = qualified_row_columns("chosen");
+        self.ctes.push(format!(
+            "{name} AS (\n  SELECT {columns}, chosen.bindings, chosen.choice_order FROM (\n    SELECT branch.*, row_number() OVER (PARTITION BY file_index, node ORDER BY CASE WHEN verdict = 1 OR (verdict IS NULL AND unknown_blocks = 1) THEN 0 WHEN verdict IS NULL THEN 1 ELSE 2 END, branch_order, choice_order, producer_id, match_index) AS truth_order FROM {union} branch\n  ) chosen\n  WHERE chosen.truth_order = 1 AND chosen.verdict IS NOT 0\n)"
+        ));
         Ok(name)
     }
 
@@ -755,9 +887,126 @@ impl SqlRenderer {
         let universe = self.render(universe)?;
         let excluded = self.render(excluded)?;
         let name = self.next_name("relation");
+        let compatible = Self::binding_compatibility("universe", "excluded");
+        let verdict = format!(
+            "CASE WHEN EXISTS (SELECT 1 FROM {excluded} excluded WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node AND excluded.verdict IS NULL AND {compatible}) THEN NULL ELSE 1 END"
+        );
+        let columns = qualified_row_columns_with_verdict("universe", &verdict);
         self.ctes.push(format!(
-            "{name} AS (\n  SELECT universe.* FROM {universe} universe\n  WHERE NOT EXISTS (\n    SELECT 1 FROM {excluded} excluded\n    WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node\n      AND {}\n  )\n)",
-            Self::binding_compatibility("universe", "excluded")
+            "{name} AS (\n  SELECT {columns}, universe.bindings, universe.choice_order FROM {universe} universe\n  WHERE universe.verdict = 1 AND NOT EXISTS (\n    SELECT 1 FROM {excluded} excluded\n    WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node AND excluded.verdict = 1\n      AND {compatible}\n  )\n)"
+        ));
+        Ok(name)
+    }
+
+    fn render_comparison(
+        &mut self,
+        spec: &ComparisonSpec,
+        source: &RelationNode,
+    ) -> Result<String, String> {
+        let source = self.render(source)?;
+        let name = self.next_name("compare");
+        let left_name = Self::sql_text(&spec.left);
+        let right_name = Self::sql_text(&spec.right);
+        let operand = |alias: &str| match spec.text {
+            CompareText::Source => format!("json_extract({alias}.value, '$.text')"),
+            CompareText::Unquoted => format!(
+                "CASE WHEN substr(json_extract({alias}.value, '$.text'), 1, 1) = substr(json_extract({alias}.value, '$.text'), -1, 1) AND substr(json_extract({alias}.value, '$.text'), 1, 1) IN ('\"', '''', '`') THEN substr(json_extract({alias}.value, '$.text'), 2, length(json_extract({alias}.value, '$.text')) - 2) ELSE json_extract({alias}.value, '$.text') END"
+            ),
+            CompareText::Node => format!(
+                "printf('%d:%s', json_extract({alias}.value, '$.node'), json_extract({alias}.value, '$.structure'))"
+            ),
+            CompareText::Tokens | CompareText::Index | CompareText::Semantic(_) => String::new(),
+        };
+        if matches!(
+            spec.text,
+            CompareText::Tokens | CompareText::Index | CompareText::Semantic(_)
+        ) {
+            return Err("comparison text mode is not lowered in phase two".to_owned());
+        }
+        if spec.collation != Collation::Ordinal {
+            return Err(
+                "non-ordinal comparison collation requires a bounded collation fact".to_owned(),
+            );
+        }
+        let fold = |value: String| value;
+        let operator = match spec.op {
+            CompareOp::Lt => "<",
+            CompareOp::Le => "<=",
+            CompareOp::Eq => "=",
+            CompareOp::Ne => "<>",
+            CompareOp::Gt => ">",
+            CompareOp::Ge => ">=",
+        };
+        if spec.text == CompareText::Node && !matches!(spec.op, CompareOp::Eq | CompareOp::Ne) {
+            return Err("node identity supports equality comparisons only".to_owned());
+        }
+        let test = format!(
+            "{} {operator} {}",
+            fold(operand("left_value")),
+            fold(operand("right_value"))
+        );
+        let verdict = format!(
+            "CASE WHEN source.verdict = 0 THEN 0 WHEN source.verdict IS NULL OR left_value.value IS NULL OR right_value.value IS NULL THEN NULL WHEN {test} THEN 1 ELSE 0 END"
+        );
+        let columns = qualified_row_columns_with_verdict("source", &verdict);
+        self.ctes.push(format!(
+            "{name} AS (\n  SELECT {columns}, source.bindings, source.choice_order FROM {source} source\n  LEFT JOIN json_each(source.bindings) left_value ON json_extract(left_value.value, '$.label') = {left_name} AND json_extract(left_value.value, '$.kind') = 1 AND json_extract(left_value.value, '$.occurrence') = 0\n  LEFT JOIN json_each(source.bindings) right_value ON json_extract(right_value.value, '$.label') = {right_name} AND json_extract(right_value.value, '$.kind') = 1 AND json_extract(right_value.value, '$.occurrence') = 0\n)"
+        ));
+        Ok(name)
+    }
+
+    fn render_value(
+        &mut self,
+        spec: &ValuePredicateSpec,
+        source: &RelationNode,
+    ) -> Result<String, String> {
+        let source = if matches!(source, RelationNode::Seed) {
+            let name = self.next_name("value_source");
+            self.ctes.push(format!(
+                "{name} AS (\n  SELECT fact.*, json('[]') AS bindings, '' AS choice_order FROM fact WHERE fact.producer_id = {} AND fact.fact_kind = 1\n)",
+                spec.producer
+            ));
+            name
+        } else {
+            self.render(source)?
+        };
+        let name = self.next_name("value");
+        let expected = match &spec.eq {
+            ValueLiteral::Null => "null".to_owned(),
+            ValueLiteral::Bool(value)
+                if spec.language == super::super::language::GrammarDialect::Python =>
+            {
+                format!("int:{}", i64::from(*value))
+            }
+            ValueLiteral::Bool(value) => format!("bool:{}", i64::from(*value)),
+            ValueLiteral::Integer(value) => format!("int:{value}"),
+            ValueLiteral::Float(value) => {
+                let value = value
+                    .parse::<f64>()
+                    .map_err(|_| "value comparison has an invalid float literal")?;
+                if spec.language == super::super::language::GrammarDialect::Python
+                    && value.is_finite()
+                    && value.fract() == 0.0
+                {
+                    format!(
+                        "int:{}",
+                        num_bigint::BigInt::from_f64(value)
+                            .ok_or("integral value comparison exceeds its numeric fact")?
+                    )
+                } else {
+                    format!("float:{:016x}", value.to_bits())
+                }
+            }
+            ValueLiteral::String(value) => format!("string:{value}"),
+        };
+        let expected = Self::sql_text(&expected);
+        let verdict = format!(
+            "CASE WHEN source.verdict = 0 OR value_fact.verdict = 0 THEN 0 WHEN source.verdict IS NULL OR value_fact.verdict IS NULL THEN NULL WHEN value_fact.text_value = {expected} THEN 1 ELSE 0 END"
+        );
+        let columns = qualified_row_columns_with_verdict("source", &verdict);
+        self.ctes.push(format!(
+            "{name} AS (\n  SELECT {columns}, source.bindings, source.choice_order FROM {source} source\n  JOIN fact value_fact ON value_fact.producer_id = {} AND value_fact.file_index = source.file_index AND value_fact.node = source.node AND value_fact.fact_kind = 1\n)",
+            spec.producer
         ));
         Ok(name)
     }
@@ -1106,6 +1355,20 @@ pub(super) fn normalized_binding_compatibility(left: &str, right: &str) -> Strin
     SqlRenderer::binding_compatibility(left, right)
 }
 
+fn qualified_row_columns_with_verdict(alias: &str, verdict: &str) -> String {
+    ROW_COLUMNS
+        .split(", ")
+        .map(|column| {
+            if column == "verdict" {
+                format!("{verdict} AS verdict")
+            } else {
+                format!("{alias}.{column}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn qualified_row_columns_with_node(alias: &str, node: &str) -> String {
     ROW_COLUMNS
         .split(", ")
@@ -1150,6 +1413,42 @@ impl RelationalIr {
             terminal_kinds: Vec::new(),
             operations: vec![SqlOperation::PackedMaterialized, SqlOperation::StatusJoin],
         }
+    }
+
+    pub(super) fn empty_relation() -> Self {
+        let mut relation = Self {
+            roots: vec![RelationNode::Empty],
+            terminal_kinds: Vec::new(),
+            operations: Vec::new(),
+        };
+        relation.refresh_explanation();
+        relation
+    }
+
+    pub(super) fn comparison(spec: ComparisonSpec) -> Self {
+        let mut relation = Self {
+            roots: vec![RelationNode::Compare {
+                spec,
+                source: Box::new(RelationNode::Seed),
+            }],
+            terminal_kinds: Vec::new(),
+            operations: Vec::new(),
+        };
+        relation.refresh_explanation();
+        relation
+    }
+
+    pub(super) fn value(spec: ValuePredicateSpec) -> Self {
+        let mut relation = Self {
+            roots: vec![RelationNode::Value {
+                spec,
+                source: Box::new(RelationNode::Seed),
+            }],
+            terminal_kinds: Vec::new(),
+            operations: Vec::new(),
+        };
+        relation.refresh_explanation();
+        relation
     }
 
     pub(super) fn terminal_spec(
@@ -1306,14 +1605,20 @@ impl RelationalIr {
     pub(super) fn contains_terminal_spec(&self, kind: TerminalKind, semantic_key: &str) -> bool {
         fn contains(node: &RelationNode, kind: TerminalKind, semantic_key: &str) -> bool {
             match node {
-                RelationNode::Seed | RelationNode::Rendered(_) => false,
+                RelationNode::Seed | RelationNode::Empty | RelationNode::Rendered(_) => false,
                 RelationNode::Producer(spec) => {
                     spec.kind == kind && spec.semantic_key == semantic_key
                 }
                 RelationNode::Apply { inputs, .. } | RelationNode::MergeChoices(inputs) => inputs
                     .iter()
                     .any(|input| contains(input, kind, semantic_key)),
-                RelationNode::PrefixChoice { source, .. } => contains(source, kind, semantic_key),
+                RelationNode::PrefixChoice { source, .. }
+                | RelationNode::Compare { source, .. } => contains(source, kind, semantic_key),
+                RelationNode::Value { spec, source } => {
+                    (kind == TerminalKind::Value
+                        && semantic_key == format!("terminal:{}", spec.producer))
+                        || contains(source, kind, semantic_key)
+                }
                 RelationNode::Navigate {
                     spec,
                     source,
@@ -1387,7 +1692,7 @@ impl RelationalIr {
         let result = renderer.render(&self.roots[0])?;
         let selected = renderer.next_name("selected");
         renderer.ctes.push(format!(
-            "{selected} AS (\n  SELECT candidate.* FROM {result} candidate\n  WHERE NOT EXISTS (\n    SELECT 1 FROM {result} earlier\n    WHERE earlier.file_index = candidate.file_index AND earlier.node = candidate.node\n      AND (earlier.choice_order < candidate.choice_order\n        OR (earlier.choice_order = candidate.choice_order AND earlier.producer_id < candidate.producer_id)\n        OR (earlier.choice_order = candidate.choice_order AND earlier.producer_id = candidate.producer_id AND earlier.match_index < candidate.match_index))\n  )\n)"
+            "{selected} AS (\n  SELECT candidate.* FROM {result} candidate\n  WHERE candidate.verdict = 1 AND NOT EXISTS (\n    SELECT 1 FROM {result} earlier\n    WHERE earlier.file_index = candidate.file_index AND earlier.node = candidate.node\n      AND (earlier.choice_order < candidate.choice_order\n        OR (earlier.choice_order = candidate.choice_order AND earlier.producer_id < candidate.producer_id)\n        OR (earlier.choice_order = candidate.choice_order AND earlier.producer_id = candidate.producer_id AND earlier.match_index < candidate.match_index))\n  )\n)"
         ));
         Ok((renderer.ctes.join(",\n"), selected))
     }

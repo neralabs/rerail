@@ -1,12 +1,13 @@
 use super::relational_ir::{
-    CountSpec, NavigationAxis, NavigationSpec, NavigationStop, NthChildSpec, RelationalIr,
-    SqlOperation, qualified_row_columns,
+    ComparisonSpec, CountSpec, NavigationAxis, NavigationSpec, NavigationStop, NthChildSpec,
+    RelationalIr, SqlOperation, ValueLiteral, ValuePredicateSpec, qualified_row_columns,
 };
 use crate::code_rule_dsl::language::{GrammarDialect, label};
-use crate::code_rule_dsl::matcher::{AstMatcher, StopBy};
+use crate::code_rule_dsl::matcher::{AstMatcher, Semantic, StopBy};
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Query};
 use crate::code_rule_dsl::packed::Program;
-use crate::code_rule_dsl::transducer::sql_backend::ProducerKind;
+use crate::code_rule_dsl::transducer::sql_backend::{ProducerKind, ValueFactDescriptor};
+use crate::code_rule_dsl::value::Value;
 use ast_grep_core::matcher::Matcher;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -23,6 +24,7 @@ pub(super) struct TerminalPlan {
     program: Program,
     clauses: Vec<(usize, usize)>,
     result_limit: u32,
+    value_fact: Option<ValueFactDescriptor>,
 }
 
 impl TerminalPlan {
@@ -56,8 +58,13 @@ impl TerminalPlan {
         match self.kind {
             TerminalKind::Navigation => ProducerKind::Navigation,
             TerminalKind::Pattern => ProducerKind::Pattern,
+            TerminalKind::Value => ProducerKind::ValueFact,
             _ => ProducerKind::Terminal,
         }
+    }
+
+    pub(super) fn value_fact(&self) -> Option<ValueFactDescriptor> {
+        self.value_fact.clone()
     }
 }
 
@@ -105,13 +112,17 @@ impl SqlCatalogPlan {
                         u32::try_from(code_rule.capabilities.limits.max_witnesses)
                             .unwrap_or(u32::MAX);
                     let mut ir = RelationalIr::empty();
-                    builder.lower_matcher(
-                        &matcher.matcher,
-                        matcher.language,
-                        &at,
-                        &mut terminals,
-                        &mut ir,
-                    );
+                    if matcher.applies {
+                        builder.lower_matcher(
+                            &matcher.matcher,
+                            matcher.language,
+                            &at,
+                            &mut terminals,
+                            &mut ir,
+                        );
+                    } else {
+                        ir = RelationalIr::empty_relation();
+                    }
                     builder.clause_terminal_ids.push(terminals);
                     builder.clause_irs.push(ir);
                 }
@@ -210,6 +221,7 @@ enum TerminalIdentity {
     Kind(GrammarDialect, u16),
     Pattern(GrammarDialect, String),
     Regex(GrammarDialect, String),
+    Value(GrammarDialect, bool, Vec<u16>, String),
 }
 
 #[derive(Default)]
@@ -492,13 +504,71 @@ impl Builder {
             AstMatcher::Count(count) => {
                 self.lower_count(count, language, at, terminals, ir);
             }
-            AstMatcher::Never => self
-                .unsupported
-                .push(format!("{at}: never matcher is not lowered")),
-            AstMatcher::Util(_)
-            | AstMatcher::Call(_)
-            | AstMatcher::Compare(_)
-            | AstMatcher::Semantic(_) => self
+            AstMatcher::Compare(comparison) => {
+                if comparison.transform.is_some() || !comparison.commute.is_empty() {
+                    self.unsupported.push(format!(
+                        "{at}: transformed or commuted comparison is not lowered"
+                    ));
+                    return;
+                }
+                *ir = RelationalIr::comparison(ComparisonSpec {
+                    left: comparison.left.clone(),
+                    op: comparison.op,
+                    right: comparison.right.clone(),
+                    collation: comparison.collation,
+                    text: comparison.text,
+                });
+            }
+            AstMatcher::Semantic(Semantic::Value(test)) => {
+                let unsupported_value_shape = !test.types.is_empty()
+                    || test.constant.is_some()
+                    || !test.starts_with.is_empty()
+                    || test.regex.is_some()
+                    || test.bits_any.is_some()
+                    || !test.bounds.is_empty()
+                    || test.truthy.is_some();
+                let Some(expected) = test.eq.as_ref() else {
+                    self.unsupported
+                        .push(format!("{at}: value predicate has no SQL comparison"));
+                    return;
+                };
+                if unsupported_value_shape {
+                    self.unsupported.push(format!(
+                        "{at}: compound value predicate is not lowered in phase two"
+                    ));
+                    return;
+                }
+                let expected = match expected {
+                    Value::None => ValueLiteral::Null,
+                    Value::Bool(value) => ValueLiteral::Bool(*value),
+                    Value::Int(value) => ValueLiteral::Integer(value.to_string()),
+                    Value::Float(value) => ValueLiteral::Float(value.to_string()),
+                    Value::Str(value) => ValueLiteral::String(value.clone()),
+                    _ => {
+                        self.unsupported.push(format!(
+                            "{at}: value equality literal is not representable as a SQL fact"
+                        ));
+                        return;
+                    }
+                };
+                let descriptor = ValueFactDescriptor {
+                    language: test.reading.language,
+                    follow: test.reading.follow,
+                    expression_kinds: test.reading.expressions.iter().copied().collect(),
+                    reading: test.reading.clone(),
+                };
+                let id = self.value_terminal(at, descriptor);
+                if !terminals.contains(&id) {
+                    terminals.push(id);
+                }
+                *ir = RelationalIr::value(ValuePredicateSpec {
+                    producer: id,
+                    language,
+                    eq: expected,
+                });
+            }
+            AstMatcher::Never => *ir = RelationalIr::empty_relation(),
+            AstMatcher::Util(_) | AstMatcher::Call(_) | AstMatcher::Semantic(_) => self
                 .unsupported
                 .push(format!("{at}: matcher operation is not lowered")),
             #[cfg(test)]
@@ -680,6 +750,29 @@ impl Builder {
         )
     }
 
+    fn value_terminal(&mut self, at: &str, descriptor: ValueFactDescriptor) -> usize {
+        let identity = TerminalIdentity::Value(
+            descriptor.language,
+            descriptor.follow,
+            descriptor.expression_kinds.clone(),
+            at.to_owned(),
+        );
+        if let Some(id) = self.terminal_ids.get(&identity).copied() {
+            return id;
+        }
+        let id = self.terminals.len();
+        self.terminals.push(TerminalPlan {
+            kind: TerminalKind::Value,
+            language: descriptor.language,
+            program: Program::compile_universe().expect("the value fact shell is verified"),
+            clauses: vec![self.current_clause],
+            result_limit: u32::MAX,
+            value_fact: Some(descriptor),
+        });
+        self.terminal_ids.insert(identity, id);
+        id
+    }
+
     fn intern_terminal(
         &mut self,
         identity: TerminalIdentity,
@@ -702,6 +795,7 @@ impl Builder {
             program,
             clauses: vec![self.current_clause],
             result_limit: self.current_result_limit,
+            value_fact: None,
         });
         self.terminal_ids.insert(identity, id);
         id

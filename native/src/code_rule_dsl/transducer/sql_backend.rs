@@ -4,10 +4,15 @@
 //! calls `xFilter` with the batch token. The first call executes the packed backend and stores its
 //! normalized relation. No host callback or semantic matcher can be registered here.
 
+use super::super::language::GrammarDialect;
+use super::super::matcher::Reading;
 use super::super::packed::{
     Error as PackedError, ExecutionBackend, Program, execute_with_backend_packed_result_limits,
 };
 use super::super::tape::TapeDoc;
+use super::super::value::Lang;
+use ast_grep_core::AstGrep;
+use num_traits::FromPrimitive as _;
 use rusqlite::ffi;
 use rusqlite::vtab::{
     Context, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConfig, VTabConnection,
@@ -33,12 +38,127 @@ pub(in crate::code_rule_dsl) enum ProducerKind {
     Terminal,
     Pattern,
     Navigation,
+    ValueFact,
+}
+
+/// A bounded value-reading request. It contains no predicate and does not decide a rule. The
+/// producer emits one typed fact for each demanded node; SQL applies value predicates to facts.
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) struct ValueFactDescriptor {
+    pub(in crate::code_rule_dsl) language: GrammarDialect,
+    pub(in crate::code_rule_dsl) follow: bool,
+    pub(in crate::code_rule_dsl) expression_kinds: Vec<u16>,
+    pub(in crate::code_rule_dsl) reading: Reading,
+}
+
+impl std::fmt::Debug for ValueFactDescriptor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ValueFactDescriptor")
+            .field("language", &self.language)
+            .field("follow", &self.follow)
+            .field("expression_kinds", &self.expression_kinds)
+            .finish_non_exhaustive()
+    }
+}
+
+struct ValueFact {
+    verdict: Option<bool>,
+    text: Option<String>,
+}
+
+impl ValueFact {
+    fn known(text: String) -> Self {
+        Self {
+            verdict: Some(true),
+            text: Some(text),
+        }
+    }
+
+    fn missing() -> Self {
+        Self {
+            verdict: Some(false),
+            text: None,
+        }
+    }
+
+    fn unknown() -> Self {
+        Self {
+            verdict: None,
+            text: None,
+        }
+    }
+}
+
+impl ValueFactDescriptor {
+    fn canonical(&self, value: &super::super::value::Value) -> Option<String> {
+        use super::super::value::Value;
+        Some(match value {
+            Value::Unknown => return None,
+            Value::None => "null".to_owned(),
+            Value::Undefined => "undefined".to_owned(),
+            Value::Ellipsis => "ellipsis".to_owned(),
+            Value::Bool(value) if self.reading.lang() == Lang::Python => {
+                format!("int:{}", i64::from(*value))
+            }
+            Value::Bool(value) => format!("bool:{}", i64::from(*value)),
+            Value::Int(value) => format!("int:{value}"),
+            Value::Float(value)
+                if self.reading.lang() == Lang::Python
+                    && value.is_finite()
+                    && value.fract() == 0.0 =>
+            {
+                format!(
+                    "int:{}",
+                    num_bigint::BigInt::from_f64(*value)
+                        .expect("a finite integral float converts to an integer")
+                )
+            }
+            Value::Float(value) => format!("float:{:016x}", value.to_bits()),
+            Value::BigInt(value) => format!("bigint:{value}"),
+            Value::Str(value) => format!("string:{value}"),
+            Value::Utf16(value) => format!(
+                "utf16:{}",
+                value
+                    .iter()
+                    .map(|unit| format!("{unit:04x}"))
+                    .collect::<String>()
+            ),
+            Value::PhpStr(value) | Value::Bytes(value) => format!(
+                "bytes:{}",
+                value
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            ),
+            // Phase two predicates accept scalar literals only. A known non-scalar fact is still
+            // distinct from every accepted scalar and must not become unknown.
+            Value::Complex(..)
+            | Value::Tuple(_)
+            | Value::Array(_)
+            | Value::RegExp(_)
+            | Value::PhpArray(_)
+            | Value::Container { .. } => "non-scalar".to_owned(),
+        })
+    }
+
+    fn read(&self, node: &ast_grep_core::Node<'_, TapeDoc>) -> ValueFact {
+        if !self.reading.has_value(node) {
+            return ValueFact::missing();
+        }
+        let value = self.reading.value(node);
+        match self.canonical(&value) {
+            Some(value) => ValueFact::known(value),
+            None => ValueFact::unknown(),
+        }
+    }
 }
 
 pub(in crate::code_rule_dsl) struct PackedDemand {
     backend: ExecutionBackend,
     programs: Vec<Program>,
     producer_kinds: Vec<ProducerKind>,
+    value_facts: Vec<Option<ValueFactDescriptor>>,
     files: Vec<TapeDoc>,
     anchors: Vec<Vec<Vec<u32>>>,
     task_grid: Vec<Vec<bool>>,
@@ -63,10 +183,12 @@ impl PackedDemand {
             return Err(PackedError::InvalidAnchor);
         }
         let producer_kinds = vec![ProducerKind::Terminal; programs.len()];
+        let value_facts = vec![None; programs.len()];
         Ok(Self {
             backend,
             programs,
             producer_kinds,
+            value_facts,
             files,
             anchors,
             task_grid,
@@ -95,6 +217,25 @@ impl PackedDemand {
             return Err(PackedError::InvalidAnchor);
         }
         self.producer_kinds = producer_kinds;
+        Ok(self)
+    }
+
+    pub(in crate::code_rule_dsl) fn with_value_facts(
+        mut self,
+        value_facts: Vec<Option<ValueFactDescriptor>>,
+    ) -> Result<Self, PackedError> {
+        if value_facts.len() != self.programs.len()
+            || value_facts
+                .iter()
+                .enumerate()
+                .any(|(producer, descriptor)| {
+                    descriptor.is_some()
+                        != (self.producer_kinds[producer] == ProducerKind::ValueFact)
+                })
+        {
+            return Err(PackedError::InvalidAnchor);
+        }
+        self.value_facts = value_facts;
         Ok(self)
     }
 
@@ -132,6 +273,45 @@ impl PackedDemand {
         for file in 0..execution.file_count() {
             for program in 0..execution.program_count() {
                 if !self.task_grid[file][program] {
+                    continue;
+                }
+                if self.producer_kinds[program] == ProducerKind::ValueFact {
+                    let descriptor = self.value_facts[program]
+                        .as_ref()
+                        .expect("a verified value producer has its descriptor");
+                    let parsed = AstGrep::doc(self.files[file].clone());
+                    let _scope = super::super::matcher::FileScopeSlot::install(
+                        Vec::new(),
+                        None,
+                        !parsed.root().get_doc().syntax_error_ranges().is_empty(),
+                    );
+                    super::super::matcher::with_file_memo(&parsed, || {
+                        let root = parsed.root();
+                        let tape = root.get_doc();
+                        for (task_index, node) in
+                            self.anchors[file][program].iter().copied().enumerate()
+                        {
+                            let node_value = parsed.adopt(tape.node(node));
+                            let value = descriptor.read(&node_value);
+                            rows.push(PackedRow::value_fact(
+                                token,
+                                file,
+                                program,
+                                task_index,
+                                node,
+                                value.verdict,
+                                value.text,
+                            ));
+                        }
+                    });
+                    rows.push(PackedRow::producer_status(
+                        token,
+                        file,
+                        program,
+                        true,
+                        Some(true),
+                        None,
+                    ));
                     continue;
                 }
                 if self.producer_kinds[program] == ProducerKind::Pattern {
@@ -583,6 +763,27 @@ impl PackedRow {
         row.axis_order = Some(child_order as i64);
         row.field_id = Some(i64::from(field));
         row.related_named = Some(i64::from(named));
+        row
+    }
+
+    fn value_fact(
+        batch: i64,
+        file: usize,
+        producer: usize,
+        task_index: usize,
+        node: u32,
+        verdict: Option<bool>,
+        text: Option<String>,
+    ) -> Self {
+        let mut row = Self::blank(batch, RowKind::Fact);
+        row.file_index = Some(file as i64);
+        row.producer_id = Some(producer as i64);
+        row.task_index = Some(task_index as i64);
+        row.match_index = Some(task_index as i64);
+        row.node = Some(node as i64);
+        row.fact_kind = Some(1);
+        row.verdict = verdict.map(i64::from);
+        row.text_value = text;
         row
     }
 

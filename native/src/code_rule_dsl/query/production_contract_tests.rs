@@ -287,11 +287,19 @@ fn production_contract_phase_two_comparison_value_and_truth_lower_completely() {
         .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
         match SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]) {
             Ok(plan) => {
-                assert_eq!(plan.sql().matches("rerail_matches").count(), 1, "{}", case.name);
+                assert_eq!(
+                    plan.sql().matches("rerail_matches").count(),
+                    1,
+                    "{}",
+                    case.name
+                );
                 assert!(!plan.sql().contains("GrammarMatcher"), "{}", case.name);
                 assert!(!plan.sql().contains("tq_"), "{}", case.name);
                 if case.name == "disabled-when" {
-                    assert!(plan.terminals().is_empty(), "disabled queries demand no terminals");
+                    assert!(
+                        plan.terminals().is_empty(),
+                        "disabled queries demand no terminals"
+                    );
                 }
             }
             Err(error) => failures.push(format!(
@@ -336,10 +344,7 @@ fn production_contract_phase_two_sql_rows_equal_committed_oracle_rows() {
             .collect::<Vec<_>>();
         expected.sort_unstable();
         assert_eq!(
-            super::policy_lowering_tests::sql_ranges(
-                &compiled,
-                &case.workspace.files[0].source
-            ),
+            super::policy_lowering_tests::sql_ranges(&compiled, &case.workspace.files[0].source),
             expected,
             "{}",
             case.name

@@ -20,10 +20,11 @@ compiled clause
 The semantic matcher remains a test-only oracle.
 Production has no matcher fallback and no second execution shape.
 
-The current implementation establishes this boundary for kind, Smart-pattern, regex, Boolean, navigation, constraint, and count operations.
+The current implementation supports kind, Smart-pattern, regex, comparison, value, Boolean, navigation, constraint, and count operations.
 Each lowered clause owns an operand-bearing expression graph with semantic producer identities.
-SQL renders ordered Boolean operations, navigation axes, field relations, stop rules, and `nthChild` positions.
-The compact-contract frontend is separate from the production frontend and still uses transitional operation classification.
+SQL renders three-valued Boolean operations, comparisons, navigation, field relations, stop rules, and `nthChild` positions.
+A bounded value producer emits typed true, false, or unknown facts from an immutable reading descriptor.
+The production compiler reads complete policies. The deleted compact-contract frontend is not an execution path.
 The workspace tape-preparation and result-publication stages remain incomplete.
 
 ## Decision
@@ -272,7 +273,7 @@ The virtual table now exposes one 35-column tagged relation for all seven row fa
 Current producers emit batch status, producer status, terminal matches, capture sequences, and navigation edges.
 Capture rows identify single and multi-captures, named nodes, equality order, source text, and structural identity.
 Navigation edges include the grammar field identity and the named-node flag.
-The fact and document-map tags and columns are reserved, but their producers are not implemented.
+The value producer emits typed fact rows. Other fact producers and document-map producers are not implemented.
 Complete relational lowering must not treat an unimplemented row family as an empty result.
 
 ## One-statement execution
