@@ -15,17 +15,17 @@
     ]
   },
   "source_corpus_subset": {
-    "nativeCalls": 168,
-    "replayedCalls": 168,
-    "positiveCalls": 84,
-    "cleanCalls": 84,
+    "nativeCalls": 180,
+    "replayedCalls": 180,
+    "positiveCalls": 94,
+    "cleanCalls": 86,
     "falsePositives": 0,
     "falseNegatives": 0,
     "engineFailures": 0,
     "executionPathDifferences": 0,
     "missingCoverage": [],
-    "compilationMs": 647.3505000000002,
-    "elapsedMs": 4343.981875
+    "compilationMs": 702.5885419999995,
+    "elapsedMs": 3447.938875
   },
   "checks": [
     {
@@ -43,7 +43,7 @@
     {
       "check": "async_sync_delegation",
       "candidate": "packs/data-layer/candidates/rules/data-layer-async-sync-delegation.json",
-      "policy_sha256": "912ccf169ede0dc785dfd519fde7a277d5f298bd4ec9efec4e0809ea3071ebec",
+      "policy_sha256": "fec7c4bd3e7d6ea27e522f2da3aa18436599d6cc6cbdc170af8d1102ef6c96f8",
       "status": "repository detector parity"
     },
     {
@@ -67,7 +67,7 @@
     {
       "check": "layer_violations",
       "candidate": "packs/data-layer/candidates/rules/data-layer-layer-violations.json",
-      "policy_sha256": "c1f4d088c6ea43230c0def590327a2065dfe6153f9e757d161187099c562be86",
+      "policy_sha256": "7e6429288e52ee44640555298374c589b7a66cc777f9bceb4416320ef1302f32",
       "status": "repository detector parity"
     },
     {
@@ -85,11 +85,49 @@
     {
       "check": "imperative_private_functions",
       "candidate": "packs/data-layer/candidates/rules/data-layer-imperative-private-functions.json",
-      "policy_sha256": "78d442e1dbbf3f14b78faecb81cd028bce1cea6d43be2b20106c77c9c38f8e5a",
+      "policy_sha256": "9e1e5194e17de2f62570c2d8d14e0008048bc43c1bce4acd8879dc8e33ab294a",
       "status": "source-corpus only; project graph parity fails"
     }
   ],
   "repository": {
+    "files": 5914,
+    "bytes": 106201417,
+    "oracle_ms": 34575.444375004736,
+    "oracle_workers": 1,
+    "native_workers": 4,
+    "compilation_ms": 516.078792,
+    "cold_ms": 15370.262332999999,
+    "unchanged_file_ms": 31.07849999999962,
+    "edited_file_ms": 72.70116699999926,
+    "false_positives_by_check_and_code": {
+      "data-layer-imperative-private-functions:calls_imperative": 26
+    },
+    "false_negatives_by_check_and_code": {
+      "data-layer-imperative-private-functions:calls_imperative": 1904
+    },
+    "failures": [],
+    "native_sha256": "9b4ab3fd4f7d8f17147f7c1920a707c918a13225873d8e76f98039f654833d36",
+    "allocator": "system-shim",
+    "build_features": [
+      "code-rule-profile"
+    ],
+    "interpretation": "Timings measure incomplete semantics with unequal worker counts and do not certify a parity-preserving speedup"
+  },
+  "retained_reporter_contracts": [
+    "async_sync_delegation signed category/total baseline reporter"
+  ],
+  "validation": [
+    "646 unchanged upstream tests passed",
+    "180 native source comparisons: 94 positive and 86 clean",
+    "51 TypeScript regression tests passed, including 7 fifth-batch capability tests",
+    "1347 native DSL tests passed; 22 ignored",
+    "TypeScript typecheck and repository checks passed",
+    "Native formatting and all-target Clippy passed",
+    "38 reference grammar productions checked; no differences",
+    "Eight generated policies identical across two Python hash seeds"
+  ],
+  "previous_repository_checkpoint": {
+    "commit": "08040e12",
     "files": 5914,
     "bytes": 106201417,
     "oracle_ms": 34575.444375004736,
@@ -131,15 +169,32 @@
     "allocator": "system-shim",
     "interpretation": "Timings measure incomplete semantics and do not certify a parity-preserving speedup"
   },
-  "retained_reporter_contracts": [
-    "async_sync_delegation signed category/total baseline reporter"
-  ],
-  "validation": [
-    "646 unchanged upstream tests passed",
-    "168 native source comparisons: 84 positive and 84 clean",
-    "56 existing TypeScript regression tests passed",
-    "4 new native capability tests passed",
-    "10 native comparison compiler tests passed",
-    "TypeScript typecheck passed"
-  ]
+  "checkpoint_base_commit": "08040e12",
+  "declared_reference_ladders": {
+    "passing_corpus": "fixtures/host/data-layer-port/batch-05-graph-probes.json",
+    "passing_cases": 12,
+    "initial_gaps": [
+      "callbacks and returned values",
+      "declared receiver dispatch",
+      "typed parameter receivers",
+      "assignment alias exclusion",
+      "positional-only annotation exclusion"
+    ],
+    "scale_regression": {
+      "methods": 700,
+      "snapshot_and_workspace": "pass at existing limits"
+    },
+    "remaining_corpus": "fixtures/host/data-layer-port/batch-05-remaining-graph-probes.json",
+    "remaining_cases": 7,
+    "false_positives": 0,
+    "false_negatives": 3,
+    "engine_failures": 0,
+    "execution_path_differences": 0,
+    "unimplemented_relations": [
+      "decorator-generated sibling delegation",
+      "typed instance-field method selection",
+      "super method selection"
+    ],
+    "interpretation": "Reduced cases prove gaps but do not explain every repository mismatch"
+  }
 }

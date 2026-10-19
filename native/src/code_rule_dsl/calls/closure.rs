@@ -427,6 +427,8 @@ thread_local! {
 /// link a replacement can change are linked again, and only the files calling them re-resolved.
 #[derive(Clone, Default)]
 pub(crate) struct Graph {
+    /// A declared-symbol graph links classes themselves and does not dispatch to subclasses.
+    references: bool,
     /// Files by slot; a removed file's slot is reused.
     slots: Vec<Option<GraphFile>>,
     free: Vec<u32>,
@@ -530,6 +532,19 @@ impl Graph {
     /// of order.
     pub(crate) fn link(files: Vec<(Arc<str>, Arc<Summary>)>) -> Self {
         let mut graph = Self::default();
+        graph.update(
+            files
+                .into_iter()
+                .map(|(path, summary)| (path, Some(summary))),
+        );
+        graph
+    }
+
+    pub(crate) fn link_references(files: Vec<(Arc<str>, Arc<Summary>)>) -> Self {
+        let mut graph = Self {
+            references: true,
+            ..Self::default()
+        };
         graph.update(
             files
                 .into_iter()
@@ -1586,6 +1601,10 @@ impl Graph {
     /// class's and every workspace subclass's.
     pub(crate) fn link_python(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
         if name.text().ends_with('^') {
+            if self.references {
+                let declared = name.text().trim_end_matches('^').trim_end_matches('.');
+                return self.link_python(&Name::new(name.family(), declared), hops + 1, followed);
+            }
             return self.link_late_python(name, hops, followed);
         }
         if let Some(link) = self.member(name, hops, followed) {
@@ -1653,8 +1672,8 @@ impl Graph {
         };
         let mut class = false;
         for (file, (local, flags)) in defs.into_iter().flatten() {
-            link.open |= flags & DECORATED != 0;
-            if flags & CLASS == 0 {
+            link.open |= !self.references && flags & DECORATED != 0;
+            if flags & CLASS == 0 || self.references {
                 link.defs.push(DefRef {
                     file: *file,
                     local: *local,

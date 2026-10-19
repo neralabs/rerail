@@ -26,7 +26,7 @@ use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
 
 /// Bumped whenever extraction changes what a summary holds for the same file.
-pub(crate) const EXTRACTOR_VERSION: u32 = 9;
+pub(crate) const EXTRACTOR_VERSION: u32 = 11;
 
 pub(crate) const ASYNC: u8 = 1;
 pub(crate) const CLASS: u8 = 2;
@@ -65,6 +65,11 @@ pub(crate) struct Summary {
     pub(crate) defs: Vec<Def>,
     /// `(definition, callee name)`: what each definition's own body calls. Sorted, distinct.
     pub(crate) edges: Vec<(u32, u32)>,
+    /// Resolved value references, including callbacks and returned function values.
+    pub(crate) references: Vec<(u32, u32)>,
+    pub(crate) reference_targets: Vec<u32>,
+    /// Imported declarations, without run-time assignment aliases.
+    pub(crate) reference_aliases: Vec<(u32, u32)>,
     /// Every callee name any call of the file names, in a definition or not. Sorted, distinct.
     pub(crate) targets: Vec<u32>,
     /// Module- and class-level names other code may call through: `(this module's name for it,
@@ -116,6 +121,17 @@ pub(crate) enum Callee {
 }
 
 impl Summary {
+    pub(crate) fn as_references(&self) -> Self {
+        let mut summary = self.clone();
+        summary.edges = self.references.clone();
+        summary.targets = self.reference_targets.clone();
+        summary.aliases = self.reference_aliases.clone();
+        summary.open_sites = false;
+        for def in &mut summary.defs {
+            def.flags &= !OPEN;
+        }
+        summary
+    }
     pub(crate) fn name(&self, id: u32) -> &str {
         self.names[id as usize].text()
     }
@@ -162,14 +178,20 @@ impl Summary {
     /// A stable serialization for the content store.
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(
-            32 + self
+            58 + self
                 .names
                 .iter()
                 .map(|name| name.text().len() + 4)
                 .sum::<usize>()
                 + 13 * self.defs.len()
-                + 8 * (self.edges.len() + self.aliases.len())
-                + 4 * (self.targets.len() + self.opaque.len() + self.stars.len())
+                + 8 * (self.edges.len()
+                    + self.references.len()
+                    + self.aliases.len()
+                    + self.reference_aliases.len())
+                + 4 * (self.targets.len()
+                    + self.reference_targets.len()
+                    + self.opaque.len()
+                    + self.stars.len())
                 + 9 * self.supers.len(),
         );
         let put = |out: &mut Vec<u8>, value: u32| out.extend_from_slice(&value.to_le_bytes());
@@ -190,14 +212,24 @@ impl Summary {
             put(&mut out, def.end);
             out.push(def.flags);
         }
-        for pairs in [&self.edges, &self.aliases] {
+        for pairs in [
+            &self.edges,
+            &self.references,
+            &self.aliases,
+            &self.reference_aliases,
+        ] {
             put(&mut out, pairs.len() as u32);
             for (a, b) in pairs {
                 put(&mut out, *a);
                 put(&mut out, *b);
             }
         }
-        for ids in [&self.targets, &self.opaque, &self.stars] {
+        for ids in [
+            &self.targets,
+            &self.reference_targets,
+            &self.opaque,
+            &self.stars,
+        ] {
             put(&mut out, ids.len() as u32);
             for id in ids {
                 put(&mut out, *id);
@@ -253,13 +285,16 @@ impl Summary {
                 .collect::<Option<Vec<_>>>()
         };
         let edges = pairs(&|def| (def as usize) < defs.len())?;
+        let references = pairs(&|def| (def as usize) < defs.len())?;
         let aliases = pairs(&known)?;
+        let reference_aliases = pairs(&known)?;
         let mut ids = || {
             (0..reader.count(4)?)
                 .map(|_| reader.u32().filter(|id| known(*id)))
                 .collect::<Option<Vec<_>>>()
         };
         let targets = ids()?;
+        let reference_targets = ids()?;
         let opaque = ids()?;
         let stars = ids()?;
         let supers = (0..reader.count(9)?)
@@ -273,6 +308,9 @@ impl Summary {
             names,
             defs,
             edges,
+            references,
+            reference_targets,
+            reference_aliases,
             targets,
             aliases,
             opaque,
@@ -339,6 +377,8 @@ impl Receiver {
 struct Context {
     /// The definition whose body this is.
     owner: Option<u32>,
+    reference_owner: Option<u32>,
+    reference_receiver: Option<Receiver>,
     /// Prepended to a definition's name here.
     prefix: String,
     /// In a class body: the class's qualified name.
@@ -409,6 +449,9 @@ struct Extractor<'t> {
     ids: HashMap<Box<str>, u32>,
     defs: Vec<Def>,
     edges: Vec<(u32, u32)>,
+    references: Vec<(u32, u32)>,
+    reference_targets: Vec<u32>,
+    reference_aliases: Vec<(u32, u32)>,
     targets: Vec<u32>,
     aliases: Vec<(u32, u32)>,
     opaque: Vec<u32>,
@@ -427,6 +470,9 @@ impl<'t> Extractor<'t> {
             ids: HashMap::new(),
             defs: Vec::new(),
             edges: Vec::new(),
+            references: Vec::new(),
+            reference_targets: Vec::new(),
+            reference_aliases: Vec::new(),
             targets: Vec::new(),
             aliases: Vec::new(),
             opaque: Vec::new(),
@@ -461,11 +507,21 @@ impl<'t> Extractor<'t> {
     fn finish(mut self, family: Family) -> Summary {
         debug_assert!(self.defs.is_sorted_by_key(|def| def.start));
         let module = self.module.clone().map(|module| self.intern(&module));
-        for list in [&mut self.edges, &mut self.aliases] {
+        for list in [
+            &mut self.edges,
+            &mut self.references,
+            &mut self.aliases,
+            &mut self.reference_aliases,
+        ] {
             list.sort_unstable();
             list.dedup();
         }
-        for list in [&mut self.targets, &mut self.opaque, &mut self.stars] {
+        for list in [
+            &mut self.targets,
+            &mut self.reference_targets,
+            &mut self.opaque,
+            &mut self.stars,
+        ] {
             list.sort_unstable();
             list.dedup();
         }
@@ -478,6 +534,9 @@ impl<'t> Extractor<'t> {
                 .collect(),
             defs: self.defs,
             edges: self.edges,
+            references: self.references,
+            reference_targets: self.reference_targets,
+            reference_aliases: self.reference_aliases,
             targets: self.targets,
             aliases: self.aliases,
             opaque: self.opaque,
@@ -495,6 +554,8 @@ impl<'t> Extractor<'t> {
     fn walk<D: Doc>(&mut self, root: &Node<'_, D>) {
         let top = Context {
             owner: None,
+            reference_owner: None,
+            reference_receiver: None,
             prefix: self
                 .module
                 .as_ref()
@@ -505,6 +566,7 @@ impl<'t> Extractor<'t> {
         let mut contexts = vec![top];
         // Calls of a local definition, named once every definition is: `(owner, site, tail)`.
         let mut local = Vec::new();
+        let mut local_references = Vec::new();
         let mut stack = vec![(root.clone(), 0usize)];
         while let Some((node, context)) = stack.pop() {
             let before = stack.len();
@@ -528,6 +590,64 @@ impl<'t> Extractor<'t> {
                     Some(Found::Local(site, tail)) => local.push((owner, site, tail)),
                     Some(Found::Open) => self.open(owner),
                     None => {}
+                }
+            }
+            if let Some(table) = self.table {
+                let head_of_attribute = node.parent().is_some_and(|parent| {
+                    parent.kind() == "attribute"
+                        && parent
+                            .field("object")
+                            .is_some_and(|object| object.range() == node.range())
+                });
+                let call_target = node.parent().is_some_and(|parent| {
+                    parent.kind() == "call"
+                        && parent
+                            .field("function")
+                            .is_some_and(|function| function.range() == node.range())
+                });
+                let parameter_value = kind == "identifier"
+                    && table.reference(&node.range()).is_some_and(|reference| {
+                        table
+                            .resolve(reference, &python_identifier(&node))
+                            .is_some_and(|binding| binding.site.form == Form::Parameter)
+                    });
+                let expression = if kind == "call" {
+                    node.field("function")
+                } else if (kind == "attribute" && !call_target)
+                    || (kind == "identifier"
+                        && !head_of_attribute
+                        && !call_target
+                        && !parameter_value
+                        && table.reference(&node.range()).is_some_and(|reference| {
+                            matches!(reference.access, crate::code_rule_dsl::scope::Access::Load)
+                        }))
+                {
+                    Some(node.clone())
+                } else {
+                    None
+                };
+                if let Some(expression) = expression {
+                    let owner = contexts[context].reference_owner;
+                    match follow_reference(
+                        table,
+                        self.path,
+                        &expression,
+                        contexts[context].reference_receiver.as_ref(),
+                        Vec::new(),
+                        0,
+                    ) {
+                        Some(Found::Name(name)) => {
+                            let name = self.intern(&name);
+                            self.reference_targets.push(name);
+                            if let Some(owner) = owner {
+                                self.references.push((owner, name));
+                            }
+                        }
+                        Some(Found::Local(site, tail)) => {
+                            local_references.push((owner, site, tail))
+                        }
+                        _ => {}
+                    }
                 }
             }
             match inner {
@@ -560,6 +680,16 @@ impl<'t> Extractor<'t> {
             let name = self.def_name(def, &tail);
             let name = self.intern(&name);
             self.call(owner, name);
+        }
+        for (owner, site, tail) in local_references {
+            if let Some(def) = self.def_index(site) {
+                let name = self.def_name(def, &tail);
+                let name = self.intern(&name);
+                self.reference_targets.push(name);
+                if let Some(owner) = owner {
+                    self.references.push((owner, name));
+                }
+            }
         }
     }
 
@@ -614,6 +744,8 @@ impl<'t> Extractor<'t> {
         Some(if class {
             Context {
                 owner: outer.owner,
+                reference_owner: outer.reference_owner,
+                reference_receiver: outer.reference_receiver.clone(),
                 prefix: format!("{qualified}."),
                 class: Some(qualified),
                 receiver: None,
@@ -621,6 +753,18 @@ impl<'t> Extractor<'t> {
         } else {
             Context {
                 owner: Some(def),
+                reference_owner: outer.reference_owner.or(Some(def)),
+                reference_receiver: if outer.reference_owner.is_some() {
+                    outer.reference_receiver.clone()
+                } else {
+                    outer.class.as_ref().and_then(|class| {
+                        receiver_parameter(node).map(|(parameter, class_bound)| Receiver {
+                            parameter,
+                            class: class.clone(),
+                            class_bound,
+                        })
+                    })
+                },
                 prefix: format!("{qualified}.<locals>."),
                 class: None,
                 receiver: outer.class.as_ref().and_then(|class| {
@@ -779,6 +923,7 @@ impl<'t> Extractor<'t> {
     /// scope's body has run (`SHADOWED`).
     fn members<D: Doc>(&mut self, root: &Node<'_, D>, table: &ScopeTable) {
         let mut aliases = Vec::new();
+        let mut reference_aliases = Vec::new();
         let mut opaque = Vec::new();
         for (index, scope) in table.scopes.iter().enumerate() {
             let prefix = if index == 0 {
@@ -807,7 +952,16 @@ impl<'t> Extractor<'t> {
                 };
                 for at in last {
                     match self.member(root, table, &bindings[at]) {
-                        Some(Some(target)) => aliases.push((format!("{prefix}.{name}"), target)),
+                        Some(Some(target)) => {
+                            if matches!(
+                                bindings[at].import,
+                                Some(Import::Qualified(_) | Import::Relative { .. })
+                            ) {
+                                reference_aliases
+                                    .push((format!("{prefix}.{name}"), target.clone()));
+                            }
+                            aliases.push((format!("{prefix}.{name}"), target));
+                        }
                         Some(None) => opaque.push(format!("{prefix}.{name}")),
                         None => {}
                     }
@@ -819,6 +973,11 @@ impl<'t> Extractor<'t> {
         for (alias, target) in aliases {
             let pair = (self.intern(&alias), self.intern(&target));
             self.aliases.push(pair);
+        }
+        reference_aliases.sort();
+        for (alias, target) in reference_aliases {
+            let pair = (self.intern(&alias), self.intern(&target));
+            self.reference_aliases.push(pair);
         }
         opaque.sort();
         for name in opaque {
@@ -1054,6 +1213,81 @@ fn follow<D: Doc>(
         }),
         _ => Some(Found::Open),
     }
+}
+
+/// A declared parameter type can name the receiver of a reference. This does not
+/// change the conservative, run-time dispatch used by the ordinary call graph.
+fn follow_reference<D: Doc>(
+    table: &ScopeTable,
+    path: Option<&ModulePath>,
+    expression: &Node<'_, D>,
+    receiver: Option<&Receiver>,
+    after: Vec<String>,
+    depth: u8,
+) -> Option<Found> {
+    let mut head = unparenthesized(expression);
+    while head.kind() == "attribute" {
+        head = unparenthesized(&head.field("object")?);
+    }
+    if head.kind() == "identifier"
+        && let Some(reference) = table.reference(&head.range())
+        && let Some(binding) = table.resolve(reference, &python_identifier(&head))
+        && binding.import.is_none()
+        && matches!(
+            binding.site.form,
+            Form::Assignment | Form::Annotated | Form::Named
+        )
+    {
+        return None;
+    }
+    let found = follow(table, path, expression, receiver, after, depth);
+    if !matches!(found, Some(Found::Open)) {
+        return found;
+    }
+    let attribute = expression.field("attribute")?;
+    let object = expression.field("object")?;
+    if object.kind() != "identifier" {
+        return found;
+    }
+    let reference = table.reference(&object.range())?;
+    let binding = table.resolve(reference, &python_identifier(&object))?;
+    if binding.site.form != Form::Parameter {
+        return found;
+    }
+    let parameter = binding.site.node?.find(expression.root().root())?;
+    if parameter.children().any(|child| {
+        matches!(
+            child.kind().as_ref(),
+            "list_splat_pattern" | "dictionary_splat_pattern"
+        )
+    }) || parameter.parent().is_some_and(|parameters| {
+        parameters.children().any(|child| {
+            child.kind() == "positional_separator" && child.range().start > parameter.range().end
+        })
+    }) {
+        return None;
+    }
+    let annotation = binding.site.annotation?.find(expression.root().root())?;
+    let text = annotation.text();
+    let name = text.split(['[', '|']).next()?.trim();
+    // A forward string or qualified expression does not declare a module binding.
+    let chain = table.scopes[0].bindings.get(name)?;
+    let ty = chain.last()?;
+    if !matches!(
+        ty.import,
+        Some(Import::Definition | Import::Qualified(_) | Import::Relative { .. })
+    ) {
+        return None;
+    }
+    bound(
+        table,
+        path,
+        &expression.root().root(),
+        ty,
+        vec![python_identifier(&attribute).into_owned()],
+        None,
+        0,
+    )
 }
 
 /// What one binding makes a callee with attribute names `tail`.

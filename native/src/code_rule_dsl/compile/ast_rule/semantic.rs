@@ -221,9 +221,11 @@ fn compile_calls(
     use crate::code_rule_dsl::language::adapter::{
         Adapter, CallFeature, CallRules, gate, with_adapter,
     };
+    let definition = crate::code_rule_dsl::calls::split(calls, path)?.definition;
     let (verdict, kinds) = with_adapter!(Family::of(language), A => (
         <<A as Adapter>::Calls as CallRules>::feature(CallFeature::Calls),
-        <<A as Adapter>::Calls as CallRules>::CALL_KINDS,
+        if definition { <<A as Adapter>::Calls as CallRules>::FUNCTION_KINDS }
+        else { <<A as Adapter>::Calls as CallRules>::CALL_KINDS },
     ));
     gate(path, verdict)?;
     let collector = utils.calls.ok_or_else(|| {

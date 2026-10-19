@@ -64,8 +64,11 @@ impl Semantic {
             | Self::Arguments(_)
             | Self::Parse(_)
             | Self::FormatArgs(_)
-            | Self::Calls(_)
-            | Self::Binds(_) => true,
+            | Self::Calls(_) => true,
+            Self::Binds(test) => {
+                !test.declaration_only()
+                    || test.sub_rules().any(|rule| super::reads_values(rule, seen))
+            }
             Self::Host(test) => super::reads_values(&test.rule, seen),
             // PHP's run-time fallback of a function or constant name may be unknown.
             Self::Resolves(resolves) => flow(resolves.language),

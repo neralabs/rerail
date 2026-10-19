@@ -848,10 +848,14 @@ export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.la
 export const codeRuleCallsSchema: z.ZodType<CodeRuleDslCalls> = z.lazy(
   () =>
     z
-      .object({ through: z.enum(["sync", "any"]).optional(), chain: metavariableName.optional() })
+      .object({ through: z.enum(["sync", "any"]).optional(), chain: metavariableName.optional(),
+        graph: z.enum(["calls", "references"]).optional(), at: z.enum(["call", "definition"]).optional() })
       .passthrough()
       .superRefine((calls, context) => {
-        const { through: _through, chain: _chain, ...inner } = calls;
+        if (calls.graph === "references" && calls.at !== "definition") {
+          context.addIssue({ code: "custom", path: ["at"], message: "graph references requires at definition." });
+        }
+        const { through: _through, chain: _chain, graph: _graph, at: _at, ...inner } = calls;
         const parsed = codeRuleAstRuleSchema.safeParse(inner);
         if (!parsed.success) {
           for (const issue of parsed.error.issues) context.addIssue({ ...issue, code: "custom", message: issue.message });
@@ -1052,7 +1056,7 @@ function visitFormatArgs(rule: CodeRuleDslAstRule, path: RulePath, parsed: Parse
 
 function visitCalls(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGrammar | undefined, issue: RuleIssue, visit: AstRuleVisit): void {
   if (rule.calls === undefined) return;
-  const { through: _through, chain: _chain, ...inner } = rule.calls;
+  const { through: _through, chain: _chain, graph: _graph, at: _at, ...inner } = rule.calls;
   if (containsCalls(inner)) issue([...path, "calls"], "A calls rule cannot contain calls.");
   visit(inner, [...path, "calls"], parsed);
 }

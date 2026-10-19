@@ -623,7 +623,7 @@ fn stateless_calls(
             evaluated.insert(Arc::clone(&term.seed_key), starts);
         }
     }
-    let view = calls::CallsView::build(terms.questions(), summaries.clone(), &seeds);
+    let view = calls::CallsView::build_modes(terms.questions(), summaries.clone(), &seeds);
     Ok(Some(calls::EvaluationSlot::install(
         calls::EvaluationCalls {
             view: Arc::new(view),

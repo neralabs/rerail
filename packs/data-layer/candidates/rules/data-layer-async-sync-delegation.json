@@ -2462,564 +2462,13 @@
                     "all": [
                       {
                         "filePath": {
-                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^select_one$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l7000_versioned_schema/versioned_connection\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_drain_pending_versioned_fts_rebuilds_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4200_event_pipeline/bridges/subscription_generator\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^start$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:scripts/benchmark_auto_api_batch_refs\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^connection_disposer$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l1500_llm/provider\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^get_completion_batch$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/common/l7300_cross_branch/permission_expression_compiler\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_needs_permission_where_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4300_ipc/handlers\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^handle_get_server_info$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l9900_auto_api/exception_handlers\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_handle_db_permission_error$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l7200_versioned_transactions/versioned_transactions\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_cleanup_versioned_context_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l2070_batching/server_plan\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_enter_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4200_event_pipeline/persistent_metrics\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^start$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^invoke_handler$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l2000_connection/schema_transaction\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_exit_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:logged_table\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_create_triggers_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l2000_connection/connection\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_set_statement_timeout_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4100_queue/insert_auth\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^activate_queue_insert_token_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/l1595_llm_cache/write_back_queue\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^start$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4100_queue/insert_auth\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^revoke_queue_insert_authorization_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l2050_transaction/transaction\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^cancel_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4300_ipc/handlers\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^handle_get_metrics$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l9750_graphql/executor\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_execute_graphql_subscription$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l9900_auto_api/rest_router\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^rest_type_catalog_properties$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4200_event_pipeline/bridges/hook_generator\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^stop$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/l1595_llm_cache/cache_manager\\.py)$"
+                          "regex": "(?:impl/common/l2550_storage_backend/azure_backend\\.py)$"
                         }
                       },
                       {
                         "has": {
                           "field": "name",
                           "regex": "^get_stats_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l2000_connection/connection\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_read_storage_chunk_manifest_rows_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l5200_vector_index/embedding_auto_queue\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_enqueue_embedding_auto_queue_for_row_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l2000_connection/schema_transaction\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^execute_ddl_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l1500_llm/provider\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^close$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^execute_one$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/common/l7300_cross_branch/permission_expression_compiler\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^compile_permission_where_async$"
                         }
                       }
                     ]
@@ -3051,13 +2500,13 @@
                     "all": [
                       {
                         "filePath": {
-                          "regex": "(?:l4200_event_pipeline/bridges/subscription_generator\\.py)$"
+                          "regex": "(?:impl/common/l7300_cross_branch/permission_expression_compiler\\.py)$"
                         }
                       },
                       {
                         "has": {
                           "field": "name",
-                          "regex": "^stop$"
+                          "regex": "^_needs_permission_where_async$"
                         }
                       }
                     ]
@@ -3070,184 +2519,13 @@
                     "all": [
                       {
                         "filePath": {
-                          "regex": "(?:l2000_connection/schema_transaction\\.py)$"
+                          "regex": "(?:impl/common/l7300_cross_branch/permission_expression_compiler\\.py)$"
                         }
                       },
                       {
                         "has": {
                           "field": "name",
-                          "regex": "^_enter_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l2080_lazy_orm/lazy_row\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^update_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/l1595_llm_cache/proxy_server\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_get_client$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^delete_by_id$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l2070_batching/executor\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_run_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l1500_llm/provider\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^list_models$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l2000_connection/connection\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^close_async_driver_connection$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/common/l2550_storage_backend/azure_backend\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^get_stats_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4000_permissions/permission_scheme\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^check_permission_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l9900_auto_api/exception_handlers\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_handle_security_error$"
+                          "regex": "^compile_permission_where_async$"
                         }
                       }
                     ]
@@ -3279,13 +2557,13 @@
                     "all": [
                       {
                         "filePath": {
-                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
+                          "regex": "(?:impl/l1595_llm_cache/cache_manager\\.py)$"
                         }
                       },
                       {
                         "has": {
                           "field": "name",
-                          "regex": "^update$"
+                          "regex": "^get_stats_async$"
                         }
                       }
                     ]
@@ -3298,260 +2576,13 @@
                     "all": [
                       {
                         "filePath": {
-                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
+                          "regex": "(?:impl/l1595_llm_cache/proxy_server\\.py)$"
                         }
                       },
                       {
                         "has": {
                           "field": "name",
-                          "regex": "^count$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l2200_notification/polling_channel\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_do_subscribe$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4200_event_pipeline/dispatcher\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_dispatch_event$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4000_permissions/rbac_permission_lookup\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_async_empty_dict_row_list$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4300_ipc/handlers\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^handle_ping$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:scripts/benchmark_auto_api_batch_refs\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^connection_factory$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^enqueue_message$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l2000_connection/connection_provider\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_acquire_async_context_impl$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^execute$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4300_ipc/handlers\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^handle_force_gc$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^insert$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l9900_auto_api/exception_handlers\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_handle_auto_api_response_error$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l2200_notification/polling_channel\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_do_unsubscribe$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l5200_vector_index/embedding_auto_queue\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_enqueue_embedding_auto_queue_for_rows_async$"
+                          "regex": "^_get_client$"
                         }
                       }
                     ]
@@ -3583,64 +2614,7 @@
                     "all": [
                       {
                         "filePath": {
-                          "regex": "(?:l2070_batching/server_plan\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^_exit_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l5000_subscriptions/dispatcher\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^dispatch_graph_event_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l1500_llm/watchers\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^start_async_processing$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l4200_event_pipeline/bridges/hook_generator\\.py)$"
+                          "regex": "(?:impl/l1595_llm_cache/write_back_queue\\.py)$"
                         }
                       },
                       {
@@ -3678,6 +2652,1032 @@
                     "all": [
                       {
                         "filePath": {
+                          "regex": "(?:l1500_llm/provider\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^close$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l1500_llm/provider\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^get_completion_batch$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l1500_llm/provider\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^list_models$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l1500_llm/watchers\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^start_async_processing$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2000_connection/connection\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_read_storage_chunk_manifest_rows_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2000_connection/connection\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_set_statement_timeout_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2000_connection/connection\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^close_async_driver_connection$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2000_connection/connection_provider\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_acquire_async_context_impl$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2000_connection/schema_transaction\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_enter_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2000_connection/schema_transaction\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_exit_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2000_connection/schema_transaction\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^execute_ddl_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2050_transaction/transaction\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^cancel_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2070_batching/executor\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_run_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2070_batching/server_plan\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_enter_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2070_batching/server_plan\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_exit_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2080_lazy_orm/lazy_row\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^update_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2200_notification/polling_channel\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_do_subscribe$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2200_notification/polling_channel\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_do_unsubscribe$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4000_permissions/permission_scheme\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^check_permission_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4000_permissions/rbac_permission_lookup\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_async_empty_dict_row_list$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4100_queue/insert_auth\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^activate_queue_insert_token_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4100_queue/insert_auth\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^revoke_queue_insert_authorization_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^count$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^delete_by_id$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^enqueue_message$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^execute$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^execute_one$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^insert$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^invoke_handler$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^select_one$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4170_inbound_bridge/process\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^update$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4200_event_pipeline/bridges/hook_generator\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^start$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4200_event_pipeline/bridges/hook_generator\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^stop$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4200_event_pipeline/bridges/subscription_generator\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^start$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4200_event_pipeline/bridges/subscription_generator\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^stop$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4200_event_pipeline/dispatcher\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_dispatch_event$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4200_event_pipeline/persistent_metrics\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^start$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4300_ipc/handlers\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^handle_force_gc$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4300_ipc/handlers\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^handle_get_metrics$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4300_ipc/handlers\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^handle_get_server_info$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l4300_ipc/handlers\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^handle_ping$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l5000_subscriptions/dispatcher\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^dispatch_graph_event_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l5200_vector_index/embedding_auto_queue\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_enqueue_embedding_auto_queue_for_row_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l5200_vector_index/embedding_auto_queue\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_enqueue_embedding_auto_queue_for_rows_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l7000_versioned_schema/versioned_connection\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_drain_pending_versioned_fts_rebuilds_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l7200_versioned_transactions/versioned_transactions\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_cleanup_versioned_context_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l9750_graphql/executor\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_execute_graphql_subscription$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l9900_auto_api/exception_handlers\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_handle_auto_api_response_error$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l9900_auto_api/exception_handlers\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_handle_db_permission_error$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l9900_auto_api/exception_handlers\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_handle_security_error$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l9900_auto_api/rest_router\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^rest_type_catalog_properties$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:logged_table\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^_create_triggers_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:scripts/benchmark_auto_api_batch_refs\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^connection_disposer$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:scripts/benchmark_auto_api_batch_refs\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^connection_factory$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
                           "regex": "(?:impl/common/l8000_managed/permission/audit\\.py)$"
                         }
                       },
@@ -3697,13 +3697,13 @@
                     "all": [
                       {
                         "filePath": {
-                          "regex": "(?:l2550_storage_backend/memory_backend\\.py)$"
+                          "regex": "(?:impl/mongodb/backend_operations\\.py)$"
                         }
                       },
                       {
                         "has": {
                           "field": "name",
-                          "regex": "^exists_async$"
+                          "regex": "^create_staged_commit_async$"
                         }
                       }
                     ]
@@ -3716,13 +3716,165 @@
                     "all": [
                       {
                         "filePath": {
-                          "regex": "(?:impl/neo4j/versioned_read_transaction_sparse\\.py)$"
+                          "regex": "(?:impl/mongodb/connection\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^close_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:impl/mongodb/transaction\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^commit_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:impl/mongodb/transaction\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^rollback_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:impl/mongodb/versioned_read_transaction_sparse\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^find_object_branches_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:impl/mongodb/versioned_read_transaction_sparse\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^find_object_revisions_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:impl/mongodb/versioned_read_transaction_sparse\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^get_history_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:impl/mongodb/versioned_read_transaction_sparse\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^select_at_revision_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:impl/mongodb/versioned_read_transaction_sparse\\.py)$"
                         }
                       },
                       {
                         "has": {
                           "field": "name",
                           "regex": "^select_one_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:impl/neo4j/backend_operations\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^create_staged_commit_async$"
                         }
                       }
                     ]
@@ -3754,44 +3906,6 @@
                     "all": [
                       {
                         "filePath": {
-                          "regex": "(?:impl/mongodb/versioned_read_transaction_sparse\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^find_object_revisions_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/mongodb/versioned_read_transaction_sparse\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^select_one_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
                           "regex": "(?:impl/neo4j/query\\.py)$"
                         }
                       },
@@ -3799,6 +3913,63 @@
                         "has": {
                           "field": "name",
                           "regex": "^delete_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:impl/neo4j/transaction\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^commit_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:impl/neo4j/transaction\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^rollback_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:impl/neo4j/versioned_read_transaction_sparse\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^find_object_branches_async$"
                         }
                       }
                     ]
@@ -3830,13 +4001,13 @@
                     "all": [
                       {
                         "filePath": {
-                          "regex": "(?:l2550_storage_backend/memory_backend\\.py)$"
+                          "regex": "(?:impl/neo4j/versioned_read_transaction_sparse\\.py)$"
                         }
                       },
                       {
                         "has": {
                           "field": "name",
-                          "regex": "^get_stats_async$"
+                          "regex": "^get_history_async$"
                         }
                       }
                     ]
@@ -3849,13 +4020,70 @@
                     "all": [
                       {
                         "filePath": {
-                          "regex": "(?:impl/mongodb/transaction\\.py)$"
+                          "regex": "(?:impl/neo4j/versioned_read_transaction_sparse\\.py)$"
                         }
                       },
                       {
                         "has": {
                           "field": "name",
-                          "regex": "^commit_async$"
+                          "regex": "^select_at_revision_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:impl/neo4j/versioned_read_transaction_sparse\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^select_one_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2550_storage_backend/memory_backend\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^delete_async$"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "filePath": {
+                          "regex": "(?:l2550_storage_backend/memory_backend\\.py)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^exists_async$"
                         }
                       }
                     ]
@@ -3893,64 +4121,7 @@
                       {
                         "has": {
                           "field": "name",
-                          "regex": "^delete_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/mongodb/versioned_read_transaction_sparse\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^find_object_branches_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/neo4j/transaction\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^commit_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/neo4j/versioned_read_transaction_sparse\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^find_object_branches_async$"
+                          "regex": "^get_stats_async$"
                         }
                       }
                     ]
@@ -3982,120 +4153,6 @@
                     "all": [
                       {
                         "filePath": {
-                          "regex": "(?:impl/mongodb/backend_operations\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^create_staged_commit_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/neo4j/backend_operations\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^create_staged_commit_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/mongodb/versioned_read_transaction_sparse\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^select_at_revision_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/mongodb/transaction\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^rollback_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/neo4j/versioned_read_transaction_sparse\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^select_at_revision_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:l2550_storage_backend/memory_backend\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^store_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
                           "regex": "(?:l2550_storage_backend/memory_backend\\.py)$"
                         }
                       },
@@ -4115,70 +4172,13 @@
                     "all": [
                       {
                         "filePath": {
-                          "regex": "(?:impl/mongodb/versioned_read_transaction_sparse\\.py)$"
+                          "regex": "(?:l2550_storage_backend/memory_backend\\.py)$"
                         }
                       },
                       {
                         "has": {
                           "field": "name",
-                          "regex": "^get_history_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/neo4j/transaction\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^rollback_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/neo4j/versioned_read_transaction_sparse\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^get_history_async$"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "filePath": {
-                          "regex": "(?:impl/mongodb/connection\\.py)$"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "name",
-                          "regex": "^close_async$"
+                          "regex": "^store_async$"
                         }
                       }
                     ]

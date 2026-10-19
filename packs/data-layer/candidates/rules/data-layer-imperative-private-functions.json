@@ -326,14 +326,32 @@
                             }
                           },
                           {
-                            "not": {
-                              "matches": {
-                                "later-module-symbol": {
-                                  "NAME": "$SYMBOL_NAME",
-                                  "CURRENT": "$SYMBOL_NODE"
+                            "any": [
+                              {
+                                "has": {
+                                  "binds": {
+                                    "form": [
+                                      "definition"
+                                    ],
+                                    "bindings": {
+                                      "max": 1
+                                    }
+                                  },
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "matches": {
+                                    "later-module-symbol": {
+                                      "NAME": "$SYMBOL_NAME",
+                                      "CURRENT": "$SYMBOL_NODE"
+                                    }
+                                  }
                                 }
                               }
-                            }
+                            ]
                           }
                         ]
                       },
@@ -359,15 +377,63 @@
                             }
                           },
                           {
-                            "not": {
-                              "matches": {
-                                "later-method-symbol": {
-                                  "NAME": "$SYMBOL_NAME",
-                                  "CURRENT": "$SYMBOL_NODE",
-                                  "GROUP": "$SYMBOL_CLASS"
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "has": {
+                                      "binds": {
+                                        "form": [
+                                          "definition"
+                                        ],
+                                        "bindings": {
+                                          "max": 1
+                                        }
+                                      },
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "all": [
+                                        {
+                                          "kind": "class_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "binds": {
+                                              "form": [
+                                                "definition"
+                                              ],
+                                              "bindings": {
+                                                "max": 1
+                                              }
+                                            },
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": {
+                                        "kind": "class_definition"
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": {
+                                    "later-method-symbol": {
+                                      "NAME": "$SYMBOL_NAME",
+                                      "CURRENT": "$SYMBOL_NODE",
+                                      "GROUP": "$SYMBOL_CLASS"
+                                    }
+                                  }
                                 }
                               }
-                            }
+                            ]
                           }
                         ]
                       }
@@ -518,14 +584,32 @@
                             }
                           },
                           {
-                            "not": {
-                              "matches": {
-                                "later-module-symbol": {
-                                  "NAME": "$SYMBOL_NAME",
-                                  "CURRENT": "$SYMBOL_NODE"
+                            "any": [
+                              {
+                                "has": {
+                                  "binds": {
+                                    "form": [
+                                      "definition"
+                                    ],
+                                    "bindings": {
+                                      "max": 1
+                                    }
+                                  },
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "matches": {
+                                    "later-module-symbol": {
+                                      "NAME": "$SYMBOL_NAME",
+                                      "CURRENT": "$SYMBOL_NODE"
+                                    }
+                                  }
                                 }
                               }
-                            }
+                            ]
                           }
                         ]
                       },
@@ -551,15 +635,63 @@
                             }
                           },
                           {
-                            "not": {
-                              "matches": {
-                                "later-method-symbol": {
-                                  "NAME": "$SYMBOL_NAME",
-                                  "CURRENT": "$SYMBOL_NODE",
-                                  "GROUP": "$SYMBOL_CLASS"
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "has": {
+                                      "binds": {
+                                        "form": [
+                                          "definition"
+                                        ],
+                                        "bindings": {
+                                          "max": 1
+                                        }
+                                      },
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "all": [
+                                        {
+                                          "kind": "class_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "binds": {
+                                              "form": [
+                                                "definition"
+                                              ],
+                                              "bindings": {
+                                                "max": 1
+                                              }
+                                            },
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": {
+                                        "kind": "class_definition"
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": {
+                                    "later-method-symbol": {
+                                      "NAME": "$SYMBOL_NAME",
+                                      "CURRENT": "$SYMBOL_NODE",
+                                      "GROUP": "$SYMBOL_CLASS"
+                                    }
+                                  }
                                 }
                               }
-                            }
+                            ]
                           }
                         ]
                       }
@@ -1351,14 +1483,32 @@
                             }
                           },
                           {
-                            "not": {
-                              "matches": {
-                                "later-module-symbol": {
-                                  "NAME": "$SYMBOL_NAME",
-                                  "CURRENT": "$SYMBOL_NODE"
+                            "any": [
+                              {
+                                "has": {
+                                  "binds": {
+                                    "form": [
+                                      "definition"
+                                    ],
+                                    "bindings": {
+                                      "max": 1
+                                    }
+                                  },
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "matches": {
+                                    "later-module-symbol": {
+                                      "NAME": "$SYMBOL_NAME",
+                                      "CURRENT": "$SYMBOL_NODE"
+                                    }
+                                  }
                                 }
                               }
-                            }
+                            ]
                           }
                         ]
                       },
@@ -1384,15 +1534,63 @@
                             }
                           },
                           {
-                            "not": {
-                              "matches": {
-                                "later-method-symbol": {
-                                  "NAME": "$SYMBOL_NAME",
-                                  "CURRENT": "$SYMBOL_NODE",
-                                  "GROUP": "$SYMBOL_CLASS"
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "has": {
+                                      "binds": {
+                                        "form": [
+                                          "definition"
+                                        ],
+                                        "bindings": {
+                                          "max": 1
+                                        }
+                                      },
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "all": [
+                                        {
+                                          "kind": "class_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "binds": {
+                                              "form": [
+                                                "definition"
+                                              ],
+                                              "bindings": {
+                                                "max": 1
+                                              }
+                                            },
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": {
+                                        "kind": "class_definition"
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": {
+                                    "later-method-symbol": {
+                                      "NAME": "$SYMBOL_NAME",
+                                      "CURRENT": "$SYMBOL_NODE",
+                                      "GROUP": "$SYMBOL_CLASS"
+                                    }
+                                  }
                                 }
                               }
-                            }
+                            ]
                           }
                         ]
                       }
@@ -2125,45 +2323,103 @@
                 }
               },
               {
-                "has": {
-                  "has": {
-                    "all": [
-                      {
-                        "kind": "call"
-                      },
-                      {
-                        "calls": {
-                          "through": "any",
+                "calls": {
+                  "graph": "references",
+                  "at": "definition",
+                  "through": "any",
+                  "all": [
+                    {
+                      "all": [
+                        {
                           "all": [
+                            {
+                              "kind": "function_definition"
+                            }
+                          ]
+                        },
+                        {
+                          "not": {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "function_definition"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        },
+                        {
+                          "pattern": "$SYMBOL_NODE"
+                        },
+                        {
+                          "has": {
+                            "pattern": "$SYMBOL_NAME",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "any": [
                             {
                               "all": [
                                 {
-                                  "all": [
-                                    {
-                                      "kind": "function_definition"
-                                    }
-                                  ]
-                                },
-                                {
                                   "not": {
                                     "inside": {
-                                      "all": [
-                                        {
-                                          "kind": "function_definition"
-                                        }
-                                      ],
+                                      "kind": "class_definition",
                                       "stopBy": "end"
                                     }
                                   }
                                 },
                                 {
-                                  "pattern": "$SYMBOL_NODE"
-                                },
+                                  "any": [
+                                    {
+                                      "has": {
+                                        "binds": {
+                                          "form": [
+                                            "definition"
+                                          ],
+                                          "bindings": {
+                                            "max": 1
+                                          }
+                                        },
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "matches": {
+                                          "later-module-symbol": {
+                                            "NAME": "$SYMBOL_NAME",
+                                            "CURRENT": "$SYMBOL_NODE"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
                                 {
-                                  "has": {
-                                    "pattern": "$SYMBOL_NAME",
-                                    "stopBy": "neighbor",
-                                    "field": "name"
+                                  "inside": {
+                                    "all": [
+                                      {
+                                        "kind": "class_definition"
+                                      },
+                                      {
+                                        "has": {
+                                          "pattern": "$SYMBOL_CLASS",
+                                          "stopBy": "neighbor",
+                                          "field": "name"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": {
+                                      "kind": "class_definition"
+                                    }
                                   }
                                 },
                                 {
@@ -2171,27 +2427,19 @@
                                     {
                                       "all": [
                                         {
-                                          "not": {
-                                            "inside": {
-                                              "kind": "class_definition",
-                                              "stopBy": "end"
-                                            }
+                                          "has": {
+                                            "binds": {
+                                              "form": [
+                                                "definition"
+                                              ],
+                                              "bindings": {
+                                                "max": 1
+                                              }
+                                            },
+                                            "stopBy": "neighbor",
+                                            "field": "name"
                                           }
                                         },
-                                        {
-                                          "not": {
-                                            "matches": {
-                                              "later-module-symbol": {
-                                                "NAME": "$SYMBOL_NAME",
-                                                "CURRENT": "$SYMBOL_NODE"
-                                              }
-                                            }
-                                          }
-                                        }
-                                      ]
-                                    },
-                                    {
-                                      "all": [
                                         {
                                           "inside": {
                                             "all": [
@@ -2200,7 +2448,14 @@
                                               },
                                               {
                                                 "has": {
-                                                  "pattern": "$SYMBOL_CLASS",
+                                                  "binds": {
+                                                    "form": [
+                                                      "definition"
+                                                    ],
+                                                    "bindings": {
+                                                      "max": 1
+                                                    }
+                                                  },
                                                   "stopBy": "neighbor",
                                                   "field": "name"
                                                 }
@@ -2210,498 +2465,323 @@
                                               "kind": "class_definition"
                                             }
                                           }
-                                        },
-                                        {
-                                          "not": {
-                                            "matches": {
-                                              "later-method-symbol": {
-                                                "NAME": "$SYMBOL_NAME",
-                                                "CURRENT": "$SYMBOL_NODE",
-                                                "GROUP": "$SYMBOL_CLASS"
-                                              }
-                                            }
-                                          }
                                         }
                                       ]
+                                    },
+                                    {
+                                      "not": {
+                                        "matches": {
+                                          "later-method-symbol": {
+                                            "NAME": "$SYMBOL_NAME",
+                                            "CURRENT": "$SYMBOL_NODE",
+                                            "GROUP": "$SYMBOL_CLASS"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "has": {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "call"
+                                },
+                                {
+                                  "has": {
+                                    "any": [
+                                      {
+                                        "any": [
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:_fetchall|_fetchone|execute|execute_async|execute_fire_and_forget|execute_grammar|execute_grammar_fetchall|execute_grammar_fetchone|execute_raw|fetchall|fetchall_raw|fetchone|fetchone_raw|grammar_effect_lazy|grammar_fetchall|grammar_fetchall_async|grammar_fetchone|grammar_fetchone_async|grammar_row_lazy|grammar_rows_lazy|raw_execute)$"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "attribute"
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:_fetchall|_fetchone|execute|execute_async|execute_fire_and_forget|execute_grammar|execute_grammar_fetchall|execute_grammar_fetchone|execute_raw|fetchall|fetchall_raw|fetchone|fetchone_raw|grammar_effect_lazy|grammar_fetchall|grammar_fetchall_async|grammar_fetchone|grammar_fetchone_async|grammar_row_lazy|grammar_rows_lazy|raw_execute)$"
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor",
+                                                  "field": "attribute"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:execute_grammar|grammar_fetch)"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "has": {
+                                              "regex": "^(?:execute_grammar|grammar_fetch)",
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ],
+                                    "stopBy": "neighbor",
+                                    "field": "function"
+                                  }
+                                }
+                              ],
+                              "stopBy": "end"
+                            },
+                            "stopBy": "neighbor",
+                            "field": "body"
+                          }
+                        },
+                        {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "not": {
+                                    "has": {
+                                      "regex": "^__.*__$",
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  }
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "has": {
+                                        "regex": "^_",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "regex": "^_",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": {
+                                          "kind": "class_definition"
+                                        }
+                                      }
                                     }
                                   ]
                                 }
                               ]
                             },
                             {
-                              "any": [
-                                {
-                                  "has": {
+                              "not": {
+                                "any": [
+                                  {
                                     "has": {
+                                      "regex": "_lazy$",
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  },
+                                  {
+                                    "inside": {
                                       "all": [
                                         {
-                                          "kind": "call"
+                                          "kind": "decorated_definition"
                                         },
                                         {
                                           "has": {
-                                            "any": [
+                                            "all": [
                                               {
-                                                "any": [
-                                                  {
-                                                    "all": [
-                                                      {
-                                                        "kind": "identifier"
-                                                      },
-                                                      {
-                                                        "regex": "^(?:_fetchall|_fetchone|execute|execute_async|execute_fire_and_forget|execute_grammar|execute_grammar_fetchall|execute_grammar_fetchone|execute_raw|fetchall|fetchall_raw|fetchone|fetchone_raw|grammar_effect_lazy|grammar_fetchall|grammar_fetchall_async|grammar_fetchone|grammar_fetchone_async|grammar_row_lazy|grammar_rows_lazy|raw_execute)$"
-                                                      }
-                                                    ]
-                                                  },
-                                                  {
-                                                    "all": [
-                                                      {
-                                                        "kind": "attribute"
-                                                      },
-                                                      {
-                                                        "has": {
+                                                "kind": "decorator"
+                                              },
+                                              {
+                                                "has": {
+                                                  "any": [
+                                                    {
+                                                      "any": [
+                                                        {
                                                           "all": [
                                                             {
                                                               "kind": "identifier"
                                                             },
                                                             {
-                                                              "regex": "^(?:_fetchall|_fetchone|execute|execute_async|execute_fire_and_forget|execute_grammar|execute_grammar_fetchall|execute_grammar_fetchone|execute_raw|fetchall|fetchall_raw|fetchone|fetchone_raw|grammar_effect_lazy|grammar_fetchall|grammar_fetchall_async|grammar_fetchone|grammar_fetchone_async|grammar_row_lazy|grammar_rows_lazy|raw_execute)$"
+                                                              "regex": "lazy$"
                                                             }
-                                                          ],
-                                                          "stopBy": "neighbor",
-                                                          "field": "attribute"
+                                                          ]
+                                                        },
+                                                        {
+                                                          "all": [
+                                                            {
+                                                              "kind": "attribute"
+                                                            },
+                                                            {
+                                                              "has": {
+                                                                "regex": "lazy$",
+                                                                "stopBy": "neighbor",
+                                                                "field": "attribute"
+                                                              }
+                                                            }
+                                                          ]
                                                         }
-                                                      }
-                                                    ]
-                                                  }
-                                                ]
-                                              },
-                                              {
-                                                "all": [
-                                                  {
-                                                    "kind": "identifier"
-                                                  },
-                                                  {
-                                                    "regex": "^(?:execute_grammar|grammar_fetch)"
-                                                  }
-                                                ]
-                                              },
-                                              {
-                                                "all": [
-                                                  {
-                                                    "kind": "attribute"
-                                                  },
-                                                  {
-                                                    "has": {
-                                                      "regex": "^(?:execute_grammar|grammar_fetch)",
-                                                      "stopBy": "neighbor",
-                                                      "field": "attribute"
+                                                      ]
+                                                    },
+                                                    {
+                                                      "all": [
+                                                        {
+                                                          "kind": "call"
+                                                        },
+                                                        {
+                                                          "has": {
+                                                            "any": [
+                                                              {
+                                                                "all": [
+                                                                  {
+                                                                    "kind": "identifier"
+                                                                  },
+                                                                  {
+                                                                    "regex": "lazy$"
+                                                                  }
+                                                                ]
+                                                              },
+                                                              {
+                                                                "all": [
+                                                                  {
+                                                                    "kind": "attribute"
+                                                                  },
+                                                                  {
+                                                                    "has": {
+                                                                      "regex": "lazy$",
+                                                                      "stopBy": "neighbor",
+                                                                      "field": "attribute"
+                                                                    }
+                                                                  }
+                                                                ]
+                                                              }
+                                                            ],
+                                                            "stopBy": "neighbor",
+                                                            "field": "function"
+                                                          }
+                                                        }
+                                                      ]
                                                     }
-                                                  }
-                                                ]
+                                                  ],
+                                                  "stopBy": "neighbor"
+                                                }
                                               }
                                             ],
-                                            "stopBy": "neighbor",
-                                            "field": "function"
+                                            "stopBy": "neighbor"
                                           }
                                         }
                                       ],
-                                      "stopBy": "end"
-                                    },
-                                    "stopBy": "neighbor",
-                                    "field": "body"
-                                  }
-                                },
-                                {
-                                  "all": [
-                                    {
-                                      "all": [
-                                        {
-                                          "not": {
-                                            "has": {
-                                              "regex": "^__.*__$",
-                                              "stopBy": "neighbor",
-                                              "field": "name"
-                                            }
-                                          }
-                                        },
-                                        {
-                                          "any": [
-                                            {
-                                              "has": {
-                                                "regex": "^_",
-                                                "stopBy": "neighbor",
-                                                "field": "name"
-                                              }
-                                            },
-                                            {
-                                              "inside": {
+                                      "stopBy": "neighbor"
+                                    }
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "has": {
+                                          "regex": "Lazy|LazyOperation|LazyResult|LazySeq|ServerPlan",
+                                          "stopBy": "neighbor",
+                                          "field": "return_type"
+                                        }
+                                      },
+                                      {
+                                        "has": {
+                                          "has": {
+                                            "all": [
+                                              {
                                                 "all": [
                                                   {
-                                                    "kind": "class_definition"
+                                                    "any": [
+                                                      {
+                                                        "kind": "typed_parameter"
+                                                      },
+                                                      {
+                                                        "kind": "typed_default_parameter"
+                                                      }
+                                                    ]
                                                   },
                                                   {
-                                                    "has": {
-                                                      "regex": "^_",
-                                                      "stopBy": "neighbor",
-                                                      "field": "name"
-                                                    }
-                                                  }
-                                                ],
-                                                "stopBy": {
-                                                  "kind": "class_definition"
-                                                }
-                                              }
-                                            }
-                                          ]
-                                        }
-                                      ]
-                                    },
-                                    {
-                                      "not": {
-                                        "any": [
-                                          {
-                                            "has": {
-                                              "regex": "_lazy$",
-                                              "stopBy": "neighbor",
-                                              "field": "name"
-                                            }
-                                          },
-                                          {
-                                            "inside": {
-                                              "all": [
-                                                {
-                                                  "kind": "decorated_definition"
-                                                },
-                                                {
-                                                  "has": {
-                                                    "all": [
-                                                      {
-                                                        "kind": "decorator"
-                                                      },
-                                                      {
-                                                        "has": {
-                                                          "any": [
-                                                            {
-                                                              "any": [
-                                                                {
-                                                                  "all": [
-                                                                    {
-                                                                      "kind": "identifier"
-                                                                    },
-                                                                    {
-                                                                      "regex": "lazy$"
-                                                                    }
-                                                                  ]
-                                                                },
-                                                                {
-                                                                  "all": [
-                                                                    {
-                                                                      "kind": "attribute"
-                                                                    },
-                                                                    {
-                                                                      "has": {
-                                                                        "regex": "lazy$",
-                                                                        "stopBy": "neighbor",
-                                                                        "field": "attribute"
-                                                                      }
-                                                                    }
-                                                                  ]
-                                                                }
-                                                              ]
-                                                            },
-                                                            {
-                                                              "all": [
-                                                                {
-                                                                  "kind": "call"
-                                                                },
-                                                                {
-                                                                  "has": {
-                                                                    "any": [
-                                                                      {
-                                                                        "all": [
-                                                                          {
-                                                                            "kind": "identifier"
-                                                                          },
-                                                                          {
-                                                                            "regex": "lazy$"
-                                                                          }
-                                                                        ]
-                                                                      },
-                                                                      {
-                                                                        "all": [
-                                                                          {
-                                                                            "kind": "attribute"
-                                                                          },
-                                                                          {
-                                                                            "has": {
-                                                                              "regex": "lazy$",
-                                                                              "stopBy": "neighbor",
-                                                                              "field": "attribute"
-                                                                            }
-                                                                          }
-                                                                        ]
-                                                                      }
-                                                                    ],
-                                                                    "stopBy": "neighbor",
-                                                                    "field": "function"
-                                                                  }
-                                                                }
-                                                              ]
-                                                            }
-                                                          ],
-                                                          "stopBy": "neighbor"
-                                                        }
-                                                      }
-                                                    ],
-                                                    "stopBy": "neighbor"
-                                                  }
-                                                }
-                                              ],
-                                              "stopBy": "neighbor"
-                                            }
-                                          },
-                                          {
-                                            "any": [
-                                              {
-                                                "has": {
-                                                  "regex": "Lazy|LazyOperation|LazyResult|LazySeq|ServerPlan",
-                                                  "stopBy": "neighbor",
-                                                  "field": "return_type"
-                                                }
-                                              },
-                                              {
-                                                "has": {
-                                                  "has": {
-                                                    "all": [
-                                                      {
-                                                        "all": [
+                                                    "not": {
+                                                      "has": {
+                                                        "any": [
                                                           {
-                                                            "any": [
-                                                              {
-                                                                "kind": "typed_parameter"
-                                                              },
-                                                              {
-                                                                "kind": "typed_default_parameter"
-                                                              }
-                                                            ]
+                                                            "kind": "list_splat_pattern"
                                                           },
                                                           {
-                                                            "not": {
-                                                              "has": {
-                                                                "any": [
-                                                                  {
-                                                                    "kind": "list_splat_pattern"
-                                                                  },
-                                                                  {
-                                                                    "kind": "dictionary_splat_pattern"
-                                                                  }
-                                                                ],
-                                                                "stopBy": "neighbor"
-                                                              }
-                                                            }
-                                                          },
-                                                          {
-                                                            "not": {
-                                                              "precedes": {
-                                                                "kind": "positional_separator",
-                                                                "stopBy": "end"
-                                                              }
-                                                            }
-                                                          },
-                                                          {
-                                                            "not": {
-                                                              "all": [
-                                                                {
-                                                                  "inside": {
-                                                                    "kind": "class_definition",
-                                                                    "stopBy": "end"
-                                                                  }
-                                                                },
-                                                                {
-                                                                  "any": [
-                                                                    {
-                                                                      "all": [
-                                                                        {
-                                                                          "kind": "typed_parameter"
-                                                                        },
-                                                                        {
-                                                                          "has": {
-                                                                            "all": [
-                                                                              {
-                                                                                "kind": "identifier"
-                                                                              },
-                                                                              {
-                                                                                "regex": "^(?:cls|self)$"
-                                                                              }
-                                                                            ],
-                                                                            "stopBy": "neighbor"
-                                                                          }
-                                                                        }
-                                                                      ]
-                                                                    },
-                                                                    {
-                                                                      "all": [
-                                                                        {
-                                                                          "kind": "typed_default_parameter"
-                                                                        },
-                                                                        {
-                                                                          "has": {
-                                                                            "all": [
-                                                                              {
-                                                                                "kind": "identifier"
-                                                                              },
-                                                                              {
-                                                                                "regex": "^(?:cls|self)$"
-                                                                              }
-                                                                            ],
-                                                                            "stopBy": "neighbor",
-                                                                            "field": "name"
-                                                                          }
-                                                                        }
-                                                                      ]
-                                                                    }
-                                                                  ]
-                                                                }
-                                                              ]
-                                                            }
+                                                            "kind": "dictionary_splat_pattern"
                                                           }
-                                                        ]
-                                                      },
-                                                      {
-                                                        "has": {
-                                                          "regex": "Lazy|LazyOperation|LazyResult|LazySeq|ServerPlan",
-                                                          "stopBy": "neighbor",
-                                                          "field": "type"
-                                                        }
+                                                        ],
+                                                        "stopBy": "neighbor"
                                                       }
-                                                    ],
-                                                    "stopBy": "neighbor"
+                                                    }
                                                   },
-                                                  "stopBy": "neighbor",
-                                                  "field": "parameters"
-                                                }
-                                              }
-                                            ]
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    {
-                                      "not": {
-                                        "any": [
-                                          {
-                                            "inside": {
-                                              "all": [
-                                                {
-                                                  "kind": "decorated_definition"
-                                                },
-                                                {
-                                                  "has": {
-                                                    "all": [
-                                                      {
-                                                        "kind": "decorator"
-                                                      },
-                                                      {
-                                                        "has": {
-                                                          "any": [
-                                                            {
-                                                              "any": [
-                                                                {
-                                                                  "all": [
-                                                                    {
-                                                                      "kind": "identifier"
-                                                                    },
-                                                                    {
-                                                                      "regex": "(?:abstractmethod|property|legacy_sync|legacy_module_sync|direct_legacy_module_sync|legacy_async|legacy_module_async|direct_legacy_module_async)$"
-                                                                    }
-                                                                  ]
-                                                                },
-                                                                {
-                                                                  "all": [
-                                                                    {
-                                                                      "kind": "attribute"
-                                                                    },
-                                                                    {
-                                                                      "has": {
-                                                                        "regex": "(?:abstractmethod|property|legacy_sync|legacy_module_sync|direct_legacy_module_sync|legacy_async|legacy_module_async|direct_legacy_module_async)$",
-                                                                        "stopBy": "neighbor",
-                                                                        "field": "attribute"
-                                                                      }
-                                                                    }
-                                                                  ]
-                                                                }
-                                                              ]
-                                                            },
-                                                            {
-                                                              "all": [
-                                                                {
-                                                                  "kind": "call"
-                                                                },
-                                                                {
-                                                                  "has": {
-                                                                    "any": [
-                                                                      {
-                                                                        "all": [
-                                                                          {
-                                                                            "kind": "identifier"
-                                                                          },
-                                                                          {
-                                                                            "regex": "(?:abstractmethod|property|legacy_sync|legacy_module_sync|direct_legacy_module_sync|legacy_async|legacy_module_async|direct_legacy_module_async)$"
-                                                                          }
-                                                                        ]
-                                                                      },
-                                                                      {
-                                                                        "all": [
-                                                                          {
-                                                                            "kind": "attribute"
-                                                                          },
-                                                                          {
-                                                                            "has": {
-                                                                              "regex": "(?:abstractmethod|property|legacy_sync|legacy_module_sync|direct_legacy_module_sync|legacy_async|legacy_module_async|direct_legacy_module_async)$",
-                                                                              "stopBy": "neighbor",
-                                                                              "field": "attribute"
-                                                                            }
-                                                                          }
-                                                                        ]
-                                                                      }
-                                                                    ],
-                                                                    "stopBy": "neighbor",
-                                                                    "field": "function"
-                                                                  }
-                                                                }
-                                                              ]
-                                                            }
-                                                          ],
-                                                          "stopBy": "neighbor"
-                                                        }
+                                                  {
+                                                    "not": {
+                                                      "precedes": {
+                                                        "kind": "positional_separator",
+                                                        "stopBy": "end"
                                                       }
-                                                    ],
-                                                    "stopBy": "neighbor"
-                                                  }
-                                                }
-                                              ],
-                                              "stopBy": "neighbor"
-                                            }
-                                          },
-                                          {
-                                            "inside": {
-                                              "all": [
-                                                {
-                                                  "kind": "decorated_definition"
-                                                },
-                                                {
-                                                  "has": {
-                                                    "all": [
-                                                      {
-                                                        "kind": "decorator"
-                                                      },
-                                                      {
-                                                        "has": {
+                                                    }
+                                                  },
+                                                  {
+                                                    "not": {
+                                                      "all": [
+                                                        {
+                                                          "inside": {
+                                                            "kind": "class_definition",
+                                                            "stopBy": "end"
+                                                          }
+                                                        },
+                                                        {
                                                           "any": [
                                                             {
                                                               "all": [
                                                                 {
-                                                                  "kind": "attribute"
+                                                                  "kind": "typed_parameter"
                                                                 },
                                                                 {
                                                                   "has": {
@@ -2710,11 +2790,10 @@
                                                                         "kind": "identifier"
                                                                       },
                                                                       {
-                                                                        "regex": "^(?:deleter|setter)$"
+                                                                        "regex": "^(?:cls|self)$"
                                                                       }
                                                                     ],
-                                                                    "stopBy": "neighbor",
-                                                                    "field": "attribute"
+                                                                    "stopBy": "neighbor"
                                                                   }
                                                                 }
                                                               ]
@@ -2722,89 +2801,384 @@
                                                             {
                                                               "all": [
                                                                 {
-                                                                  "kind": "call"
+                                                                  "kind": "typed_default_parameter"
                                                                 },
                                                                 {
                                                                   "has": {
                                                                     "all": [
                                                                       {
-                                                                        "kind": "attribute"
+                                                                        "kind": "identifier"
                                                                       },
                                                                       {
-                                                                        "has": {
-                                                                          "all": [
-                                                                            {
-                                                                              "kind": "identifier"
-                                                                            },
-                                                                            {
-                                                                              "regex": "^(?:deleter|setter)$"
-                                                                            }
-                                                                          ],
-                                                                          "stopBy": "neighbor",
-                                                                          "field": "attribute"
-                                                                        }
+                                                                        "regex": "^(?:cls|self)$"
                                                                       }
                                                                     ],
                                                                     "stopBy": "neighbor",
-                                                                    "field": "function"
+                                                                    "field": "name"
                                                                   }
                                                                 }
                                                               ]
                                                             }
-                                                          ],
-                                                          "stopBy": "neighbor"
+                                                          ]
                                                         }
-                                                      }
-                                                    ],
-                                                    "stopBy": "neighbor"
+                                                      ]
+                                                    }
                                                   }
+                                                ]
+                                              },
+                                              {
+                                                "has": {
+                                                  "regex": "Lazy|LazyOperation|LazyResult|LazySeq|ServerPlan",
+                                                  "stopBy": "neighbor",
+                                                  "field": "type"
                                                 }
-                                              ],
-                                              "stopBy": "neighbor"
-                                            }
+                                              }
+                                            ],
+                                            "stopBy": "neighbor"
+                                          },
+                                          "stopBy": "neighbor",
+                                          "field": "parameters"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "any": [
+                                  {
+                                    "inside": {
+                                      "all": [
+                                        {
+                                          "kind": "decorated_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "decorator"
+                                              },
+                                              {
+                                                "has": {
+                                                  "any": [
+                                                    {
+                                                      "any": [
+                                                        {
+                                                          "all": [
+                                                            {
+                                                              "kind": "identifier"
+                                                            },
+                                                            {
+                                                              "regex": "(?:abstractmethod|property|legacy_sync|legacy_module_sync|direct_legacy_module_sync|legacy_async|legacy_module_async|direct_legacy_module_async)$"
+                                                            }
+                                                          ]
+                                                        },
+                                                        {
+                                                          "all": [
+                                                            {
+                                                              "kind": "attribute"
+                                                            },
+                                                            {
+                                                              "has": {
+                                                                "regex": "(?:abstractmethod|property|legacy_sync|legacy_module_sync|direct_legacy_module_sync|legacy_async|legacy_module_async|direct_legacy_module_async)$",
+                                                                "stopBy": "neighbor",
+                                                                "field": "attribute"
+                                                              }
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "all": [
+                                                        {
+                                                          "kind": "call"
+                                                        },
+                                                        {
+                                                          "has": {
+                                                            "any": [
+                                                              {
+                                                                "all": [
+                                                                  {
+                                                                    "kind": "identifier"
+                                                                  },
+                                                                  {
+                                                                    "regex": "(?:abstractmethod|property|legacy_sync|legacy_module_sync|direct_legacy_module_sync|legacy_async|legacy_module_async|direct_legacy_module_async)$"
+                                                                  }
+                                                                ]
+                                                              },
+                                                              {
+                                                                "all": [
+                                                                  {
+                                                                    "kind": "attribute"
+                                                                  },
+                                                                  {
+                                                                    "has": {
+                                                                      "regex": "(?:abstractmethod|property|legacy_sync|legacy_module_sync|direct_legacy_module_sync|legacy_async|legacy_module_async|direct_legacy_module_async)$",
+                                                                      "stopBy": "neighbor",
+                                                                      "field": "attribute"
+                                                                    }
+                                                                  }
+                                                                ]
+                                                              }
+                                                            ],
+                                                            "stopBy": "neighbor",
+                                                            "field": "function"
+                                                          }
+                                                        }
+                                                      ]
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "neighbor"
                                           }
-                                        ]
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "all": [
+                                        {
+                                          "kind": "decorated_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "decorator"
+                                              },
+                                              {
+                                                "has": {
+                                                  "any": [
+                                                    {
+                                                      "all": [
+                                                        {
+                                                          "kind": "attribute"
+                                                        },
+                                                        {
+                                                          "has": {
+                                                            "all": [
+                                                              {
+                                                                "kind": "identifier"
+                                                              },
+                                                              {
+                                                                "regex": "^(?:deleter|setter)$"
+                                                              }
+                                                            ],
+                                                            "stopBy": "neighbor",
+                                                            "field": "attribute"
+                                                          }
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "all": [
+                                                        {
+                                                          "kind": "call"
+                                                        },
+                                                        {
+                                                          "has": {
+                                                            "all": [
+                                                              {
+                                                                "kind": "attribute"
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "all": [
+                                                                    {
+                                                                      "kind": "identifier"
+                                                                    },
+                                                                    {
+                                                                      "regex": "^(?:deleter|setter)$"
+                                                                    }
+                                                                  ],
+                                                                  "stopBy": "neighbor",
+                                                                  "field": "attribute"
+                                                                }
+                                                              }
+                                                            ],
+                                                            "stopBy": "neighbor",
+                                                            "field": "function"
+                                                          }
+                                                        }
+                                                      ]
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "neighbor"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "any": [
+                                {
+                                  "any": [
+                                    {
+                                      "has": {
+                                        "regex": "(?i)(?:branch|commit|connection|delete|execute|fetch|graph|insert|lazy|merge|plan|query|read|revision|select|server|transaction|update|versioned|write)",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
                                       }
                                     },
                                     {
-                                      "any": [
-                                        {
-                                          "any": [
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "regex": "(?i)(?:branch|commit|connection|delete|execute|fetch|graph|insert|lazy|merge|plan|query|read|revision|select|server|transaction|update|versioned|write)",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": {
+                                          "kind": "class_definition"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "filePath": {
+                                        "regex": "/connection|/graph_query|/query|/server_plan|/transaction|/versioned"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "has": {
+                                        "has": {
+                                          "all": [
                                             {
-                                              "has": {
-                                                "regex": "(?i)(?:branch|commit|connection|delete|execute|fetch|graph|insert|lazy|merge|plan|query|read|revision|select|server|transaction|update|versioned|write)",
-                                                "stopBy": "neighbor",
-                                                "field": "name"
-                                              }
+                                              "kind": "identifier"
                                             },
                                             {
-                                              "inside": {
-                                                "all": [
-                                                  {
-                                                    "kind": "class_definition"
-                                                  },
-                                                  {
+                                              "regex": "(?i)^(?:databaseconnection|syncdatabaseconnection|lazyresult|lazyseq|readtransaction|serverplan|syncversioneddatabaseconnection|versioneddatabaseconnection|versionedreadtransaction|versionedwritetransaction|writetransaction)$"
+                                            }
+                                          ],
+                                          "stopBy": "end"
+                                        },
+                                        "stopBy": "neighbor",
+                                        "field": "return_type"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "all": [
+                                                {
+                                                  "any": [
+                                                    {
+                                                      "kind": "typed_parameter"
+                                                    },
+                                                    {
+                                                      "kind": "typed_default_parameter"
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "not": {
                                                     "has": {
-                                                      "regex": "(?i)(?:branch|commit|connection|delete|execute|fetch|graph|insert|lazy|merge|plan|query|read|revision|select|server|transaction|update|versioned|write)",
-                                                      "stopBy": "neighbor",
-                                                      "field": "name"
+                                                      "any": [
+                                                        {
+                                                          "kind": "list_splat_pattern"
+                                                        },
+                                                        {
+                                                          "kind": "dictionary_splat_pattern"
+                                                        }
+                                                      ],
+                                                      "stopBy": "neighbor"
                                                     }
                                                   }
-                                                ],
-                                                "stopBy": {
-                                                  "kind": "class_definition"
+                                                },
+                                                {
+                                                  "not": {
+                                                    "precedes": {
+                                                      "kind": "positional_separator",
+                                                      "stopBy": "end"
+                                                    }
+                                                  }
+                                                },
+                                                {
+                                                  "not": {
+                                                    "all": [
+                                                      {
+                                                        "inside": {
+                                                          "kind": "class_definition",
+                                                          "stopBy": "end"
+                                                        }
+                                                      },
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "all": [
+                                                              {
+                                                                "kind": "typed_parameter"
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "all": [
+                                                                    {
+                                                                      "kind": "identifier"
+                                                                    },
+                                                                    {
+                                                                      "regex": "^(?:cls|self)$"
+                                                                    }
+                                                                  ],
+                                                                  "stopBy": "neighbor"
+                                                                }
+                                                              }
+                                                            ]
+                                                          },
+                                                          {
+                                                            "all": [
+                                                              {
+                                                                "kind": "typed_default_parameter"
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "all": [
+                                                                    {
+                                                                      "kind": "identifier"
+                                                                    },
+                                                                    {
+                                                                      "regex": "^(?:cls|self)$"
+                                                                    }
+                                                                  ],
+                                                                  "stopBy": "neighbor",
+                                                                  "field": "name"
+                                                                }
+                                                              }
+                                                            ]
+                                                          }
+                                                        ]
+                                                      }
+                                                    ]
+                                                  }
                                                 }
-                                              }
+                                              ]
                                             },
-                                            {
-                                              "filePath": {
-                                                "regex": "/connection|/graph_query|/query|/server_plan|/transaction|/versioned"
-                                              }
-                                            }
-                                          ]
-                                        },
-                                        {
-                                          "any": [
                                             {
                                               "has": {
                                                 "has": {
@@ -2819,134 +3193,15 @@
                                                   "stopBy": "end"
                                                 },
                                                 "stopBy": "neighbor",
-                                                "field": "return_type"
-                                              }
-                                            },
-                                            {
-                                              "has": {
-                                                "has": {
-                                                  "all": [
-                                                    {
-                                                      "all": [
-                                                        {
-                                                          "any": [
-                                                            {
-                                                              "kind": "typed_parameter"
-                                                            },
-                                                            {
-                                                              "kind": "typed_default_parameter"
-                                                            }
-                                                          ]
-                                                        },
-                                                        {
-                                                          "not": {
-                                                            "has": {
-                                                              "any": [
-                                                                {
-                                                                  "kind": "list_splat_pattern"
-                                                                },
-                                                                {
-                                                                  "kind": "dictionary_splat_pattern"
-                                                                }
-                                                              ],
-                                                              "stopBy": "neighbor"
-                                                            }
-                                                          }
-                                                        },
-                                                        {
-                                                          "not": {
-                                                            "precedes": {
-                                                              "kind": "positional_separator",
-                                                              "stopBy": "end"
-                                                            }
-                                                          }
-                                                        },
-                                                        {
-                                                          "not": {
-                                                            "all": [
-                                                              {
-                                                                "inside": {
-                                                                  "kind": "class_definition",
-                                                                  "stopBy": "end"
-                                                                }
-                                                              },
-                                                              {
-                                                                "any": [
-                                                                  {
-                                                                    "all": [
-                                                                      {
-                                                                        "kind": "typed_parameter"
-                                                                      },
-                                                                      {
-                                                                        "has": {
-                                                                          "all": [
-                                                                            {
-                                                                              "kind": "identifier"
-                                                                            },
-                                                                            {
-                                                                              "regex": "^(?:cls|self)$"
-                                                                            }
-                                                                          ],
-                                                                          "stopBy": "neighbor"
-                                                                        }
-                                                                      }
-                                                                    ]
-                                                                  },
-                                                                  {
-                                                                    "all": [
-                                                                      {
-                                                                        "kind": "typed_default_parameter"
-                                                                      },
-                                                                      {
-                                                                        "has": {
-                                                                          "all": [
-                                                                            {
-                                                                              "kind": "identifier"
-                                                                            },
-                                                                            {
-                                                                              "regex": "^(?:cls|self)$"
-                                                                            }
-                                                                          ],
-                                                                          "stopBy": "neighbor",
-                                                                          "field": "name"
-                                                                        }
-                                                                      }
-                                                                    ]
-                                                                  }
-                                                                ]
-                                                              }
-                                                            ]
-                                                          }
-                                                        }
-                                                      ]
-                                                    },
-                                                    {
-                                                      "has": {
-                                                        "has": {
-                                                          "all": [
-                                                            {
-                                                              "kind": "identifier"
-                                                            },
-                                                            {
-                                                              "regex": "(?i)^(?:databaseconnection|syncdatabaseconnection|lazyresult|lazyseq|readtransaction|serverplan|syncversioneddatabaseconnection|versioneddatabaseconnection|versionedreadtransaction|versionedwritetransaction|writetransaction)$"
-                                                            }
-                                                          ],
-                                                          "stopBy": "end"
-                                                        },
-                                                        "stopBy": "neighbor",
-                                                        "field": "type"
-                                                      }
-                                                    }
-                                                  ],
-                                                  "stopBy": "end"
-                                                },
-                                                "stopBy": "neighbor",
-                                                "field": "parameters"
+                                                "field": "type"
                                               }
                                             }
-                                          ]
-                                        }
-                                      ]
+                                          ],
+                                          "stopBy": "end"
+                                        },
+                                        "stopBy": "neighbor",
+                                        "field": "parameters"
+                                      }
                                     }
                                   ]
                                 }
@@ -2954,12 +3209,9 @@
                             }
                           ]
                         }
-                      }
-                    ],
-                    "stopBy": "end"
-                  },
-                  "stopBy": "neighbor",
-                  "field": "body"
+                      ]
+                    }
+                  ]
                 }
               }
             ]
