@@ -1,0 +1,102 @@
+[
+  {
+    "name": "pattern-terminal",
+    "form": "pattern(named terminal)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-pattern-terminal","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"pattern":"print"}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "pattern-structural",
+    "form": "pattern(internal tree)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-pattern-structural","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"pattern":"print($A)"}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "pattern-single-metavariable",
+    "form": "pattern($NAME)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-pattern-single-metavariable","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"pattern":"$NAME"}}},"violation":{"anchor":"capture.NAME","code":"SQL","message":"$NAME"}}]}
+  },
+  {
+    "name": "pattern-multi-metavariable",
+    "form": "pattern($$$ARGS)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-pattern-multi-metavariable","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"pattern":"f($$$ARGS)"}}},"violation":{"anchor":"witness.span","code":"SQL","message":"$$$ARGS"}}]}
+  },
+  {
+    "name": "pattern-repeated-capture",
+    "form": "pattern($A + $A)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-pattern-repeated-capture","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"pattern":"$A + $A"}}},"violation":{"anchor":"capture.A","code":"SQL","message":"$A"}}]}
+  },
+  {
+    "name": "pattern-context-selector",
+    "form": "pattern(context, selector)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-pattern-context-selector","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"pattern":{"context":"def $F():\n    $$$BODY","selector":"function_definition"}}}},"violation":{"anchor":"capture.F","code":"SQL","message":"$F"}}]}
+  },
+  {
+    "name": "kind-single",
+    "form": "kind(identifier)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-kind-single","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"kind":"identifier"}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "kind-set",
+    "form": "kind(identifier|string)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-kind-set","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"any":[{"kind":"identifier"},{"kind":"string"}]}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "node-regex",
+    "form": "regex(^unsafe$)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-node-regex","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"regex":"^unsafe$"}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "node-text-equality",
+    "form": "text(eq, literal)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-node-text-equality","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"pattern":"$LEFT + $RIGHT","compare":{"left":"LEFT","op":"eq","right":"RIGHT","text":"source"}}}},"violation":{"anchor":"witness.span","code":"SQL","message":"$LEFT equals $RIGHT"}}]}
+  },
+  {
+    "name": "node-value-positive",
+    "form": "value(is, constant)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-node-value-positive","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"kind":"integer","value":{"eq":1}}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "node-value-unknown",
+    "form": "value(flow-dependent)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-node-value-unknown","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"kind":"identifier","value":{"follow":true,"eq":1}}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "all-two-positive",
+    "form": "all(kind, regex)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-all-two-positive","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"all":[{"kind":"identifier"},{"regex":"^x$"}]}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "all-capture-threading",
+    "form": "all(pattern($A), compare($A))",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-all-capture-threading","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"all":[{"pattern":"$A + $B"},{"compare":{"left":"A","op":"eq","right":"B","text":"source"}}]}}},"violation":{"anchor":"capture.A","code":"SQL","message":"$A equals $B"}}]}
+  },
+  {
+    "name": "all-three-valued-false-after-unknown",
+    "form": "all(value(unknown), kind(false))",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-all-three-valued-false-after-unknown","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"all":[{"kind":"identifier","value":{"follow":true,"eq":1}},{"kind":"comment"}]}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "all-three-valued-withheld-capture",
+    "form": "all(value($A, unknown), compare($A))",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-all-three-valued-withheld-capture","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"all":[{"pattern":"$A","value":{"follow":true,"eq":1}},{"compare":{"left":"A","op":"eq","right":"A","text":"source"}}]}}},"violation":{"anchor":"capture.A","code":"SQL","message":"$A"}}]}
+  },
+  {
+    "name": "any-first-branch",
+    "form": "any(pattern(a), pattern(b))",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-any-first-branch","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"any":[{"pattern":"$A"},{"pattern":"$B"}]}}},"violation":{"anchor":"witness.span","code":"SQL","message":"A=$A B=$B"}}]}
+  },
+  {
+    "name": "any-unknown-binding-blocks-later",
+    "form": "any(value($A, unknown), pattern($A))",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-any-unknown-binding-blocks-later","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"any":[{"pattern":"$A","value":{"follow":true,"eq":1}},{"pattern":"$A"}]}}},"violation":{"anchor":"capture.A","code":"SQL","message":"$A"}}]}
+  },
+  {
+    "name": "any-unknown-without-binding",
+    "form": "any(value(unknown), kind(match))",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-any-unknown-without-binding","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"any":[{"kind":"identifier","value":{"follow":true,"eq":1}},{"kind":"identifier"}]}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "not-complete-positive",
+    "form": "not(kind(identifier))",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-not-complete-positive","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"not":{"kind":"identifier"}}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  }
+]

@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 struct ContractCase {
-    name: &'static str,
-    form: &'static str,
+    name: String,
+    form: String,
     input: Value,
 }
 
@@ -54,7 +54,33 @@ fn ast_violation(rule: Value, violation: Value) -> Value {
 }
 
 fn case(name: &'static str, form: &'static str, input: Value) -> ContractCase {
-    ContractCase { name, form, input }
+    ContractCase {
+        name: name.to_owned(),
+        form: form.to_owned(),
+        input,
+    }
+}
+
+fn first_twenty_cases() -> Vec<ContractCase> {
+    let fixture: Value =
+        serde_json::from_str(include_str!("fixtures/production_contracts_001_020.json"))
+            .expect("the authored production contracts are valid JSON");
+    fixture
+        .as_array()
+        .expect("the authored production contracts are an array")
+        .iter()
+        .map(|entry| ContractCase {
+            name: entry["name"]
+                .as_str()
+                .expect("a production contract has a name")
+                .to_owned(),
+            form: entry["form"]
+                .as_str()
+                .expect("a production contract has a compact form")
+                .to_owned(),
+            input: entry["policy"].clone(),
+        })
+        .collect()
 }
 
 fn cases() -> Vec<ContractCase> {
@@ -70,121 +96,8 @@ fn cases() -> Vec<ContractCase> {
     };
     let util = |rule: Value, utils: Value| ast_query(json!({ "rule": rule, "utils": utils }));
     let semantic = |term: Value| ast(json!({ "kind": "identifier", "all": [term] }));
-    vec![
-        case(
-            "pattern-terminal",
-            "pattern(named terminal)",
-            ast(pattern("print")),
-        ),
-        case(
-            "pattern-structural",
-            "pattern(internal tree)",
-            ast(pattern("print($A)")),
-        ),
-        case(
-            "pattern-single-metavariable",
-            "pattern($NAME)",
-            ast(pattern("$NAME")),
-        ),
-        case(
-            "pattern-multi-metavariable",
-            "pattern($$$ARGS)",
-            ast(pattern("f($$$ARGS)")),
-        ),
-        case(
-            "pattern-repeated-capture",
-            "pattern($A + $A)",
-            ast(pattern("$A + $A")),
-        ),
-        case(
-            "pattern-context-selector",
-            "pattern(context, selector)",
-            ast(
-                json!({ "pattern": { "context": "def $F():\n    $$$BODY", "selector": "function_definition" } }),
-            ),
-        ),
-        case(
-            "kind-single",
-            "kind(identifier)",
-            ast(json!({ "kind": "identifier" })),
-        ),
-        case(
-            "kind-set",
-            "kind(identifier|string)",
-            ast(json!({ "any": [{ "kind": "identifier" }, { "kind": "string" }] })),
-        ),
-        case(
-            "node-regex",
-            "regex(^unsafe$)",
-            ast(json!({ "regex": "^unsafe$" })),
-        ),
-        case(
-            "node-text-equality",
-            "text(eq, literal)",
-            ast(
-                json!({ "pattern": "$A", "compare": { "left": "A", "op": "eq", "right": "A", "text": "source" } }),
-            ),
-        ),
-        case(
-            "node-value-positive",
-            "value(is, constant)",
-            ast(json!({ "kind": "integer", "value": { "eq": 1 } })),
-        ),
-        case(
-            "node-value-unknown",
-            "value(flow-dependent)",
-            ast(json!({ "kind": "identifier", "value": { "follow": true, "eq": 1 } })),
-        ),
-        case(
-            "all-two-positive",
-            "all(kind, regex)",
-            ast(json!({ "all": [{ "kind": "identifier" }, { "regex": "^x$" }] })),
-        ),
-        case(
-            "all-capture-threading",
-            "all(pattern($A), compare($A))",
-            ast(
-                json!({ "all": [{ "pattern": "$A" }, { "compare": { "left": "A", "op": "eq", "right": "A" } }] }),
-            ),
-        ),
-        case(
-            "all-three-valued-false-after-unknown",
-            "all(value(unknown), kind(false))",
-            ast(
-                json!({ "all": [{ "value": { "follow": true, "eq": 1 } }, { "kind": "comment" }] }),
-            ),
-        ),
-        case(
-            "all-three-valued-withheld-capture",
-            "all(value($A, unknown), compare($A))",
-            ast(
-                json!({ "all": [{ "pattern": "$A", "value": { "follow": true, "eq": 1 } }, { "compare": { "left": "A", "op": "eq", "right": "A" } }] }),
-            ),
-        ),
-        case(
-            "any-first-branch",
-            "any(pattern(a), pattern(b))",
-            ast(json!({ "any": [{ "pattern": "a" }, { "pattern": "b" }] })),
-        ),
-        case(
-            "any-unknown-binding-blocks-later",
-            "any(value($A, unknown), pattern($A))",
-            ast(
-                json!({ "any": [{ "pattern": "$A", "value": { "follow": true, "eq": 1 } }, { "pattern": "$A" }] }),
-            ),
-        ),
-        case(
-            "any-unknown-without-binding",
-            "any(value(unknown), kind(match))",
-            ast(
-                json!({ "any": [{ "value": { "follow": true, "eq": 1 } }, { "kind": "identifier" }] }),
-            ),
-        ),
-        case(
-            "not-complete-positive",
-            "not(kind(identifier))",
-            ast(json!({ "not": { "kind": "identifier" } })),
-        ),
+    let mut cases = first_twenty_cases();
+    cases.extend([
         case(
             "not-unknown",
             "not(value(unknown))",
@@ -728,7 +641,8 @@ fn cases() -> Vec<ContractCase> {
                 json!({ "anchor": "capture.A", "code": "SQL", "message": "$A", "each": "A" }),
             ),
         ),
-    ]
+    ]);
+    cases
 }
 
 fn evidence(alias: &str) -> Value {
