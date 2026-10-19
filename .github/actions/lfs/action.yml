@@ -4,6 +4,13 @@ description: >-
   The objects come from a cache keyed on their ids (`git lfs ls-files -l`), so a run downloads them from LFS only
   when one of them changes. Use it right after `actions/checkout`, which leaves the pointers when `lfs` is false.
 
+inputs:
+  save:
+    description: >-
+      Save the objects to the cache on a miss. A job that runs a pull request's code under pull_request_target sets it
+      to false: it would save into the base branch's scope, which every workflow on main restores.
+    default: "true"
+
 runs:
   using: composite
   steps:
@@ -13,7 +20,15 @@ runs:
       run: echo "digest=$(git lfs ls-files -l | sort | git hash-object --stdin)" >> "$GITHUB_OUTPUT"
 
     - name: Restore the LFS objects
+      if: inputs.save == 'true'
       uses: actions/cache@v6
+      with:
+        path: .git/lfs
+        key: lfs-${{ steps.objects.outputs.digest }}
+
+    - name: Restore the LFS objects, without saving them
+      if: inputs.save != 'true'
+      uses: actions/cache/restore@v6
       with:
         path: .git/lfs
         key: lfs-${{ steps.objects.outputs.digest }}

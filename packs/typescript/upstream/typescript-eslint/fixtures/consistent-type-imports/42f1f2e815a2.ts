@@ -1,0 +1,3 @@
+
+import {} from 'foo'; // empty
+        

@@ -107,6 +107,8 @@
     "test:watch": "vitest --dir test",
     "conformance:languages": "node --import tsx conformance/languages/cli.ts",
     "conformance:languages:check": "node --import tsx conformance/languages/cli.ts --check",
+    "port-readiness": "node --import tsx conformance/port-readiness/cli.ts",
+    "port-readiness:record": "node --import tsx conformance/recorders/port-readiness/cli.ts",
     "generate:schema": "node --import tsx scripts/generate/schema/schema-sql.ts",
     "generate:languages": "node --import tsx scripts/generate/languages/registry.ts",
     "generate:packs": "node --import tsx scripts/generate/packs/pack-list.ts",
@@ -148,11 +150,14 @@
     "@types/node": "26.6.5",
     "@types/semver": "^7.8.0",
     "@vitest/coverage-v8": "^5.0.0",
+    "apache-arrow": "21.2.0",
     "drizzle-kit": "^0.31.11",
     "esbuild": "0.28.2",
+    "smol-toml": "1.9.0",
     "tsx": "4.23.13",
     "typescript": "5.9.3",
-    "vitest": "5.0.0"
+    "vitest": "5.0.0",
+    "yaml": "2.9.1"
   },
   "engines": {
     "node": ">=24"

@@ -12,6 +12,7 @@ pub(super) fn ast_captures<'a>(
             names.extend(arguments.bind.iter().map(|(name, _)| name.as_str()))
         }
         Semantic::Parse(test) => names.extend(test.exports.iter().map(String::as_str)),
+        Semantic::Embedded(test) => names.extend(test.exports.iter().map(String::as_str)),
         Semantic::Capture(name) => {
             names.insert(name.as_str());
         }
@@ -45,6 +46,7 @@ pub(super) fn parse_exports<'a>(
 ) {
     match semantic {
         Semantic::Parse(test) => exported.extend(test.exports.iter().map(String::as_str)),
+        Semantic::Embedded(test) => exported.extend(test.exports.iter().map(String::as_str)),
         Semantic::FormatArgs(test) => {
             exported.extend(test.exports.iter().map(String::as_str));
             if let Some(unused) = &test.unused {

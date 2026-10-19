@@ -71,6 +71,7 @@ export {
   CODE_RULE_AST_LANGUAGES,
   CODE_RULE_DIALECTS,
   CODE_RULE_LANGUAGE_FAMILIES,
+  codeRuleLanguageEmbedVias,
   codeRuleLanguageFamily,
   LANGUAGE_REGISTRY,
 } from "./code-rule/code-rule-languages.js";

@@ -8,7 +8,7 @@
  * breaks one check of a copy of it, `exemplar`, for the test-only planned language, passes with its rule not supported
  * yet, and `empty`, whose ports are all candidates, passes with no rules.
  */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -347,6 +347,11 @@ describe("validatePack", () => {
       { licences: ["upstream/examplelint/fixtures/more.py is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it"] },
     ],
     [
+      "a file copied from an upstream path its UPSTREAM.md lists as not copied",
+      directory => appendFileSync(join(directory, "licenses", "examplelint", "UPSTREAM.md"), "\n- Not copied: `tests/` — a copyleft project, GPL-3.0-only\n"),
+      { licences: ["licenses/examplelint/UPSTREAM.md lists upstream/examplelint/fixtures/asserts.py as copied from tests/asserts.py, under tests/, which it lists as not copied"] },
+    ],
+    [
       "an authored file the tool's UPSTREAM.md does not list",
       directory => writeFileSync(join(directory, "upstream", "examplelint", "UPSTREAM.md"), "# examplelint: files Rerail wrote\n"),
       { licences: ["upstream/examplelint/fixtures/clean.py is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it"] },
@@ -485,7 +490,8 @@ describe("validatePack", () => {
   });
 
   it("asks no suppress.biome of a port whose query language does not honour Biome's comments", async () => {
-    // Vue's registry entry honours eslint alone: a Vue query refuses suppress.biome.
+    // Vue's registry entry honours eslint alone: a Vue query, over the component's script program
+    // too, refuses suppress.biome.
     const vue = (directory: string) =>
       editJson(join(directory, "rules", "no-debugger.json"), document => ({
         ...document,
@@ -494,7 +500,7 @@ describe("validatePack", () => {
           .parse(document.clauses)
           .map(clause => ({
             ...clause,
-            forbid: { ...clause.forbid, ast: { ...clause.forbid.ast, language: "vue" } },
+            forbid: { ...clause.forbid, ast: { ...clause.forbid.ast, language: "vue", embedded: "script-block" } },
             violation: { ...clause.violation, suppress: { eslint: { rules: ["no-debugger"] } } },
           })),
       }));

@@ -10,6 +10,8 @@ the core package at the repository root.
 > by name only (`src/engine/catalog/pack-list.generated.ts`).
 
 - [docs/pack-format.md](../docs/pack-format.md): the layout and the validation contract every pack here passes.
+- [docs/port-readiness.md](../docs/port-readiness.md): the port readiness gates every shipped ported rule must pass (`npm run port-readiness`);
+  candidates run through them and are only reported.
 - [docs/language-packs.md](../docs/language-packs.md#start-a-pack): how to start a pack, for a supported language, a
   planned one, or one that ports another tool's rules.
 

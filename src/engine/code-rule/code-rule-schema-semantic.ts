@@ -74,6 +74,7 @@ export function semanticRuleShape(fields: {
   formatArgs: z.ZodType;
   layout: z.ZodType;
   host: z.ZodType;
+  embedded: z.ZodType;
   calls: z.ZodType;
 }) {
   return {
@@ -86,6 +87,7 @@ export function semanticRuleShape(fields: {
     formatArgs: fields.formatArgs.optional(),
     layout: fields.layout.optional(),
     host: fields.host.optional(),
+    embedded: fields.embedded.optional(),
     calls: fields.calls.optional(),
   };
 }

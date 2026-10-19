@@ -1,0 +1,1 @@
+const fn = (a?: number = 5) => {};

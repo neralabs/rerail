@@ -11,7 +11,7 @@ A language is three things, each owned by one place:
 | Part | Where | Holds |
 |---|---|---|
 | Registry entry | `languages/<id>.json` | What the language is: id, family, dialects (file suffixes, parser, grammar, tape tag), which capabilities it supports, suppression comments, embedded languages, and its status |
-| Engine adapter | `native/src/code_rule_dsl/language/adapter.rs` and its concern files (one adapter per family) | How the engine reads it: scope, values, call arguments, call graph, format strings, suppressions, the regions of a file it reads, and the DSL features it refuses |
+| Engine adapter | `native/src/code_rule_dsl/language/adapter.rs` and its concern files (one adapter per family) | How the engine reads it: scope, values, call arguments, call graph, format strings, suppressions, and the DSL features it refuses |
 | Rule pack | `packs/<id>/` ([pack structure](pack-format.md)) | Code rules written in it, with the evidence that they behave |
 
 ## The layering rule
@@ -39,20 +39,22 @@ semantics (`truthy`, `type_name`, `equals`, `order`, `relation`, `numeric`, `int
 
 | Part | Holds |
 |---|---|
-| `Adapter` | The family's diagnostic label, line terminators, name normalisation (Python's NFKC, SQL's PostgreSQL case folding), the regions of a file its semantics read (a file's root; Blade's compiled-view `program`; Vue's script-block `program`), module paths from package markers (Python), and inline suppression comments |
+| `Adapter` | The family's diagnostic label, line terminators, name normalisation (Python's NFKC, SQL's PostgreSQL case folding), module paths from package markers (Python), and inline suppression comments (an embedding family's read every document of its files) |
 | `ScopeRules` (`adapter/scope.rs`) | Scope tables: building, resolving, bindings, usage, PHP's flow, SQL's query blocks, and refusals of binding and resolution features |
 | `ValueRules` (`adapter/value.rs`) | Value decoding, kinds, structures, names, keys and references for comparisons, type names, and refusals of compare modes |
 | `ArgumentRules` (`adapter/arguments.rs`) | Call kinds, the arguments a call passes, and refusals of signature markers and modes |
 | `CallRules` (`adapter/calls.rs`) | Call and function kinds, per-file call summaries, call-graph links and labels |
 | `FormatArgRules` (`adapter/format_args.rs`) | The format styles a family reads |
-| `SyntaxRules` (`adapter/syntax.rs`) | Literal grammars a family hosts (`parse`), `languageOptions` and `when` keys, Blade's and Vue's text-only patterns |
+| `SyntaxRules` (`adapter/syntax.rs`) | Literal grammars a family hosts (`parse`), `languageOptions` and `when` keys |
 
 A concern the registry does not mark `supported` for a family is `Refused` (Ecma's, Vue's and Sql's `calls` and
-`formatArgs`). An embedding family reuses the embedded language's concerns (Blade's delegate to PHP's, Vue's to
-Ecma's) and overrides only what reads the template itself. Refusals go through one gate (`gate`), which reports a
-refused feature as invalid and a planned one as `language-not-supported`. The adapter kit (`adapter/kit.rs`) runs
-one generic suite over every adapter, and checks that each family's adapter reads exactly the capabilities its
-registry entries support.
+`formatArgs`). An embedding family's semantics are the embedded language's, over the embedded program, which is a
+document of its own read with that language's family (Blade's view with PHP's, Vue's program with Ecma's); its own
+concerns name the embedded language's for the compile's checks, and a semantic key over the file's own tree is
+refused (`compile::documents::check_sides`). Refusals go through one gate (`gate`), which reports a refused feature
+as invalid and a planned one as `language-not-supported`. The adapter kit (`adapter/kit.rs`) runs one generic suite
+over every adapter, its semantic checks over the document each family's semantics read, and checks that each family's
+adapter reads exactly the capabilities its registry entries support.
 
 | Family | Languages | Adapter | Capabilities | Suppressions |
 |---|---|---|---|---|
@@ -66,20 +68,20 @@ registry entries support.
 
 ### Vue
 
-Vue's adapter is `adapter/vue.rs`. A `.vue` file's tape holds its tree-sitter-vue tree and, as the root's last
-child, the one program its `<script>` blocks and template expressions make (`vue::view`, embedded through
-`script-block`, `embed/script_block.rs`): TypeScript for `lang="ts"`, TSX for `lang="tsx"`, JavaScript otherwise;
-a script in another language (`coffee`) embeds none. The three grammars share one numbering on a Vue tape
-(`KindCatalog`): TypeScript's kinds and fields follow Vue's own, and TSX's and JavaScript's take TypeScript's codes
-wherever their names agree, so a rule's `kind`, `field` and `pattern` read every program alike.
+Vue's adapter is `adapter/vue.rs`. A `.vue` file is two documents (`embed`): its tree-sitter-vue tree, and the one
+program its `<script>` blocks and template expressions make (`vue::view`, embedded through `script-block`,
+`embed/script_block.rs`): TypeScript for `lang="ts"`, TSX for `lang="tsx"`, JavaScript otherwise; a script in another
+language (`coffee`) embeds none. The program is a tree of its own grammar over its own text, with the segments that map
+its text to the file's bytes; a clause reads it with `ast.embedded: script-block`, and a template rule reaches it with
+`embedded`.
 
 | Concern | Vue |
 |---|---|
-| Regions | The embedded `program`, read as the dialect `ScriptBlock` built it in, which the tape records (`tape::EmbeddedProgram`: the shared kind codes do not tell the three apart); it stands apart from the template (`Embedder::APART`), so a template's syntax error leaves a clause over a clean program complete |
+| Documents | The component's tree; the program, read in the dialect `ScriptBlock` built it in. Each has its own syntax errors: the template's leave a clause over a clean program complete |
 | Scope, value, arguments | Ecma's, over the program: template references resolve in the scopes Vue's compiler gives them; a token the view writes (an interpolation's `(` and `);`) is not spelled (`embed::rewritten`) |
 | Calls, format arguments | Refused, as ECMAScript's are: vue-eslint-parser hands the scripts to ESLint, which has neither |
-| Suppressions | `eslint`: ESLint's directives in the `<script>` blocks' comments (`suppress::vue::script_directives`), or eslint-plugin-vue's template comment directives (`vue/comment-directive`, `VueDirectives`) |
-| Patterns | A pattern holding a Vue construct (an element, a directive, an interpolation, a comment) is Vue's; any other is TypeScript and matches the program in any of its grammars (JSX, TSX's alone, matches none) |
+| Suppressions | `eslint`: ESLint's directives in the `<script>` blocks' comments (`suppress::vue::script_directives`, the program's comments at the file bytes they copy), or eslint-plugin-vue's template comment directives (`vue/comment-directive`, `VueDirectives`) |
+| Patterns | A clause over the component's tree has Vue's patterns; one over the program, its dialect's |
 | `languageOptions`, `when` | Ecma's keys |
 
 ### The Rust adapter
@@ -114,7 +116,7 @@ readings as divergences. Each concern and its oracle:
 
 | Concern | What it reads | Oracle |
 |---|---|---|
-| `Adapter` | A naked identifier folds to lower case and a quoted one is exact, as PostgreSQL looks names up (`value::sql::identifier`); one region, the file's root; SQLFluff's `-- noqa` (`suppress/sqlfluff.rs`) | `fixtures/sql/suppress/sqlfluff.expected.json`, SQLFluff's reports with `noqa` ignored and honoured |
+| `Adapter` | A naked identifier folds to lower case and a quoted one is exact, as PostgreSQL looks names up (`value::sql::identifier`); SQLFluff's `-- noqa` (`suppress/sqlfluff.rs`) | `fixtures/sql/suppress/sqlfluff.expected.json`, SQLFluff's reports with `noqa` ignored and honoured |
 | `ScopeRules` | Query blocks (`ScopeKind::Query`, scope `query`) from `scope/sql.rs`: a block binds its `FROM`/`JOIN` relations (`Form::Relation`), its `UPDATE`/`DELETE`/`INSERT` target (`Form::Target`), and a block around a `WITH` statement its CTE names (`Form::Cte`); a qualified column reference's table part resolves to a relation or target of its block or an enclosing one (a CTE only through a relation over it). `resolves.unresolved` is RF01's report and `binds: { used: false }` AL05's | SQLFluff's RF01 and AL05 recordings (`packs/sql/upstream/sqlfluff/fixtures.expected.json`), with the declared ANSI-versus-PostgreSQL mismatches |
 | `ValueRules` | Literals and names (`value/sql.rs`) only where PostgreSQL's and SQLite's readings agree; `type`, the key, member, reference and structural compare modes are refused | `fixtures/sql/scope/postgres.expected.json` (PostgreSQL 18.6 through libpg_query) and `fixtures/sql/value/sqlite.expected.json` (SQLite 3.50.4) |
 | `ArgumentRules` | An `invocation`'s arguments as PostgreSQL 18.6's parser binds them (`matcher/arguments_sql.rs`): by position, then by name; signature markers, `syntactic` and `estree` are refused | `fixtures/sql/matcher/arguments/postgres.expected.json`, 50 calls: 48 matched by position, 2 asserted unreadable (`substring(s FOR n)`, `substring(s FOR n FROM m)`) |
@@ -161,13 +163,14 @@ One file per language, `languages/<id>.json`, so a language is added or changed 
 | `runsOn` | no | The dialect labels its rules run on, its own first; default: its own dialects. A `typescript` rule also runs on JavaScript files |
 | `capabilities` | yes | For each engine capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (the language has no such thing, or no plan for it: a rule using it is invalid) or `not-supported-yet` |
 | `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `oxlint`, `biome`, `phpstan`, `psalm`, `phpcs`, `clippy`, `sqlfluff`) |
-| `embeds` | no | Languages embedded in its files and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks |
+| `embeds` | no | Languages embedded in its files and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks. A rule runs on the program with `ast.embedded: "<via>"` and reaches it from the file's own tree with `embedded` ([DSL reference](code-rule-dsl-reference.html#embedded)) |
 
 `parser` is validated but drives no behaviour yet. `embeds` names the embedded language and how it is reached
 (`via`); a supported entry may embed only supported languages. An embedding's `Embedder` builds at most one program
-per file and `via`, and `adapter::regions` yields it as a region in the dialect the tape records for it. Changes stay
-additive within `rerail.language/v1`: a new optional field or a new value is a v1 change, and renaming or removing a
-field, or changing what a value means, needs `rerail.language/v2`.
+per file and `via`, a document derived from the file's own (`tape::DerivedImage`), with a tape of its own that the
+store keeps as a row of its own beside the file's (`file_documents`). Changes
+stay additive within `rerail.language/v1`: a new optional field or a new value is a v1 change, and renaming or removing
+a field, or changing what a value means, needs `rerail.language/v2`.
 
 The build fails, and so does `test/engine/code-rule/language-registry.test.ts`, when ids, dialect labels, suffixes or tape tags repeat;
 when a supported dialect lacks a variant, parser, grammar or tape tag; when a planned language supports a capability
@@ -216,7 +219,8 @@ package and never in the product:
 Embedding has a test-only counterpart in the engine: the test-only HTML grammar embeds TypeScript, TSX and JavaScript
 through `Via::TestScript` (`language::test_embeds`, `native/src/code_rule_dsl/embed/test_script.rs`), whose program is
 an HTML file's scripts and then its `on*` handlers. Its tests (`embed/tests.rs`) run the tape's embedder loop, the
-persisted program records, region dialects, and scope and usage over a program whose nodes stand out of file order.
+derived documents persisted apart from the file's tape and their dialects, and scope and usage over a program whose
+text maps to the file out of order.
 The generated `Via` and `with_embedder!` carry it only under `#[cfg(test)]`.
 
 ## Adding a language
@@ -239,29 +243,34 @@ The generated `Via` and `with_embedder!` carry it only under `#[cfg(test)]`.
    - `ArgumentRules`;
    - `CallRules`, with `const NAMES: Option<Family>`, the family whose namespace its call names live in;
    - `FormatArgRules`;
-   - `SyntaxRules`, including `embedded_pattern`.
-   A new dialect in an existing family needs no per-dialect table: ECMAScript's scope reads each dialect's grammar,
-   embedded or not, as the file's tape numbers it (`scope::ecma::script`).
+   - `SyntaxRules`.
+   A new dialect in an existing family needs no per-dialect table: ECMAScript's scope reads each dialect's grammar
+   (`scope::ecma::script`).
 4. A suppression kind the language needs and the engine lacks is one row in `suppression_kinds!` in
    `native/src/code_rule_dsl/suppress.rs` (`Variant key: Spec = linter::spec, "detail";`, its parser in
    `suppress/<linter>.rs`), one entry in `codeRuleSuppressSchema` in
    `src/engine/code-rule/code-rule-schema-semantic.ts`, its name in the registry entry's `suppressions`, and its use in
    the adapter's `suppresses`.
 5. An embedding (`embeds` with a new `via`) adds `native/src/code_rule_dsl/embed/<via>.rs`, implementing `Embedder`
-   (`APART`, whether its program is a tree apart from the host's that host syntax errors leave whole, and `build`)
-   and `Program` (`dialect`, `root`, `span` and `omitted`; `embed::segments::SegmentMap` maps the program's bytes to
-   the host's, in any order), and one `mod` and one `pub(crate) use` line in `embed.rs`. `build` returns one program
-   or none, so a file holds at most one program per `via`. Nothing else in the engine changes:
-   - `KindCatalog` numbers each embedded grammar's kinds and fields after the host's, and the tape records each
-     program's dialect and apartness (`tape::EmbeddedProgram`): TypeScript, TSX and JavaScript share kind codes.
-   - `adapter::regions(root, dialect)` yields each program as `Region { root, dialect }`, in the dialect its embedder
-     built it in. ECMAScript's scope and usage read every region (`scope::ecma`), Blade's its compiled view; rule
-     kinds, patterns and values match the whole tape, programs included.
-   - A clause whose witnesses all lie in programs apart from the host, free of syntax errors of their own, is
-     complete whatever the host's errors (`soundness::SyntaxErrors`).
-   - A call summary reads the first region only, so a family whose files may hold several refuses calls.
+   (`build`, which returns an `embed::Program`: its dialect, its tree over its own text, the `SegmentMap` that maps the
+   text to the host's bytes, copied or written over them and in any order, and the host's syntax errors it reads
+   through), and one `mod` and one `pub(crate) use` line in `embed.rs`. `build` returns one program or none, so a file
+   holds at most one program per `via`. Nothing else in the engine changes:
+   - The program is a document derived from the file's (`tape::DerivedImage`): its text, source map, host errors and
+     its own tape, in its own grammar's codes, checked as every tape is. The store keeps that tape as a row of its
+     own, related to the file's tape by `file_documents` ([store](content-addressed-workspace-store.md)).
+   - A clause reads it with `ast.embedded: <via>` and a host rule reaches it with `embedded`; a program node reaches
+     the host with `host` (`matcher::embedded`). Its witnesses, captures and fixes are placed at the file bytes they
+     stand for: every document is an `origin::Origin` into the one it was read from, and `origin::InFile` places
+     its nodes and ranges in the file (a fix only over bytes it copies). Nothing else maps a position. A node
+     stands for the file ranges of its pieces (`embed::segments::FileRanges`), apart where the program is written
+     out of file order and joined only over white space; a single span reports the range it starts in, and
+     positions are half-open (a boundary belongs to the range starting there).
+   - Each document has its own syntax errors as ranges of the file (`soundness::SyntaxErrors::of_doc`): a program
+     whose `host_errors` are empty is complete whatever the host's errors.
+   - Calls read the program whose dialect's calls join the graph (`calls::calls_document`).
 
-   The embedding family's adapter (step 3) delegates each concern to the embedded family's, as Blade's does to PHP's.
+   The embedding family's adapter (step 3) names the embedded family's concerns, as Blade's does PHP's.
 6. Add one `#[test]` function for the family to `native/src/code_rule_dsl/language/adapter/kit.rs`, calling
    `kit::<Family>(&Expect { .. })` with the family's expectations.
 7. Flip each capability to `supported` only when it is implemented and proven by its oracle suite; mark one the

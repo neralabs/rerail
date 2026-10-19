@@ -133,6 +133,10 @@ checks 1 to 7 over one pack and returns each check's failures and each rule's st
 the validator's own tests over the fixture packs in `fixtures/packs/`. `npm test` runs it with the local core.
 Running it against the newest published core inside each pack's range is for pack CI, which does not exist yet.
 
+The contract is the floor every pack meets. A ported rule must also pass the [port readiness gates](port-readiness.md) to ship:
+they compare it with its upstream on start and end positions, on real code, and for overfitting and size; they block
+CI for shipped rules and only report candidates.
+
 ```sh
 npx vitest run test/engine/catalog/packs.test.ts                         # every pack: checks 1 to 7, each rule's status
 npx vitest run test/engine/catalog/packs.test.ts -t "pack python"        # one pack
@@ -151,7 +155,7 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
 | 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
 | 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `restricted`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
-| 6 | Licences | A copied file is missing from an `UPSTREAM.md`; `reuse lint` or the licence allowlist fails |
+| 6 | Licences | A copied file is missing from an `UPSTREAM.md`, or is copied from an upstream path its `UPSTREAM.md` lists as not copied; `reuse lint` or the licence allowlist fails |
 | 7 | Manifest | `pack.json` has no `match`, or its `match` fails the schema; core's generated pack list does not name the pack or is stale |
 
 Precisely:
@@ -219,9 +223,13 @@ Precisely:
    corpus) is listed instead in the tool's own `upstream/<tool>/UPSTREAM.md`, with the same table rows: it is Rerail's,
    so it adds no licence to `licenses/` or to the package's `license`. That record may list only files under its own
    `upstream/<tool>/`. Every listed file must exist, every recorded licence must be on the repository allowlist
-   (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. `reuse lint` and `node scripts/check/check-licenses.mjs`
+   (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. An `UPSTREAM.md` may declare upstream
+   paths nothing is copied from, one per line as ``- Not copied: `<upstream path prefix>` — <project>, <SPDX id>``
+   (an upstream's material derived from a copyleft project, such as Ruff's fixtures for its pylint ports); a row whose
+   upstream path (its second column) starts with one fails. `reuse lint` and `node scripts/check/check-licenses.mjs`
    stay repository-wide gates in CI; annotate copied files in `REUSE.toml` as well, since `reuse lint` alone accepts
-   a copied file the catch-all Apache-2.0 annotation covers.
+   a copied file the catch-all Apache-2.0 annotation covers. Structure metric 7 (`npm run check:structure`) fails a
+   listed file whose REUSE licence lacks the one its `UPSTREAM.md` records, or whose REUSE copyright names only Rerail.
 7. `match` must be present: without it set-up never recommends the pack. For a directory under `packs/`,
    `src/engine/catalog/pack-list.generated.ts` must list the pack's id and equal what `npm run generate:packs` writes.
    Fixture packs elsewhere are not published, so no list names them; `listed: true` checks the list for them too.
