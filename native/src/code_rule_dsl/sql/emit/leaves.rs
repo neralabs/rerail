@@ -156,7 +156,7 @@ impl Emitter<'_> {
     /// `Op::Every`: the first candidate in walk order where the sub-rule is not true decides:
     /// false where it is false there, unknown where it is unknown; true where there is none.
     pub(super) fn every(&mut self, walk: Walk, sub: &Op, input: &str) -> String {
-        let candidates = self.candidates(walk, input);
+        let candidates = self.candidates(walk, None, input);
         let matched = self.op(sub, &candidates);
         let unk = if self.three { "s.unk" } else { "0" };
         let first = self.grouped(

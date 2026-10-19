@@ -142,7 +142,8 @@ impl Lowerer<'_> {
     }
 
     /// `rule` over `walk`'s candidates, as a relation searches them: its first match binds;
-    /// three-valued, an unknown candidate ends the search where `strict`.
+    /// three-valued, an unknown candidate ends the search where `strict`. A terminal's candidates
+    /// are not narrowed by kind.
     fn search_over(&self, walk: Walk, sub: Op, strict: bool) -> Op {
         let binds = sub.binds();
         if self.three {
@@ -151,12 +152,14 @@ impl Lowerer<'_> {
                 sub: Box::new(sub),
                 binds,
                 strict,
+                kinds: None,
             }
         } else {
             Op::Relation {
                 walk,
                 sub: Box::new(sub),
                 binds,
+                kinds: None,
             }
         }
     }

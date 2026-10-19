@@ -101,6 +101,7 @@ impl Lowerer<'_> {
                 sub: Box::new(sub),
                 binds,
                 strict: may_bind(rule),
+                kinds: self.walk_kinds(rule),
             },
             out,
         ))
