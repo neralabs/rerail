@@ -53,16 +53,6 @@ impl Emitter<'_> {
                 reverse,
                 of_rule: Some(of_rule),
             } => self.nth_child_open(*step, *offset, *reverse, of_rule, input),
-            Op::Stage(stage) => {
-                let table = stage_table(*stage);
-                self.frame(
-                    "x",
-                    &format!(
-                        "SELECT {} FROM {input} f JOIN {table} st ON st.file = f.file AND st.node = f.node",
-                        self.verdict("f", &[], "st.unk")
-                    ),
-                )
-            }
             Op::Constrained { rule, constraints } => {
                 self.constrained_open(rule, constraints, input)
             }

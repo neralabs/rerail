@@ -23,10 +23,11 @@
 //! joined row come from the output (what the operator bound), the others from the input row.
 //! An input row whose key has no output row is false and drops, as the operator would drop it.
 //!
-//! A per-batch stage (`Op::Stage`, a stop rule, a capture-free `ofRule`) is the zero-read case of
-//! the same mechanism: its rule names no slot, so its key is `(file, node)` alone, and its domain
-//! is every node of its root kinds in the batch rather than the keys of one input frame. Its
-//! table is keyed by `(file, node)`, and a frame reads it with the same equality join.
+//! A per-batch stage (a stop rule, a capture-free `ofRule`: readers of the whole set) is the
+//! zero-read case of the same mechanism: its rule names no slot, so its key is `(file, node)`
+//! alone, and its domain is every node of its root kinds in the batch rather than the keys of one
+//! input frame. Its table is keyed by `(file, node)`, and a frame reads it with the same equality
+//! join. A `matches` is never a stage: its utility runs on the frame's keys (inlined, or a unit).
 //!
 //! # When a frame is already keyed
 //!
@@ -80,7 +81,7 @@ fn export_slots(exports: &[Export], out: &mut BTreeSet<SlotId>) {
 fn touched(op: &Op, names: &Names, out: &mut BTreeSet<SlotId>) {
     let sub = |op: &Op, out: &mut BTreeSet<SlotId>| touched(op, names, out);
     match op {
-        Op::Kinds(_) | Op::Regex(_) | Op::Never | Op::Stage(_) => {}
+        Op::Kinds(_) | Op::Regex(_) | Op::Never => {}
         Op::Pattern { vars, reads, .. } => {
             out.extend(vars.iter().copied());
             out.extend(reads.iter().copied());

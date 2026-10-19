@@ -163,53 +163,6 @@ pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Vec<St
     emitter.statements
 }
 
-/// A capture-free cycle's stage (its units, every one seeded with the nodes of its root kinds):
-/// the members' loop, then the first member's matches. `recursive_member` selects another's. A
-/// three-valued cycle's statement is `Op::Unknowable` over `Op::Never`: its units' bodies are
-/// three-valued, and so are its answers.
-pub(super) fn recursive_stage(statement: &Statement) -> Vec<String> {
-    let mut emitter = Emitter::new(statement);
-    emitter.configure(statement);
-    for (index, unit) in statement.units.iter().enumerate() {
-        emitter.unit_tables(index);
-        if let Some(seed) = &unit.seed {
-            let kinds = match seed {
-                None => String::new(),
-                Some(kinds) if kinds.is_empty() => " AND 0".to_owned(),
-                Some(kinds) => format!(" AND n.kind IN ({})", list(kinds)),
-            };
-            emitter.statements.push(format!(
-                "INSERT INTO {}(file, node) SELECT n.file, n.id FROM node n WHERE n.file IN ({FILES}){kinds}",
-                demand_table(index)
-            ));
-        }
-    }
-    let sccs: BTreeSet<usize> = statement.units.iter().map(|unit| unit.scc).collect();
-    for scc in sccs {
-        if statement
-            .units
-            .iter()
-            .any(|unit| unit.scc == scc && unit.seed.is_some())
-        {
-            emitter.shared_loop(scc);
-        }
-    }
-    let three = emitter.three;
-    emitter
-        .statements
-        .push(recursive_member(NAMESPACE, 0, three));
-    emitter.statements
-}
-
-/// The matches of a capture-free cycle's member `unit`, from the tables of its stage's loop
-/// (`namespace`); `three`, with each answer's `unk`.
-pub(super) fn recursive_member(namespace: &str, unit: usize, three: bool) -> String {
-    let demand = demand_table(unit).replace(NAMESPACE, namespace);
-    let answer = answer_table(unit).replace(NAMESPACE, namespace);
-    let unk = if three { ", r.unk" } else { "" };
-    format!("SELECT d.file, d.node{unk} FROM {demand} d JOIN {answer} r ON r.id = d.id")
-}
-
 /// A stage's statements: the last selects the distinct `(file, node)` its rule matches; in a
 /// three-valued statement `(file, node, unk)`, where it is true or unknown.
 pub(super) fn stage(statement: &Statement) -> Vec<String> {
@@ -626,19 +579,6 @@ impl<'s> Emitter<'s> {
                 reverse,
                 of_rule,
             } => self.nth_child(*step, *offset, *reverse, of_rule.as_ref(), input),
-            // The zero-read case of distinct-key evaluation (`keyed`): the rule names no slot, so
-            // its verdicts are keyed by `(file, node)` alone, computed once per batch over every
-            // node of its root kinds, and read back with the key join.
-            Op::Stage(stage) => {
-                let table = stage_table(*stage);
-                self.frame(
-                    "x",
-                    &format!(
-                        "SELECT {} FROM {input} f JOIN {table} st ON st.file = f.file AND st.node = f.node",
-                        self.cols("f")
-                    ),
-                )
-            }
             Op::Call {
                 entry,
                 body,
@@ -811,19 +751,17 @@ impl<'s> Emitter<'s> {
             .enumerate()
             .map(|(index, column)| format!(" AND d.c{index} IS f.{column}"))
             .collect();
-        if units[unit].seed.is_none() {
-            let columns: String = (0..site_columns.len())
-                .map(|index| format!(", c{index}"))
-                .collect();
-            let values: String = site_columns
-                .iter()
-                .map(|column| format!(", f.{column}"))
-                .collect();
-            self.statements.push(format!(
-                "INSERT INTO {demand}(file, node{columns}) SELECT DISTINCT f.file, f.node{values} FROM {input} f \
-                 WHERE NOT EXISTS (SELECT 1 FROM {demand} d WHERE d.file = f.file AND d.node = f.node{matched})"
-            ));
-        }
+        let columns: String = (0..site_columns.len())
+            .map(|index| format!(", c{index}"))
+            .collect();
+        let values: String = site_columns
+            .iter()
+            .map(|column| format!(", f.{column}"))
+            .collect();
+        self.statements.push(format!(
+            "INSERT INTO {demand}(file, node{columns}) SELECT DISTINCT f.file, f.node{values} FROM {input} f \
+             WHERE NOT EXISTS (SELECT 1 FROM {demand} d WHERE d.file = f.file AND d.node = f.node{matched})"
+        ));
         let scc = units[unit].scc;
         if !self.emitting.contains(&scc) {
             self.shared_loop(scc);
