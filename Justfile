@@ -61,3 +61,12 @@ rerail-query-parity *args:
 # The nera-data-layer benchmark: whole-tree | profile | conformance --corpus <nera-data-layer> --policies <ported rules> [--addon <addon>] (benchmark/README.md).
 rerail-data-layer *args:
     @node --import tsx benchmark/data-layer/data-layer.ts {{ args }}
+
+# The SQL engine's validation loop: build the `loop` profile addon (target-loop/), then each clause alone on native and SQL over benchmark/data-layer/loop-subset.json: parity, speed, TIMEOUTs, projection (benchmark/README.md). RERAIL_BENCH_LOCK=<command> prefixes the timed run (e.g. ~/rerail-bench/bench-lock).
+rerail-sql-loop *args:
+    @CARGO_TARGET_DIR="$PWD/target-loop" npx napi build --platform --profile loop --features unbounded-work --manifest-path native/Cargo.toml --output-dir target-loop/addon
+    @${RERAIL_BENCH_LOCK:-} node --import tsx benchmark/data-layer/loop.ts run {{ args }}
+
+# The loop's other commands: costs (per (clause, file) SQL times) | select (writes loop-subset.json) | calibrate (SQL per clause on the full corpus against the projection). Re-calibrate after every select.
+rerail-sql-loop-tool *args:
+    @${RERAIL_BENCH_LOCK:-} node --import tsx benchmark/data-layer/loop.ts {{ args }}

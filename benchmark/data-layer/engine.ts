@@ -240,6 +240,14 @@ export interface Matcher {
 export const nativeMatcher: Matcher = { engine: "native" };
 
 const refusalSchema = z.object({ ruleId: z.string(), clauseId: z.string(), language: z.string(), reason: z.string() });
+/** The `unbounded-work` build's statement texts by time (`workspace/sql.rs`, `profile_report`), costliest first. */
+const statementProfileSchema = z.array(z.object({ sql: z.string(), milliseconds: z.number(), rows: z.number(), runs: z.number() }));
+/** The `unbounded-work` build's clause, (clause, file) and file times, costliest first. */
+const sqlProfileSchema = z.object({
+  clauses: z.array(z.object({ ruleId: z.string(), clauseId: z.string(), statement: z.number(), milliseconds: z.number(), files: z.number() })),
+  clauseFiles: z.array(z.object({ ruleId: z.string(), clauseId: z.string(), path: z.string(), milliseconds: z.number() })),
+  files: z.array(z.object({ path: z.string(), milliseconds: z.number() })),
+});
 export const engineReportSchema = z.union([
   z.object({ engine: z.literal("native") }),
   z.object({
@@ -249,7 +257,17 @@ export const engineReportSchema = z.union([
     compiled: z.number().int(),
     ran: z.number().int(),
     refused: z.array(refusalSchema),
-    statements: z.object({ count: z.number(), rows: z.number() }).passthrough(),
+    statements: z.object({
+      count: z.number(),
+      rows: z.number(),
+      milliseconds: z.number().optional(),
+      stageMilliseconds: z.number().optional(),
+      selectMilliseconds: z.number().optional(),
+      inputMilliseconds: z.number().optional(),
+      factsMilliseconds: z.number().optional(),
+      profile: statementProfileSchema.optional(),
+    }).passthrough(),
+    profile: sqlProfileSchema.optional(),
   }),
 ]);
 export type EngineReport = z.infer<typeof engineReportSchema>;
