@@ -33,6 +33,7 @@ fn query(
                 let refusals = census(grammar, each);
                 if refusals.is_empty() {
                     *lowered += 1;
+                    audit(grammar, each);
                 }
                 found.extend(refusals);
             }
@@ -42,6 +43,22 @@ fn query(
             self::query(select, each, found, lowered, matchers);
             self::query(exists, None, found, lowered, matchers);
         }
+    }
+}
+
+/// The plan audit of `emitted_joins_never_scan_a_whole_table_on_the_inner_side`, on a benchmark
+/// clause the engine lowers: no statement reads a whole table on the inner side of a join.
+fn audit(grammar: &crate::code_rule_dsl::matcher::GrammarMatcher, each: Option<&str>) {
+    let program = crate::code_rule_dsl::sql::compile_enumerating(&[grammar], each)
+        .expect("a clause that lowers compiles");
+    let session = program.session().expect("a session");
+    for (sql, plan) in session.plans().expect("plans") {
+        let scans = super::differential::inner_scans(&plan);
+        assert!(
+            scans.is_empty(),
+            "inner scans {scans:?} in {}",
+            sql.chars().take(600).collect::<String>()
+        );
     }
 }
 

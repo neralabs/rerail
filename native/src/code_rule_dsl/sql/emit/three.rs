@@ -4,6 +4,7 @@
 
 use super::{Emitter, chain, holds, stage_table};
 use crate::code_rule_dsl::sql::plan::{AllTerm, OfRule, Op, SlotKind, Stop, Walk};
+use std::collections::BTreeSet;
 use std::fmt::Write;
 
 /// The order key of an event after every candidate of a walk: an unknown stop that ends it.
@@ -101,6 +102,7 @@ impl Emitter<'_> {
                 ),
                 None => current.clone(),
             };
+            self.inherit(&current, &run, &BTreeSet::new());
             let out = self.op(&term.op, &run);
             let mut select = if first {
                 format!("SELECT o.k, o.file, o.node{}, o.unk", self.physical_of("o"))
@@ -148,7 +150,10 @@ impl Emitter<'_> {
                 }
                 write!(select, " FROM {current} p WHERE {held}").expect("write to a string");
             }
-            current = self.frame("a", &select);
+            let next = self.frame("a", &select);
+            let changed = self.touched(&term.op);
+            self.inherit(&current, &next, &changed);
+            current = next;
         }
         if !terms.iter().any(|term| term.op.binds()) {
             return current;
@@ -201,13 +206,15 @@ impl Emitter<'_> {
                     self.verdict("r", &[], "1")
                 ));
             } else {
-                rest = self.frame(
+                let next = self.frame(
                     "y",
                     &format!(
                         "SELECT {} FROM {rest} r LEFT JOIN {out} o ON o.k = r.k WHERE o.k IS NULL OR ({open})",
                         self.verdict("r", &[], &format!("({before} | (o.k IS NOT NULL))"))
                     ),
                 );
+                self.inherit(&rest, &next, &BTreeSet::new());
+                rest = next;
             }
         }
         self.frame("x", &parts.join(" UNION ALL "))
@@ -220,11 +227,12 @@ impl Emitter<'_> {
         let candidates = self.candidates(walk, input);
         let matched = self.op(sub, &candidates);
         let opened = self.opened(walk, input, &candidates);
+        let physical = self.physical.clone();
         let from = |alias: &str, test: &str| -> Vec<(String, String)> {
             if !binds {
                 return Vec::new();
             }
-            self.physical
+            physical
                 .iter()
                 .map(|column| {
                     (
@@ -255,13 +263,18 @@ impl Emitter<'_> {
         let stops = opened.map_or(String::new(), |opened| {
             format!(" UNION SELECT pk FROM {opened}")
         });
+        let first = self.grouped(
+            &format!("o{}", self.physical_list()),
+            &format!(
+                "SELECT g.pk, MIN(g.ord){} FROM {matched} s JOIN {candidates} g ON g.k = s.k WHERE s.unk = 0 GROUP BY g.pk",
+                self.physical_of("s")
+            ),
+        );
         let with = format!(
-            "WITH t AS (SELECT g.pk AS pk, MIN(g.ord) AS o{} FROM {matched} s JOIN {candidates} g ON g.k = s.k WHERE s.unk = 0 GROUP BY g.pk), \
-             u AS (SELECT g.pk AS pk FROM {matched} s JOIN {candidates} g ON g.k = s.k WHERE s.unk = 1{stops}) ",
-            self.physical_of("s")
+            "WITH u AS (SELECT g.pk AS pk FROM {matched} s JOIN {candidates} g ON g.k = s.k WHERE s.unk = 1{stops}) "
         );
         let select = format!(
-            "SELECT {} FROM {input} f LEFT JOIN t ON t.pk = f.k WHERE t.pk IS NOT NULL OR f.k IN (SELECT pk FROM u)",
+            "SELECT {} FROM {input} f LEFT JOIN {first} t ON t.pk = f.k WHERE t.pk IS NOT NULL OR f.k IN (SELECT pk FROM u)",
             self.verdict("f", &from("t", "t.pk IS NOT NULL"), "(t.pk IS NULL)")
         );
         self.frame_with("x", &with, &select)
@@ -344,35 +357,38 @@ impl Emitter<'_> {
         let open = opened.map_or("0".to_owned(), |opened| {
             format!("(f.k IN (SELECT pk FROM {opened}))")
         });
-        let with = format!(
-            "WITH c AS (SELECT g.pk AS pk, SUM(s.unk = 0) AS t, SUM(s.unk = 1) AS u FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk), \
-             n AS (SELECT f.k AS k, COALESCE(c.t, 0) AS t, COALESCE(c.u, 0) AS u, {open} AS o FROM {input} f LEFT JOIN c ON c.pk = f.k) "
+        let counts = self.grouped(
+            "t, u",
+            &format!(
+                "SELECT g.pk, SUM(s.unk = 0), SUM(s.unk = 1) FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk"
+            ),
         );
+        let (t, u) = ("COALESCE(c.t, 0)", "COALESCE(c.u, 0)");
         let exact = if bind.is_some() {
-            "(NOT n.o AND n.u = 0)"
+            format!("(NOT {open} AND {u} = 0)")
         } else {
-            "1"
+            "1".to_owned()
         };
         let upper = max.map_or("1".to_owned(), |max| {
-            format!("(NOT n.o AND n.t + n.u <= {max})")
+            format!("(NOT {open} AND {t} + {u} <= {max})")
         });
-        let holds = format!("({exact} AND n.t >= {min} AND {upper})");
-        let above = max.map_or(String::new(), |max| format!(" OR n.t > {max}"));
-        let fails = format!("((NOT n.o AND n.t + n.u < {min}){above})");
+        let holds = format!("({exact} AND {t} >= {min} AND {upper})");
+        let above = max.map_or(String::new(), |max| format!(" OR {t} > {max}"));
+        let fails = format!("((NOT {open} AND {t} + {u} < {min}){above})");
         let overrides: Vec<(String, String)> = bind
             .iter()
             .map(|(slot, offset)| {
                 (
                     format!("s{slot}"),
-                    format!("CASE WHEN {holds} THEN n.t + ({offset}) ELSE f.s{slot} END"),
+                    format!("CASE WHEN {holds} THEN {t} + ({offset}) ELSE f.s{slot} END"),
                 )
             })
             .collect();
         let select = format!(
-            "SELECT {} FROM {input} f JOIN n ON n.k = f.k WHERE {holds} OR NOT {fails}",
+            "SELECT {} FROM {input} f LEFT JOIN {counts} c ON c.pk = f.k WHERE {holds} OR NOT {fails}",
             self.verdict("f", &overrides, &format!("(NOT {holds})"))
         );
-        self.frame_with("x", &with, &select)
+        self.frame("x", &select)
     }
 
     /// `NthChild::index` with `ofRule`: unknown where a named sibling's probe is (before the

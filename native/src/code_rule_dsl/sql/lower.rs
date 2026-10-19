@@ -987,11 +987,7 @@ impl<'p> Lowerer<'p> {
                     return Ok((Op::Never, bound.clone()));
                 };
                 let (sub, _) = self.with_exclude(None, |lowerer| {
-                    if lowerer.three {
-                        lowerer.walked(related.rule(), scope, bound)
-                    } else {
-                        lowerer.lower(related.rule(), scope, bound)
-                    }
+                    lowerer.lower(related.rule(), scope, bound)
                 })?;
                 let mut out = bound.clone();
                 let bind = count.binding.as_ref().map(|binding| {

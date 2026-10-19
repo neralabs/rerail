@@ -3,6 +3,7 @@
 mod census;
 mod differential;
 mod hard_cases;
+mod keyed;
 mod nodes;
 mod probe;
 mod recursion;
@@ -107,7 +108,9 @@ fn a_sample_clause_set_runs_a_bounded_number_of_statements_per_batch() {
     let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
     let (stages, clauses) = program.statement_count();
     eprintln!("sample clause set: {stages} stage statements, {clauses} clause statements");
-    assert_eq!((stages, clauses), (6, 64));
+    // `count` groups into a table keyed by row (`Emitter::grouped`). No rule walks over a frame
+    // that repeats a key (the nested `has` walks children, one row each): nothing is keyed.
+    assert_eq!((stages, clauses), (6, 66));
 }
 
 /// Terminals run once per statement over their whole input set, never once per row: a fresh

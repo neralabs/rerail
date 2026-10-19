@@ -13,14 +13,16 @@
 //! appends: a `ROW_NUMBER() OVER ()` would buffer every row in an ephemeral table first and
 //! insert them by seeking.
 
+mod keyed;
 mod three;
 
 use super::lower::{INTERNAL, ORIGIN};
 use super::plan::{
     CallReturn, CallSlot, OfRule, Op, Slot, SlotId, SlotKind, Statement, Stop, Unit, Walk,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
+use std::rc::Rc;
 
 /// Where the driver substitutes the statement's whole files (`n.file IN (…)` of the root frame).
 pub(super) const FILES: &str = "/*FILES*/";
@@ -136,7 +138,7 @@ pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Vec<St
     ));
     statements.push(format!(
         "SELECT e.file, e.node{} FROM {NAMESPACE}eo e WHERE (SELECT round FROM {EACH}r) = 0 \
-         OR EXISTS (SELECT 1 FROM {NAMESPACE}ef f WHERE f.file = e.file AND f.node = e.node) \
+         OR (e.file, e.node) IN (SELECT file, node FROM {NAMESPACE}ef) \
          ORDER BY e.file, e.node",
         of("e")
     ));
@@ -225,6 +227,11 @@ struct Emitter<'s> {
     evaluating: Vec<usize>,
     /// The slot holding the demand row a unit's row is evaluated for.
     origin: Option<SlotId>,
+    /// The frames known to hold one row per `(file, node, slots of a set)`, with each such set
+    /// (`keyed`).
+    unique: HashMap<String, Vec<BTreeSet<SlotId>>>,
+    /// The slots each operator names, by its address (`keyed::touched`).
+    touched_slots: HashMap<usize, Rc<BTreeSet<SlotId>>>,
 }
 
 /// `An+B` at a 1-based position `index`, as `nth_child::Position::holds` computes it.
@@ -269,6 +276,8 @@ impl<'s> Emitter<'s> {
             origin: slots
                 .iter()
                 .position(|slot| slot.scope == INTERNAL && slot.name == ORIGIN),
+            unique: HashMap::new(),
+            touched_slots: HashMap::new(),
         }
     }
 
@@ -322,6 +331,18 @@ impl<'s> Emitter<'s> {
 
     fn frame(&mut self, prefix: &str, select: &str) -> String {
         self.frame_with(prefix, "", select)
+    }
+
+    /// A table of per-row results keyed by the row's `k` (`pk INTEGER PRIMARY KEY`, then
+    /// `columns`), filled by `select`: a frame joins it on `k` through its primary key, whatever
+    /// side of the join the frame is on (a grouped CTE has no index, and a `LEFT JOIN` to one
+    /// rescans it per row).
+    fn grouped(&mut self, columns: &str, select: &str) -> String {
+        let name = self.name("h");
+        self.create(&name, &format!("pk INTEGER PRIMARY KEY, {columns}"));
+        self.statements
+            .push(format!("INSERT INTO {name} {select}"));
+        name
     }
 
     /// The frame columns of `alias`.
@@ -429,10 +450,24 @@ impl<'s> Emitter<'s> {
                 self.zeros()
             ),
         );
+        // One row per root: a file's roots are either all its nodes or the selected ones.
+        self.keyed_by(&root, vec![BTreeSet::new()]);
         self.op(op, &root)
     }
 
+    /// `op` on `input`: per distinct key where it walks over a frame that may repeat a key
+    /// (`keyed`), else directly.
     fn op(&mut self, op: &Op, input: &str) -> String {
+        let out = match self.keyed(op, input) {
+            Some(out) => out,
+            None => self.apply(op, input),
+        };
+        let changed = self.touched(op);
+        self.inherit(input, &out, &changed);
+        out
+    }
+
+    fn apply(&mut self, op: &Op, input: &str) -> String {
         if self.three
             && let Some(out) = self.op3(op, input)
         {
@@ -479,13 +514,15 @@ impl<'s> Emitter<'s> {
                 for (index, branch) in branches.iter().enumerate() {
                     let out = self.op(branch, &rest);
                     if index + 1 < branches.len() {
-                        rest = self.frame(
+                        let next = self.frame(
                             "y",
                             &format!(
                                 "SELECT {} FROM {rest} f WHERE f.k NOT IN (SELECT k FROM {out})",
                                 self.cols("f")
                             ),
                         );
+                        self.inherit(&rest, &next, &BTreeSet::new());
+                        rest = next;
                     }
                     outs.push(out);
                 }
@@ -541,8 +578,11 @@ impl<'s> Emitter<'s> {
             } => {
                 let candidates = self.candidates(*walk, input);
                 let matched = self.op(sub, &candidates);
-                let with = format!(
-                    "WITH c AS (SELECT g.pk AS pk, COUNT(*) AS n FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk) "
+                let counts = self.grouped(
+                    "n",
+                    &format!(
+                        "SELECT g.pk, COUNT(*) FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk"
+                    ),
                 );
                 let overrides: Vec<(String, String)> = bind
                     .iter()
@@ -552,10 +592,10 @@ impl<'s> Emitter<'s> {
                     .collect();
                 let upper = max.map_or(String::new(), |max| format!(" AND COALESCE(c.n, 0) <= {max}"));
                 let select = format!(
-                    "SELECT {} FROM {input} f LEFT JOIN c ON c.pk = f.k WHERE COALESCE(c.n, 0) >= {min}{upper}",
+                    "SELECT {} FROM {input} f LEFT JOIN {counts} c ON c.pk = f.k WHERE COALESCE(c.n, 0) >= {min}{upper}",
                     self.select("f", &overrides)
                 );
-                self.frame_with("x", &with, &select)
+                self.frame("x", &select)
             }
             Op::NthChild {
                 step,
@@ -563,6 +603,9 @@ impl<'s> Emitter<'s> {
                 reverse,
                 of_rule,
             } => self.nth_child(*step, *offset, *reverse, of_rule.as_ref(), input),
+            // The zero-read case of distinct-key evaluation (`keyed`): the rule names no slot, so
+            // its verdicts are keyed by `(file, node)` alone, computed once per batch over every
+            // node of its root kinds, and read back with the key join.
             Op::Stage(stage) => {
                 let table = stage_table(*stage);
                 self.frame(
@@ -784,6 +827,9 @@ impl<'s> Emitter<'s> {
         ));
         self.statements
             .push(format!("CREATE TEMP TABLE IF NOT EXISTS {changed}(u, id)"));
+        self.statements.push(format!(
+            "CREATE INDEX IF NOT EXISTS {changed}_at ON {changed}(u, id)"
+        ));
         self.emitting.push(scc);
         self.looping += 1;
         self.statements.push(LOOP.to_owned());
@@ -806,6 +852,10 @@ impl<'s> Emitter<'s> {
                 "u",
                 &format!("SELECT {select} FROM {demand} d WHERE d.dirty = 1"),
             );
+            // One row per demanded key, and one per demand row (its origin).
+            let mut sets = vec![key.iter().copied().collect::<BTreeSet<SlotId>>()];
+            sets.extend(self.origin.map(|origin| BTreeSet::from([origin])));
+            self.keyed_by(&keys, sets);
             self.statements.push(format!(
                 "UPDATE {demand} SET dirty = 0 WHERE id IN (SELECT k FROM {keys})"
             ));
@@ -1026,6 +1076,14 @@ impl<'s> Emitter<'s> {
             self.physical_of("f"),
             self.zeros()
         ));
+        // A node has one parent and its field's first child one: from a frame unique on a key,
+        // the children (or field children) of its rows are unique on it too.
+        if matches!(
+            walk,
+            Walk::Has(Stop::Neighbor) | Walk::FieldHas(_, Stop::Neighbor)
+        ) {
+            self.inherit(input, &name, &BTreeSet::new());
+        }
         name
     }
 
