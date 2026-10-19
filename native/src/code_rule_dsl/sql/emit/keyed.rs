@@ -54,7 +54,9 @@ fn touched(op: &Op, units: &[Unit], origin: Option<SlotId>, out: &mut BTreeSet<S
         Op::All(items) | Op::Any(items) => items.iter().for_each(|item| sub(item, out)),
         Op::Not(inner) => sub(inner, out),
         Op::Relation { sub: rule, .. } | Op::Search { sub: rule, .. } => sub(rule, out),
-        Op::Count { sub: rule, bind, .. } => {
+        Op::Count {
+            sub: rule, bind, ..
+        } => {
             sub(rule, out);
             out.extend(bind.iter().map(|(slot, _)| *slot));
         }

@@ -340,8 +340,7 @@ impl<'s> Emitter<'s> {
     fn grouped(&mut self, columns: &str, select: &str) -> String {
         let name = self.name("h");
         self.create(&name, &format!("pk INTEGER PRIMARY KEY, {columns}"));
-        self.statements
-            .push(format!("INSERT INTO {name} {select}"));
+        self.statements.push(format!("INSERT INTO {name} {select}"));
         name
     }
 

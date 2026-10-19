@@ -813,7 +813,9 @@ fn slow_log(line: &Value) {
     use std::io::Write as _;
     static LOG: std::sync::Mutex<()> = std::sync::Mutex::new(());
     if let Ok(path) = std::env::var("RERAIL_SQL_DIFF_SLOW_LOG") {
-        let _held = LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _held = LOG
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -1246,7 +1248,12 @@ pub(super) fn inner_scans(plan: &[(i64, i64, String)]) -> Vec<String> {
                 } else {
                     ["i=", "p=", "i>", "i}", "i<", "i{", "l}", "l>"]
                         .iter()
-                        .any(|code| codes.as_bytes().chunks(2).any(|pair| pair == code.as_bytes()))
+                        .any(|code| {
+                            codes
+                                .as_bytes()
+                                .chunks(2)
+                                .any(|pair| pair == code.as_bytes())
+                        })
                 }
             }
             None => false,
@@ -1328,5 +1335,9 @@ fn emitted_joins_never_scan_a_whole_table_on_the_inner_side() {
         eprintln!("inner scan `{shape}` in {count} statements, e.g.:\n  {sql}");
     }
     assert!(clauses > 500, "{clauses} clauses audited");
-    assert!(offenders.is_empty(), "{} inner scan shapes", offenders.len());
+    assert!(
+        offenders.is_empty(),
+        "{} inner scan shapes",
+        offenders.len()
+    );
 }

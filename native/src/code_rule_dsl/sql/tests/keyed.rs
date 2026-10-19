@@ -12,7 +12,9 @@ use serde_json::json;
 fn nested(depth: usize) -> String {
     let mut source = String::new();
     for level in 0..depth {
-        source.push_str(&format!("if (a{level} > {level}) {{ f(b{level}, 1); g({level});\n"));
+        source.push_str(&format!(
+            "if (a{level} > {level}) {{ f(b{level}, 1); g({level});\n"
+        ));
     }
     source.push_str(&"}\n".repeat(depth));
     source
@@ -32,14 +34,21 @@ fn nested_walks_run_once_per_distinct_node() {
         STATEMENT_PROFILE.set(Some(Default::default()));
         let result = same(&rule, &snapshot(&[("typescript", "a.ts", &nested(depth))]));
         let profile = STATEMENT_PROFILE.take().unwrap_or_default();
-        assert!(result["violations"].as_array().is_some_and(|found| !found.is_empty()));
+        assert!(
+            result["violations"]
+                .as_array()
+                .is_some_and(|found| !found.is_empty())
+        );
         profile.values().map(|(_, rows, _)| rows).sum::<usize>()
     };
     let (small, large) = (rows(10), rows(40));
     eprintln!("rows written: depth 10 {small}, depth 40 {large}");
     // Four times the depth: the (node, ancestor) pairs grow 16-fold; one walk per row from each
     // root would grow them 64-fold.
-    assert!(large < small * 24, "{small} rows at depth 10, {large} at depth 40");
+    assert!(
+        large < small * 24,
+        "{small} rows at depth 10, {large} at depth 40"
+    );
 }
 
 /// A walk keyed by a capture some rows bind and others leave unbound: the key compares slots
@@ -51,7 +60,11 @@ fn a_key_holds_unbound_slots_as_their_own_value() {
         "inside": { "stopBy": "end", "has": { "stopBy": "end", "pattern": "$A" } },
     } }));
     let result = same(&rule, &snapshot(&[("typescript", "a.ts", &nested(6))]));
-    assert!(result["violations"].as_array().is_some_and(|found| found.len() > 6));
+    assert!(
+        result["violations"]
+            .as_array()
+            .is_some_and(|found| found.len() > 6)
+    );
 }
 
 /// Three-valued: a keyed search returns its key's verdict, unknown ones included.

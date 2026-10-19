@@ -657,9 +657,7 @@ impl Session {
     /// Every statement a batch can run (stages', then clauses'), with its `EXPLAIN QUERY PLAN`
     /// rows `(id, parent, detail)`, planned as the session prepares it: on its tables, empty.
     #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn plans(
-        &self,
-    ) -> Result<Vec<(String, Vec<(i64, i64, String)>)>, SqlError> {
+    pub(in crate::code_rule_dsl) fn plans(&self) -> Result<Vec<(String, QueryPlan)>, SqlError> {
         let mut plans = Vec::new();
         let prepared = self
             .stages
@@ -969,6 +967,10 @@ thread_local! {
 /// Per statement text: its time, rows and runs.
 #[cfg(test)]
 pub(super) type StatementProfile = std::collections::HashMap<String, (u64, usize, usize)>;
+
+/// A statement's `EXPLAIN QUERY PLAN` rows: `(id, parent, detail)`.
+#[cfg(test)]
+pub(in crate::code_rule_dsl) type QueryPlan = Vec<(i64, i64, String)>;
 
 /// A clause-scope capture's name, kind and first column in a clause's last statement.
 type CaptureColumn = (String, SlotKind, usize);
