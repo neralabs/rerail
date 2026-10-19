@@ -10,6 +10,16 @@ rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders `upst
 
 Ruff's `LICENSE` also carries the notices of the projects Ruff derives from, Pyflakes among them. Ruff's pyflakes fixtures come with that notice.
 
+Some of Ruff's rules are ports of plugins under copyleft licences, and Ruff's fixtures for them carry those plugins' test
+code. Nothing under these upstream paths is copied, so their rules are not recorded, and no port readiness recording
+holds their text (`upstream/ruff/generate.py`, the port readiness recorder and the pack check all read this list):
+
+- Not copied: `crates/ruff_linter/resources/test/fixtures/flake8_builtins/` — flake8-builtins, GPL-2.0
+- Not copied: `crates/ruff_linter/resources/test/fixtures/flake8_django/` — flake8-django, GPL-3.0-or-later
+- Not copied: `crates/ruff_linter/resources/test/fixtures/flake8_executable/` — flake8-executable, LGPL-3.0-or-later
+- Not copied: `crates/ruff_linter/resources/test/fixtures/pylint/` — pylint, GPL-2.0-or-later
+- Not copied: `crates/ruff_linter/resources/test/fixtures/refurb/` — refurb, GPL-3.0-only
+
 Paths are relative to the pack directory, `packs/python/`.
 
 | File | Upstream path | Copy |

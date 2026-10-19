@@ -12,8 +12,8 @@
  *   file, and independent parsers' verdicts on each.
  *
  * Each PackAdapter member and where its recorded answer is:
- *   identity → `identity`; packChecks → `packChecks`; licenseText → `licenseSha256` (the text itself is the kept
- *   `licenses/<project>/LICENSE`, checked against this digest); rule(name) → `rules[name].facts`, undefined for a name
+ *   identity → `identity`; packChecks → `packChecks`; licenseText → `licenseText` and its digest `licenseSha256` (the kept
+ *   `licenses/<project>/LICENSE` is checked against the digest); rule(name) → `rules[name].facts`, undefined for a name
  *   in `absent`; implementationNames / sharedImplementationNames / implementationRegexes → `rules[name].names` with
  *   `nameSets`; fixtureWords → `fixtureWords`; fixtureTexts → `fixtureTexts`: upstream's files fetched at the
  *   pinned commit (each checked against its sha256) and the inline texts, or, in a recording without it, the
@@ -32,6 +32,8 @@
  * Both files are deterministic: every list the schema calls sorted is sorted in code-unit order, objects are written
  * with sorted keys (`recordingText`), and nothing in them names a machine path, a date or a cache directory.
  */
+import { createHash } from "node:crypto";
+
 import { z } from "zod";
 
 import { ADAPTERS } from "../manifest.js";
@@ -202,8 +204,8 @@ const caseSchema = z.strictObject({
   /** UpstreamCase.script: read as an ECMAScript script (ESLint's `sourceType: "script"`); absent where the adapter says nothing. */
   script: z.boolean().optional(),
   /**
-   * UpstreamCase.skipped: why upstream did not lint the case, `not-copied` when its source cannot be committed (Ruff's
-   * GPL-derived fixtures), or null; a skipped case is not scored.
+   * UpstreamCase.skipped: why upstream did not lint the case, `not-copied` when its source cannot be committed (an upstream
+   * path the pack's licenses/<project>/UPSTREAM.md lists as "Not copied", such as Ruff's GPL-derived fixtures), or null; a skipped case is not scored.
    */
   skipped: nonEmpty.nullable(),
   /** UpstreamCase.expected: upstream's findings on the case, sorted by position. */
@@ -305,6 +307,12 @@ export const gatesRecordingSchema = z.strictObject({
   packChecks: z.array(checkSchema),
   /** licenseText's sha256 (UTF-8): upstream's LICENSE at the pinned commit; the kept licenses/<project>/LICENSE must match it. */
   licenseSha256: sha256,
+  /**
+   * licenseText itself: upstream's copyright and permission notice, which must accompany the excerpts of its tests this
+   * recording holds (`fixtureTexts.inline`) wherever the asset is downloaded. Its sha256 is `licenseSha256`. Absent in
+   * an older recording.
+   */
+  licenseText: z.string().min(1).optional(),
   /** inScopeSamples: one path per file type upstream lints, which a ported rule must be in scope for. */
   inScopeSamples: z.array(relativePath).min(1),
   /** inCorpus as data: the file extensions upstream lints in a corpus, and whether they are matched case-sensitively. */
@@ -325,7 +333,7 @@ export const gatesRecordingSchema = z.strictObject({
    * the pinned commit, the sha256 (UTF-8) of the text as the adapter produced it and the transform that produced it
    * (`notebook-code-cells`: a notebook's code cells joined), sorted by path; and every text that is no file (Ruff's
    * test-module string literals), sorted, each as often as the adapter read it. The gates fetch the files at the pinned
-   * commit and check each digest. A text of Ruff's GPL-derived fixtures is never inline. Absent in an older recording,
+   * commit and check each digest. A text of a fixture UPSTREAM.md lists as not copied (Ruff's GPL-derived fixtures) is never inline. Absent in an older recording,
    * whose fixtureTexts are the committed case sources.
    */
   fixtureTexts: z.strictObject({
@@ -352,6 +360,7 @@ export const gatesRecordingSchema = z.strictObject({
   parserVerdicts: z.array(verdictEntrySchema),
 }).superRefine((recording, context) => {
   const issue = (path: (string | number)[], message: string) => context.addIssue({ code: "custom", path, message });
+  if (recording.licenseText !== undefined && createHash("sha256").update(recording.licenseText, "utf8").digest("hex") !== recording.licenseSha256) issue(["licenseText"], "its sha256 is not licenseSha256");
   checkVerdicts(recording.parsers, recording.parserVerdicts, (index) => ["parserVerdicts", index, "verdicts"], issue);
   for (const [name, rule] of Object.entries(recording.rules)) {
     for (const part of ["implementation", "shared"] as const) {

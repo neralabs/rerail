@@ -311,10 +311,14 @@ answers, the nightly `--check` fails and names the difference: pin that package 
 the pack: the recording lists each one with its sha256, and the gates fetch them from upstream at the pinned commit
 (sparse, cached like the corpus), so Ruff's GPL-derived fixtures are read in place and never committed. Test text that
 is not a file of its own (Ruff's test-module strings, the `code` of each ESLint RuleTester case) is kept verbatim in
-`recording.json` (`fixtureTexts.inline`). That makes the recording partly upstream's material, so the upstream's
-`UPSTREAM.md` records it as excerpts under upstream's licence and Apache-2.0 — in the note under the file table, not
-in the table itself, which pack check 6 reads as the files the pack carries and the recording is no longer one of
-them. `REUSE.toml` cannot annotate a file that is not here and says so where the annotations were.
+`recording.json` (`fixtureTexts.inline`). That makes the recording partly upstream's material, so it carries
+upstream's LICENSE text (`licenseText`, whose sha256 is `licenseSha256`) wherever the release asset is downloaded, and
+the upstream's `UPSTREAM.md` records it as excerpts under upstream's licence and Apache-2.0 — in the note under the
+file table, not in the table itself, which pack check 6 reads as the files the pack carries and the recording is no
+longer one of them. `REUSE.toml` cannot annotate a file that is not here and says so where the annotations were. No
+case source or text comes from an upstream path a pack's `licenses/<project>/UPSTREAM.md` lists as "Not copied"
+(`- Not copied: \`<prefix>\``): the recorder reads those lines, skips such a case as `not-copied` and refuses a
+recording that would hold such a file's text inline.
 
 Independent parsers (two TypeScript versions and Babel for the ESLint family; CPython and libcst for Python) read every
 case source and every corpus file, so a file the engine cannot parse can be told from a file that is not valid source.

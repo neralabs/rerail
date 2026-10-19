@@ -74,6 +74,10 @@ const VALIDATION_MATERIAL = [CONFORMANCE_FILE, "divergences.json", "upstream", "
 const RERAIL_LICENSE = "Apache-2.0";
 const UPSTREAM_LICENSE = /\bLicense: ([A-Za-z0-9][A-Za-z0-9.+-]*)/u;
 const UPSTREAM_ROW = /^\|\s*`([^`]+)`/u;
+/** A row's upstream path, its second column. */
+const UPSTREAM_SOURCE = /^\|\s*`[^`]+`\s*\|\s*`([^`]+)`/u;
+/** An upstream path prefix an UPSTREAM.md declares nothing may be copied from (a copyleft project's material). */
+const NOT_COPIED = /^- Not copied: `([^`]+)`/gmu;
 
 let allowlist: ReadonlySet<string> | undefined;
 /** The repository's licence allowlist, the one `scripts/check/check-licenses.mjs` enforces. */
@@ -376,9 +380,13 @@ function readLicences(directory: string): Licences {
     const licence = UPSTREAM_LICENSE.exec(text)?.[1];
     if (licence === undefined) failures.push(`${record}: no "License: <SPDX id>" line`);
     else recorded.set(project, licence);
+    const notCopied = [...text.matchAll(NOT_COPIED)].map(match => match[1]!);
     for (const line of text.split("\n")) {
       const file = UPSTREAM_ROW.exec(line)?.[1];
       if (file !== undefined && !listed.has(file)) listed.set(file, record);
+      const source = UPSTREAM_SOURCE.exec(line)?.[1];
+      const refused = source === undefined ? undefined : notCopied.find(prefix => source.startsWith(prefix));
+      if (refused !== undefined) failures.push(`${record} lists ${file} as copied from ${source}, under ${refused}, which it lists as not copied`);
     }
   }
   return { recorded, listed, failures };
@@ -621,8 +629,9 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     }
   }
 
-  // Check 6: licences. Every copied file is listed in an UPSTREAM.md, every listed file exists, and every recorded
-  // licence is on the repository allowlist. Under upstream/<tool>/, the recordings and the recorder (files directly in
+  // Check 6: licences. Every copied file is listed in an UPSTREAM.md, every listed file exists, no listed file is
+  // copied from an upstream path its UPSTREAM.md lists as "Not copied" (readLicences), and every recorded licence is
+  // on the repository allowlist. Under upstream/<tool>/, the recordings and the recorder (files directly in
   // it) are Rerail's; everything in its subdirectories (fixtures/, tests/) is copied from the tool, unless the tool's
   // own upstream/<tool>/UPSTREAM.md lists it as Rerail's.
   for (const failure of licences.failures) fail("licences", failure);

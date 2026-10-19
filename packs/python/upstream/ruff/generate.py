@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -32,9 +33,10 @@ FIXTURES = "crates/ruff_linter/resources/test/fixtures"
 # Each ported rule, shipped (rules/) or candidate (candidates/rules/), and its own default-settings fixtures: every
 # .py and .pyi file the tests in `crates/ruff_linter/src/rules/<linter>/mod.rs` (and `src/linter.rs`'s syntax-error
 # tests) lint with settings that enable the rule and change no option, preview mode or target version. Notebooks
-# (.ipynb), which the host does not route to Python, are left out. Fixtures of pylint-derived (PL*) and flake8-builtins
-# (A*) rules are GPL-derived and are never copied, so the candidate A005 is not recorded; nor is the candidate INP001,
-# which Ruff's tests lint only with a `namespace-packages` option.
+# (.ipynb), which the host does not route to Python, are left out. Fixtures under the upstream paths that
+# licenses/ruff/UPSTREAM.md lists as "Not copied" (ports of copyleft plugins: pylint, flake8-builtins, flake8-django,
+# flake8-executable, refurb) are never copied (`fixtures` refuses one), so their rules are not recorded: not the
+# candidate A005. Nor is the candidate INP001, which Ruff's tests lint only with a `namespace-packages` option.
 RULES: dict[str, list[str]] = {
     "ASYNC100": ["flake8_async/ASYNC100.py"],
     "ASYNC105": ["flake8_async/ASYNC105.py"],
@@ -565,7 +567,21 @@ def ruff(executable: str, paths: list[str], cwd: pathlib.Path) -> list[dict]:
     return findings
 
 
+def not_copied() -> list[str]:
+    """The upstream path prefixes licenses/ruff/UPSTREAM.md lists as "Not copied": fixtures of copyleft plugins' ports."""
+    record = HERE.parent.parent / "licenses" / "ruff" / "UPSTREAM.md"
+    prefixes = re.findall(r"^- Not copied: `([^`]+)`", record.read_text(encoding="utf-8"), re.MULTILINE)
+    if not prefixes:
+        raise SystemExit(f"{record} lists no \"Not copied\" upstream paths")
+    return prefixes
+
+
 def fixtures(checkout: pathlib.Path, executable: str) -> None:
+    excluded = not_copied()
+    refused = sorted(file for paths in RULES.values() for file in paths
+                     if any(f"{FIXTURES}/{file}".startswith(prefix) for prefix in excluded))
+    if refused:
+        raise SystemExit(f"RULES names fixtures licenses/ruff/UPSTREAM.md lists as not copied: {', '.join(refused)}")
     version = common.tool_version(executable, VERSION)
     head = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True,
                           check=True).stdout.strip()

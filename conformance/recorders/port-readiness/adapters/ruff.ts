@@ -329,7 +329,7 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
       ...lints.map((lint) => resolve(linterDirectory, lint.fixture!)),
     ])].sort();
     // Each text's origin, so the gates can rebuild the list: a file by its path in the checkout and the digest of the text
-    // as read here; a test-module string literal inline (Ruff's own Rust sources, never a GPL-derived fixture).
+    // as read here; a test-module string literal inline (Ruff's own Rust sources, never a fixture UPSTREAM.md lists as not copied).
     const fixtureTextSources: FixtureTextSource[] = [];
     const fixtureTexts: string[] = [];
     for (const path of fixtureFiles) {

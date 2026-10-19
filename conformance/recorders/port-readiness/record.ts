@@ -40,15 +40,29 @@ const sha256 = (value: string | Buffer): string => createHash("sha256").update(v
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const sortedUnique = (values: Iterable<string>): string[] => [...new Set([...values].filter((value) => value !== ""))].sort(byText);
 
-/** Ruff's fixture directories whose files derive from GPL-licensed projects: their text is never written into a recording. */
-const GPL_DERIVED = /(?:^|\/)resources\/test\/fixtures\/(?:pylint|flake8_builtins)\//u;
+/** An UPSTREAM.md line naming an upstream path prefix nothing is copied from (conformance/pack-validation.ts reads it too). */
+const NOT_COPIED = /^- Not copied: `([^`]+)`/gmu;
+
+/**
+ * The upstream path prefixes the pack's `licenses/<project>/UPSTREAM.md` list as "Not copied": material an upstream
+ * derives from a copyleft project (Ruff's fixtures for its pylint, flake8-builtins, flake8-django, flake8-executable and
+ * refurb ports). No case source under one is committed, and no recording holds such a file's text.
+ */
+export function notCopiedPrefixes(root: string, pack: string): string[] {
+  const licenses = join(root, "packs", pack, "licenses");
+  if (!existsSync(licenses)) return [];
+  return readdirSync(licenses, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(licenses, entry.name, "UPSTREAM.md")))
+    .flatMap((entry) => [...readFileSync(join(licenses, entry.name, "UPSTREAM.md"), "utf8").matchAll(NOT_COPIED)].map((match) => match[1]!))
+    .sort(byText);
+}
 
 /**
  * The live adapter's fixtureTextSources as recording.json records them: files sorted by path, inline texts sorted. The
  * list the gates rebuild from it (rebuildFixtureTexts, on the live adapter's checkout) must equal the live
  * fixtureTexts() as a multiset, or nothing is written.
  */
-export function recordFixtureTexts(adapter: PackAdapter, cacheRoot: string, pins: { repository: string; commit: string }): RecordedFixtureTexts | undefined {
+export function recordFixtureTexts(adapter: PackAdapter, cacheRoot: string, pins: { repository: string; commit: string }, notCopied: readonly string[]): RecordedFixtureTexts | undefined {
   const origins = adapter.fixtureTextSources?.();
   if (origins === undefined) return undefined;
   const live = adapter.fixtureTexts();
@@ -67,10 +81,10 @@ export function recordFixtureTexts(adapter: PackAdapter, cacheRoot: string, pins
     files: [...files.keys()].sort(byText).map((path) => files.get(path)!),
     inline: inline.sort((a, b) => byText(a.text, b.text)),
   };
-  // A GPL-derived fixture's text must never be inline; it is fetched from upstream by path instead.
-  const gplTexts = new Set(live.filter((_, index) => { const origin = origins[index]!; return !("inline" in origin) && GPL_DERIVED.test(origin.path); }));
-  const leaked = recorded.inline.filter(({ text }) => text.length > 0 && gplTexts.has(text)).length;
-  if (leaked > 0) throw new Error(`${leaked} inline fixture text(s) are the text of a GPL-derived fixture`);
+  // A not-copied (copyleft-derived) fixture's text must never be inline; it is fetched from upstream by path instead.
+  const notCopiedTexts = new Set(live.filter((_, index) => { const origin = origins[index]!; return !("inline" in origin) && notCopied.some((prefix) => origin.path.startsWith(prefix)); }));
+  const leaked = recorded.inline.filter(({ text }) => text.length > 0 && notCopiedTexts.has(text)).length;
+  if (leaked > 0) throw new Error(`${leaked} inline fixture text(s) are the text of a fixture UPSTREAM.md lists as not copied`);
   const rebuilt = rebuildFixtureTexts(upstreamCheckoutDirectory(cacheRoot, pins), recorded);
   const counts = new Map<string, number>();
   for (const text of live) counts.set(text, (counts.get(text) ?? 0) + 1);
@@ -102,9 +116,6 @@ const RUFF_FIXTURES = "crates/ruff_linter/resources/test/fixtures/";
 const RUFF_TESTS = "crates/ruff_linter/resources/test/";
 /** Ruff's notebook fixtures, which its linter tests read from the ruff_notebook crate. */
 const RUFF_NOTEBOOK_FIXTURES = "crates/ruff_notebook/resources/test/fixtures/";
-/** Ruff's fixtures of pylint-derived (PL*) and flake8-builtins (A*) rules are GPL-derived and are never copied. */
-const RUFF_NOT_COPIED = ["pylint/", "flake8_builtins/"];
-
 /** An ESLint-family case's test file, without the run and case it names (`tests/lib/rules/eqeqeq.js#0/valid[3]`). */
 const eslintTestFile = (fixture: string): string => fixture.replace(/#.*$/u, "");
 
@@ -120,7 +131,7 @@ export const CASE_LAYOUTS: Record<GatesManifest["adapter"], CaseLayout> = {
     file({ fixture }) {
       if (fixture.startsWith(RUFF_NOTEBOOK_FIXTURES)) return `fixtures/ruff_notebook/${fixture.slice(RUFF_NOTEBOOK_FIXTURES.length)}`;
       const rest = fixture.startsWith(RUFF_FIXTURES) ? fixture.slice(RUFF_FIXTURES.length) : fixture.startsWith(RUFF_TESTS) ? fixture.slice(RUFF_TESTS.length) : null;
-      if (rest === null || RUFF_NOT_COPIED.some((prefix) => rest.startsWith(prefix))) return null;
+      if (rest === null) return null;
       return `fixtures/${rest}`;
     },
   },
@@ -294,6 +305,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     return fixtureBytes.get(fixture);
   };
   const committed = committedSources(toolPackDirectory(root, packId, tool));
+  const notCopied = notCopiedPrefixes(root, packId);
 
   const nameSets: GatesRecording["nameSets"] = {};
   const rules: Record<string, RecordedRule> = {};
@@ -325,7 +337,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     const cases: RecordedCase[] = adapter.cases(name).map((testCase) => {
       allCases.push(testCase);
       const bytes = upstreamBytesOf(testCase.fixture) ?? Buffer.from(testCase.source, "utf8");
-      const file = layout.file({ fixture: testCase.fixture, path: readPath(testCase), bytes }, committed);
+      const file = notCopied.some((prefix) => testCase.fixture.startsWith(prefix)) ? null : layout.file({ fixture: testCase.fixture, path: readPath(testCase), bytes }, committed);
       if (file !== null && !sources.has(file)) sources.set(file, { file, fixture: testCase.fixture, bytes });
       if (file !== null) {
         const entry = { path: readPath({ ...testCase, path: recordedPath(testCase.path, testCase.fixture) }), script: testCase.script === true, source: testCase.source, sha256: sha256(testCase.source) };
@@ -376,7 +388,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   const verdicts = await adapter.parserVerdicts(verdictFiles.map(({ path, source, script }) => ({ path, source, script })));
 
   // fixtureTexts by origin, rebuilt from upstream's checkout exactly as the gates will, and checked against the live list.
-  const fixtureTexts = recordFixtureTexts(adapter, cacheRoot, manifest.upstream);
+  const fixtureTexts = recordFixtureTexts(adapter, cacheRoot, manifest.upstream, notCopied);
 
   const extensions = PROBED_EXTENSIONS.filter((extension) => adapter.inCorpus(`src/example${extension}`));
   const runtimeDigests = options.runtimeDigests ?? ((runtime: string) => runtimePinDigests(runtime));
@@ -389,6 +401,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     identity: adapter.identity,
     packChecks: adapter.packChecks,
     licenseSha256: sha256(adapter.licenseText),
+    licenseText: adapter.licenseText,
     inScopeSamples: adapter.inScopeSamples,
     corpus: {
       extensions,

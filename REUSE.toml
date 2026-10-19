@@ -1035,10 +1035,13 @@ SPDX-License-Identifier = "Apache-2.0"
 # The port readiness gates' recordings hold upstream test text inline (fixtureTexts.inline): excerpts of the upstream's tests
 # beside Rerail's recorded answers. They are no longer in this repository — each tool-pack commits a recording.lock
 # and the bytes are a GitHub release asset (conformance/port-readiness/recording/store.ts) — so REUSE cannot annotate them, and
-# there is nothing here to annotate. The attribution is where a reader of the asset can find it: each upstream's
+# there is nothing here to annotate. The attribution travels with the asset: each recording.json carries upstream's
+# LICENSE text (licenseText, its copyright and permission notice; recordings made before it was added carry only its
+# digest, licenseSha256, until they are recorded again). In this repository each upstream's
 # packs/<pack>/licenses/<project>/UPSTREAM.md lists the recording as excerpts under upstream's licence and Apache-2.0,
-# the kept LICENSE sits beside it, and the release's own description names both. Ruff's GPL-derived fixture texts are
-# never in a recording at all (the recorder skips them as not-copied); every other upstream here is MIT.
+# and the kept LICENSE sits beside it. Nothing under an upstream path an UPSTREAM.md lists as "Not copied" (Ruff's
+# fixtures for its ports of copyleft plugins) is ever in a recording. Every upstream whose text a recording holds is
+# MIT; Bandit (Apache-2.0) contributes none, its recording naming upstream's files by path and digest only.
 #
 # Upstream by upstream, as the removed annotations read: Ruff 0.16.9 (2022 Charles Marsh), typescript-eslint 8.70.1
 # (2019 typescript-eslint and other contributors), @vitest/eslint-plugin 1.6.27 (2022 - PRESENT Verite Mugabo

@@ -9,7 +9,7 @@ import type { CorpusFile } from "../../../conformance/port-readiness/corpus.js";
 import { gatesCorpusSchema, gatesRecordingSchema, recordingText, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
 import { readCachedRecording, recordingLockSchema, recordingLockText, writeCachedRecording } from "../../../conformance/port-readiness/recording/store.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
-import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
+import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
 import { RUNTIMES_DIRECTORY, unpinnedNpmDependencies, unpinnedPythonDependencies } from "../../../conformance/recorders/port-readiness/runtimes.js";
 
 const MANIFEST = `adapter: bandit
@@ -89,6 +89,13 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     const recording = gatesRecordingSchema.parse(JSON.parse(readCachedRecording(join(root, "cache"), lock.files["recording.json"].sha256)!));
     assert.deepEqual(Object.keys(recording.rules), ["B301"]);
     assert.deepEqual(recording.absent, ["B999"]);
+    // Upstream's licence travels with the excerpts the asset holds, and must be the text its digest names.
+    assert.equal(recording.licenseText, "LICENSE TEXT\n");
+    assert.equal(recording.licenseSha256, createHash("sha256").update("LICENSE TEXT\n").digest("hex"));
+    assert.throws(() => gatesRecordingSchema.parse({ ...recording, licenseText: "ANOTHER LICENSE\n" }), /its sha256 is not licenseSha256/u);
+    const older = { ...recording };
+    delete older.licenseText;
+    assert.equal(gatesRecordingSchema.parse(older).licenseText, undefined);
     const rule = recording.rules.B301!;
     assert.deepEqual(rule.spanParts, { endLine: false, endCol: true });
     assert.equal(rule.cases[0]!.file, "fixtures/pickle_deserialize.py");
@@ -141,6 +148,41 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     const unread = diffRecording(root, "demo", "bandit", again, join(root, "cache"));
     assert.deepEqual(unread.changed, ["corpus.json"]);
     assert.match(unread.corpusNote!, /could not be compared: .* not in the cache/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a case from an upstream path the pack's UPSTREAM.md lists as not copied is skipped and never committed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "port-readiness-record-"));
+  try {
+    mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
+    mkdirSync(join(root, "packs/demo/licenses/bandit"), { recursive: true });
+    writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), MANIFEST);
+    writeFileSync(join(root, "packs/demo/licenses/bandit/UPSTREAM.md"), "# Bandit\n\n- Not copied: `examples/pickle` — a copyleft project, GPL-3.0-only\n\n| File | Upstream path | Copy |\n|---|---|---|\n");
+    writeFileSync(join(root, "packs/demo/conformance.json"), JSON.stringify({ rules: [{ id: "bandit-b301", upstream: { tool: "bandit", rule: "B301" }, policy: "rules/bandit-b301.json" }] }));
+    assert.deepEqual(notCopiedPrefixes(root, "demo"), ["examples/pickle"]);
+    // One case under the not-copied path and one beside it, which the recorder copies and parses as usual.
+    const twoCases: AdapterFactory = async (...args) => ({
+      ...(await fakeAdapter(...args)),
+      cases: () => [
+        { fixture: "examples/pickle_deserialize.py", variant: "default", path: "pickle_deserialize.py", source: SOURCE, skipped: null, expected: [span], markup: null },
+        { fixture: "examples/assert.py", variant: "default", path: "assert.py", source: SOURCE, skipped: null, expected: [span], markup: null },
+      ],
+    });
+    const recorded = await recordToolPack({
+      root, pack: "demo", tool: "bandit", cacheRoot: join(root, "cache"), runner: { run: () => Promise.reject(new Error("no commands")) },
+      adapters: { bandit: twoCases },
+      upstreamBytes: () => Buffer.from(SOURCE, "utf8"),
+      corpusFiles: async () => [],
+      tasksSha256: "c".repeat(64),
+      runtimeDigests: () => ({ "pyproject.toml": "d".repeat(64) }),
+    });
+    const [refused, copied] = recorded.recording.rules.B301!.cases;
+    assert.equal(refused!.file, null);
+    assert.equal(refused!.skipped, "not-copied");
+    assert.equal(copied!.file, "fixtures/assert.py");
+    assert.deepEqual(recorded.sources.map((source) => source.fixture), ["examples/assert.py"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
