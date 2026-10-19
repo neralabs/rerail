@@ -228,9 +228,16 @@ fn compiled_ordered_all_has_exact_relational_sql() {
             SqlShape::OrderBy,
         ]
     );
+    let verdict = "CASE WHEN left_input.verdict = 0 OR right_input.verdict = 0 THEN 0 WHEN left_input.verdict IS NULL OR right_input.verdict IS NULL THEN NULL ELSE 1 END";
+    let columns = qualified_row_columns("left_input").replace(
+        "left_input.verdict",
+        &format!("{verdict} AS verdict"),
+    );
     assert_eq!(
         cte(plan.sql(), "clause_0_relation_2 AS"),
-        "clause_0_relation_2 AS ( SELECT left_input.* FROM clause_0_term_0 left_input INNER JOIN clause_0_term_1 right_input ON right_input.file_index = left_input.file_index AND right_input.node = left_input.node )"
+        format!(
+            "clause_0_relation_2 AS ( SELECT {columns}, left_input.bindings, left_input.choice_order FROM clause_0_term_0 left_input INNER JOIN clause_0_term_1 right_input ON right_input.file_index = left_input.file_index AND right_input.node = left_input.node )"
+        )
     );
     assert_eq!(
         execute_boolean_sql(
@@ -271,9 +278,16 @@ fn compiled_ordered_any_preserves_branch_identity_in_exact_sql() {
     );
     let columns = qualified_row_columns("branch");
     assert_eq!(
+        cte(plan.sql(), "clause_0_relation_2_branches AS"),
+        format!(
+            "clause_0_relation_2_branches AS ( SELECT {columns}, branch.bindings, printf('%08d/', 0) || branch.choice_order AS choice_order, 0 AS branch_order, 0 AS unknown_blocks FROM clause_0_term_0 branch UNION ALL SELECT {columns}, branch.bindings, printf('%08d/', 1) || branch.choice_order AS choice_order, 1 AS branch_order, 0 AS unknown_blocks FROM clause_0_term_1 branch )"
+        )
+    );
+    let chosen = qualified_row_columns("chosen");
+    assert_eq!(
         cte(plan.sql(), "clause_0_relation_2 AS"),
         format!(
-            "clause_0_relation_2 AS ( SELECT {columns}, branch.bindings, printf('%08d/', 0) || branch.choice_order AS choice_order FROM clause_0_term_0 branch UNION ALL SELECT {columns}, branch.bindings, printf('%08d/', 1) || branch.choice_order AS choice_order FROM clause_0_term_1 branch )"
+            "clause_0_relation_2 AS ( SELECT {chosen}, chosen.bindings, chosen.choice_order FROM ( SELECT branch.*, row_number() OVER (PARTITION BY file_index, node ORDER BY CASE WHEN verdict = 1 OR (verdict IS NULL AND unknown_blocks = 1) THEN 0 WHEN verdict IS NULL THEN 1 ELSE 2 END, branch_order, choice_order, producer_id, match_index) AS truth_order FROM clause_0_relation_2_branches branch ) chosen WHERE chosen.truth_order = 1 AND chosen.verdict IS NOT 0 )"
         )
     );
     assert_eq!(
@@ -308,11 +322,16 @@ fn compiled_not_uses_completion_guarded_relational_antijoin() {
             SqlShape::OrderBy,
         ]
     );
+    let compatible = normalized_binding_compatibility("universe", "excluded");
+    let verdict = format!(
+        "CASE WHEN EXISTS (SELECT 1 FROM clause_0_term_1 excluded WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node AND excluded.verdict IS NULL AND {compatible}) THEN NULL ELSE 1 END"
+    );
+    let columns = qualified_row_columns("universe")
+        .replace("universe.verdict", &format!("{verdict} AS verdict"));
     assert_eq!(
         cte(plan.sql(), "clause_0_relation_2 AS"),
         format!(
-            "clause_0_relation_2 AS ( SELECT universe.* FROM clause_0_term_0 universe WHERE NOT EXISTS ( SELECT 1 FROM clause_0_term_1 excluded WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node AND {} ) )",
-            normalized_binding_compatibility("universe", "excluded")
+            "clause_0_relation_2 AS ( SELECT {columns}, universe.bindings, universe.choice_order FROM clause_0_term_0 universe WHERE universe.verdict = 1 AND NOT EXISTS ( SELECT 1 FROM clause_0_term_1 excluded WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node AND excluded.verdict = 1 AND {compatible} ) )"
         )
     );
     assert!(plan.sql().contains("batch.complete = 1"));
@@ -840,6 +859,54 @@ fn packed_repeated_capture_pattern_and_sql_equality_execute_together() {
 }
 
 #[test]
+fn phase_two_comparison_and_value_have_exact_relational_sql_and_catalogs() {
+    let comparison = code_rule(json!({
+        "all": [
+            { "pattern": "$A + $B" },
+            { "compare": { "left": "A", "op": "eq", "right": "B", "text": "source" } }
+        ]
+    }));
+    let comparison = SqlCatalogPlan::compile(&[Arc::clone(&comparison.inner)])
+        .expect("source comparison lowers");
+    assert_eq!(comparison.terminals().len(), 1);
+    assert_eq!(comparison.terminals()[0].kind(), TerminalKind::Pattern);
+    let compare_sql = cte(comparison.sql(), "clause_0_compare_1 AS");
+    assert!(compare_sql.contains("json_extract(left_value.value, '$.label') = 'A'"));
+    assert!(compare_sql.contains("json_extract(right_value.value, '$.label') = 'B'"));
+    assert!(compare_sql.contains(
+        "json_extract(left_value.value, '$.text') = json_extract(right_value.value, '$.text')"
+    ));
+    assert!(compare_sql.contains("THEN NULL"));
+
+    let value = code_rule(json!({
+        "kind": "identifier",
+        "value": { "follow": true, "eq": 1 }
+    }));
+    let value = SqlCatalogPlan::compile(&[Arc::clone(&value.inner)])
+        .expect("flow-dependent value lowers");
+    assert_eq!(
+        value
+            .terminals()
+            .iter()
+            .map(|terminal| terminal.kind())
+            .collect::<Vec<_>>(),
+        vec![TerminalKind::Kind, TerminalKind::Value]
+    );
+    assert_eq!(value.terminals()[1].producer_kind(), ProducerKind::ValueFact);
+    let descriptor = value.terminals()[1]
+        .value_fact()
+        .expect("value catalog entry has one immutable descriptor");
+    assert_eq!(descriptor.language, GrammarDialect::Python);
+    assert!(descriptor.follow);
+    assert!(!descriptor.expression_kinds.is_empty());
+    let value_sql = cte(value.sql(), "clause_0_value_1 AS");
+    assert!(value_sql.contains("JOIN fact value_fact"));
+    assert!(value_sql.contains("value_fact.fact_kind = 1"));
+    assert!(value_sql.contains("value_fact.text_value = 'int:1'"));
+    assert!(value_sql.contains("THEN NULL"));
+}
+
+#[test]
 fn phase_two_comparison_value_and_truth_sql_equal_the_oracle() {
     let cases = [
         (
@@ -878,13 +945,35 @@ fn phase_two_comparison_value_and_truth_sql_equal_the_oracle() {
             "known = 1\nknown\nunknown\n",
         ),
         (
+            json!({
+                "all": [
+                    { "pattern": "$A", "value": { "follow": true, "eq": 1 } },
+                    { "compare": { "left": "A", "op": "eq", "right": "A", "text": "source" } }
+                ]
+            }),
+            "known = 1\nknown\nunknown\n",
+        ),
+        (
+            json!({
+                "any": [
+                    { "pattern": "$A", "value": { "follow": true, "eq": 1 } },
+                    { "pattern": "$A" }
+                ]
+            }),
+            "known = 1\nknown\nunknown\n",
+        ),
+        (
             json!({ "not": { "kind": "identifier", "value": { "follow": true, "eq": 1 } } }),
             "known = 1\nknown\nunknown\n",
         ),
     ];
-    for (rule, source) in cases {
+    for (case_index, (rule, source)) in cases.into_iter().enumerate() {
         let compiled = code_rule(rule);
-        assert_eq!(sql_ranges(&compiled, source), oracle_ranges(&compiled, source));
+        assert_eq!(
+            sql_ranges(&compiled, source),
+            oracle_ranges(&compiled, source),
+            "case {case_index}: {source}"
+        );
     }
 }
 
@@ -950,6 +1039,14 @@ fn sql_ranges(
             .collect(),
     )
     .and_then(|demand| demand.with_producer_kinds(producer_kinds))
+    .and_then(|demand| {
+        demand.with_value_facts(
+            plan.terminals()
+                .iter()
+                .map(|terminal| terminal.value_fact())
+                .collect(),
+        )
+    })
     .expect("immutable structural demand");
     let connection = Connection::open_in_memory().expect("in-memory SQLite");
     let registry = Arc::new(MatchRegistry::default());
@@ -962,7 +1059,15 @@ fn sql_ranges(
         .expect("SQL structural query")
         .collect::<rusqlite::Result<Vec<_>>>()
         .expect("typed SQL nodes");
-    assert_eq!(registry.query_execution_counters(token), Some((1, 1)));
+    let expected_executions = if plan.terminals().is_empty() {
+        (0, 0)
+    } else {
+        (1, 1)
+    };
+    assert_eq!(
+        registry.query_execution_counters(token),
+        Some(expected_executions)
+    );
     let mut ranges = nodes
         .into_iter()
         .map(|node| {
@@ -1661,13 +1766,13 @@ fn compiled_count_uses_each_axis_direction_and_inclusive_stop_order() {
 fn unsupported_inventory_reports_every_operation_in_source_order() {
     let compiled = code_rule(json!({
         "kind": "integer",
-        "value": { "eq": 1 }
+        "value": { "constant": true }
     }));
     let error = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect_err("the compiler reports unsupported relational operators");
 
     assert_eq!(
         error.unsupported(),
-        &["lowering/ast-match/python/rule/all/1: matcher operation is not lowered"]
+        &["lowering/ast-match/python/rule/all/1: value predicate has no SQL comparison"]
     );
 }
