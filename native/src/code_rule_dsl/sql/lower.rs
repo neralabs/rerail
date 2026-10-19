@@ -548,6 +548,20 @@ impl<'p> Lowerer<'p> {
             .filter(|(name, _)| params.is_none_or(|params| params.contains(name)))
             .map(|(name, kind)| self.slot(own, name, *kind))
             .collect();
+        // A utility sharing its caller's scope also reads captures it does not hold (a
+        // `compare` against the caller's binding): its answer depends on them as well, so they
+        // are its key too, every slot the scope has of them (as a terminal reads them,
+        // `read_slots`), as the matcher's memo keys its verdicts by every capture it may read.
+        if params.is_none() {
+            let held_names: BTreeSet<&str> = held.iter().map(|(name, _)| name.as_str()).collect();
+            let read: BTreeSet<String> = util
+                .with_target(|rule| CaptureAnalysis::default().mentions(rule))
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|name| !held_names.contains(name.as_str()))
+                .collect();
+            key.extend(self.read_slots(own, &read).0);
+        }
         if exclude.is_some()
             && let Some(root) = self.root
         {

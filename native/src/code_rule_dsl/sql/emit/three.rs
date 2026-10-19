@@ -430,16 +430,22 @@ impl Emitter<'_> {
         let position = holds(index, step, offset);
         match of_rule {
             OfRule::Stage(stage) => {
+                // Over the input's parents' children alone (`Emitter::nth_child`).
                 let table = stage_table(*stage);
                 let with = format!(
-                    "WITH r AS (SELECT n.file AS file, n.id AS node, \
-                     ROW_NUMBER() OVER (PARTITION BY n.file, n.parent ORDER BY n.id) AS r, \
-                     COUNT(*) OVER (PARTITION BY n.file, n.parent) AS cnt FROM {table} st \
-                     JOIN node n ON n.file = st.file AND n.id = st.node \
-                     WHERE n.named = 1 AND n.parent IS NOT NULL AND st.unk = 0), \
-                     u AS (SELECT DISTINCT n.file AS file, n.parent AS parent FROM {table} st \
-                     JOIN node n ON n.file = st.file AND n.id = st.node \
-                     WHERE st.unk = 1 AND n.named = 1 AND n.parent IS NOT NULL) "
+                    "WITH p AS MATERIALIZED (SELECT DISTINCT n.file AS file, n.parent AS parent \
+                     FROM {input} f JOIN node n ON n.file = f.file AND n.id = f.node \
+                     WHERE n.parent IS NOT NULL), \
+                     r AS (SELECT c.file AS file, c.id AS node, \
+                     ROW_NUMBER() OVER (PARTITION BY c.file, c.parent ORDER BY c.id) AS r, \
+                     COUNT(*) OVER (PARTITION BY c.file, c.parent) AS cnt FROM p \
+                     JOIN node c ON c.file = p.file AND c.parent = p.parent \
+                     JOIN {table} st ON st.file = c.file AND st.node = c.id \
+                     WHERE c.named = 1 AND st.unk = 0), \
+                     u AS (SELECT DISTINCT c.file AS file, c.parent AS parent FROM p \
+                     JOIN node c ON c.file = p.file AND c.parent = p.parent \
+                     JOIN {table} st ON st.file = c.file AND st.node = c.id \
+                     WHERE st.unk = 1 AND c.named = 1) "
                 );
                 let select = format!(
                     "SELECT {} FROM {input} f JOIN r ON r.file = f.file AND r.node = f.node \
