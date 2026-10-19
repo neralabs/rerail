@@ -166,7 +166,9 @@ impl Batch {
     /// The fresh-env matches of pattern terminal `index` at `keys` (`file << 32 | node`), each
     /// (term, node) matched once per batch whichever statements ask for it.
     pub(super) fn fresh(&self, index: usize, term: &PatternTerm, keys: &[i64]) -> Vec<PatternRow> {
-        let mut tested = self.fresh[index].lock();
+        // Mutant 17: the tested (term, node) pairs are keyed by node only (one map for every
+        // pattern terminal), so a node tested for one term answers for the others.
+        let mut tested = self.fresh[if super::mutant(17) { 0 } else { index }].lock();
         keys.iter()
             .filter_map(|&key| {
                 let (file, node) = ((key >> 32) as u32, key as u32);
@@ -998,10 +1000,24 @@ impl Session {
                 continue;
             }
             let mut passes = 0;
+            // Mutant 11: the loop's last pass is undone.
+            let drop_last = super::mutant(11);
             loop {
+                if drop_last {
+                    connection.execute_batch("SAVEPOINT mutant_pass")?;
+                }
                 Self::run_steps(connection, frames, stats, &steps[at + 1..end], blocks)?;
                 passes += 1;
-                if !dirty(connection)? {
+                let changed = dirty(connection)?;
+                if drop_last {
+                    let undo = if changed {
+                        ""
+                    } else {
+                        "ROLLBACK TO mutant_pass; "
+                    };
+                    connection.execute_batch(&format!("{undo}RELEASE mutant_pass"))?;
+                }
+                if !changed {
                     break;
                 }
                 if passes > MAX_LEVELS {

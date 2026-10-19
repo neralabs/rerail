@@ -477,7 +477,8 @@ impl<'p> Lowerer<'p> {
         // `compare` against the caller's binding): its answer depends on them as well, so they
         // are its key too, every slot the scope has of them (as a terminal reads them,
         // `read_slots`), as the matcher's memo keys its verdicts by every capture it may read.
-        if params.is_none() {
+        // Mutant 18: the key drops the caller's captures the unit reads.
+        if params.is_none() && !super::mutant(18) {
             let held_names: BTreeSet<&str> = held.iter().map(|(name, _)| name.as_str()).collect();
             let read: BTreeSet<String> = util
                 .with_target(|rule| CaptureAnalysis::default().mentions(rule))
@@ -919,8 +920,11 @@ impl<'p> Lowerer<'p> {
                 Ok((Op::Any(ops), out))
             }
             AstMatcher::Not(inner) => {
+                // Mutant 3: the probe ignores the captures bound before it.
+                let fresh = Bound::new();
+                let probe = if super::mutant(3) { &fresh } else { bound };
                 let (op, _) =
-                    self.with_exclude(None, |lowerer| lowerer.lower(inner, scope, bound))?;
+                    self.with_exclude(None, |lowerer| lowerer.lower(inner, scope, probe))?;
                 Ok((Op::Not(Box::new(op)), bound.clone()))
             }
             AstMatcher::Never => Ok((Op::Never, bound.clone())),
@@ -1198,7 +1202,11 @@ impl<'p> Lowerer<'p> {
             AstMatcher::Constrained(core) => {
                 let (rule, mut current) = self.lower(&core.rule, scope, bound)?;
                 let mut constraints = Vec::new();
-                for (name, constraint) in &core.constraints {
+                // Mutant 14: the constraints in reverse order.
+                let (flip, count) = (super::mutant(14), core.constraints.len());
+                for index in 0..count {
+                    let (name, constraint) =
+                        &core.constraints[if flip { count - 1 - index } else { index }];
                     let Some(slot) = self.existing(scope, name, SlotKind::Node) else {
                         // Never bound, so never checked.
                         continue;

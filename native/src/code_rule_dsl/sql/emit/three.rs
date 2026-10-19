@@ -84,7 +84,8 @@ impl Emitter<'_> {
                         .collect::<Vec<_>>()
                         .join(" OR ")
                 })
-                .filter(|held| !held.is_empty());
+                // Mutant 4: no term is withheld.
+                .filter(|held| !held.is_empty() && !crate::code_rule_dsl::sql::mutant(4));
             let run = match &held {
                 Some(held) => self.frame(
                     "y",
@@ -236,7 +237,8 @@ impl Emitter<'_> {
                 })
                 .collect()
         };
-        if strict {
+        // Mutant 5: a strict search runs on past an unknown candidate.
+        if strict && !crate::code_rule_dsl::sql::mutant(5) {
             // Events in walk order: each candidate's test, then an unknown stop's (`opened`).
             let stops = opened.map_or(String::new(), |opened| {
                 let nulls: String = self.physical.iter().map(|_| ", NULL").collect();
@@ -357,10 +359,16 @@ impl Emitter<'_> {
         let open = opened.map_or("0".to_owned(), |opened| {
             format!("(f.k IN (SELECT pk FROM {opened}))")
         });
+        // Mutant 6: an unknown candidate counts as false.
+        let unknown = if crate::code_rule_dsl::sql::mutant(6) {
+            "0"
+        } else {
+            "SUM(s.unk = 1)"
+        };
         let counts = self.grouped(
             "t, u",
             &format!(
-                "SELECT g.pk, SUM(s.unk = 0), SUM(s.unk = 1) FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk"
+                "SELECT g.pk, SUM(s.unk = 0), {unknown} FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk"
             ),
         );
         let (t, u) = ("COALESCE(c.t, 0)", "COALESCE(c.u, 0)");
@@ -408,16 +416,30 @@ impl Emitter<'_> {
             OfRule::Stage(stage) => {
                 // Over the input's parents' children alone (`Emitter::nth_child`).
                 let table = stage_table(*stage);
+                // Mutant 19: ranks over the whole stage, not the input's parents' children.
+                let ranked = if crate::code_rule_dsl::sql::mutant(19) {
+                    format!(
+                        "r AS (SELECT n.file AS file, n.id AS node, \
+                         ROW_NUMBER() OVER (PARTITION BY n.file ORDER BY n.id) AS r, \
+                         COUNT(*) OVER (PARTITION BY n.file) AS cnt FROM {table} st \
+                         JOIN node n ON n.file = st.file AND n.id = st.node \
+                         WHERE n.named = 1 AND n.parent IS NOT NULL AND st.unk = 0)"
+                    )
+                } else {
+                    format!(
+                        "r AS (SELECT c.file AS file, c.id AS node, \
+                         ROW_NUMBER() OVER (PARTITION BY c.file, c.parent ORDER BY c.id) AS r, \
+                         COUNT(*) OVER (PARTITION BY c.file, c.parent) AS cnt FROM p \
+                         JOIN node c ON c.file = p.file AND c.parent = p.parent \
+                         JOIN {table} st ON st.file = c.file AND st.node = c.id \
+                         WHERE c.named = 1 AND st.unk = 0)"
+                    )
+                };
                 let with = format!(
                     "WITH p AS MATERIALIZED (SELECT DISTINCT n.file AS file, n.parent AS parent \
                      FROM {input} f JOIN node n ON n.file = f.file AND n.id = f.node \
                      WHERE n.parent IS NOT NULL), \
-                     r AS (SELECT c.file AS file, c.id AS node, \
-                     ROW_NUMBER() OVER (PARTITION BY c.file, c.parent ORDER BY c.id) AS r, \
-                     COUNT(*) OVER (PARTITION BY c.file, c.parent) AS cnt FROM p \
-                     JOIN node c ON c.file = p.file AND c.parent = p.parent \
-                     JOIN {table} st ON st.file = c.file AND st.node = c.id \
-                     WHERE c.named = 1 AND st.unk = 0), \
+                     {ranked}, \
                      u AS (SELECT DISTINCT c.file AS file, c.parent AS parent FROM p \
                      JOIN node c ON c.file = p.file AND c.parent = p.parent \
                      JOIN {table} st ON st.file = c.file AND st.node = c.id \

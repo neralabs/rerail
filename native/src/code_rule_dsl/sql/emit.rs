@@ -154,9 +154,15 @@ pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Vec<St
     statements.push(format!(
         "INSERT INTO {EACH}a SELECT file, node FROM {NAMESPACE}ef"
     ));
+    // Mutant 10: a match that repeats a range is reported too.
+    let reported = if super::mutant(10) {
+        "e.es IS NOT NULL".to_owned()
+    } else {
+        format!("(e.file, e.node) IN (SELECT file, node FROM {NAMESPACE}ef)")
+    };
     statements.push(format!(
         "SELECT e.file, e.node{} FROM {NAMESPACE}eo e WHERE (SELECT round FROM {EACH}r) = 0 \
-         OR (e.file, e.node) IN (SELECT file, node FROM {NAMESPACE}ef) \
+         OR {reported} \
          ORDER BY e.file, e.node",
         of("e")
     ));
@@ -487,7 +493,10 @@ impl<'s> Emitter<'s> {
             Op::Any(branches) => {
                 let mut rest = input.to_owned();
                 let mut outs = Vec::new();
-                for (index, branch) in branches.iter().enumerate() {
+                // Mutant 2: the branches last first.
+                let flip = super::mutant(2);
+                for index in 0..branches.len() {
+                    let branch = &branches[if flip { branches.len() - 1 - index } else { index }];
                     let out = self.op(branch, &rest);
                     if index + 1 < branches.len() {
                         let next = self.frame(
@@ -511,10 +520,17 @@ impl<'s> Emitter<'s> {
             }
             Op::Not(inner) => {
                 let out = self.op(inner, input);
+                // Mutant 16: an empty probe is taken for an empty output (an exec skip that
+                // reads a `not`'s empty inner frame as nothing to keep).
+                let skip = if super::mutant(16) {
+                    format!(" AND EXISTS (SELECT 1 FROM {out})")
+                } else {
+                    String::new()
+                };
                 self.frame(
                     "x",
                     &format!(
-                        "SELECT {} FROM {input} f WHERE f.k NOT IN (SELECT k FROM {out})",
+                        "SELECT {} FROM {input} f WHERE f.k NOT IN (SELECT k FROM {out}){skip}",
                         self.cols("f")
                     ),
                 )
@@ -526,8 +542,10 @@ impl<'s> Emitter<'s> {
                 if *binds {
                     // `ord` is the walk order (negated ids for descending walks): its minimum
                     // is the first match.
+                    // Mutant 1: any match, not the first.
+                    let first = if super::mutant(1) { "g.ord" } else { "MIN(g.ord)" };
                     let with = format!(
-                        "WITH w AS (SELECT g.pk AS pk, MIN(g.ord) AS o{} FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk) ",
+                        "WITH w AS (SELECT g.pk AS pk, {first} AS o{} FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk) ",
                         self.physical_of("s")
                     );
                     let select = format!(
@@ -988,15 +1006,24 @@ impl<'s> Emitter<'s> {
         if let Some(candidates) = self.leaf_candidates(walk, input) {
             return candidates;
         }
+        // Mutant 15: a field relation walks as its plain relation.
+        let walk = match walk {
+            Walk::FieldHas(_, stop) if super::mutant(15) => Walk::Has(stop),
+            Walk::FieldInside(_, stop) if super::mutant(15) => Walk::Inside(stop),
+            walk => walk,
+        };
         let at = "JOIN node fn ON fn.file = f.file AND fn.id = f.node";
         let simple = |from: &str| {
             format!("SELECT f.k AS pk, c.file AS file, c.id AS node FROM {input} f {from}")
         };
         let mut with = String::new();
         let source = match walk {
-            Walk::Has(Stop::Neighbor) => {
-                simple("JOIN node c ON c.file = f.file AND c.parent = f.node")
-            }
+            // Mutant 8: only the named children.
+            Walk::Has(Stop::Neighbor) => simple(if super::mutant(8) {
+                "JOIN node c ON c.file = f.file AND c.parent = f.node AND c.named = 1"
+            } else {
+                "JOIN node c ON c.file = f.file AND c.parent = f.node"
+            }),
             Walk::Has(Stop::End) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id > f.node AND c.id <= fn.\"last\""
             )),
@@ -1085,6 +1112,23 @@ impl<'s> Emitter<'s> {
                 unreachable!("a terminal's walk (`leaf_candidates`)")
             }
         };
+        // Mutant 9: the stop node is not a candidate.
+        let source = match walk {
+            Walk::Has(Stop::Rule(stage))
+            | Walk::Inside(Stop::Rule(stage))
+            | Walk::Precedes(Stop::Rule(stage))
+            | Walk::Follows(Stop::Rule(stage))
+            | Walk::FieldHas(_, Stop::Rule(stage))
+            | Walk::FieldInside(_, Stop::Rule(stage))
+                if super::mutant(9) =>
+            {
+                let table = stage_table(stage);
+                format!(
+                    "SELECT * FROM ({source}) WHERE (file, node) NOT IN (SELECT file, node FROM {table})"
+                )
+            }
+            _ => source,
+        };
         let order = if walk.descending() {
             "-c.node"
         } else {
@@ -1144,15 +1188,25 @@ impl<'s> Emitter<'s> {
                 // a node's rank reads its parent's children, never the rest of the stage, which
                 // can hold most nodes of the batch.
                 let table = stage_table(*stage);
-                let with = format!(
-                    "WITH p AS (SELECT DISTINCT n.file AS file, n.parent AS parent FROM {input} f \
-                     JOIN node n ON n.file = f.file AND n.id = f.node WHERE n.parent IS NOT NULL), \
-                     r AS (SELECT c.file AS file, c.id AS node, \
-                     ROW_NUMBER() OVER (PARTITION BY c.file, c.parent ORDER BY c.id) AS r, \
-                     COUNT(*) OVER (PARTITION BY c.file, c.parent) AS cnt FROM p \
-                     JOIN node c ON c.file = p.file AND c.parent = p.parent \
-                     JOIN {table} st ON st.file = c.file AND st.node = c.id WHERE c.named = 1) "
-                );
+                let with = if super::mutant(19) {
+                    // Mutant 19: ranks over the whole stage, not the input's parents' children.
+                    format!(
+                        "WITH r AS (SELECT n.file AS file, n.id AS node, \
+                         ROW_NUMBER() OVER (PARTITION BY n.file ORDER BY n.id) AS r, \
+                         COUNT(*) OVER (PARTITION BY n.file) AS cnt FROM {table} st \
+                         JOIN node n ON n.file = st.file AND n.id = st.node WHERE n.named = 1 AND n.parent IS NOT NULL) "
+                    )
+                } else {
+                    format!(
+                        "WITH p AS (SELECT DISTINCT n.file AS file, n.parent AS parent FROM {input} f \
+                         JOIN node n ON n.file = f.file AND n.id = f.node WHERE n.parent IS NOT NULL), \
+                         r AS (SELECT c.file AS file, c.id AS node, \
+                         ROW_NUMBER() OVER (PARTITION BY c.file, c.parent ORDER BY c.id) AS r, \
+                         COUNT(*) OVER (PARTITION BY c.file, c.parent) AS cnt FROM p \
+                         JOIN node c ON c.file = p.file AND c.parent = p.parent \
+                         JOIN {table} st ON st.file = c.file AND st.node = c.id WHERE c.named = 1) "
+                    )
+                };
                 let index = if reverse { "(r.cnt - r.r + 1)" } else { "r.r" };
                 let select = format!(
                     "SELECT {} FROM {input} f JOIN r ON r.file = f.file AND r.node = f.node WHERE {}",
@@ -1398,7 +1452,12 @@ impl<'s> Emitter<'s> {
             }
         }
         let returned = format!("({})", returned.join(" OR "));
-        let ok = format!("({})", ok.join(" AND "));
+        // Mutant 12: conflicting parameters return anyway.
+        let ok = if super::mutant(12) {
+            "1".to_owned()
+        } else {
+            format!("({})", ok.join(" AND "))
+        };
         // Three-valued: a body whose verdict is unknown returns nothing; the call is unknown.
         let (returned, verdict) = if self.three {
             (format!("(b.unk = 0 AND {returned})"), "b.unk")
