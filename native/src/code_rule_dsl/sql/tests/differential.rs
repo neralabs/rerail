@@ -1179,6 +1179,7 @@ fn replayed_cases_agree() {
             .expect("a fixture language")
             .1;
         STATEMENT_PROFILE.set(Some(Default::default()));
+        LAST_TIMES.set((0.0, 0.0));
         let outcome = run_case(ast, violation, input, &capabilities);
         let profile = STATEMENT_PROFILE.take().unwrap_or_default();
         let rows: usize = profile.values().map(|(_, rows, _)| rows).sum();
@@ -1202,6 +1203,19 @@ fn replayed_cases_agree() {
             case["sql"].as_f64().unwrap_or(-1.0),
             ast.to_string().chars().take(300).collect::<String>()
         );
+        // Where the time of a slow case went: its costliest statements, with their rows and runs.
+        if sql >= 1.0 {
+            let mut costly: Vec<_> = profile.iter().collect();
+            costly.sort_by_key(|(_, (nanos, _, _))| std::cmp::Reverse(*nanos));
+            let shown = env_number("RERAIL_SQL_DIFF_REPLAY_STATEMENTS", 6) as usize;
+            for (statement, (nanos, rows, runs)) in costly.into_iter().take(shown) {
+                eprintln!(
+                    "  {:>8.3}s {rows:>10} rows {runs:>6} runs  {}",
+                    *nanos as f64 / 1e9,
+                    statement.chars().take(400).collect::<String>()
+                );
+            }
+        }
     }
     assert_eq!(differ, 0, "{differ} replayed cases differ");
 }

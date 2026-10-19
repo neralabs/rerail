@@ -660,12 +660,25 @@ impl<'s> Emitter<'s> {
                 unreachable!("three-valued operators lower under `Unknowable`, at the root only")
             }
             Op::Recur { unit, slots } => self.recur(*unit, slots.as_deref(), input),
+            // The root is bound only where some range is reported for it: elsewhere `Excluded`
+            // drops nothing whatever the root, so leaving it unbound keeps the roots out of the
+            // distinct keys of the sub-rules (`keyed`) and recursive units, which would otherwise
+            // evaluate the same answer once per root.
             Op::EachRoot { root } => self.frame(
                 "x",
                 &format!(
                     "SELECT {} FROM {input} f WHERE (SELECT round FROM {EACH}r) = 0 \
                      OR EXISTS (SELECT 1 FROM {EACH}a a WHERE a.file = f.file AND a.root = f.node)",
-                    self.select("f", &[(format!("s{root}"), "f.node".to_owned())])
+                    self.select(
+                        "f",
+                        &[(
+                            format!("s{root}"),
+                            format!(
+                                "CASE WHEN EXISTS (SELECT 1 FROM {EACH}x x WHERE x.file = f.file AND x.root = f.node) \
+                                 THEN f.node END"
+                            )
+                        )]
+                    )
                 ),
             ),
             Op::Excluded { name, root } => self.frame(
@@ -725,8 +738,10 @@ impl<'s> Emitter<'s> {
         self.statements.push(format!(
             "CREATE TEMP TABLE IF NOT EXISTS {demand}(id INTEGER PRIMARY KEY, file, node{columns}, dirty INTEGER DEFAULT 1)"
         ));
+        // The whole key: a reference finds its row by `(file, node)` and every key column, and a
+        // node can be demanded under many bindings.
         self.statements.push(format!(
-            "CREATE INDEX IF NOT EXISTS {demand}_at ON {demand}(file, node)"
+            "CREATE INDEX IF NOT EXISTS {demand}_at ON {demand}(file, node{columns})"
         ));
         self.statements.push(format!(
             "CREATE TEMP TABLE IF NOT EXISTS {answer}(id INTEGER PRIMARY KEY{columns}{unk})"
