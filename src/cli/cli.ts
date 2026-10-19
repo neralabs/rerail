@@ -26,7 +26,7 @@ import {
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { repositoryName } from "../engine/catalog/repository-identity.js";
 import { checkSetupAnswer, setupAgents, startRerail } from "./repository-setup.js";
-import { isPreSetupHealthCheck, isUpdateHealthCheck, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
+import { isPreSetupHealthCheck, skipsSessionsApproval, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
@@ -442,9 +442,8 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
       ...(answer === undefined ? {} : { answer }),
       ...(setupCommand === undefined ? {} : { setupCommand }),
       repository,
-      // An update's health check reads no one's sessions: a scratch folder (`isUpdateHealthCheck`) on a computer, as its
-      // scratch home makes it, with no coding agent to connect. Only then is it not asked to allow it.
-      environment: isUpdateHealthCheck(args, io.lane, workspace) && environment.agentsFound().length === 0
+      // An update's health check reads no one's sessions, so it is not asked to allow it (`skipsSessionsApproval`).
+      environment: skipsSessionsApproval(args, io.lane, workspace, () => environment.agentsFound())
         ? { ...environment, sessionsApproved: () => true }
         : environment,
     });

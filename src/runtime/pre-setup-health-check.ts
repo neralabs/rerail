@@ -23,19 +23,20 @@ export function isPreSetupHealthCheck(
 }
 
 /**
- * The check releases since set-up run (`startHealthRepository` in `updater.ts`): `start --repo <folder> --answer
- * pick-myself`, in the same scratch place. Set-up runs there as for anyone, except that it does not ask whether Rerail
- * may read sessions: the scratch home has no coding agent, so there are no sessions of anyone's to read, and a release
- * that predates the question could never answer it.
+ * Whether set-up goes on without asking whether Rerail may read sessions. Only for the check releases since set-up run
+ * (`startHealthRepository` in `updater.ts`): `start --repo <folder> --answer pick-myself` in the same scratch place, on
+ * a computer with no coding agent found, as its scratch home makes it. There are no sessions of anyone's to read, and a
+ * release that predates the question could never answer it. Wherever a coding agent is found, set-up asks.
  */
-export function isUpdateHealthCheck(
+export function skipsSessionsApproval(
   args: readonly string[],
   lane: RepositorySetupIo["lane"],
   workspace: string,
+  agentsFound: () => readonly unknown[],
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   return args.length === 4 && args[0] === "--repo" && args[2] === "--answer" && args[3] === "pick-myself"
-    && isScratchHealthFolder(lane, workspace, env);
+    && isScratchHealthFolder(lane, workspace, env) && agentsFound().length === 0;
 }
 
 /** No terminal, `RERAIL_AUTOSTART=0` with its own `RERAIL_HOME` and `RERAIL_STORAGE_ROOT`, at an empty folder outside Git. */
