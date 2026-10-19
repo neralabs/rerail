@@ -148,7 +148,8 @@ impl Emitter<'_> {
                 }
                 write!(select, " FROM {current} p WHERE {held}").expect("write to a string");
             }
-            current = self.frame("a", &select);
+            // `v`, not `a`: `a{unit}` is a recursive unit's answer table (`emit::answer_table`).
+            current = self.frame("v", &select);
         }
         if !terms.iter().any(|term| term.op.binds()) {
             return current;
