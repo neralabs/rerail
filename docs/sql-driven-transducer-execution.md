@@ -344,7 +344,7 @@ A complete negative task has no terminal-match row and has `complete=1` in its s
 An incomplete task has `complete=0` and an `error_code`.
 SQL cannot infer absence without a complete status row.
 
-The final SQL order uses explicit catalog, file, program, match, output, and capture keys.
+The final SQL order uses explicit clause, file, root, choice-path, program, match, output, and capture keys.
 Backend completion order cannot affect the final order.
 
 ## Validation gates

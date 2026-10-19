@@ -1224,7 +1224,10 @@ impl PackedPattern {
                     skipped_anonymous += 1;
                 }
                 if goal == goals.len() {
-                    let end = candidates.len().saturating_sub(skipped_anonymous);
+                    let end = candidates
+                        .len()
+                        .saturating_sub(skipped_anonymous)
+                        .max(candidate);
                     return name.as_ref().is_none_or(|name| {
                         Self::bind_multi(bindings, name, candidates[candidate..end].to_vec(), tape)
                     });
@@ -1235,6 +1238,9 @@ impl PackedPattern {
                     }
                     let captured = vec![candidates[candidate]];
                     candidate += 1;
+                    if candidate == candidates.len() {
+                        return false;
+                    }
                     if name
                         .as_ref()
                         .is_some_and(|name| !Self::bind_multi(bindings, name, captured, tape))
@@ -1250,7 +1256,7 @@ impl PackedPattern {
                     };
                     let mut probe = bindings.clone();
                     if goals[goal].one(node, tape, &mut probe, false) == PatternVerdict::Matched {
-                        let end = candidate.saturating_sub(skipped_anonymous);
+                        let end = candidate.saturating_sub(skipped_anonymous).max(start);
                         if name.as_ref().is_some_and(|name| {
                             !Self::bind_multi(bindings, name, candidates[start..end].to_vec(), tape)
                         }) {

@@ -20,7 +20,7 @@ compiled clause
 The semantic matcher remains a test-only oracle.
 Production has no matcher fallback and no second execution shape.
 
-The current implementation establishes this boundary for kind, literal-pattern, regex, Boolean, and navigation operations.
+The current implementation establishes this boundary for kind, Smart-pattern, regex, Boolean, navigation, constraint, and count operations.
 Each lowered clause owns an operand-bearing expression graph with semantic producer identities.
 SQL renders ordered Boolean operations, navigation axes, field relations, stop rules, and `nthChild` positions.
 The compact-contract frontend is separate from the production frontend and still uses transitional operation classification.
@@ -349,11 +349,12 @@ A later false term still decides the result.
 
 ### Ordered alternatives
 
-`Any` unions branch results with an explicit branch ordinal.
-SQL selects the first accepted branch for each input environment.
+`Any` unions branch results with an explicit choice path.
+SQL retains each branch until later terms apply capture compatibility.
+The final clause relation selects the first compatible choice path for each node.
 
-An unknown branch that can bind captures blocks an incompatible later branch.
-The IR records this dependency before SQL rendering.
+An incompatible earlier branch does not hide a compatible later branch.
+The choice path also preserves order through nested alternatives.
 
 ### Negation
 
@@ -369,7 +370,9 @@ Relations use typed navigation rows and typed terminal rows.
 Navigation rows include axis order and source and target node identities.
 
 SQL applies `stopBy`, field constraints, and candidate order.
-It selects the first accepted candidate when the language contract requires one.
+A descendant stop cuts only its own subtree.
+It does not cut a later sibling subtree.
+SQL selects the first compatible candidate when the language contract requires one.
 
 A navigation producer can emit only the requested axes and candidate ranges.
 The engine does not need one complete corpus-wide node table.
@@ -585,8 +588,13 @@ SQL derives ancestor, descendant, sibling, field, stop-rule, and `nthChild` resu
 SQL rejects incomplete or unknown producer status before it returns a clause row.
 The structural IR now carries JSON binding environments through Boolean and navigation relations.
 SQL now applies capture constraints, repeated-capture equality, and bounded relation counts.
-Representative structural policies produce the same ranges as the semantic matcher.
-Item 5 remains incomplete because the parity matrix does not cover all structural combinations.
+The compiler now completes item 5 for the supported structural operation inventory.
+The parity suite compares range multisets for every supported operation family.
+It also compares 48 Boolean cross-product cases and nested capture-dependent compositions.
+The statement uses explicit deterministic row ordering; final violation ordering uses violation IDs.
+A separate outcome test compares the selected capture environment with the matcher output.
+These tests run real packed producers through one SQLite statement.
+They do not use operation metadata as parity evidence.
 
 ### Phase 4: Lower utilities and semantic facts
 

@@ -18,6 +18,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::{CStr, c_int};
 use std::marker::PhantomData;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -153,6 +154,7 @@ impl PackedDemand {
                                     task_index: task_index as u32,
                                     start_ordinal: root,
                                     node: root,
+                                    span: tape.transducer_span(root),
                                     output_label: Some("ast-grep-pattern".to_owned()),
                                 }));
                                 let mut equality_occurrences = HashMap::<&str, usize>::new();
@@ -332,6 +334,7 @@ impl PackedDemand {
                         task_index: result.task_ordinal(),
                         start_ordinal: result.local_ordinal(),
                         node: result.start_node(),
+                        span: self.files[file].transducer_span(result.start_node()),
                         output_label: self.programs[program]
                             .label_name(result.label())
                             .map(str::to_owned),
@@ -426,6 +429,7 @@ struct TerminalMatchData {
     task_index: u32,
     start_ordinal: u32,
     node: u32,
+    span: std::ops::Range<usize>,
     output_label: Option<String>,
 }
 
@@ -590,6 +594,8 @@ impl PackedRow {
         row.match_index = Some(data.match_index as i64);
         row.start_ordinal = Some(data.start_ordinal as i64);
         row.node = Some(data.node as i64);
+        row.start_byte = Some(data.span.start as i64);
+        row.end_byte = Some(data.span.end as i64);
         row.output_label = data.output_label;
         row
     }
@@ -687,6 +693,16 @@ impl PackedRow {
     }
 }
 
+fn execute_without_unwind(token: i64, execute: impl FnOnce() -> Vec<PackedRow>) -> Vec<PackedRow> {
+    catch_unwind(AssertUnwindSafe(execute)).unwrap_or_else(|_| {
+        vec![PackedRow::batch_status(
+            token,
+            false,
+            Some("packed producer panicked".to_owned()),
+        )]
+    })
+}
+
 struct MatchBatch {
     token: i64,
     demand: Mutex<Option<PackedDemand>>,
@@ -705,7 +721,9 @@ impl MatchBatch {
                 .expect("packed demand mutex poisoned")
                 .take()
                 .expect("a demanded packed batch executes once");
-            Arc::new(demand.execute(self.token))
+            Arc::new(execute_without_unwind(self.token, || {
+                demand.execute(self.token)
+            }))
         })))
     }
 }

@@ -701,6 +701,8 @@ The current implementation stores a verified immutable `PackedPattern` tree in a
 The first `xFilter` runs this bounded producer against demanded roots.
 The producer implements Smart terminals, metavariables, ellipses, rollback probes, and repeated-capture equality.
 It emits typed single and multi-capture rows without a `GrammarMatcher` call.
+The parity suite covers comments, adjacent ellipses, repeated multi-captures, and contextual selectors.
+A producer panic becomes one typed batch failure before control returns to SQLite.
 Metal lowering remains incomplete, so the pattern producer currently runs on the CPU inside `xFilter`.
 
 The first implementation must not support SCM.

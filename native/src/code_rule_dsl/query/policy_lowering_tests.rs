@@ -1,4 +1,5 @@
 use super::relational::{SqlCatalogPlan, SqlShape, TerminalKind};
+use super::relational_ir::{normalized_binding_compatibility, qualified_row_columns};
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::packed::ExecutionBackend;
@@ -268,12 +269,13 @@ fn compiled_ordered_any_preserves_branch_identity_in_exact_sql() {
             SqlShape::OrderBy,
         ]
     );
+    let columns = qualified_row_columns("branch");
     assert_eq!(
         cte(plan.sql(), "clause_0_relation_2 AS"),
-        "clause_0_relation_2 AS ( SELECT candidate.* FROM clause_0_relation_2_candidates candidate WHERE NOT EXISTS ( SELECT 1 FROM clause_0_relation_2_candidates earlier WHERE earlier.file_index = candidate.file_index AND earlier.node = candidate.node AND earlier.branch_order < candidate.branch_order ) )"
+        format!(
+            "clause_0_relation_2 AS ( SELECT {columns}, branch.bindings, printf('%08d/', 0) || branch.choice_order AS choice_order FROM clause_0_term_0 branch UNION ALL SELECT {columns}, branch.bindings, printf('%08d/', 1) || branch.choice_order AS choice_order FROM clause_0_term_1 branch )"
+        )
     );
-    assert!(plan.sql().contains("0 AS branch_order"));
-    assert!(plan.sql().contains("1 AS branch_order"));
     assert_eq!(
         execute_boolean_sql(
             &plan,
@@ -308,7 +310,10 @@ fn compiled_not_uses_completion_guarded_relational_antijoin() {
     );
     assert_eq!(
         cte(plan.sql(), "clause_0_relation_2 AS"),
-        "clause_0_relation_2 AS ( SELECT universe.* FROM clause_0_term_0 universe WHERE NOT EXISTS ( SELECT 1 FROM clause_0_term_1 excluded WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node ) )"
+        format!(
+            "clause_0_relation_2 AS ( SELECT universe.* FROM clause_0_term_0 universe WHERE NOT EXISTS ( SELECT 1 FROM clause_0_term_1 excluded WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node AND {} ) )",
+            normalized_binding_compatibility("universe", "excluded")
+        )
     );
     assert!(plan.sql().contains("batch.complete = 1"));
     assert_eq!(
@@ -468,14 +473,14 @@ fn compiled_ancestor_and_descendant_relations_execute_stop_semantics() {
         ),
         vec![1]
     );
-    assert!(
+    assert_eq!(
         execute_navigation_sql(
             &has,
             &[(0, &[0]), (2, &[4]), (3, &[1])],
             &[(0, 1, 0, 0, true), (1, 2, 0, 0, true), (0, 4, 1, 0, true)]
-        )
-        .is_empty(),
-        "a preorder stop node must also cut later descendant branches"
+        ),
+        vec![0],
+        "a stop node cuts only its own descendant branch"
     );
     assert_eq!(
         execute_navigation_sql(
@@ -895,13 +900,15 @@ fn sql_ranges(
         .collect::<rusqlite::Result<Vec<_>>>()
         .expect("typed SQL nodes");
     assert_eq!(registry.query_execution_counters(token), Some((1, 1)));
-    nodes
+    let mut ranges = nodes
         .into_iter()
         .map(|node| {
             let span = &spans[node as usize];
             (span.start, span.end)
         })
-        .collect()
+        .collect::<Vec<_>>();
+    ranges.sort_unstable();
+    ranges
 }
 
 fn oracle_ranges(
@@ -910,7 +917,7 @@ fn oracle_ranges(
 ) -> Vec<(usize, usize)> {
     let result = evaluate_file(compiled, "python", "a.py", source);
     assert_eq!(result["failures"], json!([]), "{result}");
-    result["violations"]
+    let mut ranges = result["violations"]
         .as_array()
         .expect("violations")
         .iter()
@@ -920,7 +927,9 @@ fn oracle_ranges(
                 violation["span"]["endByte"].as_u64().expect("end") as usize,
             )
         })
-        .collect()
+        .collect::<Vec<_>>();
+    ranges.sort_unstable();
+    ranges
 }
 
 fn sql_single_bindings(
@@ -1037,6 +1046,86 @@ fn sql_ordered_alternatives_publish_the_oracle_capture_environment() {
 }
 
 #[test]
+fn sql_nested_alternatives_preserve_lexical_choice_order() {
+    let compiled = code_rule_with_message(
+        json!({
+            "all": [
+                { "any": [
+                    { "pattern": "$A + $X" },
+                    { "pattern": "$X + $A" }
+                ] },
+                { "any": [
+                    { "pattern": "$Z + $A" },
+                    { "pattern": "$A + $Z" }
+                ] }
+            ]
+        }),
+        "A=$A",
+    );
+    let source = "x + y\n";
+    let sql = sql_single_bindings(&compiled, source);
+    let oracle = evaluate_file(&compiled, "python", "a.py", source);
+    assert_eq!(oracle["failures"], json!([]), "{oracle}");
+    assert_eq!(oracle["violations"][0]["message"], "A=x");
+    assert_eq!(sql[0].1["A"], "x");
+}
+
+#[test]
+fn sql_constraints_publish_new_oracle_bindings() {
+    let compiled = compile_code_rule(
+        json!({
+            "language": "python",
+            "rule": { "pattern": "$A + 1" },
+            "constraints": { "A": { "pattern": "$B" } }
+        }),
+        "A=$A B=$B",
+    );
+    let source = "x + 1\n";
+    let sql = sql_single_bindings(&compiled, source);
+    let oracle = evaluate_file(&compiled, "python", "a.py", source);
+    assert_eq!(oracle["failures"], json!([]), "{oracle}");
+    assert_eq!(oracle["violations"][0]["message"], "A=x B=x");
+    assert_eq!(
+        sql,
+        vec![(
+            (0, 5),
+            BTreeMap::from([
+                ("A".to_owned(), "x".to_owned()),
+                ("B".to_owned(), "x".to_owned()),
+            ])
+        )]
+    );
+}
+
+#[test]
+fn sql_count_bindings_publish_the_oracle_value() {
+    let compiled = code_rule_with_message(
+        json!({
+            "kind": "function_definition",
+            "count": {
+                "has": { "kind": "return_statement", "stopBy": "end" },
+                "min": 2,
+                "as": "CCN",
+                "offset": 1
+            }
+        }),
+        "CCN=$CCN",
+    );
+    let source = "def f():\n return 1\n return 2\n";
+    let sql = sql_single_bindings(&compiled, source);
+    let oracle = evaluate_file(&compiled, "python", "a.py", source);
+    assert_eq!(oracle["failures"], json!([]), "{oracle}");
+    assert_eq!(oracle["violations"][0]["message"], "CCN=3");
+    assert_eq!(
+        sql,
+        vec![(
+            (0, source.len() - 1),
+            BTreeMap::from([("CCN".to_owned(), "3".to_owned())])
+        )]
+    );
+}
+
+#[test]
 fn sql_structural_core_matches_the_matcher_oracle() {
     let cases = [
         (
@@ -1044,6 +1133,23 @@ fn sql_structural_core_matches_the_matcher_oracle() {
             "f(a, b)\ng(c)\nf(# comment\n  d, e)\n",
         ),
         (code_rule(json!({ "pattern": "$A + $A" })), "x + x\ny + z\n"),
+        (
+            code_rule(json!({ "pattern": "f($A)" })),
+            "f(# before\n x # after\n)\nf(1)\n",
+        ),
+        (
+            code_rule(json!({ "pattern": "f($$$A, $$$B)" })),
+            "f(a, b, c)\nf(a)\nf()\n",
+        ),
+        (
+            code_rule(json!({
+                "pattern": {
+                    "context": "def $F():\n    $$$BODY",
+                    "selector": "function_definition"
+                }
+            })),
+            "def f():\n    return 1\n\nx = 1\n",
+        ),
         (
             code_rule_ast(json!({
                 "language": "python",
@@ -1099,7 +1205,8 @@ fn sql_structural_core_matches_the_matcher_oracle() {
     for (compiled, source) in cases {
         assert_eq!(
             sql_ranges(&compiled, source),
-            oracle_ranges(&compiled, source)
+            oracle_ranges(&compiled, source),
+            "{source}"
         );
     }
 }
@@ -1178,6 +1285,39 @@ fn sql_structural_composition_matrix_matches_the_matcher_oracle() {
         ),
         (
             code_rule(json!({
+                "all": [
+                    { "pattern": "check($F($$$))" },
+                    { "has": {
+                        "kind": "argument_list",
+                        "count": {
+                            "has": { "pattern": "$F", "stopBy": "end" },
+                            "min": 2
+                        },
+                        "stopBy": "end"
+                    } }
+                ]
+            })),
+            "check(f(g, g))\ncheck(f(f, f))\n",
+        ),
+        (
+            code_rule(json!({
+                "pattern": "check($F($$$))",
+                "count": {
+                    "has": {
+                        "kind": "argument_list",
+                        "count": {
+                            "has": { "pattern": "$F", "stopBy": "end" },
+                            "min": 2
+                        },
+                        "stopBy": "end"
+                    },
+                    "min": 1
+                }
+            })),
+            "check(f(g, g))\ncheck(f(f, f))\n",
+        ),
+        (
+            code_rule(json!({
                 "kind": "identifier",
                 "inside": {
                     "any": [
@@ -1188,6 +1328,30 @@ fn sql_structural_composition_matrix_matches_the_matcher_oracle() {
                 }
             })),
             "def f():\n x = 1\n\ny = 2\n",
+        ),
+        (
+            code_rule(json!({
+                "kind": "function_definition",
+                "has": {
+                    "kind": "return_statement",
+                    "stopBy": { "kind": "function_definition" }
+                }
+            })),
+            "def outer():\n def inner():\n  return 1\n return 2\n",
+        ),
+        (
+            code_rule(json!({
+                "kind": "function_definition",
+                "count": {
+                    "has": {
+                        "kind": "return_statement",
+                        "stopBy": { "kind": "function_definition" }
+                    },
+                    "min": 1,
+                    "max": 1
+                }
+            })),
+            "def outer():\n def inner():\n  return 1\n return 2\n",
         ),
         (
             code_rule(json!({
@@ -1211,10 +1375,40 @@ fn sql_structural_composition_matrix_matches_the_matcher_oracle() {
         ),
         (
             code_rule(json!({
+                "kind": "function_definition",
+                "has": { "field": "body", "kind": "block", "stopBy": "neighbor" }
+            })),
+            "def f():\n x = 1\n",
+        ),
+        (
+            code_rule(json!({
+                "kind": "identifier",
+                "inside": { "field": "body", "kind": "function_definition", "stopBy": "end" }
+            })),
+            "def f():\n x = 1\n",
+        ),
+        (
+            code_rule(json!({
                 "kind": "identifier",
                 "nthChild": { "position": "2n+1", "reverse": true }
             })),
             "f(a, b, c, d)\n",
+        ),
+        (
+            code_rule(json!({
+                "kind": "identifier",
+                "nthChild": { "position": 2, "ofRule": { "kind": "identifier" } }
+            })),
+            "f(a, b, c, d)\n",
+        ),
+        (
+            code_rule(json!({
+                "all": [
+                    { "pattern": "$A" },
+                    { "nthChild": { "position": 1, "ofRule": { "pattern": "$A" } } }
+                ]
+            })),
+            "f(a, b)\n",
         ),
         (
             code_rule(json!({ "pattern": "[$$$A, 0, $$$A]" })),
@@ -1227,6 +1421,33 @@ fn sql_structural_composition_matrix_matches_the_matcher_oracle() {
             oracle_ranges(&compiled, source),
             "{source}"
         );
+    }
+}
+
+#[test]
+fn sql_boolean_cross_product_matches_the_matcher_oracle() {
+    let atoms = [
+        json!({ "kind": "identifier" }),
+        json!({ "regex": "^[fgx]$" }),
+        json!({ "pattern": "$A" }),
+        json!({ "has": { "kind": "identifier", "stopBy": "neighbor" } }),
+    ];
+    let source = "def f(x):\n return g(x)\n";
+    for left in &atoms {
+        for right in &atoms {
+            for rule in [
+                json!({ "all": [left.clone(), right.clone()] }),
+                json!({ "any": [left.clone(), right.clone()] }),
+                json!({ "all": [left.clone(), { "not": right.clone() }] }),
+            ] {
+                let compiled = code_rule(rule);
+                assert_eq!(
+                    sql_ranges(&compiled, source),
+                    oracle_ranges(&compiled, source),
+                    "left={left} right={right}"
+                );
+            }
+        }
     }
 }
 
@@ -1362,14 +1583,14 @@ fn compiled_count_uses_each_axis_direction_and_inclusive_stop_order() {
     }));
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect("completion-aware stopped count lowers into SQL");
-    assert_eq!(
+    assert!(
         execute_navigation_sql(
             &plan,
             &[(0, &[0]), (2, &[4]), (3, &[1])],
             &[(0, 1, 0, 0, true), (1, 2, 0, 0, true), (0, 4, 1, 0, true)]
-        ),
-        vec![0],
-        "the stop at node 1 hides the later preorder match at node 4"
+        )
+        .is_empty(),
+        "the stop at node 1 does not hide a match in its sibling branch"
     );
 }
 
