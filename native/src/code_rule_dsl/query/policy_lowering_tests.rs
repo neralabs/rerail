@@ -9,13 +9,28 @@ use crate::code_rule_dsl::transducer::sql_backend::{
 };
 use rusqlite::{Connection, params};
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 fn code_rule(rule: serde_json::Value) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     code_rule_ast(json!({ "language": "python", "rule": rule }))
 }
 
+fn code_rule_with_message(
+    rule: serde_json::Value,
+    message: &str,
+) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
+    compile_code_rule(json!({ "language": "python", "rule": rule }), message)
+}
+
 fn code_rule_ast(ast: serde_json::Value) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
+    compile_code_rule(ast, "x")
+}
+
+fn compile_code_rule(
+    ast: serde_json::Value,
+    message: &str,
+) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     CodeRuleDslRuntime::compile(
         json!({
             "format": "rerail.policy/v1",
@@ -25,7 +40,7 @@ fn code_rule_ast(ast: serde_json::Value) -> crate::code_rule_dsl::CompiledCodeRu
             "clauses": [{
                 "id": "ast-match",
                 "forbid": { "ast": ast },
-                "violation": { "anchor": "witness.span", "code": "X", "message": "x" }
+                "violation": { "anchor": "witness.span", "code": "X", "message": message }
             }]
         })
         .to_string(),
@@ -906,6 +921,119 @@ fn oracle_ranges(
             )
         })
         .collect()
+}
+
+fn sql_single_bindings(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    source: &str,
+) -> Vec<((usize, usize), BTreeMap<String, String>)> {
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("policy has complete structural SQL lowering");
+    let source = Arc::new(source.to_owned());
+    let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
+    let image = TapeImage::parse(&grammar, &source, &|| false)
+        .expect("parser completed")
+        .expect("tape image");
+    let tape =
+        TapeDoc::restore(Arc::clone(&source), grammar, &image, &|| false).expect("restored tape");
+    let spans = (0..tape.transducer_len() as u32)
+        .map(|node| tape.transducer_span(node))
+        .collect::<Vec<_>>();
+    let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+    let anchors = plan
+        .terminals()
+        .iter()
+        .map(|terminal| {
+            if terminal.kind() == TerminalKind::Navigation {
+                vec![0]
+            } else {
+                roots.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    let demand = PackedDemand::new(
+        ExecutionBackend::CpuJit,
+        plan.terminals()
+            .iter()
+            .map(|terminal| terminal.program().clone())
+            .collect(),
+        vec![tape],
+        vec![anchors],
+        vec![vec![true; plan.terminals().len()]],
+        plan.terminals()
+            .iter()
+            .map(|terminal| terminal.result_limit())
+            .collect(),
+    )
+    .and_then(|demand| {
+        demand.with_producer_kinds(
+            plan.terminals()
+                .iter()
+                .map(|terminal| terminal.producer_kind())
+                .collect(),
+        )
+    })
+    .expect("immutable structural demand");
+    let connection = Connection::open_in_memory().expect("in-memory SQLite");
+    let registry = Arc::new(MatchRegistry::default());
+    register_module(&connection, Arc::clone(&registry)).expect("packed virtual table");
+    let token = registry.register(demand);
+    connection
+        .prepare(plan.sql())
+        .expect("executable SQL plan")
+        .query_map([token], |row| {
+            Ok((row.get::<_, i64>(10)?, row.get::<_, String>(35)?))
+        })
+        .expect("SQL structural query")
+        .map(|row| {
+            let (node, bindings) = row.expect("typed SQL environment");
+            let bindings: serde_json::Value =
+                serde_json::from_str(&bindings).expect("JSON binding environment");
+            let mut singles = BTreeMap::new();
+            for binding in bindings.as_array().expect("binding array") {
+                if binding["kind"] == 1 {
+                    let label = binding["label"].as_str().expect("capture label");
+                    let text = binding["text"].as_str().expect("capture text");
+                    if let Some(previous) = singles.insert(label.to_owned(), text.to_owned()) {
+                        assert_eq!(previous, text, "one single capture has one value");
+                    }
+                }
+            }
+            let span = &spans[node as usize];
+            ((span.start, span.end), singles)
+        })
+        .collect()
+}
+
+#[test]
+fn sql_ordered_alternatives_publish_the_oracle_capture_environment() {
+    let compiled = code_rule_with_message(
+        json!({
+            "all": [
+                { "pattern": "$A + $B" },
+                { "any": [
+                    { "pattern": "$X + $A" },
+                    { "pattern": "$A + $X" }
+                ] }
+            ]
+        }),
+        "A=$A X=$X",
+    );
+    let sql = sql_single_bindings(&compiled, "x + y\n");
+    let oracle = evaluate_file(&compiled, "python", "a.py", "x + y\n");
+    assert_eq!(oracle["failures"], json!([]), "{oracle}");
+    assert_eq!(oracle["violations"][0]["message"], "A=x X=y");
+    assert_eq!(
+        sql,
+        vec![(
+            (0, 5),
+            BTreeMap::from([
+                ("A".to_owned(), "x".to_owned()),
+                ("B".to_owned(), "y".to_owned()),
+                ("X".to_owned(), "y".to_owned()),
+            ])
+        )]
+    );
 }
 
 #[test]
