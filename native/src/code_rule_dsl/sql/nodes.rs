@@ -55,19 +55,19 @@ const FIELD_FIRST: u8 = 32;
 /// Every column of one file's nodes, by node id.
 pub(super) struct NodeFacts {
     len: u32,
-    pub(super) last: Vec<u32>,
-    pub(super) parent: Vec<u32>,
+    last: Vec<u32>,
+    parent: Vec<u32>,
     kind: Vec<u16>,
     field: Vec<u16>,
     flags: Vec<u8>,
     named_ix: Vec<u32>,
     named_n: Vec<u32>,
     /// `SgNode::prev` (the structural previous sibling).
-    pub(super) prev: Vec<u32>,
+    prev: Vec<u32>,
     /// `SgNode::next`: the next sibling ending after this node ends (zero-width skip).
     next: Vec<u32>,
     /// The structural next sibling.
-    pub(super) nsib: Vec<u32>,
+    nsib: Vec<u32>,
     /// Where `next_all`/`prev_all` start (`TapeNode::walk_anchor`'s neighbours).
     anext: Vec<u32>,
     aprev: Vec<u32>,
@@ -231,6 +231,26 @@ impl NodeFacts {
     pub(super) fn next_sibling(&self, id: u32) -> Option<u32> {
         let next = self.nsib[id as usize];
         (next != NONE).then_some(next)
+    }
+
+    /// The parent, `NONE` for the root.
+    pub(super) fn parent(&self, id: u32) -> u32 {
+        self.parent[id as usize]
+    }
+
+    /// The structural previous sibling, `NONE` where none is.
+    pub(super) fn prev(&self, id: u32) -> u32 {
+        self.prev[id as usize]
+    }
+
+    /// The structural next sibling, `NONE` where none is.
+    pub(super) fn nsib(&self, id: u32) -> u32 {
+        self.nsib[id as usize]
+    }
+
+    /// The last descendant (the node itself for a leaf).
+    pub(super) fn last(&self, id: u32) -> u32 {
+        self.last[id as usize]
     }
 
     pub(super) fn thash(&self, id: u32) -> i64 {

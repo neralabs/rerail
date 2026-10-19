@@ -7,7 +7,7 @@
 //! - `nxt`: the first node in `S` of the chain from the node along structural next siblings (the
 //!   node, its next sibling, …), NULL where none is;
 //! - `prv`: the same along structural previous siblings;
-//! - `last`: its last descendant, as `node`'s.
+//! - `last`: its last descendant, as `node`'s (read from the file's structure, not kept).
 //!
 //! A file's columns are computed in one preorder pass (`anc`, `prv`) and one reverse pass (`nxt`)
 //! the first time a statement reads the file for the set, and kept for the batch, with the file's
@@ -19,7 +19,7 @@
 //! before it, and every batch is a fresh `Batch` (the cache is keyed by its identity). So the
 //! member list is read once per stage and batch; later statements' lists are not read.
 
-use super::exec::{Batch, BatchSlot};
+use super::exec::{Batch, BatchSlot, SubFile};
 use super::nodes::{NONE, NodeFacts, facts_of, integer};
 use rusqlite::fallible_iterator::FallibleIterator;
 use rusqlite::types::{Value, ValueRef};
@@ -57,7 +57,6 @@ pub(super) fn set_of(alias: &str, stage: usize, file: &str) -> String {
 
 /// One file's columns for one set.
 struct FileNearest {
-    last: Vec<u32>,
     anc: Vec<u32>,
     /// A member's rank among the file's members (ascending ids), `NONE` for a non-member.
     rank: Vec<u32>,
@@ -87,7 +86,7 @@ impl FileNearest {
         let mut prv = vec![NONE; len];
         for id in 0..len as u32 {
             let index = id as usize;
-            let parent = facts.parent[index];
+            let parent = facts.parent(id);
             if parent != NONE {
                 anc[index] = if is_member(parent) {
                     parent
@@ -98,7 +97,7 @@ impl FileNearest {
             prv[index] = if is_member(id) {
                 id
             } else {
-                match facts.prev[index] {
+                match facts.prev(id) {
                     NONE => NONE,
                     prev => prv[prev as usize],
                 }
@@ -110,7 +109,7 @@ impl FileNearest {
             nxt[index] = if is_member(id) {
                 id
             } else {
-                match facts.nsib[index] {
+                match facts.nsib(id) {
                     NONE => NONE,
                     next => nxt[next as usize],
                 }
@@ -135,7 +134,6 @@ impl FileNearest {
             *slot += 1;
         }
         Self {
-            last: facts.last[..len].to_vec(),
             anc,
             rank,
             nxt,
@@ -355,6 +353,8 @@ unsafe impl<'vtab> VTab<'vtab> for NearestTable {
             file: 0,
             stage: 0,
             columns: None,
+            batch: None,
+            sub: None,
             source: Source::Done,
             current: None,
             phantom: PhantomData,
@@ -378,6 +378,9 @@ pub(super) struct NearestCursor<'vtab> {
     file: u32,
     stage: i64,
     columns: Option<Arc<FileNearest>>,
+    /// The batch and parsed tree `file` is read from, for `last`.
+    batch: Option<Arc<Batch>>,
+    sub: Option<Arc<SubFile>>,
     source: Source,
     current: Option<u32>,
     phantom: PhantomData<&'vtab NearestTable>,
@@ -456,10 +459,10 @@ unsafe impl VTabCursor for NearestCursor<'_> {
             return Ok(());
         };
         let set = cache.stages.get_mut(&stage).expect("read above");
+        let sub = batch.subfile(file as usize);
         let columns = match set.files.get(&file) {
             Some(columns) => Arc::clone(columns),
             None => {
-                let sub = batch.subfile(file as usize);
                 let facts = facts_of(&batch, &sub, file);
                 let members = set.members.get(&file).map_or(&[][..], Vec::as_slice);
                 let columns = Arc::new(FileNearest::of(facts, members));
@@ -509,6 +512,8 @@ unsafe impl VTabCursor for NearestCursor<'_> {
             };
         }
         self.columns = Some(columns);
+        self.batch = Some(batch);
+        self.sub = sub;
         self.advance();
         Ok(())
     }
@@ -531,7 +536,11 @@ unsafe impl VTabCursor for NearestCursor<'_> {
         match column {
             COL_FILE => context.set_result(&i64::from(self.file)),
             COL_ID => context.set_result(&i64::from(id)),
-            COL_LAST => context.set_result(&i64::from(columns.last[index])),
+            COL_LAST => {
+                let batch = self.batch.as_ref().expect("a batch");
+                let last = facts_of(batch, &self.sub, self.file).last(id);
+                context.set_result(&i64::from(last))
+            }
             COL_ANC => context.set_result(&or_none(columns.anc[index])),
             COL_BASE => context.set_result(&if columns.rank[index] != NONE {
                 i64::from(id)
