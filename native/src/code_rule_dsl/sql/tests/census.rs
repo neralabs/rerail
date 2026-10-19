@@ -645,7 +645,7 @@ fn run_footprint() {
                 }
             }
         }
-        alone.sort_by(|a, b| b.0.cmp(&a.0));
+        alone.sort_by_key(|entry| std::cmp::Reverse(entry.0));
         if clause_filter.is_some() {
             for (bytes, statements, seconds, clause) in &alone {
                 eprintln!(

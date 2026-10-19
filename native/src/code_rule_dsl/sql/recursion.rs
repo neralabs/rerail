@@ -31,6 +31,12 @@
 //! levels, and the passes needed are at most the tree's height. A recursion whose read graph may
 //! loop (an alias walked up from a reference and down again to it) is evaluated alike and
 //! accepted exactly where, in the batch, it does not loop.
+//!
+//! A non-recursive utility reached through two or more references (`repeated`) is a unit too, a
+//! component of one member whose body reads no answer of its own: its loop finishes in one pass,
+//! and the argument above holds with a read graph that has no edge. Every reference demands its
+//! keys and reads their answers, so the body is lowered and emitted once however many references
+//! reach it, and equal keys share an answer, as the matcher's per-file utility memo shares it.
 
 use super::plan::{SlotKind, Unsupported};
 use super::terminals::pattern_vars;
@@ -155,6 +161,35 @@ fn reachable(start: &UtilRef) -> HashMap<UtilKey, UtilRef> {
         seen.insert(key, util);
     }
     seen
+}
+
+/// The non-recursive utilities `roots` reach through two or more references, counted over
+/// `roots` and every utility they reach: each such utility's body is lowered once, as a unit
+/// (`Lowerer::shared_unit`), so each reference is lowered once too, and these are exactly the
+/// utilities lowering would otherwise copy. A utility with one reference stays inlined.
+pub(super) fn repeated(roots: &[&AstMatcher]) -> HashSet<UtilKey> {
+    let mut counts: HashMap<UtilKey, usize> = HashMap::new();
+    let mut seen: HashSet<UtilKey> = HashSet::new();
+    let mut stack: Vec<UtilRef> = Vec::new();
+    let mut count = |rule: &AstMatcher, stack: &mut Vec<UtilRef>| {
+        walk(rule, false, &mut |util, _| {
+            *counts.entry(util_key(util)).or_default() += 1;
+            stack.push(util.clone());
+        });
+    };
+    for root in roots {
+        count(root, &mut stack);
+    }
+    while let Some(util) = stack.pop() {
+        if seen.insert(util_key(&util)) {
+            util.with_target(|rule| count(rule, &mut stack));
+        }
+    }
+    counts
+        .into_iter()
+        .filter(|&(_, count)| count >= 2)
+        .map(|(key, _)| key)
+        .collect()
 }
 
 /// Whether a capture-free shared utility: no parameters, no capture read or bound.
