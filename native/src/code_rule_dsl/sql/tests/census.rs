@@ -219,9 +219,18 @@ fn run_corpus() {
     for path in &policies {
         let policy: Value =
             serde_json::from_str(&std::fs::read_to_string(path).expect("policy")).expect("JSON");
-        for clause in policy["clauses"].as_array().expect("clauses") {
+        // Each clause alone, with the policy's `define`s it may read (they report nothing).
+        let clauses = policy["clauses"].as_array().expect("clauses");
+        let defines: Vec<&Value> = clauses
+            .iter()
+            .filter(|clause| clause.get("define").is_some())
+            .collect();
+        for clause in clauses
+            .iter()
+            .filter(|clause| clause.get("define").is_none())
+        {
             let mut document = policy.clone();
-            document["clauses"] = json!([clause]);
+            document["clauses"] = json!(defines.iter().chain([&clause]).collect::<Vec<_>>());
             let compiled = CodeRuleDslRuntime::compile(
                 document.to_string(),
                 "json".to_owned(),
