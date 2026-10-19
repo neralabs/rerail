@@ -32,8 +32,14 @@ pub(super) const FILES: &str = "/*FILES*/";
 /// Where the driver substitutes the statement's selected roots, `(file, node)` rows, in files
 /// whose roots an anchor index narrowed (the root frame's second branch).
 pub(super) const ROOTS: &str = "/*ROOTS*/";
-/// Where the driver substitutes the prefix of the statement's own tables.
+/// Where the driver substitutes the prefix of the statement's own tables that live across its
+/// operators: a recursion unit's tables, the enumeration's frames.
 pub(super) const NAMESPACE: &str = "/*NS*/";
+/// Before an operator's temporary table (`Emitter::name`: a prefix of letters, then digits):
+/// the driver allocates each that is a frame a register, a frame name shared across clauses and
+/// reused once the temporary is dead (`exec::registers`); one that stays a B-tree takes the
+/// statement's namespace.
+pub(super) const TEMP: &str = "/*T*/";
 /// Where the driver substitutes the prefix of a `violation.each` enumeration's tables: `x`, the
 /// ranges reported per root `(file, root, start, end)`; `a`, the roots still enumerated; `r`, the
 /// round.
@@ -444,7 +450,7 @@ impl<'s> Emitter<'s> {
 
     fn name(&mut self, prefix: &str) -> String {
         self.next += 1;
-        format!("{NAMESPACE}{prefix}{}", self.next)
+        format!("{TEMP}{prefix}{}", self.next)
     }
 
     /// The physical columns, comma-led: `, s0, s1a…`.

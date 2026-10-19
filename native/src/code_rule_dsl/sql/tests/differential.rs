@@ -1649,7 +1649,7 @@ fn emitted_joins_never_scan_a_whole_table_on_the_inner_side() {
             continue;
         };
         clauses += 1;
-        let session = program.session().expect("a session");
+        let mut session = program.session().expect("a session");
         for (sql, plan) in session.plans().expect("plans") {
             statements += 1;
             assert!(!sql.contains("RECURSIVE"), "a recursive CTE: {sql}");
