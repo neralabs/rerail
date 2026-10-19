@@ -106,11 +106,17 @@ pub struct Health {
     pub engine_version: String,
 }
 
-/// The benchmark-only `unbounded-work` build says so, so a benchmark can prove what it ran.
-#[cfg(not(feature = "unbounded-work"))]
-const ENGINE_VERSION: &str = "1";
-#[cfg(feature = "unbounded-work")]
-const ENGINE_VERSION: &str = "1+unbounded-work";
+/// The benchmark-only `unbounded-work` and `sql-mutants` builds say so, so a benchmark can prove
+/// what it ran.
+const ENGINE_VERSION: &str = match (
+    cfg!(feature = "unbounded-work"),
+    cfg!(feature = "sql-mutants"),
+) {
+    (false, false) => "1",
+    (true, false) => "1+unbounded-work",
+    (false, true) => "1+sql-mutants",
+    (true, true) => "1+unbounded-work+sql-mutants",
+};
 
 #[napi]
 pub fn health() -> Health {

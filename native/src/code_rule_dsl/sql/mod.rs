@@ -25,7 +25,7 @@ pub(super) use exec::{
 #[cfg(feature = "unbounded-work")]
 pub(super) use exec::{StatementProfile, profiled};
 
-/// The mutation kit's switch: whether this test process runs seeded semantic mutant `n`
+/// The mutation kit's switch: whether this process runs seeded semantic mutant `n`
 /// (`RERAIL_SQL_MUTANT=<n>`, read once; unset or 0 runs none). Each mutant is a plausible
 /// regression of one hard construct, a few lines at its site, that the differential and the
 /// corpus census must catch:
@@ -46,8 +46,9 @@ pub(super) use exec::{StatementProfile, profiled};
 /// 14. `constraints` run in reverse order (`lower`);
 /// 15. a `field` relation ignores the field (`emit`).
 ///
-/// Without `cfg(test)` it is the constant `false`: production code is unaffected.
-#[cfg(test)]
+/// Only test builds and the never-shipped `sql-mutants` feature read the switch; elsewhere it is
+/// the constant `false`, so production code is unaffected.
+#[cfg(any(test, feature = "sql-mutants"))]
 fn mutant(n: u8) -> bool {
     static MUTANT: std::sync::LazyLock<u8> = std::sync::LazyLock::new(|| {
         std::env::var("RERAIL_SQL_MUTANT")
@@ -58,7 +59,7 @@ fn mutant(n: u8) -> bool {
     *MUTANT == n
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "sql-mutants")))]
 #[inline(always)]
 const fn mutant(_: u8) -> bool {
     false
