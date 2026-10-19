@@ -13,11 +13,9 @@ against, is `native/src/code_rule_dsl/capabilities.json`.
 
 ## Principles
 
-1. **A pack is data.** Rule documents plus the evidence that they behave. Its only code is its match checks
-   (`checks/*.mjs`), which set-up runs under Node's permission model: read-only access to the repository and the
-   pack, no writes, no child processes or workers, and 5 s to answer. Node 24's permission model does not restrict
-   the network (Node 25's does), so a check must not use it. It never imports the engine: core runs its rules, and the
-   repository's tests validate it.
+1. **A pack is data.** Rule documents plus the evidence that they behave. It contains no code, not even to decide
+   whether it fits a repository (its `match` is globs and dependency names), and never imports the engine: core runs
+   its rules, and the repository's tests validate it.
 2. **The directory is the contract.** What a pack must prove follows from which files it has. There is no separate
    validation manifest.
 3. **Every rule is proven.** By examples it must catch and let pass, or, for a rule ported from another tool, by that
@@ -34,8 +32,6 @@ packs/<id>/
 ├── LICENSE, NOTICE     the pack's licence and notice
 ├── rules/
 │   └── <rule id>.json  code-rule documents (rerail.policy/v1), each named for its id
-├── checks/
-│   └── <name>.mjs      match checks a `check` signal in pack.json names, when the pack has any
 ├── licenses/
 │   └── <project>/      upstream LICENSE (verbatim) and UPSTREAM.md (every copied or adapted file)
 │
@@ -66,10 +62,12 @@ packs/<id>/
 }
 ```
 
-- The core version range lives in `peerDependencies`, so npm warns when the installed core does not fit. It is a
-  declaration, not an import: a pack has no `dependencies`. The `-0` admits core's prereleases (`0.1.0-next.0`).
+- The core version range lives in `peerDependencies`. It is a declaration, not an import: a pack has no
+  `dependencies`. The `-0` admits core's prereleases (`0.1.0-next.0`). Rerail's catalog enforces it: an installed pack
+  whose range excludes the active core is left out ([rule packs](rule-packs.md#installing-packs)). npm does not, since
+  core is never installed beside the packs in `$RERAIL_HOME/packs`.
 - The peer is `optional`: `packs/*` are workspaces of this repository, whose root package is core itself, and npm
-  would otherwise try to install a published core into them. npm still checks the range when core is installed.
+  would otherwise try to install a published core into them.
 - `files` publishes the pack and its licence records. `conformance.json`, `divergences.json`, `upstream/` and
   `candidates/` are validation material: they stay in the repository and never reach npm, which keeps copied
   upstream tests out of the package.
@@ -154,7 +152,7 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 | 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
 | 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `restricted`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
 | 6 | Licences | A copied file is missing from an `UPSTREAM.md`; `reuse lint` or the licence allowlist fails |
-| 7 | Manifest | `pack.json` has no `match`, or its `match` fails the schema; a `check` signal's module is missing, `files` does not publish it, or it fails or does not answer within 5 s on an empty repository; core's generated pack list does not name the pack or is stale |
+| 7 | Manifest | `pack.json` has no `match`, or its `match` fails the schema; core's generated pack list does not name the pack or is stale |
 
 Precisely:
 
@@ -224,13 +222,9 @@ Precisely:
    (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. `reuse lint` and `node scripts/check/check-licenses.mjs`
    stay repository-wide gates in CI; annotate copied files in `REUSE.toml` as well, since `reuse lint` alone accepts
    a copied file the catch-all Apache-2.0 annotation covers.
-7. `match` must be present: without it set-up never recommends the pack. Each `check` signal's module must exist,
-   be published by a `files` entry (`checks` or one covering the file), and answer `{ matched: false }` or
-   `{ matched: true, paths }` when run by the matcher's runner (`runMatchCheck` in
-   `src/engine/catalog/rule-pack-matcher.ts`, under the permission model and `MATCH_CHECK_TIMEOUT_MS`) on an empty
-   repository. For a directory under `packs/`, `src/engine/catalog/pack-list.generated.ts` must list the pack's id and
-   equal what `npm run generate:packs` writes. Fixture packs elsewhere are not published, so no list names them;
-   `listed: true` checks the list for them too.
+7. `match` must be present: without it set-up never recommends the pack. For a directory under `packs/`,
+   `src/engine/catalog/pack-list.generated.ts` must list the pack's id and equal what `npm run generate:packs` writes.
+   Fixture packs elsewhere are not published, so no list names them; `listed: true` checks the list for them too.
 
 **Languages not supported yet.** A pack may hold code rules for a language core's
 [language registry](language-packs.md) lists as `planned`, or rules that read a capability their language has
@@ -315,7 +309,7 @@ repository allowlist are accepted.
 
 | Today | Becomes |
 |---|---|
-| Core's shipped complexity rules and their documents | `packs/complexity/pack.json` and `rules/`, still shipped in core's package until core loads installed packs |
+| Core's shipped complexity rules and their documents | `packs/complexity/pack.json` and `rules/`, published on their own; core ships no packs |
 | `conformance/languages/<lang>/pack.json`, `rules/`, `divergences.json` | `packs/<lang>/conformance.json`, `rules/` or `candidates/`, `divergences.json`, plus a `pack.json` |
 | `fixtures/<family>/rules/<tool>/` recordings, copied tests and recorders | `packs/<lang>/upstream/<tool>/`; for a language without rules yet, `fixtures/<family>/upstream/<tool>/` |
 | `fixtures/<family>/{candidates,probes,policies}/` | `packs/<lang>/candidates/` |

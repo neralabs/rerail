@@ -23,7 +23,6 @@ export { type AuditInput, type AuditRecorder, type AuditResult, isUnreadFailure,
 export { loadPackRuleDocuments } from "./catalog/rule-documents.js";
 export { installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "./catalog/rule-catalog.js";
 export { RULE_PACK_LIST } from "./catalog/pack-list.generated.js";
-export { MATCH_CHECK_TIMEOUT_MS, runMatchCheck, scanRepository } from "./catalog/rule-pack-matcher.js";
 export { ConversationRuleRegistry } from "./catalog/registry.js";
 export { repositoryIdentityLocation, resolveCloneId } from "./catalog/repository-identity.js";
 export {

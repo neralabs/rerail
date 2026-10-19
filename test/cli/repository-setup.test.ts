@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,7 +22,8 @@ import { setUpRepository } from "../../src/engine/index.js";
 import { noBrowserReason, runSetupCommand, type SetupIo } from "../../src/cli/setup-cli.js";
 import { ManagedUpdater } from "../../src/setup/index.js";
 import { directoryPackStore, repositoryPackVersions } from "../support/directory-pack-store.js";
-import { installPack, removeInstalledPacks } from "../support/installed-packs.js";
+import { installPack, installPackDirectory, removeInstalledPacks, uninstallPack } from "../support/installed-packs.js";
+import { repositoryPath } from "../support/oracles.js";
 import { attachPacks, fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
 
@@ -130,6 +131,8 @@ function failStarts(databasePath: string): void {
 const SETUP_TIMEOUT_MS = 30_000;
 /** The pack set-up offers the TypeScript fixture, at the version its "Yes" answer carries (`--packs`). */
 const TYPESCRIPT = repositoryPackVersions("typescript");
+/** What "Review them first" carries where set-up offers both TypeScript and complexity. */
+const TYPESCRIPT_AND_COMPLEXITY = repositoryPackVersions("typescript", "complexity");
 
 describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () => {
   it("asks before reading, changes nothing until yes, and repeats no side effect when an answer is run again", async () => {
@@ -181,7 +184,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     });
 
     const review = agentIo();
-    expect(await runSetup(review, request(setup, environment, { answer: "review", repo: setup.repo }))).toEqual({ status: "waiting" });
+    expect(await runSetup(review, request(setup, environment, { answer: "review", repo: setup.repo, packs: TYPESCRIPT_AND_COMPLEXITY }))).toEqual({ status: "waiting" });
     expect(review.text()).toContain("http://127.0.0.1:4737/#rule-packs?review=1");
     expect(review.text()).toContain(`rerail setup --answer start --repo ${setup.repo}`);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
@@ -207,7 +210,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const environment = fakeSetupEnvironment({
       onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["typescript"]) : undefined),
     });
-    await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo }));
+    await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo, packs: TYPESCRIPT }));
     expect(selected(setup)).toEqual(["typescript"]);
 
     const picked = agentIo();
@@ -215,6 +218,20 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
       .toMatchObject({ status: "started", ruleCount: 0 });
     expect(selected(setup)).toEqual([]);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
+  });
+
+  it("starts with only the packs the person chooses after the review, replacing those the review added", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment({
+      packs: directoryPackStore(undefined, ["typescript", "complexity"]),
+      onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["typescript", "complexity"]) : undefined),
+    });
+    await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo, packs: TYPESCRIPT_AND_COMPLEXITY }));
+    expect(selected(setup)).toEqual(["complexity", "typescript"]);
+
+    expect(await runSetup(agentIo(), request(setup, environment, { answer: "choose", repo: setup.repo, packs: repositoryPackVersions("complexity") })))
+      .toMatchObject({ status: "started" });
+    expect(selected(setup)).toEqual(["complexity"]);
   });
 
   it("just starts a repository that `rerail rules add` set up, keeping its rule and asking nothing", async () => {
@@ -272,7 +289,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
       packs: directoryPackStore(undefined, ["typescript", "complexity"]),
       onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["complexity"]) : undefined),
     });
-    await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo }));
+    await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo, packs: TYPESCRIPT_AND_COMPLEXITY }));
 
     const io = agentIo();
     const report = await startRerail(setup.repo, io, { databasePath: setup.databasePath, environment });
@@ -458,7 +475,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
       packs: directoryPackStore(undefined, ["typescript", "complexity"]),
       onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["typescript", "complexity"]) : undefined),
     });
-    await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo }));
+    await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo, packs: TYPESCRIPT_AND_COMPLEXITY }));
     failStarts(setup.databasePath);
 
     // Each pack is removed before the start fails; none of it stands.
@@ -515,7 +532,7 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
       onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["typescript"]) : undefined),
     });
     const review = agentIo();
-    await runSetup(review, request(setup, environment, { answer: "review", repo: setup.repo }));
+    await runSetup(review, request(setup, environment, { answer: "review", repo: setup.repo, packs: TYPESCRIPT }));
     expect(review.text()).toContain("eslint.config.ts is not statically readable: it exports no config Rerail can find (export default or module.exports). Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.");
     expect(review.text()).toContain(`${TYPE_DEFINITIONS} starts off  eslint.config.ts is not statically readable`);
     expect(review.text()).toContain(`${TSLINT_COMMENT} starts off  eslint.config.ts is not statically readable; .oxlintrc.json: "typescript/ban-tslint-comment": "off"`);
@@ -563,6 +580,24 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     writeFileSync(join(setup.repo, ".eslintrc.json"), JSON.stringify({ rules: { "@typescript-eslint/ban-tslint-comment": "off" } }));
     await runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "pick-myself", repo: setup.repo, packs: TYPESCRIPT }));
     expect(selected(setup)).toEqual(["typescript"]);
+    const database = openRerailDatabase(setup.databasePath, { readonly: true });
+    try {
+      expect(database.$client.prepare("SELECT COUNT(*) AS count FROM rule_settings").get()).toEqual({ count: 0 });
+    } finally {
+      database.$client.close();
+    }
+  });
+
+  it("takes nothing from the lint config when the person picks packs themselves after the review added packs", async () => {
+    const setup = await fixture();
+    writeFileSync(join(setup.repo, ".eslintrc.json"), JSON.stringify({ rules: { "@typescript-eslint/ban-tslint-comment": "off" } }));
+    const environment = fakeSetupEnvironment({
+      onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["typescript"]) : undefined),
+    });
+    await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo, packs: TYPESCRIPT }));
+    await runSetup(agentIo(), request(setup, environment, { answer: "pick-myself", repo: setup.repo, packs: TYPESCRIPT }));
+    expect(selected(setup)).toEqual(["typescript"]);
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
     const database = openRerailDatabase(setup.databasePath, { readonly: true });
     try {
       expect(database.$client.prepare("SELECT COUNT(*) AS count FROM rule_settings").get()).toEqual({ count: 0 });
@@ -818,13 +853,91 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
   });
 
-  it("starts nothing when npm has no such version of a pack its answer names", async () => {
+  it("asks the confirm question again, saying why and changing nothing, when npm has no such version of a pack its answer names", async () => {
     const setup = await fixture();
-    const environment = fakeSetupEnvironment();
-    await expect(runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: [{ id: "typescript", version: "9.9.9" }] })))
-      .rejects.toThrow("@neralabs/rerail-pack-typescript@9.9.9 is not in the registry");
+    const asked = agentIo();
+    expect(await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo, packs: [{ id: "typescript", version: "9.9.9" }] })))
+      .toEqual({ status: "waiting" });
+    expect(asked.text()).toContain("No matching version found for @neralabs/rerail-pack-typescript@9.9.9");
+    expect(asked.text()).toContain("Start Rerail in acme-api with this rule pack?");
     expect(loadRuleCatalog().packs.size).toBe(0);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
+  });
+
+  /** This repository's typescript pack installed at `version`, as `rerail packs add typescript@<version>` would; `range`: its core range. */
+  function installTypescriptAt(version: string, range?: string): void {
+    const copy = join(process.env.RERAIL_HOME!, "copies", version);
+    cpSync(repositoryPath("packs", "typescript"), copy, { recursive: true, filter: source => !source.includes("upstream") });
+    const manifest = JSON.parse(readFileSync(join(copy, "package.json"), "utf8")) as Record<string, unknown>;
+    writeFileSync(join(copy, "package.json"), JSON.stringify({ ...manifest, version, ...(range === undefined ? {} : { peerDependencies: { "@neralabs/rerail": range } }) }));
+    installPackDirectory(copy, "typescript");
+  }
+
+  it("refuses an answer that would replace an installed pack with an older version, and asks again", async () => {
+    const setup = await fixture();
+    installTypescriptAt("0.9.0");
+    const packs = countingStore(["typescript"]);
+    const asked = agentIo();
+    expect(await runSetup(asked, request(setup, fakeSetupEnvironment({ packs }), { answer: "start", repo: setup.repo, packs: TYPESCRIPT })))
+      .toEqual({ status: "waiting" });
+    expect(asked.text()).toContain(`typescript@${TYPESCRIPT[0]!.version} is older than the installed 0.9.0`);
+    expect(packs.installs).toEqual([]);
+    expect(loadRuleCatalog().packs.get("typescript")?.version).toBe("0.9.0");
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
+  });
+
+  it("asks again, saying why, when the installed copy of the version an answer names is left out", async () => {
+    const setup = await fixture();
+    installTypescriptAt(TYPESCRIPT[0]!.version, ">=9.0.0");
+    const packs = countingStore(["typescript"]);
+    const asked = agentIo();
+    expect(await runSetup(asked, request(setup, fakeSetupEnvironment({ packs }), { answer: "start", repo: setup.repo, packs: TYPESCRIPT })))
+      .toEqual({ status: "waiting" });
+    expect(asked.text()).toContain(`@neralabs/rerail-pack-typescript@${TYPESCRIPT[0]!.version} cannot be used:`);
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
+  });
+
+  it("installs only what the review answer carries, and nothing when the review is shown again", async () => {
+    const setup = await fixture();
+    const packs = countingStore(["typescript"]);
+    const environment = fakeSetupEnvironment({ packs });
+    await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo, packs: TYPESCRIPT }));
+    expect(packs.installs).toEqual([[`@neralabs/rerail-pack-typescript@${TYPESCRIPT[0]!.version}`]]);
+    uninstallPack("typescript");
+
+    // Shown again, by a plain re-run and by the review answer without packs: neither installs.
+    expect(await runSetup(agentIo(), request(setup, environment))).toEqual({ status: "waiting" });
+    expect(await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo }))).toEqual({ status: "waiting" });
+    expect(packs.installs).toHaveLength(1);
+    expect(loadRuleCatalog().packs.size).toBe(0);
+  });
+
+  it("asks, offering only None for now, when the person picks packs themselves and npm gives none", async () => {
+    const setup = await fixture();
+    const asked = agentIo();
+    expect(await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: countingStore([], ["typescript"]) }), { answer: "pick-myself", repo: setup.repo })))
+      .toEqual({ status: "waiting" });
+    expect(asked.text()).toContain("Set-up could not get any of Rerail’s rule packs.");
+    expect(asked.text()).toContain("@neralabs/rerail-pack-typescript: npm error code E401");
+    expect(asked.text()).toContain(`--answer pick-myself --repo ${setup.repo} --packs none`);
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
+  });
+
+  it("offers a pack installed at a newer version than npm's at that version, and never replaces it with an older one", async () => {
+    const setup = await fixture();
+    installTypescriptAt("0.9.0");
+    const asked = agentIo();
+    await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: setup.repo }));
+    expect(asked.text()).toContain("@neralabs/rerail-pack-typescript@0.9.0  installed already");
+    expect(asked.text()).toContain("--packs typescript@0.9.0");
+  });
+
+  it("says a pack a yes installs replaces an older installed version every repository uses", async () => {
+    const setup = await fixture();
+    installTypescriptAt("0.0.9");
+    const asked = agentIo();
+    await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: setup.repo }));
+    expect(asked.text()).toContain(`@neralabs/rerail-pack-typescript@${TYPESCRIPT[0]!.version}  replaces 0.0.9, which every repo on this computer uses`);
   });
 
   it("installs only the packs the person chooses at a terminal, by number or id, after one it does not know", async () => {
@@ -853,7 +966,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     const setup = await fixture();
     const asked = agentIo();
     await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: countingStore(["typescript"], ["complexity"]) }), { answer: "yes", repo: setup.repo }));
-    expect(asked.text()).toContain("Rule packs set-up could not get:\n    @neralabs/rerail-pack-complexity: npm error code E401");
+    expect(asked.text()).toContain("Rule packs set-up could not use:\n    @neralabs/rerail-pack-complexity: npm error code E401");
     expect(asked.text()).toContain("Start Rerail in acme-api with this rule pack?");
   });
 

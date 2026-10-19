@@ -46,11 +46,11 @@ const exampleSchema = z
  */
 export const RULE_PACK_RULE_ID = /^[a-z0-9][a-z0-9-]*$/u;
 
-/** A rule's code-rule document, relative to the pack directory: `rules/<id>.json`. */
-const documentPathSchema = z.string().regex(/^rules\/[^/]+\.json$/u, "must be rules/<id>.json");
-
-/** A pack's match check, relative to the pack directory: `checks/<name>.mjs`. */
-export const MATCH_CHECK_PATH = /^checks\/[^/]+\.mjs$/u;
+/**
+ * A rule's code-rule document, relative to the pack directory: `rules/<id>.json`. Only a plain name: a `\` or `..`
+ * would reach outside the pack on Windows, where `\` separates folders.
+ */
+const documentPathSchema = z.string().regex(/^rules\/[a-z0-9][a-z0-9-]*\.json$/u, "must be rules/<id>.json");
 
 const packRuleFields = {
   id: z.string().regex(RULE_PACK_RULE_ID, "must be lowercase letters, digits and dashes"),
@@ -67,7 +67,6 @@ const packRuleFields = {
 const signalSchema: z.ZodType<RulePackSignal> = z.union([
   z.object({ files: z.array(nonEmpty).min(1), exclude: z.array(nonEmpty).optional(), label: nonEmpty }).strict(),
   z.object({ dependencies: z.object({ ecosystem: z.enum(DEPENDENCY_ECOSYSTEMS), names: z.array(nonEmpty).min(1) }).strict() }).strict(),
-  z.object({ check: z.string().regex(MATCH_CHECK_PATH, "must be checks/<name>.mjs"), label: nonEmpty }).strict(),
 ]);
 
 const matchSchema: z.ZodType<RulePackMatch> = z.object({ any: z.array(signalSchema).min(1) }).strict();
@@ -197,24 +196,17 @@ function readPackageJson(directory: string, id: string): RulePackPackage | undef
   return parsed.data;
 }
 
-/** The pack's match with each check's path made absolute; throws on a malformed glob or a missing check. */
-function resolveMatch(directory: string, id: string, match: RulePackMatch): RulePackMatch {
-  return {
-    any: match.any.map(signal => {
-      if ("check" in signal) {
-        const check = join(directory, signal.check);
-        if (!existsSync(check)) throw new Error(`Rule pack ${id}: its match check ${signal.check} does not exist`);
-        return { ...signal, check };
-      }
-      if (!("files" in signal)) return signal;
-      try {
-        globPattern([...signal.files, ...(signal.exclude ?? [])]);
-      } catch (error) {
-        throw new Error(`Rule pack ${id}: ${(error as Error).message}`);
-      }
-      return signal;
-    }),
-  };
+/** The pack's match, checked: throws on a malformed glob, naming the pack. */
+function checkedMatch(id: string, match: RulePackMatch): RulePackMatch {
+  for (const signal of match.any) {
+    if (!("files" in signal)) continue;
+    try {
+      globPattern([...signal.files, ...(signal.exclude ?? [])]);
+    } catch (error) {
+      throw new Error(`Rule pack ${id}: ${(error as Error).message}`);
+    }
+  }
+  return match;
 }
 
 /** One listed rule read and checked: its document is named for its id, exists and carries that id. */
@@ -240,7 +232,7 @@ function readPackRule(directory: string, id: string, rule: RulePackFile["rules"]
 /**
  * The pack in `directory`, validated: `pack.json` parses, the npm package (when there is a `package.json`) is the
  * pack's, or else the directory is named for it, every rule's document is named for its id, exists and carries that
- * id, and its match checks exist. Throws an error naming the pack on the first problem.
+ * id, and its globs compile. Throws an error naming the pack on the first problem.
  */
 export function readRulePack(directory: string): LoadedRulePack {
   const path = join(directory, "pack.json");
@@ -253,7 +245,7 @@ export function readRulePack(directory: string): LoadedRulePack {
   }
   const file = parsed.data;
   const packageJson = readPackageJson(directory, file.id);
-  const match = resolveMatch(directory, file.id, file.match);
+  const match = checkedMatch(file.id, file.match);
   const rules = file.rules.map(rule => readPackRule(directory, file.id, rule));
   const pack: RulePack = {
     id: file.id,
@@ -302,8 +294,8 @@ export function rulePackIdOf(ruleId: string, packs: readonly RulePack[] = loadRu
 }
 
 /**
- * The packs that fit the repository at `repositoryRoot`, from its files and dependency manifests, and from each pack's
- * own check: no model, no network, and no list of what does not fit. A pack without a rule that starts on never fits.
+ * The packs that fit the repository at `repositoryRoot`, from its files and dependency manifests: no model, no
+ * network, no code from the packs, and no list of what does not fit. A pack without a rule that starts on never fits.
  * Languages come first, then frameworks, then repository packs. Each comes with the folder it belongs in (see
  * `RulePackRecommendation.folder`).
  */
@@ -327,7 +319,7 @@ const recommendationCache = new Map<string, { at: number; digest: string; recomm
  * `recommendRulePacks` over the installed packs, for the daemon, which answers synchronously: the scan blocks other
  * requests while it runs (about 0.3 to 0.5 s on a large repository), so a repository is scanned at most once per
  * `RECOMMENDATION_CACHE_MS` while the installed packs stay the same. A file added or removed within that window shows on
- * the next scan.
+ * the next scan; a pack installed or removed shows at once.
  */
 export function cachedRecommendRulePacks(repositoryRoot: string, now = Date.now()): RulePackRecommendation[] {
   const catalog = loadRuleCatalog();

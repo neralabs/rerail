@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { rulePackPackageName } from "../../src/engine/index.js";
 import type { PackStore } from "../../src/setup/index.js";
-import { installPackDirectory, uninstallPack } from "./installed-packs.js";
+import { fileSpecDirectory, installPackDirectory, uninstallPack } from "./installed-packs.js";
 import { repositoryPath } from "./oracles.js";
 
 export interface DirectoryPackStore extends PackStore {
@@ -36,6 +36,8 @@ export function directoryPackStore(packsRoot: string = repositoryPath("packs"), 
       return {
         fetched: ids.filter(id => versionOf(id) !== undefined).map(id => ({ id, directory: join(packsRoot, id) })),
         problems: ids.filter(id => versionOf(id) === undefined && only === undefined).map(id => ({ packageName: rulePackPackageName(id), reason: "npm error 404 Not Found" })),
+        // The packs are this repository's own directories: nothing to remove.
+        release: async () => {},
       };
     },
     async install(specs) {
@@ -44,7 +46,13 @@ export function directoryPackStore(packsRoot: string = repositoryPath("packs"), 
         const match = /^@neralabs\/rerail-pack-([a-z][a-z0-9-]*)@(.+)$/u.exec(spec);
         if (match === null) throw new Error(`directoryPackStore installs <package>@<version>, not ${spec}`);
         const [, id, version] = match;
-        if (versionOf(id!) !== version) throw new Error(`npm error 404 ${spec} is not in the registry`);
+        // What npm recorded for a pack added from a folder: put back as it was.
+        const folder = fileSpecDirectory(spec);
+        if (folder !== undefined) {
+          installPackDirectory(folder, id!);
+          continue;
+        }
+        if (versionOf(id!) !== version) throw new Error(`npm error code ETARGET\nnpm error notarget No matching version found for ${spec}.`);
         installPackDirectory(join(packsRoot, id!), id!);
       }
     },

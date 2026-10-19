@@ -198,6 +198,22 @@ describe("the installed-pack catalog", () => {
     expect([...loadRuleCatalog().packs.keys()]).toEqual(["valid"]);
   });
 
+  it("reads the packs again when the active core changes, checking their range against the new one", () => {
+    installPackDirectory(VALID, "valid");
+    expect([...loadRuleCatalog().packs.keys()]).toEqual(["valid"]);
+    // `rerail update` makes a core active whose version is outside the pack's range; the packs themselves are unchanged.
+    const current = join(process.env.RERAIL_HOME!, "current");
+    mkdirSync(current, { recursive: true });
+    writeFileSync(join(current, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "9.0.0" }));
+    try {
+      const catalog = loadRuleCatalog();
+      expect(catalog.packs.size).toBe(0);
+      expect(catalog.skipped.map(skipped => skipped.packageName)).toEqual(["@neralabs/rerail-pack-valid"]);
+    } finally {
+      rmSync(current, { recursive: true, force: true });
+    }
+  });
+
   it("reads the packs it is given without the core range unless asked", async () => {
     const directory = await copyPack(VALID);
     editJson(directory, "package.json", manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": ">=9.0.0" } }));

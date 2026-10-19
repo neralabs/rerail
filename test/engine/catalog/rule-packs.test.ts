@@ -13,7 +13,7 @@ import {
   rulePackRecommendationsSchema,
   DatabaseApiStores,
 } from "../../../src/api/index.js";
-import { globPattern, MATCH_CHECK_TIMEOUT_MS, scanRepository, signalEvidence } from "../../../src/engine/catalog/rule-pack-matcher.js";
+import { globPattern, scanRepository, signalEvidence } from "../../../src/engine/catalog/rule-pack-matcher.js";
 import {
   cachedRecommendRulePacks,
   RECOMMENDATION_CACHE_MS,
@@ -25,7 +25,7 @@ import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-document
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { MOCK_CONVERSATION_RULES } from "../../../src/cli/index.js";
-import { installPack } from "../../support/installed-packs.js";
+import { installPack, removeInstalledPacks } from "../../support/installed-packs.js";
 import { repositoryPath } from "../../support/oracles.js";
 
 const temporaryDirectories: string[] = [];
@@ -239,64 +239,6 @@ describe("dependency manifests", () => {
   });
 });
 
-describe("a pack's match check", () => {
-  /** A pack whose only signal is `checks/find.mjs` with `source` as its body. */
-  async function checkPack(id: string, source: string): Promise<string> {
-    const directory = writePack(await temporaryDirectory("rerail-check-pack-"), {
-      format: "rerail.rule-pack/v1", id, name: id, category: "framework", covers: "c", reason: "r",
-      match: { any: [{ check: "checks/find.mjs", label: "Vue single-file components" }] },
-      rules: [{ id: `${id}-cyclomatic`, document: `rules/${id}-cyclomatic.json`, title: "t", group: "g" }],
-    }, { [`rules/${id}-cyclomatic.json`]: { ...typescriptRule.rule, id: `${id}-cyclomatic` } });
-    writeFiles(directory, { "checks/find.mjs": source });
-    return directory;
-  }
-
-  async function vueRepository(): Promise<string> {
-    const root = await temporaryDirectory("rerail-check-repo-");
-    writeFiles(root, { "web/src/App.vue": "<template><div/></template>\n", "web/src/notes.vue": "plain\n", "README.md": "hi\n" });
-    return root;
-  }
-
-  it("runs the pack's own check against the repository and matches the files it reports, at their folder", async () => {
-    const pack = await checkPack("vue-sfc", [
-      "import { readFileSync } from 'node:fs';",
-      "import { join } from 'node:path';",
-      "export default ({ root, files }) => {",
-      "  const paths = files.filter(path => path.endsWith('.vue') && readFileSync(join(root, path), 'utf8').includes('<template>'));",
-      "  return paths.length === 0 ? { matched: false } : { matched: true, paths: [...paths, 'not/in/the/repository.vue'] };",
-      "};",
-    ].join("\n"));
-
-    expect(recommendRulePacks(await vueRepository(), readRulePacks([pack])).map(({ reason, folder }) => [reason, folder]))
-      .toEqual([["matches Vue single-file components in web/src", "web/src"]]);
-  });
-
-  it.each([
-    ["throws", "export default () => { throw new Error('no'); };"],
-    ["answers something else", "export default () => ({ matched: 'yes' });"],
-    ["writes a file, which the permission model refuses", "import { writeFileSync } from 'node:fs'; import { join } from 'node:path'; export default ({ root }) => { writeFileSync(join(root, 'written.txt'), 'x'); return { matched: true, paths: ['README.md'] }; };"],
-    ["starts a process, which the permission model refuses", "import { execFileSync } from 'node:child_process'; export default () => { execFileSync('true'); return { matched: true, paths: ['README.md'] }; };"],
-  ])("counts a check that %s as no match, and the other packs still match", async (_case, source) => {
-    const root = await vueRepository();
-    const failing = await checkPack("failing", source);
-    const working = await checkPack("working", "export default ({ files }) => ({ matched: true, paths: files.filter(path => path.endsWith('.vue')) });");
-
-    expect(recommendRulePacks(root, readRulePacks([failing, working])).map(({ pack: found }) => found.id)).toEqual(["working"]);
-    expect(existsSync(join(root, "written.txt"))).toBe(false);
-  });
-
-  it("counts a check that runs past its time as no match", async () => {
-    const pack = await checkPack("slow", "export default () => { for (;;) {} };");
-    expect(recommendRulePacks(await vueRepository(), readRulePacks([pack]))).toEqual([]);
-  }, MATCH_CHECK_TIMEOUT_MS + 10_000);
-
-  it("rejects a pack whose check does not exist, naming the pack", async () => {
-    const pack = await checkPack("missing", "");
-    rmSync(join(pack, "checks"), { recursive: true });
-    expect(() => readRulePacks([pack])).toThrow("Rule pack missing: its match check checks/find.mjs does not exist");
-  });
-});
-
 describe("the complexity pack's match", () => {
   const [complexity] = readRulePacks([complexityDirectory]);
   it.each([
@@ -436,6 +378,18 @@ describe("recommendRulePacks", () => {
     const rescanned = cachedRecommendRulePacks(root, RECOMMENDATION_CACHE_MS);
     expect(rescanned).not.toBe(first);
     expect(cachedRecommendRulePacks(root, 2 * RECOMMENDATION_CACHE_MS - 1)).toBe(rescanned);
+  });
+
+  it("scans again within the minute once a pack is installed", async () => {
+    const root = await temporaryDirectory("rerail-recommend-installed-");
+    writeFiles(root, { "app/main.ts": "export const one = 1;\n" });
+    try {
+      expect(cachedRecommendRulePacks(root, 0)).toEqual([]);
+      installPack("typescript");
+      expect(cachedRecommendRulePacks(root, 1).map(found => found.pack.id)).toEqual(["typescript"]);
+    } finally {
+      removeInstalledPacks();
+    }
   });
 
   it("reads no package.json that is a symlink, outside the repository or to a device, and none larger than 1 MiB", async () => {

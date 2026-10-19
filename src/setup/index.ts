@@ -9,4 +9,12 @@ export { ManagedUpdater, type UpdateResult, type UpdateStatus } from "./updater.
 export { codingAgentHome, codingAgentStates, registrationRoot } from "./coding-agents.js";
 export { registerHarnesses } from "./harness-registration.js";
 export { type Harness } from "./harness-registration.js";
-export { discoverPacks, npmPackStore, parsePackVersions, type PackDiscovery, type PackStore, type PackVersion } from "./rule-pack-store.js";
+export {
+  discoverPacks,
+  installPackVersions,
+  npmPackStore,
+  parsePackVersions,
+  type PackDiscovery,
+  type PackStore,
+  type PackVersion,
+} from "./rule-pack-store.js";

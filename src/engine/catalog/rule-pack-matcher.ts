@@ -1,7 +1,5 @@
-import { spawnSync } from "node:child_process";
 import { lstatSync, readdirSync, readFileSync, realpathSync, type Dirent } from "node:fs";
 import { dirname, join, posix, relative, sep } from "node:path";
-import { z } from "zod";
 import { withinCheckout } from "./checkout-control.js";
 import { readTomlStringLists } from "./lint-config-formats.js";
 import { IGNORED_DIRECTORIES } from "../code-rule/code-rule-enforcer.js";
@@ -11,7 +9,7 @@ import { compareDeterministicStrings } from "../stable-json.js";
 /**
  * The local half of rule pack matching: list a repository's files once, read its dependency manifests
  * (`package.json`, `requirements*.txt`, `pyproject.toml`, `composer.json`), and test each pack's match definition
- * against them. No model, no network, and no source text; a pack's own check reads only what it asks for.
+ * against them. No model, no network, no source text, and no code from the pack: a match is data.
  */
 
 export const DEPENDENCY_ECOSYSTEMS = ["npm", "pypi", "composer"] as const;
@@ -22,13 +20,7 @@ export type RulePackSignal =
   /** Files whose repository-relative path matches one of `files` and none of `exclude`; `label` names them in the reason. */
   | { files: readonly string[]; exclude?: readonly string[] | undefined; label: string }
   /** Any manifest of `ecosystem` in the repository that depends on one of `names`. */
-  | { dependencies: { ecosystem: DependencyEcosystem; names: readonly string[] } }
-  /**
-   * The pack's own check, `checks/<name>.mjs`: its default export gets `{ root, files }` and answers
-   * `{ matched: false }` or `{ matched: true, paths }`. In `pack.json` the path is relative to the pack; once the pack
-   * is read it is absolute. `label` names what it found in the reason.
-   */
-  | { check: string; label: string };
+  | { dependencies: { ecosystem: DependencyEcosystem; names: readonly string[] } };
 
 /** A pack fits a repository when any of its signals is present. */
 export interface RulePackMatch {
@@ -37,8 +29,6 @@ export interface RulePackMatch {
 
 /** What the matcher read from a repository. */
 export interface RepositoryScan {
-  /** The repository's root, which a pack's check may read. */
-  readonly root: string;
   /** Repository-relative paths with `/` separators, outside dependency and build-output directories. */
   readonly files: readonly string[];
   /** Per ecosystem, package name (normalised) to every manifest that depends on it, shallowest first, then by path. */
@@ -56,9 +46,6 @@ const DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "peerDependencies"
 const COMPOSER_FIELDS = ["require", "require-dev"] as const;
 /** A manifest larger than this is not one a person wrote; it is skipped unread. */
 const MAX_MANIFEST_BYTES = 1024 * 1024;
-/** How long a pack's check may run; one that runs longer counts as no match. */
-export const MATCH_CHECK_TIMEOUT_MS = 5_000;
-const MATCH_CHECK_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 /** A folder's entries, or none when the user cannot read it: such a folder says nothing about the stack. */
 function readableEntries(directory: string): Dirent[] {
@@ -254,7 +241,7 @@ export function scanRepository(root: string): RepositoryScan {
     const byName = dependencies.get(ecosystem)!;
     for (const name of new Set(manifestDependencies(root, path, ecosystem))) byName.set(name, [...(byName.get(name) ?? []), path]);
   }
-  return { root, files, dependencies };
+  return { files, dependencies };
 }
 
 /** How many characters the glob token at `index` spans: `**\/`, `**`, a whole `{…}` group, or one character. */
@@ -313,86 +300,8 @@ function commonDirectory(paths: readonly string[]): string {
 }
 
 /**
- * The module a pack's check runs in: its own Node process, under the permission model, so it reads only the
- * repository and the pack and can write nothing, start no process or worker and load no addon. The model denies the
- * network only from Node 25; under Node 24 a check could reach it, which is why only `@neralabs` packs, installed
- * without scripts, are fetched. It reads `{ check, root, files }` on stdin and writes the check's answer on stdout.
- */
-const MATCH_CHECK_RUNNER = [
-  "import { readFileSync } from 'node:fs';",
-  "import { pathToFileURL } from 'node:url';",
-  "const input = JSON.parse(readFileSync(0, 'utf8'));",
-  "const check = (await import(pathToFileURL(input.check).href)).default;",
-  "if (typeof check !== 'function') throw new Error('its default export is not a function');",
-  "process.stdout.write(JSON.stringify((await check({ root: input.root, files: input.files })) ?? null));",
-].join("\n");
-
-const checkResults = new WeakMap<RepositoryScan, Map<string, readonly string[]>>();
-
-/** What a pack's check answers. */
-const checkAnswerSchema = z.union([
-  z.object({ matched: z.literal(false) }),
-  z.object({ matched: z.literal(true), paths: z.array(z.string()) }),
-]);
-
-/** The error a failed check printed (`Error: …`, the permission model's refusal), else its last line. */
-function checkFailure(stderr: string, status: number | null): string {
-  const lines = stderr.split("\n").map(line => line.trim()).filter(line => line !== "");
-  return lines.find(line => /^[A-Za-z]*(?:Error|Exception)\b/u.test(line)) ?? lines.at(-1) ?? `it exited with ${String(status)}`;
-}
-
-/**
- * The paths a check's run reports, or the problem that makes it count as no match. The check is given the repository's
- * real path, the one the permission model lets it read. The pack validator runs it too, on an empty repository.
- */
-export function runMatchCheck(check: string, scan: RepositoryScan): { paths: readonly string[] } | { problem: string } {
-  const root = realpathSync(scan.root);
-  const run = spawnSync(process.execPath, [
-    "--permission",
-    `--allow-fs-read=${root}`,
-    `--allow-fs-read=${realpathSync(dirname(dirname(check)))}`,
-    "--input-type=module",
-    "--eval", MATCH_CHECK_RUNNER,
-  ], {
-    input: JSON.stringify({ check: realpathSync(check), root, files: scan.files }),
-    encoding: "utf8",
-    timeout: MATCH_CHECK_TIMEOUT_MS,
-    maxBuffer: MATCH_CHECK_OUTPUT_BYTES,
-  });
-  if (run.error !== undefined) return { problem: run.error.message };
-  if (run.status !== 0) return { problem: checkFailure(run.stderr, run.status) };
-  let output: unknown;
-  try {
-    output = JSON.parse(run.stdout);
-  } catch {
-    return { problem: "it wrote no JSON answer" };
-  }
-  const answer = checkAnswerSchema.safeParse(output);
-  if (!answer.success) return { problem: "it did not answer { matched: false } or { matched: true, paths: [...] }" };
-  return { paths: answer.data.matched ? answer.data.paths : [] };
-}
-
-/**
- * The files a pack's check found, those of them in the scan; none when it does not match. A check that fails, runs
- * past `MATCH_CHECK_TIMEOUT_MS` or answers anything else counts as no match, and is reported on stderr. One run per
- * check per scan.
- */
-function checkEvidence(check: string, scan: RepositoryScan): readonly string[] {
-  let results = checkResults.get(scan);
-  if (results === undefined) checkResults.set(scan, results = new Map());
-  const known = results.get(check);
-  if (known !== undefined) return known;
-  const run = runMatchCheck(check, scan);
-  if ("problem" in run) process.stderr.write(`rerail: the rule pack check ${check} counts as no match: ${run.problem}\n`);
-  const files = new Set(scan.files);
-  const evidence = "problem" in run ? [] : [...new Set(run.paths)].filter(path => files.has(path)).sort(compareDeterministicStrings);
-  results.set(check, evidence);
-  return evidence;
-}
-
-/**
- * The repository-relative files that make `signal` present: every manifest that depends on one of its packages,
- * every file its globs match, or the files the pack's check found. Empty when the signal is absent.
+ * The repository-relative files that make `signal` present: every manifest that depends on one of its packages, or
+ * every file its globs match. Empty when the signal is absent.
  */
 export function signalEvidence(signal: RulePackSignal, scan: RepositoryScan): readonly string[] {
   if ("dependencies" in signal) {
@@ -400,7 +309,6 @@ export function signalEvidence(signal: RulePackSignal, scan: RepositoryScan): re
     const byName = scan.dependencies.get(ecosystem);
     return [...new Set(names.flatMap(name => byName?.get(normalizeDependencyName(ecosystem, name)) ?? []))];
   }
-  if ("check" in signal) return checkEvidence(signal.check, scan);
   const include = globPattern(signal.files);
   const exclude = signal.exclude === undefined || signal.exclude.length === 0 ? undefined : globPattern(signal.exclude);
   return scan.files.filter(path => include.test(path) && exclude?.test(path) !== true);

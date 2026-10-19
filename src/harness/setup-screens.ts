@@ -32,8 +32,8 @@ export interface RecommendedPack {
   /** The npm package and exact version set-up installs once the person says yes. */
   readonly packageName: string;
   readonly version: string;
-  /** That version is installed already. */
-  readonly installed: boolean;
+  /** The version installed now, if any. Every repository on this computer runs it, so installing another replaces it there too. */
+  readonly installed: string | null;
 }
 
 /** A rule pack "Choose rule packs…" offers: every one set-up fetched, matched or not. */
@@ -99,7 +99,7 @@ const PLAIN_STYLE: Style = { brand: plain, dim: plain, bold: plain, red: plain, 
 const styleFor = (lane: SetupLane): Style => (lane === "terminal" ? TERMINAL_STYLE : PLAIN_STYLE);
 
 /** Repo names, reasons and paths come from disk; never let them carry escape sequences. */
-const clean = (value: string): string => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
+export const clean = (value: string): string => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
 
 const MASCOT_HAPPY = ">^ᴥ^<";
 const LABEL_WIDTH = 15;
@@ -345,12 +345,19 @@ function packTable(packs: readonly RecommendedPack[], style: Style): string[] {
   return [header, ...rows];
 }
 
+/** What the installed copy of a pack becomes: kept, or replaced for every repository on this computer. */
+function installedNote(pack: RecommendedPack, style: Style): string {
+  if (pack.installed === null) return "";
+  if (pack.installed === pack.version) return `  ${style.dim("installed already")}`;
+  return `  ${style.yellow(`replaces ${clean(pack.installed)}, which every repo on this computer uses`)}`;
+}
+
 /** What "Yes" installs, one npm package per line, so the person sees exactly what lands on their machine. */
 function installLines(packs: readonly RecommendedPack[], style: Style): string[] {
   if (packs.length === 0) return [];
   return [
     "  Installs from npm once you say yes:",
-    ...packs.map(pack => `    ${clean(pack.packageName)}@${clean(pack.version)}${pack.installed ? `  ${style.dim("installed already")}` : ""}`),
+    ...packs.map(pack => `    ${clean(pack.packageName)}@${clean(pack.version)}${installedNote(pack, style)}`),
   ];
 }
 
@@ -359,7 +366,7 @@ function unavailableLines(unavailable: readonly string[] | undefined, style: Sty
   const shown = unavailable.length > MAX_UNAVAILABLE_LINES ? unavailable.slice(0, MAX_UNAVAILABLE_LINES - 1) : unavailable;
   const more = unavailable.length - shown.length;
   return [
-    "  Rule packs set-up could not get:",
+    "  Rule packs set-up could not use:",
     ...shown.map(problem => `    ${style.dim(clean(problem))}`),
     ...(more === 0 ? [] : [`    …and ${more} more.`]),
   ];
@@ -417,7 +424,8 @@ function confirmQuestion(input: RecommendedPacksInput, prompt: string, lead: rea
         answer: "choose",
         label: "Choose rule packs…",
         hint: "only some, or others",
-        args: [SETUP_FLAGS.answer, "start", ...repoFlag],
+        // Its own answer: after the dashboard's review, the packs chosen replace those the review added.
+        args: [SETUP_FLAGS.answer, "choose", ...repoFlag],
         input: { flag: SETUP_FLAGS.packs, prompt: "Which rule packs should Rerail install?", hint: `comma-separated, from: ${available}`, placeholder: "<packs>" },
         agentText: command => `To choose the rule packs: ${command}, with comma-separated packs from: ${available}.`,
       },
@@ -705,21 +713,23 @@ export interface PickPacksInput {
 /**
  * E4, before it starts: every rule pack set-up fetched, to pick from. The repository is not read, so a pack picked
  * here is added for the whole repository; "None for now" starts Rerail with none, as E4 did before packs were fetched.
+ * With nothing fetched, the question says why and offers only "None for now".
  */
 export function pickPacksQuestion(input: PickPacksInput, lane: SetupLane): QuestionForm {
   const style = styleFor(lane);
   const repoFlag = [SETUP_FLAGS.repo, clean(input.repoPath)];
   const available = packList(input.available);
+  const none = { answer: "none", label: "None for now", hint: "add rule packs later", args: [SETUP_FLAGS.answer, "pick-myself", ...repoFlag, SETUP_FLAGS.packs, NO_PACKS] };
   return {
     id: "pick-packs",
     lead: [
-      "  Rerail’s rule packs, from npm:",
+      input.available.length === 0 ? "  Set-up could not get any of Rerail’s rule packs." : "  Rerail’s rule packs, from npm:",
       ...input.available.map(pack => `    ${withHint(`${clean(pack.id)}@${clean(pack.version)}  ${clean(pack.name)}`, pack.reason === undefined ? undefined : clean(pack.reason), style)}`),
       ...unavailableLines(input.unavailable, style),
     ],
     prompt: `Which rule packs should Rerail start with in ${clean(input.repoName)}?`,
     trail: ["Each one you pick is installed from npm and added for the whole repo. Nothing is installed until you pick."],
-    choices: [
+    choices: input.available.length === 0 ? [none] : [
       {
         answer: "choose",
         label: "Choose rule packs…",
@@ -727,7 +737,7 @@ export function pickPacksQuestion(input: PickPacksInput, lane: SetupLane): Quest
         input: { flag: SETUP_FLAGS.packs, prompt: "Which rule packs should Rerail install?", hint: `comma-separated, from: ${available}`, placeholder: "<packs>" },
         agentText: command => `To choose the rule packs: ${command}, with comma-separated packs from: ${available}.`,
       },
-      { answer: "none", label: "None for now", hint: "add rule packs later", args: [SETUP_FLAGS.answer, "pick-myself", ...repoFlag, SETUP_FLAGS.packs, NO_PACKS] },
+      none,
     ],
     ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
   };

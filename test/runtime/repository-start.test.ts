@@ -20,7 +20,6 @@ import {
   isRerailStarted,
   readOnlyStartState,
   sessionNoteRules,
-  setUpWithRecommendedPacks,
   startStateReader,
   stopRerail,
   workspaceSetUp,
@@ -175,27 +174,6 @@ describe("repository start state", () => {
     stopRerail(main, recorder(), { databasePath });
     expect(await startRerail(main, recorder(), started(databasePath))).toMatchObject({ setUpRan: false, ruleCount: 0 });
     expect(attachedPacks(main, databasePath)).toEqual([]);
-  });
-
-  it("sets a repository up without asking with its recommended packs (none installed), starting it only when nobody started or stopped it", async () => {
-    const root = await temporary("rerail-start-auto-");
-    const databasePath = join(root, "rerail.sqlite");
-    const fresh = gitRepository(join(root, "fresh"));
-    const stopped = gitRepository(join(root, "stopped"));
-    for (const checkout of [fresh, stopped]) writeFiles(checkout, { "web/src/main.tsx": "export {};\n" });
-    startTestRepository(stopped, databasePath);
-    stopRerail(stopped, recorder(), { databasePath, repository: true });
-
-    const database = openRerailDatabase(databasePath);
-    try {
-      expect(setUpWithRecommendedPacks(database, recordCheckout(database, fresh))).toEqual([]);
-      expect(setUpWithRecommendedPacks(database, recordCheckout(database, stopped))).toEqual([]);
-    } finally {
-      database.$client.close();
-    }
-    expect(workspaceStartState(fresh, databasePath)).toBe("started");
-    expect(workspaceStartState(stopped, databasePath)).toBe("stopped");
-    expect(attachedPacks(fresh, databasePath)).toEqual([]);
   });
 
   it("takes a checkout's own value, then the nearest containing checkout's, then the repository's", async () => {

@@ -3,8 +3,7 @@
  * `packs/<id>/` directory. Test support, not runtime: test/engine/catalog/packs.test.ts calls it for every pack, and it reuses the
  * conformance runner for ported rules, so it lives beside that runner and stays out of the published core.
  */
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { basename, dirname, join, matchesGlob, posix, relative, resolve, sep } from "node:path";
 import { z } from "zod";
@@ -22,10 +21,7 @@ import {
   type RulePackFile,
   compareDeterministicStrings,
   LANGUAGE_REGISTRY,
-  MATCH_CHECK_TIMEOUT_MS,
   RULE_PACK_LIST,
-  runMatchCheck,
-  scanRepository,
 } from "../src/engine/index.js";
 import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
 import { CONFORMANCE_FILE, defaultCorpusRoot, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
@@ -423,11 +419,10 @@ function readAuthored(directory: string): { authored: Set<string>; failures: str
 const PACK_LIST_MODULE = "src/engine/catalog/pack-list.generated.ts";
 
 /**
- * Check 7 (manifest): `pack.json` has a `match`, every `check` signal's module exists, `files` publishes it and it
- * answers on an empty repository within the matcher's timeout, run by the matcher's own runner; and, when `listed`,
- * core's generated pack list is current and names the pack. `published` is undefined when package.json fails check 5.
+ * Check 7 (manifest): `pack.json` has a `match`, so set-up can recommend the pack; and, when `listed`, core's
+ * generated pack list is current and names the pack.
  */
-function manifestFailures(directory: string, packJson: unknown, published: readonly string[] | undefined, listed: boolean): string[] {
+function manifestFailures(directory: string, packJson: unknown, listed: boolean): string[] {
   const failures: string[] = [];
   const id = basename(directory);
   if (listed) {
@@ -437,26 +432,7 @@ function manifestFailures(directory: string, packJson: unknown, published: reado
   if (packJson === undefined) return [...failures, "pack.json does not parse; see check 1"];
   const raw = z.looseObject({ match: z.unknown() }).safeParse(packJson);
   if (!raw.success || raw.data.match === undefined) return [...failures, "pack.json has no match: set-up could never recommend this pack"];
-  const match = rulePackFileSchema.shape.match.safeParse(raw.data.match);
-  if (!match.success) return [...failures, "pack.json: match does not pass the schema; see check 1"];
-  const checks = match.data.any.flatMap(signal => ("check" in signal ? [signal.check] : []));
-  if (checks.length === 0) return failures;
-  const empty = mkdtempSync(join(tmpdir(), "rerail-pack-check-"));
-  try {
-    const scan = scanRepository(empty);
-    for (const check of checks) {
-      if (!existsSync(join(directory, check))) {
-        failures.push(`match check ${check} does not exist`);
-        continue;
-      }
-      if (published !== undefined && !published.some(file => publishes(file, check))) failures.push(`match check ${check}: package.json files does not publish it`);
-      const run = runMatchCheck(join(directory, check), scan);
-      if ("problem" in run)
-        failures.push(`match check ${check} fails on an empty repository, where it must answer within ${MATCH_CHECK_TIMEOUT_MS / 1000} s: ${run.problem}`);
-    }
-  } finally {
-    rmSync(empty, { recursive: true, force: true });
-  }
+  if (!rulePackFileSchema.shape.match.safeParse(raw.data.match).success) return [...failures, "pack.json: match does not pass the schema; see check 1"];
   return failures;
 }
 
@@ -641,8 +617,6 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   // dependencies, no validation material published, licence agreeing with what licenses/ records.
   const licences = readLicences(directory);
   const packagePath = join(directory, "package.json");
-  /** What package.json `files` publishes, once it passes the schema: check 7 reads it for the match checks. */
-  let published: readonly string[] | undefined;
   if (!existsSync(packagePath)) fail("package", "package.json is missing");
   else {
     let raw: unknown;
@@ -658,7 +632,6 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     if (parsed !== undefined && !parsed.success) fail("package", `package.json: ${z.prettifyError(parsed.error)}`);
     if (parsed?.success === true) {
       const manifest = parsed.data;
-      published = manifest.files;
       if (manifest.name !== rulePackPackageName(id)) fail("package", `package.json: name is ${manifest.name}, not ${rulePackPackageName(id)}`);
       const repository = { type: "git", url: repositoryUrl(), directory: `packs/${id}` };
       if (!isDeepStrictEqual(manifest.repository, repository))
@@ -699,9 +672,8 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     if (!existsSync(join(directory, file))) fail("licences", `${record} lists ${file}, which does not exist`);
   }
 
-  // Check 7: manifest. Set-up can recommend the pack: its match is there and every check it runs answers, and core's
-  // pack list names it.
-  for (const failure of manifestFailures(directory, packJson, published, options.listed ?? resolve(dirname(directory)) === PACKS_DIRECTORY)) fail("manifest", failure);
+  // Check 7: manifest. Set-up can recommend the pack: its match is there, and core's pack list names it.
+  for (const failure of manifestFailures(directory, packJson, options.listed ?? resolve(dirname(directory)) === PACKS_DIRECTORY)) fail("manifest", failure);
 
   const rules = (pack?.rules ?? []).map((rule): PackRuleResult => {
     const failures = ruleFailures.get(rule.id) ?? [];

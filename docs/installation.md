@@ -212,7 +212,7 @@ the lint config, even for the packs the person then picks.
 **Without a terminal** (stdin or stdout is not a TTY, as when a coding agent
 runs it), or with `--relay`, each run prints the next question for the coding
 agent to relay, as written, with one command per answer, and exits 0. The
-coding agent runs set-up again with the person's answer: `--answer <yes|other-folder|pick-myself|start|review|other|skip>`,
+coding agent runs set-up again with the person's answer: `--answer <yes|other-folder|pick-myself|start|review|choose|other|skip>`,
 `--repo <folder>`, `--agents <ids>` (`omp,pi,claude-code,codex,cursor`) and
 `--packs <id@version,…>` (the exact versions an answer installs; `none` for
 none).
@@ -322,9 +322,9 @@ holding each repository's rule configuration, the rules you created, and the
 sessions, events, and work links of every repository on the machine; each
 session is attributed to its repository (`rerail status` names the file). The
 daemon serves every repository; its pages are scoped to one with
-`?repository=<key>&checkout=<path>`. The rules that ship with Rerail are read
-from the package and run only in repositories that add them (see
-[Rule scoping](rule-scoping.md)).
+`?repository=<key>&checkout=<path>`. The rules of the rule packs you install
+(`$RERAIL_HOME/packs`, see [Rule packs](rule-packs.md#installing-packs)) run only
+in repositories that add them (see [Rule scoping](rule-scoping.md)).
 `rerail update` first copies the database to `~/.rerail/rerail.sqlite.pre-update`
 (kept only when the update changes the version, and recorded with that change), and
 `rerail update rollback` puts that copy back when rolling that change back and the

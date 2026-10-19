@@ -70,10 +70,10 @@ export interface RuleCatalogOptions {
   readonly compile?: boolean;
 }
 
-/** Why `loaded` cannot join a catalog that already holds `owner`'s rules, or undefined when it can. */
-function packProblem(loaded: LoadedRulePack, owner: ReadonlyMap<string, string>, options: RuleCatalogOptions): string | undefined {
+/** Why `loaded` cannot join a catalog that already holds the packs `loadedIds` and their rules `owner`, or undefined. */
+function packProblem(loaded: LoadedRulePack, loadedIds: ReadonlySet<string>, owner: ReadonlyMap<string, string>, options: RuleCatalogOptions): string | undefined {
   const { pack, packageJson } = loaded;
-  if ([...owner.values()].includes(pack.id)) return `another pack ${pack.id} is already loaded`;
+  if (loadedIds.has(pack.id)) return `another pack ${pack.id} is already loaded`;
   if (options.coreVersion !== undefined) {
     if (packageJson === undefined) return `pack ${pack.id} has no package.json naming the core versions it fits`;
     const range = packageJson.peerDependencies[RERAIL_PACKAGE_NAME];
@@ -146,7 +146,7 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
       skipped.push(skippedPack(directory, error instanceof Error ? error.message : String(error)));
       continue;
     }
-    let problem = packProblem(pack, owner, options);
+    let problem = packProblem(pack, new Set(loaded.map(entry => entry.pack.id)), owner, options);
     if (problem === undefined && compile) {
       try {
         problem = compileProblem(pack);
@@ -173,8 +173,12 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
   };
 }
 
-/** A cheap stamp of what is installed: changes when npm installs, removes or updates a pack, or a pack's files move. */
-function installedStamp(home: string, directories: readonly string[]): string {
+/**
+ * A cheap stamp of what is installed and what checks it: changes when npm installs, removes or updates a pack, a pack's
+ * files move, or another core version becomes active (its range decides which packs load). It does not see an edit to
+ * a rule document inside a pack linked from a folder (`rerail packs add <folder>`); touch its `pack.json` to reload.
+ */
+function installedStamp(home: string, directories: readonly string[], coreVersion: string): string {
   const stamp = (path: string): string => {
     try {
       const info = statSync(path);
@@ -184,22 +188,23 @@ function installedStamp(home: string, directories: readonly string[]): string {
     }
   };
   const lock = join(installedPacksPrefix(home), "node_modules", ".package-lock.json");
-  return [home, stamp(lock), ...directories.flatMap(directory => [directory, stamp(join(directory, "package.json")), stamp(join(directory, "pack.json"))])].join("\0");
+  return [home, coreVersion, stamp(lock), ...directories.flatMap(directory => [directory, stamp(join(directory, "package.json")), stamp(join(directory, "pack.json"))])].join("\0");
 }
 
 let installed: { readonly stamp: string; readonly catalog: RuleCatalog } | undefined;
 
 /**
- * The catalog of the packs installed in the Rerail home, checked against the active core and the engine. It is read
- * again whenever the installed packs change (`rerail packs add`, `remove`, or set-up installing them), so a running
- * daemon and every catalog built on it follow an install without a restart; otherwise each call returns the same one.
+ * The catalog of the packs installed in the Rerail home `home`, checked against its active core and the engine. It is
+ * read again whenever the installed packs or the active core change (`rerail packs add`, `remove`, set-up installing
+ * them, `rerail update`), so a running daemon and every catalog built on it follow an install without a restart;
+ * otherwise each call returns the same one.
  */
-export function loadRuleCatalog(): RuleCatalog {
-  const home = defaultRerailHome();
+export function loadRuleCatalog(home: string = defaultRerailHome()): RuleCatalog {
   const directories = installedPackDirectories(home);
-  const stamp = installedStamp(home, directories);
+  const coreVersion = activeCoreVersion(home);
+  const stamp = installedStamp(home, directories, coreVersion);
   if (installed?.stamp !== stamp) {
-    installed = { stamp, catalog: readRuleCatalog(directories, { coreVersion: activeCoreVersion(home), compile: true }) };
+    installed = { stamp, catalog: readRuleCatalog(directories, { coreVersion, compile: true }) };
   }
   return installed.catalog;
 }

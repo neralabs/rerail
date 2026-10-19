@@ -6,8 +6,7 @@
  *
  * The validator's own tests run it over the fixture packs in fixtures/packs/: `valid` passes, each negative
  * breaks one check of a copy of it, `exemplar`, for the test-only planned language, passes with its rule not supported
- * yet, `empty`, whose ports are all candidates, passes with no rules, and `match-check`, whose match is its own
- * executable check, passes check 7 and copies of it fail it.
+ * yet, and `empty`, whose ports are all candidates, passes with no rules.
  */
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -361,13 +360,6 @@ describe("validatePack", () => {
   });
 
   describe("check 7: manifest", () => {
-    const CHECK = "checks/gemfile.mjs";
-
-    it("passes a pack whose match is its own check, published and answering on an empty repository", async () => {
-      const validation = await validatePack(join(FIXTURES, "match-check"), { corpora: false });
-      expect(failing(validation)).toEqual({});
-    });
-
     it("fails a pack.json without match, as a manifest failure besides check 1's schema failure", async () => {
       const validation = await validatePack(changed("valid", directory => editJson(join(directory, "pack.json"), ({ match: _match, ...pack }) => pack)), { corpora: false });
       expect(failing(validation)).toEqual({
@@ -378,33 +370,9 @@ describe("validatePack", () => {
       });
     });
 
-    const cases: [string, (directory: string) => void, string][] = [
-      ["a check module that does not exist", directory => rmSync(join(directory, CHECK)), `match check ${CHECK} does not exist`],
-      [
-        "a check module package.json files does not publish",
-        directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, files: z.array(z.string()).parse(manifest.files).filter(file => file !== "checks") })),
-        `match check ${CHECK}: package.json files does not publish it`,
-      ],
-      [
-        "a check that throws on an empty repository",
-        directory => writeFileSync(join(directory, CHECK), 'export default () => { throw new Error("no Gemfile reader"); };\n'),
-        `match check ${CHECK} fails on an empty repository, where it must answer within 5 s: Error: no Gemfile reader`,
-      ],
-      [
-        "a check that answers neither matched nor not",
-        directory => writeFileSync(join(directory, CHECK), "export default () => ({ found: true });\n"),
-        `match check ${CHECK} fails on an empty repository, where it must answer within 5 s: it did not answer { matched: false } or { matched: true, paths: [...] }`,
-      ],
-    ];
-
-    it.each(cases)("fails %s", async (_name, change, expected) => {
-      const validation = await validatePack(changed("match-check", change), { corpora: false });
-      expect(failing(validation)).toEqual({ manifest: [expected] });
-    });
-
     it("fails a pack core's generated pack list does not name, when it must be listed", async () => {
-      const validation = await validatePack(join(FIXTURES, "match-check"), { corpora: false, listed: true });
-      expect(failing(validation)).toEqual({ manifest: ["src/engine/catalog/pack-list.generated.ts does not list match-check; run npm run generate:packs"] });
+      const validation = await validatePack(join(FIXTURES, "valid"), { corpora: false, listed: true });
+      expect(failing(validation)).toEqual({ manifest: ["src/engine/catalog/pack-list.generated.ts does not list valid; run npm run generate:packs"] });
     });
   });
 

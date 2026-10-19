@@ -296,7 +296,8 @@ jobs:
 
   # Rule packs installed from npm, against the registry: set-up on a project outside this repository, and
   # `rerail packs` upgrading, downgrading and removing a published pack (integration/installed-packs.test.ts).
-  # NPM_PACKS_READ_TOKEN is a read-only granular token for the restricted @neralabs packs.
+  # NPM_PACKS_READ_TOKEN is a read-only granular token for the restricted @neralabs packs. Only the steps that check it
+  # and read the packs get it; `npm ci` and the build run without it.
   installed-packs:
     name: Rule packs installed from npm
     needs: build
@@ -311,11 +312,10 @@ jobs:
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
-      RERAIL_INSTALLED_PACKS_NPM: "1"
     steps:
       - name: Require the npm read token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
         run: |
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
             echo "::error::Reading the restricted rule packs needs the repository secret NPM_PACKS_READ_TOKEN"
@@ -334,11 +334,14 @@ jobs:
         with:
           built: "true"
 
-      # npm reads the token from the environment; the file names no secret.
+      # The file names the variable, not the token: npm reads NODE_AUTH_TOKEN from the step that runs it.
       - name: Authenticate npm to read the packs
         run: printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
 
       - name: Rule packs from npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+          RERAIL_INSTALLED_PACKS_NPM: "1"
         run: npx vitest run integration/installed-packs.test.ts
 
   tools:

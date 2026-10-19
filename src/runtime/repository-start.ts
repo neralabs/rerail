@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { and, asc, eq, getTableName, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, getTableName, inArray, isNotNull, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import type { CheckoutContext, RepositoryKey, RepositoryStartState, RepositoryStatus } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
@@ -12,9 +12,8 @@ import {
   parentCheckouts,
   recordCheckout,
 } from "../engine/catalog/repository-registry.js";
-import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
+import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
-import { recommendRulePacks, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
 import { checkouts, events, repositories, sessions } from "../engine/storage/schema.js";
 import { clearSetupReview, setupReviewOffered } from "../engine/catalog/setup-review.js";
 import type { RerailHost } from "../engine/adapter-contract.js";
@@ -202,25 +201,6 @@ export function awaitingStartAfterReview(db: Reader, repositoryKey: RepositoryKe
   if (repository?.configuredAt == null || repository.started !== null || !setupReviewOffered(db, repositoryKey)) return false;
   return db.select({ path: checkouts.checkoutPath }).from(checkouts)
     .where(and(eq(checkouts.repositoryKey, repositoryKey), isNotNull(checkouts.started))).get() === undefined;
-}
-
-/** Set `checkout`'s repository up with `recommendations`, each pack at its recommended folder. */
-function setUpWith(database: RerailDatabase, checkout: CheckoutContext, recommendations: readonly RulePackRecommendation[], now: number) {
-  const packs = recommendations.map(({ pack, folder }) => ({ packId: pack.id, folder }));
-  setUpRepository(database, checkout.repositoryKey, { packs }, now);
-  return packs;
-}
-
-/**
- * Set `checkout`'s repository up with the rule packs recommended for the checkout, each at its folder, without
- * asking (the dashboard's "Set up with recommended packs"). A repository nobody
- * started or stopped is started; an explicit start or stop is kept. Returns the packs added.
- */
-export function setUpWithRecommendedPacks(database: RerailDatabase, checkout: CheckoutContext, now = Date.now()): readonly { packId: string; folder: string }[] {
-  const packs = setUpWith(database, checkout, recommendRulePacks(checkout.checkoutPath), now);
-  database.update(repositories).set({ started: true, updatedAt: now })
-    .where(and(eq(repositories.repositoryKey, checkout.repositoryKey), isNull(repositories.started))).run();
-  return packs;
 }
 
 /** Start or stop a repository as a whole: its own value, with every checkout's own setting cleared. */

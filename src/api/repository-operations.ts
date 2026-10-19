@@ -540,7 +540,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "rule_packs_recommend",
     method: "GET",
     path: "/api/rule-packs/recommendations",
-    summary: "Recommend rule packs for a repository by matching a checkout's files and package.json dependencies against each pack, each with the folder to add it in (the whole repository for repository packs). Local; changes nothing. A checkout is rescanned at most once a minute.",
+    summary: "Recommend installed rule packs for a repository by matching a checkout's files and dependency manifests against each pack, each with the folder to add it in (the whole repository for repository packs). Local; changes nothing. A checkout is rescanned at most once a minute.",
     query: z.object({ ...targetShape }).strict(),
     output: rulePackRecommendationsSchema,
     handler: (stores, input, caller) => {

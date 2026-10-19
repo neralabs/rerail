@@ -2,24 +2,40 @@
  * `rerail packs`: the rule packs installed on this machine (docs/rule-packs.md, "Installing packs"). Packs are npm
  * packages installed into the Rerail home; a running daemon follows an install or removal without a restart.
  */
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { rulePackPackageName } from "../engine/catalog/rule-packs.js";
+import { clean } from "../harness/setup-screens.js";
 import { discoverPacks, npmPackStore, type DiscoveredPack, type PackStore } from "../setup/rule-pack-store.js";
 
 const PACK_ID = /^[a-z][a-z0-9-]*$/u;
-const PACK_ID_AT_VERSION = /^([a-z][a-z0-9-]*)@(\S+)$/u;
+/**
+ * A version (`0.1.1`, `0.1.2-next.0`), a range (`^0.1.0`) or a dist-tag (`next`): what may follow a pack's name. Not
+ * npm's other specs, `npm:` aliases, git, URLs or `file:` paths, which would install something else under its name.
+ */
+const VERSION_OR_TAG = String.raw`[0-9A-Za-z^~<>=.*+-][0-9A-Za-z^~<>=.*+ -]*`;
+const PACK_ID_AT_VERSION = new RegExp(String.raw`^([a-z][a-z0-9-]*)@(${VERSION_OR_TAG})$`, "u");
+const PACK_PACKAGE = new RegExp(String.raw`^@neralabs\/rerail-pack-[a-z][a-z0-9-]*(?:@${VERSION_OR_TAG})?$`, "u");
 
 /**
  * What npm installs for one `rerail packs add` argument: a pack id (`typescript`) or id at a version or tag
- * (`typescript@0.1.1`) is that pack's package; anything else (a package name, a tarball, a folder) goes to npm as is.
+ * (`typescript@0.1.1`) is that pack's package; a pack's package name, at a version or tag, is itself; a tarball or
+ * folder on disk is its absolute path. Anything else, an npm option (`--ignore-scripts=false`) or another kind of npm
+ * spec, is refused, so the install keeps its own options and installs only a rule pack.
  */
 export function packAddSpec(argument: string): string {
+  if (argument.startsWith("-")) throw new Error(`rerail packs add takes rule packs, not npm options: ${argument}`);
   if (PACK_ID.test(argument)) return rulePackPackageName(argument);
   const atVersion = PACK_ID_AT_VERSION.exec(argument);
-  return atVersion === null ? argument : `${rulePackPackageName(atVersion[1]!)}@${atVersion[2]!}`;
+  if (atVersion !== null) return `${rulePackPackageName(atVersion[1]!)}@${atVersion[2]!}`;
+  if (PACK_PACKAGE.test(argument)) return argument;
+  // A folder or tarball that exists: npm is given its absolute path, never the argument, so it reads no other spec.
+  const path = resolve(argument);
+  if (existsSync(path)) return path;
+  throw new Error(`${argument} is not a rule pack id, a @neralabs/rerail-pack-<id> package, or a tarball or folder that exists`);
 }
 
 function write(lines: readonly string[]): void {
@@ -32,18 +48,19 @@ function installedLines(): string[] {
   const packs = [...catalog.packs.values()];
   const lines = packs.length === 0
     ? ["No rule packs are installed. `rerail packs recommend` lists the ones that fit a repository."]
-    : packs.map(pack => `  ${pack.id}@${pack.version ?? "?"}  ${pack.name}: ${pack.rules.filter(rule => rule.on).length} of ${pack.rules.length} rules start on`);
+    : packs.map(pack => `  ${pack.id}@${clean(pack.version ?? "?")}  ${clean(pack.name)}: ${pack.rules.filter(rule => rule.on).length} of ${pack.rules.length} rules start on`);
   for (const skipped of catalog.skipped) {
-    lines.push(`  left out: ${skipped.packageName ?? skipped.path}${skipped.version === null ? "" : `@${skipped.version}`}: ${skipped.reason}`);
+    lines.push(`  left out: ${clean(skipped.packageName ?? skipped.path)}${skipped.version === null ? "" : `@${clean(skipped.version)}`}: ${clean(skipped.reason)}`);
   }
   return lines;
 }
 
+/** One discovered pack; its name, reason and version come from the pack, so they are printed without control characters. */
 function discoveredLine(found: DiscoveredPack): string {
-  const installed = found.installed === null ? "" : found.installed === found.version ? "  (installed)" : `  (${found.installed} installed)`;
+  const installed = found.installed === null ? "" : found.installed === found.version ? "  (installed)" : `  (${clean(found.installed)} installed)`;
   // The reason names where each signal matched; the folder is where set-up would add the pack.
-  const match = found.match === undefined ? "" : `: ${found.match.reason}${found.match.folder === "" ? "" : `; added in ${found.match.folder}/`}`;
-  return `  ${rulePackPackageName(found.pack.id)}@${found.version} (${found.ruleCount} rules)${match}${installed}`;
+  const match = found.match === undefined ? "" : `: ${clean(found.match.reason)}${found.match.folder === "" ? "" : `; added in ${clean(found.match.folder)}/`}`;
+  return `  ${rulePackPackageName(found.pack.id)}@${clean(found.version)} (${found.ruleCount} rules)${match}${installed}`;
 }
 
 async function recommend(args: readonly string[], usage: () => string, store: PackStore): Promise<number> {
@@ -55,7 +72,7 @@ async function recommend(args: readonly string[], usage: () => string, store: Pa
     discovery.recommended.length === 0 ? `No rule pack fits ${workspaceRoot}.` : `Rule packs that fit ${workspaceRoot}:`,
     ...discovery.recommended.map(discoveredLine),
     ...(others.length === 0 ? [] : ["Other rule packs:", ...others.map(discoveredLine)]),
-    ...(discovery.problems.length === 0 ? [] : ["Not available:", ...discovery.problems.map(problem => `  ${problem}`)]),
+    ...(discovery.problems.length === 0 ? [] : ["Not available:", ...discovery.problems.map(problem => `  ${clean(problem)}`)]),
     ...(discovery.recommended.length === 0 ? [] : [`Install them with: rerail packs add ${discovery.recommended.map(found => `${found.pack.id}@${found.version}`).join(" ")}`]),
   ]);
   return 0;

@@ -40,8 +40,8 @@ const PACKS: RecommendedPacksInput = {
   repoName: "acme-web",
   repoPath: "/Users/me/code/acme-web",
   packs: [
-    { id: "typescript", name: "TypeScript", ruleCount: 74, reason: "matches the typescript dependency in package.json and *.ts files", packageName: "@neralabs/rerail-pack-typescript", version: "0.1.1", installed: false },
-    { id: "acme-api", name: "acme-api", ruleCount: 92, reason: "matches the acme_api package", packageName: "@neralabs/rerail-pack-acme-api", version: "1.2.0", installed: true },
+    { id: "typescript", name: "TypeScript", ruleCount: 74, reason: "matches the typescript dependency in package.json and *.ts files", packageName: "@neralabs/rerail-pack-typescript", version: "0.1.1", installed: null },
+    { id: "acme-api", name: "acme-api", ruleCount: 92, reason: "matches the acme_api package", packageName: "@neralabs/rerail-pack-acme-api", version: "1.2.0", installed: "1.2.0" },
   ],
   available: [
     { id: "typescript", version: "0.1.1", name: "TypeScript", reason: "matches the typescript dependency in package.json and *.ts files" },
@@ -172,7 +172,7 @@ describe("T4 / C4 recommended rule packs", () => {
     const text = renderRecommendedPacks(PACKS, "agent");
     expect(text).toContain("1. rerail setup --answer start --repo /Users/me/code/acme-web --packs typescript@0.1.1,acme-api@1.2.0");
     expect(text).toContain("2. rerail setup --answer review --repo /Users/me/code/acme-web --packs typescript@0.1.1,acme-api@1.2.0");
-    expect(text).toContain("3. To choose the rule packs: rerail setup --answer start --repo /Users/me/code/acme-web --packs <packs>, with comma-separated packs from: typescript@0.1.1,acme-api@1.2.0,python@0.1.2.");
+    expect(text).toContain("3. To choose the rule packs: rerail setup --answer choose --repo /Users/me/code/acme-web --packs <packs>, with comma-separated packs from: typescript@0.1.1,acme-api@1.2.0,python@0.1.2.");
     expect(text).toContain("5. rerail setup --answer pick-myself --repo /Users/me/code/acme-web");
     expect(renderRecommendedPacks({ ...PACKS, packs: [] }, "agent")).toContain("1. rerail setup --answer start --repo /Users/me/code/acme-web\n");
   });
