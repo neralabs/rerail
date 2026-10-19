@@ -4,7 +4,8 @@
  * (`eslint.config.*` at the root, parsed and never run: `eslint-flat-config.ts`), `.eslintrc.json`, `.eslintrc` (JSON)
  * or `package.json` `eslintConfig` (`rules` and `overrides`), oxlint's `.oxlintrc.json` (top-level `rules`) and Ruff's
  * rule selection (`select`, `extend-select`, `ignore`, `extend-ignore`, `per-file-ignores`; `.ruff.toml`, `ruff.toml` or
- * `pyproject.toml`, and the configs its `extend` names). Config code is never run or imported; `.eslintrc.js` and YAML
+ * `pyproject.toml`, and the configs its `extend` names), and TSLint's `tslint.json` for the TSLint rules a pack ports the
+ * typescript-eslint replacement of (`TSLINT_RULES`). Config code is never run or imported; `.eslintrc.js` and YAML
  * configs are reported as not read.
  *
  * What is read becomes settings for the rules of the packs being set up, matched through each port's `violation.
@@ -43,6 +44,31 @@ const RUFF_TABLES = ["per-file-ignores", "extend-per-file-ignores"] as const;
 /** A Ruff selector: `ALL`, or a rule code or prefix of one (`E`, `E7`, `E711`, `PLR09`). */
 const RUFF_SELECTOR = /^(?:ALL|[A-Z]+[0-9]*)$/u;
 const NEVER_RUN = "Rerail never runs your config.";
+/** TSLint's config files in the order TSLint looks for them in a folder; the first present is the one it uses. */
+const TSLINT_FILES = ["tslint.json", "tslint.yaml", "tslint.yml"];
+
+/** A TSLint rule as the typescript-eslint rule that replaces it, whose port it configures. */
+interface TslintReplacement {
+  readonly eslint: string;
+  /** The ESLint options the TSLint rule has whenever it is on. */
+  readonly on: Readonly<Record<string, unknown>>;
+  /** Each TSLint option as ESLint options. */
+  readonly options: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+}
+
+/**
+ * The TSLint rules read from `tslint.json`, by typescript-eslint's TSLint migration table. TSLint 5.20.1's
+ * `no-unused-expression` never reports a conditional whose branches are both used (`allowTernary`), and
+ * `allow-fast-null-checks` allows `e && e.f()` and `e || f()` (as `allowShortCircuit`, which also allows `e ?? f()`,
+ * which TSLint reports); `allow-new` needs no option, since the ESLint rule never reports `new`.
+ */
+const TSLINT_RULES: Readonly<Record<string, TslintReplacement>> = {
+  "no-unused-expression": {
+    eslint: "@typescript-eslint/no-unused-expressions",
+    on: { allowTernary: true },
+    options: { "allow-fast-null-checks": { allowShortCircuit: true }, "allow-new": {} },
+  },
+};
 
 /**
  * A rule built into oxlint: oxlint's internal plugin name (`eslint`, `typescript`, `react`, `jsx_a11y`, `nextjs`,
@@ -160,7 +186,7 @@ function oxlintRuleOfPort(eslintName: string): OxlintRule {
   return oxlintRuleOfKey(eslintName.startsWith("n/") ? `node/${eslintName.slice(2)}` : eslintName);
 }
 
-export type LintConfigLinter = "eslint" | "oxlint" | "ruff";
+export type LintConfigLinter = "eslint" | "oxlint" | "ruff" | "tslint";
 
 /** A rule entry limited to some files (a flat config object's, an `.eslintrc` override's), after the last entry for its rule that every file gets. */
 export interface ScopedRule {
@@ -195,6 +221,8 @@ export interface LintConfigRules {
    * ports from this linter starts off, with no options.
    */
   readonly unreadable?: string;
+  /** The presets the config takes and Rerail does not read (an `extends`, a shared config), which may set any rule. */
+  readonly presets?: string;
   /**
    * Set for an ESLint config read the eslintrc way (an `.eslintrc` file, `package.json` `eslintConfig`). ESLint's
    * eslintrc loader lower-cases a severity string, so `"OFF"` is `"off"` there; its flat config refuses `"OFF"`.
@@ -235,8 +263,12 @@ export interface RuffSelection {
 /** What `readLintConfigFiles` read at a repository root. */
 export interface LintConfigFiles {
   readonly eslint: LintConfigRules | undefined;
+  /** The config ESLint uses where Rerail names it but does not read it (`.eslintrc.js`, YAML, not a JSON object). */
+  readonly eslintNotRead?: string;
   readonly oxlint: LintConfigRules | undefined;
   readonly ruff: RuffSelection | undefined;
+  /** `tslint.json`'s top-level `rules`, and its keys that are not read (`extends`, `defaultSeverity`). */
+  readonly tslint: { readonly file: string; readonly rules: Readonly<Record<string, unknown>>; readonly unread: readonly string[] } | undefined;
   /** What was present and not read, or read only in part, and why; by the linter it configures. */
   readonly notes: readonly { readonly linter: LintConfigLinter; readonly text: string }[];
 }
@@ -309,6 +341,11 @@ function topLevelRules(file: string, config: z.infer<typeof configFile>, unread:
     ? eslintrcOverrides(file, config, notes)
     : { scoped: [], shadowedBy: config.overrides === undefined ? undefined : `${file} overrides` };
   const shadowed = new Map(overrides.shadowedBy === undefined ? [] : Object.keys(rules.data).map(key => [key, overrides.shadowedBy!] as const));
+  const presets = [
+    ...(Object.hasOwn(config, "extends") ? [`${file} extends`] : []),
+    ...(Array.isArray(config.overrides) ? config.overrides : []).flatMap((override: unknown, index) =>
+      (typeof override === "object" && override !== null ? ["extends", "overrides"].filter(key => Object.hasOwn(override, key)).map(key => `${file} overrides[${index}].${key}`) : [])),
+  ];
   return {
     file,
     rules: rules.data,
@@ -316,6 +353,7 @@ function topLevelRules(file: string, config: z.infer<typeof configFile>, unread:
     unresolved: new Map(),
     shadowed,
     optionsUnknown: new Map(),
+    ...(presets.length > 0 ? { presets: presets.join(", ") } : {}),
     ...(linter === "eslint" ? { eslintrc: true as const } : {}),
   };
 }
@@ -456,10 +494,16 @@ function flatRules(file: string, read: FlatConfigRead): LintConfigRules {
     }
   }
   for (const [key, entries] of scopedUnresolved) if (!unresolved.has(key) && entries.length > 0) unresolved.set(key, entries[0]!.entry);
-  return { file, rules, scoped, unresolved, shadowed, optionsUnknown };
+  return { file, rules, scoped, unresolved, shadowed, optionsUnknown, ...(read.unread.length > 0 ? { presets: read.unread.join(", ") } : {}) };
 }
 
-function readEslint(root: string, notes: Notes): LintConfigRules | undefined {
+/** ESLint's config as read, and the config ESLint uses that Rerail names but does not read (code, YAML, not a JSON object). */
+interface EslintRead {
+  readonly rules?: LintConfigRules;
+  readonly notRead?: string;
+}
+
+function readEslint(root: string, notes: Notes): EslintRead {
   const flat = ESLINT_FLAT_CONFIGS.filter(name => readRootFile(root, name).present);
   const legacy = ESLINTRC_FILES.filter(name => readRootFile(root, name).present);
   if (flat.length > 0) {
@@ -476,55 +520,78 @@ function readEslint(root: string, notes: Notes): LintConfigRules | undefined {
       return { file: used, rules: {}, scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), unreadable: why };
     };
     const read = readRootFile(root, used);
-    if (read.present && read.text === undefined) return unreadable(NOT_A_FILE.replace(/\.$/u, ""));
+    if (read.present && read.text === undefined) return { rules: unreadable(NOT_A_FILE.replace(/\.$/u, "")) };
     let config: FlatConfigRead;
     try {
       config = readEslintFlatConfig(read.present ? read.text! : "", used);
     } catch (error) {
       if (!(error instanceof LintConfigFormatError)) throw error;
-      return unreadable(error.message);
+      return { rules: unreadable(error.message) };
     }
     for (const note of config.notes) notes.push({ linter: "eslint", text: `${used}: ${note}` });
     ignored();
-    return flatRules(used, config);
+    return { rules: flatRules(used, config) };
   }
   const used = legacy[0];
   if (used !== undefined) {
     for (const name of legacy.slice(1)) notes.push({ linter: "eslint", text: `${name} is not read: ESLint uses ${used} instead.` });
     if (ESLINTRC_CODE.has(used)) {
       notes.push({ linter: "eslint", text: `${used} is not read: ${NEVER_RUN}` });
-      return undefined;
+      return { notRead: used };
     }
     if (used.endsWith(".yaml") || used.endsWith(".yml")) {
       notes.push({ linter: "eslint", text: `${used} is not read: Rerail reads JSON lint configs only.` });
-      return undefined;
+      return { notRead: used };
     }
     const config = jsoncFile(root, used, "eslint", notes);
-    return config === undefined ? undefined : topLevelRules(used, config, ESLINT_UNREAD, "eslint", notes);
+    const rules = config === undefined ? undefined : topLevelRules(used, config, ESLINT_UNREAD, "eslint", notes);
+    return rules === undefined ? { notRead: used } : { rules };
   }
   // Without a config file, ESLint reads `package.json`'s `eslintConfig`.
   const manifest = readRootFile(root, "package.json");
-  if (!manifest.present || manifest.text === undefined) return undefined;
+  if (!manifest.present || manifest.text === undefined) return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(manifest.text);
   } catch {
     // An unreadable manifest is not an ESLint config; the matcher skips it the same way.
-    return undefined;
+    return {};
   }
   const eslintConfig = z.looseObject({ eslintConfig: z.unknown().optional() }).safeParse(parsed).data?.eslintConfig;
-  if (eslintConfig === undefined) return undefined;
+  if (eslintConfig === undefined) return {};
   const config = configFile.safeParse(eslintConfig);
   if (!config.success) {
     notes.push({ linter: "eslint", text: "package.json eslintConfig is not read: it is not an object." });
-    return undefined;
+    return { notRead: "package.json eslintConfig" };
   }
-  return topLevelRules("package.json eslintConfig", config.data, ESLINT_UNREAD, "eslint", notes);
+  const rules = topLevelRules("package.json eslintConfig", config.data, ESLINT_UNREAD, "eslint", notes);
+  return rules === undefined ? { notRead: "package.json eslintConfig" } : { rules };
 }
 
 function readOxlint(root: string, notes: Notes): LintConfigRules | undefined {
   const config = jsoncFile(root, ".oxlintrc.json", "oxlint", notes);
   return config === undefined ? undefined : topLevelRules(".oxlintrc.json", config, ["extends", "overrides", "categories"], "oxlint", notes);
+}
+
+/** `tslint.json`'s own rules, of which `TSLINT_RULES` are used; its `extends` (which a rule it sets replaces) and `defaultSeverity` are not read. */
+function readTslint(root: string, notes: Notes): LintConfigFiles["tslint"] {
+  const used = TSLINT_FILES.find(name => readRootFile(root, name).present);
+  if (used === undefined) return undefined;
+  if (used !== "tslint.json") {
+    notes.push({ linter: "tslint", text: `${used} is not read: Rerail reads JSON lint configs only.` });
+    return undefined;
+  }
+  const config = jsoncFile(root, used, "tslint", notes);
+  if (config === undefined) return undefined;
+  const rules = topLevelRules(used, config, [], "tslint", notes);
+  const unread = ["extends", "defaultSeverity"].filter(key => Object.hasOwn(config, key));
+  return rules === undefined ? undefined : { file: used, rules: rules.rules, unread };
+}
+
+/** A `tslint.json` rule entry as TSLint reads `true`, `false` or a list starting with one; undefined for any other form. */
+function tslintEntry(value: unknown): { off: boolean; options: unknown[] } | undefined {
+  const [enabled, ...options] = Array.isArray(value) ? value : [value];
+  return typeof enabled === "boolean" ? { off: !enabled, options } : undefined;
 }
 
 type RuffPerFileIgnore = RuffSelection["perFileIgnores"][number];
@@ -676,7 +743,8 @@ export function readLintConfigFiles(root: string): LintConfigFiles {
   const eslint = readEslint(root, notes);
   const oxlint = readOxlint(root, notes);
   const ruff = readRuff(root, notes);
-  return { eslint, oxlint, ruff, notes };
+  const tslint = readTslint(root, notes);
+  return { eslint: eslint.rules, ...(eslint.notRead === undefined ? {} : { eslintNotRead: eslint.notRead }), oxlint, ruff, tslint, notes };
 }
 
 /**
@@ -964,6 +1032,37 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
       if (!severity.off && severity.options.length > 0) notes.push(`${ruleId}: option not mapped: Rerail maps ESLint options, not oxlint's (${because}).`);
       add(ruleId, { off: severity.off, because });
     }
+    const tslint = files.tslint;
+    for (const [key, replacement] of Object.entries(TSLINT_RULES)) {
+      if (tslint === undefined || !port.eslint.includes(replacement.eslint) || !Object.hasOwn(tslint.rules, key)) continue;
+      const value = tslint.rules[key];
+      const because = entryText(tslint.file, key, value);
+      // A repository with both linters is moving to ESLint, whose config is the one that counts where it sets the rule,
+      // or may set it: through presets Rerail does not read, or anywhere in a file it cannot read.
+      const eslintSets = eslint === undefined ? (files.eslintNotRead === undefined ? undefined : `${files.eslintNotRead}, which Rerail does not read, may set ${JSON.stringify(replacement.eslint)}`)
+        : eslint.unreadable !== undefined ? `${eslint.file} is not statically readable`
+        : Object.hasOwn(eslint.rules, replacement.eslint) || eslint.unresolved.has(replacement.eslint) || eslint.scoped.some(entry => entry.key === replacement.eslint)
+          ? `${eslint.file} sets ${JSON.stringify(replacement.eslint)}`
+        : eslint.presets === undefined ? undefined
+        : `${eslint.presets}, which Rerail does not read, may set ${JSON.stringify(replacement.eslint)}`;
+      if (eslintSets !== undefined) {
+        notes.push(`${ruleId}: ${because} is not used: ${eslintSets}.`);
+        continue;
+      }
+      const entry = tslintEntry(value);
+      if (entry === undefined) {
+        notes.push(`${ruleId}: ${because} is not read: Rerail reads true, false or a list starting with one.`);
+        continue;
+      }
+      const options = entry.options.filter((option): option is string => typeof option === "string" && Object.hasOwn(replacement.options, option));
+      const mapped = new Set<unknown>(options);
+      const unmapped = entry.options.find(option => !mapped.has(option));
+      const config: MappedOptions | undefined = entry.off ? undefined
+        : unmapped === undefined ? mappedOptions(ruleId, port.declared, [Object.assign({}, replacement.on, ...options.map(option => replacement.options[option]))])
+        : { ok: false, reason: `${JSON.stringify(unmapped)} is not a TSLint option Rerail maps` };
+      if (tslint.unread.length > 0) notes.push(`${ruleId}: ${tslint.file}: only its own ${JSON.stringify(key)} entry is read, not ${tslint.unread.join(" or ")}.`);
+      add(ruleId, { off: entry.off, because, ...(config === undefined ? {} : { config }) });
+    }
     const ruff = files.ruff;
     if (ruff !== undefined) {
       for (const code of new Set(port.noqa)) {
@@ -1018,6 +1117,7 @@ export function proposeLintConfigSettings(files: LintConfigFiles, bundle: Bundle
     ...(port.eslint.length > 0 ? ["eslint" as const] : []),
     ...(port.oxlint.length > 0 ? ["oxlint" as const] : []),
     ...(port.noqa.length > 0 ? ["ruff" as const] : []),
+    ...(Object.values(TSLINT_RULES).some(replacement => port.eslint.includes(replacement.eslint)) ? ["tslint" as const] : []),
   ]));
   return { settings, notes: [...files.notes.filter(note => linters.has(note.linter)).map(note => note.text), ...notes] };
 }
