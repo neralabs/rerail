@@ -103,8 +103,8 @@ impl Drop for BatchScopes {
 }
 
 /// Runs `body` with file `index`'s scopes installed: those parked by an earlier statement of the
-/// batch, else fresh ones as the native evaluator installs them per file (its module, path and
-/// whether its syntax errors hide bindings).
+/// batch, else fresh ones as the native evaluator installs them per file (its cached scope
+/// tables, module, path and whether its syntax errors hide bindings).
 fn with_scopes<T>(index: usize, file: &BatchFile, body: impl FnOnce() -> T) -> T {
     let parked = SCOPES.with_borrow_mut(|scopes| scopes.get_mut(index).and_then(Option::take));
     let slot = match parked {
@@ -112,7 +112,7 @@ fn with_scopes<T>(index: usize, file: &BatchFile, body: impl FnOnce() -> T) -> T
         None => {
             let errors = SyntaxErrors::of_doc(file.root.root().get_doc());
             let slot = FileScopeSlot::install(
-                Vec::new(),
+                file.context.scopes.clone(),
                 file.context.module.clone(),
                 errors.hide_bindings(),
             );

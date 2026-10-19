@@ -206,6 +206,7 @@ pub(super) fn evaluate_clauses(
                         clause,
                         (subject, subject_rows),
                         (evidence, &evidence_rows),
+                        engine,
                     ),
                 );
             }
@@ -219,7 +220,7 @@ pub(super) fn evaluate_clauses(
                 )?;
                 merge(
                     &mut evaluation,
-                    evidence::budget(code_rule, clause, query, rows),
+                    evidence::budget(code_rule, clause, query, rows, engine),
                 );
             }
             ClauseKind::Llm => evaluation.failures.push(failure(

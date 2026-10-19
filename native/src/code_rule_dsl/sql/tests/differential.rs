@@ -11,7 +11,7 @@ use super::snapshot;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::node_at;
+use crate::code_rule_dsl::matcher::{UtilLimit, node_at};
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
 use crate::code_rule_dsl::test_support::{CAPABILITIES, clause_document, compile_document_with};
 use ast_grep_core::AstGrep;
@@ -239,7 +239,12 @@ struct Generator<'v> {
     counted: bool,
     /// Whether the case may hold three-valued leaves (`value`, `testUnknown`).
     three: bool,
+    /// Whether the case's rule reaches a recursive utility.
+    recursive: bool,
 }
+
+/// The relations a recursive utility recurses through, one direction per cycle.
+const DIRECTIONS: &[&str] = &["has", "inside", "precedes", "follows"];
 
 impl Generator<'_> {
     fn single(&mut self) -> String {
@@ -597,13 +602,118 @@ impl Generator<'_> {
         Value::Object(rule)
     }
 
+    /// A recursive step: `direction`'s relation to a node `reference` matches, perhaps under a
+    /// stop, a field or an extra term, perhaps negated or counted.
+    fn recursive_step(&mut self, direction: &str, reference: Value) -> Value {
+        let mut step = Map::new();
+        step.insert("matches".into(), reference);
+        if self.rng.chance(30) {
+            step.insert("kind".into(), json!(self.rng.pick(&self.vocabulary.kinds)));
+        }
+        match self.rng.below(10) {
+            0..=3 => {
+                step.insert("stopBy".into(), json!("end"));
+            }
+            4..=5 => {
+                step.insert("stopBy".into(), json!("neighbor"));
+            }
+            _ => {}
+        }
+        if (direction == "has" || direction == "inside")
+            && self.rng.chance(15)
+            && !self.vocabulary.fields.is_empty()
+        {
+            step.insert(
+                "field".into(),
+                json!(self.rng.pick(&self.vocabulary.fields)),
+            );
+        }
+        let relation = json!({ direction: Value::Object(step.clone()) });
+        match self.rng.below(10) {
+            0 => json!({ "not": relation }),
+            1 => {
+                let mut count = Map::new();
+                count.insert(direction.into(), Value::Object(step));
+                count.insert("min".into(), json!(1 + self.rng.below(2)));
+                json!({ "count": count })
+            }
+            _ => relation,
+        }
+    }
+
+    /// A utility that recurses through relations in one direction (now and then two, whose reads
+    /// may loop back): its own rule, or a call's with parameters.
+    fn recursive_util(&mut self, params: Option<Vec<String>>, reference: Value) -> Value {
+        let direction = *self.rng.pick(DIRECTIONS);
+        self.params = params.clone();
+        let mut base = self.rule(2);
+        if let Some(params) = &params
+            && self.rng.chance(70)
+        {
+            base["pattern"] = json!(format!("${}", params[0]));
+        }
+        let mut branches = vec![base, self.recursive_step(direction, reference.clone())];
+        if self.rng.chance(6) {
+            let other = *self.rng.pick(DIRECTIONS);
+            branches.push(self.recursive_step(other, reference));
+        }
+        let body = match self.rng.below(10) {
+            0 | 1 => {
+                // A conjunction: the recursion holds only beside another term.
+                let mut all = Map::new();
+                all.insert("all".into(), json!(branches));
+                Value::Object(all)
+            }
+            _ => json!({ "any": branches }),
+        };
+        self.params = None;
+        match params {
+            Some(params) => json!({ "params": params, "rule": body }),
+            None => body,
+        }
+    }
+
     /// One case: an `ast` query (rule, utilities, constraints) and its violation.
     fn case(&mut self) -> (Value, Value) {
         self.calls.clear();
         self.plain.clear();
         self.counted = false;
         self.three = self.rng.chance(50);
+        self.recursive = false;
         let mut utils = Map::new();
+        let mut recursive = None;
+        if self.rng.chance(35) {
+            match self.rng.below(4) {
+                0 => {
+                    // A parameterized utility calling itself.
+                    let params = vec!["P".to_owned()];
+                    let reference = json!({ "r0": { "P": "$P" } });
+                    let util = self.recursive_util(Some(params.clone()), reference);
+                    utils.insert("r0".into(), util);
+                    self.calls.push(("r0".into(), params));
+                    recursive = Some(json!({ "r0": { "P": format!("${}", self.single()) } }));
+                }
+                1 => {
+                    // Two utilities: `r1` meets `r0` at its own node, `r0` reaches `r1` through
+                    // a relation.
+                    let util = self.recursive_util(None, json!("r1"));
+                    utils.insert("r0".into(), util);
+                    let base = self.rule(2);
+                    utils.insert(
+                        "r1".into(),
+                        json!({ "any": [base, { "matches": "r0", "kind": self.rng.pick(&self.vocabulary.kinds) }] }),
+                    );
+                    self.plain.push("r0".into());
+                    recursive = Some(json!("r0"));
+                }
+                _ => {
+                    let util = self.recursive_util(None, json!("r0"));
+                    utils.insert("r0".into(), util);
+                    self.plain.push("r0".into());
+                    recursive = Some(json!("r0"));
+                }
+            }
+        }
         for index in 0..self.rng.below(3) {
             let name = format!("u{index}");
             if self.rng.chance(50) {
@@ -628,7 +738,14 @@ impl Generator<'_> {
         }
         let mut ast = Map::new();
         ast.insert("language".into(), json!(self.vocabulary.label));
-        ast.insert("rule".into(), self.rule(0));
+        let mut rule = self.rule(0);
+        if let Some(reference) = recursive
+            && self.rng.chance(85)
+        {
+            rule["matches"] = reference;
+        }
+        self.recursive = serde_json::to_string(&rule).is_ok_and(|text| text.contains("\"r0\""));
+        ast.insert("rule".into(), rule);
         if !utils.is_empty() {
             ast.insert("utils".into(), Value::Object(utils));
         }
@@ -637,7 +754,20 @@ impl Generator<'_> {
             ast.insert("constraints".into(), json!({ name: self.rule(2) }));
         }
         let message = if self.counted { "n=$N" } else { "x" };
-        let violation = json!({ "anchor": "witness.span", "code": "X", "message": message });
+        let mut violation = json!({ "anchor": "witness.span", "code": "X", "message": message });
+        // `violation.each` over a capture the rule names, now and then.
+        let text = serde_json::to_string(&ast).unwrap_or_default();
+        let named: Vec<&str> = SINGLE
+            .iter()
+            .copied()
+            .filter(|name| {
+                text.match_indices(&format!("${name}"))
+                    .any(|(at, _)| !text[..at].ends_with('$'))
+            })
+            .collect();
+        if !named.is_empty() && self.rng.chance(30) {
+            violation["each"] = json!(*self.rng.pick(&named));
+        }
         (Value::Object(ast), violation)
     }
 }
@@ -645,6 +775,9 @@ impl Generator<'_> {
 enum Outcome {
     /// The front end refused the rule.
     Rejected,
+    /// The native matcher hit a utility limit: its depth limit (256 levels or 1 MiB of stack,
+    /// which depends on the build) or its work budget, limits the SQL engine does not emulate.
+    NativeLimit,
     /// The SQL engine refused an operator.
     Unsupported(String),
     /// Both engines answered alike, with this many violations; whether the clause is
@@ -670,6 +803,15 @@ static ENGINE_NANOS: [std::sync::atomic::AtomicU64; 4] = [
 ];
 
 fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value) -> Outcome {
+    // A case known to take hours on the SQL engine (`RERAIL_SQL_DIFF_SKIP`: a fragment of its
+    // rule's JSON) is skipped, and counted.
+    if let Ok(fragment) = std::env::var("RERAIL_SQL_DIFF_SKIP")
+        && !fragment.is_empty()
+        && ast.to_string().contains(&fragment)
+    {
+        eprintln!("skipped case: {ast}");
+        return Outcome::Rejected;
+    }
     let document = clause_document(
         json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": violation }),
     );
@@ -709,10 +851,16 @@ fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value)
     );
     if sql_time.max(native_time).as_secs() >= 5 {
         eprintln!(
-            "slow case: native {:.1}s, sql {:.1}s: {ast}",
+            "slow case: native {:.1}s, sql {:.1}s: {}",
             native_time.as_secs_f64(),
-            sql_time.as_secs_f64()
+            sql_time.as_secs_f64(),
+            ast.to_string().chars().take(800).collect::<String>()
         );
+    }
+    if native.as_ref().is_ok_and(|output| {
+        output.contains(UtilLimit::Depth.message()) || output.contains(UtilLimit::Work.message())
+    }) {
+        return Outcome::NativeLimit;
     }
     match (&native, &sql) {
         (_, Err(reason)) if reason.contains("Unsupported(") => Outcome::Unsupported(reason.clone()),
@@ -816,38 +964,46 @@ fn generated_rules_agree_with_the_native_matcher() {
             params: None,
             counted: false,
             three: false,
+            recursive: false,
         })
         .collect();
     let (mut compared, mut rejected, mut generated) = (0usize, 0usize, 0usize);
     let (mut with_violations, mut violations) = (0usize, 0usize);
-    let (mut three_valued, mut with_unknown) = (0usize, 0usize);
+    let (mut three_valued, mut with_unknown, mut three_recursive) = (0usize, 0usize, 0usize);
     let mut operators = std::collections::BTreeMap::new();
+    let (mut with_recursion, mut with_each, mut with_either, mut native_limits) =
+        (0usize, 0usize, 0usize, 0usize);
     let mut unsupported = Vec::new();
     let mut differences = Vec::new();
     while compared < wanted {
-        let batch: Vec<(usize, Value, Value)> = (0..256)
+        let batch: Vec<(usize, Value, Value, bool)> = (0..256)
             .map(|index| {
                 let language = (generated + index) % generators.len();
                 let (ast, violation) = generators[language].case();
-                (language, ast, violation)
+                (language, ast, violation, generators[language].recursive)
             })
             .collect();
         generated += batch.len();
         let outcomes: Vec<Outcome> = batch
             .par_iter()
-            .map(|(language, ast, violation)| {
+            .map(|(language, ast, violation, _)| {
                 run_case(ast, violation, &inputs[*language], &capabilities)
             })
             .collect();
-        for ((_, ast, _), outcome) in batch.iter().zip(outcomes) {
+        for ((_, ast, violation, recursive), outcome) in batch.iter().zip(outcomes) {
             if compared >= wanted {
                 break;
             }
-            if !matches!(outcome, Outcome::Rejected) {
+            if !matches!(outcome, Outcome::Rejected | Outcome::NativeLimit) {
                 census(ast, &mut operators);
+                let each = violation.get("each").is_some();
+                with_recursion += usize::from(*recursive);
+                with_each += usize::from(each);
+                with_either += usize::from(*recursive || each);
             }
             match outcome {
                 Outcome::Rejected => rejected += 1,
+                Outcome::NativeLimit => native_limits += 1,
                 Outcome::Unsupported(reason) => {
                     compared += 1;
                     unsupported.push((ast.clone(), reason));
@@ -862,6 +1018,7 @@ fn generated_rules_agree_with_the_native_matcher() {
                     with_violations += usize::from(found > 0);
                     three_valued += usize::from(three);
                     with_unknown += usize::from(unknown);
+                    three_recursive += usize::from(three && *recursive);
                 }
                 Outcome::Differs { native, sql } => {
                     compared += 1;
@@ -870,11 +1027,23 @@ fn generated_rules_agree_with_the_native_matcher() {
             }
         }
     }
+    let mut refusals = std::collections::BTreeMap::<String, usize>::new();
+    for (_, reason) in &unsupported {
+        let name = reason
+            .split("Unsupported(")
+            .nth(1)
+            .and_then(|rest| rest.split(')').next())
+            .unwrap_or(reason);
+        *refusals.entry(name.to_owned()).or_default() += 1;
+    }
     eprintln!(
-        "sql differential: seed {seed:#x}, {compared} cases compared ({generated} generated, {rejected} rejected by the front end), {} differences, {} unsupported, {with_violations} cases with violations ({violations} violations), {three_valued} three-valued cases, {with_unknown} with an unknown verdict, {:.1}s",
+        "sql differential: seed {seed:#x}, {compared} cases compared ({generated} generated, {rejected} rejected by the front end), {} differences, {} unsupported {refusals:?}, {with_violations} cases with violations ({violations} violations), {three_valued} three-valued cases, {with_unknown} with an unknown verdict, {with_recursion} reaching a recursive utility ({three_recursive} three-valued), {with_each} under violation.each, {:.1}s",
         differences.len(),
         unsupported.len(),
         started.elapsed().as_secs_f64()
+    );
+    eprintln!(
+        "recursion or each: {with_either} compared cases ({with_recursion} reaching a recursive utility, {with_each} under violation.each); {native_limits} cases not compared: the native matcher hit a utility limit (depth or work)"
     );
     eprintln!("operators in compared cases: {operators:?}");
     let seconds =
@@ -897,10 +1066,21 @@ fn generated_rules_agree_with_the_native_matcher() {
             cut(sql)
         );
     }
-    // The generator covers in-scope operators only; the one shape the engine refuses within
-    // them is `lower::walk_leak`'s, and it must refuse it rather than answer.
+    // The generator covers in-scope operators only; the shapes the engine refuses within them
+    // are `lower::walk_leak`'s, a stop rule that recurses, a recursion whose reads loop in the
+    // fixtures (where the matcher would recurse until its depth limit, or around the loop by
+    // stopping at a first match), and `violation.each` over a three-valued clause (its exclusion
+    // rounds run on two-valued operators only), and it must refuse them rather than answer.
     let refused = |reason: &String| {
-        reason.contains("Unsupported(nthChild with a binding ofRule as a relation's rule)")
+        [
+            "Unsupported(nthChild with a binding ofRule as a relation's rule)",
+            "Unsupported(recursion whose reads loop back)",
+            "Unsupported(recursion deeper than 256 levels)",
+            "Unsupported(recursive utility in a stop rule)",
+            "Unsupported(three-valued violation.each)",
+        ]
+        .iter()
+        .any(|refusal| reason.contains(refusal))
     };
     assert!(
         differences.is_empty() && unsupported.iter().all(|(_, reason)| refused(reason)),

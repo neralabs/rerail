@@ -148,7 +148,18 @@ export interface NativeCodeRuleDslWorkspace {
   /** The referenced node as JSON; throws when the reference's file version is no longer current. */
   resolveNodeReference(reference: string): string;
   setDocumentResidencyLimit(bytes: number): void;
+  /**
+   * The engine that matches the workspace's AST clauses, as JSON: `{"engine":"native"}`, or on SQL its clauses, those it
+   * refuses (`refused`: rule, clause, language, reason), how many compiled and ran, and what its statements did.
+   */
+  engineReport(): string;
   close(): void;
+}
+
+/** Which engine matches a workspace's AST clauses; `sqlBatchSize` is the files per SQL batch (default 64). */
+export interface NativeCodeRuleDslWorkspaceOptions {
+  engine?: "native" | "sql";
+  sqlBatchSize?: number;
 }
 
 /** The bounds of one repository index; every chunk call carries the same. */
@@ -193,7 +204,7 @@ export function encodeCodeRuleWorkspaceRequest(request: {
   return Buffer.concat([header, metadata, ...sources], length);
 }
 
-export type NativeCodeRuleDslWorkspaceConstructor = new () => NativeCodeRuleDslWorkspace;
+export type NativeCodeRuleDslWorkspaceConstructor = new (options?: NativeCodeRuleDslWorkspaceOptions) => NativeCodeRuleDslWorkspace;
 
 export interface NativeCodeRuleDslRuntimeConstructor {
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;

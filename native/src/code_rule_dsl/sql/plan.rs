@@ -173,6 +173,23 @@ pub(super) struct AllTerm {
     pub(super) checked: bool,
 }
 
+/// A recursive utility's evaluation unit (`recursion` explains why it is exact): its answers are
+/// remembered per key, `(file, node, bindings of key)`, in a demand table (the keys asked for) and
+/// an answer table (the bindings after the body, for the keys it matched). The driver evaluates
+/// the body over every demanded key, pass after pass, until no answer changes and no key is
+/// added; a `Recur` reference reads the answers so far.
+#[derive(Debug)]
+pub(super) struct Unit {
+    /// The slots the body reads and binds, in the unit's own scope: its key, and its answer.
+    pub(super) key: Vec<SlotId>,
+    pub(super) body: Op,
+    /// A capture-free unit of a per-batch stage: every node of these kinds (`None`: every node)
+    /// is demanded up front, so references add no demand.
+    pub(super) seed: Option<Option<Vec<u16>>>,
+    /// The units that reach each other (a strongly connected component) share one loop.
+    pub(super) scc: usize,
+}
+
 #[derive(Debug)]
 pub(super) enum Op {
     /// `node.kind IN (…)`.
@@ -261,6 +278,30 @@ pub(super) enum Op {
         at_node: bool,
         binds: Vec<SlotId>,
     },
+    /// A recursive unit's answers at the frame's keys: `slots` are the frame's slots for the
+    /// unit's key, in order (`None`: the key's own slots, a shared utility in its caller's scope).
+    Recur {
+        unit: usize,
+        slots: Option<Vec<SlotId>>,
+    },
+    /// `violation.each`: the root a row is evaluated for, set in `root`, and on a later round of
+    /// the enumeration only the roots still enumerated.
+    EachRoot {
+        root: SlotId,
+    },
+    /// `violation.each`: drops a row whose binding of the enumerated capture (`name`, in the
+    /// current scope) has a range already reported for its root.
+    Excluded {
+        name: SlotId,
+        root: SlotId,
+    },
+    /// `nthChild` with a binding `ofRule` while `violation.each` excludes: the position comes from
+    /// `nth` (its probes exclude nothing), the bindings from `commit`, the rule matched again at
+    /// the node excluding; where `commit` does not match, the position holds with no bindings.
+    NthCommit {
+        nth: Box<Op>,
+        commit: Box<Op>,
+    },
 }
 
 impl Op {
@@ -282,7 +323,8 @@ impl Op {
             },
             Self::Count { bind, .. } => bind.is_some(),
             Self::Call { returns, .. } => !returns.is_empty(),
-            Self::Constrained { .. } => true,
+            Self::Constrained { .. } | Self::NthCommit { .. } | Self::Recur { .. } => true,
+            Self::EachRoot { .. } | Self::Excluded { .. } => false,
         }
     }
 }
@@ -293,4 +335,6 @@ pub(super) struct Statement {
     pub(super) slots: Vec<Slot>,
     pub(super) kinds: Option<Vec<u16>>,
     pub(super) op: Op,
+    /// The recursive units the statement reads, by `Recur`'s index.
+    pub(super) units: Vec<Unit>,
 }

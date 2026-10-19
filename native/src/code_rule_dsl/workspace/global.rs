@@ -4,7 +4,9 @@
 use super::crossfile::CrossFileScheduler;
 use super::{ClauseId, FileState, WorkspaceState};
 use crate::code_rule_dsl::budget::matcher_budget_exhausted;
-use crate::code_rule_dsl::eval::{evaluate_clauses, evidence, failure, violation_from_witness};
+use crate::code_rule_dsl::eval::{
+    Engine, evaluate_clauses, evidence, failure, violation_from_witness,
+};
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledClause, CompiledCodeRule, Evaluation, FactQuery, Query, Snapshot,
@@ -164,11 +166,16 @@ fn evaluate_relations(
                 clause,
                 (subject, relation_rows(state, subject_id, subject)),
                 (evidence, &relation_rows(state, evidence_id, evidence)),
+                state.engine.engine,
             )
         }
-        (ClauseKind::Budget { query, .. }, &[id]) => {
-            evidence::budget(code_rule, clause, query, relation_rows(state, id, query))
-        }
+        (ClauseKind::Budget { query, .. }, &[id]) => evidence::budget(
+            code_rule,
+            clause,
+            query,
+            relation_rows(state, id, query),
+            state.engine.engine,
+        ),
         _ => unreachable!("relation plans are compiled for require_each and budget"),
     }
 }
@@ -288,7 +295,11 @@ fn evaluate_plan<'s>(
         .limits
         .max_witnesses
         .saturating_add(1);
-    let answer = match query::select_when::answer(plan, cap, &leaves).map_err(invalid)? {
+    let answer = match state.engine.engine {
+        Engine::Native => query::select_when::answer(plan, cap, &leaves),
+        Engine::Sql => crate::code_rule_dsl::sql::select_when::answer_leaves(plan, cap, &leaves),
+    };
+    let answer = match answer.map_err(invalid)? {
         Ok(answer) => answer,
         Err((leaf, position)) => return Ok(Err(leaves.row(leaf, position))),
     };

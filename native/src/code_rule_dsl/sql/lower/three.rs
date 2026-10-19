@@ -2,9 +2,10 @@
 //! with the withholding masks `match_all` reads, `any` with each branch's `may_bind`, and the
 //! relations as strict or open searches.
 
-use super::{Bound, Lowerer, capture_free, walk_leak};
+use super::{Bound, Lowerer, capture_free};
 use crate::code_rule_dsl::matcher::{AstMatcher, CaptureAnalysis, may_bind, reads_values};
 use crate::code_rule_dsl::sql::plan::{AllTerm, Op, Unsupported, Walk};
+use crate::code_rule_dsl::sql::recursion;
 use std::collections::BTreeSet;
 
 /// Whether matching a rule takes more than testing the node itself: it walks, counts, calls a
@@ -103,7 +104,7 @@ impl Lowerer<'_> {
             }
         };
         let (sub, out) = self.walked(rule, scope, bound)?;
-        walk_leak(&sub)?;
+        self.leaks(&sub)?;
         let binds = sub.binds();
         Ok((
             Op::Search {
@@ -119,14 +120,17 @@ impl Lowerer<'_> {
     /// A walked rule (a relation's or a count's) of a three-valued clause: where it reads, binds
     /// and counts no capture and is more than a node test, its verdict at a node is the node's
     /// alone, so it is a per-batch stage, matched once per node however many walks reach the node
-    /// (as the matcher remembers a node-local relation's answers per file, `Related::chains`).
+    /// (as the matcher remembers a node-local relation's answers per file, `Related::chains`). A
+    /// rule that reaches a recursive utility whose units are being lowered stays in the unit's
+    /// body, where its references read the loop's answers.
     pub(super) fn walked(
         &mut self,
         rule: &AstMatcher,
         scope: usize,
         bound: &Bound,
     ) -> Result<(Op, Bound), Unsupported> {
-        if capture_free(rule) && walks(rule) {
+        if capture_free(rule) && walks(rule) && !recursion::reaches(rule, &self.program.in_progress)
+        {
             return Ok((Op::Stage(self.stage(rule)?), bound.clone()));
         }
         self.lower(rule, scope, bound)

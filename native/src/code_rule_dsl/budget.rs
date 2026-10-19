@@ -288,6 +288,13 @@ impl MatchBudget {
         Self { deadline }
     }
 
+    /// Takes the budget off this thread, spent as it is, until `SuspendedBudget::resume`: a
+    /// batched evaluation (the workspace on the SQL engine) leaves each file's budget between its
+    /// steps before and after the batch. Resuming restarts the poll countdowns.
+    pub(super) fn suspend(self) -> SuspendedBudget {
+        SuspendedBudget(self.deadline.clone())
+    }
+
     /// Whether a poll found the budget, or an allowance run inside it, exhausted: an evaluation
     /// that finished without one is complete.
     pub(super) fn observed(&self) -> bool {
@@ -319,6 +326,17 @@ impl MatchBudget {
         Self::work(&Arc::new(AtomicBool::new(false)), 0)
     }
 }
+
+/// A file's budget taken off its thread (`MatchBudget::suspend`).
+pub(super) struct SuspendedBudget(MatchDeadline);
+
+impl SuspendedBudget {
+    /// Installs the budget on this thread again.
+    pub(super) fn resume(self) -> MatchBudget {
+        MatchBudget::install(self.0)
+    }
+}
+
 impl Drop for MatchBudget {
     fn drop(&mut self) {
         MATCH_BUDGET.with(|budget| *budget.borrow_mut() = None);

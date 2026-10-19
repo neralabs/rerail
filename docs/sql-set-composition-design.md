@@ -107,7 +107,9 @@ A clause's root frame is the set of candidate roots:
 | `violation.each` | a host loop of exclusion rounds per batch. Round r re-runs the clause on the roots that produced a fresh range in round r−1, with an exclusion table; relations, `any` and `binding.occurrence` skip candidates whose binding of the enumerated name falls in an excluded range. A root stops when the name is unbound or repeats. |
 | semantic leaves: `value`, `compare` (semantic modes), `layout`, `arguments`, `resolves`, `binds`, `parse`, `formatArgs`, `calls` | each is an **input-set terminal**. The virtual table receives F's distinct (file, node, read captures) tuples in one `xFilter` call via `sqlite3_vtab_in`. It evaluates them natively against per-batch fact state (scope tables, value decoders, parsed literals, line tables, call graph) and returns (row key, verdict, unknown, bindings or related nodes). `binds`/`resolves.binding` return related site/value/annotation/occurrence nodes, and their sub-rules lower as relations over them; first occurrence = min id. `compare` in `source`/`unquoted`/`node`/`tokens` modes is pure SQL over text and spans where exact. |
 
-`select_when`, `require_each` and `budget` are SQL over per-file leaf rows and evidence rows (they were before D36; recover their SQL from `e049dfbd3`).
+`select_when`, `require_each` and `budget` are SQL over per-file leaf rows and evidence rows (they were before D36; recover their SQL from `e049dfbd3`). They are implemented in `sql/select_when.rs` and `sql/crossfile.rs`, each on a per-thread in-memory connection whose tables are created once and cleared and refilled per call:
+- `select_when`: leaf rows `(leaf, position, failed, partial, witnesses)`. The plan's tree shape drops out. A leaf that holds (a decision leaf with a witness) moves reading on to the next leaf in `Plan::leaves` order, and any other verdict reaches the root. One statement therefore computes each leaf's end, the first leaf that does not hold, the unknown row, the partial rows, and the witness budget as a running sum. `answer_leaves` pulls rows through a `Leaves` reader with exactly the native answer's calls, so lazy evaluation and its errors are unchanged.
+- `require_each` / `budget`: each operand field is extracted natively at load time into `cf_value`. `eq`/`ne` operands use an injective canonical text that mirrors `same_text`, and missing fields are NULL compared with `IS`. Group and distinct keys use JSON text. The anti-join is a join plus `NOT IN`. The budget is a `GROUP BY` with `COUNT(DISTINCT …)`. `interrupted` is polled between statements; budget accounting is not emulated (§Budgets).
 
 ## What stays native and outside composition
 
@@ -156,8 +158,21 @@ The engine is selected at runtime (`engine: native|sql` in the evaluation option
 | G0 baseline | Native whole-tree time, CPU and digest on this branch (`benchmark/data-layer`), stable across 3 runs. |
 | G1 kernel | `kind`, `regex`, `pattern`, `all`/`any`/`not`, relations with every stop mode and `field`, non-recursive `matches`, `Call`, `nthChild`, `count`, `constraints`. A differential test generates random rules over fixture files in Python, TypeScript and PHP, and the two engines agree on ≥ 20,000 cases. |
 | G2 data-layer parity | Semantic terminals, three-valued logic, `each`, recursion and `select_when`. Whole-tree output is byte-identical to native with limits lifted. |
-| G3 speed | Whole-tree wall time ≤ 1.10 × native, alternating runs ×3, recorded with load average. |
+| G3 speed | Whole-tree wall time ≤ 1.10 × native, alternating runs ×3, recorded with load average. Reached through the speed levers below, in their order. Each lever records the profile that motivated it and its before/after numbers. **Memory condition:** peak RSS on the 47-workspace benchmark stays under 1 GiB and close to native's 564 MiB, with a row cap per batch. A lever that raises the peak noticeably is rejected, even if it is faster. |
 | G4 production | Workspace and stateless paths on SQL; language conformance, pack and query-parity suites pass; budgets redefined (D-record); native only under `cfg(test)`; docs updated. |
+
+## Speed levers (G3), in order
+
+Correct SQL composition comes first; levers are applied only after G2 parity. Levers 3–5 are Jeremy's execution levers, which G1/G2 don't use yet. Levers 2 and 3 both attack the measured hotspot: in the G2 probe, frame row writes into SQLite B-trees plus index lookups were about 48% of the time.
+
+1. **Measure.** Profile the whole tree on SQL. Attribute the time to statements, frames, terminals and sub-rules.
+2. **Frames and nodes in Rust memory.** Frames live in Rust-owned columnar buffers exposed to SQL as virtual tables, instead of TEMP tables. The `node` table is served from the tape and anchor indexes (kind postings, parent links, subtree ranges) instead of being queried row by row. Each statement still reads and writes whole frames; only the storage changes, so semantics are unchanged and the differential tests keep checking it.
+3. **Transducer pushdown.** Compile the dominant capture-free sub-rules into transducer `Program`s over tapes, run once per batch across many tapes. Jeremy's list of what transducers may take is same-file joins, conjunctions, disjunctions and simple counting. The `Program` interpreter becomes a production terminal behind a virtual table. A pushed-down sub-rule keeps its SQL lowering as its definition and as the differential oracle for the program.
+4. **Storage inside the virtual tables.** The `node` table and terminals read tapes from the content store and its arena caches directly: decompression, caching and pinning happen inside the tables, not in a restore step in the batch driver.
+5. **Selector-driven loads.** Clause selectors (root kinds, required text, anchor facts) decide which files and tapes a batch loads, through batched reads instead of given file lists.
+6. **Physical tuning.** Batch size, statement caching, `xBestIndex` costs.
+
+Native shortcuts (moving a combinator into a native terminal) are not a lever: they would create a second way to add an operator. Parallel or GPU transducers across tapes stay deferred; workers keep native's 4 threads. Recursion over stored facts for multi-file analysis (coloring, call graphs) is out of scope for this experiment; `calls` stays a terminal.
 
 ## Known hard cases
 

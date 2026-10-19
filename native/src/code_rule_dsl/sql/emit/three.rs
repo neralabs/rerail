@@ -320,8 +320,7 @@ impl Emitter<'_> {
             ),
         };
         let name = self.name("o");
-        self.statements
-            .push(format!("CREATE TEMP TABLE {name}(pk, e)"));
+        self.create(&name, "pk, e");
         self.statements
             .push(format!("{with}INSERT INTO {name} {select}"));
         Some(name)
@@ -416,13 +415,14 @@ impl Emitter<'_> {
             }
             OfRule::Frame(rule) => {
                 let siblings = self.name("g");
-                self.statements.push(format!(
-                    "CREATE TEMP TABLE {siblings}(k INTEGER PRIMARY KEY, file, node{}, pk, ord{})",
+                let columns = format!(
+                    "k INTEGER PRIMARY KEY, file, node{}, pk, ord{}",
                     self.physical_list(),
                     self.extra_list()
-                ));
+                );
+                self.create(&siblings, &columns);
                 self.statements.push(format!(
-                    "INSERT INTO {siblings} SELECT ROW_NUMBER() OVER (), c.file, c.id{}, f.k, c.id{} FROM {input} f \
+                    "INSERT INTO {siblings} SELECT NULL, c.file, c.id{}, f.k, c.id{} FROM {input} f \
                      JOIN node fn ON fn.file = f.file AND fn.id = f.node \
                      JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
                     self.physical_of("f"),
