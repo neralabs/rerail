@@ -555,7 +555,7 @@ jobs:
           set -euo pipefail
           if ! id="$(gh api "repos/$REPO/releases/tags/$RELEASE" --jq .id 2> /dev/null)"; then
             gh release create "$RELEASE" --repo "$REPO" --prerelease --title "Port readiness recordings" \
-              --notes "Upstream linters' recorded answers for the port readiness gates (docs/port-readiness.md). Each asset is named for the sha256 of the JSON it holds, and a commit's packs/<pack>/upstream/<tool>/recording.lock names the ones its rules are judged against. Each recording holds excerpts of its upstream's test files: see that upstream's packs/<pack>/licenses/<project>/UPSTREAM.md and the LICENSE beside it."
+              --notes "Upstream linters' recorded answers for the port readiness gates (docs/port-readiness.md). Each asset is named for the sha256 of the JSON it holds, and a commit's packs/<pack>/upstream/<tool>/recording.lock names the ones its rules are judged against. Each recording holds excerpts of its upstream's tests under that upstream's licence, whose text it carries as licenseText; see also that upstream's packs/<pack>/licenses/<project>/UPSTREAM.md and the LICENSE beside it."
             id="$(gh api "repos/$REPO/releases/tags/$RELEASE" --jq .id)"
           fi
           gh api --paginate "repos/$REPO/releases/$id/assets?per_page=100" --jq '.[].name' > "$RUNNER_TEMP/have.txt"
