@@ -1520,6 +1520,21 @@ impl TapeDoc {
         rec.start as usize..rec.end as usize
     }
 
+    /// Node `node`'s parent, first child, and structural next and previous siblings, as its
+    /// record holds them (`u32::MAX` for none).
+    #[inline]
+    pub(super) fn transducer_links(&self, node: u32) -> [u32; 4] {
+        let rec = &self.data[node as usize];
+        [rec.parent, rec.first, rec.next, rec.prev]
+    }
+
+    /// Whether node `node` is extra, an ERROR node, and a MISSING token.
+    #[inline]
+    pub(super) fn transducer_marks(&self, node: u32) -> [bool; 3] {
+        let rec = &self.data[node as usize];
+        [rec.extra, rec.error, rec.missing]
+    }
+
     #[cfg(test)]
     pub(super) fn transducer_parent(&self, node: u32) -> Option<u32> {
         let parent = self.data[node as usize].parent;
