@@ -10,6 +10,9 @@
     "runtime": "eslint-plugin-react-hooks-7.1.1"
   },
   "runtimes": {
+    "eslint-config-next-16.3.8": {
+      "package.json": "fa48caee62a30874dd792a0b9a48721a2c2e3fed58c128918c7c8f0f4e6542d4"
+    },
     "eslint-plugin-react-hooks-7.1.1": {
       "package.json": "0eebb7eb2f433e74c140fe8c23fe50027e82caf583a33f2a87d2cd37d72b88ae"
     },
@@ -19,16 +22,16 @@
   },
   "files": {
     "recording.json": {
-      "sha256": "11e50fbaf44ab74565931616b6c90fa69db7b8303d11f6a87b251dcc3b88710e",
-      "size": 2085741,
+      "sha256": "d40e994aa3fd7186a874cc699fb571496749db77bc147d1a47c933bf5105a169",
+      "size": 2087006,
       "format": "rerail.port-readiness-recording/v2",
-      "asset": "react-eslint-plugin-react-hooks-recording-11e50fbaf44ab74565931616b6c90fa69db7b8303d11f6a87b251dcc3b88710e.json.gz"
+      "asset": "react-eslint-plugin-react-hooks-recording-d40e994aa3fd7186a874cc699fb571496749db77bc147d1a47c933bf5105a169.json.gz"
     },
     "corpus.json": {
-      "sha256": "b85afe644972c47e475a26ff186273468bb7317e7211863d6f0c8a2626222e1c",
-      "size": 215066,
+      "sha256": "6df5f873dc62d667d4bc42456aa753f9d2869119b776753b5408de196e223e57",
+      "size": 10445,
       "format": "rerail.port-readiness-corpus/v2",
-      "asset": "react-eslint-plugin-react-hooks-corpus-b85afe644972c47e475a26ff186273468bb7317e7211863d6f0c8a2626222e1c.json.gz"
+      "asset": "react-eslint-plugin-react-hooks-corpus-6df5f873dc62d667d4bc42456aa753f9d2869119b776753b5408de196e223e57.json.gz"
     }
   }
 }

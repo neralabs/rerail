@@ -10,6 +10,9 @@
     "runtime": "eslint-plugin-next-16.3.8"
   },
   "runtimes": {
+    "eslint-config-next-16.3.8": {
+      "package.json": "fa48caee62a30874dd792a0b9a48721a2c2e3fed58c128918c7c8f0f4e6542d4"
+    },
     "eslint-plugin-next-16.3.8": {
       "package.json": "01c0769560c39074a9ede986868b8a47414bc1710fdf72c19020b5012be1b627"
     },
@@ -19,16 +22,16 @@
   },
   "files": {
     "recording.json": {
-      "sha256": "824360574a54f5a3e9b42c76b507ee87522169e9502d88ebdaadb5802483fced",
-      "size": 254331,
+      "sha256": "48e75f88de0aa398664fde287ab0bb6b917b1cb681c9769b4e06a80d1f6dcde2",
+      "size": 255587,
       "format": "rerail.port-readiness-recording/v2",
-      "asset": "next-eslint-plugin-next-recording-824360574a54f5a3e9b42c76b507ee87522169e9502d88ebdaadb5802483fced.json.gz"
+      "asset": "next-eslint-plugin-next-recording-48e75f88de0aa398664fde287ab0bb6b917b1cb681c9769b4e06a80d1f6dcde2.json.gz"
     },
     "corpus.json": {
-      "sha256": "220df27c30349a333b333cc17bf70af7213f44f063c570406ac53ad330bd0f0b",
-      "size": 1710146,
+      "sha256": "a6cbf7bc426147b135e67a9e60b8c681b7da5b0098c69d0b9bd0bdb6fee677b3",
+      "size": 32839,
       "format": "rerail.port-readiness-corpus/v2",
-      "asset": "next-eslint-plugin-next-corpus-220df27c30349a333b333cc17bf70af7213f44f063c570406ac53ad330bd0f0b.json.gz"
+      "asset": "next-eslint-plugin-next-corpus-a6cbf7bc426147b135e67a9e60b8c681b7da5b0098c69d0b9bd0bdb6fee677b3.json.gz"
     }
   }
 }
