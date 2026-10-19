@@ -177,30 +177,35 @@ it("matches fourth-batch upstream detections without claiming missing positive c
       { check: "rust_sql_grammar_boundary", positive: 0, clean: 0 }] });
 }, 60_000);
 
-it("keeps the fourth-batch positive gaps and helper-cycle failures explicit", async () => {
-  const output = join(mkdtempSync(join(tmpdir(), "rerail-data-layer-fourth-gaps-")), "report.json");
-  const passed = await replay(fixturesPath("host", "data-layer-port", "batch-04-probes.json"), output);
-  const report = z.object({
-    rows: z.array(z.object({ test: z.string(), falsePositives: z.array(z.string()), falseNegatives: z.array(z.string()),
-      engineFailures: z.array(z.unknown()), statelessFailures: z.array(z.unknown()) })),
-  }).parse(JSON.parse(readFileSync(output, "utf8")));
-  const summary = summarySchema.parse(JSON.parse(readFileSync(output, "utf8")));
-  expect(passed).toBe(false);
-  expect(summary).toEqual({ replayedCalls: 224, positiveCalls: 133, cleanCalls: 91,
-    falsePositives: 0, falseNegatives: 14, engineFailures: 8, executionPathDifferences: 0, missingCoverage: [] });
-  const failingCases = [...new Set(report.rows.filter(row => row.falsePositives.length + row.falseNegatives.length
-    + row.engineFailures.length + row.statelessFailures.length > 0).map(row => row.test.replace(/:(analyzer|plugin|production-detector)$/, "")))].sort();
-  expect(failingCases).toEqual([
-    "probe:grammar_callable_constructors:cross-file-constructor",
-    "probe:grammar_fragment_usage:alias-string-container",
-    "probe:grammar_fragment_usage:cycle",
-    "probe:grammar_fragment_usage:unreachable-cycle",
-    "probe:regex_sql_parsing:fstring",
-    "probe:render_raw_strings:fstring",
-    "probe:render_raw_strings:nested",
-    "probe:sql_grammar_escape_hatches:cross-file-inheritance",
-  ]);
+it("ports the fourth batch across the expanded positive and clean oracle corpus", async () => {
+  const { passed, summary } = await run(undefined, fixturesPath("host", "data-layer-port", "batch-04-probes.json"));
+  expect(passed).toBe(true);
+  expect(summary).toEqual({ replayedCalls: 308, positiveCalls: 191, cleanCalls: 117,
+    falsePositives: 0, falseNegatives: 0, engineFailures: 0, executionPathDifferences: 0, missingCoverage: [] });
 }, 60_000);
+
+it("certifies fourth-batch coverage from the original tests and supplemental corpus together", async () => {
+  const output = join(mkdtempSync(join(tmpdir(), "rerail-data-layer-fourth-combined-")), "report.json");
+  const passed = await replay([
+    fixturesPath("host", "data-layer-port", "batch-04-recording.json"),
+    fixturesPath("host", "data-layer-port", "batch-04-probes.json"),
+  ], output);
+  expect(passed).toBe(true);
+  expect(summarySchema.parse(JSON.parse(readFileSync(output, "utf8")))).toEqual({
+    replayedCalls: 514, positiveCalls: 321, cleanCalls: 193, falsePositives: 0, falseNegatives: 0,
+    engineFailures: 0, executionPathDifferences: 0, missingCoverage: [],
+  });
+}, 60_000);
+
+it("refuses to combine recordings from different source commits", async () => {
+  const original = fixturesPath("host", "data-layer-port", "batch-04-recording.json");
+  const directory = mkdtempSync(join(tmpdir(), "rerail-data-layer-source-pin-"));
+  const modified = z.object({ commit: z.string() }).passthrough().parse(JSON.parse(readFileSync(original, "utf8")));
+  modified.commit = "different-source";
+  const other = join(directory, "recording.json");
+  writeFileSync(other, JSON.stringify(modified));
+  await expect(replay([original, other], join(directory, "report.json"))).rejects.toThrow("same source commit");
+});
 
 it("rejects an empty fourth-batch detector on the original positive corpus", async () => {
   const { passed, summary } = await run(sentinel("\\b\\B"), fixturesPath("host", "data-layer-port", "batch-04-recording.json"));

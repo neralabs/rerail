@@ -72,9 +72,21 @@ async function workspaceEvaluation(compiled: NativeCompiledCodeRuleDsl, event: E
   } finally { workspace.close(); }
 }
 
-export async function replay(recordingPath: string, outputPath: string, policies = "packs/data-layer/candidates/rules"): Promise<boolean> {
-  const recording = recordingSchema.parse(JSON.parse(readFileSync(recordingPath, "utf8")));
-  if (recording.pytest_exit_code !== 0 || recording.source_mismatches.length !== 0) throw new Error("Upstream tests or pinned source verification failed");
+export async function replay(recordingPath: string | string[], outputPath: string, policies = "packs/data-layer/candidates/rules"): Promise<boolean> {
+  const paths = typeof recordingPath === "string" ? [recordingPath] : recordingPath;
+  if (paths.length === 0) throw new Error("At least one recording is required");
+  const inputs = paths.map(path => recordingSchema.parse(JSON.parse(readFileSync(path, "utf8"))));
+  const first = inputs[0]!;
+  for (const input of inputs) {
+    if (input.pytest_exit_code !== 0 || input.source_mismatches.length !== 0) throw new Error("Upstream tests or pinned source verification failed");
+    if (input.commit !== first.commit) throw new Error("Combined recordings must use the same source commit");
+  }
+  const recording = { ...first, files: undefined,
+    checks: [...new Set(inputs.flatMap(input => input.checks))],
+    collected_tests: inputs.reduce((sum, input) => sum + input.collected_tests, 0),
+    uncaptured_tests: inputs.flatMap(input => input.uncaptured_tests),
+    events: inputs.flatMap(input => input.events.map(event => ({ ...event, files: event.files ?? input.files }))),
+  };
   const compiled = new Map<string, NativeCompiledCodeRuleDsl>();
   const validated = new Map<string, z.infer<typeof codeRuleSchema>>();
   const rows: ReplayRow[] = [];
@@ -178,7 +190,7 @@ export async function replay(recordingPath: string, outputPath: string, policies
   }));
   const missingCoverage = coverage.filter(row => row.positive === 0 || row.clean === 0);
   const report = { coverage, missingCoverage, nativeSha256: createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex"), dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded"],
-    format: "rerail.data-layer-parity/v1", commit: recording.commit,
+    format: "rerail.data-layer-parity/v1", commit: recording.commit, recordings: paths,
     collectedTests: recording.collected_tests, replayedCalls: rows.length,
     positiveCalls: rows.filter(row => row.positive).length, cleanCalls: rows.filter(row => !row.positive).length,
     retainedCalls: recording.events.filter(event => event.retained_reason !== undefined).map(event => ({ test: event.test, reason: event.retained_reason })),
@@ -194,7 +206,7 @@ export async function replay(recordingPath: string, outputPath: string, policies
 }
 
 if (process.argv[1]?.endsWith("/replay.ts")) {
-  const { values } = parseArgs({ options: { recording: { type: "string" }, output: { type: "string" }, policies: { type: "string" } } });
+  const { values } = parseArgs({ options: { recording: { type: "string", multiple: true }, output: { type: "string" }, policies: { type: "string" } } });
   if (values.recording === undefined || values.output === undefined) throw new Error("Usage: replay.ts --recording <json> --output <json> [--policies <directory>]");
   if (!await replay(values.recording, values.output, values.policies)) process.exitCode = 1;
 }

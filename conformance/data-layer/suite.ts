@@ -15,7 +15,8 @@ const pageSchema = z.object({ done: z.boolean(), cursor: z.number(),
   violations: z.array(z.object({ ruleId: z.string(), path: z.string(), code: z.string(), span: z.object({ startLine: z.number() }) })),
   failures: z.array(z.unknown()),
 });
-const { values } = parseArgs({ options: { recording: { type: "string" }, output: { type: "string" }, allocator: { type: "string", default: "unspecified" } } });
+const { values } = parseArgs({ options: { recording: { type: "string" }, output: { type: "string" }, allocator: { type: "string", default: "unspecified" },
+  policies: { type: "string", default: "packs/data-layer/candidates/rules" } } });
 if (values.recording === undefined || values.output === undefined) throw new Error("Usage: suite.ts --recording <json> --output <json>");
 const recording = recordingSchema.parse(JSON.parse(readFileSync(values.recording, "utf8")));
 if (recording.source_mismatches.length !== 0) throw new Error("Pinned source verification failed");
@@ -33,7 +34,7 @@ try {
   for (const event of recording.events) {
     const id = `data-layer-${event.check.replaceAll("_", "-")}`;
     const policyStarted = performance.now();
-    const compiled = native.CodeRuleDslRuntime.compile(readFileSync(`packs/data-layer/candidates/rules/${id}.json`, "utf8"), "json", capabilitiesJson());
+    const compiled = native.CodeRuleDslRuntime.compile(readFileSync(`${values.policies}/${id}.json`, "utf8"), "json", capabilitiesJson());
     policyCompilationMs[id] = performance.now() - policyStarted;
     policyDigests[id] = compiled.digest();
     workspace.addCodeRule(compiled);
@@ -70,7 +71,7 @@ try {
   const report = { commit: recording.commit, files: files.length, bytes: files.reduce((sum, file) => sum + Buffer.byteLength(file.source), 0),
     oracleMs: recording.oracle_ms, oracleWorkers: recording.workers, policyDigests, policyCompilationMs, compilationMs, coldMs, unchangedFileMs, editedFileMs, editedPath: file.path,
     expected: expected.length, actual: actual.length, falsePositives: difference(actual, expected), falseNegatives: difference(expected, actual), failures,
-    allocator: values.allocator, nativeSha256: createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex"), nativeWorkers: 4 };
+    allocator: values.allocator, policies: values.policies, nativeSha256: createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex"), nativeWorkers: 4 };
   writeFileSync(values.output, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ...report, falsePositives: report.falsePositives.length, falseNegatives: report.falseNegatives.length, failures: failures.length }, null, 2));
   if (report.falsePositives.length + report.falseNegatives.length + failures.length !== 0) process.exitCode = 1;

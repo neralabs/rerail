@@ -542,7 +542,8 @@ export interface CodeRuleDslCompare {
 /**
  * A cross-file relation projected from an AST query's matches in every file of the code rule's
  * scope (narrowed by `paths`). Each match is one row of the `project` fields: `capture.NAME`
- * (the capture's source text), `file.path`, `file.directory`, `file.name`, `file.stem` (the name
+ * (the capture's source text), `capture.NAME.text` (decoded exported text or host text),
+ * `capture.NAME.startByte`, `capture.NAME.startLine`, `file.path`, `file.directory`, `file.name`, `file.stem` (the name
  * without extensions), `file.module` or `file.package` (Python). A file whose query failed or
  * was read around syntax errors has unknown rows: no absence or upper bound ignores it.
  */
@@ -553,6 +554,13 @@ export interface CodeRuleDslEvidenceQuery {
     query: CodeRuleDslAstQuery;
     project: Record<string, string>;
     where?: CodeRuleDslPredicate;
+    /** Ordered, cycle-safe name closures over raw projected fields. */
+    /** Enumerate bindings before projecting rows. */
+    each?: string;
+    /** Report a selected capture's location; defaults to witness.span. */
+    anchor?: string;
+    closure?: { name: string; seeds?: string[]; seed_field?: string; edges?: { from: string; to: string };
+      extends?: string[]; partition_by?: string[]; contains: Record<string, string> }[];
   };
 }
 
@@ -726,7 +734,7 @@ export interface CodeRuleDslFormatArgs {
 }
 
 /** The sub-grammars `parse` applies (the engine's `literal::Grammar`). */
-export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotation" | "eslintDirective" | "printfFormat" | "scanfFormat" | "phpDoc" | "rustFormat";
+export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotation" | "eslintDirective" | "printfFormat" | "scanfFormat" | "phpDoc" | "rustFormat" | "identifierWords" | "pythonFString";
 
 /**
  * A string literal parsed by a sub-grammar, and a rule of that grammar's kinds matched on the parsed tree's root: the
@@ -805,6 +813,8 @@ export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotat
  */
 export interface CodeRuleDslParse extends CodeRuleDslAstRule {
   grammar: CodeRuleDslParseGrammar;
+  /** The opaque slot text in a pythonFString projection. Defaults to "{}". */
+  interpolation?: string;
 }
 
 /**

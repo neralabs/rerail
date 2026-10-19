@@ -50,6 +50,13 @@ def R(id, pattern, code, paths=None, **kw):
  q={'source':'file.content','pattern':pattern,'lines':{'first':True},**kw}
  if paths:q['paths']=paths
  return {'id':id,'forbid':{'regex':q},'violation':{'code':code,'anchor':'witness.span','message':code+': '+id}}
+def G(id, rule, project, stages, predicate, code, each='ROW', groups=None, anchor='witness.span'):
+ return {'id':id, 'budget':{'query':{'evidence':{'as':'row', 'query':{'ast':{'language':'python','syntax':'valid','rule':rule}},
+  'project':{'path':'file.path',**project},'each':each,'anchor':anchor,'closure':stages,'where':predicate}},
+  'count':{'lte':0},'group_by':groups or ['row.path','row.position']},
+  'violation':{'code':code,'anchor':'witness.span','message':code+': '+id}}
+def astquery(clause):
+ return clause.get('forbid',{}).get('ast') or clause.get('budget',{}).get('query',{}).get('evidence',{}).get('query',{}).get('ast')
 def W(name,clauses,utils=None,options=None,roots=None,exclude=None,mode='block'):
  options={'oracleAnalyzer':{'type':'boolean','default':False},'sourceGate':{'type':'boolean','default':True},**(options or {})}
  definition={'options':options}
@@ -86,8 +93,8 @@ def W(name,clauses,utils=None,options=None,roots=None,exclude=None,mode='block')
  if triggers:
   gate={'$option':'sourceGate','cases':{'true':'|'.join(re.escape(x) for x in triggers),'false':r'(?s).*'}}
   for clause in clauses:
-   if 'ast' in clause.get('forbid',{}):
-    q=clause['forbid']['ast'];q['rule']=A(q['rule'],I(A(K('module'),RX(gate))))
+   q=astquery(clause)
+   if q is not None:q['rule']=A(q['rule'],I(A(K('module'),RX(gate))))
  (args.output/(d['id']+'.json')).write_text(json.dumps(d,indent=2)+'\n')
 def arrays(module, *keys):return {key:{'type':'array','default':sorted(getattr(module,key))} for key in keys}
 FPREFIX=A(K('string'),RX(r'(?i)^[rub]*f'))
@@ -109,7 +116,9 @@ doc=A(I(A(K('expression_statement'),{'nthChild':{'position':1,'ofRule':N(K('comm
 suppress_special=I(A(K('argument_list'),I(A(specialcall,{'arguments':{'signature':['arg','/'],'bind':{'FIRST':'arg'},'mode':'syntactic'}}),'neighbor')),'neighbor')
 raw=A(CONST,{'value':{'regex':r'(?s)^.{2}'}},RENDER,N(doc),N(I(O(K('raise_statement'),K('assert_statement')))),N(allowedarg),
  N(A(P('CURRENT'),suppress_special,{'compare':{'left':'CURRENT','right':'FIRST','op':'eq','text':'node'}})))
-W('render_raw_strings',[C('literal',raw,'string_literal'),C('template',A(specialcall,F('function',names(['Template'])),RENDER),'template_call'),
+raw_fstring=A(FS,RENDER,N(I(O(K('raise_statement'),K('assert_statement')))),
+ {'parse':{'grammar':'pythonFString','has':{'kind':'literal','value':{'regex':r'(?s)^.{2}'},'capture':'PART'}}})
+W('render_raw_strings',[C('literal',raw,'string_literal'),C('fstring-literal',raw_fstring,'string_literal',anchor='capture.PART',each='PART'),C('template',A(specialcall,F('function',names(['Template'])),RENDER),'template_call'),
  C('static',A(specialcall,F('function',K('attribute')),RENDER),'static_call')])
 # Rendering method restrictions use the nearest class's bases when render() is entered.
 m=modules['grammar_render_methods']
@@ -188,11 +197,20 @@ ordered=[('ERROR_MSG_PARSE',error),('SQL_COMMENT_STRIP',A(sql,V(r'--\[?\\?\^|/\\
  ('SQL_STRUCTURE_PARSE',A(sql,V(r'(?i)LIKE')))]
 clauses=[];previous=[]
 methods=['search','sub','match','findall','fullmatch','split','compile']
+def inline_regex_utils(rule):
+ if isinstance(rule,list):return [inline_regex_utils(x) for x in rule]
+ if not isinstance(rule,dict):return rule
+ if set(rule)=={'matches'}:return inline_regex_utils(utils[rule['matches']])
+ return {k:inline_regex_utils(v) for k,v in rule.items()}
 for i,(code,test) in enumerate(ordered+[('SQL_REWRITE',sql),('SQL_STRUCTURE_PARSE',sql)]):
  use_methods=['sub'] if i==len(ordered) else ([x for x in methods if x!='sub'] if i==len(ordered)+1 else methods)
- classified=A(CONST,N(false),test,*(N(old) for old in previous))
+ classifier=A(N(false),test,*(N(old) for old in previous))
+ classified=O(A(CONST,classifier),A(FS,{'parse':{'grammar':'pythonFString','interpolation':'{...}',**inline_regex_utils(classifier)}}))
+ # Parentheses disappear from Python's AST, including around an adjacent JoinedStr.
+ pattern='regex-pattern-'+str(i)
+ utils[pattern]=O(classified,A(K('parenthesized_expression'),H(M(pattern))))
  rule=A(K('call'),F('function',A(K('attribute'),F('object',names(['re'])),F('attribute',names(use_methods)))),
-  F('arguments',H(A(classified,{'nthChild':{'position':1,'ofRule':N(K('comment'))}}))))
+  F('arguments',H(A(M(pattern),{'nthChild':{'position':1,'ofRule':N(K('comment'))}}))))
  clauses.append(C('category-'+str(i),rule,code))
  if i<len(ordered):previous.append(test)
 W('regex_sql_parsing',clauses,utils,roots=['data_layer/**/*.py','impl/**/*.py','_internal/**/*.py','l[0-9][0-9][0-9][0-9]_*/**/*.py'])
@@ -201,36 +219,48 @@ m=modules['sql_grammar_escape_hatches'];utils={}
 options=arrays(m,'ALLOWLISTED_CLASSES','DATA_VALUE_PARAMS','OPERATOR_PARAMS','SCHEMA_METADATA_CLASSES','CALLSITE_PROTECTED_CLASSES')
 options.update(grammar_class_names={'type':'array','default':['SqlRenderable','SqlClause','SqlFragment','SqlParam']},safe_param_types={'type':'array','default':sorted(m._SAFE_PARAM_TYPES_STATIC)})
 utils['type-name']=O(K('identifier'),A(K('attribute'),F('attribute',M('type-name'))),A(K('subscript'),F('value',M('type-name'))))
-# Recursion through module declarations follows same-file inheritance and aliases.
-utils['grammar-name']={'params':['NAME'],'rule':O(A(K('identifier'),RX(opt('grammar_class_names'))),
- A(K('identifier'),I(A(K('module'),H(A(K('class_definition'),F('name',P('NAME')),F('superclasses',H(A(P('BASE'),M('grammar-name',NAME='BASE'))))),stop='end')))),
- A(K('identifier'),I(A(K('module'),H(A(K('assignment'),F('left',P('NAME')),F('right',A(P('BASE'),M('grammar-alias',NAME='BASE')))),stop='end')))))}
-utils['grammar-alias']={'params':['NAME'],'rule':O(M('grammar-name',NAME='NAME'),A(K('binary_operator'),F('operator',RX(r'^\|$')),O(F('left',A(P('X'),M('grammar-alias',NAME='X'))),F('right',A(P('Y'),M('grammar-alias',NAME='Y'))))),A(K('parenthesized_expression'),H(A(P('X'),M('grammar-alias',NAME='X')))))}
+utils['base-name']=O(A(K('identifier'),P('BASE')),A(K('attribute'),F('attribute',A(K('identifier'),P('BASE')))),
+ A(K('subscript'),F('value',M('base-name'))))
 # Leaf types exclude transparent container names and qualified-name prefixes.
-utils['unsafe-leaf']=O(A(K('identifier'),N(RX(opt('safe_param_types'))),N(names(m.TRANSPARENT_CONTAINER_TYPES)),N(A(P('G'),M('grammar-name',NAME='G')))),
+name_exempt=I(A(O(K('typed_parameter'),K('typed_default_parameter')),O(H(onames('DATA_VALUE_PARAMS')),F('name',onames('DATA_VALUE_PARAMS')),H(onames('OPERATOR_PARAMS')),F('name',onames('OPERATOR_PARAMS')))),O(K('typed_parameter'),K('typed_default_parameter')))
+leaf=A(K('identifier'),N(RX(opt('safe_param_types'))),N(names(m.TRANSPARENT_CONTAINER_TYPES)),N(A(names(['str']),name_exempt)),P('LEAF'),P('ROW'))
+utils['unsafe-leaf']=O(leaf,
  A(K('attribute'),F('attribute',M('unsafe-leaf'))),
  A(O(K('type'),K('generic_type'),K('union_type'),K('type_parameter'),K('tuple'),K('parenthesized_expression')),H(M('unsafe-leaf'))),
  A(K('subscript'),O(F('value',M('unsafe-leaf')),F('subscript',M('unsafe-leaf')))),
  A(K('binary_operator'),F('operator',RX(r'^\|$')),O(F('left',M('unsafe-leaf')),F('right',M('unsafe-leaf')))),
- A(K('string'),{'parse':{'grammar':'annotation',**H(M('unsafe-leaf'),stop='end')}}),
- O(K('integer'),K('float'),K('true'),K('false')))
-# Native annotation parsing reads actual types; upstream forward strings tokenize all identifiers.
-# This candidate's exceptional string-token behavior is checked separately by probes.
+ A(STR,{'parse':{'grammar':'identifierWords','has':{'kind':'word','all':[N(RX(opt('safe_param_types'))),N(RX('^(?:'+'|'.join(re.escape(x) for x in sorted(m.TRANSPARENT_CONTAINER_TYPES))+')$'))],
+   'capture':'LEAF','any':[{'capture':'ROW'}],'not':A(RX('^str$'),{'host':name_exempt})}}}),
+ A(O(K('integer'),K('float'),K('true'),K('false')),P('LEAF'),P('ROW')))
 forbidden=names(m.FORBIDDEN_ESCAPE_HATCHES)
 skip=O(*(onames(n) for n in ('ALLOWLISTED_CLASSES','SCHEMA_METADATA_CLASSES','CALLSITE_PROTECTED_CLASSES')),forbidden)
-classrule=A(K('class_definition'),N(F('name',skip)),F('superclasses',H(A(P('BASE'),M('grammar-name',NAME='BASE')))))
-param=A(O(K('typed_parameter'),K('typed_default_parameter')),N(H(names(['self']))),F('type',M('unsafe-leaf')),
- I(A(sync('__init__'),I(classrule,K('class_definition'))),K('function_definition')))
-param=A(param,normal,
+param=A(O(K('typed_parameter'),K('typed_default_parameter')),P('PARAMETER'),N(H(names(['self']))),F('type',M('unsafe-leaf')),
+ normal,
  N({'precedes':{**K('positional_separator'),'stopBy':'end'}}),
  N({'follows':{**O(K('keyword_separator'),K('list_splat_pattern'),A(K('typed_parameter'),H(K('list_splat_pattern')))),'stopBy':'end'}}))
-clauses=[C('forbidden-class',A(K('class_definition'),F('name',forbidden)),'escape_hatch'),C('unsafe-parameter',param,'escape_hatch')]
+# A base expression is one graph edge, so multiple bases remain separate rows. The parameter
+# row is anchored back to its constructor, rather than to the base expression's source line.
+class_decl=A(K('class_definition'),P('CLASS'),F('name',P('CLASS_NAME')))
+classbase=A(M('base-name'),I(A(K('argument_list'),I(class_decl,'neighbor')),'neighbor'))
+classedge=A(classbase,P('ROW'))
+subject=A(classbase,I(A(K('class_definition'),N(F('name',skip)),direct_method(A(sync('__init__'),F('parameters',H(param))))),K('class_definition')))
+utils['alias-target']=O(A(K('identifier'),P('ALIAS_FROM'),P('ROW')),A(K('attribute'),F('attribute',A(K('identifier'),P('ALIAS_FROM'),P('ROW')))),
+ A(K('binary_operator'),F('operator',RX(r'^\|$')),O(F('left',M('alias-target')),F('right',M('alias-target')))),A(K('parenthesized_expression'),H(M('alias-target'))))
+aliasedge=A(K('assignment'),F('left',A(K('identifier'),P('ALIAS_TO'))),F('right',M('alias-target')))
+clauses=[C('forbidden-class',A(K('class_definition'),F('name',forbidden)),'escape_hatch'),
+ G('unsafe-parameter',O(classedge,subject,aliasedge),
+  {'base':'capture.BASE','class':'capture.CLASS_NAME','alias_from':'capture.ALIAS_FROM','alias_to':'capture.ALIAS_TO','leaf':'capture.LEAF.text',
+   'position':'capture.PARAMETER.startLine','owner':'capture.CLASS_NAME','parameter':'capture.PARAMETER'},
+  [{'name':'classes','seeds':{'$option':'grammar_class_names'},'edges':{'from':'base','to':'class'},'contains':{}},
+   {'name':'aliases','extends':['classes'],'edges':{'from':'alias_from','to':'alias_to'},'contains':{'grammar':'base','safe':'leaf'}}],
+  {'all':[{'eq':['row.grammar',True]},{'eq':['row.safe',False]},{'ne':['row.parameter',None]}]},'escape_hatch',
+  groups=['row.path','row.position','row.owner'],anchor='capture.PARAMETER')]
 for i,name in enumerate(sorted(m.FORBIDDEN_ESCAPE_HATCHES)):
  c=R('usage-'+str(i),re.escape(name)+r'\(|import '+re.escape(name)+r'|, '+re.escape(name),'escape_hatch');c['forbid']['regex']['lines'].update(terminators='lf',exclude=[r'^\s*#']);clauses.append(c)
 W('sql_grammar_escape_hatches',clauses,utils,options,roots=['api/**/*.py','impl/**/*.py'],mode='steer')
 # Callable hooks and constructor fields are matched by name, as the original visitor does.
 utils={}
-utils['constructor-name']=O(K('identifier'),A(K('attribute'),F('attribute',M('constructor-name'))),A(K('subscript'),F('value',M('constructor-name'))),A(K('call'),F('function',M('constructor-name'))))
+utils['constructor-name']=O(A(K('identifier'),P('CTOR')),A(K('attribute'),F('attribute',M('constructor-name'))),A(K('subscript'),F('value',M('constructor-name'))),A(K('call'),F('function',M('constructor-name'))))
 utils['contains-callable']=O(term(['Callable']),H(M('contains-callable')))
 parameter=O(A(K('identifier'),P('PARAM')),A(O(K('typed_parameter'),K('typed_default_parameter'),K('default_parameter')),O(F('name',P('PARAM')),H(A(K('identifier'),P('PARAM'))))))
 callableparam=A(parameter,F('type',M('contains-callable')))
@@ -257,10 +287,17 @@ utils['symbol-scope']={'params':['NAME'],'rule':O(A(K('module'),H(A(sync(),F('na
  A(sync(),directfunction),A(sync(),N(local),I(M('symbol-scope',NAME='NAME'),O(sync(),K('module')))))}
 functionarg=A(K('identifier'),P('NAME'),I(M('symbol-scope',NAME='NAME'),O(sync(),K('module'))))
 actualarg=O(K('lambda'),functionarg)
-callctor=A(K('call'),F('function',A(M('constructor-name'),P('CTOR'))),
- I(A(K('module'),H(A(K('class_definition'),F('name',P('CTOR')),direct_method(sync('render')))))),
- F('arguments',H(O(A(actualarg,P('ARG')),A(K('keyword_argument'),F('value',A(actualarg,P('ARG'))))))))
-clauses.append(C('constructor-arg',callctor,'CALLABLE_CONSTRUCTOR_ARG',each='ARG'))
+# The oracle's registry is global and syntactic: no import or lexical binding is required.
+renderclass=A(K('class_definition'),P('ROW'),F('name',P('SEED')),direct_method(sync('render')),
+ O(I(K('module'),'neighbor'),I(A(K('decorated_definition'),I(K('module'),'neighbor')),'neighbor')))
+ctorcall=A(K('call'),F('function',M('constructor-name')))
+ctorarg=A(actualarg,P('ROW'),O(
+ I(A(K('argument_list'),I(ctorcall,'neighbor')),'neighbor'),
+ I(A(K('keyword_argument'),I(A(K('argument_list'),I(ctorcall,'neighbor')),'neighbor')),'neighbor')))
+clauses.append(G('constructor-arg',O(renderclass,ctorarg),
+ {'seed':'capture.SEED','constructor':'capture.CTOR','position':'capture.ROW.startByte'},
+ [{'name':'renderables','seed_field':'seed','contains':{'known':'constructor'}}],
+ {'eq':['row.known',True]},'CALLABLE_CONSTRUCTOR_ARG'))
 W('grammar_callable_constructors',clauses,utils,roots=['impl/common/l2100_sql_grammar/**/*.py'],exclude=['**/tests/**','**/fragments.py'])
 # Fragment ownership: recursive structural values, aliases, captured fields, and helper calls.
 m=modules['grammar_fragment_usage'];utils={}
@@ -272,9 +309,10 @@ fragment_alias=A(K('identifier'),P('ALIAS'),I(A(K('module'),M('has-fragment-impo
 utils['fragment-type']=O(
  names(['SqlFragment']), A(K('attribute'), F('attribute', names(['SqlFragment']))), fragment_alias,
  A(STR,V(r'(?:^|[^A-Za-z0-9_])SqlFragment(?:$|[^A-Za-z0-9_])')),
- A(STR,P('ANNOTATION'),I(A(K('module'),M('has-fragment-import'))),module_has(A(K('import_from_statement'),H(A(K('aliased_import'),
- F('name',RX(r'(?:^|\.)SqlFragment$')),F('alias',A(P('IMPORTED_TOKEN'),
- {'compare':{'left':'ANNOTATION','right':'IMPORTED_TOKEN','op':'eq','text':'unquoted'}}))))))),
+ A(STR,I(A(K('module'),M('has-fragment-import'))),{'parse':{'grammar':'identifierWords',
+  'has':{'kind':'word','capture':'ANNOTATION_TOKEN','host':module_has(A(K('import_from_statement'),H(A(K('aliased_import'),
+   F('name',RX(r'(?:^|\.)SqlFragment$')),F('alias',A(P('IMPORTED_TOKEN'),
+   {'compare':{'left':'ANNOTATION_TOKEN','right':'IMPORTED_TOKEN','op':'eq'}}))))))}}}),
  A(O(*(K(k) for k in ['type','generic_type','type_parameter','union_type','binary_operator','list','tuple','subscript','parenthesized_expression'])), H(M('fragment-type')))
 )
 utils['grammar-base'] = {'params': ['NAME'], 'rule': O(
@@ -335,18 +373,26 @@ utils['returned-field']={'params':['CLASS_NAME'],'rule':O(A(K('attribute'),F('ob
  A(K('subscript'),F('value',M('returned-field',CLASS_NAME='CLASS_NAME'))),A(K('parenthesized_expression'),H(M('returned-field',CLASS_NAME='CLASS_NAME'))),
  A(K('call'),F('function',O(names(['SqlFragment']),A(K('attribute'),F('object',names(['SqlFragment'])),F('attribute',names(['static','with_params']))))),
  F('arguments',H(A(M('returned-field',CLASS_NAME='CLASS_NAME'),{'nthChild':{'position':1,'ofRule':N(K('comment'))}})))))}
-edge=H(A(K('call'), F('function', A(K('attribute'), F('object', names(['self','cls'])), F('attribute', P('TARGET'))))), stop='end')
-utils['reachable-method']={'params':['TARGET'],'rule': A(K('class_definition'), direct_method(A(
- fn(), F('name', P('CALLER')), edge,
- O(F('name', names(['render'])), I(M('reachable-method',TARGET='CALLER'), K('class_definition')))
-)))}
-# A target is reachable directly as render(), or via a class-local self/cls call chain.
-reachable=A(fn(),F('name',P('METHOD')),O(F('name',names(['render'])),I(M('reachable-method',TARGET='METHOD'),K('class_definition'))))
 unsafe_return=O(M('returned-field',CLASS_NAME='CLASS_NAME'),A(field,I(M('unsafe-field',FIELD='FIELD'),K('class_definition'))))
+owner=A(K('class_definition'),P('OWNER'),F('name',P('CLASS_NAME')),N(F('name',names(m.FORBIDDEN_GRAMMAR_CLASSES))),direct_method(fn('render')))
+# Match the enclosing direct method, including calls and returns in its nested bodies, as ast.walk does.
+for order,side in [('earlier','after'),('later','before')]:
+ utils[order+'-method']={'params':['NAME','CURRENT'],'rule':A(K('class_definition'),direct_method(A(fn(),F('name',P('NAME')),
+  {'layout':{side:{'to':'capture.CURRENT','breaks':{'min':0}}}})))}
+# The visitor enters the first render method, but its helper dictionary keeps the last definition.
+selected_method=O(A(F('name',names(['render'])),N(I(M('earlier-method',NAME='METHOD',CURRENT='METHOD_NODE'),K('class_definition')))),
+ A(N(F('name',names(['render']))),N(I(M('later-method',NAME='METHOD',CURRENT='METHOD_NODE'),K('class_definition')))))
+method=A(fn(),P('METHOD_NODE'),F('name',P('METHOD')),I(A(owner,direct_method(A(fn(),P('METHOD_NODE')))),K('class_definition')),selected_method)
+edge=A(K('call'),P('ROW'),F('function',A(K('attribute'),F('object',names(['self','cls'])),F('attribute',P('TARGET')))),I(method))
+risky=A(K('return_statement'),P('ROW'),P('RETURN'),I(A(owner,N(F('name',names(m.FORBIDDEN_GRAMMAR_CLASSES))),direct_method(fn('render'))),K('class_definition')),
+ H(unsafe_return),I(method))
 clauses=[C('forbidden-class',A(K('class_definition'),F('name',names(m.FORBIDDEN_GRAMMAR_CLASSES))),'sqlfragment_usage'),
  C('constructor-fragment',A(sync('__init__'),I(M('grammar-class'),K('class_definition')),F('parameters',H(A(O(parameter,A(K('typed_parameter'),H(A(O(K('list_splat_pattern'),K('dictionary_splat_pattern')),H(A(K('identifier'),P('PARAM'))))))),N(H(names(['self']))),F('type',M('fragment-type')))))),'sqlfragment_usage',each='PARAM'),
  C('attribute-fragment',A(K('assignment'),F('type',M('fragment-type')),N(I(fn())),I(M('grammar-class'),K('class_definition'))),'sqlfragment_usage'),
- C('captured-return',A(K('return_statement'),I(A(K('class_definition'),F('name',P('CLASS_NAME')),N(F('name',names(m.FORBIDDEN_GRAMMAR_CLASSES))),direct_method(fn('render'))),K('class_definition')),
- H(unsafe_return),I(reachable,K('function_definition'))),'sqlfragment_usage')]
+ G('captured-return',O(edge,risky),
+  {'caller':'capture.METHOD','target':'capture.TARGET','method':'capture.METHOD','owner':'capture.OWNER.startByte','position':'capture.ROW.startByte',
+   'return':'capture.RETURN'},
+  [{'name':'reachable','seeds':['render'],'partition_by':['path','owner'],'edges':{'from':'caller','to':'target'},'contains':{'reachable':'method'}}],
+  {'all':[{'eq':['row.reachable',True]},{'ne':['row.return',None]}]},'sqlfragment_usage')]
 parse=C('syntax-error',K('module'),'python_parse_error',anchor='file.start');parse['forbid']['ast']['syntax']='invalid';clauses.append(parse)
 W('grammar_fragment_usage',clauses,utils,roots=['api/**/*.py','impl/**/*.py','data_layer/**/*.py','_internal/**/*.py','l[0-9]*/**/*.py'])

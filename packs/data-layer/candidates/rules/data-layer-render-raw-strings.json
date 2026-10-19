@@ -497,6 +497,141 @@
       }
     },
     {
+      "id": "fstring-literal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "regex": "(?i)^[rub]*f"
+                              }
+                            ]
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "concatenated_string",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "concatenated_string"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "string"
+                                },
+                                {
+                                  "regex": "(?i)^[rub]*f"
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "format_specifier"
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "has": {
+                            "regex": "^render(?:_|$)",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "any": [
+                          {
+                            "kind": "raise_statement"
+                          },
+                          {
+                            "kind": "assert_statement"
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  },
+                  {
+                    "parse": {
+                      "grammar": "pythonFString",
+                      "has": {
+                        "kind": "literal",
+                        "value": {
+                          "regex": "(?s)^.{2}"
+                        },
+                        "capture": "PART"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "render|'|\"|Template\\(|SqlFragment\\.static\\(",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "string_literal",
+        "anchor": "capture.PART",
+        "message": "string_literal: fstring-literal",
+        "each": "PART"
+      }
+    },
+    {
       "id": "template",
       "forbid": {
         "ast": {

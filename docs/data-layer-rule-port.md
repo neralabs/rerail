@@ -1,4 +1,4 @@
-Latest continuation: [batch four](data-layer-batch-four.md) contains ten more authored candidates and concrete execution gaps.
+Latest continuation: [batch four](data-layer-batch-four.md) completes ten more source-detection candidates and documents the failure analysis.
 This brings the candidate inventory to forty; it does not certify forty completed ports.
 
 # Data layer rule migration assessment
