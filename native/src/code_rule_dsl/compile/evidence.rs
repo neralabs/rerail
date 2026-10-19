@@ -56,7 +56,32 @@ pub(super) fn compile_relation(
         .iter()
         .map(|(field, source)| {
             let at = format!("{path}/project/{field}");
-            let source = non_empty_str(Some(source), &at)?;
+            let (source, extract) = if source.is_object() {
+                let spec = object(source, &at)?;
+                reject_unknown(spec, &["source", "regex", "group"], &at)?;
+                let pattern = non_empty_str(spec.get("regex"), &format!("{at}/regex"))?;
+                if pattern.len() > capabilities.limits.max_regex_pattern_bytes {
+                    return Err(invalid(format!("{at}/regex exceeds maxRegexPatternBytes")));
+                }
+                let regex = regex::Regex::new(pattern)
+                    .map_err(|error| invalid(format!("{at}/regex: {error}")))?;
+                let group = spec
+                    .get("group")
+                    .and_then(Value::as_u64)
+                    .and_then(|group| usize::try_from(group).ok())
+                    .filter(|group| *group < regex.captures_len())
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "{at}/group must name an existing numeric regex group"
+                        ))
+                    })?;
+                (
+                    non_empty_str(spec.get("source"), &format!("{at}/source"))?,
+                    Some((regex, group)),
+                )
+            } else {
+                (non_empty_str(Some(source), &at)?, None)
+            };
             let source = match source {
                 "file.path" => ProjectionSource::Path,
                 "file.directory" => ProjectionSource::Directory,
@@ -95,6 +120,7 @@ pub(super) fn compile_relation(
             Ok(Projection {
                 field: field.clone(),
                 source,
+                extract,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -312,12 +338,12 @@ fn validate_predicate(value: &Value, path: &str) -> Result<()> {
             Ok(())
         }
         "not" => validate_predicate(&predicate[operator], &format!("{path}/not")),
-        "eq" | "ne" => match predicate[operator].as_array() {
+        "eq" | "ne" | "lt" | "le" | "gt" | "ge" => match predicate[operator].as_array() {
             Some(operands) if operands.len() == 2 => Ok(()),
             _ => Err(invalid(format!("{path}/{operator} must have two operands"))),
         },
         other => Err(invalid(format!(
-            "{path}: `{other}` is not available over evidence; use all, any, not, eq or ne"
+            "{path}: `{other}` is not available over evidence; use all, any, not, eq, ne, lt, le, gt or ge"
         ))),
     }
 }
@@ -373,7 +399,10 @@ pub(super) fn check_operands(
                 }
             } else if let Some(item) = predicate.get("not") {
                 check_operands(Some(item), relations, path)?;
-            } else if let Some(items) = predicate.get("eq").or_else(|| predicate.get("ne")) {
+            } else if let Some(items) = ["eq", "ne", "lt", "le", "gt", "ge"]
+                .iter()
+                .find_map(|key| predicate.get(*key))
+            {
                 for item in items.as_array().into_iter().flatten() {
                     check_operand(item)?;
                 }

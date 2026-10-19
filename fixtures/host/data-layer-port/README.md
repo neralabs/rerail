@@ -31,3 +31,9 @@ Only two upstream duplicate-owner ambiguities and three original I/O observation
 `escape-hatch-allowlist-signature.json` contains the pinned public verification material for the host adapter.
 Use `data_layer_record.py --batch 4` and `data_layer_probe_four.py` to regenerate their oracle results.
 See [the fourth-batch report](../../../docs/data-layer-batch-four.md).
+
+`batch-05-recording.json` contains the fifth batch's original observations.
+`batch-05-probe-inputs.json` and `batch-05-probes.json` contain supplemental source inputs and verified oracle results.
+Eight candidates pass the small source corpus. Repository graph parity remains incomplete.
+The two unported checks' source probes do not count as native passes.
+See [the fifth-batch progress report](../../../docs/data-layer-batch-five.md) and `batch-05-evidence.json`.

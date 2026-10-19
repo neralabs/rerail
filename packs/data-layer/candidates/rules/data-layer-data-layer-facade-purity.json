@@ -1,0 +1,921 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-data-layer-facade-purity",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer data_layer_facade_purity at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "data_layer/_file_locking.py",
+      "data_layer/_mime_sniffing.py",
+      "data_layer/rippling.py",
+      "data_layer/versioned_merge.py",
+      "data_layer/versioned_rebase.py",
+      "data_layer/versioned_squash.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/tmp/**",
+      "**/__pycache__/**",
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "language": "python",
+        "utils": {
+          "simple-value": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "integer"
+                  },
+                  {
+                    "kind": "float"
+                  },
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "false"
+                  },
+                  {
+                    "kind": "none"
+                  },
+                  {
+                    "kind": "ellipsis"
+                  },
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "concatenated_string"
+                          }
+                        ]
+                      },
+                      {
+                        "not": {
+                          "regex": "(?i)^[rub]*f"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "regex": "(?i)^[rub]*f"
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "identifier"
+              },
+              {
+                "all": [
+                  {
+                    "kind": "attribute"
+                  },
+                  {
+                    "has": {
+                      "matches": "simple-value",
+                      "stopBy": "neighbor",
+                      "field": "object"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "has": {
+                      "matches": "simple-value",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "list"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "set"
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "all": [
+                          {
+                            "pattern": "$_"
+                          },
+                          {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          },
+                          {
+                            "not": {
+                              "matches": "simple-value"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "dictionary"
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "all": [
+                          {
+                            "pattern": "$_"
+                          },
+                          {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          },
+                          {
+                            "not": {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "pair"
+                                    },
+                                    {
+                                      "has": {
+                                        "matches": "simple-value",
+                                        "stopBy": "neighbor",
+                                        "field": "key"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "matches": "simple-value",
+                                        "stopBy": "neighbor",
+                                        "field": "value"
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "dictionary_splat"
+                                    },
+                                    {
+                                      "has": {
+                                        "matches": "simple-value",
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "simple-assignment": {
+            "all": [
+              {
+                "kind": "assignment"
+              },
+              {
+                "has": {
+                  "kind": "identifier",
+                  "stopBy": "neighbor",
+                  "field": "left"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "not": {
+                      "any": [
+                        {
+                          "matches": "simple-value"
+                        },
+                        {
+                          "matches": "simple-assignment"
+                        }
+                      ]
+                    },
+                    "stopBy": "neighbor",
+                    "field": "right"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "definition",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "module",
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "decorated_definition"
+                            },
+                            {
+                              "inside": {
+                                "kind": "module",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "def\\ |class\\ |impl\\.|=|\\(",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "def\\ |class\\ |impl\\.|=|\\(",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "FAC001",
+        "anchor": "witness.span",
+        "message": "FAC001: definition"
+      }
+    },
+    {
+      "id": "impl-from",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "import_from_statement"
+                  },
+                  {
+                    "has": {
+                      "regex": "^impl\\.",
+                      "stopBy": "neighbor",
+                      "field": "module_name"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "module",
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "decorated_definition"
+                            },
+                            {
+                              "inside": {
+                                "kind": "module",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "def\\ |class\\ |impl\\.|=|\\(",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "def\\ |class\\ |impl\\.|=|\\(",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "FAC003",
+        "anchor": "witness.span",
+        "message": "FAC003: impl-from"
+      }
+    },
+    {
+      "id": "impl-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "import_statement"
+                  },
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "module",
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "decorated_definition"
+                            },
+                            {
+                              "inside": {
+                                "kind": "module",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "dotted_name"
+                            },
+                            {
+                              "regex": "^impl\\."
+                            },
+                            {
+                              "pattern": "$IMPORT"
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "aliased_import"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "regex": "^impl\\."
+                                  },
+                                  {
+                                    "pattern": "$IMPORT"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "def\\ |class\\ |impl\\.|=|\\(",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "def\\ |class\\ |impl\\.|=|\\(",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "FAC003",
+        "anchor": "witness.span",
+        "message": "FAC003: impl-import",
+        "each": "IMPORT"
+      }
+    },
+    {
+      "id": "assignment",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "expression_statement"
+                      },
+                      {
+                        "inside": {
+                          "kind": "module",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "assignment"
+                            },
+                            {
+                              "kind": "augmented_assignment"
+                            }
+                          ]
+                        },
+                        {
+                          "not": {
+                            "matches": "simple-assignment"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "def\\ |class\\ |impl\\.|=|\\(",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "def\\ |class\\ |impl\\.|=|\\(",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "FAC004",
+        "anchor": "witness.span",
+        "message": "FAC004: assignment"
+      }
+    },
+    {
+      "id": "expression",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "expression_statement"
+                      },
+                      {
+                        "inside": {
+                          "kind": "module",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "assignment"
+                          },
+                          {
+                            "kind": "augmented_assignment"
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "concatenated_string"
+                              }
+                            ]
+                          },
+                          {
+                            "value": {
+                              "type": "str"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "def\\ |class\\ |impl\\.|=|\\(",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "def\\ |class\\ |impl\\.|=|\\(",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "FAC002",
+        "anchor": "witness.span",
+        "message": "FAC002: expression"
+      }
+    },
+    {
+      "id": "statement",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "module",
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "decorated_definition"
+                            },
+                            {
+                              "inside": {
+                                "kind": "module",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "expression_statement"
+                        },
+                        {
+                          "kind": "import_statement"
+                        },
+                        {
+                          "kind": "import_from_statement"
+                        },
+                        {
+                          "kind": "future_import_statement"
+                        },
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "kind": "decorated_definition"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "def\\ |class\\ |impl\\.|=|\\(",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "def\\ |class\\ |impl\\.|=|\\(",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "FAC002",
+        "anchor": "witness.span",
+        "message": "FAC002: statement"
+      }
+    }
+  ]
+}

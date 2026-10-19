@@ -82,66 +82,85 @@ pub(super) fn project<D: Doc>(
     let module = file.module.as_deref();
     let fields = project
         .iter()
-        .map(|Projection { field, source }| {
-            let value = match source {
-                ProjectionSource::Capture(capture) => {
-                    let range = env
+        .map(
+            |Projection {
+                 field,
+                 source,
+                 extract,
+             }| {
+                let value = match source {
+                    ProjectionSource::Capture(capture) => {
+                        let range = env
+                            .get_match(capture)
+                            .map(|node| node.range())
+                            .or_else(|| {
+                                let nodes = env.get_multiple_matches(capture);
+                                Some(nodes.first()?.range().start..nodes.last()?.range().end)
+                            })
+                            .or_else(|| exported_span(env, capture))
+                            .or_else(|| {
+                                groups
+                                    .iter()
+                                    .find(|(name, _, _)| name == capture)
+                                    .map(|(_, _, range)| range.clone())
+                            });
+                        range
+                            .and_then(|range| file.source.get(range))
+                            .map_or(Value::Null, |text| Value::String(text.to_owned()))
+                    }
+                    ProjectionSource::CaptureLine(capture) => env
                         .get_match(capture)
-                        .map(|node| node.range())
+                        .map(|node| node.start_pos().line())
                         .or_else(|| {
-                            let nodes = env.get_multiple_matches(capture);
-                            Some(nodes.first()?.range().start..nodes.last()?.range().end)
+                            exported_span(env, capture).map(|span| {
+                                crate::code_rule_dsl::matcher::file_lines(
+                                    &file.source,
+                                    crate::code_rule_dsl::lines::Terminators::Newlines,
+                                )
+                                .span(span.start, span.end)
+                                .start_line
+                            })
                         })
-                        .or_else(|| exported_span(env, capture))
-                        .or_else(|| {
-                            groups
-                                .iter()
-                                .find(|(name, _, _)| name == capture)
-                                .map(|(_, _, range)| range.clone())
-                        });
-                    range
-                        .and_then(|range| file.source.get(range))
-                        .map_or(Value::Null, |text| Value::String(text.to_owned()))
-                }
-                ProjectionSource::CaptureLine(capture) => env
-                    .get_match(capture)
-                    .map(|node| node.start_pos().line())
-                    .or_else(|| {
-                        exported_span(env, capture).map(|span| {
-                            crate::code_rule_dsl::matcher::file_lines(
-                                &file.source,
-                                crate::code_rule_dsl::lines::Terminators::Newlines,
-                            )
-                            .span(span.start, span.end)
-                            .start_line
+                        .map_or(Value::Null, |line| json!(line)),
+                    ProjectionSource::CaptureText(capture) => exported_text(env, capture)
+                        .or_else(|| env.get_match(capture).map(|node| node.text().into_owned()))
+                        .map_or(Value::Null, Value::String),
+                    ProjectionSource::CaptureStart(capture) => env
+                        .get_match(capture)
+                        .map(|node| node.range().start)
+                        .or_else(|| exported_span(env, capture).map(|span| span.start))
+                        .map_or(Value::Null, |at| json!(at)),
+                    ProjectionSource::Path => Value::String(file.path.clone()),
+                    ProjectionSource::Directory => Value::String(directory.to_owned()),
+                    ProjectionSource::Name => Value::String(name.to_owned()),
+                    ProjectionSource::Stem => Value::String(
+                        name.split_once('.')
+                            .map_or(name, |(stem, _)| stem)
+                            .to_owned(),
+                    ),
+                    ProjectionSource::Module => module
+                        .map(|module| Value::String(module.text()))
+                        .unwrap_or(Value::Null),
+                    ProjectionSource::Package => module
+                        .map(|module| Value::String(module.package_text()))
+                        .unwrap_or(Value::Null),
+                };
+                let value = if let Some((regex, group)) = extract {
+                    value
+                        .as_str()
+                        .and_then(|text| regex.captures(text))
+                        .and_then(|matched| {
+                            matched
+                                .get(*group)
+                                .map(|part| Value::String(part.as_str().to_owned()))
                         })
-                    })
-                    .map_or(Value::Null, |line| json!(line)),
-                ProjectionSource::CaptureText(capture) => exported_text(env, capture)
-                    .or_else(|| env.get_match(capture).map(|node| node.text().into_owned()))
-                    .map_or(Value::Null, Value::String),
-                ProjectionSource::CaptureStart(capture) => env
-                    .get_match(capture)
-                    .map(|node| node.range().start)
-                    .or_else(|| exported_span(env, capture).map(|span| span.start))
-                    .map_or(Value::Null, |at| json!(at)),
-                ProjectionSource::Path => Value::String(file.path.clone()),
-                ProjectionSource::Directory => Value::String(directory.to_owned()),
-                ProjectionSource::Name => Value::String(name.to_owned()),
-                ProjectionSource::Stem => Value::String(
-                    name.split_once('.')
-                        .map_or(name, |(stem, _)| stem)
-                        .to_owned(),
-                ),
-                ProjectionSource::Module => module
-                    .map(|module| Value::String(module.text()))
-                    .unwrap_or(Value::Null),
-                ProjectionSource::Package => module
-                    .map(|module| Value::String(module.package_text()))
-                    .unwrap_or(Value::Null),
-            };
-            (field.clone(), value)
-        })
+                        .unwrap_or(Value::Null)
+                } else {
+                    value
+                };
+                (field.clone(), value)
+            },
+        )
         .collect::<Map<_, _>>();
     Value::Object(fields)
 }

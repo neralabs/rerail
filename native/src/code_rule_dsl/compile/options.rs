@@ -590,7 +590,7 @@ pub(super) fn compile_file_condition(
 }
 
 /// A `regex`, `notRegex` or both.
-fn text_condition(
+pub(super) fn text_condition(
     value: Option<&Value>,
     at: &str,
     max_regex_bytes: usize,

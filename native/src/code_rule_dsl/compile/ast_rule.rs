@@ -44,6 +44,7 @@ const AST_RULE_KEYS: &[&str] = &[
     "capture",
     "formatArgs",
     "layout",
+    "filePath",
     "calls",
 ];
 /// Tests add `testUnknown`, a leaf whose verdict is unknown where its regex matches the node's text.
@@ -71,6 +72,7 @@ const AST_RULE_KEYS: &[&str] = &[
     "capture",
     "formatArgs",
     "layout",
+    "filePath",
     "calls",
     "testUnknown",
 ];
@@ -515,6 +517,20 @@ pub(crate) fn compile_ast_rule(
                 utils,
             )
             .expect("arguments is semantic")?,
+        );
+    }
+    if let Some(condition) = rule.get("filePath") {
+        terms.push(
+            semantic::compile_key(
+                "filePath",
+                condition,
+                semantic::Stage::Atomic,
+                language,
+                &format!("{path}/filePath"),
+                gaps,
+                utils,
+            )
+            .expect("filePath is semantic")?,
         );
     }
     // Composites, negations, utilities, relations and binding terms may read captures, and all but

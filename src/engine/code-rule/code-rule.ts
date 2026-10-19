@@ -555,7 +555,7 @@ export interface CodeRuleDslEvidenceQuery {
     as: string;
     paths?: { include?: string[]; exclude?: string[] };
     query: CodeRuleDslAstQuery;
-    project: Record<string, string>;
+    project: Record<string, string | { source: string; regex: string; group: number }>;
     where?: CodeRuleDslPredicate;
     /** Ordered, cycle-safe name closures over raw projected fields. */
     /** Enumerate bindings before projecting rows. */
@@ -582,6 +582,10 @@ export type CodeRuleDslPredicate =
   | { any: CodeRuleDslPredicate[] }
   | { not: CodeRuleDslPredicate }
   | { eq: [CodeRuleDslValue, CodeRuleDslValue] }
+  | { lt: [CodeRuleDslValue, CodeRuleDslValue] }
+  | { le: [CodeRuleDslValue, CodeRuleDslValue] }
+  | { gt: [CodeRuleDslValue, CodeRuleDslValue] }
+  | { ge: [CodeRuleDslValue, CodeRuleDslValue] }
   | { ne: [CodeRuleDslValue, CodeRuleDslValue] };
 
 export type CodeRuleDslAstPattern = string | { context: string; selector: string };
@@ -612,6 +616,8 @@ export interface CodeRuleDslAstRule extends CodeRuleDslSemanticAstRuleFields {
   kind?: string;
   regex?: string;
   nthChild?: CodeRuleDslNthChild;
+  /** File path condition that can also scope a call-graph seed. */
+  filePath?: CodeRuleDslTextCondition;
   all?: CodeRuleDslAstRule[];
   any?: CodeRuleDslAstRule[];
   not?: CodeRuleDslAstRule;
@@ -1276,7 +1282,7 @@ export interface CodeRuleDslAstCount {
   max?: number;
   /**
    * Metavariable name (without `$`) that a count which holds binds to `offset` plus the exact count, as decimal text.
-   * Only the violation's message may interpolate it; under `not` it binds nothing. The walk then runs to its end, and
+   * Messages and source-text comparisons may read it; under `not` it binds nothing outside that negation. The walk runs to its end, and
    * a count that is not known exactly (a node or stop verdict unknown) leaves the match unknown.
    */
   as?: string;

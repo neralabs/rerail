@@ -26,7 +26,7 @@ pub(crate) struct Count {
 }
 
 /// `as` and `offset`: a count that holds binds `offset` plus the exact count, in decimal, as a
-/// transformed variable named `name`, which only a finding's message reads. The walk then runs to
+/// transformed variable named `name`, which messages and source-text comparisons read. The walk then runs to
 /// its end rather than stopping at `min`, and a count it cannot know exactly is unknown.
 #[derive(Clone, Debug)]
 pub(crate) struct CountBinding {
