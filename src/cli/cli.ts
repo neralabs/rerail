@@ -58,6 +58,7 @@ import {
   type UpdateResult,
   type UpdateStatus,
 } from "../setup/updater.js";
+import { packsLeftOutByCore } from "../setup/rule-pack-store.js";
 
 const MANAGED_CHILD_ARGUMENT = "--rerail-managed-child";
 
@@ -96,10 +97,22 @@ function printStatus(status: UpdateStatus): void {
   process.stdout.write(`Last check: ${status.lastCheckAt ?? "never"}\n`);
 }
 
-function printUpdateResult(result: UpdateResult): void {
+/**
+ * What an update or rollback did, and, when it changed the active core, the installed rule packs that version leaves
+ * out by their core range: every repository that adds one runs none of its rules until a version that fits is in.
+ */
+function printUpdateResult(result: UpdateResult, home: string): void {
   process.stdout.write(result.changed
     ? `Activated Rerail ${result.current.version}; new harness sessions will use it.\n`
     : `Rerail ${result.current.version} is current for channel ${result.channel}.\n`);
+  if (!result.changed) return;
+  const leftOut = packsLeftOutByCore(home, result.current.version, result.previous?.version);
+  if (leftOut.length === 0) return;
+  process.stdout.write([
+    `Rerail ${result.current.version} leaves out ${leftOut.length === 1 ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${leftOut.length === 1 ? "it run none of its" : "them run none of their"} rules:`,
+    ...leftOut.map(line => `  ${line}`),
+    "Install a version that fits with `rerail packs add <id>`, or go back with `rerail update rollback`.",
+  ].join("\n") + "\n");
 }
 
 function selectedChannel(args: readonly string[]): string | undefined {
@@ -284,11 +297,11 @@ async function runUpdateCommand(
     return 0;
   }
   if (action === "rollback") {
-    printUpdateResult(await rollbackWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), () => stopDaemon(home)));
+    printUpdateResult(await rollbackWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), () => stopDaemon(home)), home);
     return 0;
   }
   if (action !== undefined && action !== "--channel") throw new Error(`Unknown update action: ${action}`);
-  printUpdateResult(await updateWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), channel));
+  printUpdateResult(await updateWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), channel), home);
   // Newer version or not, the version `current` names registers itself again, as its own CLI, with every coding agent
   // already connected (`install --refresh`): its commands, skills and hooks arrive and the ones it retired go. A failure
   // leaves that version active and exits non-zero, naming the command to run once the configuration is fixed. Reading

@@ -5,7 +5,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { rulePackPackageName } from "../../src/engine/index.js";
+import { defaultRerailHome, rulePackPackageName } from "../../src/engine/index.js";
 import type { PackStore } from "../../src/setup/index.js";
 import { fileSpecDirectory, installPackDirectory, uninstallPack } from "./installed-packs.js";
 import { repositoryPath } from "./oracles.js";
@@ -22,15 +22,16 @@ export function repositoryPackVersions(...ids: string[]): { id: string; version:
 
 /**
  * `packsRoot`'s pack directories (this repository's `packs/` by default) as the packs npm would give; with `only`,
- * just those, as if no other pack were published.
+ * just those, as if no other pack were published. Installs into `home`: the test's Rerail home when it is made.
  */
-export function directoryPackStore(packsRoot: string = repositoryPath("packs"), only?: readonly string[]): DirectoryPackStore {
+export function directoryPackStore(packsRoot: string = repositoryPath("packs"), only?: readonly string[], home: string = defaultRerailHome()): DirectoryPackStore {
   const installs: string[][] = [];
   const versionOf = (id: string): string | undefined => {
     const path = join(packsRoot, id, "package.json");
     return existsSync(path) && (only === undefined || only.includes(id)) ? (JSON.parse(readFileSync(path, "utf8")) as { version: string }).version : undefined;
   };
   return {
+    home,
     installs,
     async fetch(ids) {
       return {
@@ -49,15 +50,15 @@ export function directoryPackStore(packsRoot: string = repositoryPath("packs"), 
         // What npm recorded for a pack added from a folder: put back as it was.
         const folder = fileSpecDirectory(spec);
         if (folder !== undefined) {
-          installPackDirectory(folder, id!);
+          installPackDirectory(folder, id!, home);
           continue;
         }
         if (versionOf(id!) !== version) throw new Error(`npm error code ETARGET\nnpm error notarget No matching version found for ${spec}.`);
-        installPackDirectory(join(packsRoot, id!), id!);
+        installPackDirectory(join(packsRoot, id!), id!, home);
       }
     },
     async remove(ids) {
-      for (const id of ids) uninstallPack(id);
+      for (const id of ids) uninstallPack(id, home);
     },
   };
 }

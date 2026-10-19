@@ -208,6 +208,8 @@ describe("dependency manifests", () => {
       "api/requirements-dev.txt": "# tools\n-r requirements.txt\n--index-url https://example.invalid\nDjango_REST.framework>=3.15 ; python_version > '3.9'  # api\n\n",
       "api/pyproject.toml": "[project]\nname = \"api\"\ndependencies = [\n  \"FastAPI>=0.115\",  # web\n]\n\n[project.optional-dependencies]\ntest = [\"pytest\"]\n",
       "worker/pyproject.toml": "[tool.poetry.dependencies]\npython = \"^3.12\"\ncelery = { version = \"^5.4\", extras = [\"redis\"] }\n\n[tool.poetry.group.dev.dependencies]\n\"Ruff\" = \"*\"\n",
+      // Poetry before 1.2 keeps development tools here.
+      "legacy/pyproject.toml": "[tool.poetry.dependencies]\npython = \"^3.9\"\n\n[tool.poetry.dev-dependencies]\nDjango-Stubs = \"^4.2\"\n",
       "broken/pyproject.toml": "[project\ndependencies = [\"numpy\"]\n",
     });
 
@@ -218,6 +220,7 @@ describe("dependency manifests", () => {
       pytest: ["api/pyproject.toml"],
       celery: ["worker/pyproject.toml"],
       ruff: ["worker/pyproject.toml"],
+      "django-stubs": ["legacy/pyproject.toml"],
     });
     expect(Object.fromEntries(dependencies.get("composer")!)).toEqual({
       "laravel/framework": ["web/composer.json"], php: ["web/composer.json"], "pestphp/pest": ["web/composer.json"],

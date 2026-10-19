@@ -39,6 +39,7 @@ import { ruleAttachments, ruleSettings } from "../engine/storage/schema.js";
 import { offerSetupReview, setupReviewOffered } from "../engine/catalog/setup-review.js";
 import {
   CONFIRM_PACKS_ANSWERS,
+  confirmPacksAnswers,
   NO_PACKS,
   NO_REPO_ANSWERS,
   PICK_PACKS_ANSWERS,
@@ -215,6 +216,9 @@ interface Run {
   readonly request: SetupRequest;
   readonly databasePath: string;
 }
+
+/** The Rerail home set-up installs packs into, and so reads them back from: its pack store's. */
+const packsHome = (run: Run): string => run.request.environment.packs.home;
 
 function say(io: RepositorySetupIo, screen: string): void {
   io.say(screen.replace(/\n$/u, ""));
@@ -403,13 +407,13 @@ function packLabels(packs: readonly { packId: string; folder: string }[]): strin
  * read from its files now. None for a rule the repository has a setting of its own for in that folder (one the person
  * made in the dashboard's review stands).
  */
-function lintConfigSettings(database: RerailDatabase, root: string, repositoryKey: RepositoryKey, packIds: readonly string[]): RuleSetting[] {
+function lintConfigSettings(database: RerailDatabase, home: string, root: string, repositoryKey: RepositoryKey, packIds: readonly string[]): RuleSetting[] {
   const own = new Set(database.select({ folder: ruleSettings.folder, targetId: ruleSettings.targetId }).from(ruleSettings).where(and(
     eq(ruleSettings.ownerKind, "repository"),
     eq(ruleSettings.ownerId, repositoryKey),
     eq(ruleSettings.targetKind, "rule"),
   )).all().map(row => `${row.folder}\0${row.targetId}`));
-  return readRepositoryLintConfig(root, loadRuleCatalog(), packIds).settings
+  return readRepositoryLintConfig(root, loadRuleCatalog(home), packIds).settings
     .filter(setting => !own.has(`${setting.folder}\0${setting.ruleId}`))
     .map(({ ruleId, folder, on, config }) => ({ owner: { kind: "repository", repositoryKey }, folder, targetKind: "rule", targetId: ruleId, on, mode: null, config }));
 }
@@ -508,7 +512,7 @@ function turnOn(run: Run, repository: Repository, startWith: StartWith): number 
     if (!checkoutStatus(database, checkout).setUp) {
       recordSetUp(database, repositoryKey, {
         packs: adding,
-        settings: readRepository ? lintConfigSettings(database, repository.root, repositoryKey, adding.map(({ packId }) => packId)) : [],
+        settings: readRepository ? lintConfigSettings(database, packsHome(run), repository.root, repositoryKey, adding.map(({ packId }) => packId)) : [],
       });
     } else if (!awaitingStartAfterReview(database, repositoryKey)) {
       return undefined;
@@ -518,7 +522,7 @@ function turnOn(run: Run, repository: Repository, startWith: StartWith): number 
         for (const { packId, folder } of adding) addAttachment(database, { repositoryKey, folder, sourceKind: "pack", sourceId: packId });
       }
       const kept = [...new Set(attachedPacks(database, repositoryKey).map(({ packId }) => packId))];
-      if (readRepository) for (const setting of lintConfigSettings(database, repository.root, repositoryKey, kept)) setRuleSetting(database, setting);
+      if (readRepository) for (const setting of lintConfigSettings(database, packsHome(run), repository.root, repositoryKey, kept)) setRuleSetting(database, setting);
     }
     startSetUpRepository(database, checkout, run.request.repository === true);
     return new Set(attachedPacks(database, repositoryKey).map(({ packId }) => packId)).size;
@@ -575,7 +579,7 @@ async function pickPacksMyself(run: Run, repository: Repository, offering?: Pick
     const chosen = await askPacks(run.io, offered.available);
     if (chosen === undefined) return halted(run.io);
     const problem = await installAnswered(run, chosen);
-    if (problem === undefined) return start(run, repository, chosenPacks(chosenRecommendations(repository, chosen, false), false));
+    if (problem === undefined) return start(run, repository, chosenPacks(chosenRecommendations(run, repository, chosen, false), false));
     say(run.io, problem);
   }
 }
@@ -588,7 +592,7 @@ async function startPicked(run: Run, repository: Repository, chosen: readonly Pa
   if (chosen.length === 0) return pickMyself(run, repository);
   const problem = await installAnswered(run, chosen);
   if (problem !== undefined) return pickPacksMyself(withPacksError(run, problem), repository, offering);
-  return start(run, repository, chosenPacks(chosenRecommendations(repository, chosen, false), false));
+  return start(run, repository, chosenPacks(chosenRecommendations(run, repository, chosen, false), false));
 }
 
 /** The run as an answer whose rule packs could not be installed: no packs, and why, so the question is asked again. */
@@ -604,7 +608,7 @@ function withPacksError(run: Run, problem: string): Run {
  */
 async function installAnswered(run: Run, packs: readonly PackVersion[]): Promise<string | undefined> {
   const older = packs.flatMap(pack => {
-    const installed = installedPackVersion(pack.id);
+    const installed = installedPackVersion(pack.id, packsHome(run));
     return installed !== null && semver.valid(installed) !== null && semver.lt(pack.version, installed) ? [`${pack.id}@${pack.version} is older than the installed ${installed}`] : [];
   });
   if (older.length > 0) return `${older.join("; ")}: set-up does not downgrade a pack every repository uses; rerail packs add does.`;
@@ -669,8 +673,8 @@ function discoveryOffering(discovery: PackDiscovery): Offering {
  * fit or `readRepository` is false (the repository is then not read). `installPackVersions` has made sure each is
  * installed and loaded at that version; throws, naming them, when one is not.
  */
-function chosenOffering(repository: Repository, chosen: readonly PackVersion[], readRepository = true): Offering {
-  const catalog = loadRuleCatalog();
+function chosenOffering(run: Run, repository: Repository, chosen: readonly PackVersion[], readRepository = true): Offering {
+  const catalog = loadRuleCatalog(packsHome(run));
   const missing = chosen.filter(({ id, version }) => catalog.packs.get(id)?.version !== version);
   if (missing.length > 0) throw new Error(`These rule packs are not installed: ${missing.map(pack => `${pack.id}@${pack.version}`).join(", ")}.`);
   const packs = chosen.map(({ id }) => catalog.packs.get(id)!);
@@ -690,8 +694,8 @@ function chosenOffering(repository: Repository, chosen: readonly PackVersion[], 
 
 const offeredVersions = (offering: Offering): PackVersion[] => offering.offers.map(offer => ({ id: offer.recommendation.pack.id, version: offer.version }));
 const recommendationsOf = (offering: Offering): RulePackRecommendation[] => offering.offers.map(offer => offer.recommendation);
-const chosenRecommendations = (repository: Repository, chosen: readonly PackVersion[], readRepository: boolean): RulePackRecommendation[] =>
-  recommendationsOf(chosenOffering(repository, chosen, readRepository));
+const chosenRecommendations = (run: Run, repository: Repository, chosen: readonly PackVersion[], readRepository: boolean): RulePackRecommendation[] =>
+  recommendationsOf(chosenOffering(run, repository, chosen, readRepository));
 
 function packsInput(run: Run, repository: Repository, offering: Offering): RecommendedPacksInput {
   const found = run.request.environment.agentsFound();
@@ -746,8 +750,8 @@ async function confirm(run: Run, repository: Repository, answer: string | undefi
     const problem = await installAnswered(run, packs);
     // The question again, with why, as for an answer's coding agents set-up does not know.
     if (problem !== undefined) return confirm(withPacksError(run, problem), repository, reviewed ? "review" : undefined, reviewed);
-    if (answer === "choose") return start(run, repository, chosenPacks(chosenRecommendations(repository, packs, true), true));
-    const chosen = chosenOffering(repository, packs);
+    if (answer === "choose") return start(run, repository, chosenPacks(chosenRecommendations(run, repository, packs, true), true));
+    const chosen = chosenOffering(run, repository, packs);
     if (answer !== "review") return start(run, repository, recommended(recommendationsOf(chosen)));
     // "Choose rule packs…" under the review question still lists every pack set-up can fetch.
     const discovery = discoveryOffering(await discoverPacks(repository.root, store));
@@ -773,14 +777,14 @@ async function confirmLoop(run: Run, repository: Repository, offered: Offering, 
   let offering = offered;
   let question = first;
   for (;;) {
-    const picked = await choose(run, question, CONFIRM_PACKS_ANSWERS);
+    const picked = await choose(run, question, confirmPacksAnswers(offering.available));
     if (picked === undefined) return halted(run.io);
     if (picked === "pick-myself") return pickPacksMyself(run, repository, offering);
     if (picked === "choose") {
       const chosen = await askPacks(run.io, offering.available);
       if (chosen === undefined) return halted(run.io);
       const problem = await installAnswered(run, chosen);
-      if (problem === undefined) return start(run, repository, chosenPacks(chosenRecommendations(repository, chosen, true), true));
+      if (problem === undefined) return start(run, repository, chosenPacks(chosenRecommendations(run, repository, chosen, true), true));
       say(run.io, problem);
       continue;
     }

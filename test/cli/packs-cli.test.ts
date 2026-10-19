@@ -39,6 +39,7 @@ describe("rerail packs add", () => {
   it("installs nothing when any argument is refused, the packs before it included", async () => {
     const installs: string[][] = [];
     const store: PackStore = {
+      home: join(tmpdir(), "rerail-packs-cli-unused"),
       fetch: async () => ({ fetched: [], problems: [], release: async () => {} }),
       install: async specs => { installs.push([...specs]); },
       remove: async () => {},

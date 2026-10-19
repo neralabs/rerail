@@ -275,7 +275,10 @@ export function createRerailApi(
         }
         if (RESULT_ETAG_OPERATIONS.has(operation.id)) {
           const key = `${operation.id}\u0000${normalizedInput(input)}`;
-          const version = stores.historyVersion();
+          // The history a result reads, and the rule catalog (`rules_activity` lists the installed packs' rules), so
+          // a pack installed or removed shows without waiting for a session to write.
+          const history = stores.historyVersion();
+          const version = history === undefined ? undefined : `${history}\u0000${stores.ruleCatalog().digest}`;
           const known = remembered.get(key);
           if (known !== undefined && known.version === version) {
             return conditional(known.etag) ?? context.json(known.result, 200);

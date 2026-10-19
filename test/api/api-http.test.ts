@@ -23,7 +23,7 @@ import {
 import { MOCK_CODE_RULES, MOCK_CONVERSATION_RULES } from "../../src/cli/index.js";
 import { SqliteSessionStore } from "../../src/runtime/index.js";
 import { codingAgentHome, codingAgentStates, registerHarnesses, registrationRoot } from "../../src/setup/index.js";
-import { installPack } from "../support/installed-packs.js";
+import { installPack, uninstallPack } from "../support/installed-packs.js";
 
 /** The host a browser addressed the page to through a container port mapping; the fixture never binds it. */
 const PAGE_HOST = "localhost:35831";
@@ -353,6 +353,21 @@ describe("Rerail API over HTTP", () => {
     await getJson("/api/rules/activity?since=0");
     await getJson("/api/rules/activity?since=1");
     expect(activity).toHaveBeenCalledTimes(4);
+  });
+
+  it("answers a history read afresh once a pack is removed, with no database write between", async () => {
+    addLibraryRules();
+    addRepository(WEB, { configuredAt: 5, started: true });
+    const first = await app.request("/api/rules/activity?since=0");
+    const tag = first.headers.get("etag")!;
+    const rules = Object.keys((await first.json() as { rules: Record<string, unknown> }).rules);
+    expect(rules.some(id => id.startsWith("complexity-"))).toBe(true);
+
+    uninstallPack("complexity");
+
+    const after = await app.request("/api/rules/activity?since=0", { headers: { "if-none-match": tag } });
+    expect(after.status).toBe(200);
+    expect(Object.keys((await after.json() as { rules: Record<string, unknown> }).rules).some(id => id.startsWith("complexity-"))).toBe(false);
   });
 
   it("admits a write whose Origin is an allowlisted host on the requested port and rejects every other", async () => {

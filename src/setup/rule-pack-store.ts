@@ -15,6 +15,7 @@ import type { RuleCatalog, SkippedRulePack } from "../engine/catalog/repository-
 import { recommendRulePacks, rulePackPackageName, type RulePack } from "../engine/catalog/rule-packs.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { runNpm, type NpmRunner } from "../runtime/npm.js";
+import { withPacksLock } from "./packs-lock.js";
 
 /** The dist-tag a pack is fetched under when core's update channel has no version of it: where packs publish first. */
 export const PACK_FALLBACK_TAG = "next";
@@ -47,11 +48,16 @@ export interface FetchedPacks {
 
 /** Where packs come from and go to: npm in production (`npmPackStore`); tests give their own. */
 export interface PackStore {
+  /**
+   * The Rerail home whose packs it installs and removes. Discovery, installing and set-up read the installed packs
+   * from here, so what they check is always what was installed.
+   */
+  readonly home: string;
   /** Each pack in `ids` at the version under `tag`, fetched without installing it; a pack that cannot be is a problem. */
   fetch(ids: readonly string[], tag: string): Promise<FetchedPacks>;
-  /** Installs these npm specs (`<name>@<version>`, a tarball, a folder) into the Rerail home's packs. */
+  /** Installs these npm specs (`<name>@<version>`, a tarball, a folder) into `home`'s packs. */
   install(specs: readonly string[]): Promise<void>;
-  /** Uninstalls these packs from the Rerail home's packs. */
+  /** Uninstalls these packs from `home`'s packs. */
   remove(ids: readonly string[]): Promise<void>;
 }
 
@@ -69,7 +75,8 @@ export function parsePackVersions(list: string): PackVersion[] {
   const packs = new Map<string, PackVersion>();
   for (const entry of list.split(",").map(item => item.trim()).filter(item => item !== "")) {
     const match = /^([a-z][a-z0-9-]*)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/u.exec(entry);
-    if (match === null) throw new Error(`Name each rule pack as <id>@<version>, for example typescript@0.1.1, not ${entry}`);
+    // The regex lets through what semver does not read (`01.2.3`, `1.0.0-a..b`); the downgrade guard compares with it.
+    if (match === null || semver.valid(match[2]) === null) throw new Error(`Name each rule pack as <id>@<version>, for example typescript@0.1.1, not ${entry}`);
     const [, id, version] = match as unknown as [string, string, string];
     const named = packs.get(id);
     if (named !== undefined && named.version !== version) throw new Error(`${id} is named twice, at ${named.version} and ${version}`);
@@ -120,6 +127,7 @@ export function npmPackStore(home: string = defaultRerailHome(), npm: NpmRunner 
   const prefix = installedPacksPrefix(home);
   const quiet = ["--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"];
   return {
+    home,
     async fetch(ids, tag) {
       const staging = join(prefix, "staging");
       mkdirSync(staging, { recursive: true });
@@ -220,24 +228,38 @@ function skippedProblem(skipped: SkippedRulePack): string {
   return `${name}: ${skippedReason(skipped)}`;
 }
 
+/**
+ * The installed packs in `home` that core `current` leaves out by their core range but `previous` loaded, each with
+ * why: what `rerail update` and `update rollback` name, since every repository that adds one stops running its rules.
+ */
+export function packsLeftOutByCore(home: string, current: string, previous: string | undefined): string[] {
+  const directories = installedPackDirectories(home);
+  if (directories.length === 0) return [];
+  const leftOut = (coreVersion: string) => readRuleCatalog(directories, { coreVersion }).skipped;
+  const before = new Set((previous === undefined ? [] : leftOut(previous)).map(skipped => skipped.path));
+  return leftOut(current).filter(skipped => !before.has(skipped.path)).map(skippedProblem);
+}
+
 /** The pack id an installed or staged pack directory holds (`…/@neralabs/rerail-pack-<id>`). */
 const packIdOf = (directory: string): string => basename(directory).slice("rerail-pack-".length);
 
 /**
  * Every pack core lists, fetched under the update channel's tag, checked against the active core and the engine,
  * and matched against the repository at `repositoryRoot`; with none, nothing is read and no pack is recommended. The
- * installed version stands in for a pack npm cannot give (offline, no access, not published), and for one where it is
- * newer than npm's under the tag (installed from `next` by hand), so set-up never offers to replace a pack with an
- * older one. Discovery itself never fails on one pack.
+ * installed version stands in for a pack npm cannot give (offline, no access, not published), and for one where the
+ * version installed is newer than npm's under the tag (installed from `next` by hand), so set-up never offers to
+ * replace a pack with an older one: when that newer version does not load, the pack is named with why, not offered.
+ * Installed packs are read from `store.home`. Discovery itself never fails on one pack.
  */
-export async function discoverPacks(repositoryRoot: string | undefined, store: PackStore, home: string = defaultRerailHome()): Promise<PackDiscovery> {
+export async function discoverPacks(repositoryRoot: string | undefined, store: PackStore): Promise<PackDiscovery> {
+  const { home } = store;
   const fetch = await store.fetch(RULE_PACK_LIST.map(pack => pack.id), updateChannel(home));
   try {
-    const installedCatalog = loadRuleCatalog(home);
+    // What is on disk, loaded or not: the version set-up would replace, and the one its downgrade guard compares.
     const newerInstalled = (fetched: FetchedPack): boolean => {
-      const installed = installedCatalog.packs.get(fetched.id)?.version;
+      const installed = installedPackVersion(fetched.id, home);
       const offered = readPackageVersion(fetched.directory);
-      return installed != null && offered !== null && semver.valid(installed) !== null && semver.valid(offered) !== null && semver.gt(installed, offered);
+      return installed !== null && offered !== null && semver.valid(installed) !== null && semver.valid(offered) !== null && semver.gt(installed, offered);
     };
     const fromNpm = fetch.fetched.filter(fetched => !newerInstalled(fetched));
     const fetchedIds = new Set(fromNpm.map(pack => pack.id));
@@ -269,6 +291,12 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
   }
 }
 
+/** One pack in a home's packs prefix: the spec npm recorded for it, if any, and the version on disk, if any. */
+interface PrefixEntry {
+  readonly spec: string | undefined;
+  readonly version: string | null;
+}
+
 /**
  * What npm recorded for each installed pack, by id: the spec in the prefix's `package.json` (`0.1.1`, or `file:…` for
  * one added from a folder or tarball, made absolute), so a pack can be put back exactly as it was installed.
@@ -287,53 +315,111 @@ function recordedSpecs(home: string): Map<string, string> {
   }
 }
 
-/**
- * Installs the packs whose installed version differs from the one named, then makes sure the catalog loads every pack
- * named at its version and still loads every pack it loaded before (an install can push another pack out: a rule
- * both hold). When npm fails, nothing changed. When a pack is left out, every pack this installed is put back as npm
- * recorded it, or removed if it was not installed before. Returns the problem for the person, saying what is
- * installed now; undefined when every pack loads.
- */
-export async function installPackVersions(packs: readonly PackVersion[], store: PackStore, home: string = defaultRerailHome()): Promise<string | undefined> {
-  const loadedBefore = new Map([...loadRuleCatalog(home).packs.values()].map(pack => [pack.id, pack.version]));
+/** Every pack in `home`'s prefix, recorded or on disk, with its spec and version. */
+function prefixState(home: string): Map<string, PrefixEntry> {
   const recorded = recordedSpecs(home);
-  const changes = packs.filter(pack => installedPackVersion(pack.id, home) !== pack.version);
-  if (changes.length > 0) {
-    const specs = changes.map(packSpec);
-    try {
-      await store.install(specs);
-    } catch (error) {
-      return `${fetchProblemReason(specs.join(", "), error)}. Nothing was changed.`;
-    }
-  }
-  const catalog = loadRuleCatalog(home);
-  const whyLeftOut = (id: string): string => {
-    const skipped = catalog.skipped.find(entry => entry.packageName === rulePackPackageName(id));
-    return skipped === undefined ? "the catalog does not load it" : skippedReason(skipped);
-  };
-  const named = new Set(packs.map(pack => pack.id));
-  const problems = [
-    ...packs.filter(pack => catalog.packs.get(pack.id)?.version !== pack.version).map(pack => `${packSpec(pack)} cannot be used: ${whyLeftOut(pack.id)}`),
-    ...[...loadedBefore].filter(([id, version]) => !named.has(id) && catalog.packs.get(id)?.version !== version)
-      .map(([id]) => `${rulePackPackageName(id)} would stop loading: ${whyLeftOut(id)}`),
-  ];
-  if (problems.length === 0) return undefined;
-  // Put back what npm recorded before, remove what was not installed; each step runs even if the other fails.
-  const restore = changes.flatMap(pack => recorded.has(pack.id) ? [recorded.get(pack.id)!] : []);
-  const remove = changes.flatMap(pack => recorded.has(pack.id) ? [] : [pack.id]);
-  const undone: string[] = [];
+  const ids = new Set([...recorded.keys(), ...installedPackDirectories(home).map(packIdOf)]);
+  return new Map([...ids].map(id => [id, { spec: recorded.get(id), version: installedPackVersion(id, home) }]));
+}
+
+/** The packs whose spec or version differs between two states of a prefix. */
+function changedPacks(before: ReadonlyMap<string, PrefixEntry>, after: ReadonlyMap<string, PrefixEntry>): string[] {
+  return [...new Set([...before.keys(), ...after.keys()])].filter(id => {
+    const was = before.get(id);
+    const now = after.get(id);
+    return was?.spec !== now?.spec || (was?.version ?? null) !== (now?.version ?? null);
+  });
+}
+
+/**
+ * Puts `home`'s packs back as they were in `before`: each pack whose spec or version changed is installed again from
+ * the spec npm had recorded, or removed if it was not there. Each step runs even if the other fails. Returns what to
+ * tell the person: nothing changed, or what failed and where to look.
+ */
+async function restorePrefix(store: PackStore, before: ReadonlyMap<string, PrefixEntry>): Promise<string> {
+  const changed = changedPacks(before, prefixState(store.home));
+  const restore = changed.flatMap(id => before.get(id)?.spec ?? []);
+  const remove = changed.filter(id => before.get(id) === undefined);
+  // Installed before with no record of how (copied into node_modules by hand): npm cannot put it back.
+  const unrecorded = changed.filter(id => before.get(id) !== undefined && before.get(id)!.spec === undefined);
+  const undone = unrecorded.map(id => `${rulePackPackageName(id)}@${before.get(id)!.version} was installed with no npm record to put it back from`);
   try {
-    await store.install(restore);
+    if (restore.length > 0) await store.install(restore);
   } catch (error) {
     undone.push(`putting back ${restore.join(", ")} failed: ${fetchProblemReason(restore.join(", "), error)}`);
   }
   try {
-    await store.remove(remove);
+    if (remove.length > 0) await store.remove(remove);
   } catch (error) {
     const names = remove.map(rulePackPackageName).join(", ");
     undone.push(`removing ${names} failed: ${fetchProblemReason(names, error)}`);
   }
-  return undone.length === 0
-    ? `${problems.join("; ")}. Nothing was changed.`
-    : `${problems.join("; ")}. Then ${undone.join("; ")}. \`rerail packs list\` shows what is installed now.`;
+  return undone.length === 0 ? "Nothing was changed." : `Then ${undone.join("; ")}. \`rerail packs list\` shows what is installed now.`;
+}
+
+/**
+ * One install into `store.home`'s packs, checked, holding the packs lock throughout so no other install changes the
+ * prefix in between. `specsOf` gives what npm installs, from the prefix as it is; `expectedOf` the packs that must
+ * then load at those versions, from the packs the install changed. Every pack the catalog loaded before must still
+ * load (an install can push another out: a rule both hold). When npm fails, or a pack is left out, the prefix is put
+ * back as it was (`restorePrefix`). Returns the problem for the person, saying what is installed now; undefined when
+ * every pack loads.
+ */
+async function installChecked(
+  store: PackStore,
+  specsOf: (before: ReadonlyMap<string, PrefixEntry>) => readonly string[],
+  expectedOf: (changed: readonly string[]) => readonly PackVersion[],
+): Promise<string | undefined> {
+  const { home } = store;
+  return await withPacksLock(home, async () => {
+    const loadedBefore = new Map([...loadRuleCatalog(home).packs.values()].map(pack => [pack.id, pack.version]));
+    const before = prefixState(home);
+    const specs = specsOf(before);
+    if (specs.length > 0) {
+      try {
+        await store.install(specs);
+      } catch (error) {
+        // npm usually undoes a failed install itself; one that stopped partway (a full disk) may not have.
+        return `${fetchProblemReason(specs.join(", "), error)}. ${await restorePrefix(store, before)}`;
+      }
+    }
+    const expected = expectedOf(changedPacks(before, prefixState(home)));
+    const catalog = loadRuleCatalog(home);
+    const whyLeftOut = (id: string): string => {
+      const skipped = catalog.skipped.find(entry => entry.packageName === rulePackPackageName(id));
+      return skipped === undefined ? "the catalog does not load it" : skippedReason(skipped);
+    };
+    const named = new Set(expected.map(pack => pack.id));
+    const problems = [
+      ...expected.filter(pack => catalog.packs.get(pack.id)?.version !== pack.version).map(pack => `${packSpec(pack)} cannot be used: ${whyLeftOut(pack.id)}`),
+      ...[...loadedBefore].filter(([id, version]) => !named.has(id) && catalog.packs.get(id)?.version !== version)
+        .map(([id]) => `${rulePackPackageName(id)} would stop loading: ${whyLeftOut(id)}`),
+    ];
+    if (problems.length === 0) return undefined;
+    return `${problems.join("; ")}. ${await restorePrefix(store, before)}`;
+  });
+}
+
+/** Set-up's install: exactly these versions, each of which must then load. Installs only those not installed already. */
+export async function installPackVersions(packs: readonly PackVersion[], store: PackStore): Promise<string | undefined> {
+  return await installChecked(
+    store,
+    before => packs.filter(pack => (before.get(pack.id)?.version ?? null) !== pack.version).map(packSpec),
+    () => packs,
+  );
+}
+
+/**
+ * `rerail packs add`: these npm specs (a pack at a version, range or tag, a tarball, a folder), after which every pack
+ * the install changed must load at the version it now has.
+ */
+export async function addPackSpecs(specs: readonly string[], store: PackStore): Promise<string | undefined> {
+  return await installChecked(
+    store,
+    () => specs,
+    changed => changed.flatMap(id => {
+      const version = installedPackVersion(id, store.home);
+      return version === null ? [] : [{ id, version }];
+    }),
+  );
 }

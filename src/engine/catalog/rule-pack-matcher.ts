@@ -167,7 +167,7 @@ function requirementsNames(text: string): string[] {
   });
 }
 
-const POETRY_DEPENDENCIES = /^tool\.poetry\.(?:group\.(?:[A-Za-z0-9_-]+|"(?:[^"\\]|\\.)*")\.)?dependencies\.(.+)$/u;
+const POETRY_DEPENDENCIES = /^tool\.poetry\.(?:dev-dependencies|(?:group\.(?:[A-Za-z0-9_-]+|"(?:[^"\\]|\\.)*")\.)?dependencies)\.(.+)$/u;
 
 /** The first key of a dotted TOML path: bare, or quoted as `readTomlStringLists` writes it. */
 function firstKey(path: string): string | undefined {
@@ -178,8 +178,9 @@ function firstKey(path: string): string | undefined {
 
 /**
  * `pyproject.toml`: PEP 621's `[project] dependencies` and `optional-dependencies`, and Poetry's
- * `[tool.poetry.dependencies]` and `[tool.poetry.group.<name>.dependencies]` (Poetry's `python` entry is the
- * interpreter, not a dependency). A file the TOML reader cannot read names nothing.
+ * `[tool.poetry.dependencies]`, `[tool.poetry.group.<name>.dependencies]` and, from Poetry before 1.2,
+ * `[tool.poetry.dev-dependencies]` (Poetry's `python` entry is the interpreter, not a dependency). A file the TOML
+ * reader cannot read names nothing.
  */
 function pyprojectNames(text: string): string[] {
   let read;

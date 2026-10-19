@@ -10,9 +10,11 @@ export { codingAgentHome, codingAgentStates, registrationRoot } from "./coding-a
 export { registerHarnesses } from "./harness-registration.js";
 export { type Harness } from "./harness-registration.js";
 export {
+  addPackSpecs,
   discoverPacks,
   installPackVersions,
   npmPackStore,
+  packsLeftOutByCore,
   parsePackVersions,
   type PackDiscovery,
   type PackStore,

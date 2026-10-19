@@ -9,7 +9,8 @@ import { repositoryIdentityLocation } from "../engine/catalog/repository-identit
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { rulePackPackageName } from "../engine/catalog/rule-packs.js";
 import { clean } from "../harness/setup-screens.js";
-import { discoverPacks, npmPackStore, type DiscoveredPack, type PackStore } from "../setup/rule-pack-store.js";
+import { addPackSpecs, discoverPacks, npmPackStore, type DiscoveredPack, type PackStore } from "../setup/rule-pack-store.js";
+import { withPacksLock } from "../setup/packs-lock.js";
 
 const PACK_ID = /^[a-z][a-z0-9-]*$/u;
 /**
@@ -42,9 +43,9 @@ function write(lines: readonly string[]): void {
   process.stdout.write(lines.length === 0 ? "" : `${lines.join("\n")}\n`);
 }
 
-/** The installed packs and those left out, as `rerail packs list` prints them. */
-function installedLines(): string[] {
-  const catalog = loadRuleCatalog();
+/** The packs installed in `home` and those left out, as `rerail packs list` prints them. */
+function installedLines(home: string): string[] {
+  const catalog = loadRuleCatalog(home);
   const packs = [...catalog.packs.values()];
   const lines = packs.length === 0
     ? ["No rule packs are installed. `rerail packs recommend` lists the ones that fit a repository."]
@@ -78,26 +79,28 @@ async function recommend(args: readonly string[], usage: () => string, store: Pa
   return 0;
 }
 
-/** `rerail packs list|add|remove|recommend`. */
+/** `rerail packs list|add|remove|recommend`, on `store`'s home. `add` and `remove` hold the packs lock while npm runs. */
 export async function runPacksCommand(args: readonly string[], usage: () => string, store: PackStore = npmPackStore()): Promise<number> {
   const [subcommand, ...rest] = args;
   if (subcommand === "list" || subcommand === undefined) {
     parseArguments(rest, { flags: [], options: [] }, argument => `Unknown packs list option: ${argument}\n\n${usage()}`);
-    write(installedLines());
+    write(installedLines(store.home));
     return 0;
   }
   if (subcommand === "add") {
     if (rest.length === 0) throw new Error(`Name a rule pack to add, for example rerail packs add typescript\n\n${usage()}`);
-    await store.install(rest.map(packAddSpec));
-    write(installedLines());
+    // Checked as set-up's install is: a pack that installs but is left out is put back, and the command fails.
+    const problem = await addPackSpecs(rest.map(packAddSpec), store);
+    if (problem !== undefined) throw new Error(problem);
+    write(installedLines(store.home));
     return 0;
   }
   if (subcommand === "remove") {
     const ids = rest.map(argument => argument.replace(/^@neralabs\/rerail-pack-/u, ""));
     const invalid = ids.find(id => !PACK_ID.test(id));
     if (ids.length === 0 || invalid !== undefined) throw new Error(`Name the rule packs to remove by id, for example rerail packs remove typescript\n\n${usage()}`);
-    await store.remove(ids);
-    write(installedLines());
+    await withPacksLock(store.home, () => store.remove(ids));
+    write(installedLines(store.home));
     return 0;
   }
   if (subcommand === "recommend") return await recommend(rest, usage, store);

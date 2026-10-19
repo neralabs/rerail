@@ -517,14 +517,14 @@ describe("packedFileFailures", () => {
   });
 
   it("fails an entry files does not publish", () => {
-    expect(packedFileFailures(files, ["pack.json", "CHANGELOG.md", "checks/match.mjs"])).toEqual([
+    expect(packedFileFailures(files, ["pack.json", "CHANGELOG.md", "docs/notes.md"])).toEqual([
       "CHANGELOG.md: package.json files does not publish it",
-      "checks/match.mjs: package.json files does not publish it",
+      "docs/notes.md: package.json files does not publish it",
     ]);
   });
 
-  it("passes a directory a pack adds to files, such as checks/", () => {
-    expect(packedFileFailures([...files, "checks"], ["checks/match.mjs"])).toEqual([]);
+  it("passes a directory a pack adds to files, such as docs/", () => {
+    expect(packedFileFailures([...files, "docs"], ["docs/notes.md"])).toEqual([]);
   });
 
   it("passes files under a folder a glob entry matches, which npm publishes whole", () => {

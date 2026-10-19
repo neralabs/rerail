@@ -489,19 +489,27 @@ function startModeLine(packs: readonly RecommendedPack[]): string {
 const packList = (packs: readonly { readonly id: string; readonly version: string }[]): string =>
   packs.map(pack => `${clean(pack.id)}@${clean(pack.version)}`).join(",");
 
+/**
+ * The confirm question's answers, in its order: no "Choose rule packs…" when set-up has no pack to choose from, since
+ * nothing could be typed there and the person could not get back.
+ */
+export function confirmPacksAnswers(available: readonly unknown[]): readonly ConfirmPacksAnswer[] {
+  return available.length === 0 ? CONFIRM_PACKS_ANSWERS.filter(answer => answer !== "choose") : CONFIRM_PACKS_ANSWERS;
+}
+
 function confirmQuestion(input: RecommendedPacksInput, prompt: string, lead: readonly string[]): QuestionForm {
   const repoFlag = [SETUP_FLAGS.repo, clean(input.repoPath)];
   // Each answer that installs carries the exact versions shown, so a later run installs what the person saw.
   const packsFlag = input.packs.length === 0 ? [] : [SETUP_FLAGS.packs, packList(input.packs)];
   const ids = input.agentsFound.map(agent => `${clean(agent.id)} (${clean(agent.name)})`).join(", ");
   const idList = ids === "" ? "none found" : ids;
-  const available = input.available.length === 0 ? "none available" : packList(input.available);
+  const available = packList(input.available);
   return {
     id: "confirm-packs",
     lead,
     prompt,
     trail: ["Nothing is installed or on until you say yes."],
-    choices: [
+    choices: ([
       { answer: "start", label: "Yes, start Rerail", args: [SETUP_FLAGS.answer, "start", ...repoFlag, ...packsFlag] },
       { answer: "review", label: "Review them first", hint: "opens the dashboard", args: [SETUP_FLAGS.answer, "review", ...repoFlag, ...packsFlag] },
       {
@@ -524,7 +532,7 @@ function confirmQuestion(input: RecommendedPacksInput, prompt: string, lead: rea
           `To start with only some coding agents: ${command}, with comma-separated ids from: ${idList}. For anything else, say what set-up can do and ask again.`,
       },
       { answer: "pick-myself", label: "I’ll pick rule packs myself", args: [SETUP_FLAGS.answer, "pick-myself", ...repoFlag] },
-    ],
+    ] satisfies Choice[]).filter(choice => confirmPacksAnswers(input.available).includes(choice.answer as ConfirmPacksAnswer)),
     ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
   };
 }

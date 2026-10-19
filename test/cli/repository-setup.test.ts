@@ -16,7 +16,7 @@ vi.mock("../../src/engine/catalog/rule-packs.js", async (importOriginal) => {
 import { openRerailDatabase } from "../../src/engine/index.js";
 import { repositoryIdentityLocation } from "../../src/engine/index.js";
 import { listRepositoryRules, loadRuleCatalog, lookupCheckout, recordCheckout, ruleSettings } from "../../src/engine/index.js";
-import { parseCodingAgents, runSetup, startRerail, startRerailStep, type SetupRequest } from "../../src/cli/repository-setup.js";
+import { parseCodingAgents, runSetup, setupPacks, startRerail, startRerailStep, type SetupRequest } from "../../src/cli/repository-setup.js";
 import { onRuleCount, stopRerail, workspaceStartState, type RepositorySetupIo } from "../../src/runtime/index.js";
 import { setUpRepository } from "../../src/engine/index.js";
 import { noBrowserReason, runSetupCommand, type SetupIo } from "../../src/cli/setup-cli.js";
@@ -970,6 +970,17 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(asked.text()).toContain("Start Rerail in acme-api with this rule pack?");
   });
 
+  it("offers no Choose rule packs… when npm gives no pack, so the person is never asked for one they cannot name", async () => {
+    const setup = await fixture();
+    // Yes, read it; `choose` is no answer here and is asked again; then 3 is "Type something else…", not Choose.
+    const io = terminalIo(["1", "choose", "3", "claude-code", ""]);
+    const environment = fakeSetupEnvironment({ packs: countingStore([], ["typescript"]) });
+    expect(await runSetup(io, request(setup, environment))).toMatchObject({ status: "started" });
+    expect(io.text()).toContain("Start Rerail in acme-api with no rule packs on?");
+    expect(io.text()).not.toContain("Choose rule packs…");
+    expect(environment.connections).toEqual([{ agents: ["claude-code"], repoRoot: setup.repo }]);
+  });
+
   it("offers an installed pack npm cannot give now, at its installed version", async () => {
     const setup = await fixture();
     installPack("typescript");
@@ -1031,5 +1042,45 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     } finally {
       await rm(current, { recursive: true, force: true });
     }
+  });
+
+  it("names a newer installed pack its core range leaves out, rather than offering npm's older one the downgrade guard would refuse", async () => {
+    const setup = await fixture();
+    // Installed from `next`, then left out: after `rerail update rollback`, say.
+    installTypescriptAt("0.9.0", ">=9.0.0");
+    const packs = countingStore(["typescript"]);
+    const environment = fakeSetupEnvironment({ packs });
+
+    const asked = agentIo();
+    await runSetup(asked, request(setup, environment, { answer: "yes", repo: setup.repo }));
+    expect(asked.text()).toMatch(/@neralabs\/rerail-pack-typescript@0\.9\.0: .*>=9\.0\.0/u);
+    expect(asked.text()).not.toContain("--packs typescript@");
+
+    // The answer the question prints starts Rerail, installing nothing and keeping 0.9.0.
+    expect(await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo }))).toMatchObject({ status: "started" });
+    expect(packs.installs).toEqual([]);
+    const manifest = join(process.env.RERAIL_HOME!, "packs", "node_modules", "@neralabs", "rerail-pack-typescript", "package.json");
+    expect((JSON.parse(readFileSync(manifest, "utf8")) as { version: string }).version).toBe("0.9.0");
+  });
+
+  it("asks again, saying why, for an answer's version semver cannot read, with that pack installed", async () => {
+    const setup = await fixture();
+    installTypescriptAt("0.9.0");
+    const asked = agentIo();
+    expect(await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo, ...setupPacks("typescript@01.2.3", "start") })))
+      .toEqual({ status: "waiting" });
+    expect(asked.text()).toContain("Name each rule pack as <id>@<version>, for example typescript@0.1.1, not typescript@01.2.3");
+  });
+
+  it("installs into its pack store's home and checks the packs there, whatever RERAIL_HOME says", async () => {
+    const setup = await fixture();
+    const storeHome = join(setup.root, "store-home");
+    const packs = directoryPackStore(undefined, ["typescript"], storeHome);
+
+    expect(await runSetup(agentIo(), request(setup, fakeSetupEnvironment({ packs }), { answer: "start", repo: setup.repo, packs: TYPESCRIPT })))
+      .toMatchObject({ status: "started" });
+    expect(loadRuleCatalog(storeHome).packs.get("typescript")?.version).toBe(TYPESCRIPT[0]!.version);
+    expect(loadRuleCatalog().packs.size).toBe(0);
+    expect(selected(setup)).toEqual(TS_PACKS);
   });
 });
