@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-valid-v-for",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/valid-v-for` with default options (allowEmptyAlias: false). Syntax checks on every `v-for` attribute inside the template (the SFC's root `<template>` itself is never visited): an argument or modifiers (reported at the first one, after its dot), a missing or empty value, and the alias list of `(value, key, index) in source` read from the attribute text like vue-eslint-parser's `for (let [aliases] in source)` parse: an empty value, key or index position (reported at the start of the value) and a key or index that is not a plain identifier (a pattern, default or rest; reported at it). Key checks, per checkKey from each `v-for` (own element, or through keyless `<template>` children whose own `v-for` source does not read a name the outer `v-for` declares): a custom component (the `custom-tag` family shared with `no-v-text-v-html-on-component`) without a key is reported at its start tag, and a `v-bind:key` that reads none of the `v-for`'s alias names at the key directive. The name comparisons read the view program (the v-for arrow `(SRC), (ALIAS) => { <element> }` spans its element and is matched to it by source text; names compare as text, as upstream compares `references` to `variables` by name). Unreachable upstream: `unexpectedExpression` (vue-eslint-parser yields no expression for a value it cannot parse as `<alias> in <expression>`).",
+  "description": "Ports eslint-plugin-vue 10.11.1 `vue/valid-v-for` with default options (allowEmptyAlias: false). Syntax checks on every `v-for` attribute inside the template (the SFC's root `<template>` itself is never visited): an argument or modifiers (reported at the first one, after its dot), a missing or empty value, and the alias list of `(value, key, index) in source` read from the attribute text like vue-eslint-parser's `for (let [aliases] in source)` parse: an empty value, key or index position (reported at the start of the value) and a key or index that is not a plain identifier (a pattern, default or rest; reported at it). Key checks, per checkKey from each `v-for` (own element, or through keyless `<template>` children whose own `v-for` source does not read a name the outer `v-for` declares): a custom component (the `custom-tag` family shared with `no-v-text-v-html-on-component`) without a key is reported at its start tag, and a `v-bind:key` that reads none of the `v-for`'s alias names at the key directive. The name comparisons reach the script-block program through `embedded` from the inner `v-for` or the key directive: a read there is compared with a parameter of the v-for arrow `(SRC), (ALIAS) => { <element> }` whose host is the owning element's `v-for` directive (`host`, node identity with the owner); names compare as text, as upstream compares `references` to `variables` by name. Unreachable upstream: `unexpectedExpression` (vue-eslint-parser yields no expression for a value it cannot parse as `<alias> in <expression>`).",
   "scope": {
     "include": [
       "**/*.vue"
@@ -715,74 +715,6 @@
                 }
               ]
             },
-            "skip-binder": {
-              "all": [
-                {
-                  "matches": "binder"
-                },
-                {
-                  "pattern": "$SB"
-                },
-                {
-                  "inside": {
-                    "stopBy": "end",
-                    "kind": "formal_parameters",
-                    "inside": {
-                      "kind": "arrow_function",
-                      "inside": {
-                        "stopBy": "neighbor",
-                        "kind": "sequence_expression",
-                        "pattern": "$SE",
-                        "all": [
-                          {
-                            "compare": {
-                              "left": "SE",
-                              "op": "eq",
-                              "right": "E",
-                              "text": "source"
-                            }
-                          },
-                          {
-                            "has": {
-                              "stopBy": "end",
-                              "kind": "sequence_expression",
-                              "pattern": "$SN",
-                              "all": [
-                                {
-                                  "compare": {
-                                    "left": "SN",
-                                    "op": "eq",
-                                    "right": "N",
-                                    "text": "source"
-                                  }
-                                },
-                                {
-                                  "has": {
-                                    "stopBy": "neighbor",
-                                    "kind": "parenthesized_expression",
-                                    "has": {
-                                      "stopBy": "end",
-                                      "matches": "ref",
-                                      "pattern": "$SR",
-                                      "compare": {
-                                        "left": "SR",
-                                        "op": "eq",
-                                        "right": "SB",
-                                        "text": "source"
-                                      }
-                                    }
-                                  }
-                                }
-                              ]
-                            }
-                          }
-                        ]
-                      }
-                    }
-                  }
-                }
-              ]
-            },
             "skip-below": {
               "has": {
                 "stopBy": "end",
@@ -818,12 +750,88 @@
                     ]
                   },
                   {
-                    "inside": {
-                      "kind": "document",
-                      "stopBy": "end",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "tag-node",
                       "has": {
-                        "stopBy": "end",
-                        "matches": "skip-binder"
+                        "stopBy": "neighbor",
+                        "matches": "vfor",
+                        "embedded": {
+                          "all": [
+                            {
+                              "matches": "ref"
+                            },
+                            {
+                              "pattern": "$SR"
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "parenthesized_expression",
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "kind": "sequence_expression"
+                                }
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "arrow_function",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "formal_parameters",
+                                      "has": {
+                                        "stopBy": "end",
+                                        "all": [
+                                          {
+                                            "matches": "binder"
+                                          },
+                                          {
+                                            "pattern": "$AL"
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "SR",
+                                              "op": "eq",
+                                              "right": "AL",
+                                              "text": "source"
+                                            }
+                                          },
+                                          {
+                                            "host": {
+                                              "inside": {
+                                                "stopBy": "end",
+                                                "matches": "vfor",
+                                                "inside": {
+                                                  "stopBy": "neighbor",
+                                                  "matches": "tag-node",
+                                                  "inside": {
+                                                    "stopBy": "neighbor",
+                                                    "matches": "el",
+                                                    "pattern": "$EV",
+                                                    "compare": {
+                                                      "left": "E",
+                                                      "op": "eq",
+                                                      "right": "EV",
+                                                      "text": "node"
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
                       }
                     }
                   }
@@ -1431,74 +1439,6 @@
                 }
               ]
             },
-            "skip-binder": {
-              "all": [
-                {
-                  "matches": "binder"
-                },
-                {
-                  "pattern": "$SB"
-                },
-                {
-                  "inside": {
-                    "stopBy": "end",
-                    "kind": "formal_parameters",
-                    "inside": {
-                      "kind": "arrow_function",
-                      "inside": {
-                        "stopBy": "neighbor",
-                        "kind": "sequence_expression",
-                        "pattern": "$SE",
-                        "all": [
-                          {
-                            "compare": {
-                              "left": "SE",
-                              "op": "eq",
-                              "right": "E",
-                              "text": "source"
-                            }
-                          },
-                          {
-                            "has": {
-                              "stopBy": "end",
-                              "kind": "sequence_expression",
-                              "pattern": "$SN",
-                              "all": [
-                                {
-                                  "compare": {
-                                    "left": "SN",
-                                    "op": "eq",
-                                    "right": "N",
-                                    "text": "source"
-                                  }
-                                },
-                                {
-                                  "has": {
-                                    "stopBy": "neighbor",
-                                    "kind": "parenthesized_expression",
-                                    "has": {
-                                      "stopBy": "end",
-                                      "matches": "ref",
-                                      "pattern": "$SR",
-                                      "compare": {
-                                        "left": "SR",
-                                        "op": "eq",
-                                        "right": "SB",
-                                        "text": "source"
-                                      }
-                                    }
-                                  }
-                                }
-                              ]
-                            }
-                          }
-                        ]
-                      }
-                    }
-                  }
-                }
-              ]
-            },
             "skip-below": {
               "has": {
                 "stopBy": "end",
@@ -1534,89 +1474,170 @@
                     ]
                   },
                   {
-                    "inside": {
-                      "kind": "document",
-                      "stopBy": "end",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "tag-node",
                       "has": {
-                        "stopBy": "end",
-                        "matches": "skip-binder"
+                        "stopBy": "neighbor",
+                        "matches": "vfor",
+                        "embedded": {
+                          "all": [
+                            {
+                              "matches": "ref"
+                            },
+                            {
+                              "pattern": "$SR"
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "parenthesized_expression",
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "kind": "sequence_expression"
+                                }
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "arrow_function",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "formal_parameters",
+                                      "has": {
+                                        "stopBy": "end",
+                                        "all": [
+                                          {
+                                            "matches": "binder"
+                                          },
+                                          {
+                                            "pattern": "$AL"
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "SR",
+                                              "op": "eq",
+                                              "right": "AL",
+                                              "text": "source"
+                                            }
+                                          },
+                                          {
+                                            "host": {
+                                              "inside": {
+                                                "stopBy": "end",
+                                                "matches": "vfor",
+                                                "inside": {
+                                                  "stopBy": "neighbor",
+                                                  "matches": "tag-node",
+                                                  "inside": {
+                                                    "stopBy": "neighbor",
+                                                    "matches": "el",
+                                                    "pattern": "$EV",
+                                                    "compare": {
+                                                      "left": "E",
+                                                      "op": "eq",
+                                                      "right": "EV",
+                                                      "text": "node"
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
                       }
                     }
                   }
                 ]
               }
             },
-            "used-binder": {
-              "all": [
-                {
-                  "matches": "binder"
+            "used-by": {
+              "has": {
+                "stopBy": "end",
+                "matches": "vkey",
+                "pattern": "$KV",
+                "compare": {
+                  "left": "K",
+                  "op": "eq",
+                  "right": "KV",
+                  "text": "node"
                 },
-                {
-                  "pattern": "$AL"
-                },
-                {
-                  "inside": {
-                    "stopBy": "end",
-                    "kind": "formal_parameters",
-                    "inside": {
-                      "kind": "arrow_function",
+                "embedded": {
+                  "all": [
+                    {
+                      "matches": "ref"
+                    },
+                    {
+                      "pattern": "$R"
+                    },
+                    {
                       "inside": {
-                        "stopBy": "neighbor",
-                        "kind": "sequence_expression",
-                        "pattern": "$AE",
+                        "stopBy": "end",
+                        "kind": "arrow_function",
                         "all": [
                           {
-                            "compare": {
-                              "left": "AE",
-                              "op": "eq",
-                              "right": "E",
-                              "text": "source"
-                            }
-                          },
-                          {
                             "has": {
-                              "stopBy": "end",
-                              "kind": "expression_statement",
-                              "pattern": "$KS",
-                              "all": [
-                                {
-                                  "compare": {
-                                    "left": "KS",
-                                    "op": "eq",
-                                    "right": "K",
-                                    "text": "source"
-                                  }
-                                },
-                                {
-                                  "has": {
-                                    "stopBy": "end",
-                                    "matches": "ref",
-                                    "pattern": "$R",
+                              "stopBy": "neighbor",
+                              "kind": "formal_parameters",
+                              "has": {
+                                "stopBy": "end",
+                                "all": [
+                                  {
+                                    "matches": "binder"
+                                  },
+                                  {
+                                    "pattern": "$AL"
+                                  },
+                                  {
                                     "compare": {
                                       "left": "R",
                                       "op": "eq",
                                       "right": "AL",
                                       "text": "source"
                                     }
+                                  },
+                                  {
+                                    "host": {
+                                      "inside": {
+                                        "stopBy": "end",
+                                        "matches": "vfor",
+                                        "inside": {
+                                          "stopBy": "neighbor",
+                                          "matches": "tag-node",
+                                          "inside": {
+                                            "stopBy": "neighbor",
+                                            "matches": "el",
+                                            "pattern": "$EV",
+                                            "compare": {
+                                              "left": "E",
+                                              "op": "eq",
+                                              "right": "EV",
+                                              "text": "node"
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
                                   }
-                                }
-                              ]
+                                ]
+                              }
                             }
                           }
                         ]
                       }
                     }
-                  }
-                }
-              ]
-            },
-            "used-by": {
-              "inside": {
-                "kind": "document",
-                "stopBy": "end",
-                "has": {
-                  "stopBy": "end",
-                  "matches": "used-binder"
+                  ]
                 }
               }
             },

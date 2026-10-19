@@ -1281,7 +1281,7 @@ fn benchmark_forte_throughput() {
                         Err(_) => 0,
                     }
                 }
-                "port-tree" => super::tree::parse_tree(template).len(),
+                "port-tree" => super::tree::parse_tree(template).map_or(0, |tree| tree.len()),
                 other => panic!("FORTE_BENCH_PARSER={other}"),
             };
         }

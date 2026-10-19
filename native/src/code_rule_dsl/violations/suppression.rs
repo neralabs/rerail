@@ -5,16 +5,18 @@
 use super::{Witness, anchored_span};
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
-use crate::code_rule_dsl::lines::Terminators;
-use crate::code_rule_dsl::matcher::{file_lines, file_rerail_ignores, host};
+use crate::code_rule_dsl::matcher::file_rerail_ignores;
 use crate::code_rule_dsl::model::{Anchor, ViolationSpec};
+use crate::code_rule_dsl::origin::InFile;
 use crate::code_rule_dsl::suppress::{RerailIgnores, root};
-use ast_grep_core::{Doc, Node};
+use crate::code_rule_dsl::tape::tape_doc;
+use ast_grep_core::{AstGrep, Doc, Node};
 use std::rc::Rc;
 
 /// Whether the violation's `suppress` removes a witness: another linter's comments suppress the
 /// violation at its anchor's start (oxlint's and Biome's: over the anchored span). `node` is the
-/// witness's node, which places the file.
+/// witness's node, which places the file: the family of the file's language reads its comments
+/// (a guest node's are its host file's: `embed`).
 pub(crate) fn suppresses<D: Doc>(
     violation: Option<&ViolationSpec>,
     node: &Node<'_, D>,
@@ -25,14 +27,13 @@ pub(crate) fn suppresses<D: Doc>(
     else {
         return false;
     };
-    let Some((source, language)) = host(node) else {
+    let Some(file) = InFile::of(node) else {
         return false;
     };
     let anchored = anchored_span(&violation.anchor, witness).0;
-    let lines = file_lines(source, Terminators::of(language));
     // Compiling checked that the query's family honours each linter `suppress` names.
     let span = (witness.span.start_byte, witness.span.end_byte);
-    with_adapter!(Family::of(language), A => A::suppresses(violation, suppress, node, source, &lines, anchored.start_byte..anchored.end_byte, span))
+    with_adapter!(Family::of(file.dialect()), A => A::suppresses(violation, suppress, node, file.source(), file.lines(), anchored.start_byte..anchored.end_byte, span))
 }
 
 /// Whether a `rerail-ignore` comment naming the violation's code rule covers the byte a witness's
@@ -66,11 +67,17 @@ pub(crate) fn names_rerail_ignore<D: Doc>(violation: &ViolationSpec, node: &Node
         .is_some_and(|rule| file_ignores(node).is_some_and(|ignores| ignores.names(rule)))
 }
 
-/// The `rerail-ignore` directives of the file `node` belongs to; none for a parsed literal's tree.
+/// The `rerail-ignore` directives of the file `node` belongs to: those of each of its documents
+/// (`embed`); none for a parsed literal's tree.
 fn file_ignores<D: Doc>(node: &Node<'_, D>) -> Option<Rc<RerailIgnores>> {
-    let (source, language) = host(node)?;
+    if let Some(doc) = tape_doc(node) {
+        let host = doc.host().unwrap_or(doc);
+        return Some(file_rerail_ignores(|| {
+            RerailIgnores::read(&AstGrep::doc(host.clone()).root(), host.get_source())
+        }));
+    }
+    let file = InFile::of(node)?;
     Some(file_rerail_ignores(|| {
-        let lines = file_lines(source, Terminators::of(language));
-        RerailIgnores::read(&root(node), source, &lines)
+        RerailIgnores::read(&root(node), file.source())
     }))
 }

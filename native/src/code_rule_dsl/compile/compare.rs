@@ -322,9 +322,11 @@ fn scope_names(
     if let Some(capture) = rule.get("capture").and_then(Value::as_str) {
         names.insert(capture.to_owned());
     }
-    // A parsed tree's captures are exported to the rule that parses it.
+    // A parsed tree's captures are exported to the rule that parses it, an embedded program's to
+    // the host rule that reaches it.
     for parsed in [
         rule.get("parse"),
+        rule.get("embedded"),
         rule.get("formatArgs").and_then(|test| test.get("missing")),
     ]
     .into_iter()
@@ -647,12 +649,15 @@ fn walk_sites<'a>(
     if let Some(not) = object.get("not") {
         enter(not, format!("{path}/not"), false, calls, scopes, sites);
     }
-    // A parsed tree's rule has an environment of its own.
-    if let Some(parse) = object.get("parse") {
-        enter(parse, format!("{path}/parse"), true, calls, scopes, sites);
+    // A parsed tree's rule has an environment of its own, as an embedded program's has.
+    for key in ["parse", "embedded"] {
+        if let Some(tree) = object.get(key) {
+            enter(tree, format!("{path}/{key}"), true, calls, scopes, sites);
+        }
     }
-    // A `host` rule (inside a parsed tree's rule) runs in the host's environment, with the tree's
-    // captures exported into it: the tree's scopes join the host's, and its own names are its own.
+    // A `host` rule (inside a parsed tree's or an embedded program's rule) runs in the host's
+    // environment, with the tree's captures exported into it: the tree's scopes join the host's,
+    // and its own names are its own.
     if let Some(host) = object.get("host") {
         let mut hosted = scopes.clone();
         if let Some(tree) = hosted.iter().rposition(|scope| scope.fresh) {

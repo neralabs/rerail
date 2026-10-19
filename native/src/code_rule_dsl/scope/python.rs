@@ -186,7 +186,7 @@ struct Python {
 fn python() -> &'static Python {
     static PYTHON: OnceLock<Python> = OnceLock::new();
     PYTHON.get_or_init(|| {
-        let grammar = Grammar::new(GrammarDialect::Python, GrammarDialect::Python, tag);
+        let grammar = Grammar::new(GrammarDialect::Python, tag);
         let fields = Fields {
             name: grammar.field("name"),
             alias: grammar.field("alias"),

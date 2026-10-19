@@ -468,7 +468,8 @@ describe("validatePack", () => {
   });
 
   it("asks no suppress.biome of a port whose query language does not honour Biome's comments", async () => {
-    // Vue's registry entry honours eslint alone: a Vue query refuses suppress.biome.
+    // Vue's registry entry honours eslint alone: a Vue query, over the component's script program
+    // too, refuses suppress.biome.
     const vue = (directory: string) =>
       editJson(join(directory, "rules", "no-debugger.json"), document => ({
         ...document,
@@ -477,7 +478,7 @@ describe("validatePack", () => {
           .parse(document.clauses)
           .map(clause => ({
             ...clause,
-            forbid: { ...clause.forbid, ast: { ...clause.forbid.ast, language: "vue" } },
+            forbid: { ...clause.forbid, ast: { ...clause.forbid.ast, language: "vue", embedded: "script-block" } },
             violation: { ...clause.violation, suppress: { eslint: { rules: ["no-debugger"] } } },
           })),
       }));

@@ -16,6 +16,7 @@
       "forbid": {
         "ast": {
           "language": "blade",
+          "embedded": "compiled-view",
           "rule": {
             "kind": "function_definition",
             "not": {

@@ -13,6 +13,7 @@ mod matcher;
 mod model;
 mod module_graph;
 mod module_path;
+mod origin;
 mod package_manifest;
 mod php_literal;
 mod php_view;
