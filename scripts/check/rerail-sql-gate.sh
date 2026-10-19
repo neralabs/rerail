@@ -39,7 +39,7 @@ if ! cargo test --profile loop --manifest-path native/Cargo.toml --lib --no-run 
     exit 1
 fi
 binary=$(sed -n 's/^ *Executable unittests src\/lib.rs (\(.*\))$/\1/p' "$build_log")
-[[ -x "$binary" ]] || binary="$root/$binary"
+[[ $binary == /* ]] || binary="$root/$binary"
 echo "gate: built in $((SECONDS - started))s: $binary"
 
 # A test run as `cargo test` runs it: from the package directory.

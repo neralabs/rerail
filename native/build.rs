@@ -156,6 +156,44 @@ fn build_grammar(grammar: &VendoredGrammar) {
     }
     let name = grammar.name;
     let source = grammar.source;
+    let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
+    // The script reruns on every engine source edit (`rerun-if-changed=src`), where generating
+    // and compiling the parsers took most of a rebuild: a parser whose inputs, generator and
+    // compiler settings are those of the library an earlier run left in `OUT_DIR` is linked as
+    // it is.
+    let compiler = ["CC", "CFLAGS", "AR", "CRATE_CC_NO_DEFAULTS"];
+    let target = std::env::var("TARGET").expect("target");
+    let mut stamp = Sha256::new();
+    stamp.update(format!("{:?}\0{}\0{source}\0", grammar.version, grammar.headers));
+    for input in grammar.inputs {
+        stamp.update(input.as_bytes());
+        stamp.update([0]);
+        stamp.update(
+            std::fs::read(input).unwrap_or_else(|error| panic!("{input} is unreadable: {error}")),
+        );
+        stamp.update([0]);
+    }
+    let lock = std::fs::read("../Cargo.lock").expect("Cargo.lock is readable");
+    stamp.update(&lock);
+    for variable in compiler.iter().flat_map(|variable| {
+        [
+            (*variable).to_owned(),
+            format!("{variable}_{target}"),
+            format!("{variable}_{}", target.replace('-', "_")),
+            format!("TARGET_{variable}"),
+        ]
+    }) {
+        println!("cargo:rerun-if-env-changed={variable}");
+        stamp.update(format!("{variable}={:?}\0", std::env::var_os(&variable)));
+    }
+    let stamp = hex(&stamp.finalize());
+    let stamp_path = out.join(format!("{name}_parser.stamp"));
+    let library = out.join(format!("libtree-sitter-{name}.a"));
+    if library.is_file() && std::fs::read_to_string(&stamp_path).is_ok_and(|kept| kept == stamp) {
+        println!("cargo:rustc-link-lib=static=tree-sitter-{name}");
+        println!("cargo:rustc-link-search=native={}", out.display());
+        return;
+    }
     let json = std::fs::read_to_string(format!("{source}/grammar.json"))
         .unwrap_or_else(|error| panic!("{name} grammar is unreadable: {error}"));
     let (generated, parser) = tree_sitter_generate::generate_parser_for_grammar(
@@ -166,8 +204,7 @@ fn build_grammar(grammar: &VendoredGrammar) {
     )
     .unwrap_or_else(|error| panic!("{name} parser does not generate: {error}"));
     assert_eq!(generated, name);
-    let parser_path = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"))
-        .join(format!("{name}_parser.c"));
+    let parser_path = out.join(format!("{name}_parser.c"));
     std::fs::write(&parser_path, parser).expect("generated parser is writable");
     cc::Build::new()
         .include(grammar.headers)
@@ -175,6 +212,7 @@ fn build_grammar(grammar: &VendoredGrammar) {
         .file(format!("{source}/scanner.c"))
         .warnings(false)
         .compile(&format!("tree-sitter-{name}"));
+    std::fs::write(&stamp_path, stamp).expect("parser stamp is writable");
 }
 
 /// Where the engine's tests read the conformance fixtures: `RERAIL_ORACLES_DIR` if set (relative
