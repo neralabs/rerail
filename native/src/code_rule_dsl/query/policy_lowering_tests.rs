@@ -977,6 +977,132 @@ fn sql_structural_core_matches_the_matcher_oracle() {
 }
 
 #[test]
+fn sql_structural_composition_matrix_matches_the_matcher_oracle() {
+    let cases = vec![
+        (
+            code_rule(json!({
+                "all": [
+                    { "pattern": "$A + $B" },
+                    { "any": [
+                        { "pattern": "$X + $A" },
+                        { "all": [
+                            { "pattern": "$A + $Y" },
+                            { "not": { "pattern": "$Y + $A" } }
+                        ] }
+                    ] }
+                ]
+            })),
+            "x + y\ny + y\n",
+        ),
+        (
+            code_rule(json!({
+                "all": [
+                    { "pattern": "$F($$$)" },
+                    { "has": { "pattern": "$F", "stopBy": "end" } }
+                ]
+            })),
+            "f(x)\ng(f)\n",
+        ),
+        (
+            code_rule(json!({
+                "all": [
+                    { "pattern": "$F($$$)" },
+                    { "not": { "has": { "pattern": "$F", "stopBy": "end" } } }
+                ]
+            })),
+            "f(x)\ng(f)\n",
+        ),
+        (
+            code_rule(json!({
+                "all": [
+                    { "pattern": "$F($$$)" },
+                    { "any": [
+                        { "has": { "pattern": "$X", "stopBy": "end" } },
+                        { "has": { "pattern": "$F", "stopBy": "end" } }
+                    ] }
+                ]
+            })),
+            "f(x)\ng(f)\n",
+        ),
+        (
+            code_rule(json!({
+                "pattern": "$F($$$)",
+                "count": {
+                    "has": { "pattern": "$F", "stopBy": "end" },
+                    "min": 1,
+                    "max": 1
+                }
+            })),
+            "f(x)\ng(f)\nf(f)\n",
+        ),
+        (
+            code_rule(json!({
+                "all": [
+                    { "pattern": "$F($$$)" },
+                    { "count": {
+                        "has": { "pattern": "$F", "stopBy": "end" },
+                        "min": 1,
+                        "max": 1
+                    } }
+                ]
+            })),
+            "f(x)\ng(f)\nf(f)\n",
+        ),
+        (
+            code_rule(json!({
+                "kind": "identifier",
+                "inside": {
+                    "any": [
+                        { "pattern": "def $A():\n    $$$" },
+                        { "kind": "function_definition" }
+                    ],
+                    "stopBy": "end"
+                }
+            })),
+            "def f():\n x = 1\n\ny = 2\n",
+        ),
+        (
+            code_rule(json!({
+                "kind": "expression_statement",
+                "precedes": {
+                    "kind": "expression_statement",
+                    "stopBy": { "pattern": "stop()" }
+                }
+            })),
+            "a()\nb()\nstop()\nc()\nd()\n",
+        ),
+        (
+            code_rule(json!({
+                "kind": "expression_statement",
+                "follows": {
+                    "kind": "expression_statement",
+                    "stopBy": { "pattern": "stop()" }
+                }
+            })),
+            "a()\nb()\nstop()\nc()\nd()\n",
+        ),
+        (
+            code_rule(json!({
+                "kind": "identifier",
+                "nthChild": { "position": "2n+1", "reverse": true }
+            })),
+            "f(a, b, c, d)\n",
+        ),
+        (
+            code_rule(json!({ "pattern": "[$$$A, 0, $$$A]" })),
+            "[x, y, 0, x, y]\n[x, 0, y]\n",
+        ),
+    ];
+    for (compiled, source) in cases {
+        assert_eq!(
+            sql_ranges(&compiled, source),
+            oracle_ranges(&compiled, source),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn sql_composition_preserves_input_environments() {
     let cases = [
         code_rule(json!({
