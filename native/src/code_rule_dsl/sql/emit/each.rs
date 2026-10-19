@@ -65,7 +65,7 @@
 //! passed over; three-valued, a sub-rule of the trial that read true or false where the matcher
 //! reads unknown (or the reverse) would change the search.
 
-use super::{EACH, Emitter};
+use super::{EACH, Emitter, Reads};
 use crate::code_rule_dsl::sql::plan::Op;
 
 impl Emitter<'_> {
@@ -95,6 +95,7 @@ impl Emitter<'_> {
                  WHERE f.unk = 1 OR e.root IS NULL",
                 self.verdict("f", &[], "f.unk")
             ),
+            Reads::anti(&out, &[&format!("{EACH}x")]),
         )
     }
 
@@ -110,6 +111,7 @@ impl Emitter<'_> {
                 "SELECT {} FROM {input} f WHERE f.k IN (SELECT k FROM {positioned} WHERE unk = 0)",
                 self.cols("f")
             ),
+            Reads::join(&[input, &positioned]),
         );
         self.same_space(input, &passed);
         let committed = self.op(commit, &passed);
@@ -131,6 +133,7 @@ impl Emitter<'_> {
                 self.verdict("f", &overrides, "0"),
                 self.verdict("f", &[], "1")
             ),
+            Reads::join(&[input, &positioned]),
         )
     }
 }

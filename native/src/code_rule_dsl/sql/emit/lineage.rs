@@ -63,7 +63,7 @@
 //! no output, since no needed row reads them. The exact start set, the keys the clause's own
 //! needed rows demand, would need the same lineage outside the loops.
 
-use super::Emitter;
+use super::{Emitter, Reads};
 use crate::code_rule_dsl::sql::plan::Walk;
 
 /// How a k-space's rows derive from its parent's (the module doc's needed rows).
@@ -99,10 +99,13 @@ pub(super) struct Member {
     reads: Vec<Read>,
 }
 
-/// A recursive read from the rows of `space`'s frame `f`: `head` up to `FROM … f`, `tail` the
-/// joins after it.
+/// A recursive read into the table `reads` from the rows of `space`'s frame `input` (`f`), joined
+/// with the unit's demand table `demand`: `head` up to `FROM … f`, `tail` the joins after it.
 struct Read {
     space: usize,
+    reads: String,
+    input: String,
+    demand: String,
     head: String,
     tail: String,
 }
@@ -182,32 +185,52 @@ impl Emitter<'_> {
         });
     }
 
-    /// A recursive read from the rows `f` of `input`, `head` up to `FROM {input} f` and `tail`
-    /// the joins after it: recorded now where every row of `input` is needed (a key's row, or a
-    /// frame in no known space), else after the body, from its needed rows.
-    pub(super) fn record_read(&mut self, input: &str, head: String, tail: String) {
+    /// A recursive read into `reads` from the rows `f` of `input` joined with `demand`, `head` up
+    /// to `FROM {input} f` and `tail` the joins after it: recorded now where every row of `input`
+    /// is needed (a key's row, or a frame in no known space), else after the body, from its
+    /// needed rows.
+    pub(super) fn record_read(
+        &mut self,
+        reads: &str,
+        input: &str,
+        demand: &str,
+        head: String,
+        tail: String,
+    ) {
         if let Some(member) = self.members.last_mut()
             && let Some(&space) = self.space_of.get(input)
             && self.spaces[space].member == member.id
             && space != member.root
         {
-            member.reads.push(Read { space, head, tail });
+            member.reads.push(Read {
+                space,
+                reads: reads.to_owned(),
+                input: input.to_owned(),
+                demand: demand.to_owned(),
+                head,
+                tail,
+            });
             return;
         }
-        self.statements.push(format!("{head}{tail}"));
+        self.insert(reads, format!("{head}{tail}"), Reads::join(&[input, demand]));
     }
 
     /// Ends a unit's body: its deferred reads, each from the needed rows of its space.
     pub(super) fn member_end(&mut self) {
         let member = self.members.pop().expect("a unit body being emitted");
         for read in member.reads {
-            let needed = self
-                .needed(read.space)
-                .map_or(String::new(), |table| {
-                    format!(" WHERE f.k IN (SELECT k FROM {table})")
-                });
-            self.statements
-                .push(format!("{}{}{needed}", read.head, read.tail));
+            let needed = self.needed(read.space);
+            let mut inputs = vec![read.input.as_str(), read.demand.as_str()];
+            let filter = needed.as_ref().map_or(String::new(), |table| {
+                inputs.push(table);
+                format!(" WHERE f.k IN (SELECT k FROM {table})")
+            });
+            let reads = Reads::join(&inputs);
+            self.insert(
+                &read.reads,
+                format!("{}{}{filter}", read.head, read.tail),
+                reads,
+            );
         }
     }
 
@@ -226,6 +249,9 @@ impl Emitter<'_> {
                 .as_ref()
                 .map(|table| format!("{alias} IN (SELECT k FROM {table})"))
         };
+        // The select, and the frames it reads (each output row stems from a row of each).
+        let mut inputs = vec![frame.clone()];
+        inputs.extend(above.clone());
         let select = match self.spaces[space].derive.clone() {
             Derive::Keys => unreachable!("a unit's keys are a root"),
             Derive::Probe => {
@@ -236,10 +262,12 @@ impl Emitter<'_> {
                     .iter()
                     .map(|column| format!(" AND q.{column} IS f.{column}"))
                     .collect();
-                format!(
+                let select = format!(
                     "SELECT DISTINCT q.k FROM {input} f CROSS JOIN {frame} q \
                      ON q.file = f.file AND q.node = f.node{matched} WHERE {under}"
-                )
+                );
+                inputs.push(input);
+                select
             }),
             // The first candidate per parent row in `matched`, then the candidates up to it.
             Derive::First {
@@ -255,11 +283,14 @@ impl Emitter<'_> {
                 } else {
                     format!(" WHERE {}", counted.join(" AND "))
                 };
+                let mut grouped: Vec<&str> = inputs.iter().map(String::as_str).collect();
+                grouped.push(&matched);
                 let first = self.grouped(
                     "o",
                     &format!(
                         "SELECT g.pk, MIN(g.ord) FROM {matched} s JOIN {frame} g ON g.k = s.k{counted} GROUP BY g.pk"
                     ),
+                    Reads::join(&grouped),
                 );
                 let under = under("g.pk").map_or(String::new(), |under| format!(" AND {under}"));
                 Some(format!(
@@ -278,8 +309,12 @@ impl Emitter<'_> {
             // `m`: `n{unit}` is a unit's fresh answers (`Emitter::recursion_loop`).
             let name = self.name("m");
             self.create(&name, "k INTEGER PRIMARY KEY");
-            self.statements
-                .push(format!("INSERT INTO {name} {select}"));
+            let inputs: Vec<&str> = inputs.iter().map(String::as_str).collect();
+            self.insert(
+                &name,
+                format!("INSERT INTO {name} {select}"),
+                Reads::join(&inputs),
+            );
             name
         });
         self.spaces[space].needed = Some(needed.clone());
