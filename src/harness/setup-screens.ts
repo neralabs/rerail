@@ -1,5 +1,6 @@
 import type { SetupOption, SetupOptionInput, SetupQuestion, SetupQuestionId } from "./setup-step.js";
 import { RERAIL_BRAND_FOREGROUND } from "../presentation/terminal-brand.generated.js";
+import { rerailMark, type ColourDepth } from "../presentation/rerail-mark.js";
 
 /**
  * The text of every install and set-up screen (T2–T6, C3–C6b, WR,
@@ -51,9 +52,11 @@ export const SETUP_FLAGS = { answer: "--answer", repo: "--repo", agents: "--agen
 export const READ_REPO_ANSWERS = ["yes", "other-folder", "pick-myself"] as const;
 export const CONFIRM_PACKS_ANSWERS = ["start", "review", "other", "pick-myself"] as const;
 export const NO_REPO_ANSWERS = ["folder", "pick-myself", "skip"] as const;
+export const SESSIONS_ANSWERS = ["allow", "decline"] as const;
 export type ReadRepoAnswer = (typeof READ_REPO_ANSWERS)[number];
 export type ConfirmPacksAnswer = (typeof CONFIRM_PACKS_ANSWERS)[number];
 export type NoRepoAnswer = (typeof NO_REPO_ANSWERS)[number];
+export type SessionsAnswer = (typeof SESSIONS_ANSWERS)[number];
 
 // ── Styling ─────────────────────────────────────────────────────────────────
 
@@ -176,7 +179,8 @@ export function renderQuestion(form: QuestionForm, lane: SetupLane): string {
   const body = [...form.lead, style.bold(form.prompt), ...form.trail];
   const answer = (choice: Choice, index: number): string => withHint(`${index + 1}. ${choice.label}`, choice.hint, style);
   if (lane === "terminal") {
-    return lines([...body, ...form.choices.map((choice, index) => `${index === 0 ? style.brand("❯") : " "} ${answer(choice, index)}`)]);
+    // A blank line first, so each question stands apart from what the answer before it printed.
+    return lines(["", ...body, ...form.choices.map((choice, index) => `${index === 0 ? style.brand("❯") : " "} ${answer(choice, index)}`)]);
   }
   return lines([
     AGENT_QUESTION_INTRO,
@@ -207,6 +211,21 @@ export function setupQuestion(form: QuestionForm, baseArgs: readonly string[]): 
 const FOLDER_PLACEHOLDER = "<the folder they name>";
 const folderInput = (example: string): ChoiceInput => ({ flag: SETUP_FLAGS.repo, prompt: "Which folder?", hint: `for example ${example}`, placeholder: FOLDER_PLACEHOLDER });
 
+// ── T1 · Banner ────────────────────────────────────────────────────────────
+
+export interface BannerInput {
+  readonly version: string;
+  /** What the terminal can draw (`colourDepth`); `none` keeps the letters plain. */
+  readonly depth: ColourDepth;
+}
+
+/** T1: the footer's `R E R A I L` mark, in its colours, heading a set-up run in a terminal. Other lanes have none. */
+export function renderBanner(input: BannerInput, lane: SetupLane): string {
+  if (lane !== "terminal") return "";
+  const style = input.depth === "none" ? PLAIN_STYLE : TERMINAL_STYLE;
+  return lines(["", `  ${rerailMark(input.depth)}   ${style.dim(`set-up · ${clean(input.version)}`)}`, ""]);
+}
+
 // ── T2 · Installed ─────────────────────────────────────────────────────────
 
 export interface InstalledInput {
@@ -218,6 +237,71 @@ export function renderInstalled(input: InstalledInput, lane: SetupLane): string 
   if (lane !== "terminal") return lines(["Rerail is installed. Nothing is on yet."]);
   const style = styleFor(lane);
   return lines([`${style.brand(MASCOT_HAPPY)}   rerail ${clean(input.version)} installed  ${style.dim("nothing is on yet")}`]);
+}
+
+// ── T2 · On PATH ───────────────────────────────────────────────────────────
+
+export interface OnPathInput {
+  /** The launcher's directory, `~/.rerail/bin`. */
+  readonly binDir: string;
+  /** The startup files (or the Windows user Path) set-up added it to; empty when it could not. */
+  readonly locations: readonly string[];
+  /** Why set-up could not add it, when it could not. */
+  readonly failure?: string;
+  /** The person's home, shown as `~`. */
+  readonly home: string;
+}
+
+/** The line after T2 when set-up put the launcher on PATH, or could not. */
+export function renderOnPath(input: OnPathInput, lane: SetupLane): string {
+  const style = styleFor(lane);
+  const home = input.home.replace(/[\\/]+$/u, "");
+  const tilde = (path: string): string =>
+    clean(home !== "" && path.startsWith(home) && /^[\\/]/u.test(path.slice(home.length)) ? `~${path.slice(home.length)}` : path);
+  const binDir = tilde(input.binDir);
+  if (input.failure !== undefined) {
+    return lines([`${style.yellow("△")} Couldn’t add ${binDir} to PATH (${clean(input.failure)}). Add it yourself to run rerail from a terminal.`]);
+  }
+  const where = input.locations.map(tilde).join(" and ");
+  if (lane !== "terminal") return lines([`Added ${binDir} to PATH in ${where}. Open a new terminal to run rerail.`]);
+  return lines([`${bullet("rerail is on your PATH", style)}  ${style.dim(`added to ${where} · open a new terminal to use it`)}`]);
+}
+
+// ── T2b · May Rerail read sessions ─────────────────────────────────────────
+
+export interface SessionsInput {
+  /** What every answer carries on, so the run picks up where it was: `--repo <folder>` when one was named. */
+  readonly carriedArgs: readonly string[];
+  readonly setupCommand?: string;
+}
+
+/** T2b: asked once on this computer, before set-up connects anything, so the person agrees to what Rerail reads. */
+export function sessionsQuestion(input: SessionsInput): QuestionForm {
+  return {
+    id: "sessions",
+    lead: [],
+    prompt: "Can Rerail read your coding agent sessions?",
+    trail: [
+      "Rerail reads the sessions of the coding agents it connects to: what you ask, what they do, and the files they edit.",
+      "It checks them against your rules and shows each session’s events in the dashboard.",
+      "It reads on this computer only. Nothing leaves it. You’re asked once.",
+    ],
+    choices: [
+      { answer: "allow", label: "Yes, allow it", hint: "for every repo you start Rerail in", args: [SETUP_FLAGS.answer, "allow", ...input.carriedArgs] },
+      { answer: "decline", label: "No, stop set-up", hint: "set-up changes nothing", args: [SETUP_FLAGS.answer, "decline"] },
+    ],
+    ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
+  };
+}
+
+/** After "No": nothing new is connected or started. Coding agents connected before stay connected until removed. */
+export function renderSessionsDeclined(lane: SetupLane): string {
+  const style = styleFor(lane);
+  return lines([
+    ...(lane === "terminal" ? [""] : []),
+    bullet("Set-up stopped. Nothing new was connected or started.", style),
+    `  ${style.dim("Rerail needs your sessions to check rules. Run set-up again whenever you want to allow it.")}`,
+  ]);
 }
 
 // ── T3 / C3 · Ask before reading ───────────────────────────────────────────
@@ -431,7 +515,8 @@ export function renderStarted(input: StartedInput, lane: SetupLane): string {
   const connected = connectedText(input.connected);
   if (lane !== "terminal") return lines([`Rerail is on in ${repo}. Connected to ${connected}.`]);
   return lines([
-    bullet(`Confirmed: ${plural(input.packCount, "rule pack")} · ${connected}`, style),
+    "",
+    bullet(`Confirmed: ${input.packCount === 0 ? "no rule packs" : plural(input.packCount, "rule pack")} · ${connected}`, style),
     `${style.brand(MASCOT_HAPPY)}   Rerail is on in ${repo}.  ${style.dim(`connected to ${connected}`)}`,
     style.dim("Enter to see the summary."),
   ]);
@@ -463,9 +548,7 @@ export interface SummaryInput {
 }
 
 function otherReposLine(names: readonly string[], style: Style): string {
-  if (names.length === 0) {
-    return labelled("Other repos", "Rerail has not been started there", style, "type /rerail-start there to set one up");
-  }
+  if (names.length === 0) return labelled("Other repos", "none yet", style, "type /rerail-start in another repo to turn it on there");
   return labelled("Other repos", `Rerail is also on in ${andList(names.map(clean))}`, style, "type /rerail-start in another repo to set it up");
 }
 

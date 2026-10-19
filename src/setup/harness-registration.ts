@@ -397,7 +397,7 @@ async function resolveWriteTarget(path: string): Promise<string> {
  * Replaces the file behind `path` via temp file + rename beside it, first backing it up when it exists and `backup`:
  * a file Rerail generated whole (a command file or skill) is not backed up, since registration writes it again.
  */
-async function writeTextFile(path: string, text: string, existing: { exists: boolean; mode: number }, backup = true): Promise<void> {
+export async function writeTextFile(path: string, text: string, existing: { exists: boolean; mode: number }, backup = true): Promise<void> {
   const target = await resolveWriteTarget(path);
   const directory = dirname(target);
   await mkdir(directory, { recursive: true });

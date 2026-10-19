@@ -25,6 +25,7 @@ const previousHome = process.env.HOME;
 afterEach(async () => {
   daemonStop.beforeStopped = undefined;
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   if (previousHome === undefined) delete process.env.HOME;
   else process.env.HOME = previousHome;
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
@@ -162,6 +163,27 @@ describe("rerail install --root", () => {
 
     expect(await readFile(join(context.home, "rerail.sqlite"), "utf8")).toBe("live database");
     expect((await readdir(hostConfigHome)).filter(name => name.startsWith(".rerail-clean-"))).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")("puts the launcher on the zsh PATH, and the uninstall takes it off again", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    vi.stubEnv("RERAIL_MODIFY_PATH", "");
+    vi.stubEnv("SHELL", "/bin/zsh");
+    vi.stubEnv("ZDOTDIR", undefined);
+    const zshrc = join(hostConfigHome, ".zshrc");
+    await writeFile(zshrc, "setopt autocd\n");
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    expect(output.mock.calls.join("")).toContain(`Added ${join(context.home, "bin")} to PATH in ${zshrc}`);
+    expect(await readFile(zshrc, "utf8")).toContain(join(context.home, "bin"));
+
+    // Removing one coding agent is not the uninstall: PATH keeps the launcher.
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code", "--remove"], context);
+    expect(await readFile(zshrc, "utf8")).toContain(join(context.home, "bin"));
+
+    await runInstallCommand(["--root", packageRoot, "--remove"], context);
+    expect(await readFile(zshrc, "utf8")).toBe("setopt autocd\n");
   });
 });
 
