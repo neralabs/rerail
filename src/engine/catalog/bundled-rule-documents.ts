@@ -16,7 +16,8 @@ import type { RuleDocument } from "./rule-store.js";
  * documents are By Rerail rules, and its `pack.json` is read by `src/engine/catalog/rule-packs.ts`. Core has no rules
  * of its own: every rule it ships is in a pack.
  */
-export const CORE_RULE_PACKS = ["complexity"] as const;
+// NER-1979 study build only: every pack in the repository loads, as it will once installed packs load (NER-1753, #140).
+export const CORE_RULE_PACKS = ["complexity", "blade", "javascript", "next", "node", "php", "python", "react", "typescript"] as const;
 
 /** `<package>/packs/<id>` for each pack core ships. */
 export function corePackDirectories(): string[] {
