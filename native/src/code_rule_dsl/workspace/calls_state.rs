@@ -355,7 +355,7 @@ impl CallsState {
                     .collect();
                 #[cfg(test)]
                 GRAPHS_LINKED.with(|count| count.set(count.get() + 1));
-                self.view = Some(Arc::new(CallsView::build(
+                self.view = Some(Arc::new(CallsView::build_modes(
                     self.terms.questions(),
                     summaries,
                     &self.seeds,
@@ -408,7 +408,7 @@ impl CallsState {
             &Arc<[TermId]>,
             &Arc<Summary>,
         )| {
-            let stamp = view.stamp(summary, terms);
+            let stamp = view.stamp(path, summary, terms);
             (known != Some(stamp)).then(|| Restamp {
                 path: path.clone(),
                 stamp,
@@ -450,7 +450,7 @@ impl CallsState {
     /// linked afresh from the same summaries and seeds.
     #[cfg(test)]
     pub(super) fn stamps_against_fresh_link(&self) -> [BTreeMap<String, Stamped>; 2] {
-        let fresh = CallsView::build(
+        let fresh = CallsView::build_modes(
             self.terms.questions(),
             self.summaries
                 .iter()
@@ -465,7 +465,7 @@ impl CallsState {
                 .filter_map(|(path, (_, terms))| {
                     let summary = self.summaries.get(path)?;
                     let silent = view.silent(summary, terms).into();
-                    Some((path.clone(), (view.stamp(summary, terms), silent)))
+                    Some((path.clone(), (view.stamp(path, summary, terms), silent)))
                 })
                 .collect()
         })
@@ -502,7 +502,19 @@ fn graph_fingerprint(summary: &Summary, seeds: &FileSeeds) -> u64 {
     for (owner, name) in &summary.edges {
         (owner, summary.name(*name)).hash(&mut hasher);
     }
+    summary.references.len().hash(&mut hasher);
+    for (owner, name) in &summary.references {
+        (owner, summary.name(*name)).hash(&mut hasher);
+    }
+    summary.reference_targets.len().hash(&mut hasher);
+    for name in &summary.reference_targets {
+        summary.name(*name).hash(&mut hasher);
+    }
     for (alias, target) in &summary.aliases {
+        (summary.name(*alias), summary.name(*target)).hash(&mut hasher);
+    }
+    summary.reference_aliases.len().hash(&mut hasher);
+    for (alias, target) in &summary.reference_aliases {
         (summary.name(*alias), summary.name(*target)).hash(&mut hasher);
     }
     for star in &summary.stars {

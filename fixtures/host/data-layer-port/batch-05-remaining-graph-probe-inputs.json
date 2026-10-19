@@ -1,0 +1,74 @@
+{
+  "cases": [
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:decorator-generated-edge",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Query:\n def read_lazy(self): return execute()\n @legacy_sync\n def read(self): return None\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unrelated-decorator-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Query:\n def read_lazy(self): return execute()\n @cache\n def read(self): return None\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:typed-field-edge",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Holder:\n txn: Transaction\n def run(self, x): return self.txn.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unknown-field-type-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Holder:\n txn: Missing\n def run(self, x): return self.txn.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:super-method-edge",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Base:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Child(Base):\n def run(self, x): return super().read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unrelated-super-method-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Base:\n def _query(self, x): return x\n def read(self, x): return x\nclass Child(Base):\n def run(self, x): return super().read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:no-execution-roots",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "def run(x): return x\n"
+        }
+      ]
+    }
+  ]
+}

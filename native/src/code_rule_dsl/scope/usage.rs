@@ -130,6 +130,30 @@ pub(crate) struct Usage {
 }
 
 impl Usage {
+    /// Declaration metadata does not require the language's read/usedness analysis.
+    pub(crate) fn declarations(
+        table: &ScopeTable,
+        cap: usize,
+        deadline: &dyn Fn() -> bool,
+    ) -> Result<Self, BuildError> {
+        let mut steps = Steps {
+            cost: 0,
+            cap,
+            deadline,
+        };
+        let sites = name_sites(table, &mut steps)?;
+        Ok(Self {
+            sites,
+            facts: Vec::new(),
+            exports: Vec::new(),
+            comment_exports: BTreeSet::new(),
+            occurrences: HashMap::new(),
+            privates: Vec::new(),
+            private_names: Vec::new(),
+            before_local: Vec::new(),
+            cost: steps.cost,
+        })
+    }
     pub(crate) fn facts(&self, id: BindingId<'_>) -> Facts {
         self.facts[id.scope as usize]
             .get(id.name)

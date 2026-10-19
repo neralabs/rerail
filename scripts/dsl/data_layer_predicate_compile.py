@@ -16,6 +16,8 @@ def compile_allowlist(module, owner, method):
     function = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == method)
     env = {'name':('field','name'), 'path':('field','path')}
     positives = []
+    def ordered(values):
+        return sorted(values, key=repr) if isinstance(values, (set, frozenset)) else values
     def combine(op, values):
         values = [v for v in values if v is not (op == 'all')]
         if any(v is (op != 'all') for v in values):return op != 'all'
@@ -32,7 +34,7 @@ def compile_allowlist(module, owner, method):
             target = value(node.func.value, values)
             if not isinstance(target, tuple) or target[0] != 'field':raise ValueError(ast.unparse(node))
             literal = value(node.args[0], values)
-            terms = literal if isinstance(literal, (tuple,list,set)) else [literal]
+            terms = ordered(literal) if isinstance(literal, (tuple,list,set,frozenset)) else [literal]
             if node.func.attr not in ('startswith','endswith'):raise ValueError(ast.unparse(node))
             pattern = '(?:'+'|'.join(re.escape(s) for s in terms)+')'
             return field_match(target[1], ('^'+pattern) if node.func.attr == 'startswith' else (pattern+'$'))
@@ -41,7 +43,7 @@ def compile_allowlist(module, owner, method):
             op = node.ops[0]
             if isinstance(op, (ast.In,ast.NotIn)):
                 if isinstance(right, tuple) and right[0] == 'field':result = field_match(right[1], re.escape(left))
-                elif isinstance(left, tuple) and left[0] == 'field':result = field_match(left[1], '^(?:'+'|'.join(re.escape(s) for s in right)+')$')
+                elif isinstance(left, tuple) and left[0] == 'field':result = field_match(left[1], '^(?:'+'|'.join(re.escape(s) for s in ordered(right))+')$')
                 else:result = left in right
                 return negate(result) if isinstance(op, ast.NotIn) else result
             if isinstance(op, (ast.Eq,ast.NotEq)):
@@ -61,7 +63,7 @@ def compile_allowlist(module, owner, method):
                 visit(node.orelse, values.copy(), combine('all',[condition,negate(test)]))
             elif isinstance(node, ast.For):
                 names = [n.id for n in node.target.elts]
-                for row in value(node.iter, values):visit(node.body, {**values,**dict(zip(names,row,strict=True))}, condition)
+                for row in ordered(value(node.iter, values)):visit(node.body, {**values,**dict(zip(names,row,strict=True))}, condition)
             elif isinstance(node, ast.Return):
                 if value(node.value, values) is True:positives.append(condition)
                 elif not (isinstance(node.value,ast.Constant) and node.value.value is False):raise ValueError(ast.unparse(node))

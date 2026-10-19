@@ -1,4 +1,4 @@
-use super::calls::{SeedScope, TermId, Through};
+use super::calls::{Mode, SeedScope, TermId};
 use super::json::invalid;
 use super::matcher::{GrammarMatcher, Transform};
 use super::module_path::ModulePath;
@@ -587,7 +587,7 @@ pub(super) struct CallsTerm {
     pub(super) key: Arc<str>,
     /// Identifies its seed query: terms differing only in `through` share it.
     pub(super) seed_key: Arc<str>,
-    pub(super) through: Through,
+    pub(super) through: Mode,
     /// Which definitions the seed query's witnesses stand for.
     pub(super) seed_scope: SeedScope,
     /// `{ all: [{ kind: function_definition }, <inner rule>] }` with the query's utilities: its
@@ -623,7 +623,7 @@ impl Terms {
     }
 
     /// Each term's key and mode, by id: what a `CallsView` asks.
-    pub(super) fn questions(&self) -> Vec<(Arc<str>, Through)> {
+    pub(super) fn questions(&self) -> Vec<(Arc<str>, Mode)> {
         self.terms
             .iter()
             .map(|term| (Arc::clone(&term.key), term.through))

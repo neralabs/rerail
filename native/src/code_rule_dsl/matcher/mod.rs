@@ -58,6 +58,7 @@ use regex::Regex;
 pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
 #[cfg(test)]
 pub(super) use relation::{set_answers_off, set_same_key_off};
+pub(in crate::code_rule_dsl) use resolve::file_path;
 pub(crate) use resolve::{
     FileGates, calls_tables, file_biome_suppressions, file_clippy, file_eslint_directives,
     file_lines, file_module, file_noqa, file_nosec, file_oxlint_directives, file_phpcs,

@@ -10,7 +10,7 @@ const candidates = new Set(["missing_async_pairs", "sync_async_signatures", "asy
 
 it("matches the recorded source corpus for the eight fifth-batch candidates without certifying repository parity", async () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-batch-five-"));
-  const paths = ["batch-05-recording.json", "batch-05-probes.json"].map(name => {
+  const paths = ["batch-05-recording.json", "batch-05-probes.json", "batch-05-graph-probes.json"].map(name => {
     const recording = JSON.parse(readFileSync(fixturesPath("host", "data-layer-port", name), "utf8"));
     recording.checks = recording.checks.filter((check: string) => candidates.has(check));
     recording.events = recording.events.filter((event: { check: string }) => candidates.has(event.check));
@@ -21,7 +21,7 @@ it("matches the recorded source corpus for the eight fifth-batch candidates with
   const output = join(directory, "result.json");
   expect(await replay(paths, output)).toBe(true);
   expect(JSON.parse(readFileSync(output, "utf8"))).toMatchObject({
-    nativeCalls: 168, positiveCalls: 84, cleanCalls: 84,
+    nativeCalls: 180, positiveCalls: 94, cleanCalls: 86,
     falsePositives: 0, falseNegatives: 0, engineFailures: 0, executionPathDifferences: 0, missingCoverage: [],
   });
 }, 60_000);

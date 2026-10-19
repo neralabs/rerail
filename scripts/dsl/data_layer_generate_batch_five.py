@@ -170,11 +170,11 @@ for idx,rule in enumerate(imports):
 bridges=local_literal(m,'check_api_impl_separation','allowed_api_impl_bridges')
 api_excludes=['**/__init__.py','**/l9900_ts_models/**','**/api/**/tests/**','**/l8000_admin/**/tools/**',
  '**/l2000_connection/**/connection_factory.py','**/l4200_event_pipeline/**/bridges/**','**/l3200_metadata/**',
- *['**/'+(layer+'/**/' if layer else '')+name for name,layer in bridges]]
+ *['**/'+(layer+'/**/' if layer else '')+name for name,layer in sorted(bridges)]]
 whitebox=local_literal(m,'check_conform_imports','whitebox_test_files')
 for idx,rule in enumerate(imports):
  for code,include,exclude in [('api_impl',['**/api/**/*.py'],api_excludes),
-                             ('conform_impl',['**/conform/**/*.py'],['**/conftest.py',*['**/'+n for n in whitebox]])]:
+                             ('conform_impl',['**/conform/**/*.py'],['**/conftest.py',*['**/'+n for n in sorted(whitebox)]])]:
   clauses.append(C(code+'-'+str(idx),A(rule,O(F('module_name',RX(r'^impl\.')),F('name',RX(r'^impl\.')),A(K('dotted_name'),RX(r'^impl\.')))),code,
                    paths={'include':include,'exclude':exclude}))
 W('layer_violations',clauses,mode='log',roots=['api/**/*.py','impl/**/*.py','conform/**/*.py'],exclude=['**/.git/**','**/.venv/**','**/tmp/**','**/__pycache__/**'])
@@ -285,14 +285,16 @@ graph_utils={
  'later-method-symbol':{'params':['NAME','CURRENT','GROUP'],'rule':I(A(K('module'),H(A(fn(),F('name',P('NAME')),N(I(fn())),
    I(A(K('class_definition'),F('name',P('GROUP'))),K('class_definition')),later),stop='end')))},
 }
+one_binding=F('name',{'binds':{'form':['definition'],'bindings':{'max':1}}})
 graph_function=A(fn(),N(I(fn())),P('SYMBOL_NODE'),F('name',P('SYMBOL_NAME')),O(
- A(N(I(K('class_definition'))),N(M('later-module-symbol',NAME='SYMBOL_NAME',CURRENT='SYMBOL_NODE'))),
+ A(N(I(K('class_definition'))),O(one_binding,N(M('later-module-symbol',NAME='SYMBOL_NAME',CURRENT='SYMBOL_NODE')))),
  A(I(A(K('class_definition'),F('name',P('SYMBOL_CLASS'))),K('class_definition')),
-   N(M('later-method-symbol',NAME='SYMBOL_NAME',CURRENT='SYMBOL_NODE',GROUP='SYMBOL_CLASS')))))
+   O(A(one_binding,I(A(K('class_definition'),one_binding),K('class_definition'))),
+     N(M('later-method-symbol',NAME='SYMBOL_NAME',CURRENT='SYMBOL_NODE',GROUP='SYMBOL_CLASS'))))))
 seed=A(graph_function,O(direct,signature))
 clauses=[C('direct-execution',A(graph_function,direct),'direct_execution'),
  C('eager-signature',A(graph_function,N(direct),signature),'eager_signature'),
- C('caller',A(graph_function,N(direct),N(signature),body_has(A(K('call'),{'calls':{'through':'any',**seed}}))),'calls_imperative')]
+ C('caller',A(graph_function,N(direct),N(signature),{'calls':{'graph':'references','at':'definition','through':'any',**seed}}),'calls_imperative')]
 W('imperative_private_functions',clauses,graph_utils,mode='log',roots=production_roots)
 
 from data_layer_predicate_compile import compile_allowlist

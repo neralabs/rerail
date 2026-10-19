@@ -636,7 +636,8 @@ export interface CodeRuleDslAstRule extends CodeRuleDslSemanticAstRuleFields {
 }
 
 /** A `calls` term: its inner rule's keys, plus how chains pass and what they bind. */
-export type CodeRuleDslCalls = CodeRuleDslAstRule & { through?: "sync" | "any"; chain?: string };
+export type CodeRuleDslCalls = CodeRuleDslAstRule & { through?: "sync" | "any"; chain?: string;
+  graph?: "calls" | "references"; at?: "call" | "definition" };
 
 /** A count of lines or bytes: exactly `eq`, or from `min` to `max` inclusive (either may be left out). */
 export type CodeRuleDslLineCount = { eq: number } | { min?: number; max?: number };

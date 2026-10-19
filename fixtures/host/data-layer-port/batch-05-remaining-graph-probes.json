@@ -1,0 +1,323 @@
+{
+  "format": "rerail.data-layer-recording/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "imperative_private_functions"
+  ],
+  "source_mismatches": [],
+  "pytest_exit_code": 0,
+  "collected_tests": 0,
+  "uncaptured_tests": [],
+  "cases": [
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:decorator-generated-edge",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Query:\n def read_lazy(self): return execute()\n @legacy_sync\n def read(self): return None\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unrelated-decorator-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Query:\n def read_lazy(self): return execute()\n @cache\n def read(self): return None\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:typed-field-edge",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Holder:\n txn: Transaction\n def run(self, x): return self.txn.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unknown-field-type-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Holder:\n txn: Missing\n def run(self, x): return self.txn.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:super-method-edge",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Base:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Child(Base):\n def run(self, x): return super().read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unrelated-super-method-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Base:\n def _query(self, x): return x\n def read(self, x): return x\nclass Child(Base):\n def run(self, x): return super().read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:no-execution-roots",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "def run(x): return x\n"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:decorator-generated-edge",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Query:\n def read_lazy(self): return execute()\n @legacy_sync\n def read(self): return None\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 2,
+          "column": null,
+          "code": "direct_execution",
+          "message": "execute"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 4,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls Query.read_lazy"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unrelated-decorator-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Query:\n def read_lazy(self): return execute()\n @cache\n def read(self): return None\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 2,
+          "column": null,
+          "code": "direct_execution",
+          "message": "execute"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:typed-field-edge",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Holder:\n txn: Transaction\n def run(self, x): return self.txn.read(x)\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 2,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 3,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls Transaction._query"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 6,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls Transaction.read"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unknown-field-type-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Holder:\n txn: Missing\n def run(self, x): return self.txn.read(x)\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 2,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 3,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls Transaction._query"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:super-method-edge",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Base:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Child(Base):\n def run(self, x): return super().read(x)\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 2,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 3,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls Base._query"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 5,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls Base.read"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unrelated-super-method-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Base:\n def _query(self, x): return x\n def read(self, x): return x\nclass Child(Base):\n def run(self, x): return super().read(x)\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 2,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:no-execution-roots",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "def run(x): return x\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    }
+  ],
+  "loaded_source_files_checked": 119
+}

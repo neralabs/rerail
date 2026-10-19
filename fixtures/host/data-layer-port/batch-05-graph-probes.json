@@ -1,0 +1,538 @@
+{
+  "format": "rerail.data-layer-recording/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "imperative_private_functions"
+  ],
+  "source_mismatches": [],
+  "pytest_exit_code": 0,
+  "collected_tests": 0,
+  "uncaptured_tests": [],
+  "cases": [
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:callback-reference",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "def _query(x): return x\ndef run(xs): return list(map(_query, xs))\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:returned-reference",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "def _query(x): return x\ndef run(): return _query\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:declared-method-dispatch",
+      "files": [
+        {
+          "path": "impl/cache.py",
+          "source": "class Cache:\n def invalidate(self, tag): ...\n def run(self, tag): return self.invalidate(tag)\nclass QueryCache(Cache):\n def _query(self, tag): return tag\n def invalidate(self, tag): return self._query(tag)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:clean-reference-graph",
+      "files": [
+        {
+          "path": "impl/cache.py",
+          "source": "class Cache:\n def invalidate(self, tag): ...\n def run(self, tag): return self.invalidate(tag)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:callable-receiver-fields",
+      "files": [
+        {
+          "path": "impl/cache.py",
+          "source": "class Middleware:\n def __init__(self, app): self.app = app\n def __call__(self): return execute()\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:duplicate-class-final-function",
+      "files": [
+        {
+          "path": "impl/cache.py",
+          "source": "class Query:\n def _query(self): return 1\nclass Query:\n @pure_lazy\n def _query(self): return 1\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:parameter-declared-method",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\ndef run(txn: Transaction, x): return txn.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:assigned-alias-is-not-a-declaration",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "def _query(x): return x\nalias = _query\ndef run(x): return alias(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:quoted-parameter-is-not-resolved",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\ndef run(txn: \"Transaction\", x): return txn.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:positional-only-parameter",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\ndef run(txn: Transaction, /): return txn.read(1)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:keyword-only-parameter",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\ndef run(*, txn: Transaction): return txn.read(1)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:assigned-type-is-not-a-class-declaration",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nAlias = Transaction\ndef run(txn: Alias): return txn.read(1)\n"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:callback-reference",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "def _query(x): return x\ndef run(xs): return list(map(_query, xs))\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 1,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 2,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls _query"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:returned-reference",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "def _query(x): return x\ndef run(): return _query\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 1,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 2,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls _query"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:declared-method-dispatch",
+      "files": [
+        {
+          "path": "impl/cache.py",
+          "source": "class Cache:\n def invalidate(self, tag): ...\n def run(self, tag): return self.invalidate(tag)\nclass QueryCache(Cache):\n def _query(self, tag): return tag\n def invalidate(self, tag): return self._query(tag)\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/cache.py",
+          "line": 5,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        },
+        {
+          "path": "impl/cache.py",
+          "line": 6,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls QueryCache._query"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:clean-reference-graph",
+      "files": [
+        {
+          "path": "impl/cache.py",
+          "source": "class Cache:\n def invalidate(self, tag): ...\n def run(self, tag): return self.invalidate(tag)\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:callable-receiver-fields",
+      "files": [
+        {
+          "path": "impl/cache.py",
+          "source": "class Middleware:\n def __init__(self, app): self.app = app\n def __call__(self): return execute()\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/cache.py",
+          "line": 3,
+          "column": null,
+          "code": "direct_execution",
+          "message": "execute"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:duplicate-class-final-function",
+      "files": [
+        {
+          "path": "impl/cache.py",
+          "source": "class Query:\n def _query(self): return 1\nclass Query:\n @pure_lazy\n def _query(self): return 1\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": []
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:parameter-declared-method",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\ndef run(txn: Transaction, x): return txn.read(x)\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 2,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 3,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls Transaction._query"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 4,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls Transaction.read"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:assigned-alias-is-not-a-declaration",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "def _query(x): return x\nalias = _query\ndef run(x): return alias(x)\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 1,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:quoted-parameter-is-not-resolved",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\ndef run(txn: \"Transaction\", x): return txn.read(x)\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 2,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 3,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls Transaction._query"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:positional-only-parameter",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\ndef run(txn: Transaction, /): return txn.read(1)\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 2,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 3,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls Transaction._query"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:keyword-only-parameter",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\ndef run(*, txn: Transaction): return txn.read(1)\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 2,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 3,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls Transaction._query"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 4,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls Transaction.read"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-graph:assigned-type-is-not-a-class-declaration",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nAlias = Transaction\ndef run(txn: Alias): return txn.read(1)\n"
+        }
+      ],
+      "call": 1,
+      "entry": "source-probe",
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "findings": [
+        {
+          "path": "impl/query.py",
+          "line": 2,
+          "column": null,
+          "code": "eager_signature",
+          "message": "private execution-scope function has no lazy return type and no lazy parameters"
+        },
+        {
+          "path": "impl/query.py",
+          "line": 3,
+          "column": null,
+          "code": "calls_imperative",
+          "message": "calls Transaction._query"
+        }
+      ]
+    }
+  ],
+  "loaded_source_files_checked": 119
+}
