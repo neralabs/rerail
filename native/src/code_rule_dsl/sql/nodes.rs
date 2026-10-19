@@ -461,9 +461,16 @@ unsafe impl<'vtab> VTab<'vtab> for NodeTable {
             used.push((last.0, last.1));
             cost = 10.0;
         } else if id_lo.is_some() || id_hi.is_some() {
+            // A range bounded on both sides (a subtree's) yields fewer ids than one bounded on one
+            // side, which runs to an end of the file: the planner must prefer it, or it bounds the
+            // range on one side and filters the rest of the file row by row.
+            cost = if id_lo.is_some() && id_hi.is_some() {
+                20.0
+            } else {
+                100.0
+            };
             used.extend(id_lo);
             used.extend(id_hi);
-            cost = 100.0;
         } else if let Some(index) = kind {
             let list = info.is_in_constraint(index)? && info.set_in_constraint(index, true)?;
             used.push((index, Used::Kind { list }));
