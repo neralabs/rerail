@@ -15,7 +15,7 @@ mod php_tests;
 #[cfg(test)]
 mod python_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use crate::code_rule_dsl::json::{invalid, object};
 use crate::code_rule_dsl::language::adapter::{Adapter, CallRules, with_adapter};

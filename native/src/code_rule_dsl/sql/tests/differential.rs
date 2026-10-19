@@ -1,6 +1,8 @@
 //! Randomly generated rules over the in-scope operators, evaluated by both engines over fixture
-//! sources in Python, TypeScript and PHP: every case's findings (roots, captures, messages) and
-//! failures must be identical.
+//! sources in Python, TypeScript, PHP and Rust: every case's findings (roots, captures, messages)
+//! and failures must be identical. The semantic leaves (`resolves`, `resolves.binding`, `binds`,
+//! `arguments`, `parse` with `capture` and `host`, `formatArgs`) are generated over Python,
+//! TypeScript and PHP, and `calls` over Python, PHP and Rust.
 //!
 //! The generator is deterministic: `RERAIL_SQL_DIFF_SEED` (default `0x5e7_c0de`) seeds it and
 //! `RERAIL_SQL_DIFF_CASES` (default 500) sets how many compiled cases are compared. Rules the
@@ -88,6 +90,14 @@ const FIXTURES: &[(&str, &[&str])] = &[
             "php/calls/php/trace.php",
             "php/calls/php/project/more.php",
             "php/scope/php/unanalysed.php",
+        ],
+    ),
+    (
+        "rust",
+        &[
+            "rust/calls/crate/src/lib.rs",
+            "rust/calls/crate/src/util.rs",
+            "rust/calls/crate/src/net/tcp.rs",
         ],
     ),
 ];
@@ -478,11 +488,263 @@ impl Generator<'_> {
         }
     }
 
+    /// A sub-rule of a semantic leaf (a binding's nodes, a search's candidates): it may bind
+    /// captures, and in a three-valued case be unknown.
+    fn sub_rule(&mut self, depth: usize) -> Value {
+        if self.rng.chance(30) {
+            self.simple(depth + 2)
+        } else {
+            self.rule(depth + 2)
+        }
+    }
+
+    /// Binding filters, as `binds`, `resolves.binding` and `redefines` read them.
+    fn filters(&mut self, test: &mut Map<String, Value>) {
+        if self.rng.chance(40) {
+            let forms: &[&str] = match self.vocabulary.label {
+                "python" => &[
+                    "assignment",
+                    "import",
+                    "definition",
+                    "parameter",
+                    "for",
+                    "augmented",
+                ],
+                "php" => &["assignment", "parameter", "for", "global", "static"],
+                _ => &["assignment", "import", "definition", "parameter", "for"],
+            };
+            test.insert("form".into(), json!(self.rng.pick(forms)));
+        }
+        for key in ["used", "referenced", "latest", "exported"] {
+            if self.rng.chance(12) {
+                test.insert(key.into(), json!(self.rng.chance(50)));
+            }
+        }
+    }
+
+    /// A binding's sub-rules: its site, value and annotation, each now and then.
+    fn binding_nodes(&mut self, test: &mut Map<String, Value>, depth: usize) {
+        for key in ["site", "value", "annotation"] {
+            if self.rng.chance(35) {
+                test.insert(key.into(), self.sub_rule(depth));
+            }
+        }
+    }
+
+    /// A semantic leaf the language reads, added to `rule` (one that needs a key the rule already
+    /// holds is left out).
+    fn leaf(&mut self, rule: &mut Map<String, Value>, depth: usize) {
+        let label = self.vocabulary.label;
+        let calls = matches!(label, "python" | "php" | "rust");
+        let leaves: &[&str] = match label {
+            "rust" => &["calls"],
+            "typescript" => &["resolves", "binding", "binds", "arguments", "parse"],
+            _ => &[
+                "resolves",
+                "binding",
+                "binds",
+                "arguments",
+                "parse",
+                "formatArgs",
+                "calls",
+            ],
+        };
+        let name = *self.rng.pick(leaves);
+        match name {
+            "resolves" => {
+                let test = match self.rng.below(4) {
+                    0 => json!({ "global": true }),
+                    1 => json!({ "unresolved": self.rng.chance(70) }),
+                    2 => match label {
+                        "python" => json!({ "import": ["os", "typing", "pkg.util", "time.sleep"] }),
+                        "php" => json!({ "global": false }),
+                        _ => json!({ "import": ["fs", "react", "./a"] }),
+                    },
+                    _ => json!({ "this": true }),
+                };
+                rule.insert("resolves".into(), test);
+            }
+            "binding" => {
+                let mut binding = Map::new();
+                self.filters(&mut binding);
+                self.binding_nodes(&mut binding, depth);
+                if label != "python" && self.rng.chance(30) {
+                    binding.insert("occurrence".into(), self.sub_rule(depth));
+                }
+                rule.insert("resolves".into(), json!({ "binding": binding }));
+            }
+            "binds" => {
+                let mut binds = Map::new();
+                self.filters(&mut binds);
+                self.binding_nodes(&mut binds, depth);
+                if label != "python" && self.rng.chance(25) {
+                    binds.insert("occurrence".into(), self.sub_rule(depth));
+                }
+                if self.rng.chance(40) {
+                    let mut redefines = Map::new();
+                    self.filters(&mut redefines);
+                    self.binding_nodes(&mut redefines, depth);
+                    if label != "python" && self.rng.chance(35) {
+                        redefines.insert("every".into(), json!(true));
+                    }
+                    if self.rng.chance(20) {
+                        redefines.insert("sameScope".into(), json!(self.rng.chance(50)));
+                    }
+                    binds.insert("redefines".into(), Value::Object(redefines));
+                }
+                rule.insert("binds".into(), Value::Object(binds));
+            }
+            "arguments" => {
+                let signature: Vec<&str> = match (label, self.rng.below(3)) {
+                    ("python", 0) => vec!["a", "/", "b", "*", "c"],
+                    ("python", 1) => vec!["a", "b", "*", "c"],
+                    _ => vec!["a", "b", "c"],
+                };
+                let slot = *self.rng.pick(&["a", "b", "c"]);
+                let mut test = Map::new();
+                test.insert("signature".into(), json!(signature));
+                if self.rng.chance(60) {
+                    test.insert("bind".into(), json!({ self.single(): slot }));
+                } else {
+                    test.insert("absent".into(), json!([slot]));
+                }
+                if label == "typescript" && self.rng.chance(50) {
+                    test.insert("mode".into(), json!(self.rng.pick(&["estree", "language"])));
+                }
+                rule.insert("arguments".into(), Value::Object(test));
+            }
+            "parse" => {
+                let (grammar, kinds, host): (&str, &[&str], Value) = match label {
+                    "python" => match self.rng.below(3) {
+                        0 => (
+                            "percentFormat",
+                            &["placeholder", "mapping_key", "conversion"],
+                            json!({ "inside": { "kind": "call", "stopBy": "end" } }),
+                        ),
+                        1 => (
+                            "braceFormat",
+                            &["field", "field_name", "format_spec"],
+                            json!({ "inside": { "kind": "call", "stopBy": "end" } }),
+                        ),
+                        _ => ("annotation", &["identifier", "subscript"], Value::Null),
+                    },
+                    "php" => (
+                        "printfFormat",
+                        &["placeholder", "literal"],
+                        json!({ "inside": { "kind": "function_call_expression", "stopBy": "end" } }),
+                    ),
+                    _ => (
+                        "eslintDirective",
+                        &["item"],
+                        json!({ "inside": { "kind": "program", "has": { "stopBy": "end",
+                            "kind": "variable_declarator", "has": { "field": "name", "pattern": "$V" },
+                            "compare": { "left": "V", "op": "eq", "right": "K", "text": "name" } } } }),
+                    ),
+                };
+                let mut inner = Map::new();
+                inner.insert("kind".into(), json!(self.rng.pick(kinds)));
+                if self.rng.chance(60) {
+                    inner.insert("stopBy".into(), json!("end"));
+                }
+                let captured = self.rng.chance(60);
+                if captured {
+                    inner.insert("capture".into(), json!("K"));
+                }
+                if captured && !host.is_null() && self.rng.chance(35) {
+                    let host = if self.rng.chance(30) {
+                        json!({ "not": host })
+                    } else {
+                        host
+                    };
+                    inner.insert("host".into(), host);
+                }
+                if self.rng.chance(25) {
+                    inner.insert(
+                        "regex".into(),
+                        json!(self.rng.pick(&["^[a-z]", "s", "^\\{", "[0-9]"])),
+                    );
+                }
+                let mut parse = Map::new();
+                parse.insert("grammar".into(), json!(grammar));
+                parse.insert("has".into(), Value::Object(inner));
+                let literal = match label {
+                    "python" => json!([{ "kind": "string" }, { "kind": "concatenated_string" }]),
+                    "php" => json!([{ "kind": "string" }, { "kind": "encapsed_string" }]),
+                    _ => json!([{ "kind": "comment" }]),
+                };
+                if !rule.contains_key("any") {
+                    rule.insert("any".into(), literal);
+                }
+                rule.insert("parse".into(), Value::Object(parse));
+            }
+            "formatArgs" if !rule.contains_key("pattern") => {
+                let (pattern, style, args) = match (label, self.rng.below(2)) {
+                    ("python", 0) => ("$S.format($$$L)", "brace", "L"),
+                    ("python", _) => ("$S % $R", "percent", "R"),
+                    _ => ("sprintf($S, $$$L)", "printf", "L"),
+                };
+                let mut test = Map::new();
+                test.insert("style".into(), json!(style));
+                test.insert("string".into(), json!("S"));
+                test.insert("args".into(), json!(args));
+                let field = match style {
+                    "brace" => "field",
+                    _ => "placeholder",
+                };
+                let side = self.rng.below(3);
+                if side != 1 {
+                    let unused = if self.rng.chance(50) {
+                        json!({ "pattern": "$U" })
+                    } else {
+                        self.sub_rule(depth)
+                    };
+                    test.insert("unused".into(), unused);
+                }
+                if side != 0 {
+                    let mut missing = Map::new();
+                    missing.insert("kind".into(), json!(field));
+                    if self.rng.chance(50) {
+                        missing.insert("capture".into(), json!("F"));
+                    }
+                    test.insert("missing".into(), Value::Object(missing));
+                }
+                rule.insert("pattern".into(), json!(pattern));
+                rule.insert("formatArgs".into(), Value::Object(test));
+            }
+            "calls" if calls => {
+                let inner = match label {
+                    "python" => json!({ "kind": "function_definition",
+                        "has": { "stopBy": { "kind": "function_definition" }, "kind": "call",
+                            "regex": self.rng.pick(&self.vocabulary.regexes) } }),
+                    "php" => {
+                        json!({ "any": [{ "kind": "function_definition" }, { "kind": "method_declaration" }],
+                        "regex": self.rng.pick(&self.vocabulary.regexes) })
+                    }
+                    _ => {
+                        json!({ "kind": "function_item", "regex": self.rng.pick(&self.vocabulary.regexes) })
+                    }
+                };
+                let mut test = inner.as_object().cloned().unwrap_or_default();
+                test.insert("through".into(), json!(self.rng.pick(&["sync", "any"])));
+                if self.rng.chance(40) {
+                    test.insert("chain".into(), json!("CH"));
+                }
+                rule.insert("calls".into(), Value::Object(test));
+            }
+            _ => {}
+        }
+    }
+
     fn rule(&mut self, depth: usize) -> Value {
         let mut rule = Map::new();
         let terms = 1 + self.rng.below(if depth == 0 { 3 } else { 2 });
         for _ in 0..terms {
             let deep = depth < 3;
+            // A semantic leaf now and then, near the root.
+            if depth < 2 && self.rng.chance(18) {
+                self.leaf(&mut rule, depth);
+                continue;
+            }
             let base = if deep { 22 } else { 8 };
             // `compare` and `layout` everywhere; `value` and `testUnknown` in three-valued cases.
             let extra = if self.three { 6 } else { 2 };
@@ -880,38 +1142,78 @@ fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value)
     }
 }
 
-/// Counts the operators a rule uses, by key (`stopBy` by its kind, `matches` by its form).
+/// Counts the operators a rule uses, by key (`stopBy` by its kind, `matches` by its form, a
+/// semantic leaf's keys under its name).
 fn census(value: &Value, counts: &mut std::collections::BTreeMap<String, usize>) {
+    census_under(value, "", counts);
+}
+
+fn census_under(
+    value: &Value,
+    parent: &str,
+    counts: &mut std::collections::BTreeMap<String, usize>,
+) {
     match value {
         Value::Object(object) => {
             for (key, item) in object {
-                let name = match (key.as_str(), item) {
-                    ("stopBy", Value::String(stop)) => format!("stopBy:{stop}"),
-                    ("stopBy", _) => "stopBy:rule".to_owned(),
-                    ("matches", Value::Object(_)) => "matches:call".to_owned(),
-                    ("matches", _) => "matches:shared".to_owned(),
-                    ("nthChild", Value::Object(nth)) if nth.contains_key("ofRule") => {
+                let name = match (parent, key.as_str(), item) {
+                    (_, "stopBy", Value::String(stop)) => format!("stopBy:{stop}"),
+                    (_, "stopBy", _) => "stopBy:rule".to_owned(),
+                    (_, "matches", Value::Object(_)) => "matches:call".to_owned(),
+                    (_, "matches", _) => "matches:shared".to_owned(),
+                    (_, "nthChild", Value::Object(nth)) if nth.contains_key("ofRule") => {
                         "nthChild:ofRule".to_owned()
                     }
                     (
+                        _,
                         "language" | "params" | "position" | "reverse" | "min" | "max" | "offset",
                         _,
                     ) => {
                         continue;
                     }
+                    (_, "resolves", Value::Object(test)) if test.contains_key("binding") => {
+                        "resolves.binding".to_owned()
+                    }
+                    ("binds", "redefines", _) => "binds.redefines".to_owned(),
+                    (
+                        "resolves.binding" | "binds" | "binds.redefines",
+                        "site" | "value" | "annotation" | "occurrence" | "every",
+                        _,
+                    )
+                    | ("formatArgs", "unused" | "missing", _)
+                    | ("calls", "chain", _)
+                    | ("arguments", "bind" | "absent", _) => format!("{parent}.{key}"),
+                    (
+                        "resolves" | "resolves.binding" | "binds" | "binds.redefines"
+                        | "formatArgs" | "calls" | "arguments",
+                        _,
+                        _,
+                    )
+                    | ("parse", "grammar", _) => continue,
                     _ => key.clone(),
                 };
-                *counts.entry(name).or_default() += 1;
-                if key != "utils" && key != "constraints" {
-                    census(item, counts);
-                } else if let Value::Object(items) = item {
-                    for rule in items.values() {
-                        census(rule, counts);
+                *counts.entry(name.clone()).or_default() += 1;
+                if key == "utils" || key == "constraints" {
+                    if let Value::Object(items) = item {
+                        for rule in items.values() {
+                            census_under(rule, "", counts);
+                        }
                     }
+                    continue;
+                }
+                match name.as_str() {
+                    "resolves.binding" => census_under(&item["binding"], &name, counts),
+                    "resolves" | "binds" | "binds.redefines" | "formatArgs" | "calls"
+                    | "arguments" | "parse" => census_under(item, &name, counts),
+                    // A capture's slot, not a rule.
+                    "arguments.bind" => {}
+                    _ => census_under(item, "", counts),
                 }
             }
         }
-        Value::Array(items) => items.iter().for_each(|item| census(item, counts)),
+        Value::Array(items) => items
+            .iter()
+            .for_each(|item| census_under(item, parent, counts)),
         _ => {}
     }
 }
@@ -1070,7 +1372,11 @@ fn generated_rules_agree_with_the_native_matcher() {
     // are `lower::walk_leak`'s, a stop rule that recurses, a recursion whose reads loop in the
     // fixtures (where the matcher would recurse until its depth limit, or around the loop by
     // stopping at a first match), and `violation.each` over a three-valued clause (its exclusion
-    // rounds run on two-valued operators only), and it must refuse them rather than answer.
+    // rounds run on two-valued operators only), and it must refuse them rather than answer. The
+    // semantic leaves' refusals (`lower::leaves`): what a parsed tree runs per batch rather than
+    // per tree (patterns, stop rules, recursive utilities, a nested parse), a tree's capture
+    // `violation.each` enumerates, and `redefines.every` with binding sub-rules or under
+    // `violation.each`.
     let refused = |reason: &String| {
         [
             "Unsupported(nthChild with a binding ofRule as a relation's rule)",
@@ -1078,6 +1384,15 @@ fn generated_rules_agree_with_the_native_matcher() {
             "Unsupported(recursion deeper than 256 levels)",
             "Unsupported(recursive utility in a stop rule)",
             "Unsupported(three-valued violation.each)",
+            "Unsupported(parse inside parse)",
+            "Unsupported(pattern inside parse)",
+            "Unsupported(stopBy rule inside parse)",
+            "Unsupported(recursive utility inside parse)",
+            "Unsupported(parse exporting a nested parse's capture)",
+            "Unsupported(a parsed tree's capture enumerated by violation.each)",
+            "Unsupported(binds.redefines.every with binding sub-rules)",
+            "Unsupported(binds.redefines.every under violation.each)",
+            "Unsupported(terminal binding more than 16 columns)",
         ]
         .iter()
         .any(|refusal| reason.contains(refusal))
