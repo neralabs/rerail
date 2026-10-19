@@ -352,6 +352,123 @@ fn production_contract_phase_two_sql_rows_equal_committed_oracle_rows() {
     }
 }
 
+const PHASE_FOUR_CASES: &[&str] = &[
+    "semantic-resolves",
+    "semantic-binding-site",
+    "semantic-binding-value",
+    "semantic-binding-annotation",
+    "semantic-binding-occurrence",
+    "semantic-binds",
+    "semantic-redefines-any",
+    "semantic-redefines-every",
+    "semantic-arguments-bind",
+    "semantic-arguments-filter",
+    "semantic-format-unused-arguments",
+    "semantic-format-missing-fields",
+    "semantic-layout",
+    "semantic-calls-direct",
+    "semantic-calls-through",
+    "semantic-fact-producer-failure",
+];
+
+#[test]
+fn production_contract_phase_four_semantic_facts_lower_completely() {
+    let mut failures = Vec::new();
+    for case in cases()
+        .into_iter()
+        .filter(|case| PHASE_FOUR_CASES.contains(&case.name.as_str()))
+    {
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        match SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]) {
+            Ok(plan) => {
+                assert_eq!(
+                    plan.sql().matches("rerail_matches").count(),
+                    1,
+                    "{}",
+                    case.name
+                );
+                assert!(
+                    plan.terminals()
+                        .iter()
+                        .any(|terminal| terminal.kind() == super::relational::TerminalKind::Fact),
+                    "{} has no immutable semantic fact producer",
+                    case.name
+                );
+                assert!(
+                    plan.shape()
+                        .contains(&super::relational::SqlShape::ScanFact),
+                    "{} does not compose typed facts in SQL",
+                    case.name
+                );
+                assert!(!plan.sql().contains("GrammarMatcher"), "{}", case.name);
+                assert!(!plan.sql().contains("tq_"), "{}", case.name);
+            }
+            Err(error) => failures.push(format!(
+                "{} (`{}`): {}",
+                case.name,
+                case.form,
+                error.unsupported().join("; ")
+            )),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn production_contract_phase_four_sql_results_equal_semantic_oracles() {
+    for case in cases().into_iter().filter(|case| {
+        PHASE_FOUR_CASES.contains(&case.name.as_str())
+            && case.name != "semantic-fact-producer-failure"
+    }) {
+        assert_eq!(case.workspace.files.len(), 1, "{}", case.name);
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let file = &case.workspace.files[0];
+        let dialect = match file.language.as_str() {
+            "python" => crate::code_rule_dsl::language::GrammarDialect::Python,
+            "typescript" => crate::code_rule_dsl::language::GrammarDialect::TypeScript,
+            other => panic!("{} has unsupported phase-four dialect `{other}`", case.name),
+        };
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"]
+                        .as_u64()
+                        .expect("oracle violation has a start byte") as usize,
+                    violation["span"]["endByte"]
+                        .as_u64()
+                        .expect("oracle violation has an end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(
+            super::policy_lowering_tests::sql_outcome_for_dialect(
+                &compiled,
+                &file.source,
+                dialect,
+            )
+            .ranges,
+            expected,
+            "{}",
+            case.name
+        );
+    }
+}
+
 const PHASE_THREE_CASES: &[&str] = &[
     "utility-simple",
     "utility-nested",

@@ -1048,10 +1048,18 @@ pub(super) fn sql_outcome(
     compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
     source: &str,
 ) -> SqlOutcome {
+    sql_outcome_for_dialect(compiled, source, GrammarDialect::Python)
+}
+
+pub(super) fn sql_outcome_for_dialect(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    source: &str,
+    dialect: GrammarDialect,
+) -> SqlOutcome {
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect("policy has complete structural SQL lowering");
     let source = Arc::new(source.to_owned());
-    let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
+    let grammar = Grammar::new(dialect).expect("contract grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false)
         .expect("parser completed")
         .expect("tape image");
