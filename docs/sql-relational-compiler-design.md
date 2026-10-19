@@ -632,18 +632,16 @@ They do not use operation metadata as parity evidence.
 
 ## Compiler contract suite
 
-`native/src/code_rule_dsl/query/lowering_contract.rs` contains 108 hand-written lowering forms.
-Each form declares its required terminal kinds and normalized SQL constructs.
+The five files in `fixtures/code-rule-dsl/query/` contain 108 complete public policies.
+Each contract contains typed workspace input and an exact matcher-oracle result.
 
-The suite covers atomic tests, boolean composition, navigation, captures, utilities, semantic facts, clauses, and outputs.
-It also rejects callback-shaped SQL fragments.
+`implementation_goldens_phase_2_4.sql` contains 39 complete normalized SQL statements.
+Each statement starts with its owning fixture name.
+`implementation_goldens_phase_2_4.json` contains the exact ordered terminal catalogs.
 
-Fixture-validation tests make sure that the contract is complete and internally consistent.
-They do not claim that lowering exists.
-
-An active TDD test requires exact terminal and SQL-shape equality for all 108 forms.
-It fails with an explicit implementation error until the relational compiler exists.
-Connect this test to `SqlCatalogPlan::explain` when that API exists.
+The tests compare complete normalized SQL, every catalog field, and ordered oracle results.
+They reject missing, duplicate, extra, and unreferenced terminal entries.
+Repeated and concurrent compilation must return identical contracts.
 
 Do not rewrite a hand-written form into an easier equivalent to make the implementation pass.
 Add separate TDD cases from real compiled policies as each compiler API becomes available.
