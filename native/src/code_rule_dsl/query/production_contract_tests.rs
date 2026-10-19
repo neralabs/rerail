@@ -7,57 +7,108 @@
 use super::relational::SqlCatalogPlan;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::test_support::CAPABILITIES;
+use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 struct ContractCase {
     name: String,
     form: String,
-    input: Value,
+    policy: Value,
+    workspace: ContractWorkspace,
+    expected: ContractExpected,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ContractWorkspace {
+    files: Vec<ContractFile>,
+    document_maps: Vec<ContractDocumentMap>,
+    capabilities: Value,
+    failure_injection: Option<FailureInjection>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ContractFile {
+    path: String,
+    language: String,
+    source: String,
+    module: Option<Value>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ContractDocumentMap {
+    source_path: String,
+    generated_path: String,
+    spans: Vec<ContractMappedSpan>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ContractMappedSpan {
+    source_start: usize,
+    source_end: usize,
+    generated_start: usize,
+    generated_end: usize,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct FailureInjection {
+    producer: usize,
+    code: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ContractExpected {
+    normalized_sql: String,
+    terminal_catalog: Vec<ExpectedTerminal>,
+    violations: Vec<Value>,
+    failures: Vec<Value>,
+    counters: ExpectedCounters,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ExpectedTerminal {
+    ordinal: usize,
+    kind: String,
+    language: String,
+    producer_kind: String,
+    program_digest: String,
+    result_schema: String,
+    clauses: Vec<[usize; 2]>,
+    result_limit: u32,
+    completion_required: bool,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ExpectedCounters {
+    statements: usize,
+    virtual_table_filters: usize,
+    terminal_executions: usize,
+    scalar_callbacks: usize,
+    matcher_calls: usize,
 }
 
 fn authored_cases(source: &str) -> Vec<ContractCase> {
-    let fixture: Value =
-        serde_json::from_str(source).expect("the authored production contracts are valid JSON");
-    fixture
-        .as_array()
-        .expect("the authored production contracts are an array")
-        .iter()
-        .map(|entry| {
-            let object = entry
-                .as_object()
-                .expect("an authored production contract is an object");
-            assert_eq!(
-                object.keys().map(String::as_str).collect::<BTreeSet<_>>(),
-                BTreeSet::from(["form", "name", "policy"]),
-                "a production contract has one unambiguous schema"
-            );
-            let name = entry["name"]
-                .as_str()
-                .expect("a production contract has a name")
-                .to_owned();
-            let form = entry["form"]
-                .as_str()
-                .expect("a production contract has a compact form")
-                .to_owned();
-            let input = entry["policy"].clone();
-            assert_eq!(input["format"], "rerail.policy/v1", "{name}");
-            assert_eq!(input["id"], format!("sql-contract-{name}"), "{name}");
-            assert_eq!(input["revision"], 1, "{name}");
-            assert_eq!(input["mode"], "block", "{name}");
-            assert_eq!(
-                input["clauses"]
-                    .as_array()
-                    .expect("a production policy has clauses")
-                    .len(),
-                1,
-                "{name}"
-            );
-            ContractCase { name, form, input }
-        })
-        .collect()
+    serde_json::from_str(source).expect("the authored production contracts have the strict schema")
 }
 
 fn cases() -> Vec<ContractCase> {
@@ -75,20 +126,61 @@ fn cases() -> Vec<ContractCase> {
         .iter()
         .map(|case| case.name.as_str())
         .collect::<BTreeSet<_>>();
+    assert_eq!(
+        cases.len(),
+        108,
+        "the production contract inventory is fixed"
+    );
     assert_eq!(names.len(), cases.len(), "contract names are unique");
+    for case in &cases {
+        assert_eq!(case.policy["format"], "rerail.policy/v1", "{}", case.name);
+        assert_eq!(
+            case.policy["id"],
+            format!("sql-contract-{}", case.name),
+            "{}",
+            case.name
+        );
+        assert_eq!(case.policy["revision"], 1, "{}", case.name);
+        assert_eq!(case.policy["mode"], "block", "{}", case.name);
+        assert_eq!(
+            case.policy["clauses"]
+                .as_array()
+                .expect("a production policy has clauses")
+                .len(),
+            1,
+            "{}",
+            case.name
+        );
+    }
     cases
+}
+
+#[test]
+fn all_108_contracts_have_complete_execution_contracts() {
+    let cases = cases();
+    for case in cases {
+        assert!(
+            !case.workspace.files.is_empty(),
+            "{} has no files",
+            case.name
+        );
+        assert!(
+            !case.expected.normalized_sql.trim().is_empty(),
+            "{} has no exact SQL",
+            case.name
+        );
+    }
 }
 
 #[test]
 fn all_108_contracts_are_real_production_inputs_and_lower_to_sql() {
     let cases = cases();
-    assert_eq!(cases.len(), 108);
     let mut failures = Vec::new();
     for case in cases {
         let compiled = match CodeRuleDslRuntime::compile(
-            case.input.to_string(),
+            case.policy.to_string(),
             "json".to_owned(),
-            CAPABILITIES.to_owned(),
+            case.workspace.capabilities.to_string(),
         ) {
             Ok(compiled) => compiled,
             Err(error) => {
@@ -109,4 +201,9 @@ fn all_108_contracts_are_real_production_inputs_and_lower_to_sql() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn default_capabilities_fixture_remains_valid_json() {
+    let _: Value = serde_json::from_str(CAPABILITIES).expect("default test capabilities are JSON");
 }
