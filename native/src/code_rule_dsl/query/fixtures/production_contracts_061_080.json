@@ -1,0 +1,102 @@
+[
+  {
+    "name": "capture-fix-range",
+    "form": "fix(range=$A, template=$B)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-capture-fix-range","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"pattern":"f($A, $B)"}}},"violation":{"anchor":"capture.A","code":"SQL","message":"replace $A","fix":{"template":"$B","range":"capture.A"}}}]}
+  },
+  {
+    "name": "capture-projection",
+    "form": "project(name=$A, value=$B)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-capture-projection","revision":1,"mode":"block","clauses":[{"id":"contract","budget":{"query":{"evidence":{"as":"usage","query":{"ast":{"language":"python","rule":{"pattern":"f($A, $B)"}}},"project":{"name":"capture.A","value":"capture.B"}}},"count":{"lte":1}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "utility-simple",
+    "form": "matches(simple-kind)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-utility-simple","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","utils":{"u":{"kind":"identifier"}},"rule":{"matches":"u"}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "utility-nested",
+    "form": "matches(outer -> inner)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-utility-nested","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","utils":{"outer":{"matches":"inner"},"inner":{"regex":"^x$"}},"rule":{"matches":"outer"}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "utility-shared-component",
+    "form": "all(matches(shared), matches(shared))",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-utility-shared-component","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","utils":{"shared":{"pattern":"$A"}},"rule":{"all":[{"matches":"shared"},{"matches":"shared"}]}}},"violation":{"anchor":"capture.A","code":"SQL","message":"$A"}}]}
+  },
+  {
+    "name": "utility-self-recursive",
+    "form": "matches(recursive-self)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-utility-self-recursive","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","utils":{"u":{"any":[{"kind":"identifier"},{"has":{"matches":"u","stopBy":"end"}}]}},"rule":{"matches":"u"}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "utility-mutual-recursion",
+    "form": "matches(a -> b -> a)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-utility-mutual-recursion","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","utils":{"a":{"any":[{"kind":"identifier"},{"has":{"matches":"b","stopBy":"end"}}]},"b":{"has":{"matches":"a","stopBy":"end"}}},"rule":{"matches":"a"}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "utility-parameterized-call",
+    "form": "call(util, node=$A, text=$B)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-utility-parameterized-call","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","utils":{"u":{"params":["P"],"rule":{"pattern":"$P"}}},"rule":{"pattern":"$A","matches":{"u":{"P":"$A"}}}}},"violation":{"anchor":"capture.A","code":"SQL","message":"$A"}}]}
+  },
+  {
+    "name": "utility-argument-frame-isolation",
+    "form": "any(call(util,$A), call(util,$B))",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-utility-argument-frame-isolation","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","utils":{"u":{"params":["P"],"rule":{"pattern":"$P"}}},"rule":{"pattern":"f($A, $B)","any":[{"matches":{"u":{"P":"$A"}}},{"matches":{"u":{"P":"$B"}}}]}}},"violation":{"anchor":"witness.span","code":"SQL","message":"A=$A B=$B"}}]}
+  },
+  {
+    "name": "utility-capture-return",
+    "form": "matches(util-binds-$A)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-utility-capture-return","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","utils":{"u":{"pattern":"$A"}},"rule":{"matches":"u"}}},"violation":{"anchor":"capture.A","code":"SQL","message":"$A"}}]}
+  },
+  {
+    "name": "utility-depth-limit",
+    "form": "matches(recursive, maxDepth)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-utility-depth-limit","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","utils":{"u":{"has":{"matches":"u","stopBy":"neighbor"}}},"rule":{"matches":"u"}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "utility-work-limit",
+    "form": "matches(recursive, maxVisitedNodes)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-utility-work-limit","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","utils":{"u":{"has":{"matches":"u","stopBy":"end"}}},"rule":{"matches":"u"}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "semantic-resolves",
+    "form": "resolves(symbol)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-semantic-resolves","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"kind":"identifier","resolves":{"global":["len"]}}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "semantic-binding-site",
+    "form": "resolves.binding.site(rule)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-semantic-binding-site","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"kind":"identifier","resolves":{"binding":{"site":{"kind":"assignment"}}}}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "semantic-binding-value",
+    "form": "resolves.binding.value(rule)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-semantic-binding-value","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"kind":"identifier","resolves":{"binding":{"value":{"pattern":"$V"}}}}}},"violation":{"anchor":"capture.V","code":"SQL","message":"$V"}}]}
+  },
+  {
+    "name": "semantic-binding-annotation",
+    "form": "resolves.binding.annotation(rule)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-semantic-binding-annotation","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"kind":"identifier","resolves":{"binding":{"annotation":{"pattern":"$T"}}}}}},"violation":{"anchor":"capture.T","code":"SQL","message":"$T"}}]}
+  },
+  {
+    "name": "semantic-binding-occurrence",
+    "form": "resolves.binding.occurrence(rule)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-semantic-binding-occurrence","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"typescript","rule":{"kind":"identifier","resolves":{"binding":{"occurrence":{"kind":"identifier"}}}}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "semantic-binds",
+    "form": "binds(filter, subrules)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-semantic-binds","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"kind":"identifier","binds":{"form":"assignment","site":{"kind":"assignment"}}}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "semantic-redefines-any",
+    "form": "binds.redefines(any)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-semantic-redefines-any","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"python","rule":{"kind":"identifier","binds":{"redefines":{"used":false}}}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  },
+  {
+    "name": "semantic-redefines-every",
+    "form": "binds.redefines(every)",
+    "policy": {"format":"rerail.policy/v1","id":"sql-contract-semantic-redefines-every","revision":1,"mode":"block","clauses":[{"id":"contract","forbid":{"ast":{"language":"typescript","rule":{"kind":"identifier","binds":{"redefines":{"every":true}}}}},"violation":{"anchor":"witness.span","code":"SQL","message":"contract"}}]}
+  }
+]

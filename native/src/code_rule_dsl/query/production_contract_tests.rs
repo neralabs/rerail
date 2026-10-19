@@ -84,7 +84,6 @@ fn authored_cases(source: &str) -> Vec<ContractCase> {
 
 fn cases() -> Vec<ContractCase> {
     let pattern = |source: &str| json!({ "pattern": source });
-    let util = |rule: Value, utils: Value| ast_query(json!({ "rule": rule, "utils": utils }));
     let semantic = |term: Value| ast(json!({ "kind": "identifier", "all": [term] }));
     let mut cases = authored_cases(include_str!("fixtures/production_contracts_001_020.json"));
     cases.extend(authored_cases(include_str!(
@@ -93,146 +92,10 @@ fn cases() -> Vec<ContractCase> {
     cases.extend(authored_cases(include_str!(
         "fixtures/production_contracts_041_060.json"
     )));
+    cases.extend(authored_cases(include_str!(
+        "fixtures/production_contracts_061_080.json"
+    )));
     cases.extend([
-        case(
-            "capture-fix-range",
-            "fix(range=$A, template=$B)",
-            ast_violation(
-                pattern("f($A, $B)"),
-                json!({ "anchor": "capture.A", "code": "SQL", "message": "$A", "fix": { "template": "$B", "range": "capture.A" } }),
-            ),
-        ),
-        case(
-            "capture-projection",
-            "project(name=$A, value=$B)",
-            ast(pattern("f($A, $B)")),
-        ),
-        case(
-            "utility-simple",
-            "matches(simple-kind)",
-            util(
-                json!({ "matches": "u" }),
-                json!({ "u": { "kind": "identifier" } }),
-            ),
-        ),
-        case(
-            "utility-nested",
-            "matches(outer -> inner)",
-            util(
-                json!({ "matches": "outer" }),
-                json!({ "outer": { "matches": "inner" }, "inner": { "regex": "^x$" } }),
-            ),
-        ),
-        case(
-            "utility-shared-component",
-            "all(matches(shared), matches(shared))",
-            util(
-                json!({ "all": [{ "matches": "shared" }, { "matches": "shared" }] }),
-                json!({ "shared": { "pattern": "$A" } }),
-            ),
-        ),
-        case(
-            "utility-self-recursive",
-            "matches(recursive-self)",
-            util(
-                json!({ "matches": "u" }),
-                json!({ "u": { "any": [{ "kind": "identifier" }, { "has": { "matches": "u" } }] } }),
-            ),
-        ),
-        case(
-            "utility-mutual-recursion",
-            "matches(a -> b -> a)",
-            util(
-                json!({ "matches": "a" }),
-                json!({ "a": { "any": [{ "kind": "identifier" }, { "has": { "matches": "b" } }] }, "b": { "has": { "matches": "a" } } }),
-            ),
-        ),
-        case(
-            "utility-parameterized-call",
-            "call(util, node=$A, text=$B)",
-            util(
-                json!({ "pattern": "$A", "matches": { "u": { "P": "$A" } } }),
-                json!({ "u": { "params": ["P"], "rule": { "pattern": "$P" } } }),
-            ),
-        ),
-        case(
-            "utility-argument-frame-isolation",
-            "any(call(util,$A), call(util,$B))",
-            util(
-                json!({ "pattern": "f($A, $B)", "any": [{ "matches": { "u": { "P": "$A" } } }, { "matches": { "u": { "P": "$B" } } }] }),
-                json!({ "u": { "params": ["P"], "rule": { "pattern": "$P" } } }),
-            ),
-        ),
-        case(
-            "utility-capture-return",
-            "matches(util-binds-$A)",
-            util(
-                json!({ "matches": "u" }),
-                json!({ "u": { "pattern": "$A" } }),
-            ),
-        ),
-        case(
-            "utility-depth-limit",
-            "matches(recursive, maxDepth)",
-            util(
-                json!({ "matches": "u" }),
-                json!({ "u": { "has": { "matches": "u" } } }),
-            ),
-        ),
-        case(
-            "utility-work-limit",
-            "matches(recursive, maxVisitedNodes)",
-            util(
-                json!({ "matches": "u" }),
-                json!({ "u": { "has": { "stopBy": "end", "matches": "u" } } }),
-            ),
-        ),
-        case(
-            "semantic-resolves",
-            "resolves(symbol)",
-            semantic(json!({ "resolves": { "global": ["len"] } })),
-        ),
-        case(
-            "semantic-binding-site",
-            "resolves.binding.site(rule)",
-            semantic(json!({ "resolves": { "binding": { "site": { "kind": "assignment" } } } })),
-        ),
-        case(
-            "semantic-binding-value",
-            "resolves.binding.value(rule)",
-            semantic(json!({ "resolves": { "binding": { "value": { "pattern": "$V" } } } })),
-        ),
-        case(
-            "semantic-binding-annotation",
-            "resolves.binding.annotation(rule)",
-            semantic(json!({ "resolves": { "binding": { "annotation": { "pattern": "$T" } } } })),
-        ),
-        case(
-            "semantic-binding-occurrence",
-            "resolves.binding.occurrence(rule)",
-            ast_query(
-                json!({ "language": "typescript", "rule": { "kind": "identifier", "resolves": { "binding": { "occurrence": { "kind": "identifier" } } } } }),
-            ),
-        ),
-        case(
-            "semantic-binds",
-            "binds(filter, subrules)",
-            semantic(
-                json!({ "binds": { "form": "assignment", "site": { "kind": "assignment" } } }),
-            ),
-        ),
-        case(
-            "semantic-redefines-any",
-            "binds.redefines(any)",
-            semantic(json!({ "binds": { "redefines": { "used": false } } })),
-        ),
-        case(
-            "semantic-redefines-every",
-            "binds.redefines(every)",
-            ast_query(
-                json!({ "language": "typescript", "rule": { "kind": "identifier", "binds": { "redefines": { "every": true } } } }),
-            ),
-        ),
         case(
             "semantic-value-literal",
             "value(literal-kind)",
