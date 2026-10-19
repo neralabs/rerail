@@ -207,8 +207,20 @@ fn execute_boolean_sql(
     }
     let mut statement = connection.prepare(plan.sql()).expect("executable SQL plan");
     statement
-        .query_map([1_i64], |row| Ok((row.get(2)?, row.get(10)?)))
+        .query_map([1_i64], |row| {
+            Ok((
+                row.get::<_, i64>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, Option<i64>>(10)?,
+            ))
+        })
         .expect("query relational rows")
+        .filter_map(|row| match row {
+            Ok((8, _, _)) => None,
+            Ok((_, Some(file), Some(node))) => Some(Ok((file, node))),
+            Ok(_) => Some(Err(rusqlite::Error::InvalidQuery)),
+            Err(error) => Some(Err(error)),
+        })
         .collect::<rusqlite::Result<Vec<_>>>()
         .expect("typed output rows")
 }
@@ -1039,9 +1051,23 @@ fn disabled_when_is_an_executable_empty_relation_without_terminal_work() {
     assert_eq!(sql_ranges(&compiled, "x\n"), Vec::<(usize, usize)>::new());
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SqlFactRow {
+    pub(super) producer: i64,
+    pub(super) node: (usize, usize),
+    pub(super) related: Option<(usize, usize)>,
+    pub(super) slot: i64,
+    pub(super) key: i64,
+    pub(super) position: i64,
+    pub(super) flag: Option<i64>,
+    pub(super) target_kind: Option<i64>,
+    pub(super) label: Option<String>,
+}
+
 pub(super) struct SqlOutcome {
     pub(super) ranges: Vec<(usize, usize)>,
     pub(super) errors: Vec<String>,
+    pub(super) facts: Vec<SqlFactRow>,
 }
 
 pub(super) fn sql_outcome(
@@ -1055,6 +1081,30 @@ pub(super) fn sql_outcome_for_dialect(
     compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
     source: &str,
     dialect: GrammarDialect,
+) -> SqlOutcome {
+    sql_outcome_with_failure(compiled, source, dialect, None)
+}
+
+pub(super) fn sql_outcome_with_fact_failure(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    source: &str,
+    dialect: GrammarDialect,
+    fact_producer: usize,
+    code: &str,
+) -> SqlOutcome {
+    sql_outcome_with_failure(
+        compiled,
+        source,
+        dialect,
+        Some((fact_producer, code.to_owned())),
+    )
+}
+
+fn sql_outcome_with_failure(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    source: &str,
+    dialect: GrammarDialect,
+    failure: Option<(usize, String)>,
 ) -> SqlOutcome {
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect("policy has complete structural SQL lowering");
@@ -1085,6 +1135,16 @@ pub(super) fn sql_outcome_for_dialect(
         .iter()
         .map(|terminal| terminal.producer_kind())
         .collect::<Vec<_>>();
+    let injected = failure.map(|(ordinal, code)| {
+        let producer = producer_kinds
+            .iter()
+            .enumerate()
+            .filter(|(_, kind)| **kind == ProducerKind::SemanticFact)
+            .nth(ordinal)
+            .map(|(producer, _)| producer)
+            .expect("injected semantic fact producer exists");
+        (producer, code)
+    });
     let demand = PackedDemand::new(
         ExecutionBackend::CpuJit,
         plan.terminals()
@@ -1108,6 +1168,18 @@ pub(super) fn sql_outcome_for_dialect(
                 .collect(),
         )
     })
+    .and_then(|demand| {
+        demand.with_semantic_facts(
+            plan.terminals()
+                .iter()
+                .map(|terminal| terminal.semantic_fact())
+                .collect(),
+        )
+    })
+    .and_then(|demand| match injected {
+        Some((producer, code)) => demand.with_failure_injection(producer, code),
+        None => Ok(demand),
+    })
     .expect("immutable structural demand");
     let connection = Connection::open_in_memory().expect("in-memory SQLite");
     let registry = Arc::new(MatchRegistry::default());
@@ -1127,6 +1199,37 @@ pub(super) fn sql_outcome_for_dialect(
         .expect("SQL structural query")
         .collect::<rusqlite::Result<Vec<_>>>()
         .expect("typed SQL nodes");
+    let mut facts = registry
+        .query_fact_rows(token)
+        .into_iter()
+        .map(|row| SqlFactRow {
+            producer: row.producer,
+            node: {
+                let span = &spans[row.node as usize];
+                (span.start, span.end)
+            },
+            related: row.related.map(|node| {
+                let span = &spans[node as usize];
+                (span.start, span.end)
+            }),
+            slot: row.slot,
+            key: row.key,
+            position: row.position,
+            flag: row.flag,
+            target_kind: row.target_kind,
+            label: row.label,
+        })
+        .collect::<Vec<_>>();
+    facts.sort_by_key(|row| {
+        (
+            row.producer,
+            row.node,
+            row.slot,
+            row.key,
+            row.position,
+            row.related,
+        )
+    });
     let expected_executions = if plan.terminals().is_empty() {
         (0, 0)
     } else {
@@ -1165,7 +1268,11 @@ pub(super) fn sql_outcome_for_dialect(
         })
         .collect::<Vec<_>>();
     ranges.sort_unstable();
-    SqlOutcome { ranges, errors }
+    SqlOutcome {
+        ranges,
+        errors,
+        facts,
+    }
 }
 
 pub(super) fn sql_ranges(

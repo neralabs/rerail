@@ -1,5 +1,6 @@
 //! Persisted positional tape indexes and the SQL-demanded relation.
 
+pub(super) mod semantic_facts;
 pub(super) mod sql_backend;
 
 use super::tape::TapeDoc;

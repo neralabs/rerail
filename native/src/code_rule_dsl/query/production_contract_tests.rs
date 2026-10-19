@@ -392,17 +392,82 @@ fn production_contract_phase_four_semantic_facts_lower_completely() {
                     "{}",
                     case.name
                 );
-                assert!(
+                let expected_catalog = match case.name.as_str() {
+                    "semantic-binding-value" | "semantic-binding-annotation" => vec![
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Pattern,
+                        super::relational::TerminalKind::Fact,
+                    ],
+                    "semantic-format-unused-arguments"
+                    | "semantic-format-missing-fields"
+                    | "semantic-layout" => vec![
+                        super::relational::TerminalKind::Pattern,
+                        super::relational::TerminalKind::Fact,
+                    ],
+                    "semantic-calls-direct" | "semantic-calls-through" => vec![
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Fact,
+                    ],
+                    "semantic-binding-occurrence" | "semantic-redefines-every" => vec![
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Fact,
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Fact,
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Fact,
+                    ],
+                    "semantic-arguments-filter" => vec![
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Fact,
+                        super::relational::TerminalKind::Kind,
+                    ],
+                    _ => vec![
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Fact,
+                    ],
+                };
+                assert_eq!(
                     plan.terminals()
                         .iter()
-                        .any(|terminal| terminal.kind() == super::relational::TerminalKind::Fact),
-                    "{} has no immutable semantic fact producer",
+                        .map(super::relational::TerminalPlan::kind)
+                        .collect::<Vec<_>>(),
+                    expected_catalog,
+                    "{}",
                     case.name
                 );
                 assert!(
                     plan.shape()
                         .contains(&super::relational::SqlShape::ScanFact),
                     "{} does not compose typed facts in SQL",
+                    case.name
+                );
+                assert!(
+                    plan.terminals()
+                        .iter()
+                        .filter_map(super::relational::TerminalPlan::semantic_fact)
+                        .all(|descriptor| !descriptor.source.has_nested_user_rule()),
+                    "{} retains a nested user matcher",
+                    case.name
+                );
+                let sql = plan.sql().split_whitespace().collect::<Vec<_>>().join(" ");
+                assert!(
+                    sql.contains(
+                        "FROM fact gate JOIN producer_status status USING (producer_id, file_index)"
+                    ),
+                    "{} has no exact completion-guarded fact gate",
+                    case.name
+                );
+                assert!(
+                    sql.contains(
+                        "gate.fact_kind = 0 AND status.complete = 1 AND gate.verdict <> 0"
+                    ),
+                    "{} has no exact three-valued fact gate",
+                    case.name
+                );
+                assert!(
+                    sql.contains("FROM producer_status failed WHERE failed.producer_id IN ("),
+                    "{} has no typed producer-failure projection",
                     case.name
                 );
                 assert!(!plan.sql().contains("GrammarMatcher"), "{}", case.name);
@@ -455,18 +520,180 @@ fn production_contract_phase_four_sql_results_equal_semantic_oracles() {
             })
             .collect::<Vec<_>>();
         expected.sort_unstable();
-        assert_eq!(
-            super::policy_lowering_tests::sql_outcome_for_dialect(
-                &compiled,
-                &file.source,
-                dialect,
-            )
-            .ranges,
-            expected,
-            "{}",
-            case.name
-        );
+        let outcome =
+            super::policy_lowering_tests::sql_outcome_for_dialect(&compiled, &file.source, dialect);
+        assert_eq!(outcome.ranges, expected, "{}", case.name);
     }
+}
+
+#[test]
+fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
+    use super::policy_lowering_tests::SqlFactRow;
+
+    let row =
+        |producer, node, related, slot, key, position, flag, target_kind, label: Option<&str>| {
+            SqlFactRow {
+                producer,
+                node,
+                related,
+                slot,
+                key,
+                position,
+                flag: Some(flag),
+                target_kind,
+                label: label.map(str::to_owned),
+            }
+        };
+    for case in cases().into_iter().filter(|case| {
+        matches!(
+            case.name.as_str(),
+            "semantic-resolves"
+                | "semantic-binding-site"
+                | "semantic-binding-value"
+                | "semantic-binding-annotation"
+                | "semantic-binding-occurrence"
+                | "semantic-binds"
+                | "semantic-redefines-every"
+                | "semantic-arguments-bind"
+                | "semantic-format-missing-fields"
+                | "semantic-layout"
+                | "semantic-calls-through"
+        )
+    }) {
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let dialect = match case.workspace.files[0].language.as_str() {
+            "python" => crate::code_rule_dsl::language::GrammarDialect::Python,
+            "typescript" => crate::code_rule_dsl::language::GrammarDialect::TypeScript,
+            other => panic!("{} has unsupported dialect `{other}`", case.name),
+        };
+        let actual = super::policy_lowering_tests::sql_outcome_for_dialect(
+            &compiled,
+            &case.workspace.files[0].source,
+            dialect,
+        )
+        .facts;
+        let expected = match case.name.as_str() {
+            "semantic-resolves" => vec![row(1, (0, 3), None, 0, 0, 0, 1, None, None)],
+            "semantic-binding-site" => vec![
+                row(1, (6, 7), None, 0, 0, 0, 1, None, None),
+                row(1, (6, 7), Some((0, 5)), 1, 0, 0, 1, Some(199), None),
+            ],
+            "semantic-binding-value" => vec![
+                row(2, (6, 7), None, 0, 0, 0, 1, None, None),
+                row(2, (6, 7), Some((4, 5)), 2, 0, 0, 1, Some(93), None),
+            ],
+            "semantic-binding-annotation" => vec![
+                row(2, (11, 12), None, 0, 0, 0, 1, None, None),
+                row(2, (11, 12), Some((3, 6)), 3, 0, 0, 1, Some(1), None),
+            ],
+            "semantic-binding-occurrence" => vec![
+                row(1, (44, 45), None, 0, 0, 0, 1, None, None),
+                row(1, (44, 45), Some((30, 31)), 4, 0, 0, 1, Some(1), None),
+                row(1, (44, 45), Some((44, 45)), 4, 0, 1, 1, Some(1), None),
+                row(1, (49, 50), None, 0, 0, 0, 1, None, None),
+                row(1, (49, 50), Some((20, 21)), 4, 0, 0, 1, Some(1), None),
+                row(1, (49, 50), Some((49, 50)), 4, 0, 1, 1, Some(1), None),
+            ],
+            "semantic-binds" => vec![
+                row(1, (0, 1), None, 0, 0, 0, 1, None, None),
+                row(1, (0, 1), Some((0, 5)), 1, 0, 0, 1, Some(199), None),
+            ],
+            "semantic-redefines-every" => vec![
+                row(1, (4, 5), None, 0, 0, 0, 1, None, None),
+                row(1, (20, 21), None, 0, 0, 0, 1, None, None),
+                row(1, (30, 31), None, 0, 0, 0, 1, None, None),
+            ],
+            "semantic-arguments-bind" => vec![
+                row(1, (0, 6), None, 0, 0, 0, 1, None, None),
+                row(1, (0, 6), Some((4, 5)), 15, 0, 0, 1, Some(93), Some("A")),
+            ],
+            "semantic-format-missing-fields" => vec![
+                row(1, (0, 25), None, 0, 0, 0, 1, Some(1), None),
+                row(1, (0, 25), Some((19, 24)), 12, 0, 0, 1, Some(1), None),
+                row(1, (0, 25), None, 13, 0, 0, 1, Some(3), None),
+                row(1, (0, 25), None, 14, 0, 0, 0, None, None),
+                row(1, (0, 25), None, 14, 0, 1, 0, None, None),
+                row(1, (0, 25), Some((0, 11)), 17, 0, 0, 1, Some(1), Some("S")),
+                row(1, (0, 25), Some((19, 24)), 17, 0, 0, 1, Some(2), Some("A")),
+            ],
+            "semantic-layout" => vec![
+                row(1, (0, 1), None, 0, 0, 0, 1, None, None),
+                row(1, (0, 8), None, 0, 0, 0, 1, None, None),
+                row(1, (0, 8), None, 0, 0, 0, 1, None, None),
+                row(1, (1, 2), None, 0, 0, 0, 1, None, None),
+                row(1, (1, 8), None, 0, 0, 0, 1, None, None),
+                row(1, (2, 7), None, 0, 0, 0, 1, None, None),
+                row(1, (7, 8), None, 0, 0, 0, 1, None, None),
+            ],
+            "semantic-calls-through" => vec![
+                row(2, (42, 50), None, 0, 0, 0, 1, None, None),
+                row(2, (42, 50), Some((0, 22)), 16, 0, 0, 1, Some(145), None),
+                row(2, (51, 60), None, 0, 0, 0, 1, None, None),
+                row(2, (51, 60), Some((0, 22)), 16, 0, 0, 1, Some(145), None),
+                row(2, (51, 60), Some((23, 50)), 16, 0, 1, 1, Some(145), None),
+            ],
+            _ => unreachable!("the exact semantic fact inventory is fixed"),
+        };
+        assert_eq!(actual, expected, "{}", case.name);
+    }
+}
+
+#[test]
+fn production_contract_phase_four_real_fact_capacity_is_atomic() {
+    let mut case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-binding-site")
+        .expect("the binding-site contract exists");
+    case.workspace.capabilities = "work-limit-one".to_owned();
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+    let outcome = super::policy_lowering_tests::sql_outcome_for_dialect(
+        &compiled,
+        &case.workspace.files[0].source,
+        crate::code_rule_dsl::language::GrammarDialect::Python,
+    );
+    assert!(outcome.ranges.is_empty(), "no partial violation is valid");
+    assert!(
+        outcome.facts.is_empty(),
+        "an incomplete producer publishes no facts"
+    );
+    assert_eq!(outcome.errors, ["semantic-fact-capacity"]);
+}
+
+#[test]
+fn production_contract_phase_four_fact_failure_is_incomplete_and_has_no_partial_result() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-fact-producer-failure")
+        .expect("the semantic fact failure contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+    let outcome = super::policy_lowering_tests::sql_outcome_with_fact_failure(
+        &compiled,
+        &case.workspace.files[0].source,
+        crate::code_rule_dsl::language::GrammarDialect::Python,
+        0,
+        "capacity-failure",
+    );
+    assert!(outcome.ranges.is_empty(), "no partial violation is valid");
+    assert!(
+        outcome.facts.is_empty(),
+        "an incomplete producer publishes no facts"
+    );
+    assert_eq!(outcome.errors, ["capacity-failure"]);
 }
 
 const PHASE_THREE_CASES: &[&str] = &[

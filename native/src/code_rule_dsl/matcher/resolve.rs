@@ -235,7 +235,7 @@ enum ThisBoundary {
 }
 
 impl Resolves {
-    pub(super) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
+    pub(crate) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
         with_adapter!(Family::of(self.language), A => self.holds_in::<<A as Adapter>::Scope, D>(node))
     }
 

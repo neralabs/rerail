@@ -20,10 +20,10 @@ compiled clause
 The semantic matcher remains a test-only oracle.
 Production has no matcher fallback and no second execution shape.
 
-The current implementation supports structural terminals, comparisons, values, navigation, counts, utilities, and bounded utility recursion.
+The current implementation supports structural terminals, comparisons, values, navigation, counts, utilities, bounded utility recursion, and semantic fact producers.
 Each lowered clause owns an operand-bearing expression graph with semantic producer identities.
-SQL renders three-valued Boolean operations, comparisons, navigation, utility frames, and recursive utility components.
-A bounded value producer emits typed true, false, or unknown facts from an immutable reading descriptor.
+SQL renders three-valued Boolean operations, comparisons, navigation, utility frames, recursive utility components, and nested semantic rules.
+Bounded value and semantic producers emit typed facts from immutable descriptors.
 The production compiler reads complete policies. The deleted compact-contract frontend is not an execution path.
 The workspace tape-preparation and result-publication stages remain incomplete.
 
@@ -272,10 +272,12 @@ A physical virtual-table schema can use a tagged union of nullable columns.
 The SQL statement creates one typed CTE for each logical row family.
 
 The virtual table now exposes one 35-column tagged relation for all seven row families.
-Current producers emit batch status, producer status, terminal matches, capture sequences, and navigation edges.
+Current producers emit batch status, producer status, terminal matches, capture sequences, navigation edges, value facts, and semantic facts.
 Capture rows identify single and multi-captures, named nodes, equality order, source text, and structural identity.
 Navigation edges include the grammar field identity and the named-node flag.
-The value producer emits typed fact rows. Other fact producers and document-map producers are not implemented.
+Semantic rows cover resolution gates, binding targets, occurrences, argument bindings, format candidates, layout verdicts, and call targets.
+A fact descriptor contains no nested user rule. SQL applies each nested rule to its typed target relation.
+Document-map producers are not implemented.
 Complete relational lowering must not treat an unimplemented row family as an empty result.
 
 ## One-statement execution
@@ -423,7 +425,12 @@ For example, a binding producer can emit these values:
 - A producer-completion status.
 
 The SQL plan applies user sub-rules to the emitted node identities.
-The producer does not call those sub-rules.
+The producer descriptor does not retain those rules, and the producer cannot call them.
+
+Semantic gates use explicit true and unknown values. Missing gates mean false only after producer completion.
+Argument rows carry capture labels and target identities. Binding and format rows carry ordered slot, key, and position values.
+Call producers emit bounded reachable-definition facts. The call seed remains a separately lowered SQL relation.
+A fact-capacity failure discards all rows from that producer, marks it incomplete, and yields one typed clause failure.
 
 ### Cross-file clauses
 

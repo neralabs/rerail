@@ -390,6 +390,18 @@ impl SubTree {
             .filter(|index| *index < self.nodes.len())
     }
 
+    /// The grammar kind of the parsed root.
+    pub(crate) fn root_kind(&self) -> u16 {
+        self.nodes[0].kind
+    }
+
+    /// The grammar kind of the node with this id.
+    pub(crate) fn node_kind(&self, node_id: usize) -> Option<u16> {
+        self.nodes
+            .get(self.index_of(node_id)?)
+            .map(|node| node.kind)
+    }
+
     /// The source range of the node with this id.
     pub(crate) fn host_range(&self, node_id: usize) -> Option<Range<usize>> {
         let rec = self.nodes.get(self.index_of(node_id)?)?;

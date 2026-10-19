@@ -1,7 +1,8 @@
 use super::relational_ir::{
     ComparisonSpec, CountSpec, NavigationAxis, NavigationSpec, NavigationStop, NthChildSpec,
-    RecursiveUtilitySpec, RecursiveUtilityTransition, RelationalIr, SqlOperation, UtilityFrameSpec,
-    UtilitySpec, ValueLiteral, ValuePredicateSpec, qualified_row_columns,
+    RecursiveUtilitySpec, RecursiveUtilityTransition, RelationalIr, SemanticFactSpec,
+    SemanticRuleSpec, SqlOperation, UtilityFrameSpec, UtilitySpec, ValueLiteral,
+    ValuePredicateSpec, qualified_failure_columns, qualified_row_columns,
 };
 use crate::code_rule_dsl::language::{GrammarDialect, label};
 use crate::code_rule_dsl::matcher::{
@@ -9,7 +10,9 @@ use crate::code_rule_dsl::matcher::{
 };
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Query};
 use crate::code_rule_dsl::packed::Program;
-use crate::code_rule_dsl::transducer::sql_backend::{ProducerKind, ValueFactDescriptor};
+use crate::code_rule_dsl::transducer::sql_backend::{
+    ProducerKind, SemanticFactDescriptor, SemanticFactSource, ValueFactDescriptor,
+};
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::matcher::Matcher;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -28,6 +31,7 @@ pub(super) struct TerminalPlan {
     clauses: Vec<(usize, usize)>,
     result_limit: u32,
     value_fact: Option<ValueFactDescriptor>,
+    semantic_fact: Option<SemanticFactDescriptor>,
 }
 
 impl TerminalPlan {
@@ -62,12 +66,17 @@ impl TerminalPlan {
             TerminalKind::Navigation => ProducerKind::Navigation,
             TerminalKind::Pattern => ProducerKind::Pattern,
             TerminalKind::Value => ProducerKind::ValueFact,
+            TerminalKind::Fact => ProducerKind::SemanticFact,
             _ => ProducerKind::Terminal,
         }
     }
 
     pub(super) fn value_fact(&self) -> Option<ValueFactDescriptor> {
         self.value_fact.clone()
+    }
+
+    pub(super) fn semantic_fact(&self) -> Option<SemanticFactDescriptor> {
+        self.semantic_fact.clone()
     }
 }
 
@@ -101,16 +110,16 @@ impl SqlCatalogPlan {
                         .push(format!("{clause_at}: clause relation is not lowered"));
                     continue;
                 };
-                if !calls.is_empty() {
-                    builder
-                        .unsupported
-                        .push(format!("{clause_at}: cross-file calls are not lowered"));
-                }
+                let _ = calls;
                 for matcher in matchers {
                     let language = label(matcher.language).unwrap_or("unknown");
                     let at = format!("{clause_at}/{language}/rule");
                     let mut terminals = Vec::new();
                     builder.current_clause = (rule_index, clause_index);
+                    builder.current_calls = calls
+                        .iter()
+                        .map(|term| (Arc::clone(&term.key), Arc::clone(term)))
+                        .collect();
                     builder.current_result_limit =
                         u32::try_from(code_rule.capabilities.limits.max_witnesses)
                             .unwrap_or(u32::MAX);
@@ -157,6 +166,14 @@ impl SqlCatalogPlan {
     }
 
     pub(super) fn verify(&self) -> Result<(), String> {
+        if self.terminals.iter().any(|terminal| {
+            terminal
+                .semantic_fact
+                .as_ref()
+                .is_some_and(|descriptor| descriptor.source.has_nested_user_rule())
+        }) {
+            return Err("semantic fact descriptor contains a nested user rule".to_owned());
+        }
         for ir in &self.clause_irs {
             ir.validate()?;
         }
@@ -226,6 +243,7 @@ enum TerminalIdentity {
     Pattern(GrammarDialect, String),
     Regex(GrammarDialect, String),
     Value(GrammarDialect, bool, Vec<u16>, String),
+    Fact(GrammarDialect, String),
 }
 
 type UtilityGraph = BTreeMap<usize, (UtilRef, AstMatcher, Vec<usize>)>;
@@ -241,6 +259,7 @@ struct Builder {
     current_result_limit: u32,
     current_max_work: usize,
     utility_stack: Vec<usize>,
+    current_calls: HashMap<Arc<str>, Arc<crate::code_rule_dsl::model::CallsTerm>>,
 }
 
 fn utility_references(matcher: &AstMatcher, references: &mut Vec<UtilRef>) {
@@ -293,6 +312,232 @@ fn utility_references(matcher: &AstMatcher, references: &mut Vec<UtilRef>) {
 }
 
 impl Builder {
+    fn semantic_rule(
+        &mut self,
+        slot: u16,
+        rule: &AstMatcher,
+        language: GrammarDialect,
+        at: &str,
+        terminals: &mut Vec<usize>,
+    ) -> SemanticRuleSpec {
+        if let AstMatcher::Kind(kind) = rule
+            && let Some(kinds) = kind.potential_kinds()
+            && kinds.iter().count() == 1
+            && let Some(kind) = kinds
+                .iter()
+                .next()
+                .and_then(|kind| u16::try_from(kind).ok())
+        {
+            return SemanticRuleSpec {
+                slot,
+                target_kind: Some(kind),
+                relation: None,
+            };
+        }
+        let mut relation = RelationalIr::empty();
+        self.lower_matcher(rule, language, at, terminals, &mut relation);
+        SemanticRuleSpec {
+            slot,
+            target_kind: None,
+            relation: Some(Box::new(relation)),
+        }
+    }
+
+    fn lower_semantic(
+        &mut self,
+        semantic: &Semantic,
+        language: GrammarDialect,
+        at: &str,
+        terminals: &mut Vec<usize>,
+        ir: &mut RelationalIr,
+    ) {
+        use crate::code_rule_dsl::transducer::semantic_facts::slot;
+        let mut rules = Vec::new();
+        let mut add = |slot, rule: &Option<AstMatcher>, suffix: &str, this: &mut Self| {
+            if let Some(rule) = rule {
+                rules.push(this.semantic_rule(
+                    slot,
+                    rule,
+                    language,
+                    &format!("{at}/{suffix}"),
+                    terminals,
+                ));
+            }
+        };
+        let mut call_through = None;
+        match semantic {
+            Semantic::Binding(test) => {
+                add(slot::SITE, &test.site, "site", self);
+                add(slot::VALUE, &test.value, "value", self);
+                add(slot::ANNOTATION, &test.annotation, "annotation", self);
+                add(slot::OCCURRENCE, &test.occurrence, "occurrence", self);
+            }
+            Semantic::Binds(test) => {
+                add(slot::SITE, &test.site, "site", self);
+                add(slot::VALUE, &test.value, "value", self);
+                add(slot::ANNOTATION, &test.annotation, "annotation", self);
+                add(slot::OCCURRENCE, &test.occurrence, "occurrence", self);
+                if let Some(redefines) = &test.redefines {
+                    let base = if language == GrammarDialect::Python {
+                        slot::SHADOWED_SITE
+                    } else {
+                        slot::OTHER_SITE
+                    };
+                    add(base, &redefines.site, "redefines/site", self);
+                    add(base + 1, &redefines.value, "redefines/value", self);
+                    add(
+                        base + 2,
+                        &redefines.annotation,
+                        "redefines/annotation",
+                        self,
+                    );
+                }
+            }
+            Semantic::FormatArgs(test) => {
+                add(slot::UNUSED, &test.unused, "unused", self);
+                add(slot::MISSING, &test.missing, "missing", self);
+            }
+            Semantic::Calls(test) => {
+                let Some(term) = self.current_calls.get(&test.key).cloned() else {
+                    self.unsupported
+                        .push(format!("{at}: calls term has no immutable seed"));
+                    return;
+                };
+                let Query::Ast { matchers, .. } = &term.seed else {
+                    self.unsupported
+                        .push(format!("{at}: calls seed is not an AST relation"));
+                    return;
+                };
+                let Some(seed) = matchers.iter().find(|matcher| matcher.language == language)
+                else {
+                    self.unsupported
+                        .push(format!("{at}: calls seed has no matching dialect"));
+                    return;
+                };
+                let mut relation = RelationalIr::empty();
+                self.lower_matcher(
+                    &seed.matcher,
+                    language,
+                    &format!("{at}/calls/seed"),
+                    terminals,
+                    &mut relation,
+                );
+                rules.push(SemanticRuleSpec {
+                    slot: slot::CALL_TARGET,
+                    target_kind: None,
+                    relation: Some(Box::new(relation)),
+                });
+                call_through = Some(term.through);
+            }
+            Semantic::Resolves(_) | Semantic::Arguments(_) | Semantic::Layout(_) => {}
+            Semantic::Value(_) | Semantic::Parse(_) | Semantic::Host(_) | Semantic::Capture(_) => {
+                self.unsupported.push(format!(
+                    "{at}: semantic fact family belongs to a later phase"
+                ));
+                return;
+            }
+        }
+        use crate::code_rule_dsl::transducer::semantic_facts::{
+            BindingRequest, BindsRequest, RedefinesRequest,
+        };
+        let input_labels = match semantic {
+            Semantic::FormatArgs(test) => vec![test.string.clone(), test.args.clone()],
+            Semantic::Layout(test) => test.reads().map(str::to_owned).collect(),
+            Semantic::Binding(test) => test
+                .filter
+                .bindings
+                .as_ref()
+                .and_then(|count| count.within.clone())
+                .into_iter()
+                .collect(),
+            Semantic::Binds(test) => test
+                .filter
+                .bindings
+                .as_ref()
+                .and_then(|count| count.within.clone())
+                .into_iter()
+                .chain(
+                    test.redefines
+                        .iter()
+                        .filter_map(|redefines| redefines.filter.bindings.as_ref())
+                        .filter_map(|count| count.within.clone()),
+                )
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            _ => Vec::new(),
+        };
+        let argument_labels = match semantic {
+            Semantic::Arguments(arguments) => arguments
+                .bind
+                .iter()
+                .map(|(label, _)| label.clone())
+                .collect(),
+            _ => Vec::new(),
+        };
+        let source = match semantic {
+            Semantic::Resolves(test) => SemanticFactSource::Resolves((**test).clone()),
+            Semantic::Binding(test) => {
+                let request = BindingRequest {
+                    site: test.site.is_some(),
+                    value: test.value.is_some(),
+                    annotation: test.annotation.is_some(),
+                    occurrence: test.occurrence.is_some(),
+                };
+                let mut test = (**test).clone();
+                (test.site, test.value, test.annotation, test.occurrence) =
+                    (None, None, None, None);
+                SemanticFactSource::Binding {
+                    test: Box::new(test),
+                    request,
+                }
+            }
+            Semantic::Binds(test) => {
+                let request = BindsRequest {
+                    binding: BindingRequest {
+                        site: test.site.is_some(),
+                        value: test.value.is_some(),
+                        annotation: test.annotation.is_some(),
+                        occurrence: test.occurrence.is_some(),
+                    },
+                    redefines: test.redefines.as_ref().map(|redefines| RedefinesRequest {
+                        site: redefines.site.is_some(),
+                        value: redefines.value.is_some(),
+                        annotation: redefines.annotation.is_some(),
+                    }),
+                };
+                let mut test = (**test).clone();
+                (test.site, test.value, test.annotation, test.occurrence) =
+                    (None, None, None, None);
+                if let Some(redefines) = test.redefines.as_deref_mut() {
+                    (redefines.site, redefines.value, redefines.annotation) = (None, None, None);
+                }
+                SemanticFactSource::Binds {
+                    test: Box::new(test),
+                    request,
+                }
+            }
+            Semantic::Arguments(test) => SemanticFactSource::Arguments((**test).clone()),
+            Semantic::FormatArgs(test) => {
+                let mut test = (**test).clone();
+                (test.unused, test.missing) = (None, None);
+                SemanticFactSource::FormatArgs(test)
+            }
+            Semantic::Layout(test) => SemanticFactSource::Layout((**test).clone()),
+            Semantic::Calls(test) => SemanticFactSource::Calls((**test).clone()),
+            Semantic::Value(_) | Semantic::Parse(_) | Semantic::Host(_) | Semantic::Capture(_) => {
+                unreachable!("unsupported semantic families returned before descriptor creation")
+            }
+        };
+        let id = self.fact_terminal(language, at, source, input_labels, call_through);
+        terminals.push(id);
+        *ir = RelationalIr::semantic(SemanticFactSpec {
+            producer: id,
+            argument_labels,
+            rules,
+        });
+    }
+
     fn lower_matcher(
         &mut self,
         matcher: &AstMatcher,
@@ -631,9 +876,9 @@ impl Builder {
             AstMatcher::Call(call) => {
                 self.lower_utility(call.util.clone(), Some(call), language, at, terminals, ir);
             }
-            AstMatcher::Semantic(_) => self
-                .unsupported
-                .push(format!("{at}: matcher operation is not lowered")),
+            AstMatcher::Semantic(semantic) => {
+                self.lower_semantic(semantic, language, at, terminals, ir);
+            }
             #[cfg(test)]
             AstMatcher::TestUnknown(_) => self
                 .unsupported
@@ -1137,6 +1382,34 @@ impl Builder {
             clauses: vec![self.current_clause],
             result_limit: u32::MAX,
             value_fact: Some(descriptor),
+            semantic_fact: None,
+        });
+        self.terminal_ids.insert(identity, id);
+        id
+    }
+
+    fn fact_terminal(
+        &mut self,
+        language: GrammarDialect,
+        at: &str,
+        source: SemanticFactSource,
+        input_labels: Vec<String>,
+        call_through: Option<crate::code_rule_dsl::calls::Through>,
+    ) -> usize {
+        let identity = TerminalIdentity::Fact(language, at.to_owned());
+        let id = self.terminals.len();
+        self.terminals.push(TerminalPlan {
+            kind: TerminalKind::Fact,
+            language,
+            program: Program::compile_universe().expect("the semantic fact shell is verified"),
+            clauses: vec![self.current_clause],
+            result_limit: u32::try_from(self.current_max_work).unwrap_or(u32::MAX),
+            value_fact: None,
+            semantic_fact: Some(SemanticFactDescriptor {
+                source,
+                input_labels,
+                call_through,
+            }),
         });
         self.terminal_ids.insert(identity, id);
         id
@@ -1165,6 +1438,7 @@ impl Builder {
             clauses: vec![self.current_clause],
             result_limit: self.current_result_limit,
             value_fact: None,
+            semantic_fact: None,
         });
         self.terminal_ids.insert(identity, id);
         id
@@ -1182,9 +1456,22 @@ impl Builder {
                         unsupported: vec![format!("clause {ordinal}: {error}")],
                     })?;
             let projection = qualified_row_columns("result");
+            let failure_projection = qualified_failure_columns("failed");
+            let producers = self.clause_terminal_ids[ordinal]
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>();
+            let failure_union = if producers.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\n  UNION ALL\n  SELECT {failure_projection}, json('[]') AS bindings, '' AS choice_order, {ordinal} AS clause_ordinal\n  FROM producer_status failed\n  WHERE failed.producer_id IN ({}) AND failed.complete <> 1",
+                    producers.join(", ")
+                )
+            };
             writeln!(
                 clauses,
-                ",\n{relations},\nclause_{ordinal} AS (\n  SELECT {projection}, result.bindings, result.choice_order, {ordinal} AS clause_ordinal FROM {result} result\n  CROSS JOIN batch_status batch\n  WHERE batch.complete = 1\n    AND NOT EXISTS (\n      SELECT 1 FROM producer_status undecided\n      WHERE undecided.complete <> 1 OR undecided.verdict IS NULL\n    )\n)"
+                ",\n{relations},\nclause_{ordinal} AS (\n  SELECT {projection}, result.bindings, result.choice_order, {ordinal} AS clause_ordinal FROM {result} result\n  CROSS JOIN batch_status batch\n  WHERE batch.complete = 1\n    AND NOT EXISTS (\n      SELECT 1 FROM producer_status undecided\n      WHERE undecided.complete <> 1 OR undecided.verdict IS NULL\n    ){failure_union}\n)"
             )
             .expect("write SQL");
         }

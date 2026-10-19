@@ -39,6 +39,67 @@ pub(in crate::code_rule_dsl) enum ProducerKind {
     Pattern,
     Navigation,
     ValueFact,
+    SemanticFact,
+}
+
+/// A bounded semantic-fact request. The descriptor emits only predicate-local rows. Nested user
+/// rules remain relational operands and are never executed by this producer.
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) enum SemanticFactSource {
+    Resolves(super::super::matcher::Resolves),
+    Binding {
+        test: Box<super::super::matcher::BindingTest>,
+        request: super::semantic_facts::BindingRequest,
+    },
+    Binds {
+        test: Box<super::super::matcher::Binds>,
+        request: super::semantic_facts::BindsRequest,
+    },
+    Arguments(super::super::matcher::Arguments),
+    FormatArgs(super::super::matcher::FormatArgs),
+    Layout(super::super::matcher::Layout),
+    Calls(super::super::calls::CallsTest),
+}
+
+impl SemanticFactSource {
+    pub(in crate::code_rule_dsl) fn has_nested_user_rule(&self) -> bool {
+        match self {
+            Self::Binding { test, .. } => {
+                test.site.is_some()
+                    || test.value.is_some()
+                    || test.annotation.is_some()
+                    || test.occurrence.is_some()
+            }
+            Self::Binds { test, .. } => {
+                test.site.is_some()
+                    || test.value.is_some()
+                    || test.annotation.is_some()
+                    || test.occurrence.is_some()
+                    || test.redefines.as_ref().is_some_and(|redefines| {
+                        redefines.site.is_some()
+                            || redefines.value.is_some()
+                            || redefines.annotation.is_some()
+                    })
+            }
+            Self::FormatArgs(test) => test.unused.is_some() || test.missing.is_some(),
+            Self::Resolves(_) | Self::Arguments(_) | Self::Layout(_) | Self::Calls(_) => false,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) struct SemanticFactDescriptor {
+    pub(in crate::code_rule_dsl) source: SemanticFactSource,
+    pub(in crate::code_rule_dsl) input_labels: Vec<String>,
+    pub(in crate::code_rule_dsl) call_through: Option<super::super::calls::Through>,
+}
+
+impl std::fmt::Debug for SemanticFactDescriptor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SemanticFactDescriptor")
+            .finish_non_exhaustive()
+    }
 }
 
 /// A bounded value-reading request. It contains no predicate and does not decide a rule. The
@@ -159,10 +220,12 @@ pub(in crate::code_rule_dsl) struct PackedDemand {
     programs: Vec<Program>,
     producer_kinds: Vec<ProducerKind>,
     value_facts: Vec<Option<ValueFactDescriptor>>,
+    semantic_facts: Vec<Option<SemanticFactDescriptor>>,
     files: Vec<TapeDoc>,
     anchors: Vec<Vec<Vec<u32>>>,
     task_grid: Vec<Vec<bool>>,
     result_limits: Vec<u32>,
+    failure_injections: HashMap<usize, String>,
 }
 
 impl PackedDemand {
@@ -184,15 +247,18 @@ impl PackedDemand {
         }
         let producer_kinds = vec![ProducerKind::Terminal; programs.len()];
         let value_facts = vec![None; programs.len()];
+        let semantic_facts = vec![None; programs.len()];
         Ok(Self {
             backend,
             programs,
             producer_kinds,
             value_facts,
+            semantic_facts,
             files,
             anchors,
             task_grid,
             result_limits,
+            failure_injections: HashMap::new(),
         })
     }
 
@@ -239,6 +305,39 @@ impl PackedDemand {
         Ok(self)
     }
 
+    pub(in crate::code_rule_dsl) fn with_semantic_facts(
+        mut self,
+        semantic_facts: Vec<Option<SemanticFactDescriptor>>,
+    ) -> Result<Self, PackedError> {
+        if semantic_facts.len() != self.programs.len()
+            || semantic_facts
+                .iter()
+                .enumerate()
+                .any(|(producer, descriptor)| {
+                    descriptor.is_some()
+                        != (self.producer_kinds[producer] == ProducerKind::SemanticFact)
+                })
+        {
+            return Err(PackedError::InvalidAnchor);
+        }
+        self.semantic_facts = semantic_facts;
+        Ok(self)
+    }
+
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn with_failure_injection(
+        mut self,
+        producer: usize,
+        code: String,
+    ) -> Result<Self, PackedError> {
+        if producer >= self.programs.len()
+            || self.failure_injections.insert(producer, code).is_some()
+        {
+            return Err(PackedError::InvalidAnchor);
+        }
+        Ok(self)
+    }
+
     fn execute(self, token: i64) -> Vec<PackedRow> {
         let execution = match execute_with_backend_packed_result_limits(
             self.backend,
@@ -268,11 +367,352 @@ impl PackedDemand {
                 return rows;
             }
         };
-        let mut rows = Vec::new();
+        let mut rows: Vec<PackedRow> = Vec::new();
         let mut batch_error = None;
         for file in 0..execution.file_count() {
             for program in 0..execution.program_count() {
                 if !self.task_grid[file][program] {
+                    continue;
+                }
+                if let Some(code) = self.failure_injections.get(&program) {
+                    batch_error.get_or_insert_with(|| code.clone());
+                    rows.push(PackedRow::producer_status(
+                        token,
+                        file,
+                        program,
+                        false,
+                        None,
+                        Some(code.clone()),
+                    ));
+                    continue;
+                }
+                if self.producer_kinds[program] == ProducerKind::SemanticFact {
+                    use super::semantic_facts::{Target, slot};
+                    let descriptor = self.semantic_facts[program]
+                        .as_ref()
+                        .expect("a verified semantic producer has its descriptor");
+                    let parsed = AstGrep::doc(self.files[file].clone());
+                    let _scope = super::super::matcher::FileScopeSlot::install(
+                        Vec::new(),
+                        None,
+                        !parsed.root().get_doc().syntax_error_ranges().is_empty(),
+                    );
+                    let semantic_row_start = rows.len();
+                    let semantic_capacity_failed = std::cell::Cell::new(false);
+                    let call_summary = match &descriptor.source {
+                        SemanticFactSource::Calls(test) => Some(
+                            super::super::calls::summarize(
+                                parsed.root(),
+                                test.language,
+                                "",
+                                None,
+                                !parsed.root().get_doc().syntax_error_ranges().is_empty(),
+                                self.files[file].transducer_source().len(),
+                                None,
+                            )
+                            .0,
+                        ),
+                        _ => None,
+                    };
+                    super::super::matcher::with_file_memo(&parsed, || {
+                        let root = parsed.root();
+                        let tape = root.get_doc();
+                        for (task_index, ordinal) in
+                            self.anchors[file][program].iter().copied().enumerate()
+                        {
+                            let node = parsed.adopt(tape.node(ordinal));
+                            let capture_sets = if descriptor.input_labels.is_empty() {
+                                vec![Vec::new()]
+                            } else {
+                                let matched = rows
+                                    .iter()
+                                    .filter(|row| {
+                                        row.row_kind == RowKind::TerminalMatch
+                                            && row.file_index == Some(file as i64)
+                                            && row.node == Some(i64::from(ordinal))
+                                    })
+                                    .filter_map(|row| Some((row.producer_id?, row.match_index?)))
+                                    .collect::<Vec<_>>();
+                                descriptor.input_labels.iter().fold(
+                                    vec![Vec::new()],
+                                    |environments, label| {
+                                        let alternatives = matched
+                                            .iter()
+                                            .map(|&(producer, matched)| {
+                                                rows.iter()
+                                                    .filter(|row| {
+                                                        row.row_kind == RowKind::Capture
+                                                            && row.file_index == Some(file as i64)
+                                                            && row.producer_id == Some(producer)
+                                                            && row.match_index == Some(matched)
+                                                            && row.capture_label.as_ref()
+                                                                == Some(label)
+                                                    })
+                                                    .cloned()
+                                                    .collect::<Vec<_>>()
+                                            })
+                                            .filter(|captures| !captures.is_empty())
+                                            .collect::<Vec<_>>();
+                                        environments
+                                            .into_iter()
+                                            .flat_map(|environment| {
+                                                alternatives.iter().map(move |alternative| {
+                                                    let mut combined = environment.clone();
+                                                    combined.extend(alternative.iter().cloned());
+                                                    combined
+                                                })
+                                            })
+                                            .collect()
+                                    },
+                                )
+                            };
+                            for (environment_index, captures) in
+                                capture_sets.into_iter().enumerate()
+                            {
+                                let environment_key = (environment_index as i64) << 32;
+                                let mut environment = ast_grep_core::meta_var::MetaVarEnv::new();
+                                for label in &descriptor.input_labels {
+                                    let found = captures
+                                        .iter()
+                                        .filter(|capture| {
+                                            capture.capture_label.as_ref() == Some(label)
+                                        })
+                                        .filter_map(|capture| {
+                                            let node = u32::try_from(capture.node?).ok()?;
+                                            Some(parsed.adopt(tape.node(node)))
+                                        })
+                                        .collect::<Vec<_>>();
+                                    if captures.iter().any(|capture| {
+                                        capture.capture_label.as_ref() == Some(label)
+                                            && capture.capture_kind == Some(2)
+                                    }) {
+                                        environment.insert_multi(label, found);
+                                    } else if let Some(found) = found.into_iter().next() {
+                                        let _ = environment.insert(label, found);
+                                    }
+                                }
+                                let mut facts = super::super::matcher::producer_facts(
+                                    &descriptor.source,
+                                    node.clone(),
+                                    &environment,
+                                );
+                                if let (
+                                    SemanticFactSource::Calls(test),
+                                    Some(summary),
+                                    Some(through),
+                                ) = (&descriptor.source, &call_summary, descriptor.call_through)
+                                {
+                                    use super::super::calls::summary::Callee;
+                                    use super::super::language::Family;
+                                    use super::super::language::adapter::{
+                                        Adapter, CallRules, with_adapter,
+                                    };
+                                    facts.rows.clear();
+                                    let callee = with_adapter!(Family::of(test.language), A => <<A as Adapter>::Calls as CallRules>::callee_at(
+                                        &node,
+                                        summary,
+                                        || super::super::matcher::calls_tables(&node, test.language),
+                                    ));
+                                    match callee {
+                                        Some(Some(Callee::Name(name))) => {
+                                            let mut pending = summary
+                                                .defs
+                                                .iter()
+                                                .enumerate()
+                                                .filter(|(_, definition)| {
+                                                    summary.name(definition.name) == name
+                                                })
+                                                .map(|(index, _)| index)
+                                                .collect::<Vec<_>>();
+                                            let mut reached = std::collections::BTreeSet::new();
+                                            while let Some(index) = pending.pop() {
+                                                if !reached.insert(index) {
+                                                    continue;
+                                                }
+                                                let definition = &summary.defs[index];
+                                                if !through.allows(definition.flags) {
+                                                    continue;
+                                                }
+                                                for (_, target) in summary
+                                                    .edges
+                                                    .iter()
+                                                    .filter(|(caller, _)| *caller == index as u32)
+                                                {
+                                                    let target = summary.name(*target);
+                                                    pending.extend(
+                                                        summary
+                                                            .defs
+                                                            .iter()
+                                                            .enumerate()
+                                                            .filter(|(_, candidate)| {
+                                                                summary.name(candidate.name)
+                                                                    == target
+                                                            })
+                                                            .map(|(index, _)| index),
+                                                    );
+                                                }
+                                            }
+                                            if reached.is_empty() {
+                                                continue;
+                                            }
+                                            facts.gate(1, Target::None);
+                                            for index in reached {
+                                                let definition = &summary.defs[index];
+                                                let target = root.dfs().find(|candidate| {
+                                                    candidate.range().start
+                                                        == definition.start as usize
+                                                        && candidate.range().end
+                                                            == definition.end as usize
+                                                });
+                                                if let Some(target) = target {
+                                                    facts.push(
+                                                        slot::CALL_TARGET,
+                                                        0,
+                                                        1,
+                                                        Target::Node(target),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        Some(Some(Callee::Open)) | None => {
+                                            facts.gate(-1, Target::None);
+                                        }
+                                        Some(None) => {}
+                                    }
+                                }
+                                let has_gate =
+                                    facts.rows.iter().any(|fact| fact.slot == slot::GATE);
+                                for fact in facts.rows {
+                                    let (related, kind) = match fact.target {
+                                        Target::None => (None, None),
+                                        Target::Tree(tree, table) => {
+                                            let _ = table;
+                                            (None, Some(tree.root_kind()))
+                                        }
+                                        Target::Node(target) => (
+                                            u32::try_from(target.node_id()).ok(),
+                                            Some(target.kind_id()),
+                                        ),
+                                        Target::TreeNode(tree, node_id) => {
+                                            (None, tree.node_kind(node_id))
+                                        }
+                                    };
+                                    let output_label = (fact.slot == slot::ARGUMENT).then(|| {
+                                        let SemanticFactSource::Arguments(arguments) =
+                                            &descriptor.source
+                                        else {
+                                            unreachable!(
+                                                "argument rows have an argument descriptor"
+                                            )
+                                        };
+                                        arguments.bind[fact.key as usize].0.clone()
+                                    });
+                                    let fact_key = environment_key | fact.key;
+                                    let mut row = PackedRow::semantic_fact(
+                                        token,
+                                        file,
+                                        program,
+                                        task_index,
+                                        ordinal,
+                                        fact.slot,
+                                        fact_key,
+                                        fact.pos,
+                                        fact.flag,
+                                        related,
+                                        kind,
+                                        output_label,
+                                    );
+                                    if let Some(related) = related {
+                                        let span = tape.transducer_span(related);
+                                        row.source_text = tape
+                                            .transducer_source()
+                                            .get(span)
+                                            .map(|text| String::from_utf8_lossy(text).into_owned());
+                                        row.structural_key =
+                                            Some(tape.transducer_structural_key(related));
+                                        row.named_leaf =
+                                            Some(i64::from(tape.transducer_is_named_leaf(related)));
+                                        row.capture_named = Some(i64::from(
+                                            tape.transducer_flags(related)
+                                                & super::super::packed::NAMED
+                                                != 0,
+                                        ));
+                                    }
+                                    if rows.len() - semantic_row_start
+                                        >= self.result_limits[program] as usize
+                                    {
+                                        semantic_capacity_failed.set(true);
+                                        break;
+                                    }
+                                    rows.push(row);
+                                }
+                                if has_gate {
+                                    for capture in &captures {
+                                        let Some(related) =
+                                            capture.node.and_then(|node| u32::try_from(node).ok())
+                                        else {
+                                            continue;
+                                        };
+                                        if rows.len() - semantic_row_start
+                                            >= self.result_limits[program] as usize
+                                        {
+                                            semantic_capacity_failed.set(true);
+                                            break;
+                                        }
+                                        let mut row = PackedRow::semantic_fact(
+                                            token,
+                                            file,
+                                            program,
+                                            task_index,
+                                            ordinal,
+                                            slot::INPUT_BINDING,
+                                            environment_key,
+                                            capture.capture_occurrence.unwrap_or(0),
+                                            1,
+                                            Some(related),
+                                            Some(tape.transducer_kind(related)),
+                                            capture.capture_label.clone(),
+                                        );
+                                        row.source_text = capture.source_text.clone();
+                                        row.structural_key = capture.structural_key.clone();
+                                        row.named_leaf = capture.named_leaf;
+                                        row.capture_named = capture.capture_named;
+                                        row.capture_kind = capture.capture_kind;
+                                        row.equality_occurrence = capture.equality_occurrence;
+                                        rows.push(row);
+                                    }
+                                }
+                                if semantic_capacity_failed.get() {
+                                    break;
+                                }
+                            }
+                            if semantic_capacity_failed.get() {
+                                break;
+                            }
+                        }
+                    });
+                    if semantic_capacity_failed.get() {
+                        rows.truncate(semantic_row_start);
+                        let code = "semantic-fact-capacity".to_owned();
+                        batch_error.get_or_insert_with(|| code.clone());
+                        rows.push(PackedRow::producer_status(
+                            token,
+                            file,
+                            program,
+                            false,
+                            None,
+                            Some(code),
+                        ));
+                    } else {
+                        rows.push(PackedRow::producer_status(
+                            token,
+                            file,
+                            program,
+                            true,
+                            Some(true),
+                            None,
+                        ));
+                    }
                     continue;
                 }
                 if self.producer_kinds[program] == ProducerKind::ValueFact {
@@ -635,6 +1075,20 @@ struct CaptureData {
     end_byte: usize,
 }
 
+#[cfg(test)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::code_rule_dsl) struct TestFactRow {
+    pub(in crate::code_rule_dsl) producer: i64,
+    pub(in crate::code_rule_dsl) node: i64,
+    pub(in crate::code_rule_dsl) related: Option<i64>,
+    pub(in crate::code_rule_dsl) slot: i64,
+    pub(in crate::code_rule_dsl) key: i64,
+    pub(in crate::code_rule_dsl) position: i64,
+    pub(in crate::code_rule_dsl) flag: Option<i64>,
+    pub(in crate::code_rule_dsl) target_kind: Option<i64>,
+    pub(in crate::code_rule_dsl) label: Option<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::code_rule_dsl) struct PackedRow {
     batch: i64,
@@ -784,6 +1238,36 @@ impl PackedRow {
         row.fact_kind = Some(1);
         row.verdict = verdict.map(i64::from);
         row.text_value = text;
+        row
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn semantic_fact(
+        batch: i64,
+        file: usize,
+        producer: usize,
+        task_index: usize,
+        root: u32,
+        slot: u16,
+        key: i64,
+        position: i64,
+        flag: i64,
+        related_node: Option<u32>,
+        related_kind: Option<u16>,
+        output_label: Option<String>,
+    ) -> Self {
+        let mut row = Self::blank(batch, RowKind::Fact);
+        row.file_index = Some(file as i64);
+        row.producer_id = Some(producer as i64);
+        row.task_index = Some(task_index as i64);
+        row.match_index = Some(key);
+        row.capture_index = Some(position);
+        row.node = Some(root as i64);
+        row.related_node = related_node.map(i64::from);
+        row.fact_kind = Some(i64::from(slot));
+        row.verdict = Some(flag);
+        row.capture_kind = related_kind.map(i64::from);
+        row.output_label = output_label;
         row
     }
 
@@ -952,6 +1436,30 @@ impl MatchRegistry {
                 }),
             );
         token
+    }
+
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn query_fact_rows(&self, token: i64) -> Vec<TestFactRow> {
+        let Some(batch) = self.batch(token) else {
+            return Vec::new();
+        };
+        let Some(rows) = batch.rows.get() else {
+            return Vec::new();
+        };
+        rows.iter()
+            .filter(|row| row.row_kind == RowKind::Fact)
+            .map(|row| TestFactRow {
+                producer: row.producer_id.expect("a fact has a producer"),
+                node: row.node.expect("a fact has a source node"),
+                related: row.related_node,
+                slot: row.fact_kind.expect("a fact has a slot"),
+                key: row.match_index.expect("a fact has a key"),
+                position: row.capture_index.unwrap_or(0),
+                flag: row.verdict,
+                target_kind: row.capture_kind,
+                label: row.output_label.clone(),
+            })
+            .collect()
     }
 
     pub(in crate::code_rule_dsl) fn query_execution_counters(

@@ -66,7 +66,7 @@ fn named_children<'r, D: Doc>(node: &Node<'r, D>) -> Vec<Node<'r, D>> {
 }
 
 impl Arguments {
-    pub(super) fn match_node<'tree, D: Doc>(
+    pub(crate) fn match_node<'tree, D: Doc>(
         &self,
         node: Node<'tree, D>,
         env: &mut Cow<MetaVarEnv<'tree, D>>,

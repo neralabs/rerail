@@ -13,6 +13,7 @@ use super::util::{THREE_VALUED, UNKNOWN};
 use super::value::Reading;
 use crate::code_rule_dsl::identifier::python_identifier;
 use crate::code_rule_dsl::literal::{Grammar, Parsed, SubDoc, offsets};
+use crate::code_rule_dsl::transducer::semantic_facts::{Facts, Target, slot};
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::Matcher;
 use ast_grep_core::meta_var::MetaVarEnv;
@@ -879,6 +880,54 @@ fn binary(operator: &str, left: Type, right: Type) -> Type {
 
 mod printf;
 mod scanf;
+
+impl FormatArgs {
+    pub(crate) fn facts<'t, D: Doc>(&self, env: &MetaVarEnv<'t, D>, facts: &mut Facts<'t, D>) {
+        let (tree, unused, missing) = match self.prepare(env) {
+            Prepared::NoMatch => return,
+            Prepared::Unknown => {
+                facts.gate(-1, Target::None);
+                return;
+            }
+            Prepared::Sides {
+                tree,
+                unused,
+                missing,
+            } => (tree, unused, missing),
+        };
+        facts.gate(1, Target::Tree(tree.clone(), None));
+        for (candidate, known) in unused.candidates {
+            facts.push(slot::UNUSED, 0, i64::from(known), Target::Node(candidate));
+        }
+        let root = AstGrep::doc(SubDoc { tree: tree.clone() });
+        for part in root.root().dfs() {
+            if let Some((id, known)) = missing
+                .candidates
+                .iter()
+                .find(|(id, _)| *id == part.node_id())
+            {
+                facts.push(
+                    slot::MISSING,
+                    0,
+                    i64::from(*known),
+                    Target::TreeNode(tree.clone(), *id),
+                );
+            }
+        }
+        facts.push(
+            slot::INCOMPLETE,
+            0,
+            i64::from(unused.incomplete),
+            Target::None,
+        );
+        facts.push(
+            slot::INCOMPLETE,
+            0,
+            i64::from(missing.incomplete),
+            Target::None,
+        );
+    }
+}
 
 #[cfg(test)]
 mod tests {

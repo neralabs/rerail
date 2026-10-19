@@ -48,7 +48,7 @@ pub(crate) enum Through {
 impl Through {
     const ALL: [Through; 2] = [Through::Sync, Through::Any];
 
-    fn allows(self, flags: u8) -> bool {
+    pub(crate) fn allows(self, flags: u8) -> bool {
         match self {
             Through::Sync => flags & (ASYNC | CLASS) == 0,
             Through::Any => flags & CLASS == 0,

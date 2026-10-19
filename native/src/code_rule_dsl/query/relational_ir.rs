@@ -203,6 +203,20 @@ pub(super) struct ValuePredicateSpec {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SemanticRuleSpec {
+    pub(super) slot: u16,
+    pub(super) target_kind: Option<u16>,
+    pub(super) relation: Option<Box<RelationalIr>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SemanticFactSpec {
+    pub(super) producer: usize,
+    pub(super) argument_labels: Vec<String>,
+    pub(super) rules: Vec<SemanticRuleSpec>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct UtilitySpec {
     pub(super) component: String,
     pub(super) universe_producer: usize,
@@ -272,6 +286,9 @@ enum RelationNode {
     Value {
         spec: ValuePredicateSpec,
         source: Box<RelationNode>,
+    },
+    Semantic {
+        spec: SemanticFactSpec,
     },
     Utility {
         spec: UtilitySpec,
@@ -445,6 +462,14 @@ impl RelationNode {
                 source, of_rule, ..
             } => source.can_bind() || of_rule.as_deref().is_some_and(Self::can_bind),
             Self::Constrain { .. } | Self::Count { .. } => true,
+            Self::Semantic { spec } => {
+                !spec.argument_labels.is_empty()
+                    || spec.rules.iter().any(|rule| {
+                        rule.relation
+                            .as_deref()
+                            .is_some_and(|relation| relation.roots.iter().any(Self::can_bind))
+                    })
+            }
             Self::Compare { source, .. } | Self::Value { source, .. } => source.can_bind(),
             Self::Utility { source, body, .. } => source.can_bind() || body.can_bind(),
             Self::UtilityFrame { source, body, .. } => source.can_bind() || body.can_bind(),
@@ -527,6 +552,18 @@ impl RelationNode {
                 }
             }
             Self::Compare { source, .. } => source.collect_terminals(terminals),
+            Self::Semantic { spec } => {
+                if !terminals.contains(&TerminalKind::Fact) {
+                    terminals.push(TerminalKind::Fact);
+                }
+                for rule in &spec.rules {
+                    if let Some(relation) = &rule.relation {
+                        for root in &relation.roots {
+                            root.collect_terminals(terminals);
+                        }
+                    }
+                }
+            }
             Self::Value { source, .. } => {
                 source.collect_terminals(terminals);
                 if !terminals.contains(&TerminalKind::Value) {
@@ -617,6 +654,25 @@ impl RelationNode {
             Self::Compare { source, .. } => {
                 source.collect_operations(operations);
                 for operation in [SqlOperation::Bindings, SqlOperation::WhereFilter] {
+                    if !operations.contains(&operation) {
+                        operations.push(operation);
+                    }
+                }
+            }
+            Self::Semantic { spec } => {
+                for rule in &spec.rules {
+                    if let Some(relation) = &rule.relation {
+                        for root in &relation.roots {
+                            root.collect_operations(operations);
+                        }
+                    }
+                }
+                for operation in [
+                    SqlOperation::ScanFact,
+                    SqlOperation::Bindings,
+                    SqlOperation::InnerJoin,
+                    SqlOperation::CaseTruth,
+                ] {
                     if !operations.contains(&operation) {
                         operations.push(operation);
                     }
@@ -740,6 +796,7 @@ impl SqlRenderer {
                 } => self.render_count(spec, source, related, stop.as_deref()),
                 RelationNode::Compare { spec, source } => self.render_comparison(spec, source),
                 RelationNode::Value { spec, source } => self.render_value(spec, source),
+                RelationNode::Semantic { spec } => self.render_semantic(spec),
                 RelationNode::Utility { spec, source, body } => {
                     self.render_utility(spec, source, body)
                 }
@@ -1155,6 +1212,69 @@ impl SqlRenderer {
             spec.producer
         ));
         Ok(name)
+    }
+
+    fn render_semantic(&mut self, spec: &SemanticFactSpec) -> Result<String, String> {
+        let mut current = self.next_name("semantic_gate");
+        let mut labels = spec
+            .argument_labels
+            .iter()
+            .enumerate()
+            .map(|(key, label)| {
+                format!(
+                    "SELECT json_object('label', {}, 'occurrence', 0, 'node', argument.related_node, 'text', argument.source_text, 'structure', argument.structural_key, 'leaf', argument.named_leaf, 'kind', 1, 'named', argument.capture_named, 'equality_occurrence', 0) AS value FROM fact argument WHERE argument.producer_id = gate.producer_id AND argument.file_index = gate.file_index AND argument.node = gate.node AND argument.fact_kind = 15 AND argument.match_index = {key}",
+                    Self::sql_text(label)
+                )
+            })
+            .collect::<Vec<_>>();
+        labels.push(
+            "SELECT json_object('label', input.output_label, 'occurrence', input.capture_occurrence, 'node', input.related_node, 'text', input.source_text, 'structure', input.structural_key, 'leaf', input.named_leaf, 'kind', input.capture_kind, 'named', input.capture_named, 'equality_occurrence', input.equality_occurrence) AS value FROM fact input WHERE input.producer_id = gate.producer_id AND input.file_index = gate.file_index AND input.node = gate.node AND input.fact_kind = 17 AND input.match_index = gate.match_index"
+                .to_owned(),
+        );
+        let bindings = if labels.is_empty() {
+            "json('[]')".to_owned()
+        } else {
+            format!(
+                "COALESCE((SELECT json_group_array(json(value)) FROM ({})), json('[]'))",
+                labels.join(" UNION ALL ")
+            )
+        };
+        let gate_columns = qualified_row_columns_with_verdict(
+            "gate",
+            "CASE WHEN gate.verdict < 0 THEN NULL ELSE gate.verdict END",
+        );
+        self.ctes.push(format!(
+            "{current} AS (\n  SELECT {gate_columns}, {bindings} AS bindings, '' AS choice_order FROM fact gate\n  JOIN producer_status status USING (producer_id, file_index)\n  WHERE gate.producer_id = {} AND gate.fact_kind = 0 AND status.complete = 1 AND gate.verdict <> 0\n)",
+            spec.producer
+        ));
+        for rule in &spec.rules {
+            let name = self.next_name("semantic_rule");
+            if let Some(kind) = rule.target_kind {
+                let columns = qualified_row_columns("source");
+                self.ctes.push(format!(
+                    "{name} AS (\n  SELECT DISTINCT {columns}, source.bindings, source.choice_order FROM {current} source\n  JOIN fact target ON target.producer_id = {} AND target.file_index = source.file_index AND target.node = source.node AND target.match_index = source.match_index AND target.fact_kind = {} AND target.verdict = 1 AND target.capture_kind = {kind}\n)",
+                    spec.producer, rule.slot
+                ));
+            } else {
+                let relation = rule
+                    .relation
+                    .as_ref()
+                    .ok_or("semantic target rule has no relational operand")?;
+                let [root] = relation.roots.as_slice() else {
+                    return Err("semantic target rule must have one relational root".to_owned());
+                };
+                let checked = self.render(root)?;
+                let columns = qualified_row_columns("source");
+                let merged = Self::merged_bindings(&["source".to_owned(), "checked".to_owned()]);
+                let compatible = Self::binding_compatibility("source", "checked");
+                self.ctes.push(format!(
+                    "{name} AS (\n  SELECT DISTINCT {columns}, {merged} AS bindings, source.choice_order || checked.choice_order AS choice_order FROM {current} source\n  JOIN fact target ON target.producer_id = {} AND target.file_index = source.file_index AND target.node = source.node AND target.match_index = source.match_index AND target.fact_kind = {} AND target.verdict = 1\n  JOIN {checked} checked ON checked.file_index = source.file_index AND checked.node = target.related_node AND {compatible}\n)",
+                    spec.producer, rule.slot
+                ));
+            }
+            current = name;
+        }
+        Ok(current)
     }
 
     fn record_utility_attempts(&mut self, spec: &UtilitySpec, source: &str) {
@@ -1771,6 +1891,10 @@ pub(super) fn qualified_row_columns(alias: &str) -> String {
     qualified_row_columns_with_overrides(alias, &[])
 }
 
+pub(super) fn qualified_failure_columns(alias: &str) -> String {
+    qualified_row_columns_with_overrides(alias, &[("row_kind", "8")])
+}
+
 fn qualified_row_columns_with_overrides(alias: &str, overrides: &[(&str, &str)]) -> String {
     ROW_COLUMNS
         .split(", ")
@@ -1838,6 +1962,16 @@ impl RelationalIr {
                 spec,
                 source: Box::new(RelationNode::Seed),
             }],
+            terminal_kinds: Vec::new(),
+            operations: Vec::new(),
+        };
+        relation.refresh_explanation();
+        relation
+    }
+
+    pub(super) fn semantic(spec: SemanticFactSpec) -> Self {
+        let mut relation = Self {
+            roots: vec![RelationNode::Semantic { spec }],
             terminal_kinds: Vec::new(),
             operations: Vec::new(),
         };
@@ -2078,6 +2212,18 @@ impl RelationalIr {
                     (kind == TerminalKind::Value
                         && semantic_key == format!("terminal:{}", spec.producer))
                         || contains(source, kind, semantic_key)
+                }
+                RelationNode::Semantic { spec } => {
+                    (kind == TerminalKind::Fact
+                        && semantic_key == format!("terminal:{}", spec.producer))
+                        || spec.rules.iter().any(|rule| {
+                            rule.relation.as_ref().is_some_and(|relation| {
+                                relation
+                                    .roots
+                                    .iter()
+                                    .any(|root| contains(root, kind, semantic_key))
+                            })
+                        })
                 }
                 RelationNode::Utility { source, body, .. } => {
                     contains(source, kind, semantic_key) || contains(body, kind, semantic_key)
