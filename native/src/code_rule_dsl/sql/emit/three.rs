@@ -96,6 +96,7 @@ impl Emitter<'_> {
                 None => current.clone(),
             };
             self.inherit(&current, &run, &BTreeSet::new());
+            self.same_space(&current, &run);
             let out = self.op(&term.op, &run);
             let mut select = if first {
                 format!("SELECT o.k, o.file, o.node{}, o.unk", self.physical_of("o"))
@@ -147,6 +148,7 @@ impl Emitter<'_> {
             let next = self.frame("v", &select);
             let changed = self.touched(&term.op);
             self.inherit(&current, &next, &changed);
+            self.same_space(&current, &next);
             current = next;
         }
         if !terms.iter().any(|term| term.op.binds()) {
@@ -208,6 +210,7 @@ impl Emitter<'_> {
                     ),
                 );
                 self.inherit(&rest, &next, &BTreeSet::new());
+                self.same_space(&rest, &next);
                 rest = next;
             }
         }
@@ -219,7 +222,10 @@ impl Emitter<'_> {
     /// binds) and otherwise unknown where a candidate or a stop was.
     fn search(&mut self, walk: Walk, sub: &Op, binds: bool, strict: bool, input: &str) -> String {
         let candidates = self.candidates(walk, input);
+        // A non-strict search passes over unknown candidates: only a true one ends it.
+        self.first_match(&candidates, walk, !strict);
         let matched = self.op(sub, &candidates);
+        self.first_matched(&candidates, &matched);
         let opened = self.opened(walk, input, &candidates);
         let physical = self.physical.clone();
         let from = |alias: &str, test: &str| -> Vec<(String, String)> {
@@ -450,6 +456,7 @@ impl Emitter<'_> {
                     self.physical_of("f"),
                     self.zeros()
                 ));
+                self.open_space(&siblings, input, super::lineage::Derive::Probe);
                 let matched = self.op(rule, &siblings);
                 let with = format!(
                     "WITH r AS (SELECT g.pk AS pk, g.node AS node, \
@@ -492,8 +499,10 @@ impl Emitter<'_> {
                     self.zeros()
                 ),
             );
+            self.same_space(&current, &passed);
+            self.same_space(&current, &captured);
             let checked = self.op(constraint, &captured);
-            current = self.frame(
+            let next = self.frame(
                 "x",
                 &format!(
                     "SELECT {} FROM {checked} c JOIN {current} f ON f.k = c.k UNION ALL SELECT {} FROM {passed} p",
@@ -501,6 +510,8 @@ impl Emitter<'_> {
                     self.verdict("p", &[], "p.unk")
                 ),
             );
+            self.same_space(&current, &next);
+            current = next;
         }
         current
     }

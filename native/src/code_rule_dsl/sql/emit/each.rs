@@ -111,6 +111,7 @@ impl Emitter<'_> {
                 self.cols("f")
             ),
         );
+        self.same_space(input, &passed);
         let committed = self.op(commit, &passed);
         let overrides: Vec<(String, String)> = self
             .physical

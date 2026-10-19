@@ -331,6 +331,14 @@ impl Emitter<'_> {
             self.zeros()
         ));
         self.keyed_by(&keys, vec![(*key).clone()]);
+        self.open_space(
+            &keys,
+            input,
+            super::lineage::Derive::Keyed {
+                input: input.to_owned(),
+                columns: columns.clone(),
+            },
+        );
         let out = self.op(op, &keys);
         // Each input row takes its key's verdict: the key's slots as the operator left them.
         let overrides: Vec<(String, String)> = columns

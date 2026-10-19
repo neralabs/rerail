@@ -16,6 +16,7 @@
 mod each;
 mod keyed;
 mod leaves;
+mod lineage;
 mod three;
 
 use super::lower::{INTERNAL, ORIGIN};
@@ -207,6 +208,12 @@ struct Emitter<'s> {
     unique: HashMap<String, Vec<BTreeSet<SlotId>>>,
     /// The slots each operator names, by its address (`keyed::touched`).
     touched_slots: HashMap<usize, Rc<BTreeSet<SlotId>>>,
+    /// The k-space of each frame in a unit's body (`lineage`), by name.
+    space_of: HashMap<String, usize>,
+    spaces: Vec<lineage::Space>,
+    /// The unit bodies being emitted, innermost last, and the next one's id.
+    members: Vec<lineage::Member>,
+    next_member: usize,
 }
 
 /// `An+B` at a 1-based position `index`, as `nth_child::Position::holds` computes it.
@@ -255,6 +262,10 @@ impl<'s> Emitter<'s> {
                 .position(|slot| slot.scope == INTERNAL && slot.name == ORIGIN),
             unique: HashMap::new(),
             touched_slots: HashMap::new(),
+            space_of: HashMap::new(),
+            spaces: Vec::new(),
+            members: Vec::new(),
+            next_member: 0,
         }
     }
 
@@ -440,6 +451,7 @@ impl<'s> Emitter<'s> {
         };
         let changed = self.touched(op);
         self.inherit(input, &out, &changed);
+        self.same_space(input, &out);
         out
     }
 
@@ -498,6 +510,7 @@ impl<'s> Emitter<'s> {
                             ),
                         );
                         self.inherit(&rest, &next, &BTreeSet::new());
+                        self.same_space(&rest, &next);
                         rest = next;
                     }
                     outs.push(out);
@@ -522,7 +535,9 @@ impl<'s> Emitter<'s> {
             Op::Never => self.frame("x", &format!("SELECT {} FROM {input} f WHERE 0", self.cols("f"))),
             Op::Relation { walk, sub, binds } => {
                 let candidates = self.candidates(*walk, input);
+                self.first_match(&candidates, *walk, false);
                 let matched = self.op(sub, &candidates);
+                self.first_matched(&candidates, &matched);
                 if *binds {
                     // `ord` is the walk order (negated ids for descending walks): its minimum
                     // is the first match.
@@ -602,8 +617,10 @@ impl<'s> Emitter<'s> {
                             self.physical_of("f")
                         ),
                     );
+                    self.same_space(&current, &passed);
+                    self.same_space(&current, &captured);
                     let checked = self.op(constraint, &captured);
-                    current = self.frame(
+                    let next = self.frame(
                         "x",
                         &format!(
                             "SELECT {} FROM {checked} c JOIN {current} f ON f.k = c.k UNION ALL SELECT {} FROM {passed} p",
@@ -611,6 +628,8 @@ impl<'s> Emitter<'s> {
                             self.cols("p")
                         ),
                     );
+                    self.same_space(&current, &next);
+                    current = next;
                 }
                 current
             }
@@ -681,6 +700,7 @@ impl<'s> Emitter<'s> {
                         self.cols("f")
                     ),
                 );
+                self.same_space(input, &passed);
                 let committed = self.op(commit, &passed);
                 let overrides: Vec<(String, String)> = self
                     .physical
@@ -772,11 +792,15 @@ impl<'s> Emitter<'s> {
         } else if let (Some(&from), Some(origin)) = (self.evaluating.last(), self.origin)
             && units[from].scc == scc
         {
-            // A read inside the component's own loop: recorded for the acyclicity check.
-            self.statements.push(format!(
-                "INSERT INTO {NAMESPACE}e{scc} SELECT DISTINCT {from}, f.s{origin}, {unit}, d.id FROM {input} f \
-                 JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched}"
-            ));
+            // A read inside the component's own loop: recorded for the acyclicity check, from
+            // the rows the matcher evaluates (`lineage`).
+            self.record_read(
+                input,
+                format!(
+                    "INSERT INTO {NAMESPACE}e{scc} SELECT DISTINCT {from}, f.s{origin}, {unit}, d.id FROM {input} f"
+                ),
+                format!(" JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched}"),
+            );
         }
         let overrides: Vec<(String, String)> = site_columns
             .iter()
@@ -875,7 +899,9 @@ impl<'s> Emitter<'s> {
                 "DELETE FROM {reads} WHERE su = {unit} AND s IN (SELECT k FROM {keys})"
             ));
             self.evaluating.push(unit);
+            self.member_start(&keys);
             let out = self.op(&units[unit].body, &keys);
+            self.member_end();
             self.evaluating.pop();
             let fresh = format!("{NAMESPACE}n{unit}");
             let width = key_columns.len();
@@ -983,11 +1009,19 @@ impl<'s> Emitter<'s> {
 
     /// A relation's candidates from each row of `input`: a frame table with a fresh `k` per
     /// candidate and the row's bindings, plus `pk` (the row's `k`) and `ord` (the walk order:
-    /// ids, negated for descending walks).
+    /// ids, negated for descending walks). A k-space whose rows are all needed where their
+    /// parent is (`lineage`); a first-match search says it stops at its first match.
     fn candidates(&mut self, walk: Walk, input: &str) -> String {
-        if let Some(candidates) = self.leaf_candidates(walk, input) {
-            return candidates;
-        }
+        let candidates = match self.leaf_candidates(walk, input) {
+            Some(candidates) => candidates,
+            None => self.tree_candidates(walk, input),
+        };
+        self.open_space(&candidates, input, lineage::Derive::Probe);
+        candidates
+    }
+
+    /// `candidates` of a walk over the tree.
+    fn tree_candidates(&mut self, walk: Walk, input: &str) -> String {
         let at = "JOIN node fn ON fn.file = f.file AND fn.id = f.node";
         let simple = |from: &str| {
             format!("SELECT f.k AS pk, c.file AS file, c.id AS node FROM {input} f {from}")
@@ -1176,6 +1210,7 @@ impl<'s> Emitter<'s> {
                     self.physical_of("f"),
                     self.zeros()
                 ));
+                self.open_space(&siblings, input, lineage::Derive::Probe);
                 let matched = self.op(rule, &siblings);
                 let with = format!(
                     "WITH r AS (SELECT g.pk AS pk, g.node AS node, \
@@ -1230,6 +1265,7 @@ impl<'s> Emitter<'s> {
             "i",
             &format!("SELECT {} FROM {input} f", self.select("f", &overrides)),
         );
+        self.same_space(input, &framed);
         let bound = self.op(body, &framed);
         if returns.is_empty() {
             return bound;

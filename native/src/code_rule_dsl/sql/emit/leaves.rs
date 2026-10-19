@@ -111,10 +111,12 @@ impl Emitter<'_> {
             let out = self.op(item, &current);
             unknown.push(format!("SELECT k FROM {out} WHERE unk = 1"));
             current = if index + 1 < items.len() {
-                self.frame(
+                let next = self.frame(
                     "y",
                     &format!("SELECT {} FROM {out} f WHERE f.unk = 0", self.cols("f")),
-                )
+                );
+                self.same_space(&out, &next);
+                next
             } else {
                 out
             };
@@ -301,6 +303,7 @@ impl Emitter<'_> {
                 "SELECT {entry} FROM {input} f JOIN {parsed} p ON p.k = f.k WHERE p.unk = 0 AND p.tree >= 0"
             ),
         );
+        self.same_space(input, &roots);
         let matched = self.op(body, &roots);
         let (with, joins, exported) = self.export_reads("b", "f", tree, exports);
         let with = if with.is_empty() {
@@ -357,6 +360,7 @@ impl Emitter<'_> {
             &with,
             &format!("SELECT {select} FROM {input} f{joins}"),
         );
+        self.same_space(input, &at_host);
         let held = self.op(rule, &at_host);
         let unk = if self.three { "o.unk" } else { "0" };
         self.frame(
