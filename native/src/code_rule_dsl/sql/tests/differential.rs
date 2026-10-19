@@ -1578,6 +1578,9 @@ pub(super) fn inner_scans(plan: &[(i64, i64, String)]) -> Vec<String> {
                 let (number, codes) = index.split_once(':').unwrap_or((index, ""));
                 if codes.is_empty() {
                     number.trim().parse::<i64>().unwrap_or(0) != 0
+                } else if codes.starts_with('@') {
+                    // A frame's lookup on its constrained columns (`frames`).
+                    true
                 } else {
                     ["i=", "p=", "i>", "i}", "i<", "i{", "l}", "l>"]
                         .iter()

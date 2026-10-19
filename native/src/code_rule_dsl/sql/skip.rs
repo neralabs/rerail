@@ -4,11 +4,13 @@
 //! it runs the statement. A statement the rule proves empty writes nothing, so passing over it
 //! leaves its output as empty as running it would, and the skip carries on to what reads it.
 //!
-//! The counts are exact: a counted table is written only by statements that record how
+//! The counts are exact. A frame's rows are its buffers' length (`frames::FrameStore::rows`):
+//! every insert and clear goes through them. A table that stays a B-tree (one some statement
+//! updates or deletes from by a condition) is written only by statements that record how
 //! (`emit::Writes`): an `INSERT` adds the rows `sqlite3_changes()` reports, a `DELETE` with a
-//! condition removes them, an emptying `DELETE` (a clear, the session's or a loop frame's) sets 0,
-//! and an `UPDATE` changes no count. Tables the session does not count (`node`, the terminals,
-//! `runs`, `roots`) are never a rule's input: a statement that reads only them always runs.
+//! condition removes them, an emptying `DELETE` sets 0, and an `UPDATE` changes no count. Tables
+//! the session does not count (`node`, the terminals, `runs`, `roots`) are never a rule's input:
+//! a statement that reads only them always runs.
 //!
 //! Beyond single statements (`exec::Runner`):
 //! - **Clause and stage runs.** Every other statement of a clause or stage reads, through its
@@ -26,7 +28,8 @@
 //! `0`, runs everything (the counts are kept, unread).
 
 use super::emit::{Effect, Rule, Writes};
-use std::sync::LazyLock;
+use super::frames::FrameStore;
+use std::sync::{Arc, LazyLock};
 
 /// What `RERAIL_SQL_SKIP` asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,14 +48,36 @@ pub(super) static MODE: LazyLock<Mode> =
 
 /// The rows of every counted table as the batch's statements left them, and each recursion
 /// block's mark: its units' demand rows when its last run ended.
-#[derive(Default)]
 pub(super) struct Counts {
-    pub(super) rows: Vec<i64>,
+    /// A B-tree's rows, by counted table (a frame's entry is unused).
+    rows: Vec<i64>,
+    /// The frame's name, by counted table, where it is a frame of `store`.
+    frames: Vec<Option<String>>,
+    store: Arc<FrameStore>,
     pub(super) marks: Vec<i64>,
 }
 
 impl Counts {
-    /// Accounts a statement that changed `changed` rows.
+    /// The counts of the tables `frames` names (each a frame of `store`, or a B-tree), all empty,
+    /// and `marks` blocks, none run.
+    pub(super) fn new(store: Arc<FrameStore>, frames: Vec<Option<String>>, marks: usize) -> Self {
+        Self {
+            rows: vec![0; frames.len()],
+            frames,
+            store,
+            marks: vec![0; marks],
+        }
+    }
+
+    /// The rows `table` holds.
+    pub(super) fn rows(&self, table: usize) -> i64 {
+        match &self.frames[table] {
+            Some(name) => self.store.rows(name).expect("a registered frame") as i64,
+            None => self.rows[table],
+        }
+    }
+
+    /// Accounts a statement that changed `changed` rows (a frame counts its own).
     pub(super) fn wrote(&mut self, writes: &Writes<usize>, changed: usize) {
         match *writes {
             Writes::None => {}
@@ -62,7 +87,7 @@ impl Counts {
         }
     }
 
-    /// Every table empty and every block unrun: a batch that failed leaves no row.
+    /// Every B-tree empty and every block unrun: a batch that failed leaves no row.
     pub(super) fn reset(&mut self) {
         self.rows.fill(0);
         self.marks.fill(0);
@@ -70,7 +95,7 @@ impl Counts {
 
     /// The rows of `tables`, summed.
     pub(super) fn sum(&self, tables: &[usize]) -> i64 {
-        tables.iter().map(|&table| self.rows[table]).sum()
+        tables.iter().map(|&table| self.rows(table)).sum()
     }
 }
 
@@ -93,9 +118,10 @@ fn exactly(rows: i64) -> Outcome {
     }
 }
 
-/// The dispatch from an effect's rule to what the statement will change.
-pub(super) fn outcome(effect: &Effect<usize>, rows: &[i64]) -> Outcome {
-    let empty = |table: &usize| rows[*table] == 0;
+/// The dispatch from an effect's rule to what the statement will change, over the rows each
+/// counted table holds (`rows`).
+pub(super) fn outcome(effect: &Effect<usize>, rows: impl Fn(usize) -> i64) -> Outcome {
+    let empty = |table: &usize| rows(*table) == 0;
     match effect.rule {
         // A root frame, a seed, a marker: reads only what the session does not count.
         Rule::AlwaysRun => Outcome::Unknown,
@@ -124,13 +150,13 @@ pub(super) fn outcome(effect: &Effect<usize>, rows: &[i64]) -> Outcome {
             if empty(primary) {
                 Outcome::Empty
             } else if probes.iter().all(empty) {
-                Outcome::Exactly(rows[*primary])
+                Outcome::Exactly(rows(*primary))
             } else {
                 Outcome::Unknown
             }
         }
         // The input's rows, each once.
-        Rule::CopyOf => exactly(rows[effect.inputs[0]]),
+        Rule::CopyOf => exactly(rows(effect.inputs[0])),
     }
 }
 
@@ -163,7 +189,7 @@ mod tests {
     #[test]
     fn each_rule_reads_its_inputs_rows() {
         let rows = [0, 3, 5];
-        let of = |rule, inputs: &[usize]| outcome(&effect(rule, inputs), &rows);
+        let of = |rule, inputs: &[usize]| outcome(&effect(rule, inputs), |table| rows[table]);
         assert_eq!(of(Rule::AlwaysRun, &[0]), Outcome::Unknown);
         assert_eq!(of(Rule::EmptyIfAnyInputEmpty, &[1, 0]), Outcome::Empty);
         assert_eq!(of(Rule::EmptyIfAnyInputEmpty, &[1, 2]), Outcome::Unknown);
@@ -178,19 +204,16 @@ mod tests {
 
     #[test]
     fn counts_follow_what_statements_wrote() {
-        let mut counts = Counts {
-            rows: vec![0; 2],
-            marks: vec![0],
-        };
+        let mut counts = Counts::new(Arc::default(), vec![None, None], 1);
         counts.wrote(&Writes::Insert(0), 4);
         counts.wrote(&Writes::Delete(0), 1);
         counts.wrote(&Writes::Insert(1), 2);
         counts.wrote(&Writes::None, 9);
-        assert_eq!(counts.rows, [3, 2]);
+        assert_eq!((counts.rows(0), counts.rows(1)), (3, 2));
         counts.wrote(&Writes::Clear(1), 2);
         assert_eq!(counts.sum(&[0, 1]), 3);
         counts.reset();
-        assert_eq!(counts.rows, [0, 0]);
+        assert_eq!(counts.sum(&[0, 1]), 0);
     }
 
     #[test]

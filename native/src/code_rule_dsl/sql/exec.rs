@@ -3,6 +3,7 @@
 //! for the native witness rendering.
 
 use super::emit::{self, Effect, Emitted, Writes};
+use super::frames::{self, FrameStore};
 use super::lower::{ProgramBuilder, Stage};
 use super::nodes::{NodeFacts, NodeTable};
 use super::plan::{SlotKind, Statement, Unsupported};
@@ -607,10 +608,15 @@ struct Step {
 }
 
 impl Step {
-    /// Empties `table` (the counted table `id`), where it holds rows.
-    fn clear(id: usize, table: &str) -> Self {
+    /// Empties `table` (the counted table `id`), where it holds rows: a frame through its
+    /// buffers (`frames::CLEAR`), a B-tree by its `DELETE`.
+    fn clear(id: usize, table: &str, frame: bool) -> Self {
         Self {
-            sql: format!("DELETE FROM {table}"),
+            sql: if frame {
+                format!("{}{table}", frames::CLEAR)
+            } else {
+                format!("DELETE FROM {table}")
+            },
             effect: Effect {
                 rule: emit::Rule::EmptyIfAnyInputEmpty,
                 inputs: vec![id],
@@ -676,16 +682,21 @@ struct Prepared {
 }
 
 /// The counted tables of a session, by name: every table its statements create, each stage's
-/// and each enumeration's.
+/// and each enumeration's; `frames`, by id, each one's name where it is a frame.
 #[derive(Default)]
 struct Tables {
     ids: HashMap<String, usize>,
+    frames: Vec<Option<String>>,
 }
 
 impl Tables {
-    fn add(&mut self, name: &str) -> usize {
+    fn add(&mut self, name: &str, frame: bool) -> usize {
         let next = self.ids.len();
-        *self.ids.entry(name.to_owned()).or_insert(next)
+        let id = *self.ids.entry(name.to_owned()).or_insert(next);
+        if id == next {
+            self.frames.push(frame.then(|| name.to_owned()));
+        }
+        id
     }
 
     fn id(&self, name: &str) -> usize {
@@ -746,13 +757,17 @@ fn extract_blocks(
     out
 }
 
-/// Creates the frame tables (and a recursion unit's tables and indexes) of `emitted` now, each a
-/// counted table of `tables`, and fixes the text of the rest, loops' markers included
-/// (`Runner::steps`), with their effects over `tables`. The statements read their root frame's
-/// files and roots under the run id `run`; their tables are named with `namespace`, an
-/// enumeration's with `each`.
+/// Creates the tables (and a recursion unit's indexes) of `emitted` now, each a counted table of
+/// `tables`: a table its statements only append to and empty whole is a frame of `frames`
+/// (`frames::rewrite`), any other a B-tree, never both (`btrees`). Fixes the text of the rest,
+/// loops' markers included (`Runner::steps`), with their effects over `tables`. The statements
+/// read their root frame's files and roots under the run id `run`; their tables are named with
+/// `namespace`, an enumeration's with `each`.
+#[allow(clippy::too_many_arguments)]
 fn prepare(
     connection: &Connection,
+    frames: &Arc<FrameStore>,
+    btrees: &mut HashSet<String>,
     tables: &mut Tables,
     marks: &mut usize,
     emitted: &Emitted,
@@ -767,17 +782,45 @@ fn prepare(
             .replace(emit::NAMESPACE, namespace)
             .replace(emit::EACH, each)
     };
+    let statements: Vec<String> = emitted
+        .statements
+        .iter()
+        .map(|statement| {
+            named(statement)
+                .replace(emit::FILES, &files)
+                .replace(emit::ROOTS, &roots)
+        })
+        .collect();
+    // `rewrite` keeps every statement but the schema's in order (a frame's clear for its
+    // `DELETE`): their effects, in that order.
+    let schema = |sql: &str| sql.starts_with("CREATE ");
+    let mut effects = statements
+        .iter()
+        .zip(&emitted.effects)
+        .filter(|(sql, _)| !schema(sql))
+        .map(|(_, effect)| effect)
+        .collect::<Vec<_>>()
+        .into_iter();
     let mut steps = Vec::new();
     let mut clear = Vec::new();
     let mut cleared = HashSet::new();
     let mut stages = Vec::new();
-    for (statement, effect) in emitted.statements.iter().zip(&emitted.effects) {
-        let sql = named(statement)
-            .replace(emit::FILES, &files)
-            .replace(emit::ROOTS, &roots);
+    for sql in frames::rewrite(statements) {
         stages_read(&sql, &mut stages);
         if sql.starts_with("CREATE INDEX IF NOT EXISTS ") {
             connection.execute_batch(&sql)?;
+            continue;
+        }
+        if let Some(declaration) = sql.strip_prefix(frames::FRAME) {
+            let name = frames.register(connection, declaration)?;
+            if btrees.contains(name) {
+                return Err(SqlError::Sql(format!(
+                    "{name} is both a frame and a B-tree"
+                )));
+            }
+            if cleared.insert(name.to_owned()) {
+                clear.push(Step::clear(tables.add(name, true), name, true));
+            }
             continue;
         }
         match sql.strip_prefix("CREATE TEMP TABLE ") {
@@ -785,13 +828,20 @@ fn prepare(
                 connection.execute_batch(&sql)?;
                 let table = table.strip_prefix("IF NOT EXISTS ").unwrap_or(table);
                 let name = table.split(['(', ' ']).next().unwrap_or_default();
+                if frames.contains(name) {
+                    return Err(SqlError::Sql(format!(
+                        "{name} is both a frame and a B-tree"
+                    )));
+                }
+                btrees.insert(name.to_owned());
                 if cleared.insert(name.to_owned()) {
-                    clear.push(Step::clear(tables.add(name), name));
+                    clear.push(Step::clear(tables.add(name, false), name, false));
                 }
             }
-            None => steps.push((sql, effect)),
+            None => steps.push((sql, effects.next().expect("an effect per statement"))),
         }
     }
+    assert!(effects.next().is_none(), "a statement per effect");
     // Once every table is created: a block's marker names its units' demand tables, which the
     // loop creates after it.
     let steps: Vec<Step> = steps
@@ -866,7 +916,7 @@ const INSERT_ROOT: &str = "INSERT OR IGNORE INTO roots(run, file, node) VALUES (
 /// every statement's text fixed when the session starts, so a batch only empties and refills
 /// tables through cached prepared statements, and never changes the schema. The files and roots a
 /// statement's root frame reads are rows of `runs` and `roots`, under the statement's run id.
-/// `counts`: every counted table's rows (`skip`).
+/// `frames`: the frame tables' buffers (`frames`); `counts`: every counted table's rows (`skip`).
 pub(in crate::code_rule_dsl) struct Session {
     connection: Connection,
     slot: Arc<BatchSlot>,
@@ -874,6 +924,7 @@ pub(in crate::code_rule_dsl) struct Session {
     stages: Vec<(GrammarDialect, Prepared)>,
     clauses: Vec<(Prepared, Vec<CaptureColumn>)>,
     stats: Stats,
+    frames: Arc<FrameStore>,
     counts: Counts,
 }
 
@@ -881,6 +932,7 @@ impl Session {
     fn new(compiled: &Compiled) -> Result<Self, SqlError> {
         let slot = Arc::new(BatchSlot::default());
         let connection = connect(&slot)?;
+        let frames = Arc::new(FrameStore::default());
         connection.execute_batch(
             "PRAGMA temp_store = MEMORY; \
              CREATE TEMP TABLE runs(run INTEGER NOT NULL, file INTEGER NOT NULL, \
@@ -889,18 +941,24 @@ impl Session {
              node INTEGER NOT NULL, PRIMARY KEY (run, file, node)) WITHOUT ROWID;",
         )?;
         let mut tables = Tables::default();
+        let mut btrees = HashSet::new();
         let mut marks = 0;
         let mut stages = Vec::with_capacity(compiled.stages.len());
         for (index, stage) in compiled.stages.iter().enumerate() {
             let table = emit::stage_table(index);
             // A three-valued stage keeps the nodes it is unknown at too, with `unk`; a two-valued
             // stage's are all 0.
-            connection.execute_batch(&format!(
-                "CREATE TEMP TABLE {table}(file INTEGER, node INTEGER, unk INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (file, node)) WITHOUT ROWID"
-            ))?;
-            let id = tables.add(&table);
+            frames.register(
+                &connection,
+                &format!(
+                    "{table}(file INTEGER, node INTEGER, unk INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (file, node))"
+                ),
+            )?;
+            let id = tables.add(&table, true);
             let mut prepared = prepare(
                 &connection,
+                &frames,
+                &mut btrees,
                 &mut tables,
                 &mut marks,
                 &stage.sql,
@@ -908,7 +966,7 @@ impl Session {
                 run_id(Some(index), 0),
                 "",
             )?;
-            prepared.clear.push(Step::clear(id, &table));
+            prepared.clear.push(Step::clear(id, &table, true));
             let columns = if stage.three {
                 "file, node, unk"
             } else {
@@ -930,12 +988,12 @@ impl Session {
                 ))?;
             }
             let enumeration = clause.each.then(|| {
-                let ids = ["x", "a", "r"].map(|table| tables.add(&format!("{each}{table}")));
+                let ids = ["x", "a", "r"].map(|table| tables.add(&format!("{each}{table}"), false));
                 Each {
                     clear: ["x", "a", "r"]
                         .iter()
                         .zip(ids)
-                        .map(|(table, id)| Step::clear(id, &format!("{each}{table}")))
+                        .map(|(table, id)| Step::clear(id, &format!("{each}{table}"), false))
                         .collect(),
                     active: ids[1],
                     round: ids[2],
@@ -944,6 +1002,8 @@ impl Session {
             });
             let mut prepared = prepare(
                 &connection,
+                &frames,
+                &mut btrees,
                 &mut tables,
                 &mut marks,
                 &clause.sql,
@@ -978,16 +1038,25 @@ impl Session {
             stages,
             clauses,
             stats: Stats::default(),
-            counts: Counts {
-                rows: vec![0; tables.ids.len()],
-                marks: vec![0; marks],
-            },
+            counts: Counts::new(Arc::clone(&frames), tables.frames, marks),
+            frames,
         })
     }
 
     /// What the session's statements did so far.
     pub(in crate::code_rule_dsl) fn stats(&self) -> Stats {
         self.stats
+    }
+
+    /// The session's tables: how many are B-trees and how many frames (`frames`).
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn tables(&self) -> Result<(usize, usize), SqlError> {
+        let btrees: i64 = self.connection.query_row(
+            "SELECT count(*) FROM sqlite_temp_master WHERE type = 'table'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok((btrees as usize, self.frames.len()))
     }
 
     /// Every statement a batch can run (stages', then clauses'), with its `EXPLAIN QUERY PLAN`
@@ -1004,7 +1073,8 @@ impl Session {
             let blocks = prepared.blocks.iter().flat_map(|block| &block.steps);
             for step in prepared.steps.iter().chain(blocks).chain([&prepared.last]) {
                 let sql = &step.sql;
-                if sql == emit::LOOP || sql.starts_with(emit::RUN) {
+                if sql == emit::LOOP || sql.starts_with(emit::RUN) || sql.starts_with(frames::CLEAR)
+                {
                     continue;
                 }
                 let sql = sql
@@ -1055,10 +1125,18 @@ impl Session {
                 .map(|step| step.sql.as_str())
                 .chain([CLEAR_RUNS, CLEAR_ROOTS]);
             for clear in clears {
-                self.connection.execute(clear, [])?;
+                match clear.strip_prefix(frames::CLEAR) {
+                    Some(name) => {
+                        self.frames.clear(name);
+                    }
+                    None => {
+                        self.connection.execute(clear, [])?;
+                    }
+                }
             }
             self.counts.reset();
         }
+        self.frames.trim();
         result
     }
 
@@ -1072,12 +1150,14 @@ impl Session {
             stages,
             clauses,
             stats,
+            frames,
             counts,
             ..
         } = self;
         let connection = &*connection;
         let mut runner = Runner {
             connection,
+            frames,
             stats,
             counts,
         };
@@ -1212,7 +1292,7 @@ impl Session {
                     };
                     // The roots still enumerated: none ends the rounds.
                     let active = if *MODE == Mode::Skip {
-                        runner.counts.rows[each.active]
+                        runner.counts.rows(each.active)
                     } else {
                         let active: i64 = connection
                             .prepare_cached(&format!("SELECT count(*) FROM {}a", each.prefix))?
@@ -1220,7 +1300,7 @@ impl Session {
                         if *MODE == Mode::Check {
                             skip::check(
                                 "the enumerated roots",
-                                Outcome::Exactly(runner.counts.rows[each.active]),
+                                Outcome::Exactly(runner.counts.rows(each.active)),
                                 active as usize,
                             );
                         }
@@ -1265,9 +1345,10 @@ impl Session {
     }
 }
 
-/// A session's connection, statistics and counts while a batch runs its statements.
+/// A session's connection, frames, statistics and counts while a batch runs its statements.
 struct Runner<'s> {
     connection: &'s Connection,
+    frames: &'s FrameStore,
     stats: &'s mut Stats,
     counts: &'s mut Counts,
 }
@@ -1282,7 +1363,7 @@ impl Runner<'_> {
             return Ok(true);
         };
         self.steps(&prepared.steps[..=root.at], &prepared.blocks, false)?;
-        let empty = *MODE != Mode::Run && self.counts.rows[root.table] == 0;
+        let empty = *MODE != Mode::Run && self.counts.rows(root.table) == 0;
         if empty && *MODE == Mode::Skip {
             self.stats.skipped_runs += 1;
             self.stats.skipped += root.rest;
@@ -1309,6 +1390,11 @@ impl Runner<'_> {
             let sql = &steps[at].sql;
             if let Some(reads) = sql.strip_prefix(emit::ACYCLIC) {
                 acyclic(self.connection, reads)?;
+                at += 1;
+                continue;
+            }
+            if sql.starts_with(frames::CLEAR) {
+                self.clear_step(&steps[at])?;
                 at += 1;
                 continue;
             }
@@ -1380,7 +1466,7 @@ impl Runner<'_> {
         match *MODE {
             Mode::Run => Outcome::Unknown,
             _ if known_empty && !matches!(step.effect.writes, Writes::Clear(_)) => Outcome::Empty,
-            _ => skip::outcome(&step.effect, &self.counts.rows),
+            _ => skip::outcome(&step.effect, |table| self.counts.rows(table)),
         }
     }
 
@@ -1419,17 +1505,31 @@ impl Runner<'_> {
     /// Empties the tables of `clears`, passing over those already empty.
     fn clears(&mut self, clears: &[Step]) -> Result<(), SqlError> {
         for clear in clears {
-            let outcome = self.outcome(clear, false);
-            if outcome == Outcome::Empty && *MODE == Mode::Skip {
-                self.stats.skipped_clears += 1;
-                continue;
-            }
-            let rows = self.connection.prepare_cached(&clear.sql)?.execute([])?;
-            if *MODE == Mode::Check {
-                skip::check(&clear.sql, outcome, rows);
-            }
-            self.counts.wrote(&clear.effect.writes, rows);
+            self.clear_step(clear)?;
         }
+        Ok(())
+    }
+
+    /// Empties one table, unless it is empty already: a frame through its buffers
+    /// (`frames::CLEAR`, which runs no statement), a B-tree by its `DELETE`.
+    fn clear_step(&mut self, clear: &Step) -> Result<(), SqlError> {
+        let outcome = self.outcome(clear, false);
+        if outcome == Outcome::Empty && *MODE == Mode::Skip {
+            self.stats.skipped_clears += 1;
+            return Ok(());
+        }
+        let rows = match clear.sql.strip_prefix(frames::CLEAR) {
+            Some(name) => {
+                let rows = self.frames.rows(name).expect("a registered frame");
+                self.frames.clear(name);
+                rows
+            }
+            None => self.connection.prepare_cached(&clear.sql)?.execute([])?,
+        };
+        if *MODE == Mode::Check {
+            skip::check(&clear.sql, outcome, rows);
+        }
+        self.counts.wrote(&clear.effect.writes, rows);
         Ok(())
     }
 }

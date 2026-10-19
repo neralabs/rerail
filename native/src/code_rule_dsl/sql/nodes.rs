@@ -1,6 +1,7 @@
-//! The `node` virtual table: one row per tape node of every file of the batch, with the columns
-//! the lowering joins on (`docs/sql-set-composition-design.md`, "`node` virtual table"). The facts
-//! behind the columns are computed once per file when the batch is built (`NodeFacts::of`).
+//! The `node` virtual table: one row per tape node of every document of the batch, with the
+//! columns the lowering joins on (`docs/sql-set-composition-design.md`, "`node` virtual table").
+//! A row is read from the document's tree in place (`NodeFacts`): no column is copied per node.
+//! A document is keyed by its index in the batch (`file`), whatever it is a document of.
 
 use super::exec::{Batch, BatchSlot, SubFile};
 use crate::code_rule_dsl::literal::SubDoc;
@@ -8,18 +9,17 @@ use crate::code_rule_dsl::matcher::node_at;
 use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::{AstGrep, Doc};
 use rusqlite::fallible_iterator::FallibleIterator;
-use rusqlite::types::{Value, ValueRef};
+use rusqlite::types::ValueRef;
 use rusqlite::vtab::{
     Context, Filters, IndexConstraintOp, IndexInfo, VTab, VTabConfig, VTabConnection, VTabCursor,
     sqlite3_vtab, sqlite3_vtab_cursor,
 };
 use rusqlite::{Error, Result};
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::ffi::{CStr, c_int};
 use std::hash::{BuildHasher, Hasher};
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// No node (a NULL column).
 pub(super) const NONE: u32 = u32::MAX;
@@ -44,237 +44,342 @@ pub(super) fn text_hash(text: &str) -> i64 {
     hasher.finish() as i64
 }
 
-const NAMED: u8 = 1;
-const LEAF: u8 = 2;
-const EXTRA: u8 = 4;
-const MISSING: u8 = 8;
-const ERROR: u8 = 16;
-/// The first child of its parent with its field.
-const FIELD_FIRST: u8 = 32;
-
-/// Every column of one file's nodes, by node id.
+/// One document of the batch as the `node` table reads it: its tree's own records, read in
+/// place (a tape's, or a parsed literal's), with no per-node copy. Kind, field, span, size and
+/// the structural links are read from the records; the flags and the byte-positioned sibling
+/// walks from the document's nodes when a row's column is read; `thash` hashes the node's text
+/// when read. What needs a pass over the tree is built on its first use and kept with the batch:
+/// the kind postings (`Postings`) and the positions among siblings (`Positions`).
 pub(super) struct NodeFacts {
+    tree: Tree,
     len: u32,
-    last: Vec<u32>,
-    parent: Vec<u32>,
-    kind: Vec<u16>,
-    field: Vec<u16>,
-    flags: Vec<u8>,
+    postings: OnceLock<Postings>,
+    positions: OnceLock<Positions>,
+}
+
+/// The tree a document's rows come from.
+enum Tree {
+    Tape(AstGrep<TapeDoc>),
+    /// A parsed literal's (`parse`): read through its nodes, as the matcher reads it.
+    Sub(AstGrep<SubDoc>),
+}
+
+/// Node ids grouped by kind: each kind's ids ascending.
+struct Postings {
+    /// Each kind present, ascending, and where its ids start in `ids`.
+    kinds: Vec<(u16, u32)>,
+    ids: Vec<u32>,
+}
+
+/// Each node's position among its parent's children.
+struct Positions {
+    /// The 1-based index among the parent's named children; 0 for an unnamed node or the root.
     named_ix: Vec<u32>,
-    named_n: Vec<u32>,
-    /// `SgNode::prev` (the structural previous sibling).
-    prev: Vec<u32>,
-    /// `SgNode::next`: the next sibling ending after this node ends (zero-width skip).
-    next: Vec<u32>,
-    /// The structural next sibling.
-    nsib: Vec<u32>,
-    /// Where `next_all`/`prev_all` start (`TapeNode::walk_anchor`'s neighbours).
-    anext: Vec<u32>,
-    aprev: Vec<u32>,
-    /// The parent of the sibling walks: the parent, or the root itself for the root.
-    wpar: Vec<u32>,
-    first: Vec<u32>,
-    start: Vec<u32>,
-    end: Vec<u32>,
-    shash: Vec<i64>,
-    thash: Vec<i64>,
-    /// Node ids by kind, ascending.
-    postings: HashMap<u16, Vec<u32>>,
+    /// By parent: how many of its children are named.
+    named_children: Vec<u32>,
+    /// One bit per node: the first child of its parent with its field (`FIELD_FIRST`).
+    field_first: Vec<u64>,
+}
+
+/// The heap bytes the batches' node facts have held (counted when built), and the nodes they
+/// cover: their bytes per node (`tests::setup`).
+#[cfg(test)]
+pub(super) static FACT_BYTES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+#[cfg(test)]
+pub(super) static FACT_NODES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+fn count_bytes(bytes: usize) {
+    FACT_BYTES.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A column a row derives from its node (`NodeFacts::derived`).
+fn derived<'r, D: Doc>(
+    node: ast_grep_core::Node<'r, D>,
+    id: u32,
+    column: c_int,
+    id_of: impl Fn(&ast_grep_core::Node<'r, D>) -> u32,
+) -> Option<i64> {
+    let at = |node: Option<ast_grep_core::Node<'r, D>>| node.map(|node| i64::from(id_of(&node)));
+    match column {
+        COL_NAMED => Some(i64::from(node.is_named())),
+        COL_LEAF => Some(i64::from(node.is_named_leaf())),
+        COL_NEXT => at(node.next()),
+        COL_ANEXT => at(node.next_all().next()),
+        COL_APREV => at(node.prev_all().next()),
+        COL_WPAR => Some(
+            node.parent()
+                .map_or(i64::from(id), |parent| i64::from(id_of(&parent))),
+        ),
+        COL_THASH => Some(text_hash(&node.text())),
+        _ => None,
+    }
 }
 
 impl NodeFacts {
-    /// The facts of `root`'s tape, computed in one pass over its nodes (the unification keys
-    /// bottom-up, from the last node back).
+    /// The rows of `root`'s tape.
     pub(super) fn of(root: &AstGrep<TapeDoc>) -> Self {
-        let tape = root.root().get_doc();
-        Self::build(
-            tape.transducer_len() as u32,
-            |id| node_at(root, id),
-            |node| node.node_id() as u32,
-            |id| tape.transducer_descendants(id).end - 1,
-            |id| tape.transducer_field(id),
-        )
+        let len = root.root().get_doc().transducer_len() as u32;
+        Self::over(Tree::Tape(root.clone()), len)
     }
 
-    /// The facts of a parsed literal's tree (`parse`): its nodes are numbered in preorder from
+    /// The rows of a parsed literal's tree (`parse`): its nodes are numbered in preorder from
     /// its root, as a tape's are.
     pub(super) fn of_tree(root: &AstGrep<SubDoc>) -> Self {
-        let tree = &root.root().get_doc().tree;
-        Self::build(
-            tree.len() as u32,
-            |id| root.adopt(root.root().get_doc().node(id)),
-            |node| sub_index(node.node_id()),
-            |id| tree.last(id),
-            |id| tree.field(id),
-        )
+        let len = root.root().get_doc().tree.len() as u32;
+        Self::over(Tree::Sub(root.clone()), len)
     }
 
-    fn build<'r, D: Doc + 'r>(
-        len: u32,
-        node_at: impl Fn(u32) -> ast_grep_core::Node<'r, D>,
-        id_of_node: impl Fn(&ast_grep_core::Node<'r, D>) -> u32,
-        last_of: impl Fn(u32) -> u32,
-        field_of: impl Fn(u32) -> u16,
-    ) -> Self {
-        let size = len as usize;
-        let mut facts = Self {
+    fn over(tree: Tree, len: u32) -> Self {
+        #[cfg(test)]
+        FACT_NODES.fetch_add(len as usize, std::sync::atomic::Ordering::Relaxed);
+        Self {
+            tree,
             len,
-            last: vec![0; size],
-            parent: vec![NONE; size],
-            kind: vec![0; size],
-            field: vec![0; size],
-            flags: vec![0; size],
-            named_ix: vec![0; size],
-            named_n: vec![0; size],
-            prev: vec![NONE; size],
-            next: vec![NONE; size],
-            nsib: vec![NONE; size],
-            anext: vec![NONE; size],
-            aprev: vec![NONE; size],
-            wpar: vec![NONE; size],
-            first: vec![NONE; size],
-            start: vec![0; size],
-            end: vec![0; size],
-            shash: vec![0; size],
-            thash: vec![0; size],
-            postings: HashMap::new(),
-        };
-        let id_of =
-            |node: Option<ast_grep_core::Node<'r, D>>| node.map_or(NONE, |node| id_of_node(&node));
-        for id in 0..len {
-            let node = node_at(id);
-            let index = id as usize;
-            let range = node.range();
-            facts.last[index] = last_of(id);
-            facts.kind[index] = node.kind_id();
-            facts.field[index] = field_of(id);
-            facts.start[index] = range.start as u32;
-            facts.end[index] = range.end as u32;
-            let mut flags = 0;
-            for (set, flag) in [
-                (node.is_named(), NAMED),
-                (node.is_named_leaf(), LEAF),
-                (node.is_extra(), EXTRA),
-                (node.is_missing(), MISSING),
-                (node.is_error(), ERROR),
-            ] {
-                if set {
-                    flags |= flag;
-                }
-            }
-            facts.flags[index] |= flags;
-            facts.next[index] = id_of(node.next());
-            facts.anext[index] = id_of(node.next_all().next());
-            facts.aprev[index] = id_of(node.prev_all().next());
-            facts.wpar[index] = node.parent().map_or(id, |parent| id_of_node(&parent));
-            facts.thash[index] = text_hash(&node.text());
-            facts.postings.entry(node.kind_id()).or_default().push(id);
-            let mut named = 0;
-            let mut seen_fields = Vec::new();
-            let mut previous = NONE;
-            for child in node.children() {
-                let child_id = id_of_node(&child);
-                let slot = child_id as usize;
-                facts.parent[slot] = id;
-                facts.prev[slot] = previous;
-                if previous != NONE {
-                    facts.nsib[previous as usize] = child_id;
-                } else {
-                    facts.first[index] = child_id;
-                }
-                previous = child_id;
-                if child.is_named() {
-                    named += 1;
-                    facts.named_ix[slot] = named;
-                }
-                let field = field_of(child_id);
-                if field != 0 && !seen_fields.contains(&field) {
-                    seen_fields.push(field);
-                    facts.flags[slot] |= FIELD_FIRST;
-                }
-            }
-            let mut child = facts.first[index];
-            while child != NONE {
-                facts.named_n[child as usize] = named;
-                child = facts.nsib[child as usize];
-            }
+            postings: OnceLock::new(),
+            positions: OnceLock::new(),
         }
-        // Unification keys: a node with no named child is keyed by its text; any other by its
-        // kind and its children's keys (`does_node_match_exactly`).
-        for id in (0..len).rev() {
-            let index = id as usize;
-            facts.shash[index] = if facts.flags[index] & LEAF != 0 {
-                let mut hasher = hasher();
-                hasher.write_u8(1);
-                hasher.write_i64(facts.thash[index]);
-                hasher.finish() as i64
-            } else {
-                let mut hasher = hasher();
-                hasher.write_u8(2);
-                hasher.write_u16(facts.kind[index]);
-                let mut child = facts.first[index];
-                while child != NONE {
-                    hasher.write_i64(facts.shash[child as usize]);
-                    child = facts.nsib[child as usize];
-                }
-                hasher.finish() as i64
-            };
-        }
-        facts
     }
 
     pub(super) fn len(&self) -> u32 {
         self.len
     }
 
+    /// Node `id` of a parsed tree, as the matcher reads it.
+    fn sub_node<'r>(root: &'r AstGrep<SubDoc>, id: u32) -> ast_grep_core::Node<'r, SubDoc> {
+        root.adopt(root.root().get_doc().node(id))
+    }
+
+    /// A parsed tree's node id as a row id.
+    fn sub_id(node: &ast_grep_core::Node<'_, SubDoc>) -> u32 {
+        sub_index(node.node_id())
+    }
+
+    /// The parent, first child, and structural next and previous siblings of `id` (`NONE` for
+    /// none).
+    fn links(&self, id: u32) -> [u32; 4] {
+        match &self.tree {
+            Tree::Tape(root) => root.root().get_doc().transducer_links(id),
+            Tree::Sub(root) => {
+                let node = Self::sub_node(root, id);
+                let id_of = |node: Option<ast_grep_core::Node<'_, SubDoc>>| {
+                    node.map_or(NONE, |node| Self::sub_id(&node))
+                };
+                [
+                    id_of(node.parent()),
+                    id_of(node.children().next()),
+                    id_of(node.next()),
+                    id_of(node.prev()),
+                ]
+            }
+        }
+    }
+
+    pub(super) fn parent(&self, id: u32) -> u32 {
+        self.links(id)[0]
+    }
+
+    pub(super) fn first(&self, id: u32) -> u32 {
+        self.links(id)[1]
+    }
+
+    /// The structural next sibling (`NONE` for none).
+    pub(super) fn nsib(&self, id: u32) -> u32 {
+        self.links(id)[2]
+    }
+
+    /// The structural previous sibling (`NONE` for none).
+    pub(super) fn prev(&self, id: u32) -> u32 {
+        self.links(id)[3]
+    }
+
     /// The structural next sibling.
     pub(super) fn next_sibling(&self, id: u32) -> Option<u32> {
-        let next = self.nsib[id as usize];
+        let next = self.nsib(id);
         (next != NONE).then_some(next)
     }
 
+    /// The last node of `id`'s subtree.
+    pub(super) fn last(&self, id: u32) -> u32 {
+        match &self.tree {
+            Tree::Tape(root) => root.root().get_doc().transducer_descendants(id).end - 1,
+            Tree::Sub(root) => root.root().get_doc().tree.last(id),
+        }
+    }
+
+    pub(super) fn kind(&self, id: u32) -> u16 {
+        match &self.tree {
+            Tree::Tape(root) => root.root().get_doc().transducer_kind(id),
+            Tree::Sub(root) => Self::sub_node(root, id).kind_id(),
+        }
+    }
+
+    fn field(&self, id: u32) -> u16 {
+        match &self.tree {
+            Tree::Tape(root) => root.root().get_doc().transducer_field(id),
+            Tree::Sub(root) => root.root().get_doc().tree.field(id),
+        }
+    }
+
     pub(super) fn thash(&self, id: u32) -> i64 {
-        self.thash[id as usize]
+        match &self.tree {
+            Tree::Tape(root) => text_hash(root.root().get_doc().transducer_text_str(id)),
+            Tree::Sub(root) => text_hash(&Self::sub_node(root, id).text()),
+        }
     }
 
     pub(super) fn named(&self, id: u32) -> bool {
-        self.flags[id as usize] & NAMED != 0
+        match &self.tree {
+            Tree::Tape(root) => node_at(root, id).is_named(),
+            Tree::Sub(root) => Self::sub_node(root, id).is_named(),
+        }
+    }
+
+    fn postings_built(&self) -> &Postings {
+        self.postings.get_or_init(|| self.postings())
+    }
+
+    /// Where the nodes of `kind` are among the postings (`posted`).
+    fn kind_range(&self, kind: u16) -> std::ops::Range<usize> {
+        let postings = self.postings_built();
+        match postings
+            .kinds
+            .binary_search_by_key(&kind, |&(kind, _)| kind)
+        {
+            Ok(at) => {
+                let start = postings.kinds[at].1 as usize;
+                let end = postings
+                    .kinds
+                    .get(at + 1)
+                    .map_or(postings.ids.len(), |&(_, end)| end as usize);
+                start..end
+            }
+            Err(_) => 0..0,
+        }
+    }
+
+    /// The node at `at` of the postings.
+    fn posted(&self, at: usize) -> u32 {
+        self.postings_built().ids[at]
     }
 
     /// The nodes of `kind`, ascending.
     pub(super) fn of_kind(&self, kind: u16) -> &[u32] {
-        self.postings.get(&kind).map_or(&[], Vec::as_slice)
+        let range = self.kind_range(kind);
+        &self.postings_built().ids[range]
+    }
+
+    /// Every node keyed by its kind, sorted: the postings.
+    fn postings(&self) -> Postings {
+        let mut keyed: Vec<u64> = (0..self.len)
+            .map(|id| u64::from(self.kind(id)) << 32 | u64::from(id))
+            .collect();
+        keyed.sort_unstable();
+        let mut kinds: Vec<(u16, u32)> = Vec::new();
+        let ids: Vec<u32> = keyed
+            .iter()
+            .enumerate()
+            .map(|(at, &key)| {
+                let kind = (key >> 32) as u16;
+                if kinds.last().is_none_or(|&(last, _)| last != kind) {
+                    kinds.push((kind, at as u32));
+                }
+                key as u32
+            })
+            .collect();
+        #[cfg(test)]
+        count_bytes(ids.capacity() * 4 + kinds.capacity() * 8);
+        Postings { kinds, ids }
+    }
+
+    fn positions(&self) -> &Positions {
+        self.positions.get_or_init(|| {
+            let size = self.len as usize;
+            let mut positions = Positions {
+                named_ix: vec![0; size],
+                named_children: vec![0; size],
+                field_first: vec![0; size.div_ceil(64)],
+            };
+            let mut seen_fields = Vec::new();
+            for id in 0..self.len {
+                let mut named = 0;
+                seen_fields.clear();
+                let mut child = self.first(id);
+                while child != NONE {
+                    let slot = child as usize;
+                    if self.named(child) {
+                        named += 1;
+                        positions.named_ix[slot] = named;
+                    }
+                    let field = self.field(child);
+                    if field != 0 && !seen_fields.contains(&field) {
+                        seen_fields.push(field);
+                        positions.field_first[slot / 64] |= 1 << (slot % 64);
+                    }
+                    child = self.nsib(child);
+                }
+                positions.named_children[id as usize] = named;
+            }
+            #[cfg(test)]
+            count_bytes(size * 8 + size.div_ceil(64) * 8);
+            positions
+        })
     }
 
     fn column(&self, id: u32, column: c_int) -> Option<i64> {
-        let index = id as usize;
         let node = |value: u32| (value != NONE).then_some(i64::from(value));
-        let flag = |flag: u8| Some(i64::from(self.flags[index] & flag != 0));
+        let flag = |set: bool| Some(i64::from(set));
         match column {
             COL_ID => Some(i64::from(id)),
-            COL_LAST => Some(i64::from(self.last[index])),
-            COL_PARENT => node(self.parent[index]),
-            COL_KIND => Some(i64::from(self.kind[index])),
-            COL_FIELD => Some(i64::from(self.field[index])),
-            COL_NAMED => flag(NAMED),
-            COL_LEAF => flag(LEAF),
-            COL_EXTRA => flag(EXTRA),
-            COL_MISSING => flag(MISSING),
-            COL_ERROR => flag(ERROR),
-            COL_NAMED_IX => (self.named_ix[index] != 0).then_some(i64::from(self.named_ix[index])),
-            COL_NAMED_N => Some(i64::from(self.named_n[index])),
-            COL_PREV => node(self.prev[index]),
-            COL_NEXT => node(self.next[index]),
-            COL_START => Some(i64::from(self.start[index])),
-            COL_END => Some(i64::from(self.end[index])),
-            COL_SHASH => Some(self.shash[index]),
-            COL_THASH => Some(self.thash[index]),
-            COL_NSIB => node(self.nsib[index]),
-            COL_ANEXT => node(self.anext[index]),
-            COL_APREV => node(self.aprev[index]),
-            COL_WPAR => node(self.wpar[index]),
-            COL_FFIRST => flag(FIELD_FIRST),
-            _ => None,
+            COL_LAST => Some(i64::from(self.last(id))),
+            COL_PARENT => node(self.parent(id)),
+            COL_KIND => Some(i64::from(self.kind(id))),
+            COL_FIELD => Some(i64::from(self.field(id))),
+            COL_PREV => node(self.prev(id)),
+            COL_NSIB => node(self.nsib(id)),
+            COL_NAMED_IX => {
+                let index = self.positions().named_ix[id as usize];
+                (index != 0).then_some(i64::from(index))
+            }
+            COL_NAMED_N => {
+                let parent = self.parent(id);
+                Some(if parent == NONE {
+                    0
+                } else {
+                    i64::from(self.positions().named_children[parent as usize])
+                })
+            }
+            COL_FFIRST => {
+                let slot = id as usize;
+                flag(self.positions().field_first[slot / 64] >> (slot % 64) & 1 == 1)
+            }
+            _ => match &self.tree {
+                Tree::Tape(root) => {
+                    let doc = root.root().get_doc();
+                    match column {
+                        COL_START => Some(doc.transducer_span(id).start as i64),
+                        COL_END => Some(doc.transducer_span(id).end as i64),
+                        COL_EXTRA => flag(doc.transducer_marks(id)[0]),
+                        COL_ERROR => flag(doc.transducer_marks(id)[1]),
+                        COL_MISSING => flag(doc.transducer_marks(id)[2]),
+                        COL_THASH => Some(text_hash(doc.transducer_text_str(id))),
+                        _ => derived(node_at(root, id), id, column, |node| node.node_id() as u32),
+                    }
+                }
+                Tree::Sub(root) => {
+                    let sub = Self::sub_node(root, id);
+                    match column {
+                        COL_START => Some(sub.range().start as i64),
+                        COL_END => Some(sub.range().end as i64),
+                        COL_EXTRA => flag(sub.is_extra()),
+                        COL_ERROR => flag(sub.is_error()),
+                        COL_MISSING => flag(sub.is_missing()),
+                        _ => derived(sub, id, column, Self::sub_id),
+                    }
+                }
+            },
         }
     }
 }
@@ -296,15 +401,14 @@ const COL_PREV: c_int = 13;
 const COL_NEXT: c_int = 14;
 const COL_START: c_int = 15;
 const COL_END: c_int = 16;
-const COL_SHASH: c_int = 17;
-const COL_THASH: c_int = 18;
-const COL_NSIB: c_int = 19;
-const COL_ANEXT: c_int = 20;
-const COL_APREV: c_int = 21;
-const COL_WPAR: c_int = 22;
-const COL_FFIRST: c_int = 23;
+const COL_THASH: c_int = 17;
+const COL_NSIB: c_int = 18;
+const COL_ANEXT: c_int = 19;
+const COL_APREV: c_int = 20;
+const COL_WPAR: c_int = 21;
+const COL_FFIRST: c_int = 22;
 
-const SCHEMA: &CStr = c"CREATE TABLE x(file, id, \"last\", parent, kind, field, named, leaf, extra, missing, error, named_ix, named_n, prev, next, start, \"end\", shash, thash, nsib, anext, aprev, wpar, ffirst)";
+const SCHEMA: &CStr = c"CREATE TABLE x(file, id, \"last\", parent, kind, field, named, leaf, extra, missing, error, named_ix, named_n, prev, next, start, \"end\", thash, nsib, anext, aprev, wpar, ffirst)";
 
 /// One constraint `xBestIndex` consumed, in argv order (`idx_str`, one letter pair each).
 #[derive(Clone, Copy, PartialEq)]
@@ -344,20 +448,20 @@ impl Used {
         }
     }
 
-    fn parse(code: &str) -> Option<Self> {
+    fn parse(code: &[u8]) -> Option<Self> {
         Some(match code {
-            "f=" => Self::File { list: false },
-            "f*" => Self::File { list: true },
-            "i=" => Self::IdEq,
-            "i>" => Self::IdGt,
-            "i}" => Self::IdGe,
-            "i<" => Self::IdLt,
-            "i{" => Self::IdLe,
-            "p=" => Self::Parent,
-            "l}" => Self::LastGe,
-            "l>" => Self::LastGt,
-            "k=" => Self::Kind { list: false },
-            "k*" => Self::Kind { list: true },
+            b"f=" => Self::File { list: false },
+            b"f*" => Self::File { list: true },
+            b"i=" => Self::IdEq,
+            b"i>" => Self::IdGt,
+            b"i}" => Self::IdGe,
+            b"i<" => Self::IdLt,
+            b"i{" => Self::IdLe,
+            b"p=" => Self::Parent,
+            b"l}" => Self::LastGe,
+            b"l>" => Self::LastGt,
+            b"k=" => Self::Kind { list: false },
+            b"k*" => Self::Kind { list: true },
             _ => return None,
         })
     }
@@ -445,7 +549,9 @@ unsafe impl<'vtab> VTab<'vtab> for NodeTable {
             let list = info.is_in_constraint(index)? && info.set_in_constraint(index, true)?;
             used.push((index, Used::File { list }));
         }
-        // The access path: the most selective constraint; the others filter what it yields.
+        // The access path: the most selective constraint; the others filter what it yields. A
+        // kind constraint is always taken: alone it reads the kind's postings, with an id range
+        // the postings within it, and otherwise it filters what the path yields.
         let cost: f64;
         if let Some(index) = id_eq {
             used.push((index, Used::IdEq));
@@ -460,13 +566,15 @@ unsafe impl<'vtab> VTab<'vtab> for NodeTable {
         } else if id_lo.is_some() || id_hi.is_some() {
             used.extend(id_lo);
             used.extend(id_hi);
-            cost = 100.0;
-        } else if let Some(index) = kind {
-            let list = info.is_in_constraint(index)? && info.set_in_constraint(index, true)?;
-            used.push((index, Used::Kind { list }));
+            cost = if kind.is_some() { 50.0 } else { 100.0 };
+        } else if kind.is_some() {
             cost = 1_000.0;
         } else {
             cost = 100_000.0;
+        }
+        if let Some(index) = kind {
+            let list = info.is_in_constraint(index)? && info.set_in_constraint(index, true)?;
+            used.push((index, Used::Kind { list }));
         }
         let cost = if file.is_some() { cost } else { cost * 1_000.0 };
         let mut codes = String::new();
@@ -512,7 +620,9 @@ unsafe impl<'vtab> VTab<'vtab> for NodeTable {
             files: Vec::new(),
             file_pos: 0,
             filter: Filter::default(),
+            kinds: Vec::new(),
             source: Source::Done,
+            ids: Vec::new(),
             current: None,
             sub: None,
             phantom: PhantomData,
@@ -521,25 +631,40 @@ unsafe impl<'vtab> VTab<'vtab> for NodeTable {
 }
 
 /// What the constraints left to check on every row, exactly (they were all omitted).
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct Filter {
     id_lo: Option<u32>,
     id_hi: Option<u32>,
     parent: Option<u32>,
     last_lo: Option<u32>,
-    kinds: Option<Vec<u16>>,
+    /// The node's kind is one of the cursor's `kinds`.
+    kinds: bool,
     /// No row can satisfy the constraints (a NULL or out-of-range value).
     empty: bool,
 }
 
 /// The ids one file's scan yields, ascending, before `Filter`.
 enum Source {
-    Range { next: u32, end: u32 },
+    Range {
+        next: u32,
+        end: u32,
+    },
     Chain(u32),
-    List { ids: Vec<u32>, pos: usize },
+    /// The cursor's `ids`, from `pos`.
+    Listed {
+        pos: usize,
+    },
+    /// The file's postings (`NodeFacts::posted`) `next..end`.
+    Posted {
+        next: usize,
+        end: usize,
+    },
     Done,
 }
 
+/// A cursor answers each `xFilter` in time proportional to what it yields: its buffers (`files`,
+/// `kinds`, `ids`) are reused across the filters of a statement, and the batch is read from the
+/// slot once per statement (a batch outlives every statement run on it).
 #[repr(C)]
 pub(super) struct NodeCursor<'vtab> {
     base: sqlite3_vtab_cursor,
@@ -548,7 +673,11 @@ pub(super) struct NodeCursor<'vtab> {
     files: Vec<u32>,
     file_pos: usize,
     filter: Filter,
+    /// The kinds a `Filter::kinds` row is one of, ascending.
+    kinds: Vec<u16>,
     source: Source,
+    /// `Source::Listed`'s ids.
+    ids: Vec<u32>,
     current: Option<(u32, u32)>,
     /// The parsed tree being scanned, where the file is one (`exec::SubFile`).
     sub: Option<Arc<SubFile>>,
@@ -564,8 +693,26 @@ pub(super) fn integer(value: ValueRef<'_>) -> Option<i64> {
     }
 }
 
+/// The first of `0..len` where `before` turns false (it holds on a prefix).
+fn partition(len: usize, before: impl Fn(usize) -> bool) -> usize {
+    let (mut low, mut high) = (0, len);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if before(middle) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    low
+}
+
 /// The facts of document `file` of `batch`: a file's, or `sub`'s where it is a parsed tree.
-fn facts_of<'a>(batch: &'a Batch, sub: &'a Option<Arc<SubFile>>, file: u32) -> &'a NodeFacts {
+pub(super) fn facts_of<'a>(
+    batch: &'a Batch,
+    sub: &'a Option<Arc<SubFile>>,
+    file: u32,
+) -> &'a NodeFacts {
     match (batch.files.get(file as usize), sub) {
         (Some(entry), _) => &entry.facts,
         (None, Some(sub)) => &sub.facts,
@@ -582,49 +729,61 @@ impl NodeCursor<'_> {
         let batch = self.batch.as_ref().expect("filtered");
         self.sub = batch.subfile(file as usize);
         let facts = facts_of(batch, &self.sub, file);
-        let filter = &self.filter;
+        let filter = self.filter;
         let len = facts.len();
         let lo = filter.id_lo.unwrap_or(0);
         let hi = filter.id_hi.map_or(len, |hi| hi.saturating_add(1).min(len));
         self.source = if let Some(parent) = filter.parent {
-            if parent < len {
-                let first = facts.first[parent as usize];
-                if first == NONE {
-                    Source::Done
-                } else {
-                    Source::Chain(first)
-                }
+            let first = if parent < len {
+                facts.first(parent)
             } else {
+                NONE
+            };
+            if first == NONE {
                 Source::Done
+            } else {
+                Source::Chain(first)
             }
         } else if let (Some(last), Some(id_hi)) = (filter.last_lo, filter.id_hi)
             && id_hi <= last
         {
             // `id <= hi <= x` and `last >= x`: the ancestors-or-self of `x`.
-            let mut ids = Vec::new();
+            self.ids.clear();
             let mut at = last;
             while at < len {
-                ids.push(at);
-                at = facts.parent[at as usize];
+                self.ids.push(at);
+                at = facts.parent(at);
             }
-            ids.reverse();
-            Source::List { ids, pos: 0 }
-        } else if let Some(kinds) = &filter.kinds
-            && filter.id_lo.is_none()
-            && filter.id_hi.is_none()
-        {
-            let mut ids: Vec<u32> = kinds
-                .iter()
-                .flat_map(|&kind| facts.of_kind(kind).iter().copied())
-                .collect();
-            if kinds.len() > 1 {
-                ids.sort_unstable();
-            }
-            Source::List { ids, pos: 0 }
-        } else if lo < hi {
-            Source::Range { next: lo, end: hi }
-        } else {
+            self.ids.reverse();
+            Source::Listed { pos: 0 }
+        } else if lo >= hi {
             Source::Done
+        } else if filter.kinds && (hi - lo) as usize > 8 * self.kinds.len() {
+            // The kinds' postings within `lo..hi`, unless the range is the shorter read.
+            let within = |kind: u16| {
+                let range = facts.kind_range(kind);
+                let from =
+                    range.start + partition(range.len(), |at| facts.posted(range.start + at) < lo);
+                let to =
+                    range.start + partition(range.len(), |at| facts.posted(range.start + at) < hi);
+                from..to
+            };
+            if let [kind] = self.kinds[..] {
+                let range = within(kind);
+                Source::Posted {
+                    next: range.start,
+                    end: range.end,
+                }
+            } else {
+                self.ids.clear();
+                for &kind in &self.kinds {
+                    self.ids.extend(within(kind).map(|at| facts.posted(at)));
+                }
+                self.ids.sort_unstable();
+                Source::Listed { pos: 0 }
+            }
+        } else {
+            Source::Range { next: lo, end: hi }
         };
     }
 
@@ -642,14 +801,18 @@ impl NodeCursor<'_> {
                 if id == NONE {
                     return None;
                 }
-                *next = facts.nsib[id as usize];
+                *next = facts.nsib(id);
                 Some(id)
             }
-            Source::List { ids, pos } => {
-                let id = ids.get(*pos).copied();
+            Source::Listed { pos } => {
+                let id = self.ids.get(*pos).copied();
                 *pos += 1;
                 id
             }
+            Source::Posted { next, end } => (*next < *end).then(|| {
+                *next += 1;
+                facts.posted(*next - 1)
+            }),
             Source::Done => None,
         }
     }
@@ -659,18 +822,14 @@ impl NodeCursor<'_> {
         let file = self.files[self.file_pos];
         let facts = facts_of(batch, &self.sub, file);
         let filter = &self.filter;
-        let index = id as usize;
         id < facts.len()
             && filter.id_lo.is_none_or(|lo| id >= lo)
             && filter.id_hi.is_none_or(|hi| id <= hi)
             && filter
                 .parent
-                .is_none_or(|parent| facts.parent[index] == parent)
-            && filter.last_lo.is_none_or(|last| facts.last[index] >= last)
-            && filter
-                .kinds
-                .as_ref()
-                .is_none_or(|kinds| kinds.contains(&facts.kind[index]))
+                .is_none_or(|parent| facts.parent(id) == parent)
+            && filter.last_lo.is_none_or(|last| facts.last(id) >= last)
+            && (!filter.kinds || self.kinds.binary_search(&facts.kind(id)).is_ok())
     }
 
     fn advance(&mut self) {
@@ -693,16 +852,23 @@ impl NodeCursor<'_> {
 
 unsafe impl VTabCursor for NodeCursor<'_> {
     fn filter(&mut self, _: c_int, idx_str: Option<&str>, args: &Filters<'_>) -> Result<()> {
-        let batch = self
-            .slot
-            .current()
-            .ok_or_else(|| Error::ModuleError("node: no batch installed".into()))?;
+        if self.batch.is_none() {
+            self.batch = Some(
+                self.slot
+                    .current()
+                    .ok_or_else(|| Error::ModuleError("node: no batch installed".into()))?,
+            );
+        }
+        let batch = self.batch.as_deref().expect("installed above");
         let codes = idx_str.unwrap_or("");
         let mut filter = Filter::default();
-        let mut files: Option<Vec<u32>> = None;
+        let mut constrained_files = false;
         // Without a file constraint the batch's files; with one, its parsed trees too.
         let count = batch.files.len() as i64;
-        let documents = batch.documents() as i64;
+        let document = |file: i64| -> Option<u32> {
+            ((0..count).contains(&file) || (0..batch.documents() as i64).contains(&file))
+                .then_some(file as u32)
+        };
         let clamp = |value: i64| u32::try_from(value.max(0)).unwrap_or(u32::MAX - 1);
         let narrow = |filter: &mut Filter, lo: Option<i64>, hi: Option<i64>| {
             if let Some(lo) = lo {
@@ -718,52 +884,41 @@ unsafe impl VTabCursor for NodeCursor<'_> {
                 }
             }
         };
-        for (argv, code) in codes.as_bytes().chunks(2).enumerate() {
-            let used = std::str::from_utf8(code)
-                .ok()
-                .and_then(Used::parse)
+        for ((argv, code), value) in codes.as_bytes().chunks(2).enumerate().zip(args.iter()) {
+            let used = Used::parse(code)
                 .ok_or_else(|| Error::ModuleError(format!("node: bad plan {codes}")))?;
-            let value = || -> Result<Option<i64>> {
-                Ok(integer(ValueRef::from(&args.get::<Value>(argv)?)))
-            };
-            let list = || -> Result<Vec<i64>> {
-                let mut values = Vec::new();
-                let mut items = args.in_values(argv)?;
-                while let Some(item) = items.next()? {
-                    values.extend(integer(item));
-                }
-                Ok(values)
-            };
             match used {
-                Used::File { list: is_list } => {
-                    let mut wanted: Vec<u32> = if is_list {
-                        list()?
+                Used::File { list } => {
+                    constrained_files = true;
+                    self.files.clear();
+                    if list {
+                        let mut items = args.in_values(argv)?;
+                        while let Some(item) = items.next()? {
+                            self.files.extend(integer(item).and_then(document));
+                        }
+                        self.files.sort_unstable();
+                        self.files.dedup();
                     } else {
-                        value()?.into_iter().collect()
+                        self.files.extend(integer(value).and_then(document));
                     }
-                    .into_iter()
-                    .filter(|file| (0..documents).contains(file))
-                    .map(|file| file as u32)
-                    .collect();
-                    wanted.sort_unstable();
-                    wanted.dedup();
-                    files = Some(wanted);
                 }
-                Used::Kind { list: is_list } => {
-                    let mut kinds: Vec<u16> = if is_list {
-                        list()?
+                Used::Kind { list } => {
+                    filter.kinds = true;
+                    self.kinds.clear();
+                    let kind = |value: i64| u16::try_from(value).ok();
+                    if list {
+                        let mut items = args.in_values(argv)?;
+                        while let Some(item) = items.next()? {
+                            self.kinds.extend(integer(item).and_then(kind));
+                        }
+                        self.kinds.sort_unstable();
+                        self.kinds.dedup();
                     } else {
-                        value()?.into_iter().collect()
+                        self.kinds.extend(integer(value).and_then(kind));
                     }
-                    .into_iter()
-                    .filter_map(|kind| u16::try_from(kind).ok())
-                    .collect();
-                    kinds.sort_unstable();
-                    kinds.dedup();
-                    filter.kinds = Some(kinds);
                 }
                 other => {
-                    let Some(value) = value()? else {
+                    let Some(value) = integer(value) else {
                         filter.empty = true;
                         continue;
                     };
@@ -795,9 +950,11 @@ unsafe impl VTabCursor for NodeCursor<'_> {
                 }
             }
         }
-        self.files = files.unwrap_or_else(|| (0..count as u32).collect());
+        if !constrained_files {
+            self.files.clear();
+            self.files.extend(0..count as u32);
+        }
         self.filter = filter;
-        self.batch = Some(batch);
         self.file_pos = 0;
         self.start_file();
         self.advance();

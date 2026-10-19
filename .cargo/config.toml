@@ -7,5 +7,11 @@ rustflags = ["-C", "target-feature=+crt-static"]
 # SQLite's memory statistics take one process-wide mutex on every allocation and free, which
 # serializes the content store connections that evaluation workers read through. Nothing reads
 # them; SQLite recommends this setting.
+#
+# SQLITE_MALLOC_SOFT_LIMIT caps SQLite's hash tables (tables, indexes, modules) at 64 buckets,
+# so finding a name takes time linear in how many there are. The SQL engine's sessions register
+# one module per frame (`native/src/code_rule_dsl/sql/frames.rs`), tens of thousands of them;
+# with the cap, session setup grows with the square of the frames. 0 lifts the cap (the only
+# use of the setting).
 [env]
-LIBSQLITE3_FLAGS = "-DSQLITE_DEFAULT_MEMSTATUS=0"
+LIBSQLITE3_FLAGS = "-DSQLITE_DEFAULT_MEMSTATUS=0 -DSQLITE_MALLOC_SOFT_LIMIT=0"
