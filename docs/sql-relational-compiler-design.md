@@ -632,27 +632,22 @@ They do not use operation metadata as parity evidence.
 
 ## Compiler contract suite
 
-The five files in `fixtures/code-rule-dsl/query/` contain 108 complete public policies.
-Each contract also contains typed workspace input and an exact matcher-oracle result.
+`native/src/code_rule_dsl/query/lowering_contract.rs` contains 108 hand-written lowering forms.
+Each form declares its required terminal kinds and normalized SQL constructs.
 
-`implementation_goldens_phase_2_4.json` contains the implementation goldens for Phases 2 through 4.
-Each of its 39 entries stores one complete normalized SQL statement and one complete ordered terminal catalog.
+The suite covers atomic tests, boolean composition, navigation, captures, utilities, semantic facts, clauses, and outputs.
+It also rejects callback-shaped SQL fragments.
 
-Each catalog entry contains these fields:
+Fixture-validation tests make sure that the contract is complete and internally consistent.
+They do not claim that lowering exists.
 
-- The terminal ordinal and kind.
-- The language dialect and producer kind.
-- The canonical packed-program digest.
-- The typed result schema.
-- The owning rule and clause IDs.
-- The result limit and completion requirement.
+An active TDD test requires exact terminal and SQL-shape equality for all 108 forms.
+It fails with an explicit implementation error until the relational compiler exists.
+Connect this test to `SqlCatalogPlan::explain` when that API exists.
 
-The contract test compares the complete SQL string after whitespace-only normalization.
-It also compares every catalog field and rejects duplicate, missing, extra, or unreferenced terminals.
-Repeated and concurrent compilation must produce the same result.
-
-The repository has no command that replaces golden data with compiler output.
-Matcher-oracle tests remain necessary because exact SQL does not prove behavioral parity.
+Do not rewrite a hand-written form into an easier equivalent to make the implementation pass.
+Add separate TDD cases from real compiled policies as each compiler API becomes available.
+Matcher-oracle tests remain necessary because an SQL shape does not prove semantic parity.
 
 ## Architecture gates
 
