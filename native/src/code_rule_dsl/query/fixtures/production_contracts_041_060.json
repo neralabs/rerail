@@ -637,7 +637,11 @@
                   "ast": {
                     "language": "python",
                     "rule": {
-                      "pattern": "$A"
+                      "kind": "call",
+                      "has": {
+                        "pattern": "$A",
+                        "stopBy": "end"
+                      }
                     }
                   }
                 },
@@ -666,13 +670,13 @@
         {
           "path": "contract.py",
           "language": "python",
-          "source": "f(a, a, b)\n",
+          "source": "f(a)\ng(b)\n",
           "module": null
         },
         {
           "path": "second.py",
           "language": "python",
-          "source": "f(a, a, b)\n",
+          "source": "f(a)\ng(b)\n",
           "module": null
         }
       ],
@@ -688,9 +692,9 @@
             "captures": {
               "A": [
                 {
-                  "endByte": 11,
-                  "endColumn": 0,
-                  "endLine": 1,
+                  "endByte": 1,
+                  "endColumn": 1,
+                  "endLine": 0,
                   "startByte": 0,
                   "startColumn": 0,
                   "startLine": 0
@@ -705,15 +709,15 @@
             "path": "contract.py",
             "ruleId": "sql-contract-count-distinct-capture",
             "span": {
-              "endByte": 11,
-              "endColumn": 0,
-              "endLine": 1,
+              "endByte": 4,
+              "endColumn": 4,
+              "endLine": 0,
               "startByte": 0,
               "startColumn": 0,
               "startLine": 0
             },
             "variables": {
-              "count": 6,
+              "count": 2,
               "subjectId": "all"
             }
           }
