@@ -115,6 +115,7 @@ function usage(): string {
     "Usage:",
     "  rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--repository] [--port <n>] [--json] [--relay] [--database <file>]",
     "  rerail install [--root <package>] [--agents <list>] [--remove] [--dry-run]",
+    "  rerail install --refresh",
     "  rerail start [--repo <dir>] [--repository] [--agents <list>] [--answer <answer>] [--json] [--relay] [--database <file>]",
     "  rerail stop [<host> [<session-id>]] [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
@@ -288,7 +289,17 @@ async function runUpdateCommand(
   }
   if (action !== undefined && action !== "--channel") throw new Error(`Unknown update action: ${action}`);
   printUpdateResult(await updateWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), channel));
-  return 0;
+  // Newer version or not, the version `current` names registers itself again, as its own CLI, with every coding agent
+  // already connected (`install --refresh`): its commands, skills and hooks arrive and the ones it retired go. A failure
+  // leaves that version active and exits non-zero, naming the command to run once the configuration is fixed. Reading
+  // the Claude Code status-line record loads `node:sqlite`, whose experimental warning is not the update's to report.
+  return await runChild(process.execPath, [
+    "--disable-warning=ExperimentalWarning",
+    join(updater.currentLink, ENTRY_POINTS.cli),
+    MANAGED_CHILD_ARGUMENT,
+    "install",
+    "--refresh",
+  ]);
 }
 
 /**

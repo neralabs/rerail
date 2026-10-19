@@ -120,6 +120,7 @@ An update:
 8. Moves the staged installation into its immutable version directory.
 9. Atomically records the old current version as previous and activates the new version.
 10. Retains the previous installation for explicit rollback.
+11. Registers the active version again with every coding agent already connected (`rerail install --refresh`, run as that version's CLI), so the commands, skills and hooks it ships arrive and the ones it retired go. This step runs even when no newer version was found. A connected coding agent that cannot be registered again fails this step for that agent only, and the update then exits non-zero with the new version still active; an agent whose configuration cannot be read to tell whether it is connected is named and left alone. The update that brings this step runs the previous version's update, which lacks it: run `rerail install --refresh` once after it.
 
 Failed resolution, authentication, installation, or health checks leave the current version unchanged. Revoked npm access therefore prevents future updates without breaking an installed version. Concurrent updates share the update lock and cannot race activation.
 
