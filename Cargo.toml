@@ -8,3 +8,11 @@ codegen-units = 1
 # Never strip through rustc: on Xcode 27 the linker-side strip rewrites LINKEDIT so
 # dyld rejects the cdylib ("mis-aligned LINKEDIT string pool"). Unstripped costs ~1 MB.
 strip = "none"
+
+# The SQL engine's fast check loop (census over a file list, mutation kit): release code
+# without the shipping build's link-time optimisation, rebuilt incrementally. Never shipped.
+[profile.mutcheck]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true

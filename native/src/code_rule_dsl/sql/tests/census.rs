@@ -203,20 +203,33 @@ fn run_census() {
 }
 
 /// The corpus files the benchmark evaluates: the tracked Python files of a nera-data-layer
-/// checkout (`RERAIL_DATA_LAYER_CORPUS`), as a snapshot's files.
+/// checkout (`RERAIL_DATA_LAYER_CORPUS`), as a snapshot's files. `RERAIL_CORPUS_FILES` names a
+/// file listing the paths to read instead (relative to the checkout, one per line), for a run
+/// over a sample of the corpus.
 fn corpus_files(root: &std::path::Path) -> Vec<serde_json::Value> {
-    let listed = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["ls-files", "-z"])
-        .output()
-        .expect("git ls-files");
-    let mut paths: Vec<String> = String::from_utf8(listed.stdout)
-        .expect("paths")
-        .split('\0')
-        .filter(|path| path.ends_with(".py"))
-        .map(str::to_owned)
-        .collect();
+    let mut paths: Vec<String> = match std::env::var("RERAIL_CORPUS_FILES") {
+        Ok(list) => std::fs::read_to_string(&list)
+            .unwrap_or_else(|error| panic!("{list}: {error}"))
+            .lines()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        Err(_) => {
+            let listed = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(["ls-files", "-z"])
+                .output()
+                .expect("git ls-files");
+            String::from_utf8(listed.stdout)
+                .expect("paths")
+                .split('\0')
+                .filter(|path| path.ends_with(".py"))
+                .map(str::to_owned)
+                .collect()
+        }
+    };
     paths.sort();
     paths
         .into_iter()

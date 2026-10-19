@@ -93,7 +93,8 @@ impl Emitter<'_> {
                         .collect::<Vec<_>>()
                         .join(" OR ")
                 })
-                .filter(|held| !held.is_empty());
+                // Mutant 4: no term is withheld.
+                .filter(|held| !held.is_empty() && !crate::code_rule_dsl::sql::mutant(4));
             let run = match &held {
                 Some(held) => self.frame(
                     "y",
@@ -245,7 +246,8 @@ impl Emitter<'_> {
                 })
                 .collect()
         };
-        if strict {
+        // Mutant 5: a strict search runs on past an unknown candidate.
+        if strict && !crate::code_rule_dsl::sql::mutant(5) {
             // Events in walk order: each candidate's test, then an unknown stop's (`opened`).
             let stops = opened.map_or(String::new(), |opened| {
                 let nulls: String = self.physical.iter().map(|_| ", NULL").collect();
@@ -361,10 +363,16 @@ impl Emitter<'_> {
         let open = opened.map_or("0".to_owned(), |opened| {
             format!("(f.k IN (SELECT pk FROM {opened}))")
         });
+        // Mutant 6: an unknown candidate counts as false.
+        let unknown = if crate::code_rule_dsl::sql::mutant(6) {
+            "0"
+        } else {
+            "SUM(s.unk = 1)"
+        };
         let counts = self.grouped(
             "t, u",
             &format!(
-                "SELECT g.pk, SUM(s.unk = 0), SUM(s.unk = 1) FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk"
+                "SELECT g.pk, SUM(s.unk = 0), {unknown} FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk"
             ),
         );
         let (t, u) = ("COALESCE(c.t, 0)", "COALESCE(c.u, 0)");

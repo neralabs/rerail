@@ -7,7 +7,9 @@
 //! The generator is deterministic: `RERAIL_SQL_DIFF_SEED` (default `0x5e7_c0de`) seeds it and
 //! `RERAIL_SQL_DIFF_CASES` (default 500) sets how many compiled cases are compared. Rules the
 //! front end rejects (an invalid pattern or kind, an order conflict) are generated but not
-//! counted.
+//! counted. `RERAIL_SQL_DIFF_KEEP` names a file every differing case is appended to (its index
+//! among the compared cases, rule and violation; one JSON line each), which
+//! `replayed_cases_agree` replays.
 
 use super::snapshot;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
@@ -1073,9 +1075,19 @@ static CASES_OVER_TWO_SECONDS: std::sync::atomic::AtomicUsize =
 
 /// Appends `line` to `RERAIL_SQL_DIFF_SLOW_LOG`, where it is set, one whole line at a time.
 fn slow_log(line: &Value) {
+    append_log("RERAIL_SQL_DIFF_SLOW_LOG", line);
+}
+
+/// Appends `line` to `RERAIL_SQL_DIFF_KEEP`, where it is set, one whole line at a time.
+fn keep_log(line: &Value) {
+    append_log("RERAIL_SQL_DIFF_KEEP", line);
+}
+
+/// Appends `line` to the file the environment variable `variable` names, where it is set.
+fn append_log(variable: &str, line: &Value) {
     use std::io::Write as _;
     static LOG: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    if let Ok(path) = std::env::var("RERAIL_SQL_DIFF_SLOW_LOG") {
+    if let Ok(path) = std::env::var(variable) {
         let _held = LOG
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1084,7 +1096,7 @@ fn slow_log(line: &Value) {
             .append(true)
             .open(&path)
             .and_then(|mut file| file.write_all(format!("{line}\n").as_bytes()))
-            .expect("the slow-case log");
+            .unwrap_or_else(|error| panic!("{variable}: {error}"));
     }
 }
 
@@ -1376,6 +1388,9 @@ fn generated_rules_agree_with_the_native_matcher() {
                     three_each_unknown += usize::from(three && each && unknown);
                 }
                 Outcome::Differs { native, sql } => {
+                    // `RERAIL_SQL_DIFF_KEEP`: every differing case, whole, one JSON line each
+                    // with its index among the compared cases, for `replayed_cases_agree`.
+                    keep_log(&json!({ "case": compared, "ast": ast, "violation": violation }));
                     compared += 1;
                     differences.push((ast.clone(), native, sql));
                 }

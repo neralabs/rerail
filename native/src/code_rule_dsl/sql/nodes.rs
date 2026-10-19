@@ -183,7 +183,8 @@ impl NodeFacts {
                     facts.first[index] = child_id;
                 }
                 previous = child_id;
-                if child.is_named() {
+                // Mutant 7: anonymous siblings count.
+                if child.is_named() || super::mutant(7) {
                     named += 1;
                     facts.named_ix[slot] = named;
                 }

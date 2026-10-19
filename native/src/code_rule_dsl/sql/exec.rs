@@ -896,12 +896,21 @@ impl Session {
                 .expect("a loop's end");
             let until = &steps[end][emit::UNTIL.len()..];
             let mut passes = 0;
+            // Mutant 11: the loop's last pass is undone.
+            let drop_last = super::mutant(11);
             loop {
+                if drop_last {
+                    connection.execute_batch("SAVEPOINT mutant_pass")?;
+                }
                 Self::run_steps(connection, stats, &steps[at + 1..end], blocks)?;
                 passes += 1;
                 let changed: i64 = connection
                     .prepare_cached(until)?
                     .query_row([], |row| row.get(0))?;
+                if drop_last {
+                    let undo = if changed == 0 { "ROLLBACK TO mutant_pass; " } else { "" };
+                    connection.execute_batch(&format!("{undo}RELEASE mutant_pass"))?;
+                }
                 if changed == 0 {
                     break;
                 }

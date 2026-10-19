@@ -1018,8 +1018,11 @@ impl<'p> Lowerer<'p> {
                 Ok((Op::Any(ops), out))
             }
             AstMatcher::Not(inner) => {
+                // Mutant 3: the probe ignores the captures bound before it.
+                let fresh = Bound::new();
+                let probe = if super::mutant(3) { &fresh } else { bound };
                 let (op, _) =
-                    self.with_exclude(None, |lowerer| lowerer.lower(inner, scope, bound))?;
+                    self.with_exclude(None, |lowerer| lowerer.lower(inner, scope, probe))?;
                 Ok((Op::Not(Box::new(op)), bound.clone()))
             }
             AstMatcher::Never => Ok((Op::Never, bound.clone())),
@@ -1310,7 +1313,11 @@ impl<'p> Lowerer<'p> {
             AstMatcher::Constrained(core) => {
                 let (rule, mut current) = self.lower(&core.rule, scope, bound)?;
                 let mut constraints = Vec::new();
-                for (name, constraint) in &core.constraints {
+                // Mutant 14: the constraints in reverse order.
+                let (flip, count) = (super::mutant(14), core.constraints.len());
+                for index in 0..count {
+                    let (name, constraint) =
+                        &core.constraints[if flip { count - 1 - index } else { index }];
                     let Some(slot) = self.existing(scope, name, SlotKind::Node) else {
                         // Never bound, so never checked.
                         continue;
