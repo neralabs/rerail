@@ -139,9 +139,8 @@ impl NodeFacts {
             thash: vec![0; size],
             postings: HashMap::new(),
         };
-        let id_of = |node: Option<ast_grep_core::Node<'r, D>>| {
-            node.map_or(NONE, |node| id_of_node(&node))
-        };
+        let id_of =
+            |node: Option<ast_grep_core::Node<'r, D>>| node.map_or(NONE, |node| id_of_node(&node));
         for id in 0..len {
             let node = node_at(id);
             let index = id as usize;

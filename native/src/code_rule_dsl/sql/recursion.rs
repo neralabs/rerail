@@ -355,10 +355,13 @@ fn holds(rule: &AstMatcher, scopes: &[Held], names: &mut Held) {
                     .iter()
                     .map(|name| (name.clone(), SlotKind::Text)),
             ),
-            Semantic::Resolves(_) | Semantic::Value(_) | Semantic::Layout(_) | Semantic::Host(_) => {
-            }
+            Semantic::Resolves(_)
+            | Semantic::Value(_)
+            | Semantic::Layout(_)
+            | Semantic::Host(_) => {}
         },
-        AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Compare(_) | AstMatcher::Never => {}
+        AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Compare(_) | AstMatcher::Never => {
+        }
         #[cfg(test)]
         AstMatcher::TestUnknown(_) => {}
     }

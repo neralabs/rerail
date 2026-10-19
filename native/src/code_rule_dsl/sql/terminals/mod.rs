@@ -11,9 +11,7 @@ use super::plan::SlotKind;
 use crate::code_rule_dsl::language::GrammarDialect;
 use ast_grep_core::matcher::{Pattern, PatternNode};
 use ast_grep_core::meta_var::MetaVariable;
-pub(super) use fact::{
-    BatchScopes, Binder, FACT_COLUMNS, FactTable, FactTerm, Leaf, Verdicts,
-};
+pub(super) use fact::{BatchScopes, Binder, FACT_COLUMNS, FactTable, FactTerm, Leaf, Verdicts};
 pub(super) use leaves::{
     BindingSites, BindsCandidates, BindsOthers, Exported, FormatPart, FormatSides, Occurrences,
     Parsed,

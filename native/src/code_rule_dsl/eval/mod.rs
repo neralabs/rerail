@@ -114,7 +114,13 @@ pub(super) fn evaluate_clauses(
         },
         clauses: covered,
     };
-    let _calls = stateless_calls(code_rule, snapshot, clauses, &mut evaluation.metrics, engine)?;
+    let _calls = stateless_calls(
+        code_rule,
+        snapshot,
+        clauses,
+        &mut evaluation.metrics,
+        engine,
+    )?;
     for clause in clauses {
         match &clause.kind {
             ClauseKind::Forbid(query) => {

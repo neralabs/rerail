@@ -153,9 +153,8 @@ unsafe impl VTabCursor for TextCursor<'_> {
                 // A parsed tree's node: its text, as the matcher reads it.
                 None => batch.subfile(file).is_some_and(|sub| {
                     node < sub.facts.len()
-                        && regex.is_match(
-                            &sub.root.adopt(sub.root.root().get_doc().node(node)).text(),
-                        )
+                        && regex
+                            .is_match(&sub.root.adopt(sub.root.root().get_doc().node(node)).text())
                 }),
             }
         });

@@ -115,7 +115,9 @@ fn run_census() {
                         );
                     }
                 }
-                ClauseKind::Budget { query: producer, .. } => query(
+                ClauseKind::Budget {
+                    query: producer, ..
+                } => query(
                     &producer.ast.query,
                     None,
                     &mut found,

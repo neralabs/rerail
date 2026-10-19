@@ -654,7 +654,15 @@ impl<'p> Lowerer<'p> {
         for (name, kind) in binds {
             bound_slots.push(self.slot(scope, name, *kind));
         }
-        self.fact_slots(verdicts, identity, scope, reads, at_node, &bound_slots, bound)
+        self.fact_slots(
+            verdicts,
+            identity,
+            scope,
+            reads,
+            at_node,
+            &bound_slots,
+            bound,
+        )
     }
 
     /// `fact`, binding the slots `binds` (in the terminal's column order) whatever their scope:
@@ -718,7 +726,12 @@ impl<'p> Lowerer<'p> {
         let mut slots = Vec::new();
         let mut vars = Vec::new();
         for name in names {
-            for kind in [SlotKind::Node, SlotKind::List, SlotKind::Count, SlotKind::Text] {
+            for kind in [
+                SlotKind::Node,
+                SlotKind::List,
+                SlotKind::Count,
+                SlotKind::Text,
+            ] {
                 if let Some(slot) = self.existing(scope, name, kind) {
                     slots.push(slot);
                     vars.push((name.clone(), kind));

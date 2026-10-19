@@ -1032,7 +1032,9 @@ impl<'s> Emitter<'s> {
                      JOIN node w ON w.file = v.file AND w.id = v.src WHERE w.field = {field} AND w.ffirst = 1"
                 )
             }
-            Walk::Slot(_) | Walk::Related(_) => unreachable!("a terminal's walk (`leaf_candidates`)"),
+            Walk::Slot(_) | Walk::Related(_) => {
+                unreachable!("a terminal's walk (`leaf_candidates`)")
+            }
         };
         let order = if walk.descending() {
             "-c.node"

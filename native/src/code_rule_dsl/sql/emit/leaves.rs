@@ -349,7 +349,11 @@ impl Emitter<'_> {
             .expect("write to a string");
         }
         select.push_str(&self.zeros());
-        let at_host = self.frame_with("h", &with, &format!("SELECT {select} FROM {input} f{joins}"));
+        let at_host = self.frame_with(
+            "h",
+            &with,
+            &format!("SELECT {select} FROM {input} f{joins}"),
+        );
         let held = self.op(rule, &at_host);
         let unk = if self.three { "o.unk" } else { "0" };
         self.frame(

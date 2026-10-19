@@ -360,7 +360,10 @@ pub(super) enum Op {
     },
     /// Copies parsed captures' texts and host ranges, from the tree `tree` holds, into host text
     /// slots (`formatArgs.missing`'s exports).
-    Exports { tree: SlotId, exports: Vec<Export> },
+    Exports {
+        tree: SlotId,
+        exports: Vec<Export>,
+    },
 }
 
 /// A parsed tree's capture as its host reads it: the inner node slot `from`, whose text and host
