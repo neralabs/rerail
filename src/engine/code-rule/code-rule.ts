@@ -96,6 +96,9 @@ export interface CodeRuleDslDefineClause {
 }
 
 export interface CodeRuleDslDefine {
+  /** Report all findings together only above this count. Failures remain visible. */
+  report_when?: { count: { gt: number } };
+
   /** The language `utils` compile for; required with them. */
   language?: CodeRuleLanguageId;
   /**

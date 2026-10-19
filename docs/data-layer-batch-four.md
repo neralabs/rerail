@@ -1,6 +1,6 @@
 # Data-layer fourth batch
 
-The fourth batch now passes its recorded source-detection parity gate.
+The fourth batch passes its recorded detector and escape-hatch reporter parity gates.
 Forty of 142 checks have authored native candidates.
 The private pack remains inactive; its manifest has an empty `rules` list.
 No Linear issues were created.
@@ -19,7 +19,7 @@ Shared definitions do not count.
 | `render_fstrings` | 1 | Render contexts and adjacent literals |
 | `render_raw_strings` | 4 | Ordinary constants, f-string parts, and special calls |
 | `regex_sql_parsing` | 9 | Ordered categories over decoded patterns and f-string projections |
-| `sql_grammar_escape_hatches` | 11 | Global inheritance, staged aliases, safe leaves, and source usages |
+| `sql_grammar_escape_hatches` | 11 | Global inheritance, aliases, safe leaves, source usages, and aggregate ceiling |
 | `grammar_render_methods` | 6 | Class context, rendering operations, and line deduplication |
 | `grammar_str_params` | 3 | Constructor parameter restrictions and slot references |
 | `grammar_callable_constructors` | 8 | Global constructor-name membership and callable arguments |
@@ -39,13 +39,15 @@ They include constants, signatures, formatting, discovery, and extraction helper
 Twenty-four classifier calls use mechanical translation to literal `re.method(pattern)` expressions.
 The unchanged classifier supplies the expected category.
 
-The supplemental corpus contains 160 source cases and 336 actual oracle observations.
-Native replay compares 308 calls: 191 positive and 117 clean, with 325 expected findings.
+The supplemental corpus contains 171 source cases and 369 actual oracle observations.
+Replay compares 367 calls: 218 positive and 149 clean, with 662 expected findings.
 The recorder verifies 127 loaded source files.
-It retains 26 signed aggregate reporter observations and two ambiguous owner observations.
+All escape-hatch reporter observations enter comparison.
+Two ambiguous owner observations remain separate because the original reporter chooses owners in asynchronous completion order.
 Rust pattern identities and allowlist variable identities participate in parity checks.
 
-The combined gate compares 514 calls and 471 expected findings.
+The combined gate compares 573 calls and 808 expected findings.
+It distinguishes 570 native evaluations from three host signature rejections.
 It has positive and clean coverage for every check.
 Both native execution paths agree, with zero false positives, false negatives, or engine failures.
 The original-only gate still reports missing coverage for Rust and the allowlist reporter.
@@ -87,6 +89,8 @@ The measured release binary enables profiling and uses the system-allocator shim
 Its build uses thin LTO and 256 code-generation units.
 These samples do not establish production throughput or a stable Python-to-native speed ratio.
 
+The following graph ablation uses the earlier source-only completion binary.
+
 | Measurement | Full candidate set | Three graph clauses removed |
 |---|---:|---:|
 | Cold native workspace | 18.40 s | 14.75 s |
@@ -95,6 +99,7 @@ These samples do not establish production throughput or a stable Python-to-nativ
 | Whitespace edit | 71.6 ms | 34.3 ms |
 | Retained-result estimate | 17.20 MB | 0.37 MB |
 
+This earlier ablation predates the aggregate reporter completion.
 Both runs use the same native binary, source snapshot, allocator, and remaining policies.
 An earlier pair measured 26.06 and 19.33 seconds.
 That variation reinforces the limits of these shared-machine samples.
@@ -112,19 +117,45 @@ The large retained-result increase makes compact graph evidence a concrete targe
 The closure worklist itself terminates; the old recursive helper search did not.
 No speed-only feature ticket was created.
 
+The completed reporter run uses binary `d68f24f62c94` and the same 9,021-file source snapshot.
+It matches all 985 expected findings with no engine failures.
+Its cold evaluation takes 33.72 seconds; compilation takes 2493.9 milliseconds.
+The unchanged-file resend takes 36.7 milliseconds, and the whitespace edit takes 127.4 milliseconds.
+A same-binary control removes only the count gate and takes 26.05 seconds.
+Parsing, regex scans, and AST matching also consume less worker CPU in that control.
+Those operations precede the reporting gate; this uncontrolled pair does not isolate gate overhead.
+The repository has no escape-hatch detections, so its matching totals cannot validate the count gate.
+The reporter corpus separately rejects that control.
+These shared-machine samples do not establish a regression or a speed ratio against the earlier binary.
+
 The evidence preserves the earlier failed scale run and the successful calibrated run.
 It also preserves policy hashes and compilation times.
 
-## Retained integration contracts
+## Aggregate reporter completion
 
-Escape-hatch source detections remain separate from signed aggregate enforcement.
-The original reporter emits findings only above its ceiling of 16 detections.
-Cases at 16 and 17 retain actual reporter outputs.
-The native source candidate uses `steer` mode.
-Signing, allowlist verification, and command-line contracts remain upstream integration work, as in earlier batches.
+The original [reporter](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_sql_grammar_escape_hatches.py#L1175) verifies its signed allowlist before it applies a global ceiling.
+The earlier source gate left these observations out of native comparison.
+That was incomplete reporter coverage.
 
-The allowlist reporter chooses duplicate owners according to asynchronous extraction completion.
-Repeated identical oracle runs selected different files.
+The shared define now declares `report_when: { count: { gt: 16 } }`.
+The native engine counts the combined findings from all clauses and reports every finding only above 16.
+The gate applies to snapshots, decisions, workspace results, and paged results.
+It preserves execution failures.
+Gated workspaces return complete results so edits clear findings in unchanged and evicted files when the count falls to 16.
+The declaration survives catalog storage because it lives inside a define clause.
+
+The [host adapter](../conformance/data-layer/signed-allowlist.ts) verifies the original Ed25519 signature against the configured allowlist before native evaluation.
+An invalid signature reports the original signature diagnostic and skips detector evaluation.
+The policy generator also refuses invalid signed constants.
+The public verification artifact comes from the pinned source; it contains no signing key.
+The native engine does not verify signatures or call Python.
+
+New oracle cases cover empty input, 15/16/17 counts, cross-file totals, mixed clauses, multiline parameters, and invalid signatures.
+The oracle deduplicates same-line parameters by file, line, and class before counting them.
+Seventeen same-line parameters therefore remain below the ceiling; 17 parameters on distinct lines exceed it.
+Unsigned allowlist edits and invalid signatures produce one signature diagnostic even above the ceiling.
+
+The allowlist burndown reporter still chooses duplicate owners according to asynchronous extraction completion.
 The two ambiguous observations retain their actual outputs and conflicting owners; neither counts as a native pass.
 The rejected path-order experiment remains in its named stash.
 No deterministic ordering feature is justified by that upstream behavior.
@@ -143,7 +174,8 @@ DL_PYTHON=/path/to/data-layer/.venv/bin/python
   --source "$DL_SOURCE" --repo "$DL_REPO" --output /tmp/batch-04-recording.json
 
 "$DL_PYTHON" scripts/dsl/data_layer_generate_batch_four.py \
-  --source "$DL_SOURCE" --repo "$DL_REPO"
+  --source "$DL_SOURCE" --repo "$DL_REPO" \
+  --signature-output /tmp/escape-hatch-allowlist-signature.json
 
 "$DL_PYTHON" scripts/dsl/data_layer_probe_four.py \
   --source "$DL_SOURCE" --repo "$DL_REPO" \

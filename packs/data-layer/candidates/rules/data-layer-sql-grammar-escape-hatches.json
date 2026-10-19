@@ -2,7 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "data-layer-sql-grammar-escape-hatches",
   "revision": 1,
-  "mode": "steer",
+  "mode": "block",
   "description": "Candidate port of nera-data-layer sql_grammar_escape_hatches at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
     "include": [
@@ -794,6 +794,11 @@
                 ]
               }
             ]
+          }
+        },
+        "report_when": {
+          "count": {
+            "gt": 16
           }
         }
       }

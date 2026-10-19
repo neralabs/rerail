@@ -108,13 +108,6 @@ def main() -> None:
                        "scope": {"include": ["**/*.py"], "exclude": []}, "file_set": "suite",
                        "findings": [{"path": v.path.relative_to(root).as_posix(), "line": v.line, "column": getattr(v, "column", None),
                                      "code": v.code, "message": v.message, "severity": v.severity} for v in result.violations]})
-    if "sql_grammar_escape_hatches" in names:
-        module = importlib.import_module("scripts.lint_sql_grammar_escape_hatches")
-        original_event = next(event for event in events if event["check"] == "sql_grammar_escape_hatches")
-        reporter_results.append({"check": original_event["check"], "contract": "signed aggregate ceiling reporter; retained upstream", "findings": original_event["findings"]})
-        original_event["entry"] = "source detections before aggregate ceiling"
-        original_event["findings"] = [{"path": Path(v.file_path).relative_to(root).as_posix(), "line": v.line_number, "column": None,
-                                       "code": "escape_hatch", "message": v.reason} for v in module._violations_from_view(captured[0])]
     if "rust_sql_grammar_boundary" in names:
         module = importlib.import_module("scripts.lint_rust_sql_grammar_boundary")
         findings = module.check_all()

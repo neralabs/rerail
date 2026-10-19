@@ -256,11 +256,20 @@ fn compile_glob_set(patterns: &[String], path: &str) -> Result<GlobSet> {
         .map_err(|error| invalid(format!("{path}: {error}")))
 }
 
-/// The code rule's id, scope, clauses and required capabilities.
+type CompiledDocument = (
+    String,
+    RuleMode,
+    CodeRuleScope,
+    Vec<CompiledClause>,
+    Value,
+    Option<usize>,
+);
+
+/// The code rule's id, scope, clauses, required capabilities, and aggregate reporting gate.
 pub(super) fn compile_document(
     document: &Value,
     capabilities: &Capabilities,
-) -> Result<(String, RuleMode, CodeRuleScope, Vec<CompiledClause>, Value)> {
+) -> Result<CompiledDocument> {
     let (resolved, options) = config::resolve(document)?;
     let document = &resolved;
     let root = object(document, "/")?;
@@ -295,6 +304,32 @@ pub(super) fn compile_document(
     if clauses.is_empty() {
         return Err(invalid("/clauses must not be empty"));
     }
+    let gates = clauses
+        .iter()
+        .filter_map(|clause| clause.get("define")?.get("report_when"))
+        .collect::<Vec<_>>();
+    if gates.len() > 1 {
+        return Err(invalid("report_when must be declared once per document"));
+    }
+    let report_count_gt = gates
+        .first()
+        .copied()
+        .map(|value| {
+            let gate = object(value, "/report_when")?;
+            reject_unknown(gate, &["count"], "/report_when")?;
+            let count = object(
+                gate.get("count")
+                    .ok_or_else(|| invalid("/report_when/count is required"))?,
+                "/report_when/count",
+            )?;
+            reject_unknown(count, &["gt"], "/report_when/count")?;
+            count
+                .get("gt")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| invalid("/report_when/count/gt must be a nonnegative integer"))
+        })
+        .transpose()?;
     let defines = Defines {
         utils: collect_defines(clauses, capabilities)?,
         options,
@@ -342,6 +377,7 @@ pub(super) fn compile_document(
         scope,
         compiled,
         json!({ "ast": ast, "llm": requires_llm }),
+        report_count_gt,
     ))
 }
 

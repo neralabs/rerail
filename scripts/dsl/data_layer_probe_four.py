@@ -26,6 +26,8 @@ def record(case, source_root):
         for name in ('ROOT','REPO_ROOT','PROJECT_ROOT'):
             if hasattr(module,name): context.enter_context(patch.object(module,name,root))
         config = case.get('oracle_config',{})
+        if 'allowlist_signature' in config:
+            context.enter_context(patch.object(module,'ALLOWLIST_SIGNATURE',config['allowlist_signature']))
         for name, value in config.get('options',{}).items():
             if hasattr(module,name): context.enter_context(patch.object(module,name,frozenset(value)))
         path = root/files[0]['path']
@@ -64,13 +66,21 @@ def record(case, source_root):
         engine=FactEngine(root=root,fact_store=JsonFactStore(root/'tmp/facts'),extractors=extractors,enable_fact_cache=False)
         view=engine.materialize((plugin,))
         reported=plugin.reporter(view)
-        findings=[{'path':(v.path.relative_to(root) if v.path.is_absolute() else v.path).as_posix(),
+        def relative_report_path(path):
+            if not path.is_absolute():return path.as_posix()
+            if path.is_relative_to(root):return path.relative_to(root).as_posix()
+            return path.relative_to(source_root.resolve()).as_posix()
+        findings=[{'path':relative_report_path(v.path),
                    'line':v.line,'column':None,'code':v.code,'message':v.message} for v in reported]
         if check == 'grammar_allowlist_burndown':
             for finding in findings:
                 variable=next(name for name,(label,_) in module._allowlist_specs().items() if finding['message'].startswith(label+':'))
                 finding['tag']='allowlist-'+variable.lower()
         production={**base,'test':case['test']+':plugin','entry':'plugin.reporter','production_scope':True,'oracle_config':{},'findings':findings}
+        if 'allowlist_signature' in config:
+            production['oracle_config']['allowlist_signature']=config['allowlist_signature']
+        if check == 'sql_grammar_escape_hatches' and 'ALLOWLISTED_CLASSES' in config.get('options',{}):
+            production['oracle_config']['options']={'ALLOWLISTED_CLASSES':config['options']['ALLOWLISTED_CLASSES']}
         if check == 'grammar_allowlist_burndown':
             owners={}
             for bundle in view.files.values():
@@ -82,12 +92,11 @@ def record(case, source_root):
                 production['retained_reason']='Upstream duplicate-owner attribution follows asynchronous fact completion order'
                 production['oracle_ambiguous_owners']=collisions
         if check == 'sql_grammar_escape_hatches':
-            # Keep the aggregate contract separate from its source detections, as in batch three.
-            production['retained_reason']='Signed allowlist verification and aggregate ceiling reporter retained upstream'
             events.append(production)
             raw=module._violations_from_view(view)
             events.append({**base,'test':case['test']+':production-detector','entry':'production source detections',
-                           'production_scope':True,'oracle_config':{},'findings':normalize(check,raw,root,files)})
+                           'production_scope':True,'oracle_config':{'options':production['oracle_config']['options']} if 'options' in production['oracle_config'] else {},
+                           'findings':normalize(check,raw,root,files)})
         else:events.append(production)
         return events
 

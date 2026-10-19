@@ -1374,13 +1374,15 @@ function checkViolationAgainstQuery(clause: CodeRuleDslReportingClause, context:
 
 export const codeRuleDefineSchema = z
   .object({
+    report_when: z.object({ count: z.object({ gt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) }).strict() }).strict().optional(),
+
     language: z.enum(CODE_RULE_LANGUAGE_IDS).optional(),
     utils: z.record(utilityId, codeRuleUtilitySchema).optional(),
     options: z.record(optionName, codeRuleOptionDeclarationSchema).optional(),
     config: z.record(optionName, codeRuleValueSchema).optional(),
   })
   .strict()
-  .refine(define => define.utils !== undefined || define.options !== undefined || define.config !== undefined, "define must hold utils, options or config.")
+  .refine(define => define.utils !== undefined || define.options !== undefined || define.config !== undefined || define.report_when !== undefined, "define must hold utils, options, config or report_when.")
   .refine(define => define.utils === undefined || define.language !== undefined, {
     message: "language is required: utilities compile for one language.",
     path: ["language"],
@@ -1591,6 +1593,9 @@ export const codeRuleResolvedRuleSchema = z
   .strict()
   .superRefine((rule, context) => {
     const ids = new Set<string>();
+    if (rule.clauses.filter(clause => clause.define?.report_when !== undefined).length > 1) {
+      context.addIssue({ code: "custom", path: ["clauses"], message: "report_when must be declared once per document." });
+    }
     for (const [index, clause] of rule.clauses.entries()) {
       if (ids.has(clause.id)) {
         context.addIssue({ code: "custom", path: ["clauses", index, "id"], message: `Duplicate clause id: ${clause.id}.` });

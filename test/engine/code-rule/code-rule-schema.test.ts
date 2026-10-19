@@ -27,6 +27,20 @@ describe("codeRuleMessageVariables", () => {
 });
 
 describe("code rule language mirror", () => {
+  it("validates a single aggregate gate inside a persisted define clause", () => {
+    const rule = astRule("python", { kind: "call" });
+    const withGate = (gate: unknown) => ({ ...rule, clauses: [
+      { id: "gate", define: { report_when: gate } }, ...rule.clauses,
+    ] });
+    expect(codeRuleSchema.safeParse(withGate({ count: { gt: 16 } })).success).toBe(true);
+    for (const count of [{ gt: -1 }, { gt: 1.5 }, { gt: "16" }, { lte: 16 }, { gt: 16, typo: 1 }]) {
+      expect(codeRuleSchema.safeParse(withGate({ count })).success).toBe(false);
+    }
+    expect(codeRuleSchema.safeParse({ ...rule, clauses: [
+      { id: "gate", define: { report_when: { count: { gt: 16 } } } },
+      { id: "other", define: { report_when: { count: { gt: 16 } } } }, ...rule.clauses,
+    ] }).success).toBe(false);
+  });
   it("matches the executable DSL capabilities language keys", () => {
     const capabilities = JSON.parse(readFileSync(new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url), "utf8")) as {
       ast: { languages: Record<string, string> };

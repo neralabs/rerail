@@ -244,7 +244,14 @@ pub(super) fn evaluate_code_rule(
     snapshot: &Snapshot,
     mode: &str,
 ) -> Result<Evaluation> {
-    evaluate_clauses(code_rule, snapshot, mode, &code_rule.clauses)
+    let mut evaluation = evaluate_clauses(code_rule, snapshot, mode, &code_rule.clauses)?;
+    if code_rule
+        .report_count_gt
+        .is_some_and(|maximum| evaluation.violations.len() <= maximum)
+    {
+        evaluation.violations.clear();
+    }
+    Ok(evaluation)
 }
 
 pub(super) fn evaluate_clauses(
@@ -299,7 +306,7 @@ pub(super) fn evaluate_clauses(
                     &code_rule.scope,
                     &mut evaluation.metrics,
                     limits,
-                    mode == "decision",
+                    mode == "decision" && code_rule.report_count_gt.is_none(),
                     &mut partial,
                     Some(&clause.violation),
                     &mut util_limit,
@@ -350,7 +357,7 @@ pub(super) fn evaluate_clauses(
                     evaluation
                         .violations
                         .push(violation_from_witness(code_rule, clause, witness));
-                    if mode == "decision" {
+                    if mode == "decision" && code_rule.report_count_gt.is_none() {
                         break;
                     }
                 }

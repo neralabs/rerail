@@ -686,6 +686,8 @@ impl RuleMode {
 #[derive(Clone)]
 pub(super) struct CompiledCodeRule {
     pub(super) id: String,
+    /// Report the rule's combined findings only when their count exceeds this ceiling.
+    pub(super) report_count_gt: Option<usize>,
     pub(super) rule_mode: RuleMode,
     pub(super) canonical: String,
     pub(super) digest: String,
