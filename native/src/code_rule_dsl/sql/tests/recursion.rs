@@ -253,7 +253,13 @@ fn two_sites_of_one_recursion_run_its_loop_each_over_their_own_demand() {
         ["f(g(f)) A=f"]
     );
     // The loop is emitted once and run again at the second site.
-    let compiled = compile("typescript", ast, None);
+    assert_eq!(markers("typescript", ast), [1, 1, 1]);
+}
+
+/// How many loop blocks (`BLOCK`), loops (`LOOP`) and later runs of a block (`RUN`) the SQL
+/// engine's statements of `ast` hold.
+fn markers(language: &str, ast: Value) -> [usize; 3] {
+    let compiled = compile(language, ast, None);
     let crate::code_rule_dsl::model::ClauseKind::Forbid(crate::code_rule_dsl::model::Query::Ast {
         matchers,
         ..
@@ -262,16 +268,57 @@ fn two_sites_of_one_recursion_run_its_loop_each_over_their_own_demand() {
         panic!("an AST clause")
     };
     let program = crate::code_rule_dsl::sql::compile(&[&matchers[0]]).expect("a program");
-    let statements: Vec<&String> = program.statements().collect();
     let count = |marker: &str| {
-        statements
-            .iter()
+        program
+            .statements()
             .filter(|statement| statement.starts_with(marker))
             .count()
     };
-    assert_eq!(count("/*BLOCK*/"), 1);
-    assert_eq!(count("/*LOOP*/"), 1);
-    assert_eq!(count("/*RUN*/"), 1);
+    [count("/*BLOCK*/"), count("/*LOOP*/"), count("/*RUN*/")]
+}
+
+#[test]
+fn a_utility_referenced_at_three_sites_is_one_unit_each_site_demands() {
+    // `named` reads `$F` and is not recursive: its three references are one unit, each demanding
+    // its own nodes (the arguments, the enclosing block's returns, an enclosing class).
+    let ast = json!({
+        "rule": { "pattern": "$F($$$)", "all": [
+            { "has": { "field": "arguments", "matches": "named" } },
+            { "inside": { "stopBy": "end", "kind": "statement_block",
+                          "has": { "stopBy": "end", "kind": "return_statement", "matches": "named" } } },
+            { "not": { "inside": { "stopBy": "end", "kind": "class_declaration", "matches": "named" } } },
+        ] },
+        "utils": { "named": { "has": { "stopBy": "end", "kind": "identifier", "pattern": "$F" } } },
+    });
+    let source = "function q() { f(g(f)); return [f]; }\nfunction r() { h(h); return x; }\n\
+                  class f { m() { f(f); return f; } }\nfunction s() { k([k]); return k; }\n";
+    assert_eq!(
+        agreed("typescript", ast.clone(), None, source),
+        ["f(g(f)) F=f", "k([k]) F=k"]
+    );
+    assert_eq!(markers("typescript", ast), [1, 1, 2]);
+}
+
+#[test]
+fn a_parameterized_utility_called_at_two_sites_maps_its_parameters_per_site() {
+    // `holds` is called with `P` bound to the callee at one site, and with `P` unbound at the
+    // other, where it returns what it binds as `$Y`: one unit, keyed by `P`'s value.
+    let ast = json!({
+        "rule": { "pattern": "$F($$$)", "all": [
+            { "has": { "field": "arguments", "matches": { "holds": { "P": "$F" } } } },
+            { "inside": { "stopBy": "end", "kind": "return_statement",
+                          "matches": { "holds": { "P": "$Y" } } } },
+        ] },
+        "utils": { "holds": { "params": ["P"], "rule": {
+            "has": { "stopBy": "end", "kind": "identifier", "pattern": "$P" } } } },
+    });
+    let source = "function q() { return f(g(f)); }\nfunction r() { return h(1); }\n\
+                  function s() { return [k(k)]; }\nm(m);\n";
+    assert_eq!(
+        agreed("typescript", ast.clone(), None, source),
+        ["f(g(f)) F=f Y=f", "k(k) F=k Y=k"]
+    );
+    assert_eq!(markers("typescript", ast), [1, 1, 1]);
 }
 
 #[test]

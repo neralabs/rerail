@@ -84,6 +84,7 @@ impl ProgramBuilder {
             .map(|kinds| kinds.iter().copied().collect());
         let mut lowerer = Lowerer::new(self, grammar.language);
         lowerer.three = grammar.three_valued;
+        lowerer.shared = recursion::repeated(&[&grammar.matcher]);
         let root = each.map(|name| {
             lowerer.exclude = Some(name.to_owned());
             let root = lowerer.slot(INTERNAL, "\0root", SlotKind::Node);
@@ -137,6 +138,9 @@ struct Lowerer<'p> {
     /// While lowering a parsed tree's rule (`parse`): where its host is. Its nodes are no
     /// file's, so no per-batch stage (computed over the batch's files) may stand for a rule.
     tree: Option<leaves::TreeContext>,
+    /// The non-recursive utilities the rule being lowered reaches through two or more
+    /// references (`recursion::repeated`): each is a unit, its body lowered once.
+    shared: HashSet<UtilKey>,
 }
 
 fn unsupported<T>(operator: &str) -> Result<T, Unsupported> {
@@ -340,6 +344,7 @@ impl<'p> Lowerer<'p> {
             stage_members: HashMap::new(),
             sources: Vec::new(),
             tree: None,
+            shared: HashSet::new(),
         }
     }
 
@@ -416,6 +421,34 @@ impl<'p> Lowerer<'p> {
             }
         }
         Ok(())
+    }
+
+    /// For a non-recursive utility the rule reaches through two or more references (`shared`):
+    /// the one-member component its unit belongs to. Its body is then lowered once, as a unit
+    /// (`unit`), whose loop finishes in one pass (no member reads another), and every reference
+    /// demands its keys and reads its answers, as a recursive reference does, instead of lowering
+    /// a copy of it. Not inside a parsed tree (units run over the batch's files), and not for an
+    /// `nthChild` whose `ofRule` binds, which a unit cannot stand for under a relation (`leaks`).
+    fn shared_unit(&self, util: &UtilRef) -> Option<Cycle> {
+        let key = util_key(util);
+        if self.tree.is_some() || !self.shared.contains(&key) {
+            return None;
+        }
+        let leaky = util
+            .with_target(|rule| match rule {
+                AstMatcher::NthChild(nth) => nth
+                    .of_rule
+                    .as_ref()
+                    .is_some_and(|rule| !CaptureAnalysis::default().binds(rule).is_empty()),
+                _ => false,
+            })
+            .unwrap_or(true);
+        (!leaky).then(|| Cycle {
+            members: vec![util.clone()],
+            keys: vec![key],
+            capture_free: false,
+            refused: None,
+        })
     }
 
     /// The unit of `util`, a member of `cycle` running in `scope` (a call's runs in a frame of its
@@ -510,6 +543,12 @@ impl<'p> Lowerer<'p> {
         let mut lowerer = Lowerer::new(self.program, self.dialect);
         lowerer.three = self.three;
         lowerer.slot(INTERNAL, ORIGIN, SlotKind::Node);
+        let targets: Vec<AstMatcher> = cycle
+            .members
+            .iter()
+            .filter_map(|member| member.with_target(Clone::clone))
+            .collect();
+        lowerer.shared = recursion::repeated(&targets.iter().collect::<Vec<_>>());
         for (index, member) in cycle.members.iter().enumerate() {
             let seed = member
                 .with_target(|rule| root_kinds(rule, 0).map(|kinds| kinds.into_iter().collect()))
@@ -793,6 +832,7 @@ impl<'p> Lowerer<'p> {
         let statement = {
             let mut lowerer = Lowerer::new(self.program, self.dialect);
             lowerer.three = self.three;
+            lowerer.shared = recursion::repeated(&[rule]);
             let (op, _) = lowerer.lower(rule, 0, &BTreeSet::new())?;
             let op = lowerer.unknowable(op);
             lowerer.finish(kinds, op)
@@ -1118,11 +1158,18 @@ impl<'p> Lowerer<'p> {
                     out.extend(self.units[unit].key.iter().copied());
                     return Ok((Op::Recur { unit, slots: None }, out));
                 }
+                let staged = self.tree.is_none()
+                    && !self.excluding_bound(scope, bound)
+                    && util.with_target(capture_free).unwrap_or(false);
+                if !staged && let Some(cycle) = self.shared_unit(util) {
+                    let exclude = self.exclude.clone();
+                    let (unit, _) = self.unit(&cycle, util, None, scope, exclude)?;
+                    let mut out = bound.clone();
+                    out.extend(self.units[unit].key.iter().copied());
+                    return Ok((Op::Recur { unit, slots: None }, out));
+                }
                 util.with_target(|rule| {
-                    if capture_free(rule)
-                        && self.tree.is_none()
-                        && !self.excluding_bound(scope, bound)
-                    {
+                    if staged {
                         self.stage(rule)
                             .map(|stage| (Op::Stage(stage), bound.clone()))
                     } else {
@@ -1151,57 +1198,62 @@ impl<'p> Lowerer<'p> {
                     SlotKind::Count,
                     SlotKind::Text,
                 ];
-                let (body, returned): (Op, Option<Bound>) =
-                    match self.program.recursion.cycle(&call.util) {
-                        Some(cycle) => {
-                            recursion::refusal(&cycle)?;
-                            let params: Vec<String> =
-                                call.args.iter().map(|(param, _)| param.clone()).collect();
-                            let (unit, _) =
-                                self.unit(&cycle, &call.util, Some(&params), scope, exclude)?;
-                            // The call's own copy of the frame's key: the unit's frame is the
-                            // same for every call, and a call inside the unit's own body must
-                            // not overwrite the parameters of the frame it runs in.
-                            let key = self.units[unit].key.clone();
-                            let slots = key
-                                .iter()
-                                .map(|&slot| {
-                                    if Some(slot) == self.root {
-                                        return slot;
-                                    }
-                                    let (name, kind) =
-                                        (self.slots[slot].name.clone(), self.slots[slot].kind);
-                                    self.slot(callee, &name, kind)
-                                })
-                                .collect();
-                            (
-                                Op::Recur {
-                                    unit,
-                                    slots: Some(slots),
-                                },
-                                None,
-                            )
-                        }
-                        None => {
-                            // The parameters the caller's bindings may fill on entry.
-                            let mut entry_bound = Bound::new();
-                            for (param, caller) in &call.args {
-                                for kind in kinds {
-                                    if let Some(slot) = self.existing(scope, caller, kind)
-                                        && bound.contains(&slot)
-                                    {
-                                        entry_bound.insert(self.slot(callee, param, kind));
-                                    }
+                let cycle = match self.program.recursion.cycle(&call.util) {
+                    Some(cycle) => {
+                        recursion::refusal(&cycle)?;
+                        Some(cycle)
+                    }
+                    None => self.shared_unit(&call.util).map(std::rc::Rc::new),
+                };
+                let (body, returned): (Op, Option<Bound>) = match cycle {
+                    Some(cycle) => {
+                        let params: Vec<String> =
+                            call.args.iter().map(|(param, _)| param.clone()).collect();
+                        let (unit, _) =
+                            self.unit(&cycle, &call.util, Some(&params), scope, exclude)?;
+                        // The call's own copy of the frame's key: the unit's frame is the
+                        // same for every call, and a call inside the unit's own body must
+                        // not overwrite the parameters of the frame it runs in.
+                        let key = self.units[unit].key.clone();
+                        let slots = key
+                            .iter()
+                            .map(|&slot| {
+                                if Some(slot) == self.root {
+                                    return slot;
+                                }
+                                let (name, kind) =
+                                    (self.slots[slot].name.clone(), self.slots[slot].kind);
+                                self.slot(callee, &name, kind)
+                            })
+                            .collect();
+                        (
+                            Op::Recur {
+                                unit,
+                                slots: Some(slots),
+                            },
+                            None,
+                        )
+                    }
+                    None => {
+                        // The parameters the caller's bindings may fill on entry.
+                        let mut entry_bound = Bound::new();
+                        for (param, caller) in &call.args {
+                            for kind in kinds {
+                                if let Some(slot) = self.existing(scope, caller, kind)
+                                    && bound.contains(&slot)
+                                {
+                                    entry_bound.insert(self.slot(callee, param, kind));
                                 }
                             }
-                            let (body, body_out) = self.with_exclude(exclude, |lowerer| {
-                                call.util
-                                    .with_target(|rule| lowerer.lower(rule, callee, &entry_bound))
-                                    .expect("a filled utility")
-                            })?;
-                            (body, Some(body_out))
                         }
-                    };
+                        let (body, body_out) = self.with_exclude(exclude, |lowerer| {
+                            call.util
+                                .with_target(|rule| lowerer.lower(rule, callee, &entry_bound))
+                                .expect("a filled utility")
+                        })?;
+                        (body, Some(body_out))
+                    }
+                };
                 let mut entry = Vec::new();
                 for (param, caller) in &call.args {
                     for kind in kinds {
