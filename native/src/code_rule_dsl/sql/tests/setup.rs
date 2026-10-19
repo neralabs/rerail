@@ -19,20 +19,32 @@ use std::time::Instant;
 #[test]
 #[ignore = "a measurement, run by hand"]
 fn tables_made_alone() {
-    for n in [1_000, 2_000, 4_000, 8_000, 16_000] {
-        let connection = Connection::open_in_memory().expect("opens");
-        connection
-            .execute_batch("PRAGMA temp_store = MEMORY")
-            .expect("memory");
-        let started = Instant::now();
-        for table in 0..n {
+    let counts: Vec<usize> = std::env::var("RERAIL_SETUP_TABLES")
+        .unwrap_or_else(|_| "1000,2000,4000,8000,16000".to_owned())
+        .split(',')
+        .map(|count| count.trim().parse().expect("a count"))
+        .collect();
+    let btree_limit: usize = std::env::var("RERAIL_SETUP_BTREES")
+        .ok()
+        .and_then(|limit| limit.parse().ok())
+        .unwrap_or(16_000);
+    for n in counts {
+        // B-trees past `RERAIL_SETUP_BTREES` would take minutes: skipped.
+        let btrees = (n <= btree_limit).then(|| {
+            let connection = Connection::open_in_memory().expect("opens");
             connection
-                .execute_batch(&format!(
-                    "CREATE TEMP TABLE t{table}(k INTEGER PRIMARY KEY, file, node, s0, s1)"
-                ))
-                .expect("a B-tree");
-        }
-        let btrees = started.elapsed().as_secs_f64();
+                .execute_batch("PRAGMA temp_store = MEMORY")
+                .expect("memory");
+            let started = Instant::now();
+            for table in 0..n {
+                connection
+                    .execute_batch(&format!(
+                        "CREATE TEMP TABLE t{table}(k INTEGER PRIMARY KEY, file, node, s0, s1)"
+                    ))
+                    .expect("a B-tree");
+            }
+            started.elapsed().as_secs_f64()
+        });
         let connection = Connection::open_in_memory().expect("opens");
         let store = Arc::new(FrameStore::default());
         let started = Instant::now();
@@ -53,9 +65,12 @@ fn tables_made_alone() {
                 .expect("reads");
         }
         let frames = started.elapsed().as_secs_f64();
+        let btrees = btrees.map_or_else(
+            || "B-trees skipped".to_owned(),
+            |btrees| format!("B-trees {btrees:.3}s ({:.1} µs/table)", btrees * 1e6 / n as f64),
+        );
         eprintln!(
-            "{n:>6} tables: B-trees {btrees:.3}s ({:.1} µs/table), frames made and read once {frames:.3}s ({:.1} µs/table)",
-            btrees * 1e6 / n as f64,
+            "{n:>7} tables: {btrees}, frames made and read once {frames:.3}s ({:.1} µs/table)",
             frames * 1e6 / n as f64
         );
     }
