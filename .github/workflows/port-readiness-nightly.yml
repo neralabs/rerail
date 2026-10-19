@@ -94,11 +94,12 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The drift check runs the recorder as port-readiness-record.yml does, with --check: it reports when upstream moved and
-  # uploads nothing, so the night tells main without quietly re-recording main behind the maintainers. It is its own
-  # job rather than a call to that workflow because a called workflow's jobs may not ask for more than the caller
-  # grants, and the recorder's authorize and publish jobs ask for write: GitHub would refuse the whole nightly run at
-  # startup, and granting write here would hand the scheduled run a write token while upstream linters run.
+  # The drift check runs the recorder as port-readiness-record.yml does, with --check: upstream on its own tests and on
+  # the corpus files the goldens name, never the rest of the corpus. It reports when upstream moved and uploads nothing,
+  # so the night tells main without quietly re-recording main behind the maintainers. It is its own job rather than a
+  # call to that workflow because a called workflow's jobs may not ask for more than the caller grants, and the
+  # recorder's authorize and publish jobs ask for write: GitHub would refuse the whole nightly run at startup, and
+  # granting write here would hand the scheduled run a write token while upstream linters run.
   record-check:
     name: Recordings match upstream (${{ matrix.pack }} · ${{ matrix.tool }})
     needs: build

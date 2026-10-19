@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { test } from "vitest";
 
 import type { CorpusFile } from "../../../conformance/port-readiness/corpus.js";
-import { gatesCorpusSchema, gatesRecordingSchema, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
-import { readCachedRecording, recordingLockSchema, recordingLockText } from "../../../conformance/port-readiness/recording/store.js";
+import { gatesCorpusSchema, gatesRecordingSchema, recordingText, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
+import { readCachedRecording, recordingLockSchema, recordingLockText, writeCachedRecording } from "../../../conformance/port-readiness/recording/store.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
 import { CASE_LAYOUTS, committedSources, diffRecording, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
 import { RUNTIMES_DIRECTORY, unpinnedNpmDependencies, unpinnedPythonDependencies } from "../../../conformance/recorders/port-readiness/runtimes.js";
@@ -107,10 +107,10 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     assert.match(readFileSync(join(root, "packs/demo/licenses/bandit/UPSTREAM.md"), "utf8"), /\| `upstream\/bandit\/fixtures\/pickle_deserialize\.py` \| `examples\/pickle_deserialize\.py` \| verbatim \|/u);
 
     const again = await recordToolPack(options);
-    assert.deepEqual(diffRecording(root, "demo", "bandit", again), { changed: [], missing: [], conflicting: [] });
+    assert.deepEqual(diffRecording(root, "demo", "bandit", again, join(root, "cache")), { changed: [], corpusNote: null, missing: [], conflicting: [] });
     // The lock is what a commit pins, so a lock naming other bytes is what the stale check sees.
     writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), recordingLockText({ ...lock, files: { ...lock.files, "recording.json": { ...lock.files["recording.json"], sha256: "e".repeat(64) } } }));
-    assert.deepEqual(diffRecording(root, "demo", "bandit", again).changed, ["recording.json"]);
+    assert.deepEqual(diffRecording(root, "demo", "bandit", again, join(root, "cache")).changed, ["recording.json"]);
     // A lock whose recording is not in the cache was recorded before: the summary says it could not compare, never
     // that this is a first recording.
     const uncompared = await writeRecording(root, "demo", "bandit", again, { cacheRoot: join(root, "cache") });
@@ -119,6 +119,28 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     const compared = await writeRecording(root, "demo", "bandit", again, { cacheRoot: join(root, "cache") });
     assert.equal(compared.changes.unavailable, null);
     assert.deepEqual(compared.changes.rules, []);
+
+    // A locked corpus.json recorded over more files than the goldens name (before the recorder narrowed to them) still
+    // holds while it answers the goldens' files as a fresh recording does; --check reads it from the cache.
+    const current = recordingLockSchema.parse(JSON.parse(readFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), "utf8")));
+    const lockCorpus = async (value: typeof corpus) => {
+      const digest = await writeCachedRecording(join(root, "cache"), recordingText(value));
+      writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), recordingLockText({ ...current, files: { ...current.files, "corpus.json": { ...current.files["corpus.json"], sha256: digest } } }));
+    };
+    const extra = { ...corpus.files[0]!, task: "other-task", findings: {} };
+    await lockCorpus({ ...corpus, files: [...corpus.files, extra] });
+    const superset = diffRecording(root, "demo", "bandit", again, join(root, "cache"));
+    assert.deepEqual(superset.changed, []);
+    assert.match(superset.corpusNote!, /answers all 1 file\(s\) the goldens name, as a fresh recording does, and 1 more/u);
+    await lockCorpus({ ...corpus, files: [{ ...corpus.files[0]!, findings: {} }, extra] });
+    const differs = diffRecording(root, "demo", "bandit", again, join(root, "cache"));
+    assert.deepEqual(differs.changed, ["corpus.json"]);
+    assert.match(differs.corpusNote!, /no longer holds: 1 of the 1 file\(s\) the goldens name are answered differently or not at all, e\.g\. demo-task\/app\.py/u);
+    // Without the locked recording in the cache nothing is compared, and the check never calls it current.
+    writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), recordingLockText({ ...current, files: { ...current.files, "corpus.json": { ...current.files["corpus.json"], sha256: "f".repeat(64) } } }));
+    const unread = diffRecording(root, "demo", "bandit", again, join(root, "cache"));
+    assert.deepEqual(unread.changed, ["corpus.json"]);
+    assert.match(unread.corpusNote!, /could not be compared: .* not in the cache/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

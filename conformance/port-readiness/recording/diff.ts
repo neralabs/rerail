@@ -77,12 +77,16 @@ function caseFindings(recording: GatesRecording, rule: string): Map<string, Reco
   return found;
 }
 
-/** A rule's corpus findings by file, so a corpus file that was added or dropped counts as a change for the rule. */
-function corpusFindings(corpus: GatesCorpusRecording | null, rule: string): Map<string, string> {
+/**
+ * A rule's corpus findings on the files both recordings answer. A file one of them does not answer is not a change in
+ * upstream's answer: the recorder answers only the files goldens name, so a file drops out when no golden names it.
+ */
+function corpusFindings(corpus: GatesCorpusRecording | null, rule: string, shared: Set<string>): Map<string, string> {
   const found = new Map<string, string>();
   for (const file of corpus?.files ?? []) {
+    const place = `${file.task}\0${file.path}\0${file.sha256}`;
     const spans = file.findings[rule];
-    if (spans !== undefined) found.set(`${file.task}\0${file.path}`, JSON.stringify(spans));
+    if (shared.has(place) && spans !== undefined) found.set(place, JSON.stringify(spans));
   }
   return found;
 }
@@ -118,6 +122,9 @@ export function diffRecordings(pack: string, tool: string, before: RecordedPair 
     .filter((field) => before.recording.pins[field] !== after.recording.pins[field])
     .map((field) => `${field} ${before.recording.pins[field]} → ${after.recording.pins[field]}`);
 
+  const placesOf = (corpus: GatesCorpusRecording | null) => new Set((corpus?.files ?? []).map((file) => `${file.task}\0${file.path}\0${file.sha256}`));
+  const afterPlaces = placesOf(after.corpus);
+  const shared = new Set([...placesOf(before.corpus)].filter((place) => afterPlaces.has(place)));
   const rules: RuleChange[] = [];
   for (const rule of [...new Set([...Object.keys(before.recording.rules), ...Object.keys(after.recording.rules)])].sort(byText)) {
     const was = before.recording.rules[rule];
@@ -133,8 +140,8 @@ export function diffRecordings(pack: string, tool: string, before: RecordedPair 
       const delta = expectedDelta(wasCases.get(place) ?? [], nowCases.get(place) ?? []);
       return { added: total.added + delta.added, removed: total.removed + delta.removed };
     }, { added: 0, removed: 0 });
-    const wasCorpus = corpusFindings(before.corpus, rule);
-    const nowCorpus = corpusFindings(after.corpus, rule);
+    const wasCorpus = corpusFindings(before.corpus, rule, shared);
+    const nowCorpus = corpusFindings(after.corpus, rule, shared);
     const corpusFilesChanged = [...new Set([...wasCorpus.keys(), ...nowCorpus.keys()])].filter((place) => wasCorpus.get(place) !== nowCorpus.get(place)).length;
     const factsChanged = (Object.keys(now.facts) as (keyof typeof now.facts)[])
       .filter((field) => JSON.stringify(was.facts[field]) !== JSON.stringify(now.facts[field]))

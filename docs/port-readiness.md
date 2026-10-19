@@ -35,9 +35,8 @@ report shows every failure, not only the first.
 
 Tool-pack checks come before any gate. When one fails, every rule of the tool-pack fails with it: a shipped rule blocks
 and a candidate is not ready to promote. They fail when the recording is stale (`corpus-pins` and the recording checks),
-when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`), when a corpus
-file the recording answers for was not fetched with its recorded bytes (`corpus-complete`, usually a failed download:
-run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
+when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`), when a task or
+corpus a golden names could not be fetched (`corpus-complete`, usually a failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
 loader (`bundled-load`, for example two documents with one id).
 
 Known parser gaps (`known_gaps` in `gates.yaml`) excuse an upstream test file that differs where the engine reported a
@@ -53,32 +52,40 @@ Gate 6, real code, runs in NRV only; rerail judges the goldens it found, in `mat
 
 ### Goldens
 
-A golden is a real-code file a shipped rule must agree with upstream on. `packs/<id>/upstream/<tool>/goldens.tsv` lists
-each by rule, task or corpus, path and the file's sha256; its expected answer is upstream's findings on that file in
-`corpus.json`. Rerail does not run the rules over the corpus to find goldens. That is V1's Gate 6, and it stays in
-nera-rule-validation (NRV), which writes every file where a rule and upstream differ to its
-`validation/goldens/<pack>.tsv`. A tool-pack's `goldens.tsv` is a reviewed list imported from there: the gates read it
-and never write it.
+A golden is a real-code file a rule must agree with upstream on. `packs/<id>/upstream/<tool>/goldens.tsv` lists each
+by rule, task or corpus, path and the file's sha256; its expected answer is upstream's findings on that file in
+`corpus.json`. Rerail does not run the rules over the corpus to find goldens, and never writes `goldens.tsv`. Finding
+them is V1's Gate 6, which stays in nera-rule-validation (NRV): NRV writes every file where a rule and upstream differ
+to its `validation/goldens/<pack>.tsv`, and a tool-pack's `goldens.tsv` is a reviewed list imported from there.
 
-- **Shipped rules only.** A shipped rule's goldens are NRV's goldens for it, filed under NRV's id for the rule (the
-  document id at NRV's pinned rerail commit, or `<tool>:<upstream rule>`). NRV's goldens for candidates are not
-  imported.
+- **Every rule's goldens are imported, candidates' too,** filed under NRV's id for the rule (the document id at NRV's
+  pinned rerail commit, or `<tool>:<upstream rule>`) and mapped to the rerail document by its upstream rule. A
+  candidate held back by a golden stays held until it agrees there, and the gates see the moment it does.
+- **A candidate that differs throughout takes one line instead.** A candidate that differs on more than 500 of its
+  goldens (`SYSTEMATIC_FILES` in `goldens.ts`) is wrong on real code as a whole, not on cases: its goldens would only
+  restate that, at the cost of judging thousands of files. It is listed once under `real_code_gaps` in the tool-pack's
+  `gates.yaml`, with how many of its goldens it differs on, in their place. A listed rule fails `no-real-code-gap`, so
+  it is never ready to promote, and a shipped rule cannot be listed. Once it agrees with upstream there, import its
+  goldens and remove the entry. Eight typescript-eslint candidates are listed today; the next largest difference
+  anywhere is 335 files.
 - **A negative where the tests have none.** `stays-silent` needs a case where upstream reports nothing and the rule
   agrees. Ruff's upstream test files all have findings, so each shipped Ruff rule without another such case has one
-  golden where upstream reports nothing: the best-ranked negative file of the last real-code run in rerail, chosen from
-  the files richest in the rule's own constructs.
-- **A candidate that differs takes one line.** A candidate that differs from upstream on its NRV goldens is listed once,
-  under `real_code_gaps` in the tool-pack's `gates.yaml`, with how many of those files it differs on, in place of a
-  golden per file. A listed rule fails `no-real-code-gap`, so it is never ready to promote, and a shipped rule cannot be
-  listed.
-- **Promoting a candidate** brings its goldens in: copy its block from NRV's goldens file into `goldens.tsv` under its
-  rerail id and remove its `real_code_gaps` entry, in the change that moves it into `rules/`. The gates then judge it
-  on them, and it ships once it agrees with upstream there.
+  golden where upstream reports nothing: the best-ranked negative file of the last real-code run in rerail, the file
+  richest in the rule's own constructs. NRV is to write these itself; then they are imported like the rest.
 
-The report's run integrity names a golden of a candidate, and a golden or `real_code_gaps` entry for a rule the
-tool-pack does not have. When the engine could not fully read a golden (a parse failure, or its work budget ran out),
-the difference is an engine gap, not the rule's: the rule still fails, through `engine-reads-goldens`, and the report
-lists it under "Blocked by engine gaps" so the fix goes to the engine (NER-1764), not the rule.
+Run integrity names a golden or `real_code_gaps` entry for a rule the tool-pack does not have, a rule with both, and a
+candidate that differs on more than 500 of its goldens. When the engine could not fully read a golden (a parse
+failure, or its work budget ran out), the difference is an engine gap, not the rule's: the rule still fails, through
+`engine-reads-goldens`, and the report lists it under "Blocked by engine gaps" so the fix goes to the engine
+(NER-1764), not the rule.
+
+**Upstream's answers cover the goldens' files only.** The recorder fetches the files `goldens.tsv` names and asks
+upstream about those alone, and the gates fetch the same files; nothing in rerail reads the rest of the corpus. So an
+imported golden whose file `corpus.json` does not answer fails its rule ("corpus.json has no answer for it") until the
+tool-pack is recorded again, as a new port needs a recording before its upstream tests can be judged.
+`port-readiness:record --check`, which the nightly runs, accepts a locked `corpus.json` recorded over more files (the
+whole corpus, before the recorder narrowed) as long as it answers every golden's file as a fresh recording does; the
+next re-record drops the rest.
 
 ## Which packs are gated
 
@@ -108,8 +115,8 @@ npm run port-readiness -- --pack python                 # every gated tool-pack 
 npm run port-readiness -- summary .rerail/reports/port-readiness # the merged summary CI writes
 ```
 
-The engine is this checkout's (`npm run build:native` first). The first run fetches the real-code corpus the goldens
-are read from into `.rerail/port-readiness/` (pinned, about 400 MB); later runs reuse it and the results of every rule whose inputs did not change.
+The engine is this checkout's (`npm run build:native` first). The first run fetches the real-code files the goldens
+name into `.rerail/port-readiness/` (pinned); later runs reuse them and the results of every rule whose inputs did not change.
 `--no-cache` judges every rule again. The command exits 1 when a shipped rule fails, as CI does.
 
 ### What a cached result is keyed by
@@ -186,20 +193,20 @@ A rule that fails: fix the rule (the check's detail names the first difference),
 ## What the gates read
 
 Upstream linters never run in pull request CI. The gates read what a recorder wrote into the pack, and fetch only the
-pinned real-code corpus and upstream's pinned test files:
+pinned real-code files the goldens name and upstream's pinned test files:
 
 ```text
 packs/<id>/upstream/<tool>/
 ├── gates.yaml          upstream pins, recommended configurations, known parser gaps, real-code gaps, and the team's decisions for the tool
 ├── recording.lock      the manifest: which recording this commit's rules are judged against (conformance/port-readiness/recording/store.ts)
-├── goldens.tsv         the shipped rules' goldens, imported from NRV
+├── goldens.tsv         the rules' goldens, imported from NRV
 └── fixtures/           upstream's test files, copied (listed in licenses/<project>/UPSTREAM.md)
 ```
 
 ### The recordings are not in the tree
 
 A recording — `recording.json`, upstream's facts and expected findings per rule, and `corpus.json`, its findings on
-the real-code corpus — is generated, large, and rewritten whole every time a tool-pack is recorded. The sixteen of
+the real-code files the goldens name — is generated, large, and rewritten whole every time a tool-pack is recorded. The sixteen of
 them were 71 MB, and git keeps every version of each forever, so a pack re-recorded after an upstream bump cost
 another few megabytes of history nobody can read. They live in a GitHub release instead, and each tool-pack commits a
 `recording.lock` of a few hundred bytes naming exactly the one its rules are judged against: its sha256, its size, its
@@ -237,7 +244,7 @@ the same way.
 upload under `.rerail/port-readiness/recordings/upload/`, and any case source the recording names that the tool-pack's
 `fixtures/` lacks, with its row in `UPSTREAM.md`. The lock, the case sources and `UPSTREAM.md` are committed; the
 recordings are not. Record again after adding a port,
-changing a tool's pins or adding a corpus; it needs `uv`, the network, and the pinned upstream runtimes
+changing a tool's pins, adding a corpus or importing a golden whose file `corpus.json` does not answer; it needs `uv`, the network, and the pinned upstream runtimes
 (`conformance/recorders/port-readiness/runtimes/`):
 
 ```sh
@@ -251,8 +258,8 @@ one written to make a rule pass; in a public repository that would be a way past
 recording with the `record-port-readiness` label, or by hand with a pull request and the head `sha` they reviewed, and
 the run records **only that commit**: if the pull request has moved on since, it fails rather than record the newer
 push. The recorder and the runtimes come **from the base branch**, and only the pull request's `packs/` and rule list
-from its head; a fork may not change the upstream its `gates.yaml` pins (repository, commit, runtime, tests), only
-`popularity` and `known_gaps`. Only a run from `main`, for `main` or a pull request into `main`, is attested, and the
+from its head (so the goldens it records answers for are the head's); a fork may not change the upstream its
+`gates.yaml` pins (repository, commit, runtime, tests), only `popularity`, `known_gaps` and `real_code_gaps`. Only a run from `main`, for `main` or a pull request into `main`, is attested, and the
 gates take no other recording, so `authorize` refuses any other before a leg records: one started by hand from another
 branch, and a stacked pull request, which is recorded once it targets `main`.
 

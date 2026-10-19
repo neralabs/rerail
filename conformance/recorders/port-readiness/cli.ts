@@ -52,7 +52,8 @@ async function main(): Promise<number> {
     + `(${cases.filter((testCase) => testCase.skipped === "not-copied").length} not copied), ${recorded.sources.length} case sources, `
     + `${recorded.corpus.files.length} corpus files, ${((Date.now() - started) / 1000).toFixed(0)} s`;
   if (values.check) {
-    const diff = diffRecording(root, values.pack, values.tool, recorded);
+    const diff = diffRecording(root, values.pack, values.tool, recorded, cacheRoot);
+    if (diff.corpusNote !== null) process.stdout.write(`${label}: ${diff.corpusNote}\n`);
     const problems = [
       ...diff.changed.map((file) => `${label}/${file} differs from a fresh recording`),
       ...diff.missing.slice(0, 10).map((copy) => `${label}/${copy.file} is missing`),

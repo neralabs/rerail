@@ -3,7 +3,7 @@ import { extname } from "node:path";
 import type { CompiledPolicy, Engine, EngineEvaluation } from "../engine.js";
 import { formatSpan, spanKey, startKey, unmatched } from "../spans.js";
 import type { CorpusFile } from "../corpus.js";
-import type { Golden } from "../goldens.js";
+import { SYSTEMATIC_FILES, type Golden } from "../goldens.js";
 import type { Check, KnownGap, PackAdapter, ParserVerdict, RealCodeGap, Span, SpanParts, UpstreamCase } from "../types.js";
 
 /** How matches-upstream-tests judges, recorded in every report so a reader knows what "identical" and "excused" meant on that run. */
@@ -16,8 +16,8 @@ export const MATCHES_UPSTREAM_TESTS_METHOD = {
   excused: "a differing file is excused only when a listed known gap that holds names it and the engine reported a parse failure on it; a gap holds when its probe occurs in every file it names, the engine still fails to parse the probe, and independent parsers read the probe as valid source; a listed gap that does not hold, or excuses nothing, fails the run; nothing else excuses a difference",
   fires: "at least one upstream finding reproduced in an upstream test file that agrees: the golden test that proves a shipped rule fires, so a rule without one does not ship",
   "stays silent": "at least one case where upstream reports nothing and the rule agrees, from an upstream test file or a golden: the golden test that proves a shipped rule stays silent, so a rule without one does not ship",
-  goldens: "the rule produces exactly what the pinned upstream reports on every golden of the tool-pack's goldens.tsv, compared as upstream's test files are; a golden is a real-code file read from the pinned corpus and checked against its sha256, and goldens.tsv is a reviewed list the gates never write: the files NRV's real-code gate found a shipped rule differing on (imported from NRV's goldens), and for a shipped rule no upstream test file proves silent, a file where upstream reports nothing; a golden whose corpus file is gone from the pinned corpus fails",
-  "real-code gaps": "a rule gates.yaml lists under real_code_gaps differs from upstream on real code throughout (NRV's goldens hold every such file; the entry stands for them), and fails no-real-code-gap: a candidate cannot be promoted, nor a rule ship, until it agrees there and its goldens are imported",
+  goldens: "the rule produces exactly what the pinned upstream reports on every golden of the tool-pack's goldens.tsv, compared as upstream's test files are; a golden is a real-code file read from the pinned corpus and checked against its sha256, and its expected answer is upstream's in corpus.json, which the recorder writes for the files goldens name and no other; goldens.tsv is a reviewed list the gates never write: the files NRV's real-code gate found a rule differing on (imported from NRV's goldens, for candidates too, so a candidate held back by a golden stays held until it agrees there), and for a shipped rule no upstream test file proves silent, a file where upstream reports nothing; a golden whose corpus file is gone from the pinned corpus, or that corpus.json does not answer, fails",
+  "real-code gaps": `a candidate that differs from upstream on more than ${SYSTEMATIC_FILES} of its goldens differs throughout, not on cases: gates.yaml lists it under real_code_gaps in place of its goldens, and it fails no-real-code-gap until it agrees there and its goldens are imported; a shipped rule cannot be listed`,
   "engine gaps": "a golden that differs where the engine could not fully read the file (it reported source-partial, source-incomplete or budget-exceeded) is an engine gap: identical-on-goldens judges only the goldens the engine read fully, and engine-reads-goldens fails the rule on every engine gap, since the rule must not ship until the engine reads the file; the fix belongs in the engine (NER-1764), and once the engine reads the file the golden is judged like any other",
   "gap candidates": "every file the engine cannot fully parse is read by independent parsers, each reporting syntax errors and grammar errors (what the language forbids in a tree the parser built): invalid source when every parser reports one, valid source (the engine's parser is wrong) when none does, and parsers disagree otherwise",
 } as const;
@@ -353,16 +353,17 @@ export function goldensGate(
   adapter: PackAdapter,
   name: string,
   compiled: CompiledPolicy,
-  goldens: { golden: Golden; file: CorpusFile | undefined; expected: Span[] | null }[],
+  goldens: { golden: Golden; file: CorpusFile | undefined; expected: Span[] | null; excluded?: string | null }[],
 ): { check: Check; engineCheck: Check; results: GoldenResult[]; unparsed: UnparsedFile[] } {
   const unparsed: UnparsedFile[] = [];
-  const results = goldens.map(({ golden, file, expected: findings }): GoldenResult => {
+  const results = goldens.map(({ golden, file, expected: findings, excluded }): GoldenResult => {
     const base = { task: golden.task, path: golden.path, expected: findings?.length ?? 0 };
     if (file === undefined) {
       return { ...base, status: "mismatch", reason: `the pinned corpus has no ${golden.task}/${golden.path} with sha256 ${golden.sha256}`, actual: 0, missing: [], extra: [], failures: [] };
     }
     if (findings === null) {
-      return { ...base, status: "mismatch", reason: "upstream's own parser rejects it at the pinned upstream, so it has no expected answer", actual: 0, missing: [], extra: [], failures: [] };
+      // corpus.json gives the reason: upstream's own parser rejected the file, or the recording has no answer for it.
+      return { ...base, status: "mismatch", reason: `it has no expected answer: ${excluded ?? "upstream's own parser rejects it at the pinned upstream"}`, actual: 0, missing: [], extra: [], failures: [] };
     }
     const language = engine.rerail.dialectForPath(file.path);
     if (language === undefined || !compiled.inScope(file.path)) {

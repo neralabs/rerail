@@ -10,9 +10,9 @@ import { packConformance, passesConformanceChecks } from "./checks/passes-confor
 import { notOverfitGate, type ClassifiedLiteral } from "./checks/not-overfit.js";
 import { canonicalJson, compactGate, NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, type SizeMetrics } from "./checks/compact.js";
 import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, provenGaps, realCodeGapCheck, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
-import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, type CorpusFile, type CorpusTask } from "./corpus.js";
+import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, wantedPlaces, type CorpusFile, type CorpusTask } from "./corpus.js";
 import { engineKey, loadEngine, policyFamilies, type Engine, type EngineIdentity } from "./engine.js";
-import { byText, readGoldens, type Goldens } from "./goldens.js";
+import { byText, readGoldens, SYSTEMATIC_FILES, type Goldens } from "./goldens.js";
 import { GATES_MANIFEST, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { createRecordedAdapter, readRecordedInputs, staleMessage } from "./recorded-adapter.js";
@@ -379,7 +379,7 @@ async function evaluateRule(
       const entry = corpusFiles.get(`${golden.task}\0${golden.path}`);
       const file: CorpusFile | undefined = entry?.file.sha256 === golden.sha256 ? entry.file : undefined;
       if (file === undefined) integrity.push(`golden ${id} ${golden.task}/${golden.path}: the pinned corpus has no such file with sha256 ${golden.sha256}`);
-      return { golden, file, expected: entry === undefined || entry.excluded !== null ? null : entry.findings.get(name) ?? [] };
+      return { golden, file, expected: entry === undefined || entry.excluded !== null ? null : entry.findings.get(name) ?? [], excluded: entry?.excluded ?? null };
     });
     const onGoldens = goldensGate(engine, adapter, name, compiled.compiled, ruleGoldens);
     for (const file of onGoldens.unparsed) unparsed.set(`${file.gate}:${file.file}`, file);
@@ -425,16 +425,24 @@ async function evaluateRule(
 
 /**
  * The integrity lines for the tool-pack's goldens.tsv and real_code_gaps: an entry that names no rule of the
- * tool-pack, and goldens of a candidate (goldens are imported for shipped rules; a candidate takes a real-code gap).
+ * tool-pack, a rule with both goldens and a real-code gap, and a candidate that differs on more than SYSTEMATIC_FILES
+ * of its goldens, which should take a real-code gap in their place. `differing` counts a rule's goldens that differ,
+ * engine gaps included.
  */
-export function goldenListLines(goldens: Goldens, realCodeGaps: RealCodeGap[], rules: { id: string; location: Location }[]): string[] {
-  const location = new Map(rules.map((rule) => [rule.id, rule.location]));
+export function goldenListLines(goldens: Goldens, realCodeGaps: RealCodeGap[], rules: { id: string; location: Location; differing: number }[]): string[] {
+  const byId = new Map(rules.map((rule) => [rule.id, rule]));
+  const gapped = new Set(realCodeGaps.map((gap) => gap.rule));
   const lines: string[] = [];
   for (const [id, entries] of goldens) {
-    if (!location.has(id)) lines.push(`goldens.tsv lists ${entries.length} golden(s) of ${id}, which is no rule of this tool-pack`);
-    else if (location.get(id) === "candidate") lines.push(`goldens.tsv lists ${entries.length} golden(s) of the candidate ${id}; goldens are imported for shipped rules, and a candidate that differs on real code takes a real_code_gaps entry`);
+    if (!byId.has(id)) lines.push(`goldens.tsv lists ${entries.length} golden(s) of ${id}, which is no rule of this tool-pack`);
+    else if (gapped.has(id)) lines.push(`${id} has ${entries.length} golden(s) and a real_code_gaps entry: keep one, the goldens unless it differs on more than ${SYSTEMATIC_FILES} of them`);
   }
-  for (const gap of realCodeGaps) if (!location.has(gap.rule)) lines.push(`gates.yaml lists a real-code gap for ${gap.rule}, which is no rule of this tool-pack`);
+  for (const gap of realCodeGaps) if (!byId.has(gap.rule)) lines.push(`gates.yaml lists a real-code gap for ${gap.rule}, which is no rule of this tool-pack`);
+  for (const rule of rules) {
+    if (rule.location === "candidate" && rule.differing > SYSTEMATIC_FILES) {
+      lines.push(`the candidate ${rule.id} differs on ${rule.differing} of its goldens, more than ${SYSTEMATIC_FILES}: list it under real_code_gaps in their place`);
+    }
+  }
   return lines;
 }
 
@@ -538,12 +546,15 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
   } else {
     // not-overfit reads every upstream test text: fetched at the pinned commit only when a rule is evaluated.
     await adapter.loadFixtureTexts();
-    const catalog = await buildCorpus(cacheRoot, (path) => adapter.inCorpus(path), options.runner);
-    const rerailCorpus = await buildRerailCorpora(corpora, cacheRoot, (path) => adapter.inCorpus(path), options.runner);
+    // Only the files the goldens name are fetched and read: no rule runs over the rest of the corpus.
+    const named = [...goldens.values()].flat();
+    const wanted = wantedPlaces(named);
+    const catalog = await buildCorpus(cacheRoot, (path) => adapter.inCorpus(path), options.runner, wanted);
+    const rerailCorpus = await buildRerailCorpora(corpora, cacheRoot, (path) => adapter.inCorpus(path), options.runner, wanted);
     const corpusFiles = [...catalog.files, ...rerailCorpus.files];
-    const complete = corpusCompleteCheck(inputs.corpus?.files ?? [], corpusFiles, [...catalog.tasks, ...rerailCorpus.tasks]);
+    const complete = corpusCompleteCheck(named, [...catalog.tasks, ...rerailCorpus.tasks]);
     pinChecks.push(complete);
-    // Results judged on part of the corpus are reported (and fail through corpus-complete) but never cached.
+    // Results judged with a golden's task unfetched are reported (and fail through corpus-complete) but never cached.
     const save = options.writeCache && complete.ok;
     const upstreamFiles = await adapter.lintCorpus(corpusFiles, names);
     const byPlace = new Map<string, UpstreamFile>(upstreamFiles.map((entry) => [`${entry.file.task}\0${entry.file.path}`, entry]));
@@ -597,7 +608,8 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
   const all = judged.map((entry) => results.get(entry.key)!);
   const gapCandidates = new Map<string, GapCandidateReport>();
   for (const result of all) for (const candidate of result.gapCandidates) gapCandidates.set(`${candidate.gate}\0${candidate.file}`, candidate);
-  const listed = goldenListLines(goldens, manifest.real_code_gaps, keyed.map((entry) => ({ id: entry.id, location: entry.location })));
+  const differing = new Map(reports.map((rule) => [rule.id, rule.gates["matches-upstream-tests"].goldens.differing.count + rule.gates["matches-upstream-tests"].goldens.engineGaps.count]));
+  const listed = goldenListLines(goldens, manifest.real_code_gaps, keyed.map((entry) => ({ id: entry.id, location: entry.location, differing: differing.get(entry.id) ?? 0 })));
 
   const report: GatesReport = {
     format: REPORT_FORMAT,

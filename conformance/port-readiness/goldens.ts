@@ -3,9 +3,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
- * One golden test of `matches-upstream-tests`: a real-code file of a shipped rule, imported from NRV, whose source is
- * the pinned corpus file at `task`/`path` (a catalog task, or a rerail corpus as `rerail:<name>`), checked against
- * `sha256`. Its expected answer is not stored here: it is the pinned upstream's findings on that file.
+ * One golden test of `matches-upstream-tests`: a real-code file, imported from NRV, whose source is the pinned corpus
+ * file at `task`/`path` (a catalog task, or a rerail corpus as `rerail:<name>`), checked against `sha256`. Its expected
+ * answer is not stored here: it is the pinned upstream's findings on that file, in the tool-pack's corpus.json.
  */
 export interface Golden {
   task: string;
@@ -14,11 +14,20 @@ export interface Golden {
 }
 
 /**
- * A tool-pack's goldens, by document id: a reviewed list the gates read and never write. A shipped rule's goldens are
- * the files NRV's real-code gate found it differing on (NRV's validation/goldens/<pack>.tsv, under its id there), and,
- * when no upstream test file proves the rule stays silent, a file where upstream reports nothing.
+ * A tool-pack's goldens, by document id: a reviewed list the gates read and never write. A rule's goldens are the files
+ * NRV's real-code gate found it differing on (NRV's validation/goldens/<pack>.tsv, under its id there), and, when no
+ * upstream test file proves a shipped rule stays silent, a file where upstream reports nothing. A candidate keeps its
+ * goldens until it agrees there, unless it differs on so many files that they only restate that it is wrong throughout:
+ * then gates.yaml lists it under real_code_gaps instead (SYSTEMATIC_FILES).
  */
 export type Goldens = Map<string, Golden[]>;
+
+/**
+ * A candidate whose goldens it differs on number more than this differs from upstream throughout, not on cases: one
+ * real_code_gaps entry replaces its goldens. The candidates over it differ on 734 to 6,898 files, the rest on 335 at
+ * most.
+ */
+export const SYSTEMATIC_FILES = 500;
 
 /** A tool-pack's goldens file: `goldens.tsv` in its directory, `packs/<pack>/upstream/<tool>/`. */
 export const GOLDENS_FILE = "goldens.tsv";
@@ -27,7 +36,7 @@ export function goldensPath(toolPackDirectory: string): string {
   return join(toolPackDirectory, GOLDENS_FILE);
 }
 
-const HEADER = "# matches-upstream-tests goldens of the shipped rules, imported from NRV and reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.";
+const HEADER = "# matches-upstream-tests goldens, imported from NRV and reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.";
 const SHA256 = /^[0-9a-f]{64}$/u;
 const FIELD = /^[^\t\r\n]+$/u;
 

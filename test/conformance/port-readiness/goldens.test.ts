@@ -6,7 +6,7 @@ import { test } from "vitest";
 
 import type { CorpusFile } from "../../../conformance/port-readiness/corpus.js";
 import type { CompiledPolicy, Engine } from "../../../conformance/port-readiness/engine.js";
-import { GOLDENS_FILE, parseGoldens, readGoldens, serializeGoldens, type Golden, type Goldens } from "../../../conformance/port-readiness/goldens.js";
+import { GOLDENS_FILE, parseGoldens, readGoldens, serializeGoldens, SYSTEMATIC_FILES, type Golden, type Goldens } from "../../../conformance/port-readiness/goldens.js";
 import { goldensGate, realCodeGapCheck } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
 import { goldenListLines } from "../../../conformance/port-readiness/run.js";
 import type { PackAdapter, Span } from "../../../conformance/port-readiness/types.js";
@@ -40,19 +40,28 @@ function corpusFile(task: string, path: string): CorpusFile {
 const SHA = "0".repeat(64);
 const golden = (task: string, path: string, sha256 = SHA): Golden => ({ task, path, sha256 });
 
-test("goldens are for shipped rules: a candidate's goldens or a stale entry are named, and a real-code gap must name a rule", () => {
-  const rules = [{ id: "shipped-rule", location: "shipped" as const }, { id: "candidate-rule", location: "candidate" as const }];
+test("run integrity names a stale entry, a rule with goldens and a gap, and a candidate that differs on goldens throughout", () => {
+  const rules = [
+    { id: "shipped-rule", location: "shipped" as const, differing: 0 },
+    { id: "candidate-rule", location: "candidate" as const, differing: 2 },
+    { id: "systematic-rule", location: "candidate" as const, differing: SYSTEMATIC_FILES + 1 },
+    { id: "gapped-rule", location: "candidate" as const, differing: 0 },
+  ];
   const goldens: Goldens = new Map([
     ["shipped-rule", [golden("t1", "a.ts")]],
     ["candidate-rule", [golden("t1", "a.ts"), golden("t1", "b.ts")]],
+    ["systematic-rule", [golden("t1", "a.ts")]],
+    ["gapped-rule", [golden("t1", "a.ts")]],
     ["gone-rule", [golden("t1", "a.ts")]],
   ]);
-  assert.deepEqual(goldenListLines(goldens, [{ rule: "candidate-rule", differing_files: 6898 }, { rule: "gone-gap", differing_files: 3 }], rules), [
-    "goldens.tsv lists 2 golden(s) of the candidate candidate-rule; goldens are imported for shipped rules, and a candidate that differs on real code takes a real_code_gaps entry",
+  assert.deepEqual(goldenListLines(goldens, [{ rule: "gapped-rule", differing_files: 900 }, { rule: "gone-gap", differing_files: 3 }], rules), [
+    `gapped-rule has 1 golden(s) and a real_code_gaps entry: keep one, the goldens unless it differs on more than ${SYSTEMATIC_FILES} of them`,
     "goldens.tsv lists 1 golden(s) of gone-rule, which is no rule of this tool-pack",
     "gates.yaml lists a real-code gap for gone-gap, which is no rule of this tool-pack",
+    `the candidate systematic-rule differs on ${SYSTEMATIC_FILES + 1} of its goldens, more than ${SYSTEMATIC_FILES}: list it under real_code_gaps in their place`,
   ]);
-  assert.deepEqual(goldenListLines(new Map([["shipped-rule", [golden("t1", "a.ts")]]]), [{ rule: "candidate-rule", differing_files: 1 }], rules), []);
+  // A candidate held back by a few goldens keeps them: that is how the gates see when it is fixed.
+  assert.deepEqual(goldenListLines(new Map([["candidate-rule", [golden("t1", "a.ts")]]]), [], rules.slice(0, 2)), []);
 });
 
 test("a rule with a real-code gap fails no-real-code-gap, naming how many files NRV found it differing on", () => {
@@ -139,6 +148,11 @@ test("a golden fails outside the document's scope with upstream findings, or whe
   assert.deepEqual(result.results.map((entry) => entry.status), ["mismatch", "agree", "mismatch", "mismatch"]);
   assert.match(result.results[2]!.reason, /^the pinned corpus has no t1\/src\/gone\.ts with sha256 0+$/u);
   assert.match(result.results[3]!.reason, /upstream's own parser rejects it/u);
+  // A golden corpus.json does not answer says so, so the fix (re-record) is plain.
+  const unrecorded = goldensGate(engine, adapter, "no-debugger", compiled({}), [
+    { golden: golden("t1", "src/new.ts"), file: corpusFile("t1", "src/new.ts"), expected: null, excluded: "corpus.json has no answer for it with this sha256: re-record the tool-pack" },
+  ]);
+  assert.equal(unrecorded.results[0]!.reason, "it has no expected answer: corpus.json has no answer for it with this sha256: re-record the tool-pack");
 });
 
 test("a golden the engine could not fully read is an engine gap, which does not fail the rule", () => {
