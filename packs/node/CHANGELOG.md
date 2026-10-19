@@ -1,5 +1,14 @@
 # @neralabs/rerail-pack-node
 
+## 0.1.3
+
+### Patch Changes
+
+- d1e67d7: Node.js pack: ships no rules until its ports pass the port readiness gates. The 22 eslint-plugin-n 18.4.1 ports move to `candidates/rules/`, still scored against the plugin's own findings on its tests and corpora, and the pack is never recommended while it has no rules.
+- ac01449: Node.js pack: the rules that read CommonJS's `require`, `module`, `exports`, `__dirname` and `__filename` (`n/exports-style`, `n/no-exports-assign`, `n/no-path-concat`, the `n/prefer-global/*` and `n/prefer-promises/*` rules, and the `n/no-deprecated-api` candidate) no longer treat every file as CommonJS. Each file keeps its own module system (`.cjs`/`.cts` CommonJS; `.mjs`/`.mts`/`.tsx` an ES module; `.js`/`.jsx`/`.ts` by the nearest `package.json`'s `type`, Node's syntax detection where that package.json sets no valid `type`, and an ES module where there is no package.json), as eslint-plugin-n's `flat/mixed-esm-and-cjs` config does, so an ES module is no longer told about `exports`, `require('fs')` or `__dirname`, which Node does not define there. `n/global-require` still reports a nested `require()` in an ES module, as upstream does.
+- ac01449: Node.js pack: `n/prefer-node-protocol` reads the file's Node version from its nearest `package.json` (`engines.node`, else the `devEngines.runtime` entry named `node`, else `>=16.0.0`), as eslint-plugin-n does, so a package whose Node range includes versions without `node:` support (`>=14`) is no longer told to use `node:` in `require` or imports; `process.getBuiltinModule` is checked whatever the range. The `n/hashbang` candidate reads the nearest `package.json`'s `bin`: a file `bin` names must start with a node shebang, and only other files are told they need none.
+- 3049ced: The match definition names its npm dependencies in the new form, `{ "dependencies": { "ecosystem": "npm", "names": [...] } }`, which core reads alongside PyPI and Composer dependencies. Which repositories the pack fits is unchanged.
+
 ## 0.1.2
 
 ### Patch Changes

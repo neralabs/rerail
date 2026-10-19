@@ -1,5 +1,13 @@
 # @neralabs/rerail-pack-typescript
 
+## 0.1.2
+
+### Patch Changes
+
+- 3049ced: The match definition names its npm dependencies in the new form, `{ "dependencies": { "ecosystem": "npm", "names": [...] } }`, which core reads alongside PyPI and Composer dependencies. Which repositories the pack fits is unchanged.
+- ac01449: TypeScript pack: every typescript-eslint rule runs on TypeScript files only, so `no-require-imports` no longer reports CommonJS `require` in `.js` and `.cjs` files and no rule reports a JavaScript file its ESLint core twin already reports; the vscode corpus is scored on its TypeScript files.
+- d1e67d7: TypeScript pack: `no-wrapper-object-types` moves to `candidates/` after failing the port readiness gates' `engine-reads-goldens` on vscode files the engine cannot fully read; 21 rules ship, 11 off.
+
 ## 0.1.1
 
 ### Patch Changes

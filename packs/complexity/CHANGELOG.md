@@ -1,5 +1,11 @@
 # @neralabs/rerail-pack-complexity
 
+## 0.1.2
+
+### Patch Changes
+
+- 3049ced: Complexity pack: set-up recommends it for a repository with Python, TypeScript or JavaScript source (outside tests), as it does every other pack. Core no longer ships it inside its own package; install it like any pack.
+
 ## 0.1.1
 
 ### Patch Changes

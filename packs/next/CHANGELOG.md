@@ -1,5 +1,15 @@
 # @neralabs/rerail-pack-next
 
+## 0.1.2
+
+### Patch Changes
+
+- 0ab3ced: Next pack: `next-no-img-element`'s message now says what switching to `next/image` needs (`width` and `height`, or `fill`, unless `src` is a static import; a matching `images.remotePatterns` entry for a remote `src`) and that `// eslint-disable-next-line @next/next/no-img-element -- <reason>` keeps `<img>`, for example for images from arbitrary hosts. What it reports is unchanged.
+- d1e67d7: Next.js pack: `google-font-display`, `no-head-element`, `no-location-assign-relative-destination` and `no-page-custom-font` pass every rule gate and ship, all on; 21 rules ship and none remain candidates.
+- ac01449: Next probes: the app-router, pages-router, route-handler, segment-config, middleware and client-hook probes read `app/`, `src/app/`, `pages/` and `middleware` paths relative to the nearest `package.json` that depends on `next`, so a Next app in a subfolder (`apps/web/app/page.tsx`) is checked and an `app/` folder of a package without `next` is not.
+- ac01449: Next probes: the client-hook probe reports a hook only in a module of the app's server module graph (`file.package.serverGraph`), so a hook module that only a `"use client"` module imports, or that nothing imports, is no longer reported, and one a server page reaches through a `tsconfig.json` alias is.
+- 3049ced: The match definition names its npm dependencies in the new form, `{ "dependencies": { "ecosystem": "npm", "names": [...] } }`, which core reads alongside PyPI and Composer dependencies. Which repositories the pack fits is unchanged.
+
 ## 0.1.1
 
 ### Patch Changes
