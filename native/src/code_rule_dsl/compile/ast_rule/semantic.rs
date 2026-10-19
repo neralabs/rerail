@@ -53,7 +53,7 @@ pub(super) fn validate(
         validate_format_args(format_args, &format!("{path}/formatArgs"), limits, utils)?;
     }
     if let Some(layout) = rule.get("layout") {
-        validate_layout(layout, &format!("{path}/layout"))?;
+        validate_layout(layout, &format!("{path}/layout"), limits)?;
     }
     if let Some(calls) = rule.get("calls") {
         let calls_path = format!("{path}/calls");

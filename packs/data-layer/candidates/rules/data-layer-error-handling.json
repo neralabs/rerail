@@ -1,0 +1,302 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-error-handling",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer error_handling at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "api/**/*.py",
+      "impl/**/*.py",
+      "services/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/test_*.py"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "log-reraise",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "raise_statement"
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "kind": "call"
+                          },
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "integer"
+                          },
+                          {
+                            "kind": "none"
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  },
+                  {
+                    "follows": {
+                      "all": [
+                        {
+                          "kind": "expression_statement"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "call"
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "kind": "attribute"
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:logger)$"
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "object"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:error|warning)$"
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "attribute"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "function"
+                                }
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      ],
+                      "stopBy": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "block",
+                      "stopBy": "end"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "except_clause",
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "except_clause"
+                          },
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "logger\\.error|logger\\.warning|txn\\.commit",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "logger\\.error|logger\\.warning|txn\\.commit",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^(?:api|impl|services)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EH001",
+        "anchor": "witness.span",
+        "message": "EH001: log reraise"
+      }
+    },
+    {
+      "id": "admin-commit",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "pattern": "txn.commit()"
+                  },
+                  {
+                    "inside": {
+                      "kind": "expression_statement",
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "logger\\.error|logger\\.warning|txn\\.commit",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "logger\\.error|logger\\.warning|txn\\.commit",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^api/l8000_admin/tools"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EH001",
+        "anchor": "witness.span",
+        "message": "EH001: admin commit"
+      }
+    }
+  ]
+}

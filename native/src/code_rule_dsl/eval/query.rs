@@ -389,7 +389,18 @@ impl<'a> Leaf<'a> {
         }
         let mut witnesses = Vec::new();
         match query {
-            Query::Regex { regex, source } => {
+            Query::Regex {
+                regex,
+                source,
+                options,
+            } => {
+                if options
+                    .paths
+                    .as_ref()
+                    .is_some_and(|paths| !paths.matches(&file.path))
+                {
+                    return Ok(FileStep::Skipped);
+                }
                 let haystack = match source {
                     RegexSource::Content => &file.source,
                     RegexSource::Path => &file.path,
@@ -401,15 +412,29 @@ impl<'a> Leaf<'a> {
                         .unwrap_or(Terminators::Eslint),
                 );
                 let span = |start, end| lines.span(start, end);
-                let (matches, complete) = crate::code_rule_dsl::query::regex_matches(
+                let (matches, complete) = crate::code_rule_dsl::query::regex_query_matches(
                     regex,
                     haystack,
+                    options,
                     self.limits.max_witnesses.saturating_add(1),
                 );
-                for range in matches {
+                for matched in matches {
+                    let range = matched.range;
+                    let offset = matched.context.start;
+                    let context = &haystack[matched.context];
+                    let span = |start, end| {
+                        let mut result = span(offset + start, offset + end);
+                        if let Some(line) = matched.line {
+                            result.start_line = line;
+                            result.end_line = line;
+                            result.start_column = start;
+                            result.end_column = end;
+                        }
+                        result
+                    };
                     let (start, end) = (range.start, range.end);
                     let found = regex
-                        .captures_at(haystack, start)
+                        .captures_at(context, start)
                         .expect("a regex match has captures");
                     assert_eq!(found.get(0).expect("whole match").range(), start..end);
                     metrics.witnesses += 1;
@@ -456,7 +481,17 @@ impl<'a> Leaf<'a> {
                 let errors = SyntaxErrors::of_doc(&doc);
                 let target = ast_grep_core::AstGrep::doc(doc);
                 let mut partial = None;
-                if !errors.is_empty() {
+                if grammar
+                    .invalid_syntax
+                    .is_some_and(|invalid| invalid == errors.is_empty())
+                {
+                    return Ok(FileStep::Read {
+                        witnesses,
+                        partial: None,
+                        decided: false,
+                    });
+                }
+                if !errors.is_empty() && grammar.invalid_syntax.is_none() {
                     // A file the parser did not read is not read by any clause, sound or not.
                     let message = match errors.reading(&lines, file.source.len()) {
                         SyntaxReading::Partial(message) => message,
@@ -750,7 +785,9 @@ fn evaluate_file_clause(
                         }
                         *work = crate::code_rule_dsl::matcher::end_clause().0;
                     }
-                    if errors.overlaps(&matched.get_node().range()) {
+                    if grammar.invalid_syntax != Some(true)
+                        && errors.overlaps(&matched.get_node().range())
+                    {
                         return Ok(true);
                     }
                     let matched_node = matched.get_node();

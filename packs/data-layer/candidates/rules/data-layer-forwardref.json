@@ -1,0 +1,694 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-forwardref",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer forwardref at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "api/**/*.py",
+      "impl/**/*.py",
+      "public/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "forwardref-type": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:ForwardRef)$"
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "kind": "identifier",
+                          "regex": "^(?:ForwardRef)$",
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "tuple"
+                  },
+                  {
+                    "has": {
+                      "matches": "forwardref-type",
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "forwardref-call": {
+            "kind": "call",
+            "pattern": "isinstance(annotation, $TYPE, $$$REST)",
+            "all": [
+              {
+                "has": {
+                  "matches": "forwardref-type",
+                  "stopBy": "neighbor",
+                  "field": "arguments"
+                }
+              }
+            ]
+          },
+          "scope": {
+            "any": [
+              {
+                "kind": "function_definition",
+                "regex": "^def\\b"
+              },
+              {
+                "kind": "module"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "fwdref001",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call",
+                "pattern": "$CALL"
+              },
+              {
+                "any": [
+                  {
+                    "pattern": "isinstance(annotation, type)"
+                  },
+                  {
+                    "pattern": "isinstance(annotation, type, $$$REST)"
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "matches": "scope"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "assignment",
+                            "pattern": "$ASSIGN"
+                          },
+                          {
+                            "has": {
+                              "kind": "identifier",
+                              "regex": "^(?:annotation)$",
+                              "stopBy": "neighbor",
+                              "field": "left"
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "has": {
+                                    "kind": "identifier",
+                                    "regex": "^(?:annotation)$",
+                                    "stopBy": "neighbor",
+                                    "field": "attribute"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "right"
+                            }
+                          },
+                          {
+                            "layout": {
+                              "after": {
+                                "to": "capture.CALL",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "matches": "scope"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "call"
+                                        },
+                                        {
+                                          "any": [
+                                            {
+                                              "pattern": "isinstance(annotation, $TYPE)"
+                                            },
+                                            {
+                                              "pattern": "isinstance(annotation, $TYPE, $$$REST)"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "has": {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "pattern": "$TYPE"
+                                                },
+                                                {
+                                                  "matches": "forwardref-type"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor"
+                                            },
+                                            "stopBy": "neighbor",
+                                            "field": "arguments"
+                                          }
+                                        },
+                                        {
+                                          "layout": {
+                                            "before": {
+                                              "to": "capture.ASSIGN",
+                                              "breaks": {
+                                                "min": 0
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "layout": {
+                                            "after": {
+                                              "to": "capture.CALL",
+                                              "breaks": {
+                                                "min": 0
+                                              }
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": {
+                                        "any": [
+                                          {
+                                            "kind": "function_definition",
+                                            "regex": "^def\\b"
+                                          },
+                                          {
+                                            "kind": "module"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ],
+                                "stopBy": {
+                                  "any": [
+                                    {
+                                      "kind": "function_definition",
+                                      "regex": "^def\\b"
+                                    },
+                                    {
+                                      "kind": "module"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": {
+                          "any": [
+                            {
+                              "kind": "function_definition",
+                              "regex": "^def\\b"
+                            },
+                            {
+                              "kind": "module"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition",
+                        "regex": "^def\\b"
+                      },
+                      {
+                        "kind": "module"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "FWDREF001",
+        "anchor": "witness.span",
+        "message": "isinstance(annotation, type) without ForwardRef handling. Check for ForwardRef before inspecting the annotation."
+      }
+    },
+    {
+      "id": "fwdref002",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call",
+                "pattern": "$CALL"
+              },
+              {
+                "any": [
+                  {
+                    "pattern": "issubclass(annotation)"
+                  },
+                  {
+                    "pattern": "issubclass(annotation, $$$REST)"
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "matches": "scope"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "assignment",
+                            "pattern": "$ASSIGN"
+                          },
+                          {
+                            "has": {
+                              "kind": "identifier",
+                              "regex": "^(?:annotation)$",
+                              "stopBy": "neighbor",
+                              "field": "left"
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "has": {
+                                    "kind": "identifier",
+                                    "regex": "^(?:annotation)$",
+                                    "stopBy": "neighbor",
+                                    "field": "attribute"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "right"
+                            }
+                          },
+                          {
+                            "layout": {
+                              "after": {
+                                "to": "capture.CALL",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "matches": "scope"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "call"
+                                        },
+                                        {
+                                          "any": [
+                                            {
+                                              "pattern": "isinstance(annotation, $TYPE)"
+                                            },
+                                            {
+                                              "pattern": "isinstance(annotation, $TYPE, $$$REST)"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "has": {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "pattern": "$TYPE"
+                                                },
+                                                {
+                                                  "matches": "forwardref-type"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor"
+                                            },
+                                            "stopBy": "neighbor",
+                                            "field": "arguments"
+                                          }
+                                        },
+                                        {
+                                          "layout": {
+                                            "before": {
+                                              "to": "capture.ASSIGN",
+                                              "breaks": {
+                                                "min": 0
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "layout": {
+                                            "after": {
+                                              "to": "capture.CALL",
+                                              "breaks": {
+                                                "min": 0
+                                              }
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": {
+                                        "any": [
+                                          {
+                                            "kind": "function_definition",
+                                            "regex": "^def\\b"
+                                          },
+                                          {
+                                            "kind": "module"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ],
+                                "stopBy": {
+                                  "any": [
+                                    {
+                                      "kind": "function_definition",
+                                      "regex": "^def\\b"
+                                    },
+                                    {
+                                      "kind": "module"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": {
+                          "any": [
+                            {
+                              "kind": "function_definition",
+                              "regex": "^def\\b"
+                            },
+                            {
+                              "kind": "module"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition",
+                        "regex": "^def\\b"
+                      },
+                      {
+                        "kind": "module"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "FWDREF002",
+        "anchor": "witness.span",
+        "message": "issubclass(annotation, ...) without ForwardRef handling. Check for ForwardRef before inspecting the annotation."
+      }
+    },
+    {
+      "id": "fwdref003",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "call",
+                "pattern": "$CALL"
+              },
+              {
+                "any": [
+                  {
+                    "pattern": "callable(annotation)"
+                  },
+                  {
+                    "pattern": "callable(annotation, $$$REST)"
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "matches": "scope"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "assignment",
+                            "pattern": "$ASSIGN"
+                          },
+                          {
+                            "has": {
+                              "kind": "identifier",
+                              "regex": "^(?:annotation)$",
+                              "stopBy": "neighbor",
+                              "field": "left"
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "has": {
+                                    "kind": "identifier",
+                                    "regex": "^(?:annotation)$",
+                                    "stopBy": "neighbor",
+                                    "field": "attribute"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "right"
+                            }
+                          },
+                          {
+                            "layout": {
+                              "after": {
+                                "to": "capture.CALL",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "matches": "scope"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "call"
+                                        },
+                                        {
+                                          "any": [
+                                            {
+                                              "pattern": "isinstance(annotation, $TYPE)"
+                                            },
+                                            {
+                                              "pattern": "isinstance(annotation, $TYPE, $$$REST)"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "has": {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "pattern": "$TYPE"
+                                                },
+                                                {
+                                                  "matches": "forwardref-type"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor"
+                                            },
+                                            "stopBy": "neighbor",
+                                            "field": "arguments"
+                                          }
+                                        },
+                                        {
+                                          "layout": {
+                                            "before": {
+                                              "to": "capture.ASSIGN",
+                                              "breaks": {
+                                                "min": 0
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "layout": {
+                                            "after": {
+                                              "to": "capture.CALL",
+                                              "breaks": {
+                                                "min": 0
+                                              }
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": {
+                                        "any": [
+                                          {
+                                            "kind": "function_definition",
+                                            "regex": "^def\\b"
+                                          },
+                                          {
+                                            "kind": "module"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ],
+                                "stopBy": {
+                                  "any": [
+                                    {
+                                      "kind": "function_definition",
+                                      "regex": "^def\\b"
+                                    },
+                                    {
+                                      "kind": "module"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": {
+                          "any": [
+                            {
+                              "kind": "function_definition",
+                              "regex": "^def\\b"
+                            },
+                            {
+                              "kind": "module"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition",
+                        "regex": "^def\\b"
+                      },
+                      {
+                        "kind": "module"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "FWDREF003",
+        "anchor": "witness.span",
+        "message": "callable(annotation) without ForwardRef handling. ForwardRef is callable but does not supply the intended type."
+      }
+    }
+  ]
+}

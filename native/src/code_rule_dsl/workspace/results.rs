@@ -312,8 +312,10 @@ fn reporting_ast_candidates<'a>(
 ) -> impl Iterator<Item = ClauseId> + 'a {
     file.witnesses.keys().copied().filter(|id| {
         matches!(
-            code_rules[id.0].clauses[id.1].kind,
-            ClauseKind::Forbid(Query::Ast { .. })
+            &code_rules[id.0].clauses[id.1].kind,
+            ClauseKind::Forbid(Query::Ast { matchers, .. })
+                if crate::code_rule_dsl::eval::grammar_matcher(matchers, &file.input)
+                    .is_some_and(|grammar| grammar.invalid_syntax.is_none())
         )
     })
 }

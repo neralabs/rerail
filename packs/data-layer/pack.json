@@ -1,0 +1,9 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "data-layer",
+  "name": "Data-layer architecture rules",
+  "category": "repository",
+  "covers": "The first thirty nera-data-layer lint checks at the pinned source revision.",
+  "reason": "Repository-specific candidate ports; activation waits for parity and integration checks.",
+  "rules": []
+}

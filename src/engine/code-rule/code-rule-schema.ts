@@ -761,7 +761,8 @@ const layoutGap = z
   .refine(gap => gap.breaks !== undefined || gap.blank !== undefined, "A gap must count breaks, blank or both.")
   .refine(gap => !gap.to.startsWith("capture.") || (gap.comments === undefined && gap.edge === undefined), "comments and edge choose the neighbouring token or sibling; a capture names its node.");
 export const codeRuleLayoutSchema = z
-  .object({ span: lineCount.optional(), start: lineCount.optional(), before: layoutGap.optional(), after: layoutGap.optional() })
+  .object({ span: lineCount.optional(), start: lineCount.optional(), before: layoutGap.optional(), after: layoutGap.optional(), line: z.string().optional(), previousLine: z.string().optional(),
+    context: z.object({ before: z.number().int().min(0).max(64).optional(), after: z.number().int().min(0).max(64).optional(), through: z.string().optional(), regex: z.string() }).strict().optional() })
   .strict()
   .refine(layout => Object.values(layout).some(value => value !== undefined), "layout must hold span, start, before or after.") as unknown as z.ZodType<CodeRuleDslLayout>;
 
@@ -1167,12 +1168,27 @@ export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
         .object({
           source: z.enum(CODE_RULE_REGEX_SOURCES),
           pattern: nonEmptyString,
+          content: z.object({ include: z.array(nonEmptyString).max(64).optional(), exclude: z.array(nonEmptyString).max(64).optional() }).strict().optional(),
+          include: z.array(nonEmptyString).max(64).optional(),
+          exclude: z.array(nonEmptyString).max(64).optional(),
+          lines: z.object({ include: z.array(nonEmptyString).max(64).optional(), exclude: z.array(nonEmptyString).max(64).optional(), first: z.boolean().optional(),
+            terminators: z.enum(["python", "lf"]).optional(),
+            state: z.object({ initial: nonEmptyString.max(64), emit: z.array(nonEmptyString.max(64)).min(1).max(16),
+              transitions: z.array(z.object({ from: nonEmptyString.max(64), to: nonEmptyString.max(64), pattern: z.string(), skip: z.boolean().optional(),
+                count: z.object({ min: z.number().int().nonnegative().optional(), max: z.number().int().nonnegative().optional(), parity: z.enum(["odd", "even"]).optional() }).strict().optional(),
+              }).strict()).min(1).max(64) }).strict().optional(),
+            indentation: z.object({ excludeUnder: z.string(), reset: z.string(), ignore: z.array(z.string()).max(64) }).strict().optional(),
+          }).strict().optional(),
+          paths: codeRuleScopeSchema.optional(),
         })
         .strict()
+        .refine(query => query.lines === undefined || query.source === "file.content", "lines requires file.content")
+        .refine(query => query.content === undefined || query.source === "file.content", "content requires file.content")
         .optional(),
       ast: z
         .object({
           language: z.enum(CODE_RULE_LANGUAGE_IDS),
+          syntax: z.enum(["valid", "invalid"]).optional(),
           rule: codeRuleAstRuleSchema,
           utils: z.record(utilityId, codeRuleUtilitySchema).optional(),
           constraints: z.record(nonEmptyString, codeRuleAstRuleSchema).optional(),
