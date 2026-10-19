@@ -137,3 +137,73 @@ fn terminals_run_once_per_statement_never_per_row() {
     assert_eq!(PATTERN_FILTERS.get(), 2);
     assert_eq!(TEXT_FILTERS.get(), 1);
 }
+
+#[test]
+fn a_files_documents_are_batch_documents_of_their_own() {
+    // A Blade view is two documents (`embed`): its template and the PHP it compiles to, each a
+    // tape of one language. A clause over either reads that document alone, beside a PHP file's
+    // own tree in the same batch, and reports where its nodes stand in the file.
+    let view = "<div>{{ $a }}</div>\n@if ($b)\n  <p>{{ $c }}</p>\n@endif\n";
+    let files = snapshot(&[
+        ("blade", "a.blade.php", view),
+        ("php", "b.php", "<?php\n$a = 1;\nif ($b) { echo $c; }\n"),
+    ]);
+    let rules = [
+        (
+            "blade",
+            None,
+            json!({ "regex": "^.", "precedes": { "stopBy": "end", "regex": "^." } }),
+        ),
+        (
+            "blade",
+            Some("compiled-view"),
+            json!({ "kind": "variable_name" }),
+        ),
+        (
+            "blade",
+            Some("compiled-view"),
+            json!({ "kind": "variable_name", "inside": { "stopBy": "end", "kind": "if_statement" } }),
+        ),
+        ("php", None, json!({ "kind": "variable_name" })),
+    ];
+    for (language, embedded, rule) in rules {
+        let mut ast = json!({ "language": language, "rule": rule });
+        if let Some(via) = embedded {
+            ast["embedded"] = json!(via);
+        }
+        let document = crate::code_rule_dsl::test_support::clause_document(json!({
+            "id": "ast-match",
+            "forbid": { "ast": ast },
+            "violation": { "anchor": "witness.span", "code": "X", "message": "x" },
+        }));
+        let compiled = crate::code_rule_dsl::test_support::compile_document_with(
+            document,
+            &serde_json::from_str::<Value>(crate::code_rule_dsl::test_support::CAPABILITIES)
+                .expect("capabilities"),
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = same(&compiled, &files);
+        let violations = result["violations"].as_array().expect("violations");
+        assert!(!violations.is_empty(), "{ast}: {result}");
+        // Each clause reads the files of its own language only.
+        let path = if language == "blade" {
+            "a.blade.php"
+        } else {
+            "b.php"
+        };
+        assert!(
+            violations.iter().all(|violation| violation["path"] == path),
+            "{ast}: {result}"
+        );
+        // A PHP node of the view reports the template bytes it stands for (`origin`).
+        if embedded.is_some() {
+            let found = hard_cases::texts(&result, view);
+            assert!(
+                found
+                    .iter()
+                    .all(|text| ["$a", "$b", "$c"].contains(&text.as_str())),
+                "{ast}: {found:?}"
+            );
+        }
+    }
+}

@@ -3963,7 +3963,11 @@ fn file_package_server_graph_reads_the_next_apps_module_graph() {
     assert_eq!(
         reported(
             &compiled
-                .evaluate(snapshot(&widget[directive.len()..]), "report".to_owned(), None)
+                .evaluate(
+                    snapshot(&widget[directive.len()..]),
+                    "report".to_owned(),
+                    None
+                )
                 .unwrap()
         ),
         server

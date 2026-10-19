@@ -411,10 +411,7 @@ fn sql_batch<'c>(
                 continue;
             }
             let index = docs.len();
-            docs.push((
-                planned.read.root.root().get_doc().clone(),
-                context.clone(),
-            ));
+            docs.push((planned.read.root.root().get_doc().clone(), context.clone()));
             for (position, run) in planned.runs.iter().enumerate() {
                 let Some((statement, roots)) = run else {
                     continue;
@@ -440,8 +437,7 @@ fn sql_batch<'c>(
         Ok(mut found) => {
             for (job, document, position, run, at) in wanted {
                 if let Ok(Started { ast: Some(ast), .. }) = &mut started[job].4 {
-                    ast.documents[document].matches[position] =
-                        std::mem::take(&mut found[run][at]);
+                    ast.documents[document].matches[position] = std::mem::take(&mut found[run][at]);
                 }
             }
         }
@@ -1212,7 +1208,8 @@ fn evaluate_ast_file(
     work: &mut ClauseWork,
     metrics: &mut Metrics,
 ) -> Result<Option<tape::TapeDoc>> {
-    let Some(mut ast) = restore_ast_file(file, code_rules, grammars, closed, lines, metrics)? else {
+    let Some(mut ast) = restore_ast_file(file, code_rules, grammars, closed, lines, metrics)?
+    else {
         return Ok(None);
     };
     for (index, document) in ast.documents().into_iter().enumerate() {
@@ -1595,11 +1592,7 @@ fn evaluate_clauses(
                         let matched_node = matched.get_node();
                         let keep = |witness: &mut Witness| {
                             if honour_suppressions
-                                && violations::suppresses(
-                                    Some(violation),
-                                    matched_node,
-                                    witness,
-                                )
+                                && violations::suppresses(Some(violation), matched_node, witness)
                             {
                                 return false;
                             }
@@ -1652,14 +1645,11 @@ fn evaluate_clauses(
                             }
                         };
                         for witness in found {
-                            let witnesses =
-                                file.witnesses.get_mut(&id).expect("eligible check");
+                            let witnesses = file.witnesses.get_mut(&id).expect("eligible check");
                             if witnesses.len() >= limits.max_witnesses {
                                 // An output cap, not a work limit.
-                                file.failures.insert(
-                                    id,
-                                    (WITNESS_LIMIT, "file witness budget exceeded"),
-                                );
+                                file.failures
+                                    .insert(id, (WITNESS_LIMIT, "file witness budget exceeded"));
                                 return Ok(false);
                             }
                             witnesses.push(witness);

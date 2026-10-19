@@ -23,7 +23,7 @@ pub(super) fn compile(language: &str, mut ast: Value) -> CompiledCodeRuleDsl {
 
 /// Each violation's text and its captures' texts, `TEXT NAME=text…` (a list's nodes joined by
 /// `|`).
-fn texts(result: &Value, source: &str) -> Vec<String> {
+pub(super) fn texts(result: &Value, source: &str) -> Vec<String> {
     let text = |span: &Value| {
         let start = span["startByte"].as_u64().expect("start") as usize;
         let end = span["endByte"].as_u64().expect("end") as usize;
@@ -139,37 +139,6 @@ fn zero_width_siblings_follow_the_tapes_byte_positioned_walks() {
                     "{relation} {stop} over {source:?}"
                 );
             }
-        }
-    }
-}
-
-#[test]
-fn blade_overlapping_siblings_scan_the_parents_children() {
-    // A Blade tape's embedded PHP sits among the template's nodes; its sibling walks scan.
-    let source = "<div>{{ $a }}</div>\n@if ($b)\n  <p>{{ $c }}</p>\n@endif\n";
-    for relation in ["precedes", "follows"] {
-        for stop in ["neighbor", "end"] {
-            let document = clause_document(json!({
-                "id": "ast-match",
-                "forbid": { "ast": { "language": "blade", "rule": {
-                    "regex": "^.",
-                    relation: { "stopBy": stop, "regex": "^." },
-                } } },
-                "violation": { "anchor": "witness.span", "code": "X", "message": "x" },
-            }));
-            let compiled = compile_document_with(
-                document,
-                &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
-            )
-            .unwrap_or_else(|error| panic!("{}", error.reason));
-            let result = same(&compiled, &snapshot(&[("blade", "a.blade.php", source)]));
-            assert!(
-                !result["violations"]
-                    .as_array()
-                    .expect("violations")
-                    .is_empty(),
-                "{relation} {stop}: {result}"
-            );
         }
     }
 }

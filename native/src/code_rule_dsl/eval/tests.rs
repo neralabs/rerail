@@ -86,7 +86,11 @@ fn edit(
     }
     assert_eq!(
         reported(&edited),
-        reported(&compiled.evaluate(snapshot, "report".to_owned(), None).unwrap()),
+        reported(
+            &compiled
+                .evaluate(snapshot, "report".to_owned(), None)
+                .unwrap()
+        ),
         "after {path}"
     );
     work

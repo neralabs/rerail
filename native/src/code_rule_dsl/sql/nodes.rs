@@ -68,10 +68,15 @@ pub(super) struct NodeFacts {
     next: Vec<u32>,
     /// The structural next sibling.
     nsib: Vec<u32>,
-    /// Where `next_all`/`prev_all` start (`TapeNode::walk_anchor`'s neighbours).
+    /// Where `next_all`/`prev_all` start (`TapeNode::walk_anchor`'s neighbours). A tape holds one
+    /// language, so siblings never overlap and a node with width starts them at its structural
+    /// neighbours (`nsib`, `prev`). The columns stand for ast-grep's cursor where it differs: a
+    /// zero-width node anchors at the first later sibling ending past it, and the root at its
+    /// first child.
     anext: Vec<u32>,
     aprev: Vec<u32>,
-    /// The parent of the sibling walks: the parent, or the root itself for the root.
+    /// The parent of the sibling walks: the parent, or the root itself for the root (whose
+    /// walks run over its children).
     wpar: Vec<u32>,
     first: Vec<u32>,
     start: Vec<u32>,

@@ -259,6 +259,8 @@ pub(in crate::code_rule_dsl) struct Compiled {
 
 /// One clause's statements, and where each clause-scope capture is in the rows of the last.
 struct ClauseSql {
+    /// The dialect of the documents it runs on: its kind codes are that grammar's.
+    dialect: GrammarDialect,
     statements: Vec<String>,
     captures: Vec<(String, SlotKind, usize)>,
     /// Whether the clause enumerates `violation.each`: its statements run in rounds.
@@ -266,7 +268,7 @@ struct ClauseSql {
 }
 
 impl ClauseSql {
-    fn of(statement: &Statement, each: Option<&str>) -> Self {
+    fn of(dialect: GrammarDialect, statement: &Statement, each: Option<&str>) -> Self {
         let mut column = 2;
         let captures = statement
             .slots
@@ -289,6 +291,7 @@ impl ClauseSql {
             None => emit::clause(statement),
         };
         Self {
+            dialect,
             statements,
             captures,
             each: each.is_some(),
@@ -316,7 +319,7 @@ pub(in crate::code_rule_dsl) fn compile_enumerating(
         let statement = builder
             .clause_each(grammar, each)
             .map_err(SqlError::Unsupported)?;
-        clauses.push(ClauseSql::of(&statement, each));
+        clauses.push(ClauseSql::of(grammar.language, &statement, each));
     }
     Ok(Compiled::new(builder, clauses))
 }
@@ -336,7 +339,7 @@ pub(in crate::code_rule_dsl) fn compile_each(
         .map(|&(grammar, each)| {
             ProgramBuilder::default().clause_each(grammar, each)?;
             let statement = builder.clause_each(grammar, each)?;
-            clauses.push(ClauseSql::of(&statement, each));
+            clauses.push(ClauseSql::of(grammar.language, &statement, each));
             Ok(clauses.len() - 1)
         })
         .collect();
@@ -593,7 +596,7 @@ pub(in crate::code_rule_dsl) struct Session {
     slot: Arc<BatchSlot>,
     program: Arc<Program>,
     stages: Vec<(GrammarDialect, Prepared)>,
-    clauses: Vec<(Prepared, Vec<CaptureColumn>)>,
+    clauses: Vec<(GrammarDialect, Prepared, Vec<CaptureColumn>)>,
     stats: Stats,
 }
 
@@ -698,13 +701,13 @@ impl Session {
                         .to_vec(),
                 );
             }
-            clauses.push((prepared, clause.captures.clone()));
+            clauses.push((clause.dialect, prepared, clause.captures.clone()));
         }
         // Every statement a batch can run stays prepared.
         let statements: usize = stages
             .iter()
             .map(|(_, prepared)| prepared)
-            .chain(clauses.iter().map(|(prepared, _)| prepared))
+            .chain(clauses.iter().map(|(_, prepared, _)| prepared))
             .map(|prepared| prepared.steps.len() + prepared.clear.len() + 8)
             .sum();
         connection.set_prepared_statement_cache_capacity(statements + 4);
@@ -732,7 +735,7 @@ impl Session {
             .stages
             .iter()
             .map(|(_, prepared)| prepared)
-            .chain(self.clauses.iter().map(|(prepared, _)| prepared));
+            .chain(self.clauses.iter().map(|(_, prepared, _)| prepared));
         for prepared in prepared {
             for sql in prepared.steps.iter().chain([&prepared.last]) {
                 if sql == emit::LOOP {
@@ -778,7 +781,7 @@ impl Session {
                 .stages
                 .iter()
                 .map(|(_, prepared)| prepared)
-                .chain(self.clauses.iter().map(|(prepared, _)| prepared))
+                .chain(self.clauses.iter().map(|(_, prepared, _)| prepared))
                 .flat_map(|prepared| prepared.clear.iter().chain(prepared.each.iter().flatten()))
                 .map(String::as_str)
                 .chain([CLEAR_RUNS, CLEAR_ROOTS]);
@@ -875,6 +878,15 @@ impl Session {
             let mut insert_run = connection.prepare_cached(INSERT_RUN)?;
             let mut insert_root = connection.prepare_cached(INSERT_ROOT)?;
             for run in runs.iter().filter(|run| !run.files.is_empty()) {
+                // A statement's kind codes are its dialect's: it runs on documents of that
+                // dialect only (each document holds one language), so a kind filter or posting
+                // list never reads another grammar's codes.
+                debug_assert!(
+                    run.files
+                        .iter()
+                        .all(|(file, _)| batch.files[*file].dialect == clauses[run.statement].0),
+                    "a statement runs on documents of its dialect"
+                );
                 let id = run_id(None, run.statement);
                 for (file, roots) in &run.files {
                     match roots {
@@ -892,7 +904,7 @@ impl Session {
                         }
                     }
                 }
-                let mut reads = clauses[run.statement].0.stages.clone();
+                let mut reads = clauses[run.statement].1.stages.clone();
                 while let Some(stage) = reads.pop() {
                     let files = &mut stage_files[stage];
                     let before = files.len();
@@ -936,7 +948,7 @@ impl Session {
                 for (at, (file, _)) in run.files.iter().enumerate() {
                     position[*file] = at;
                 }
-                let (prepared, captures) = &clauses[run.statement];
+                let (_, prepared, captures) = &clauses[run.statement];
                 let each = prepared
                     .each
                     .as_ref()
