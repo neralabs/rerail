@@ -125,14 +125,18 @@ impl Lowerer<'_> {
     /// alone, so it is a per-batch stage, matched once per node however many walks reach the node
     /// (as the matcher remembers a node-local relation's answers per file, `Related::chains`). A
     /// rule that reaches a recursive utility whose units are being lowered stays in the unit's
-    /// body, where its references read the loop's answers.
+    /// body, where its references read the loop's answers; so does one that may run on a binding
+    /// `violation.each` excludes (`excluding_bound`), whose verdict reads that binding.
     pub(super) fn walked(
         &mut self,
         rule: &AstMatcher,
         scope: usize,
         bound: &Bound,
     ) -> Result<(Op, Bound), Unsupported> {
-        if capture_free(rule) && walks(rule) && !recursion::reaches(rule, &self.program.in_progress)
+        if capture_free(rule)
+            && walks(rule)
+            && !recursion::reaches(rule, &self.program.in_progress)
+            && !self.excluding_bound(scope, bound)
         {
             return Ok((Op::Stage(self.stage(rule)?), bound.clone()));
         }

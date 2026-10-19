@@ -364,6 +364,20 @@ impl<'p> Lowerer<'p> {
         }
     }
 
+    /// Whether a rule lowered here, in a three-valued clause, may run on a binding of the capture
+    /// `violation.each` excludes (its node slot may be bound on entry): its choice points then
+    /// pass over every true candidate where that binding was reported, which a stage, matched
+    /// once excluding nothing, cannot stand for (`emit/each.rs`).
+    fn excluding_bound(&self, scope: usize, bound: &Bound) -> bool {
+        self.three
+            && self.root.is_some()
+            && self
+                .exclude
+                .as_ref()
+                .and_then(|name| self.existing(scope, name, SlotKind::Node))
+                .is_some_and(|slot| bound.contains(&slot))
+    }
+
     /// `walk_leak` for a relation's rule, also through a recursive unit: a relation in a context
     /// `violation.each` excludes in tests each candidate on a trial environment and leaks nothing.
     fn leaks(&self, sub: &Op) -> Result<(), Unsupported> {
@@ -424,6 +438,17 @@ impl<'p> Lowerer<'p> {
             && let Some(root) = self.root
         {
             key.push(root);
+        }
+        // Three-valued, the body's verdicts read the excluded capture also where the utility
+        // does not hold it (`excluding_bound`); the matcher's memo keys them by it too
+        // (`memo::kept`).
+        if self.three
+            && let Some(name) = &exclude
+        {
+            let slot = self.slot(own, name, SlotKind::Node);
+            if !key.contains(&slot) {
+                key.push(slot);
+            }
         }
         self.slot(INTERNAL, ORIGIN, SlotKind::Node);
         let id = self.units.len();
@@ -842,8 +867,12 @@ impl<'p> Lowerer<'p> {
                 Ok((Op::Regex(id), bound.clone()))
             }
             AstMatcher::All(items) if self.three => self.all_open(items, scope, bound),
+            // A kind-only `any` is a kind test, but where `violation.each` may exclude the
+            // binding it runs on, each of its true branches is passed over (`emit/each.rs`).
             AstMatcher::Any(items)
-                if self.three && !items.iter().all(|item| matches!(item, AstMatcher::Kind(_))) =>
+                if self.three
+                    && (!items.iter().all(|item| matches!(item, AstMatcher::Kind(_)))
+                        || self.excluding_bound(scope, bound)) =>
             {
                 self.any_open(items, scope, bound)
             }
@@ -1018,7 +1047,7 @@ impl<'p> Lowerer<'p> {
                     if let Some(&unit) = self.stage_members.get(&util_key(util)) {
                         return Ok((Op::Recur { unit, slots: None }, bound.clone()));
                     }
-                    if cycle.capture_free {
+                    if cycle.capture_free && !self.excluding_bound(scope, bound) {
                         let stage = self.recursive_stage(&cycle, util)?;
                         return Ok((Op::Stage(stage), bound.clone()));
                     }
@@ -1029,7 +1058,7 @@ impl<'p> Lowerer<'p> {
                     return Ok((Op::Recur { unit, slots: None }, out));
                 }
                 util.with_target(|rule| {
-                    if capture_free(rule) {
+                    if capture_free(rule) && !self.excluding_bound(scope, bound) {
                         self.stage(rule)
                             .map(|stage| (Op::Stage(stage), bound.clone()))
                     } else {

@@ -38,22 +38,29 @@
 //! - **Calls** (`call.rs` `each::framed`): the capture is excluded in the frame under the
 //!   parameter it is passed as; a frame it is not passed to excludes nothing. An unknown body is
 //!   an unknown call (`Emitter::call`), as without `each`.
-//! - **Recursion units** (`memo.rs` keys verdicts by `each::exclusion_key` and the excluded
-//!   capture): a unit under `each` is keyed by the row's root too and its body holds the wrappers;
-//!   its answer carries the body's `unk`, and an unknown answer keeps the key's bindings, so a
-//!   reference reads it as the matcher's `matches` does. Units are emptied between rounds, as the
-//!   memo's generation changes with each recorded range.
+//! - **Recursion units** (`memo.rs` keys verdicts by `each::exclusion_key` and, through
+//!   `memo::kept`, by the excluded capture): a unit under `each` is keyed by the row's root and,
+//!   three-valued, by the excluded capture too, also where the utility does not hold it, and its
+//!   body holds the wrappers; its answer carries the body's `unk`, and an unknown answer keeps the
+//!   key's bindings, so a reference reads it as the matcher's `matches` does. Units are emptied
+//!   between rounds, as the memo's generation changes with each recorded range.
+//! - **Stages** (capture-free relation rules, shared utilities and recursive cycles, matched once
+//!   per batch excluding nothing): a capture-free rule binds nothing, but its choice points test
+//!   the trial it runs on, so where the excluded capture may be bound on entry
+//!   (`Lowerer::excluding_bound`) it is lowered in place, with its wrappers, and a capture-free
+//!   cycle becomes units; elsewhere no row it runs on binds the capture and its stage is exact.
 //! - **Rounds** (`run.rs` `enumerate`, `match_rule`): a root whose verdict is unknown does not
 //!   match, so it is not visited and its enumeration ends. `clause_each` reads the matches with
 //!   `unk = 0` only: an unknown root is neither reported nor kept for the next round.
 //!
-//! Why dropping only at choice points is exact, also for captures bound before one, and for
-//! staged capture-free rules (whose verdicts are matched once, without exclusion): a row's
-//! bindings only grow (an unknown verdict keeps its input's), so once a row binds the capture to
-//! a reported range, its root's last match binds that range again or the root does not match;
-//! either ends the root's enumeration unreported, whatever the verdicts in between. A row that
-//! binds the capture to no reported range is tested on trials that do the same unless they bind
-//! it afresh, which only a rule that binds can, and a capture-free stage cannot.
+//! Why every sub-rule must read the exclusion in a three-valued clause, where a two-valued one
+//! may read some without it: a row's bindings only grow (an unknown verdict keeps its input's),
+//! so a row that carries a reported range out of every choice point ends its root unreported,
+//! whatever the verdicts it met; but inside a choice point's trial that binds a reported range,
+//! the trial's verdict still decides the search: true is passed over, and unknown is an event
+//! (it stops a strict search, or leaves the answer open). Two-valued, true and false are both
+//! passed over; three-valued, a sub-rule of the trial that read true or false where the matcher
+//! reads unknown (or the reverse) would change the search.
 
 use super::{EACH, Emitter};
 use crate::code_rule_dsl::sql::plan::Op;
