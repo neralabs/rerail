@@ -196,7 +196,12 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
         Ok(metrics)
     };
     if let Some(sql) = context.sql {
-        // Batches small enough that an apply of a few files still runs on every worker.
+        // As natively, an apply of fewer files than workers runs inline (here as one batch); a
+        // larger one in batches small enough that it still runs on every worker.
+        if jobs.len() < WORKER_THREADS {
+            let mut grammars = BTreeMap::new();
+            return Ok(sql_batch(jobs, context, sql, &mut grammars, &read, &finish));
+        }
         let size = sql
             .batch_size
             .min(jobs.len().div_ceil(WORKER_THREADS))
@@ -206,23 +211,14 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
         while jobs.peek().is_some() {
             batches.push(jobs.by_ref().take(size).collect::<Vec<_>>());
         }
-        let run = |batch: Vec<Job>, grammars: &mut Grammars| {
-            sql_batch(batch, context, sql, grammars, &read, &finish)
-        };
-        let evaluated: Vec<Evaluated> = if batches.len() < 2 {
-            let mut grammars = BTreeMap::new();
+        let evaluated: Vec<Evaluated> = WORK_POOL.install(|| {
             batches
-                .into_iter()
-                .map(|batch| run(batch, &mut grammars))
+                .into_par_iter()
+                .map_init(BTreeMap::new, |grammars, batch| {
+                    sql_batch(batch, context, sql, grammars, &read, &finish)
+                })
                 .collect()
-        } else {
-            WORK_POOL.install(|| {
-                batches
-                    .into_par_iter()
-                    .map_init(BTreeMap::new, |grammars, batch| run(batch, grammars))
-                    .collect()
-            })
-        };
+        });
         return Ok(evaluated.into_iter().flatten().collect());
     }
     let work = |job: Job, grammars: &mut Grammars| {
