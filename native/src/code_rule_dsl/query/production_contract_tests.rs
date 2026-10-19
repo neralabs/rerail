@@ -352,6 +352,148 @@ fn production_contract_phase_two_sql_rows_equal_committed_oracle_rows() {
     }
 }
 
+const PHASE_THREE_CASES: &[&str] = &[
+    "utility-simple",
+    "utility-nested",
+    "utility-shared-component",
+    "utility-self-recursive",
+    "utility-mutual-recursion",
+    "utility-parameterized-call",
+    "utility-argument-frame-isolation",
+    "utility-capture-return",
+    "utility-depth-limit",
+    "utility-work-limit",
+];
+
+#[test]
+fn production_contract_phase_three_utilities_lower_to_named_sql_components() {
+    let expected_catalogs = [
+        (
+            "utility-simple",
+            vec![super::relational::TerminalKind::Kind],
+        ),
+        (
+            "utility-nested",
+            vec![super::relational::TerminalKind::Regex],
+        ),
+        (
+            "utility-shared-component",
+            vec![super::relational::TerminalKind::Pattern],
+        ),
+        (
+            "utility-self-recursive",
+            vec![
+                super::relational::TerminalKind::Kind,
+                super::relational::TerminalKind::Universe,
+                super::relational::TerminalKind::Navigation,
+            ],
+        ),
+        (
+            "utility-mutual-recursion",
+            vec![
+                super::relational::TerminalKind::Kind,
+                super::relational::TerminalKind::Universe,
+                super::relational::TerminalKind::Navigation,
+            ],
+        ),
+        (
+            "utility-parameterized-call",
+            vec![super::relational::TerminalKind::Pattern],
+        ),
+        (
+            "utility-argument-frame-isolation",
+            vec![
+                super::relational::TerminalKind::Pattern,
+                super::relational::TerminalKind::Pattern,
+            ],
+        ),
+        (
+            "utility-capture-return",
+            vec![super::relational::TerminalKind::Pattern],
+        ),
+        (
+            "utility-depth-limit",
+            vec![
+                super::relational::TerminalKind::Universe,
+                super::relational::TerminalKind::Navigation,
+            ],
+        ),
+        (
+            "utility-work-limit",
+            vec![
+                super::relational::TerminalKind::Universe,
+                super::relational::TerminalKind::Navigation,
+            ],
+        ),
+    ];
+    for (name, expected_catalog) in expected_catalogs {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the utility contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+            .unwrap_or_else(|error| panic!("{}: {}", case.name, error.unsupported().join("; ")));
+        assert_eq!(
+            plan.terminals()
+                .iter()
+                .map(super::relational::TerminalPlan::kind)
+                .collect::<Vec<_>>(),
+            expected_catalog,
+            "{}",
+            case.name
+        );
+        assert!(plan.sql().contains("utility_"), "{}", case.name);
+        if case.name.contains("recursive") || case.name.ends_with("-limit") {
+            assert!(plan.sql().contains("utility_walk"), "{}", case.name);
+            assert!(plan.sql().contains("UNION ALL"), "{}", case.name);
+        }
+    }
+}
+
+#[test]
+fn production_contract_phase_three_sql_rows_equal_committed_utility_oracles() {
+    for case in cases()
+        .into_iter()
+        .filter(|case| PHASE_THREE_CASES.contains(&case.name.as_str()))
+    {
+        assert_eq!(case.workspace.files.len(), 1, "{}", case.name);
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let outcome =
+            super::policy_lowering_tests::sql_outcome(&compiled, &case.workspace.files[0].source);
+        let mut expected_ranges = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected_ranges.sort_unstable();
+        assert_eq!(outcome.ranges, expected_ranges, "{}", case.name);
+        let expected_errors = match case.name.as_str() {
+            "utility-depth-limit" => vec!["utility-depth-limit".to_owned()],
+            "utility-work-limit" => vec!["utility-work-limit".to_owned()],
+            _ => Vec::new(),
+        };
+        assert_eq!(outcome.errors, expected_errors, "{}", case.name);
+    }
+}
+
 #[test]
 fn all_108_contracts_are_real_production_inputs_and_lower_to_sql() {
     let cases = cases();

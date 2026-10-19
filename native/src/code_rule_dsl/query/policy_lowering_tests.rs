@@ -991,10 +991,15 @@ fn disabled_when_is_an_executable_empty_relation_without_terminal_work() {
     assert_eq!(sql_ranges(&compiled, "x\n"), Vec::<(usize, usize)>::new());
 }
 
-pub(super) fn sql_ranges(
+pub(super) struct SqlOutcome {
+    pub(super) ranges: Vec<(usize, usize)>,
+    pub(super) errors: Vec<String>,
+}
+
+pub(super) fn sql_outcome(
     compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
     source: &str,
-) -> Vec<(usize, usize)> {
+) -> SqlOutcome {
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect("policy has complete structural SQL lowering");
     let source = Arc::new(source.to_owned());
@@ -1056,7 +1061,12 @@ pub(super) fn sql_ranges(
         .prepare(plan.sql())
         .expect("executable SQL plan")
         .query_map([token], |row| {
-            Ok((row.get::<_, i64>(10)?, row.get::<_, String>(35)?))
+            Ok((
+                row.get::<_, i64>(1)?,
+                row.get::<_, Option<i64>>(10)?,
+                row.get::<_, Option<String>>(27)?,
+                row.get::<_, String>(35)?,
+            ))
         })
         .expect("SQL structural query")
         .collect::<rusqlite::Result<Vec<_>>>()
@@ -1071,9 +1081,18 @@ pub(super) fn sql_ranges(
         Some(expected_executions)
     );
     let anchor = &compiled.inner.clauses[0].violation.anchor;
+    let mut errors = rows
+        .iter()
+        .filter(|(row_kind, _, _, _)| *row_kind == 2)
+        .map(|(_, _, error, _)| error.clone().expect("a failure row has an error code"))
+        .collect::<Vec<_>>();
+    errors.sort();
+    errors.dedup();
     let mut ranges = rows
         .into_iter()
-        .map(|(node, bindings)| {
+        .filter(|(row_kind, _, _, _)| *row_kind == 3)
+        .map(|(_, node, _, bindings)| {
+            let node = node.expect("a violation row has a node");
             let node = match anchor {
                 Anchor::Capture(label) => serde_json::from_str::<serde_json::Value>(&bindings)
                     .expect("JSON binding environment")
@@ -1090,7 +1109,14 @@ pub(super) fn sql_ranges(
         })
         .collect::<Vec<_>>();
     ranges.sort_unstable();
-    ranges
+    SqlOutcome { ranges, errors }
+}
+
+pub(super) fn sql_ranges(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    source: &str,
+) -> Vec<(usize, usize)> {
+    sql_outcome(compiled, source).ranges
 }
 
 fn oracle_ranges(
