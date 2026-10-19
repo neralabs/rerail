@@ -44,6 +44,14 @@ pub(super) const UNTIL: &str = "/*UNTIL*/";
 /// A query after a loop: the recursive reads of its last pass, `(unit, key, unit, key)`, which
 /// the driver accepts only where they form no cycle (`recursion`).
 pub(super) const ACYCLIC: &str = "/*ACYCLIC*/";
+/// A recursion component's loop is emitted once, as a block: `BLOCK<scc>` … `END` at its first
+/// reference site, which runs it there, and `RUN<scc>` at every later one, which runs the same
+/// statements again over the demand rows that site added (`Emitter::recur`). The loop's
+/// statements read only its units' demand and answer tables and its own frames, which it empties
+/// before it writes them, so a run computes what a copy of the loop emitted at the site would.
+pub(super) const BLOCK: &str = "/*BLOCK*/";
+pub(super) const END: &str = "/*END*/";
+pub(super) const RUN: &str = "/*RUN*/";
 
 /// The prefix of a stage's own tables.
 pub(super) fn stage_namespace(stage: usize) -> String {
@@ -182,7 +190,7 @@ pub(super) fn recursive_stage(statement: &Statement) -> Vec<String> {
             .iter()
             .any(|unit| unit.scc == scc && unit.seed.is_some())
         {
-            emitter.recursion_loop(scc);
+            emitter.shared_loop(scc);
         }
     }
     let three = emitter.three;
@@ -234,6 +242,8 @@ struct Emitter<'s> {
     looping: usize,
     /// The unit components whose loops are being emitted, innermost last.
     emitting: Vec<usize>,
+    /// The unit components whose loop is emitted already, as a block later sites run (`RUN`).
+    blocks: BTreeSet<usize>,
     /// The units whose bodies are being emitted, innermost last.
     evaluating: Vec<usize>,
     /// The slot holding the demand row a unit's row is evaluated for.
@@ -284,6 +294,7 @@ impl<'s> Emitter<'s> {
             open: Vec::new(),
             looping: 0,
             emitting: Vec::new(),
+            blocks: BTreeSet::new(),
             evaluating: Vec::new(),
             origin: slots
                 .iter()
@@ -824,7 +835,7 @@ impl<'s> Emitter<'s> {
         }
         let scc = units[unit].scc;
         if !self.emitting.contains(&scc) {
-            self.recursion_loop(scc);
+            self.shared_loop(scc);
         } else if let (Some(&from), Some(origin)) = (self.evaluating.last(), self.origin)
             && units[from].scc == scc
         {
@@ -851,6 +862,20 @@ impl<'s> Emitter<'s> {
                  JOIN {answer} r ON r.id = d.id"
             ),
         )
+    }
+
+    /// Runs component `scc`'s loop: emitted where it is first run, as a block (`BLOCK`), and run
+    /// again by name (`RUN`) everywhere after. Its statements do not depend on the site: they read
+    /// the units' demand and answer tables and frames of their own, and every unit they reach
+    /// lies outside the loops being emitted (one that reached back would share the component).
+    fn shared_loop(&mut self, scc: usize) {
+        if self.blocks.insert(scc) {
+            self.statements.push(format!("{BLOCK}{scc}"));
+            self.recursion_loop(scc);
+            self.statements.push(END.to_owned());
+        } else {
+            self.statements.push(format!("{RUN}{scc}"));
+        }
     }
 
     /// The loop of the units of component `scc`, semi-naive: each pass evaluates every unit's body
