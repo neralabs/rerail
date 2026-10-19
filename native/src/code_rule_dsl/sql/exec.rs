@@ -175,6 +175,8 @@ impl BatchSlot {
 const NODE_MODULE: Module<'static, NodeTable> = Module::eponymous_only_module();
 const PATTERN_MODULE: Module<'static, PatternTable> = Module::eponymous_only_module();
 const TEXT_MODULE: Module<'static, TextTable> = Module::eponymous_only_module();
+const PROGRAM_MODULE: Module<'static, super::terminals::ProgramTable> =
+    Module::eponymous_only_module();
 const FACT_MODULE: Module<'static, FactTable> = Module::eponymous_only_module();
 
 /// An in-memory connection whose virtual tables read `slot`'s batch.
@@ -183,6 +185,7 @@ fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
     connection.create_module(c"node", &NODE_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"pattern", &PATTERN_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"text_match", &TEXT_MODULE, Some(Arc::clone(slot)))?;
+    connection.create_module(c"program_match", &PROGRAM_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"fact", &FACT_MODULE, Some(Arc::clone(slot)))?;
     Ok(connection)
 }
@@ -768,6 +771,9 @@ impl Session {
         let started = std::time::Instant::now();
         let batch = Batch::of(docs, Arc::clone(&self.program));
         self.stats.facts_nanos += started.elapsed().as_nanos() as u64;
+        if super::profile::enabled() {
+            super::profile::record("<facts>", started.elapsed().as_nanos() as u64, 0);
+        }
         *self.slot.current.write() = Some(Arc::clone(&batch));
         let scopes = BatchScopes::begin();
         let result = self.run_batch(&batch, runs);
@@ -826,9 +832,17 @@ impl Session {
             loop {
                 Self::run_steps(connection, stats, &steps[at + 1..end])?;
                 passes += 1;
+                let until_started = std::time::Instant::now();
                 let changed: i64 = connection
                     .prepare_cached(until)?
                     .query_row([], |row| row.get(0))?;
+                if super::profile::enabled() {
+                    super::profile::record(
+                        until,
+                        until_started.elapsed().as_nanos() as u64,
+                        usize::from(changed != 0),
+                    );
+                }
                 if changed == 0 {
                     break;
                 }
@@ -849,6 +863,9 @@ impl Session {
         stats.statements += 1;
         stats.rows += rows;
         stats.nanos += nanos;
+        if super::profile::enabled() {
+            super::profile::record(sql, nanos, rows);
+        }
         #[cfg(test)]
         STATEMENT_PROFILE.with_borrow_mut(|profile| {
             if let Some(profile) = profile {
@@ -922,6 +939,9 @@ impl Session {
             }
         }
         stats.input_nanos += inputs.elapsed().as_nanos() as u64;
+        if super::profile::enabled() {
+            super::profile::record("<inputs>", inputs.elapsed().as_nanos() as u64, 0);
+        }
         // Stages in index order: a stage only reads stages made before it.
         let started = std::time::Instant::now();
         for (stage, (_, prepared)) in stages.iter().enumerate() {
@@ -980,11 +1000,17 @@ impl Session {
                     stats.rows += count;
                     stats.nanos += elapsed;
                     stats.select_nanos += elapsed;
+                    if super::profile::enabled() {
+                        super::profile::record(&prepared.last, elapsed, count);
+                    }
                     let started = std::time::Instant::now();
                     for clear in &prepared.clear {
                         connection.prepare_cached(clear)?.execute([])?;
                     }
                     stats.input_nanos += started.elapsed().as_nanos() as u64;
+                    if super::profile::enabled() {
+                        super::profile::record("<clear>", started.elapsed().as_nanos() as u64, 0);
+                    }
                     let Some(each) = &each else {
                         break;
                     };

@@ -123,10 +123,18 @@ impl SqlEngine {
             }
         }
         let (compiled, outcomes) = compile_each(&grammars);
+        let mut names: Vec<String> = Vec::new();
         for (key, outcome) in keys.into_iter().zip(outcomes) {
             match outcome {
                 Ok(statement) => {
                     clauses.insert(key, Some(statement));
+                    if names.len() <= statement {
+                        names.resize(statement + 1, String::new());
+                    }
+                    names[statement] = format!(
+                        "{}/{}",
+                        code_rules[key.0.0].id, code_rules[key.0.0].clauses[key.0.1].id
+                    );
                 }
                 Err(unsupported) => {
                     clauses.insert(key, None);
@@ -146,6 +154,7 @@ impl SqlEngine {
                 refusal.rule, refusal.clause, refusal.reason
             );
         }
+        crate::code_rule_dsl::sql::profile::set_names(names);
         let statements = clauses.values().flatten().count();
         Self {
             compiled,
@@ -220,6 +229,7 @@ impl SqlEngine {
     /// statements did.
     pub(super) fn report(&self) -> Value {
         let stats = *self.stats.lock().unwrap_or_else(|error| error.into_inner());
+        crate::code_rule_dsl::sql::profile::dump();
         let milliseconds = |nanos: u64| nanos as f64 / 1e6;
         json!({
             "engine": "sql",

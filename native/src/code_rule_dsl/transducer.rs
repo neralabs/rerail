@@ -3,7 +3,6 @@ use super::tape::TapeDoc;
 use ast_grep_core::MatchStrictness;
 #[cfg(test)]
 use ast_grep_core::matcher::{Pattern, PatternNode};
-#[cfg(test)]
 use regex::Regex;
 #[cfg(test)]
 use std::collections::{BTreeMap, BTreeSet};
@@ -20,53 +19,48 @@ use std::ops::Range;
 mod jit;
 #[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
 mod metal_backend;
+mod sets;
 
-#[cfg(test)]
-const STOP: u8 = 0x00;
-#[cfg(test)]
-const KIND: u8 = 0x01;
-#[cfg(test)]
-const FIELD: u8 = 0x02;
-#[cfg(test)]
-const FLAGS: u8 = 0x03;
-#[cfg(test)]
-const TEXT: u8 = 0x04;
-#[cfg(test)]
-const SIZE: u8 = 0x05;
-#[cfg(test)]
-const CHILD: u8 = 0x10;
-#[cfg(test)]
-const NEXT: u8 = 0x11;
-#[cfg(test)]
-const PARENT: u8 = 0x12;
-#[cfg(test)]
-const DESCEND: u8 = 0x13;
-#[cfg(test)]
-const CAPTURE: u8 = 0x20;
-#[cfg(test)]
-const FORK: u8 = 0x30;
-#[cfg(test)]
-const GOTO: u8 = 0x31;
-#[cfg(test)]
-const EMIT: u8 = 0x40;
+pub(super) use sets::{NodeSet, Tree};
 
-#[cfg(test)]
-const NAMED: u8 = 1;
-#[cfg(test)]
+pub(super) const STOP: u8 = 0x00;
+pub(super) const KIND: u8 = 0x01;
+pub(super) const FIELD: u8 = 0x02;
+pub(super) const FLAGS: u8 = 0x03;
+pub(super) const TEXT: u8 = 0x04;
+pub(super) const SIZE: u8 = 0x05;
+pub(super) const CHILD: u8 = 0x10;
+pub(super) const NEXT: u8 = 0x11;
+pub(super) const PARENT: u8 = 0x12;
+pub(super) const DESCEND: u8 = 0x13;
+pub(super) const ANCESTOR: u8 = 0x14;
+pub(super) const CAPTURE: u8 = 0x20;
+pub(super) const FORK: u8 = 0x30;
+pub(super) const GOTO: u8 = 0x31;
+pub(super) const TEST: u8 = 0x32;
+pub(super) const COUNT: u8 = 0x33;
+pub(super) const EMIT: u8 = 0x40;
+
+/// Node selection mode of `CHILD`, `NEXT`, `DESCEND` and `ANCESTOR`: named nodes only.
+pub(super) const NAMED: u8 = 1;
+/// `FIELD` mode: the node must also be its parent's first child with that field.
+pub(super) const FIELD_FIRST: u8 = 1;
+/// `TEST` mode: retain the path where the sub-program does not emit.
+pub(super) const NEGATE: u8 = 1;
 const SIZE_LONG: u8 = 0x80;
 #[cfg(test)]
 const MAX_STEPS_PER_PATH: usize = 1 << 20;
 
 /// A `TEXT` test.
-#[cfg(test)]
 #[derive(Clone)]
 pub(super) enum TextPredicate {
+    #[cfg_attr(not(test), allow(dead_code))]
     Equal(u16),
+    #[cfg_attr(not(test), allow(dead_code))]
     Prefix(u16),
     Regex { source: u16, compiled: Regex },
 }
 
-#[cfg(test)]
 impl TextPredicate {
     fn string_index(&self) -> u16 {
         match self {
@@ -76,7 +70,19 @@ impl TextPredicate {
     }
 }
 
-#[cfg(test)]
+/// A `COUNT` table entry: the path is retained where the number of nodes the navigation `nav`
+/// (`CHILD`, `PARENT`, `DESCEND` or `ANCESTOR`, with its node selection `mode`) reaches from the
+/// current node, and at which the sub-program at `target` emits, is at least `min` and at most
+/// `max`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Count {
+    pub(super) nav: u8,
+    pub(super) mode: u8,
+    pub(super) target: u16,
+    pub(super) min: u64,
+    pub(super) max: Option<u64>,
+}
+
 #[derive(Clone)]
 pub(super) struct Program {
     words: Vec<u32>,
@@ -84,6 +90,7 @@ pub(super) struct Program {
     predicates: Vec<TextPredicate>,
     labels: Vec<u16>,
     longs: Vec<u64>,
+    counts: Vec<Count>,
 }
 
 #[cfg(test)]
@@ -102,7 +109,6 @@ pub(super) struct Output {
     pub(super) captures: Vec<Capture>,
 }
 
-#[cfg(test)]
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum Error {
     InvalidOpcode(usize),
@@ -110,12 +116,14 @@ pub(super) enum Error {
     InvalidOperand(usize),
     InvalidTarget(usize),
     NonProgressingCycle(usize),
+    #[cfg(test)]
     WorkLimit,
     UnsupportedPattern,
+    #[cfg(test)]
     InvalidAnchor,
-    #[cfg(all(feature = "bench-backends", target_os = "macos"))]
+    #[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
     UnsupportedBackend,
-    #[cfg(all(feature = "bench-backends", target_os = "macos"))]
+    #[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
     BackendFailure,
 }
 
@@ -129,12 +137,10 @@ struct Path {
     steps: usize,
 }
 
-#[cfg(test)]
 fn split(word: u32) -> (u8, u8, u16) {
     (word as u8, (word >> 8) as u8, (word >> 16) as u16)
 }
 
-#[cfg(test)]
 pub(super) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
     opcode as u32 | ((mode as u32) << 8) | ((operand as u32) << 16)
 }
@@ -183,12 +189,27 @@ impl Program {
         labels: Vec<u16>,
         longs: Vec<u64>,
     ) -> Result<Self, Error> {
+        Self::with_counts(words, strings, predicates, labels, longs, Vec::new())
+    }
+}
+
+impl Program {
+    /// A program with every table, `COUNT`'s included, validated.
+    pub(super) fn with_counts(
+        words: Vec<u32>,
+        strings: Vec<Vec<u8>>,
+        predicates: Vec<TextPredicate>,
+        labels: Vec<u16>,
+        longs: Vec<u64>,
+        counts: Vec<Count>,
+    ) -> Result<Self, Error> {
         let program = Self {
             words,
             strings,
             predicates,
             labels,
             longs,
+            counts,
         };
         program.validate()?;
         Ok(program)
@@ -217,8 +238,13 @@ impl Program {
                         return Err(Error::InvalidMode(pc));
                     }
                 }
-                KIND | FIELD => {
+                KIND => {
                     if mode != 0 {
+                        return Err(Error::InvalidMode(pc));
+                    }
+                }
+                FIELD => {
+                    if mode & !FIELD_FIRST != 0 {
                         return Err(Error::InvalidMode(pc));
                     }
                 }
@@ -240,7 +266,7 @@ impl Program {
                         return Err(Error::InvalidOperand(pc));
                     }
                 }
-                CHILD | NEXT | DESCEND => {
+                CHILD | NEXT | DESCEND | ANCESTOR => {
                     if mode > NAMED || operand != 0 {
                         return Err(Error::InvalidMode(pc));
                     }
@@ -256,11 +282,39 @@ impl Program {
                         return Err(Error::InvalidTarget(pc));
                     }
                     if target <= pc
-                        && self.words[target..=pc]
-                            .iter()
-                            .any(|word| matches!(split(*word), (PARENT | CHILD, _, _)))
+                        && self.words[target..=pc].iter().any(|word| {
+                            matches!(split(*word), (PARENT | CHILD | ANCESTOR, _, _))
+                        })
                     {
                         return Err(Error::NonProgressingCycle(pc));
+                    }
+                }
+                // A sub-program starts after the instruction that runs it, so running it never
+                // returns to the instruction at the same node.
+                TEST => {
+                    let target = usize::from(operand);
+                    if mode & !NEGATE != 0 {
+                        return Err(Error::InvalidMode(pc));
+                    }
+                    if target <= pc || target >= self.words.len() {
+                        return Err(Error::InvalidTarget(pc));
+                    }
+                }
+                COUNT => {
+                    let Some(count) = self.counts.get(usize::from(operand)) else {
+                        return Err(Error::InvalidOperand(pc));
+                    };
+                    let target = usize::from(count.target);
+                    if mode != 0
+                        || !matches!(count.nav, CHILD | PARENT | DESCEND | ANCESTOR)
+                        || count.mode > NAMED
+                        || (count.nav == PARENT && count.mode != 0)
+                        || count.max.is_some_and(|max| max < count.min)
+                    {
+                        return Err(Error::InvalidMode(pc));
+                    }
+                    if target <= pc || target >= self.words.len() {
+                        return Err(Error::InvalidTarget(pc));
                     }
                 }
                 _ => return Err(Error::InvalidOpcode(pc)),
@@ -320,6 +374,35 @@ impl Program {
         }
     }
 
+    /// The table entry of `COUNT` instruction `index`.
+    pub(super) fn count(&self, index: u16) -> &Count {
+        &self.counts[usize::from(index)]
+    }
+}
+
+#[cfg(test)]
+impl Program {
+    /// Whether a path started at `pc` on `node` emits (the sub-program of `TEST` or `COUNT`).
+    fn emits_at(&self, tape: &TapeDoc, node: u32, pc: u16) -> Result<bool, Error> {
+        Ok(!self.execute_roots_from(tape, [node], pc)?.is_empty())
+    }
+
+    /// The nodes navigation `nav` (mode `mode`) reaches from `node`, in its order.
+    fn navigate(tape: &TapeDoc, node: u32, nav: u8, mode: u8) -> Vec<u32> {
+        let named = |node: &u32| mode != NAMED || tape.transducer_flags(*node) & 1 != 0;
+        match nav {
+            CHILD => tape.transducer_children(node).filter(named).collect(),
+            DESCEND => tape.transducer_descendants(node).filter(named).collect(),
+            PARENT => tape.transducer_parent(node).into_iter().collect(),
+            ANCESTOR => std::iter::successors(tape.transducer_parent(node), |&node| {
+                tape.transducer_parent(node)
+            })
+            .filter(named)
+            .collect(),
+            _ => unreachable!("validated navigation"),
+        }
+    }
+
     pub(super) fn execute(&self, tape: &TapeDoc) -> Result<Vec<Output>, Error> {
         self.execute_roots(tape, 0..tape.transducer_len() as u32)
     }
@@ -361,7 +444,18 @@ impl Program {
                     match opcode {
                         STOP => retain = false,
                         KIND => retain = tape.transducer_kind(path.node) == operand,
-                        FIELD => retain = tape.transducer_field(path.node) == operand,
+                        FIELD => {
+                            retain = tape.transducer_field(path.node) == operand
+                                && (mode != FIELD_FIRST
+                                    || operand != 0
+                                        && tape.transducer_parent(path.node).is_some_and(
+                                            |parent| {
+                                                tape.transducer_children(parent).find(|&child| {
+                                                    tape.transducer_field(child) == operand
+                                                }) == Some(path.node)
+                                            },
+                                        ));
+                        }
                         FLAGS => {
                             let flags = tape.transducer_flags(path.node);
                             retain = flags & mode == mode && flags & operand as u8 == 0;
@@ -384,17 +478,8 @@ impl Program {
                                 _ => unreachable!("validated size mode"),
                             };
                         }
-                        CHILD | DESCEND => {
-                            let named = mode == NAMED;
-                            let choices = if opcode == CHILD {
-                                tape.transducer_children(path.node)
-                                    .filter(|&node| !named || tape.transducer_flags(node) & 1 != 0)
-                                    .collect::<Vec<_>>()
-                            } else {
-                                tape.transducer_descendants(path.node)
-                                    .filter(|&node| !named || tape.transducer_flags(node) & 1 != 0)
-                                    .collect::<Vec<_>>()
-                            };
+                        CHILD | DESCEND | ANCESTOR => {
+                            let choices = Self::navigate(tape, path.node, opcode, mode);
                             if let Some((&first, rest)) = choices.split_first() {
                                 for &node in rest.iter().rev() {
                                     let mut alternative = path.clone();
@@ -433,6 +518,17 @@ impl Program {
                             let mut alternative = path.clone();
                             alternative.pc = operand;
                             pending.push(alternative);
+                        }
+                        TEST => {
+                            retain = self.emits_at(tape, path.node, operand)? != (mode == NEGATE);
+                        }
+                        COUNT => {
+                            let count = self.count(operand);
+                            let mut found = 0u64;
+                            for node in Self::navigate(tape, path.node, count.nav, count.mode) {
+                                found += u64::from(self.emits_at(tape, node, count.target)?);
+                            }
+                            retain = found >= count.min && count.max.is_none_or(|max| found <= max);
                         }
                         GOTO => {
                             path.pc = operand;

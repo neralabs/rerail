@@ -217,6 +217,9 @@ pub(super) enum Op {
     Kinds(Vec<u16>),
     /// The `text_match` terminal.
     Regex(usize),
+    /// The `program_match` terminal: a capture-free sub-rule compiled to a transducer program
+    /// (`pushdown`), whose SQL lowering is its definition.
+    Program(usize),
     /// The `pattern` terminal. `env`: the env-input variant, given the frame's bindings of `reads`
     /// (the pattern's captures the frame may bind); otherwise fresh-env matches joined on the node.
     /// `vars` are the pattern's captures, in the terminal's column order.
@@ -379,7 +382,12 @@ impl Op {
     /// Whether the operator can bind a slot.
     pub(super) fn binds(&self) -> bool {
         match self {
-            Self::Kinds(_) | Self::Regex(_) | Self::Never | Self::Not(_) | Self::Stage(_) => false,
+            Self::Kinds(_)
+            | Self::Regex(_)
+            | Self::Program(_)
+            | Self::Never
+            | Self::Not(_)
+            | Self::Stage(_) => false,
             Self::Unknowable { op, .. } => op.binds(),
             Self::AllOpen(terms) => terms.iter().any(|term| term.op.binds()),
             Self::AnyOpen(branches) => branches.iter().any(|(branch, _)| branch.binds()),

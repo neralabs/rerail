@@ -11,6 +11,8 @@ mod lower;
 mod nodes;
 mod plan;
 mod recursion;
+pub(super) mod profile;
+mod pushdown;
 pub(super) mod select_when;
 mod terminals;
 #[cfg(test)]

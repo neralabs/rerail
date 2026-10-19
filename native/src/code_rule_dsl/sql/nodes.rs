@@ -279,6 +279,65 @@ impl NodeFacts {
     }
 }
 
+/// A file's nodes as a transducer program reads them (`Program::holds`, the `program_match`
+/// terminal): the `node` table's columns, and each node's text in the file's tape.
+pub(super) struct FileTree<'f> {
+    pub(super) facts: &'f NodeFacts,
+    pub(super) tape: &'f TapeDoc,
+}
+
+impl crate::code_rule_dsl::transducer::Tree for FileTree<'_> {
+    fn len(&self) -> u32 {
+        self.facts.len
+    }
+
+    fn kind(&self, node: u32) -> u16 {
+        self.facts.kind[node as usize]
+    }
+
+    fn field(&self, node: u32) -> u16 {
+        self.facts.field[node as usize]
+    }
+
+    fn field_first(&self, node: u32) -> bool {
+        self.facts.flags[node as usize] & FIELD_FIRST != 0
+    }
+
+    fn flags(&self, node: u32) -> u8 {
+        let flags = self.facts.flags[node as usize];
+        u8::from(flags & NAMED != 0)
+            | (u8::from(flags & EXTRA != 0) << 1)
+            | (u8::from(flags & MISSING != 0) << 2)
+            | (u8::from(flags & ERROR != 0) << 3)
+    }
+
+    fn parent(&self, node: u32) -> Option<u32> {
+        let parent = self.facts.parent[node as usize];
+        (parent != NONE).then_some(parent)
+    }
+
+    fn last(&self, node: u32) -> u32 {
+        self.facts.last[node as usize]
+    }
+
+    fn first_child(&self, node: u32) -> Option<u32> {
+        let first = self.facts.first[node as usize];
+        (first != NONE).then_some(first)
+    }
+
+    fn next_sibling(&self, node: u32) -> Option<u32> {
+        self.facts.next_sibling(node)
+    }
+
+    fn text(&self, node: u32) -> &str {
+        self.tape.transducer_text_str(node)
+    }
+
+    fn span_len(&self, node: u32) -> u64 {
+        u64::from(self.facts.end[node as usize] - self.facts.start[node as usize])
+    }
+}
+
 const COL_FILE: c_int = 0;
 const COL_ID: c_int = 1;
 const COL_LAST: c_int = 2;

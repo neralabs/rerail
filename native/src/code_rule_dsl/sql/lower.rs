@@ -67,6 +67,8 @@ pub(super) struct ProgramBuilder {
     /// When set, an operator the engine does not lower is recorded here and lowered as `Never`,
     /// so a census reads every refusal of a clause, not only its first.
     pub(super) census: Option<Vec<Unsupported>>,
+    /// The stages and programs pushdown compiled (`pushdown`).
+    pub(super) pushdown: super::pushdown::Pushdown,
 }
 
 impl ProgramBuilder {
@@ -237,6 +239,7 @@ fn referred(op: &Op, out: &mut Vec<usize>) {
         }
         Op::Kinds(_)
         | Op::Regex(_)
+        | Op::Program(_)
         | Op::Pattern { .. }
         | Op::Never
         | Op::NthChild { .. }
@@ -343,9 +346,16 @@ impl<'p> Lowerer<'p> {
         }
     }
 
-    /// The statement of what was lowered: its root kinds, its operator and its units.
+    /// The statement of what was lowered: its root kinds, its operator and its units, their
+    /// capture-free node-local sub-rules pushed down (`pushdown`).
     fn finish(self, kinds: Option<Vec<u16>>, op: Op) -> Statement {
+        let dialect = self.dialect.to_string();
+        let op = super::pushdown::push(op, &dialect, self.program);
         let mut units = self.units;
+        for unit in &mut units {
+            let body = std::mem::replace(&mut unit.body, Op::Never);
+            unit.body = super::pushdown::push(body, &dialect, self.program);
+        }
         assign_sccs(&mut units);
         Statement {
             slots: self.slots,
@@ -790,14 +800,20 @@ impl<'p> Lowerer<'p> {
 
     fn stage_of(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
         let kinds = root_kinds(rule, 0).map(|kinds| kinds.into_iter().collect());
-        let statement = {
+        let dialect = self.dialect.to_string();
+        let (statements, whole) = {
             let mut lowerer = Lowerer::new(self.program, self.dialect);
             lowerer.three = self.three;
             let (op, _) = lowerer.lower(rule, 0, &BTreeSet::new())?;
-            let op = lowerer.unknowable(op);
-            lowerer.finish(kinds, op)
+            // A stage that compiles whole is one program over its files.
+            match super::pushdown::stage(&op, self.three, &dialect, lowerer.program) {
+                Some((rule, statements)) => (statements, Some(rule)),
+                None => {
+                    let op = lowerer.unknowable(op);
+                    (emit::stage(&lowerer.finish(kinds, op)), None)
+                }
+            }
         };
-        let statements = emit::stage(&statement);
         let digest = format!("{}:{}", self.dialect, statements.join(";\n"));
         if let Some(&existing) = self.program.stage_index.get(&digest) {
             return Ok(existing);
@@ -809,6 +825,9 @@ impl<'p> Lowerer<'p> {
             statements,
             three: self.three,
         });
+        if let Some(rule) = whole {
+            self.program.pushdown.stages.insert(id, rule);
+        }
         Ok(id)
     }
 

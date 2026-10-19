@@ -469,10 +469,12 @@ impl<'s> Emitter<'s> {
     /// `op` on `input`: per distinct key where it walks over a frame that may repeat a key
     /// (`keyed`), else directly.
     fn op(&mut self, op: &Op, input: &str) -> String {
+        let start = self.statements.len();
         let out = match self.keyed(op, input) {
             Some(out) => out,
             None => self.apply(op, input),
         };
+        super::profile::tag(&mut self.statements, start, op);
         let changed = self.touched(op);
         self.inherit(input, &out, &changed);
         out
@@ -503,6 +505,14 @@ impl<'s> Emitter<'s> {
                 &format!(
                     "SELECT {} FROM {input} f WHERE (f.file * 4294967296 + f.node) IN \
                      (SELECT ek FROM text_match WHERE term = {term} AND ek IN (SELECT file * 4294967296 + node FROM {input}))",
+                    self.cols("f")
+                ),
+            ),
+            Op::Program(term) => self.frame(
+                "x",
+                &format!(
+                    "SELECT {} FROM {input} f WHERE (f.file * 4294967296 + f.node) IN \
+                     (SELECT ek FROM program_match WHERE term = {term} AND ek IN (SELECT file * 4294967296 + node FROM {input}))",
                     self.cols("f")
                 ),
             ),

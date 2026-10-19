@@ -7,6 +7,7 @@ mod keyed;
 mod leaves;
 mod nodes;
 mod probe;
+mod pushdown;
 mod recursion;
 mod setops;
 mod three_valued;
@@ -110,8 +111,10 @@ fn a_sample_clause_set_runs_a_bounded_number_of_statements_per_batch() {
     let (stages, clauses) = program.statement_count();
     eprintln!("sample clause set: {stages} stage statements, {clauses} clause statements");
     // `count` groups into a table keyed by row (`Emitter::grouped`). No rule walks over a frame
-    // that repeats a key (the nested `has` walks children, one row each): nothing is keyed.
-    assert_eq!((stages, clauses), (6, 66));
+    // that repeats a key (the nested `has` walks children, one row each): nothing is keyed. The
+    // `functions` stop rule's stage is one program (`pushdown`), and the third rule's capture-free
+    // `not has` and kind test are one program term.
+    assert_eq!((stages, clauses), (2, 58));
 }
 
 /// Terminals run once per statement over their whole input set, never once per row: a fresh

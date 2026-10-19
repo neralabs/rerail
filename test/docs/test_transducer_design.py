@@ -18,9 +18,12 @@ OPCODES = {
     0x11,
     0x12,
     0x13,
+    0x14,
     0x20,
     0x30,
     0x31,
+    0x32,
+    0x33,
     0x40,
 }
 
@@ -45,9 +48,12 @@ def decode(word):
     elif opcode == 0x05:
         if mode not in (0, 1, 2, 0x80, 0x81, 0x82):
             raise ValueError("invalid size mode")
-    elif opcode in (0x10, 0x11, 0x13):
+    elif opcode in (0x10, 0x11, 0x13, 0x14):
         if mode not in (0, 1) or operand:
             raise ValueError("invalid navigation mode")
+    elif opcode in (0x02, 0x32):
+        if mode not in (0, 1):
+            raise ValueError("invalid mode")
     elif mode or (opcode in (0x00, 0x12) and operand):
         raise ValueError("nonzero unused field")
     return opcode, mode, operand

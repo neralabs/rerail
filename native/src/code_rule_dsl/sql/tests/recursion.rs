@@ -680,7 +680,8 @@ fn a_recursion_level_runs_a_bounded_number_of_statements_per_batch() {
         passes.extend(program.loop_statements());
     }
     eprintln!("statements per recursion level: {passes:?}");
-    assert_eq!(passes, [61, 43]);
+    // The capture-free recursion's `kind` and `regex` terms are one program each (`pushdown`).
+    assert_eq!(passes, [58, 43]);
 }
 
 /// Every table a statement creates has one column list: a three-valued `all`'s frames are not
