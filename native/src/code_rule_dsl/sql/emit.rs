@@ -38,8 +38,8 @@ pub(super) const NAMESPACE: &str = "/*NS*/";
 /// ranges reported per root `(file, root, start, end)`; `a`, the roots still enumerated; `r`, the
 /// round.
 pub(super) const EACH: &str = "/*EACH*/";
-/// A statement that opens a loop: the statements up to the matching `UNTIL` run again while its
-/// query (the rest of the `UNTIL` statement) counts a change (`exec`).
+/// A statement that opens a loop: the statements up to the matching `UNTIL` run while its query
+/// (the rest of the `UNTIL` statement) counts a dirty key, checked before every pass (`exec`).
 pub(super) const LOOP: &str = "/*LOOP*/";
 pub(super) const UNTIL: &str = "/*UNTIL*/";
 /// A query after a loop: the recursive reads of its last pass, `(unit, key, unit, key)`, which
@@ -725,6 +725,10 @@ impl<'s> Emitter<'s> {
         self.statements.push(format!(
             "CREATE INDEX IF NOT EXISTS {demand}_at ON {demand}(file, node{columns})"
         ));
+        // The dirty keys, which every pass reads and the loop's guard counts before it runs.
+        self.statements.push(format!(
+            "CREATE INDEX IF NOT EXISTS {demand}_dirty ON {demand}(id) WHERE dirty = 1"
+        ));
         self.statements.push(format!(
             "CREATE TEMP TABLE IF NOT EXISTS {answer}(id INTEGER PRIMARY KEY{columns}{unk})"
         ));
@@ -1134,12 +1138,18 @@ impl<'s> Emitter<'s> {
                 )
             }
             Some(OfRule::Stage(stage)) => {
+                // Ranks among the named children `ofRule` holds at, of the input's parents alone:
+                // a node's rank reads its parent's children, never the rest of the stage, which
+                // can hold most nodes of the batch.
                 let table = stage_table(*stage);
                 let with = format!(
-                    "WITH r AS (SELECT n.file AS file, n.id AS node, \
-                     ROW_NUMBER() OVER (PARTITION BY n.file, n.parent ORDER BY n.id) AS r, \
-                     COUNT(*) OVER (PARTITION BY n.file, n.parent) AS cnt FROM {table} st \
-                     JOIN node n ON n.file = st.file AND n.id = st.node WHERE n.named = 1 AND n.parent IS NOT NULL) "
+                    "WITH p AS (SELECT DISTINCT n.file AS file, n.parent AS parent FROM {input} f \
+                     JOIN node n ON n.file = f.file AND n.id = f.node WHERE n.parent IS NOT NULL), \
+                     r AS (SELECT c.file AS file, c.id AS node, \
+                     ROW_NUMBER() OVER (PARTITION BY c.file, c.parent ORDER BY c.id) AS r, \
+                     COUNT(*) OVER (PARTITION BY c.file, c.parent) AS cnt FROM p \
+                     JOIN node c ON c.file = p.file AND c.parent = p.parent \
+                     JOIN {table} st ON st.file = c.file AND st.node = c.id WHERE c.named = 1) "
                 );
                 let index = if reverse { "(r.cnt - r.r + 1)" } else { "r.r" };
                 let select = format!(

@@ -918,8 +918,8 @@ impl Session {
         Ok(())
     }
 
-    /// Executes a stage's or clause's statements, each loop (`emit::LOOP` … `emit::UNTIL`) again
-    /// while its last query counts a change, and accepting a loop's last pass by its reads
+    /// Executes a stage's or clause's statements, each loop (`emit::LOOP` … `emit::UNTIL`) while
+    /// its last query counts a dirty key (none: not at all), and accepting a loop's last pass by its reads
     /// (`emit::ACYCLIC`). A loop that still changes after `MAX_LEVELS` passes refuses the batch: a
     /// recursion that deep is not evaluated. `emit::RUN<index>` runs the statements of
     /// `blocks[index]` there, over the tables as they stand.
@@ -965,14 +965,24 @@ impl Session {
                 })
                 .expect("a loop's end");
             let until = &steps[end][emit::UNTIL.len()..];
+            // A loop's pass evaluates the dirty keys of its units: with none (the site demanded
+            // no new key), it would change nothing, and the units it reaches would be run for
+            // nothing again, at every site of every pass above them.
+            let dirty = |connection: &Connection| -> Result<bool, SqlError> {
+                let changed: i64 = connection
+                    .prepare_cached(until)?
+                    .query_row([], |row| row.get(0))?;
+                Ok(changed != 0)
+            };
+            if !dirty(connection)? {
+                at = end + 1;
+                continue;
+            }
             let mut passes = 0;
             loop {
                 Self::run_steps(connection, frames, stats, &steps[at + 1..end], blocks)?;
                 passes += 1;
-                let changed: i64 = connection
-                    .prepare_cached(until)?
-                    .query_row([], |row| row.get(0))?;
-                if changed == 0 {
+                if !dirty(connection)? {
                     break;
                 }
                 if passes > MAX_LEVELS {
