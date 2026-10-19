@@ -863,7 +863,7 @@ describe("Claude Code commands", () => {
     }
   });
 
-  it("rewrites a stale command that names another node, backing the old one up", async () => {
+  it("rewrites a stale command that names another node without backing up the one it generated", async () => {
     const { home, root, nodePath } = await fixture();
     const path = join(home, ".claude", "commands", "rerail.md");
     await registerHarnesses({ root, home, nodePath, harnesses: options });
@@ -871,7 +871,19 @@ describe("Claude Code commands", () => {
     const report = await registerHarnesses({ root, home, nodePath: newNode, harnesses: options });
     expect(change(report.changes, "claude-code", "rerail.md").action).toBe("updated");
     expect(await readFile(path, "utf8")).toContain(`${newNode} ${join(root, "dist", "cli", "cli.js")} session claude-code`);
-    expect(await backups(path)).toHaveLength(1);
+    expect(await backups(path)).toEqual([]);
+  });
+
+  it("backs up a user's own command file before registration replaces it", async () => {
+    const { home, root, nodePath } = await fixture();
+    const path = join(home, ".claude", "commands", "rerail.md");
+    const own = "---\ndescription: my own rerail command\n---\n\nDo something else.\n";
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, own);
+    await registerHarnesses({ root, home, nodePath, harnesses: options });
+    const saved = await backups(path);
+    expect(saved).toHaveLength(1);
+    expect(await readFile(join(dirname(path), saved[0]!), "utf8")).toBe(own);
   });
 
   it("leaves a user's own rerail.md alone on unregister", async () => {
@@ -922,6 +934,16 @@ describe("Codex hooks.json", () => {
     expect(await backups(path)).toHaveLength(2);
     const snapshots = await Promise.all((await backups(path)).map((name) => readJson(join(dirname(path), name))));
     expect(snapshots).toEqual(expect.arrayContaining([foreign, installed]));
+  });
+
+  it("asks to trust the hook only when registration changes Codex's hooks", async () => {
+    const { home, root, nodePath } = await fixture();
+    const trust = expect.stringContaining("run /hooks to trust the rerail hook");
+    expect((await registerHarnesses({ root, home, nodePath, harnesses: ["codex"] })).notes).toContainEqual(trust);
+    await rm(join(home, ".codex", "skills", "rerail-show-me"), { recursive: true });
+    const again = await registerHarnesses({ root, home, nodePath, harnesses: ["codex"] });
+    expect(change(again.changes, "codex", join("rerail-show-me", "SKILL.md")).action).toBe("created");
+    expect(again.notes).not.toContainEqual(trust);
   });
 });
 
@@ -1075,6 +1097,7 @@ describe("Codex Rerail skills", () => {
     const replacement = await fixture();
     await registerHarnesses({ ...options, root: replacement.root, harnesses: ["codex"] });
     expect(await readFile(path, "utf8")).toContain(`${options.nodePath} ${join(replacement.root, "dist", "cli", "cli.js")} session`);
+    expect(await backups(path)).toEqual([]);
     await unregisterHarnesses({ ...options, harnesses: ["codex"] });
     expect(await readFile(path, "utf8")).toContain(replacement.root);
     await unregisterHarnesses({ ...options, root: replacement.root, harnesses: ["codex"] });
@@ -1201,6 +1224,14 @@ describe("Cursor hooks.json", () => {
     expect(Object.keys(config)).toEqual(["version", "hooks"]);
     expect(Object.keys(config.hooks as object)).toEqual([...CURSOR_HOOK_EVENTS]);
   });
+
+  it("leaves hooks.json absent when removing Rerail from a Cursor it never registered with", async () => {
+    const { home, root, nodePath } = await fixture();
+    await mkdir(join(home, ".cursor"));
+    const report = await unregisterHarnesses({ root, home, nodePath, harnesses: ["cursor"] });
+    expect(change(report.changes, "cursor", "hooks.json").action).toBe("unchanged");
+    expect(await readdir(join(home, ".cursor"))).toEqual([]);
+  });
 });
 
 describe("Pi settings.json", () => {
@@ -1316,6 +1347,15 @@ describe("OMP extensions symlink", () => {
 
     const again = await unregisterHarnesses({ root, home, nodePath, harnesses: ["omp"] });
     expect(change(again.changes, "omp", "mcp.json").action).toBe("unchanged");
+  });
+
+  it("keeps a rerail bridge that names another install when removing this one", async () => {
+    const { home, root, nodePath } = await fixture();
+    const path = join(home, ".omp", "agent", "mcp.json");
+    const original = await seed(path, { mcpServers: { rerail: { command: nodePath, args: [join(dirname(home), "checkout", "dist", "cli", "cli.js"), "mcp-bridge"] } } });
+    const removed = await unregisterHarnesses({ root, home, nodePath, harnesses: ["omp"] });
+    expect(change(removed.changes, "omp", "mcp.json").action).toBe("unchanged");
+    expect(await readFile(path, "utf8")).toBe(original);
   });
 
   it("replaces another install's bridge and extension link under any name, and leaves foreign ones", async () => {
