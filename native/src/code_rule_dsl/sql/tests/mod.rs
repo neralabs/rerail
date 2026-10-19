@@ -3,8 +3,8 @@
 mod census;
 mod differential;
 mod hard_cases;
-mod leaves;
 mod keyed;
+mod leaves;
 mod nodes;
 mod probe;
 mod recursion;
