@@ -167,14 +167,29 @@ The engine is selected at runtime (`engine: native|sql` in the evaluation option
 
 Correct SQL composition comes first; levers are applied only after G2 parity. Levers 3–5 are Jeremy's execution levers, which G1/G2 don't use yet. Levers 2 and 3 both attack the measured hotspot: in the G2 probe, frame row writes into SQLite B-trees plus index lookups were about 48% of the time.
 
-1. **Measure.** Profile the whole tree on SQL. Attribute the time to statements, frames, terminals and sub-rules.
-2. **Frames and nodes in Rust memory.** Frames live in Rust-owned columnar buffers exposed to SQL as virtual tables, instead of TEMP tables. The `node` table is served from the tape and anchor indexes (kind postings, parent links, subtree ranges) instead of being queried row by row. Each statement still reads and writes whole frames; only the storage changes, so semantics are unchanged and the differential tests keep checking it.
-3. **Transducer pushdown.** Compile the dominant capture-free sub-rules into transducer `Program`s over tapes, run once per batch across many tapes. Jeremy's list of what transducers may take is same-file joins, conjunctions, disjunctions and simple counting. The `Program` interpreter becomes a production terminal behind a virtual table. A pushed-down sub-rule keeps its SQL lowering as its definition and as the differential oracle for the program.
-4. **Storage inside the virtual tables.** The `node` table and terminals read tapes from the content store and its arena caches directly: decompression, caching and pinning happen inside the tables, not in a restore step in the batch driver.
-5. **Selector-driven loads.** Clause selectors (root kinds, required text, anchor facts) decide which files and tapes a batch loads, through batched reads instead of given file lists.
-6. **Physical tuning.** Batch size, statement caching, `xBestIndex` costs.
+1. **Measure.** Profile the whole tree on SQL. Attribute the time to statements, frames, terminals and sub-rules, with an operator ledger: rows written per statement against a per-query work bound, so excess relation construction shows up directly.
+2. **Frames and nodes in Rust memory.** Frames live in Rust-owned columnar buffers exposed to SQL as virtual tables, instead of TEMP tables. The `node` table reads kind, field, parent and size straight from the tape records and derives the other columns lazily; there is no wide per-node copy. `thash`/`shash` are computed only for the kinds unification can read. Each statement still reads and writes whole frames; only the storage changes, so semantics are unchanged and the differential tests keep checking it.
+3. **Transducer pushdown.** Compile the dominant capture-free sub-rules into transducer `Program`s over tapes, run once per batch across many tapes. Jeremy's list of what transducers may take is same-file joins, conjunctions, disjunctions and simple counting. The `Program` interpreter becomes a production terminal behind a virtual table and runs natively, never as recursive SQL. A pushed-down sub-rule keeps its SQL lowering as its definition and as the differential oracle for the program.
+4. **Storage inside the virtual tables.** The `node` table and terminals read decompressed in-memory tape images from the content store and its arena caches: decompression, caching and pinning happen inside the tables, not in a restore step in the batch driver.
+5. **Selector-driven loads.** Clause selectors decide which files and tapes a batch loads, through batched reads instead of given file lists. The kind prefilter tests that every required kind is present, with a per-file kind bitmap.
+6. **Physical tuning.** Batch size and statement caching, plus the emission rules below. `xBestIndex` cost hints are not relied on.
 
 Native shortcuts (moving a combinator into a native terminal) are not a lever: they would create a second way to add an operator. Parallel or GPU transducers across tapes stay deferred; workers keep native's 4 threads. Recursion over stored facts for multi-file analysis (coloring, call graphs) is out of scope for this experiment; `calls` stays a terminal.
+
+### Decisions from the ast-index-spike review
+
+Source: `neralabs/ast-index-spike` (DESIGN.md S070/S071/S089/S287/S306; branch `jeremybarnes/seadragon` S289–S309).
+
+- **One language per tape.** An embedded region (Blade's compiled PHP, Vue scripts, HTML test scripts) is its own document with its own tape and per-grammar kind codes, linked to its host by a source map. The SQL engine runs on `Moti-Velz/embedded-documents`: a batch's documents are its files' documents, and kind postings are keyed by dialect. Walks never cross a language boundary, so the Blade overlap scan is no longer a hard case. `parse` sub-documents are a separate numbering scheme (built lazily per batch from string literals and comments) and stay as they are.
+- **No wide node table.** The spike rejected a wide node table at about 69 B/node (S089). The `node` vtab reads the tape records; structural primitives (`nearest_in` and the like) read the tape, not a derived per-node struct.
+- **No recursive CTEs.** Recursive CTEs run a row at a time. Replacing descent with a native child-enumerator table took 10 hot queries from 21.8 s to 55 ms; an exact transducer written as a recursive CTE saved only 5.7% (S289) and was rejected. Every walk, stop rule and chain is a native structural primitive or a transducer behind a virtual table.
+- **Emission rules.**
+  - Single-use CTEs are not `MATERIALIZED` (11 ms inlined vs 5,924 ms materialized); a CTE read inside a correlated `EXISTS` stays materialized (64 ms vs 728 ms demoted).
+  - Semi-joins are `EXISTS`, not `JOIN` (0.46 s vs 24.3 s).
+  - Ordinals come from the virtual-table cursor, not `ROW_NUMBER()` (58 ms vs 226 ms on wide parents).
+  - A per-batch shared stage is materialized only with its exact closure and only when it has at least 2 consumers (S287 regressed 50× without exact closure; S306 gained 7.5× at 8 consumers).
+- **Not adopted.** Lowering `pattern` to SQL with a sibling NFA (set-semantic, no first-match, 1.22× native with a 14.5 s worst rule): the native pattern terminal stays. Blob handles: tapes are zstd-compressed, so lever 4 uses decompressed in-memory images.
+- **Caveat.** The spike's latencies come from anchored queries over a stored index; this engine runs every rule over every file, so anchor gains will carry over less than the spike's numbers suggest.
 
 ## Known hard cases
 
@@ -183,7 +198,7 @@ Each gets a dedicated differential test:
 - `any` with a later branch that would satisfy a downstream term;
 - `not` over captures that are unbound at that point;
 - three-valued withholding;
-- zero-width siblings and Blade overlap scans;
+- zero-width siblings;
 - `has` neighbour including anonymous children;
 - the field `has` rule-mode one-level quirk;
 - the `each` stop condition;
