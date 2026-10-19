@@ -458,11 +458,58 @@ pub(super) enum RegexSource {
     Path,
 }
 
+/// Optional filters over matched text and independent source lines.
+#[derive(Clone, Default)]
+pub(super) struct RegexOptions {
+    pub(super) include: Vec<Regex>,
+    pub(super) exclude: Vec<Regex>,
+    pub(super) content_include: Vec<Regex>,
+    pub(super) content_exclude: Vec<Regex>,
+    pub(super) lines: Option<RegexLines>,
+    pub(super) paths: Option<CodeRuleScope>,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexLines {
+    pub(super) include: Vec<Regex>,
+    pub(super) exclude: Vec<Regex>,
+    pub(super) first: bool,
+    pub(super) lf_only: bool,
+    pub(super) state: Option<RegexLineState>,
+    pub(super) indentation: Option<RegexIndentation>,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexLineState {
+    pub(super) initial: usize,
+    pub(super) emit: Vec<bool>,
+    pub(super) transitions: Vec<RegexLineTransition>,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexLineTransition {
+    pub(super) from: usize,
+    pub(super) to: usize,
+    pub(super) pattern: Regex,
+    pub(super) min: u64,
+    pub(super) max: Option<u64>,
+    pub(super) odd: Option<bool>,
+    pub(super) skip: bool,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexIndentation {
+    pub(super) exclude_under: Regex,
+    pub(super) reset: Regex,
+    pub(super) ignore: Vec<Regex>,
+}
+
 #[derive(Clone)]
 pub(super) enum Query {
     Regex {
         regex: Regex,
         source: RegexSource,
+        options: Box<RegexOptions>,
     },
     Ast {
         /// One compiled matcher per grammar the rule language spans; a file uses the grammar its label selects.

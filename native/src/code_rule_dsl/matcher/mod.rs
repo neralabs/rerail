@@ -46,7 +46,7 @@ pub(super) use count::{Count, CountBinding};
 pub(crate) use each::binding_range;
 pub(crate) use exported::{WITNESS_NODE, export_text, exported_span, is_span_variable};
 pub(crate) use format_args::{FormatArgs, Style};
-pub(crate) use layout::{Gap, Layout, LineCount, Neighbour};
+pub(crate) use layout::{Gap, Layout, LineContext, LineCount, Neighbour};
 pub(super) use memo::with_file as with_file_memo;
 pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
 #[cfg(test)]
@@ -99,6 +99,8 @@ pub(super) struct GrammarMatcher {
     pub(super) text: Option<Arc<RequiredText>>,
     /// Whether witnesses outside syntax-error regions stay sound; see `sound_under_errors`.
     pub(super) sound_under_errors: bool,
+    /// Explicit whole-file syntax gate; true admits invalid files and their error regions.
+    pub(super) invalid_syntax: Option<bool>,
     /// Keeps the query's utility rules alive (`AstMatcher::Util` holds only a weak reference)
     /// and lets violation compilation walk them.
     pub(super) utils: Arc<UtilTable>,

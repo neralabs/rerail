@@ -106,14 +106,23 @@ pub(super) fn record_evidence(state: &mut WorkspaceState, path: &str, file: &Fil
     for id in ids {
         let witnesses = file.witnesses.get(&id).cloned().unwrap_or_default();
         let failure = file.failures.get(&id).map(|&(_, message)| message);
+        let syntax = match &state.code_rules[id.0].clauses[id.1].kind {
+            ClauseKind::Forbid(Query::Ast { matchers, .. })
+                if crate::code_rule_dsl::eval::grammar_matcher(matchers, &file.input)
+                    .is_some_and(|grammar| grammar.invalid_syntax.is_some()) =>
+            {
+                None
+            }
+            _ => file.syntax.clone(),
+        };
         let partitions = state.evidence.entry(id).or_default();
-        if failure.is_some() || file.syntax.is_some() || !witnesses.is_empty() {
+        if failure.is_some() || syntax.is_some() || !witnesses.is_empty() {
             partitions.insert(
                 path.to_owned(),
                 Partition {
                     witnesses,
                     failure,
-                    syntax: file.syntax.clone(),
+                    syntax,
                 },
             );
             state.dirty_globals.insert(id.0);

@@ -186,11 +186,31 @@ export interface CodeRuleDslRegexQuery {
     source: "file.content" | "file.path";
     /** Named groups (`(?<NAME>…)`) become the witness's captures. */
     pattern: string;
+    /** Filters over each match's text: all include patterns hold and no exclude pattern holds. */
+    include?: string[];
+    exclude?: string[];
+    /** Conditions over the complete current file, before line scanning or match filters. Content queries only. */
+    content?: { include?: string[]; exclude?: string[] };
+    /** Scan independent Unicode lines, optionally skipping lines or reporting only their first match. Content only. */
+    lines?: {
+      include?: string[]; exclude?: string[]; first?: boolean; terminators?: "python" | "lf";
+      /** Process transitions before line filters, emitting only from the listed starting states. */
+      state?: { initial: string; emit: string[]; transitions: Array<{
+        from: string; to: string; pattern: string; skip?: boolean;
+        count?: { min?: number; max?: number; parity?: "odd" | "even" };
+      }> };
+      /** Suppress deeper indentation after a marker, until reset; ignored lines do not update the marker. */
+      indentation?: { excludeUnder: string; reset: string; ignore: string[] };
+    };
+    /** Restrict this clause's files within the document scope. */
+    paths?: CodeRuleDslScope;
   };
 }
 
 export interface CodeRuleDslAstQuery {
   ast: {
+    /** Gate on whole-file syntax. Invalid permits matches inside error regions. */
+    syntax?: "valid" | "invalid";
     language: CodeRuleLanguageId;
     rule: CodeRuleDslAstRule;
     /**
@@ -636,6 +656,11 @@ export interface CodeRuleDslLayoutGap {
  * is not evaluated in a file with syntax errors. A parsed tree's rule (`parse`) refuses it.
  */
 export interface CodeRuleDslLayout {
+  /** Regex on the complete first line of the node, or the preceding line. */
+  line?: string;
+  previousLine?: string;
+  /** Regex over a bounded window around the first line, optionally ending at the first matching line, inclusive. */
+  context?: { before?: number; after?: number; through?: string; regex: string };
   span?: CodeRuleDslLineCount;
   start?: CodeRuleDslLineCount;
   before?: CodeRuleDslLayoutGap;

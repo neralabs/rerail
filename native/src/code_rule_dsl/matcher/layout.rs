@@ -57,6 +57,17 @@ pub(crate) struct Layout {
     pub(crate) start: Option<LineCount>,
     pub(crate) before: Option<Gap>,
     pub(crate) after: Option<Gap>,
+    pub(crate) line: Option<regex::Regex>,
+    pub(crate) previous_line: Option<regex::Regex>,
+    pub(crate) context: Option<LineContext>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LineContext {
+    pub(crate) before: usize,
+    pub(crate) after: usize,
+    pub(crate) through: Option<regex::Regex>,
+    pub(crate) regex: regex::Regex,
 }
 
 impl Layout {
@@ -73,7 +84,11 @@ impl Layout {
 
     /// Whether a gap reads outside the node: its neighbour, and the lines up to it.
     pub(crate) fn outward(&self) -> bool {
-        self.before.is_some() || self.after.is_some()
+        self.before.is_some()
+            || self.after.is_some()
+            || self.line.is_some()
+            || self.previous_line.is_some()
+            || self.context.is_some()
     }
 
     pub(super) fn match_node<'t, D: Doc>(
@@ -94,6 +109,41 @@ impl Layout {
         // A parsed tree's nodes have no lines of the file.
         let (source, language) = host(&node)?;
         let lines = file_lines(source, Terminators::of(language));
+        let at = lines.line(range.start);
+        if self
+            .line
+            .as_ref()
+            .is_some_and(|regex| !regex.is_match(&source[lines.start(at)..lines.end(at)]))
+        {
+            return None;
+        }
+        if let Some(regex) = &self.previous_line
+            && (at == 0 || !regex.is_match(&source[lines.start(at - 1)..lines.end(at - 1)]))
+        {
+            return None;
+        }
+        if let Some(context) = &self.context {
+            let first = at.saturating_sub(context.before);
+            let mut last = (at + context.after).min(lines.line(source.len()));
+            if let Some(through) = &context.through {
+                for line in first..=last {
+                    if !spend_util_step() {
+                        return None;
+                    }
+                    if through.is_match(&source[lines.start(line)..lines.end(line)]) {
+                        last = line;
+                        break;
+                    }
+                }
+            }
+            if !context
+                .regex
+                .is_match(&source[lines.start(first)..lines.end(last)])
+            {
+                return None;
+            }
+        }
+
         if let Some(span) = self.span {
             let breaks = lines.line(range.end) - lines.line(range.start);
             if !span.holds(breaks as u64) {

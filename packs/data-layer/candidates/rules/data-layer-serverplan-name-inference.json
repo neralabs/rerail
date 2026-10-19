@@ -1,0 +1,114 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-serverplan-name-inference",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer serverplan_name_inference at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l2060_query_builder/**/*.py",
+      "l2070_batching/**/*.py",
+      "impl/common/l2070_server_plan/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "column-shape",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?:column|\\.keys\\s*\\(|set\\s*\\(\\s*(?:row|rows|value)\\s*\\)).*(?:==|!=)|(?:==|!=).*?(?:column|\\.keys\\s*\\(|set\\s*\\(\\s*(?:row|rows|value)\\s*\\))",
+          "lines": {
+            "exclude": [
+              "^\\s*#"
+            ],
+            "first": true,
+            "include": [
+              "['\\\"](?:count|deleted_count|ok|message|__exists|__result)['\\\"]"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPNI001",
+        "anchor": "witness.span",
+        "message": "column shape selects semantic behavior"
+      }
+    },
+    {
+      "id": "reference-parse",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "ref[^\\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\([^\\n]*?['\\\"](?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)['\\\"]",
+          "lines": {
+            "exclude": [
+              "^\\s*#"
+            ],
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "SPNI002",
+        "anchor": "witness.span",
+        "message": "reference text selects semantic behavior"
+      }
+    },
+    {
+      "id": "reference-synthesis",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?:ref|refs)[^\\n]*?\\.(?:get|pop|setdefault)\\s*\\(\\s*f['\\\"][^\\n]*?\\{[^}]*ref[^}]*\\}[^\\n]*?(?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)",
+          "lines": {
+            "exclude": [
+              "^\\s*#"
+            ],
+            "first": true
+          }
+        }
+      },
+      "violation": {
+        "code": "SPNI003",
+        "anchor": "witness.span",
+        "message": "semantic reference is synthesized from text"
+      }
+    },
+    {
+      "id": "column-type",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "column[^\\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\(",
+          "lines": {
+            "exclude": [
+              "^\\s*#"
+            ],
+            "first": true
+          },
+          "paths": {
+            "include": [
+              "**/sql_column_type_hints.py"
+            ],
+            "exclude": []
+          }
+        }
+      },
+      "violation": {
+        "code": "SPNI004",
+        "anchor": "witness.span",
+        "message": "SQL type is inferred from column spelling"
+      }
+    }
+  ]
+}

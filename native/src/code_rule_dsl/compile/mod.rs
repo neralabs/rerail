@@ -12,6 +12,7 @@ mod evidence;
 mod examples_tests;
 mod format_args;
 mod layout;
+mod line_state;
 mod nth_child;
 pub(crate) mod options;
 mod order;
@@ -33,8 +34,8 @@ use super::matcher::{
     UtilOrigin, UtilTable, collect_variables, reads_values,
 };
 use super::model::{
-    Anchor, Capabilities, ClauseKind, CodeRuleScope, CompiledClause, Limits, Query, RegexSource,
-    RuleMode, ViolationSpec,
+    Anchor, Capabilities, ClauseKind, CodeRuleScope, CompiledClause, Limits, Query, RegexLines,
+    RegexOptions, RegexSource, RuleMode, ViolationSpec,
 };
 use super::soundness::sound_under_errors;
 use super::violations;
@@ -530,6 +531,124 @@ fn compile_query(
     compile_query_as(value, path, capabilities, defines, required_ast, false)
 }
 
+fn compile_regex_options(
+    spec: &Map<String, Value>,
+    path: &str,
+    capabilities: &Capabilities,
+) -> Result<RegexOptions> {
+    let patterns = |value: Option<&Value>, at: &str| -> Result<Vec<Regex>> {
+        let Some(value) = value else {
+            return Ok(Vec::new());
+        };
+        let values = value
+            .as_array()
+            .ok_or_else(|| invalid(format!("{at} must be an array")))?;
+        if values.len() > 64 {
+            return Err(invalid(format!("{at} allows at most 64 patterns")));
+        }
+        values
+            .iter()
+            .enumerate()
+            .map(|(i, value)| {
+                let at = format!("{at}/{i}");
+                let text = bounded_text(
+                    Some(value),
+                    &at,
+                    "maxRegexPatternBytes",
+                    capabilities.limits.max_regex_pattern_bytes,
+                )?;
+                Regex::new(text).map_err(|error| invalid(format!("{at}: {error}")))
+            })
+            .collect()
+    };
+    let lines = spec
+        .get("lines")
+        .map(|value| -> Result<RegexLines> {
+            if spec.get("source").and_then(Value::as_str) != Some("file.content") {
+                return Err(invalid(format!("{path}/regex/lines requires file.content")));
+            }
+            let at = format!("{path}/regex/lines");
+            let value = object(value, &at)?;
+            reject_unknown(
+                value,
+                &[
+                    "include",
+                    "exclude",
+                    "first",
+                    "terminators",
+                    "state",
+                    "indentation",
+                ],
+                &at,
+            )?;
+            let first = match value.get("first") {
+                None => false,
+                Some(value) => value
+                    .as_bool()
+                    .ok_or_else(|| invalid(format!("{at}/first must be boolean")))?,
+            };
+            Ok(RegexLines {
+                include: patterns(value.get("include"), &format!("{at}/include"))?,
+                exclude: patterns(value.get("exclude"), &format!("{at}/exclude"))?,
+                first,
+                lf_only: match value.get("terminators").and_then(Value::as_str) {
+                    None if !value.contains_key("terminators") => false,
+                    Some("python") => false,
+                    Some("lf") => true,
+                    _ => return Err(invalid(format!("{at}/terminators must be python or lf"))),
+                },
+                state: value
+                    .get("state")
+                    .map(|v| {
+                        line_state::state(
+                            v,
+                            &format!("{at}/state"),
+                            capabilities.limits.max_regex_pattern_bytes,
+                        )
+                    })
+                    .transpose()?,
+                indentation: value
+                    .get("indentation")
+                    .map(|v| {
+                        line_state::indentation(
+                            v,
+                            &format!("{at}/indentation"),
+                            capabilities.limits.max_regex_pattern_bytes,
+                        )
+                    })
+                    .transpose()?,
+            })
+        })
+        .transpose()?;
+    let content = spec
+        .get("content")
+        .map(|v| -> Result<(Vec<Regex>, Vec<Regex>)> {
+            let at = format!("{path}/regex/content");
+            if spec.get("source").and_then(Value::as_str) != Some("file.content") {
+                return Err(invalid(format!("{at} requires file.content")));
+            }
+            let value = object(v, &at)?;
+            reject_unknown(value, &["include", "exclude"], &at)?;
+            Ok((
+                patterns(value.get("include"), &format!("{at}/include"))?,
+                patterns(value.get("exclude"), &format!("{at}/exclude"))?,
+            ))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(RegexOptions {
+        include: patterns(spec.get("include"), &format!("{path}/regex/include"))?,
+        exclude: patterns(spec.get("exclude"), &format!("{path}/regex/exclude"))?,
+        content_include: content.0,
+        content_exclude: content.1,
+        lines,
+        paths: spec
+            .get("paths")
+            .map(|value| compile_scope(Some(value)))
+            .transpose()?,
+    })
+}
+
 /// `compile_query`, for a `calls` term's seed query where `seed`: its rules cannot hold `calls`.
 fn compile_query_as(
     value: &Value,
@@ -556,7 +675,13 @@ fn compile_query_as(
                 query.get("regex").expect("form exists"),
                 &format!("{path}/regex"),
             )?;
-            reject_unknown(regex, &["source", "pattern"], &format!("{path}/regex"))?;
+            reject_unknown(
+                regex,
+                &[
+                    "source", "pattern", "include", "exclude", "lines", "paths", "content",
+                ],
+                &format!("{path}/regex"),
+            )?;
             let pattern = bounded_text(
                 regex.get("pattern"),
                 &format!("{path}/regex/pattern"),
@@ -580,6 +705,7 @@ fn compile_query_as(
                 regex: Regex::new(pattern)
                     .map_err(|error| invalid(format!("{path}/regex/pattern: {error}")))?,
                 source,
+                options: Box::new(compile_regex_options(regex, path, capabilities)?),
             })
         }
         "ast" => {
@@ -591,6 +717,7 @@ fn compile_query_as(
                 ast,
                 &[
                     "language",
+                    "syntax",
                     "rule",
                     "utils",
                     "constraints",
@@ -601,6 +728,16 @@ fn compile_query_as(
                 ],
                 &format!("{path}/ast"),
             )?;
+            let invalid_syntax = match ast.get("syntax") {
+                None => None,
+                Some(Value::String(value)) if value == "valid" => Some(false),
+                Some(Value::String(value)) if value == "invalid" => Some(true),
+                Some(_) => {
+                    return Err(invalid(format!(
+                        "{path}/ast/syntax must be valid or invalid"
+                    )));
+                }
+            };
             let language_name = ast
                 .get("language")
                 .and_then(Value::as_str)
@@ -859,6 +996,7 @@ fn compile_query_as(
                     matchers.push(GrammarMatcher {
                         language: *language,
                         sound_under_errors: sound_under_errors(&matcher),
+                        invalid_syntax,
                         three_valued,
                         matcher,
                         anchors,
