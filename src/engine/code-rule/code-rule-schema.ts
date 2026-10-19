@@ -148,8 +148,10 @@ export type CodeRuleAstRelation = CodeRuleDslAstRelation;
 
 const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "host", "calls"] as const;
 /** The grammars `parse` applies and their kinds (the engine's `literal::Grammar`). */
-export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat"] as const;
+export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat", "identifierWords", "pythonFString"] as const;
 export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[number], readonly string[]> = {
+  identifierWords: ["words", "word"],
+  pythonFString: ["template", "literal", "interpolation"],
   percentFormat: ["format", "literal", "placeholder", "mapping_key", "flags", "width", "precision", "star", "length", "conversion", "error"],
   braceFormat: [
     "format",
@@ -870,6 +872,7 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
   z
     .object({
       grammar: z.string(),
+      interpolation: z.string().refine(value => new TextEncoder().encode(value).length <= 1024, "interpolation exceeds 1024 bytes.").optional(),
       pattern: z.union([nonEmptyString, z.object({ context: nonEmptyString, selector: nonEmptyString }).strict()]).optional(),
       kind: nonEmptyString.optional(),
       regex: nonEmptyString.optional(),
@@ -902,6 +905,7 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
       message: `grammar must be one of ${CODE_RULE_PARSE_GRAMMARS.join(", ")}.`,
       path: ["grammar"],
     })
+    .refine(rule => rule.interpolation === undefined || rule.grammar === "pythonFString", "interpolation requires pythonFString.")
     .refine(rule => AST_RULE_KEYS.some(key => rule[key] !== undefined), "parse must hold a rule over the parsed tree.") as unknown as z.ZodType<CodeRuleDslParse>,
 );
 export const codeRuleAstCountSchema: z.ZodType<CodeRuleDslAstCount> = z.lazy(() =>
@@ -1219,7 +1223,7 @@ export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
     ) as unknown as z.ZodType<CodeRuleDslQuery>,
 );
 
-const PROJECTION_SOURCE = /^(capture\.[A-Z_][A-Z0-9_]*|file\.(path|directory|name|stem|module|package))$/;
+const PROJECTION_SOURCE = /^(capture\.[A-Z_][A-Z0-9_]*(?:\.(?:startByte|startLine|text))?|file\.(path|directory|name|stem|module|package))$/;
 
 export const codeRuleEvidenceQuerySchema = z
   .object({
@@ -1235,8 +1239,43 @@ export const codeRuleEvidenceQuerySchema = z
           .record(nonEmptyString, z.string().regex(PROJECTION_SOURCE, "expected capture.<NAME> or file.path|directory|name|stem|module|package"))
           .refine(project => Object.keys(project).length > 0, "project names at least one field."),
         where: codeRulePredicateSchema.optional(),
+        each: metavariableName.optional(),
+        anchor: nonEmptyString.optional(),
+        closure: z.array(z.object({
+          name: nonEmptyString, seeds: z.array(nonEmptyString).optional(), seed_field: nonEmptyString.optional(),
+          edges: z.object({ from: nonEmptyString, to: nonEmptyString }).strict().optional(),
+          extends: z.array(nonEmptyString).optional(), partition_by: z.array(nonEmptyString).optional(),
+          contains: z.record(nonEmptyString, nonEmptyString),
+        }).strict()).min(1).max(32).optional(),
       })
-      .strict(),
+      .strict()
+      .superRefine((evidence, context) => {
+        const fields = new Set(Object.keys(evidence.project));
+        const outputs = new Set<string>();
+        const stages = new Map<string, string[]>();
+        for (const [index, stage] of (evidence.closure ?? []).entries()) {
+          const issue = (key: string, message: string) => context.addIssue({ code: "custom", path: ["closure", index, key], message });
+          if (stages.has(stage.name)) issue("name", `Duplicate closure set ${stage.name}.`);
+          const partition = stage.partition_by ?? [];
+          for (const dependency of stage.extends ?? []) {
+            const earlier = stages.get(dependency);
+            if (earlier === undefined || JSON.stringify(earlier) !== JSON.stringify(partition)) {
+              issue("extends", `${dependency} must be an earlier set with the same partition_by.`);
+            }
+          }
+          const inputs = [...partition, ...Object.values(stage.contains),
+            ...(stage.seed_field === undefined ? [] : [stage.seed_field]),
+            ...(stage.edges === undefined ? [] : [stage.edges.from, stage.edges.to])];
+          for (const field of inputs) {
+            if (!fields.has(field)) issue("contains", `${field} names no projected field.`);
+          }
+          for (const output of Object.keys(stage.contains)) {
+            if (fields.has(output) || outputs.has(output)) issue("contains", `Output ${output} must be new.`);
+            outputs.add(output);
+          }
+          stages.set(stage.name, partition);
+        }
+      }),
   })
   .strict() as unknown as z.ZodType<CodeRuleDslEvidenceQuery>;
 

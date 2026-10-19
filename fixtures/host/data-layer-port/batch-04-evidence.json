@@ -2,9 +2,9 @@
   "format": "rerail.data-layer-batch-evidence/v1",
   "source_commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "batch": 4,
-  "base_commit": "905212f6",
-  "state": "Ten authored candidates; original detections and pinned repository match; supplemental positive gaps remain; migration not certified",
-  "engine_changes": false,
+  "base_commit": "c53831ae",
+  "state": "Fourth candidate batch complete for recorded source detections; all combined parity checks pass; integration contracts remain retained",
+  "engine_changes": true,
   "linear_issues_created": [],
   "oracle": {
     "python": "3.13.12 (main, Mar 10 2026, 18:26:32) [Clang 21.1.4 ]",
@@ -38,21 +38,23 @@
         "positive": 0,
         "clean": 0
       }
-    ]
+    ],
+    "expected_findings": 146
   },
   "probes": {
-    "cases": 118,
-    "observations": 243,
-    "retained_observations": 19,
+    "cases": 160,
+    "observations": 336,
+    "retained_observations": 28,
     "loaded_sources_verified": 127,
-    "replayedCalls": 224,
-    "positiveCalls": 133,
-    "cleanCalls": 91,
+    "replayedCalls": 308,
+    "positiveCalls": 191,
+    "cleanCalls": 117,
     "falsePositives": 0,
-    "falseNegatives": 14,
-    "engineFailures": 8,
+    "falseNegatives": 0,
+    "engineFailures": 0,
     "executionPathDifferences": 0,
-    "missingCoverage": []
+    "missingCoverage": [],
+    "expected_findings": 325
   },
   "checks": [
     {
@@ -80,8 +82,8 @@
     },
     {
       "check": "render_raw_strings",
-      "reporting_clauses": 3,
-      "policy_sha256": "bd359204f0932c452a264fbe9df477884db6c15c34020c8b35b881695404145a",
+      "reporting_clauses": 4,
+      "policy_sha256": "bf6911d01528b8e06342a6a0094ade70ff3d6cd94bacba7d3958bb2d4a3c883b",
       "original": {
         "calls": 5,
         "positive": 2,
@@ -92,19 +94,19 @@
         "engine_failures_both_paths": 0
       },
       "probes": {
-        "calls": 30,
-        "positive": 14,
-        "clean": 16,
-        "expected": 14,
+        "calls": 48,
+        "positive": 30,
+        "clean": 18,
+        "expected": 48,
         "false_positives": 0,
-        "false_negatives": 4,
+        "false_negatives": 0,
         "engine_failures_both_paths": 0
       }
     },
     {
       "check": "regex_sql_parsing",
       "reporting_clauses": 9,
-      "policy_sha256": "15a7fe91181a5dcccf5e63b1141627259d57eb3b1af7f3413c0432ad485a426b",
+      "policy_sha256": "4f1d38624a792094896568b970af80d55fab32eb5ef431dec84b9ce1f84067c9",
       "original": {
         "calls": 55,
         "positive": 34,
@@ -115,19 +117,19 @@
         "engine_failures_both_paths": 0
       },
       "probes": {
-        "calls": 24,
-        "positive": 16,
-        "clean": 8,
-        "expected": 16,
+        "calls": 42,
+        "positive": 28,
+        "clean": 14,
+        "expected": 28,
         "false_positives": 0,
-        "false_negatives": 2,
+        "false_negatives": 0,
         "engine_failures_both_paths": 0
       }
     },
     {
       "check": "sql_grammar_escape_hatches",
       "reporting_clauses": 11,
-      "policy_sha256": "d324a11decb3dc4a156878f2b2bd1e1e67b3295a9f8d8d57bad0b15e7a19e794",
+      "policy_sha256": "fb8cc4b04e22a3a825792f1755361775feb7a0ef20e61761f91b5154e971cc01",
       "original": {
         "calls": 52,
         "positive": 30,
@@ -138,12 +140,12 @@
         "engine_failures_both_paths": 0
       },
       "probes": {
-        "calls": 34,
-        "positive": 20,
-        "clean": 14,
-        "expected": 84,
+        "calls": 52,
+        "positive": 32,
+        "clean": 20,
+        "expected": 96,
         "false_positives": 0,
-        "false_negatives": 2,
+        "false_negatives": 0,
         "engine_failures_both_paths": 0
       }
     },
@@ -196,7 +198,7 @@
     {
       "check": "grammar_callable_constructors",
       "reporting_clauses": 8,
-      "policy_sha256": "f09abdc5bc5855f1d48dbee804ab3e061da4d3d715b9d7709f7809c7ecd32fad",
+      "policy_sha256": "a0b5a1ad409632caf581b11c809622946119b351460482fa689aa5027a06569a",
       "original": {
         "calls": 3,
         "positive": 2,
@@ -207,19 +209,19 @@
         "engine_failures_both_paths": 0
       },
       "probes": {
-        "calls": 20,
-        "positive": 16,
-        "clean": 4,
-        "expected": 24,
+        "calls": 24,
+        "positive": 18,
+        "clean": 6,
+        "expected": 28,
         "false_positives": 0,
-        "false_negatives": 2,
+        "false_negatives": 0,
         "engine_failures_both_paths": 0
       }
     },
     {
       "check": "grammar_fragment_usage",
       "reporting_clauses": 5,
-      "policy_sha256": "2870f2b9faa4fdeb5405d118114aa96b114212fd68bf9cf1a6861c2dc8ced9d3",
+      "policy_sha256": "6072ae2c92cde1d7b570ede8a0f48b8e24c771b399c6bfb40b66db63be4a28e3",
       "original": {
         "calls": 36,
         "positive": 31,
@@ -230,13 +232,13 @@
         "engine_failures_both_paths": 0
       },
       "probes": {
-        "calls": 18,
-        "positive": 14,
-        "clean": 4,
-        "expected": 14,
+        "calls": 44,
+        "positive": 30,
+        "clean": 14,
+        "expected": 30,
         "false_positives": 0,
-        "false_negatives": 4,
-        "engine_failures_both_paths": 8
+        "false_negatives": 0,
+        "engine_failures_both_paths": 0
       }
     },
     {
@@ -286,276 +288,7 @@
       }
     }
   ],
-  "gaps": [
-    {
-      "test": "probe:render_raw_strings:fstring:analyzer",
-      "call": 1,
-      "check": "render_raw_strings",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"string_literal\"]"
-      ],
-      "engineFailures": [],
-      "statelessFailures": [],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:render_raw_strings:fstring:plugin",
-      "call": 1,
-      "check": "render_raw_strings",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"string_literal\"]"
-      ],
-      "engineFailures": [],
-      "statelessFailures": [],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:render_raw_strings:nested:analyzer",
-      "call": 1,
-      "check": "render_raw_strings",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"string_literal\"]"
-      ],
-      "engineFailures": [],
-      "statelessFailures": [],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:render_raw_strings:nested:plugin",
-      "call": 1,
-      "check": "render_raw_strings",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"string_literal\"]"
-      ],
-      "engineFailures": [],
-      "statelessFailures": [],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:regex_sql_parsing:fstring:analyzer",
-      "call": 1,
-      "check": "regex_sql_parsing",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/queries.py\",2,\"SQL_STRUCTURE_PARSE\"]"
-      ],
-      "engineFailures": [],
-      "statelessFailures": [],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:regex_sql_parsing:fstring:plugin",
-      "call": 1,
-      "check": "regex_sql_parsing",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/queries.py\",2,\"SQL_STRUCTURE_PARSE\"]"
-      ],
-      "engineFailures": [],
-      "statelessFailures": [],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:sql_grammar_escape_hatches:cross-file-inheritance:analyzer",
-      "call": 1,
-      "check": "sql_grammar_escape_hatches",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"escape_hatch\"]"
-      ],
-      "engineFailures": [],
-      "statelessFailures": [],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:sql_grammar_escape_hatches:cross-file-inheritance:production-detector",
-      "call": 1,
-      "check": "sql_grammar_escape_hatches",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"escape_hatch\"]"
-      ],
-      "engineFailures": [],
-      "statelessFailures": [],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:grammar_callable_constructors:cross-file-constructor:analyzer",
-      "call": 1,
-      "check": "grammar_callable_constructors",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/common/l2100_sql_grammar/probe.py\",1,\"CALLABLE_CONSTRUCTOR_ARG\"]"
-      ],
-      "engineFailures": [],
-      "statelessFailures": [],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:grammar_callable_constructors:cross-file-constructor:plugin",
-      "call": 1,
-      "check": "grammar_callable_constructors",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/common/l2100_sql_grammar/probe.py\",1,\"CALLABLE_CONSTRUCTOR_ARG\"]"
-      ],
-      "engineFailures": [],
-      "statelessFailures": [],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:grammar_fragment_usage:cycle:analyzer",
-      "call": 1,
-      "check": "grammar_fragment_usage",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/common/l2100_sql_grammar/probe.py\",5,\"sqlfragment_usage\"]"
-      ],
-      "engineFailures": [
-        {
-          "code": "budget-exceeded",
-          "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
-          "path": "impl/common/l2100_sql_grammar/probe.py"
-        }
-      ],
-      "statelessFailures": [
-        {
-          "code": "budget-exceeded",
-          "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
-          "path": "impl/common/l2100_sql_grammar/probe.py"
-        }
-      ],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:grammar_fragment_usage:cycle:plugin",
-      "call": 1,
-      "check": "grammar_fragment_usage",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/common/l2100_sql_grammar/probe.py\",5,\"sqlfragment_usage\"]"
-      ],
-      "engineFailures": [
-        {
-          "code": "budget-exceeded",
-          "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
-          "path": "impl/common/l2100_sql_grammar/probe.py"
-        }
-      ],
-      "statelessFailures": [
-        {
-          "code": "budget-exceeded",
-          "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
-          "path": "impl/common/l2100_sql_grammar/probe.py"
-        }
-      ],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:grammar_fragment_usage:unreachable-cycle:analyzer",
-      "call": 1,
-      "check": "grammar_fragment_usage",
-      "expected": 0,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [],
-      "engineFailures": [
-        {
-          "code": "budget-exceeded",
-          "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
-          "path": "impl/common/l2100_sql_grammar/probe.py"
-        }
-      ],
-      "statelessFailures": [
-        {
-          "code": "budget-exceeded",
-          "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
-          "path": "impl/common/l2100_sql_grammar/probe.py"
-        }
-      ],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:grammar_fragment_usage:unreachable-cycle:plugin",
-      "call": 1,
-      "check": "grammar_fragment_usage",
-      "expected": 0,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [],
-      "engineFailures": [
-        {
-          "code": "budget-exceeded",
-          "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
-          "path": "impl/common/l2100_sql_grammar/probe.py"
-        }
-      ],
-      "statelessFailures": [
-        {
-          "code": "budget-exceeded",
-          "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
-          "path": "impl/common/l2100_sql_grammar/probe.py"
-        }
-      ],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:grammar_fragment_usage:alias-string-container:analyzer",
-      "call": 1,
-      "check": "grammar_fragment_usage",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"sqlfragment_usage\"]"
-      ],
-      "engineFailures": [],
-      "statelessFailures": [],
-      "executionPathDifferences": []
-    },
-    {
-      "test": "probe:grammar_fragment_usage:alias-string-container:plugin",
-      "call": 1,
-      "check": "grammar_fragment_usage",
-      "expected": 1,
-      "actual": 0,
-      "falsePositives": [],
-      "falseNegatives": [
-        "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"sqlfragment_usage\"]"
-      ],
-      "engineFailures": [],
-      "statelessFailures": [],
-      "executionPathDifferences": []
-    }
-  ],
+  "gaps": [],
   "oracle_ambiguity_experiment": {
     "case": "probe:grammar_allowlist_burndown:cross-file-overwrite",
     "runs": [
@@ -616,8 +349,8 @@
       "data-layer-error-handling": "sha256:148c2913f29d34155412e24ba97b9dcdfb08cf470d5c237f54059e5014b8fccf",
       "data-layer-forwardref": "sha256:23e61b16ea5970188473c10aa8d47857b65e49a2e9a81d82c9fe4251467af585",
       "data-layer-grammar-allowlist-burndown": "sha256:9951b7cc2804ae4f089bce9159c59b57f07327be51e513a0e9ad0a014df25936",
-      "data-layer-grammar-callable-constructors": "sha256:4ba3f507270d8346d28273737bd07942870e0be6e1c8ff01a5323163f27f5f19",
-      "data-layer-grammar-fragment-usage": "sha256:ec7ac9ad9ce3c8f45683955321aab965a12784a41c35d2b01aadd8ea15247b99",
+      "data-layer-grammar-callable-constructors": "sha256:feabc0d40622749ea78043e53720c71ad99d5fb1d1e258b4eb4c9cd9278a0591",
+      "data-layer-grammar-fragment-usage": "sha256:dd0bdb3bc70bb59ebf9e3bcba037008b01d075a00dfc1bc4f24c44de9022cba3",
       "data-layer-grammar-render-methods": "sha256:02daf674754c08edb1cafcceee3d5ebeb4b02f94f6ebb5b318addab65804dc4f",
       "data-layer-grammar-str-params": "sha256:c8d6ccba2cea149b130f57ff72248c4313622babd4b8dabe5cf20f492fb97903",
       "data-layer-hasattr-async": "sha256:a74db29278d0d0c76b96a87d2086d120383203dda7491c875df48a8cf461a247",
@@ -629,13 +362,13 @@
       "data-layer-permission-error": "sha256:8c4a2c535f0b0696924936fb543604778be3ad9d2efca2a20a1d08a047d52afd",
       "data-layer-plan-scope-ownership": "sha256:2a251ae3d8d16f86a4297f3e499bbed943d878f41142fa2248434c31e7a828eb",
       "data-layer-plan-scope-side-effects": "sha256:3c95c904567737c074afa6479d5aa55276be1afd311e37e1d22d8ab85162b10f",
-      "data-layer-regex-sql-parsing": "sha256:b1b32b0403bfcfb428fa626ab30542f7661d5a51ee25aa1ca0c5244290cb4671",
+      "data-layer-regex-sql-parsing": "sha256:610b522e4adf244cc3ae294863be09628ebeb3955a4b9e66be6b810ba78ccaa0",
       "data-layer-removed-compat-surfaces": "sha256:94835f3059e4020dc15475f567c861994ccf549b3ef9108d4310bc0962f39573",
       "data-layer-render-fstrings": "sha256:38600be3e0d5679decfe7f1b8297f21ec3374e4e551c288b066ba0a2f20acf54",
-      "data-layer-render-raw-strings": "sha256:0c91618d5d02d330de5b65866cbbc1800095b1df3910fb1008f937dbf2967201",
+      "data-layer-render-raw-strings": "sha256:636e02995bf3eeef4ca8d4a41224a04b65aeed5fbb81ced3d1e75c5d465ab870",
       "data-layer-serverplan-grammar-surface": "sha256:78bfa70d244f7cb87fde460d228a19f30ebb601c784cb4eb7cf8cb38cc141d59",
       "data-layer-serverplan-name-inference": "sha256:5107509774e9e6e057129af25d7b01124caf3f7619c25ea258579347d9a07051",
-      "data-layer-sql-grammar-escape-hatches": "sha256:3e770c9c912acb439400ce7b512c8d76c857957da6aad5a79536e2921d326b29",
+      "data-layer-sql-grammar-escape-hatches": "sha256:07e1bca3f270e6a4b67a307c9336b6b82402ae58b09847a99d43d77a64a66af2",
       "data-layer-swallowed-exceptions": "sha256:b3fb96fa63706e2a7725795531374944218108708fd77da95368d9717ac3d53c",
       "data-layer-transaction-callback-wrappers": "sha256:ec450b584c2d34983aae73770dd03bbb36488ab0de8e8f71fd2bb30c834c7697",
       "data-layer-transaction-closures": "sha256:888f738714f199e81fbe0e0b34e51dc4109e0b9b4d7016a7444f60b6236b449a",
@@ -646,56 +379,60 @@
       "data-layer-rust-sql-grammar-boundary": "sha256:2bb8339680ef9c152f8245bac1499d3938c47dc130609d326b85560fbfa3cbcc"
     },
     "policyCompilationMs": {
-      "data-layer-admin-async-purity": 12.062584000000015,
-      "data-layer-async-executor": 1.2437499999998636,
-      "data-layer-async-patterns": 44.56841600000007,
-      "data-layer-async-sync-boundary": 47.74854200000004,
-      "data-layer-backend-type-strings": 13.283750000000055,
-      "data-layer-classvar-check": 6.876499999999851,
-      "data-layer-conn-or-txn-union": 41.422791999999845,
-      "data-layer-connection-caches": 40.51675,
-      "data-layer-dynamic-module-loading": 8.871708000000126,
-      "data-layer-error-handling": 1.6469999999999345,
-      "data-layer-forwardref": 4.359625000000051,
-      "data-layer-grammar-allowlist-burndown": 4.363583999999946,
-      "data-layer-grammar-callable-constructors": 15.674749999999904,
-      "data-layer-grammar-fragment-usage": 29.65104199999996,
-      "data-layer-grammar-render-methods": 20.713500000000067,
-      "data-layer-grammar-str-params": 85.00345800000014,
-      "data-layer-hasattr-async": 8.495458999999983,
-      "data-layer-lazy-result-usage": 39.76670799999988,
-      "data-layer-module-level-caches": 88.12616600000001,
-      "data-layer-no-api-root-imports": 7.407999999999902,
-      "data-layer-no-blanket-grammar-bypass": 7.809750000000122,
-      "data-layer-no-source-inspection": 1.1375829999999496,
-      "data-layer-permission-error": 1.332583999999997,
-      "data-layer-plan-scope-ownership": 38.03795799999989,
-      "data-layer-plan-scope-side-effects": 48.734042000000045,
-      "data-layer-regex-sql-parsing": 98.03683299999989,
-      "data-layer-removed-compat-surfaces": 5.034499999999753,
-      "data-layer-render-fstrings": 0.7600000000002183,
-      "data-layer-render-raw-strings": 4.125417000000198,
-      "data-layer-serverplan-grammar-surface": 2.9606250000001637,
-      "data-layer-serverplan-name-inference": 1.7730000000001382,
-      "data-layer-sql-grammar-escape-hatches": 13.186416999999892,
-      "data-layer-swallowed-exceptions": 8.229584000000159,
-      "data-layer-transaction-callback-wrappers": 8.134167000000161,
-      "data-layer-transaction-closures": 22.674833000000035,
-      "data-layer-transaction-patterns": 319.75237500000003,
-      "data-layer-type-safety-patterns": 9.559000000000196,
-      "data-layer-unresolved-forward-refs": 3.7705000000000837,
-      "data-layer-versioned-lifecycle-legacy-surfaces": 1.2370409999998628,
-      "data-layer-rust-sql-grammar-boundary": 0.7503329999999551
+      "data-layer-admin-async-purity": 1.5114159999999401,
+      "data-layer-async-executor": 0.9751670000000559,
+      "data-layer-async-patterns": 36.51683400000002,
+      "data-layer-async-sync-boundary": 28.367166999999995,
+      "data-layer-backend-type-strings": 11.839291000000003,
+      "data-layer-classvar-check": 5.562792000000059,
+      "data-layer-conn-or-txn-union": 12.185500000000047,
+      "data-layer-connection-caches": 27.106250000000045,
+      "data-layer-dynamic-module-loading": 7.232040999999981,
+      "data-layer-error-handling": 1.315791999999874,
+      "data-layer-forwardref": 3.7147079999999733,
+      "data-layer-grammar-allowlist-burndown": 3.4314999999999145,
+      "data-layer-grammar-callable-constructors": 12.386874999999918,
+      "data-layer-grammar-fragment-usage": 24.52829100000008,
+      "data-layer-grammar-render-methods": 15.267417000000023,
+      "data-layer-grammar-str-params": 55.72391700000003,
+      "data-layer-hasattr-async": 6.615958999999975,
+      "data-layer-lazy-result-usage": 11.730583000000024,
+      "data-layer-module-level-caches": 39.362082999999984,
+      "data-layer-no-api-root-imports": 5.322499999999991,
+      "data-layer-no-blanket-grammar-bypass": 5.917083000000048,
+      "data-layer-no-source-inspection": 1.1375410000000556,
+      "data-layer-permission-error": 0.9074590000000171,
+      "data-layer-plan-scope-ownership": 20.1284169999999,
+      "data-layer-plan-scope-side-effects": 13.363292000000001,
+      "data-layer-regex-sql-parsing": 278.93879100000004,
+      "data-layer-removed-compat-surfaces": 3.636833999999908,
+      "data-layer-render-fstrings": 0.7502919999999449,
+      "data-layer-render-raw-strings": 4.336667000000034,
+      "data-layer-serverplan-grammar-surface": 2.234875000000102,
+      "data-layer-serverplan-name-inference": 1.3667499999999109,
+      "data-layer-sql-grammar-escape-hatches": 10.835416000000123,
+      "data-layer-swallowed-exceptions": 5.954874999999902,
+      "data-layer-transaction-callback-wrappers": 6.3097080000000005,
+      "data-layer-transaction-closures": 17.127874999999904,
+      "data-layer-transaction-patterns": 236.20800000000008,
+      "data-layer-type-safety-patterns": 7.115291999999954,
+      "data-layer-unresolved-forward-refs": 2.6052089999998316,
+      "data-layer-versioned-lifecycle-legacy-surfaces": 0.7639169999997648,
+      "data-layer-rust-sql-grammar-boundary": 0.6235830000000533
     },
-    "compilationMs": 1522.0621660000002,
-    "coldMs": 18286.609459,
-    "unchangedFileMs": 9.228499999997439,
-    "editedFileMs": 37.13187499999913,
+    "compilationMs": 1245.7365,
+    "coldMs": 18402.55975,
+    "unchangedFileMs": 23.037666999996873,
+    "editedFileMs": 71.64466600000014,
     "editedPath": "impl/common/l2200_sql_dialect/sql_connection.py",
     "expected": 985,
     "actual": 985,
-    "allocator": "system-shim",
-    "nativeSha256": "a5f9809f18d87e8dbba7941c9ee5126074f32532b6f3d579cc9a80bbb7a8bed6",
+    "falsePositives": [],
+    "falseNegatives": [],
+    "failures": [],
+    "allocator": "system-check-shim",
+    "policies": "packs/data-layer/candidates/rules",
+    "nativeSha256": "9afac9b93aed04fb835b97e5bbaa2f383ef59fe8ff5c6eacb67fbaf52ec75e61",
     "nativeWorkers": 4
   },
   "repository_parity": {
@@ -704,23 +441,23 @@
     "failures": []
   },
   "native_cold_aggregate_worker_seconds": {
-    "parse": 11.405175278,
-    "tapeEncode": 3.613850756,
-    "tapeDecodeRestore": 1.480945538,
-    "anchorIndex": 2.476477279,
-    "anchorSelection": 2.570330833,
-    "regex": 7.808407848,
-    "astMatch": 6.369628383,
-    "manifestCandidateLookup": 4.528380121
+    "parse": 9.488455185,
+    "tapeEncode": 2.948321482,
+    "tapeDecodeRestore": 1.244710931,
+    "anchorIndex": 2.241574023,
+    "anchorSelection": 2.61482214,
+    "regex": 6.367349053,
+    "astMatch": 5.82612939,
+    "manifestCandidateLookup": 6.834144192
   },
-  "native_sha256": "a5f9809f18d87e8dbba7941c9ee5126074f32532b6f3d579cc9a80bbb7a8bed6",
+  "native_sha256": "9afac9b93aed04fb835b97e5bbaa2f383ef59fe8ff5c6eacb67fbaf52ec75e61",
   "exploratory_engine_change": {
     "retained_in_stash": "bdd941d6cdcd22a9e4cc0490d39021e6a3ecdd58",
     "reason": "Ordered evidence assumed deterministic path order; repeated oracle runs showed asynchronous owner attribution. The engine change is absent from this batch."
   },
   "verification": {
-    "focused_tests": 253,
-    "focused_test_files": 5,
+    "focused_tests": 265,
+    "focused_test_files": 6,
     "command_pool": "--pool=threads --maxWorkers=1",
     "scoped_pack_checks": 6,
     "structure_checks": 25,
@@ -728,14 +465,466 @@
     "dsl_differences": 0,
     "typescript_errors_in_unchanged_files": 3,
     "policy_generator": "Ten documents reproduce byte for byte",
-    "probe_regeneration": "Comparable events reproduce; actual retained duplicate-owner attribution may vary"
+    "probe_regeneration": "Comparable events reproduce; actual retained duplicate-owner attribution may vary",
+    "capability_tests": 10,
+    "native_clippy": "Default and code-rule-profile configurations; all targets; -D warnings passed",
+    "original_tests_rerun": "605 pass; 1513 loaded sources verified; comparable observations unchanged",
+    "combined_source_pin_guard": "Rejects recordings from different commits"
   },
   "limits": [
     "Native findings are computed without Python. Python supplies oracle results and generation-time constants.",
-    "The strict supplemental gate fails on 14 missed findings and eight backend failures across four helper-cycle calls.",
-    "Escape-hatch signed aggregate ceiling enforcement remains upstream; two ambiguous burndown ownership cases are retained separately.",
-    "The pack remains private and inactive. Earlier documented migration limits remain open.",
-    "Timing samples use a shared machine, four workers, a profiling binary, and a system-allocator shim. They do not establish production throughput.",
-    "The profiling binary can abort on stderr pipe pressure in forked Vitest workers; final tests use a thread worker with a regular output file."
+    "All 514 combined source-detection calls pass. The original-only corpus still lacks positive and clean coverage for two checks.",
+    "26 signed aggregate reporter observations, two ambiguous owner observations, and three original I/O observations remain retained contracts.",
+    "397 original tests have no supported recorded boundary and do not count as native passes.",
+    "The pack remains private and inactive. Signing and aggregate enforcement remain separate integration work.",
+    "Timing samples use a shared machine, four workers, a profiling release binary with thin LTO and 256 codegen units, and a system allocator shim. They do not establish production throughput.",
+    "The performance control removes required graph clauses and fails supplemental positives. Its speed does not certify a valid port.",
+    "Profiling can abort on stderr pipe pressure in fork workers; verification uses a thread worker and regular output files."
+  ],
+  "before_completion": {
+    "commit": "c53831ae",
+    "native_sha256": "a5f9809f18d87e8dbba7941c9ee5126074f32532b6f3d579cc9a80bbb7a8bed6",
+    "probes": {
+      "cases": 118,
+      "observations": 243,
+      "retained_observations": 19,
+      "loaded_sources_verified": 127,
+      "replayedCalls": 224,
+      "positiveCalls": 133,
+      "cleanCalls": 91,
+      "falsePositives": 0,
+      "falseNegatives": 14,
+      "engineFailures": 8,
+      "executionPathDifferences": 0,
+      "missingCoverage": []
+    },
+    "gaps": [
+      {
+        "test": "probe:render_raw_strings:fstring:analyzer",
+        "call": 1,
+        "check": "render_raw_strings",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"string_literal\"]"
+        ],
+        "engineFailures": [],
+        "statelessFailures": [],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:render_raw_strings:fstring:plugin",
+        "call": 1,
+        "check": "render_raw_strings",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"string_literal\"]"
+        ],
+        "engineFailures": [],
+        "statelessFailures": [],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:render_raw_strings:nested:analyzer",
+        "call": 1,
+        "check": "render_raw_strings",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"string_literal\"]"
+        ],
+        "engineFailures": [],
+        "statelessFailures": [],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:render_raw_strings:nested:plugin",
+        "call": 1,
+        "check": "render_raw_strings",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"string_literal\"]"
+        ],
+        "engineFailures": [],
+        "statelessFailures": [],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:regex_sql_parsing:fstring:analyzer",
+        "call": 1,
+        "check": "regex_sql_parsing",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/queries.py\",2,\"SQL_STRUCTURE_PARSE\"]"
+        ],
+        "engineFailures": [],
+        "statelessFailures": [],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:regex_sql_parsing:fstring:plugin",
+        "call": 1,
+        "check": "regex_sql_parsing",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/queries.py\",2,\"SQL_STRUCTURE_PARSE\"]"
+        ],
+        "engineFailures": [],
+        "statelessFailures": [],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:sql_grammar_escape_hatches:cross-file-inheritance:analyzer",
+        "call": 1,
+        "check": "sql_grammar_escape_hatches",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"escape_hatch\"]"
+        ],
+        "engineFailures": [],
+        "statelessFailures": [],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:sql_grammar_escape_hatches:cross-file-inheritance:production-detector",
+        "call": 1,
+        "check": "sql_grammar_escape_hatches",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"escape_hatch\"]"
+        ],
+        "engineFailures": [],
+        "statelessFailures": [],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:grammar_callable_constructors:cross-file-constructor:analyzer",
+        "call": 1,
+        "check": "grammar_callable_constructors",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/common/l2100_sql_grammar/probe.py\",1,\"CALLABLE_CONSTRUCTOR_ARG\"]"
+        ],
+        "engineFailures": [],
+        "statelessFailures": [],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:grammar_callable_constructors:cross-file-constructor:plugin",
+        "call": 1,
+        "check": "grammar_callable_constructors",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/common/l2100_sql_grammar/probe.py\",1,\"CALLABLE_CONSTRUCTOR_ARG\"]"
+        ],
+        "engineFailures": [],
+        "statelessFailures": [],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:grammar_fragment_usage:cycle:analyzer",
+        "call": 1,
+        "check": "grammar_fragment_usage",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/common/l2100_sql_grammar/probe.py\",5,\"sqlfragment_usage\"]"
+        ],
+        "engineFailures": [
+          {
+            "code": "budget-exceeded",
+            "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
+            "path": "impl/common/l2100_sql_grammar/probe.py"
+          }
+        ],
+        "statelessFailures": [
+          {
+            "code": "budget-exceeded",
+            "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
+            "path": "impl/common/l2100_sql_grammar/probe.py"
+          }
+        ],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:grammar_fragment_usage:cycle:plugin",
+        "call": 1,
+        "check": "grammar_fragment_usage",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/common/l2100_sql_grammar/probe.py\",5,\"sqlfragment_usage\"]"
+        ],
+        "engineFailures": [
+          {
+            "code": "budget-exceeded",
+            "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
+            "path": "impl/common/l2100_sql_grammar/probe.py"
+          }
+        ],
+        "statelessFailures": [
+          {
+            "code": "budget-exceeded",
+            "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
+            "path": "impl/common/l2100_sql_grammar/probe.py"
+          }
+        ],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:grammar_fragment_usage:unreachable-cycle:analyzer",
+        "call": 1,
+        "check": "grammar_fragment_usage",
+        "expected": 0,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "engineFailures": [
+          {
+            "code": "budget-exceeded",
+            "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
+            "path": "impl/common/l2100_sql_grammar/probe.py"
+          }
+        ],
+        "statelessFailures": [
+          {
+            "code": "budget-exceeded",
+            "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
+            "path": "impl/common/l2100_sql_grammar/probe.py"
+          }
+        ],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:grammar_fragment_usage:unreachable-cycle:plugin",
+        "call": 1,
+        "check": "grammar_fragment_usage",
+        "expected": 0,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [],
+        "engineFailures": [
+          {
+            "code": "budget-exceeded",
+            "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
+            "path": "impl/common/l2100_sql_grammar/probe.py"
+          }
+        ],
+        "statelessFailures": [
+          {
+            "code": "budget-exceeded",
+            "message": "`matches` recursion exceeded its depth limit (256 nested utility rules or 1 MiB of stack)",
+            "path": "impl/common/l2100_sql_grammar/probe.py"
+          }
+        ],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:grammar_fragment_usage:alias-string-container:analyzer",
+        "call": 1,
+        "check": "grammar_fragment_usage",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"sqlfragment_usage\"]"
+        ],
+        "engineFailures": [],
+        "statelessFailures": [],
+        "executionPathDifferences": []
+      },
+      {
+        "test": "probe:grammar_fragment_usage:alias-string-container:plugin",
+        "call": 1,
+        "check": "grammar_fragment_usage",
+        "expected": 1,
+        "actual": 0,
+        "falsePositives": [],
+        "falseNegatives": [
+          "[\"impl/common/l2100_sql_grammar/probe.py\",3,\"sqlfragment_usage\"]"
+        ],
+        "engineFailures": [],
+        "statelessFailures": [],
+        "executionPathDifferences": []
+      }
+    ],
+    "repository": {
+      "files": 9021,
+      "bytes": 137924324,
+      "expected": 985,
+      "actual": 985,
+      "coldMs": 18286.609459,
+      "compilationMs": 1522.0621660000002,
+      "unchangedFileMs": 9.228499999997439,
+      "editedFileMs": 37.13187499999913,
+      "nativeSha256": "a5f9809f18d87e8dbba7941c9ee5126074f32532b6f3d579cc9a80bbb7a8bed6"
+    }
+  },
+  "engine_capabilities": [
+    "Authored staged name closure over evidence, with capture enumeration, reporting anchors, and source identity projections",
+    "Python f-string literal parts and authored interpolation projections",
+    "Decoded identifier words joined to host declarations"
+  ],
+  "native_build": {
+    "profile": "release",
+    "features": [
+      "code-rule-profile"
+    ],
+    "lto": "thin",
+    "codegen_units": 256,
+    "allocator": "system allocator through JEMALLOC_OVERRIDE check shim",
+    "native_workers": 4
+  },
+  "combined_replay": {
+    "replayedCalls": 514,
+    "positiveCalls": 321,
+    "cleanCalls": 193,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "missingCoverage": [],
+    "expected_findings": 471,
+    "retained_calls": 31,
+    "collected_tests": 605
+  },
+  "performance_ablation": {
+    "description": "Same binary and snapshot; removes only constructor-arg, captured-return, and unsafe-parameter graph clauses",
+    "native_sha256": "9afac9b93aed04fb835b97e5bbaa2f383ef59fe8ff5c6eacb67fbaf52ec75e61",
+    "control_policy_digests": {
+      "data-layer-admin-async-purity": "sha256:28deddcad1b387ac3b546cca10895436e0c72fd351e7b2b500ca8192e3a4987e",
+      "data-layer-async-executor": "sha256:3bf76b24b1acd4c18e88904fc9c732f4fb30ce800c331499952d0c1dcf769154",
+      "data-layer-async-patterns": "sha256:555668ec0ddc233376e61b1c68258877a8c7f3304ae7cfc794fa3fd390be3d30",
+      "data-layer-async-sync-boundary": "sha256:8387d16fdbb47ca400d878ca97be6d1c42a48defe7e0b9909ff9b15b496ef82e",
+      "data-layer-backend-type-strings": "sha256:9a767dadcfe52ec2b2801588f36919e74f6a793cb0a072cc6af21f24288b5faf",
+      "data-layer-classvar-check": "sha256:f492d76f3f686b430c649080c9be8420d375e1be023d639cf5d6c7613acb03b4",
+      "data-layer-conn-or-txn-union": "sha256:deb16c1381ad2414041c981a4c56ff6990008093f05722c74ba10baf5d01258b",
+      "data-layer-connection-caches": "sha256:33bd67e8e1ca9a9ef6f3ba78442ee2338a4fbf8392ec5dd482310e674a195c8b",
+      "data-layer-dynamic-module-loading": "sha256:a877158fd13f016a1eaecc9cb229d08b82288cdea1bb297f6479feaf9b18c387",
+      "data-layer-error-handling": "sha256:148c2913f29d34155412e24ba97b9dcdfb08cf470d5c237f54059e5014b8fccf",
+      "data-layer-forwardref": "sha256:23e61b16ea5970188473c10aa8d47857b65e49a2e9a81d82c9fe4251467af585",
+      "data-layer-grammar-allowlist-burndown": "sha256:9951b7cc2804ae4f089bce9159c59b57f07327be51e513a0e9ad0a014df25936",
+      "data-layer-grammar-callable-constructors": "sha256:f236663ef068087b44cece579e64bc1d69a2f4d1683c0671a4eafd55cbcff648",
+      "data-layer-grammar-fragment-usage": "sha256:0c01cf386a4983d0a23aecb2d17dcbc7fbe91c226d064f765a410574056068cf",
+      "data-layer-grammar-render-methods": "sha256:02daf674754c08edb1cafcceee3d5ebeb4b02f94f6ebb5b318addab65804dc4f",
+      "data-layer-grammar-str-params": "sha256:c8d6ccba2cea149b130f57ff72248c4313622babd4b8dabe5cf20f492fb97903",
+      "data-layer-hasattr-async": "sha256:a74db29278d0d0c76b96a87d2086d120383203dda7491c875df48a8cf461a247",
+      "data-layer-lazy-result-usage": "sha256:861c4ce42ec168a6437789375ae80a05869654dde9d2d424a5da84ea646d4a1f",
+      "data-layer-module-level-caches": "sha256:c823d10e3d198b68284904d503860e04bf190e0e3e3dca19f7f96597288f490d",
+      "data-layer-no-api-root-imports": "sha256:ef339f54cbb5b61d815448ca08c6db8d1715d325663c711c43c22f50621f0cbc",
+      "data-layer-no-blanket-grammar-bypass": "sha256:0d6e692f4a48ed34de5928d35d05fefa5fd6f9d7181607084102b43389af48e5",
+      "data-layer-no-source-inspection": "sha256:cfedb7e006ea6b12e84cb9d960e0658cf7134067724181a5d8a212e25222ccfc",
+      "data-layer-permission-error": "sha256:8c4a2c535f0b0696924936fb543604778be3ad9d2efca2a20a1d08a047d52afd",
+      "data-layer-plan-scope-ownership": "sha256:2a251ae3d8d16f86a4297f3e499bbed943d878f41142fa2248434c31e7a828eb",
+      "data-layer-plan-scope-side-effects": "sha256:3c95c904567737c074afa6479d5aa55276be1afd311e37e1d22d8ab85162b10f",
+      "data-layer-regex-sql-parsing": "sha256:610b522e4adf244cc3ae294863be09628ebeb3955a4b9e66be6b810ba78ccaa0",
+      "data-layer-removed-compat-surfaces": "sha256:94835f3059e4020dc15475f567c861994ccf549b3ef9108d4310bc0962f39573",
+      "data-layer-render-fstrings": "sha256:38600be3e0d5679decfe7f1b8297f21ec3374e4e551c288b066ba0a2f20acf54",
+      "data-layer-render-raw-strings": "sha256:636e02995bf3eeef4ca8d4a41224a04b65aeed5fbb81ced3d1e75c5d465ab870",
+      "data-layer-serverplan-grammar-surface": "sha256:78bfa70d244f7cb87fde460d228a19f30ebb601c784cb4eb7cf8cb38cc141d59",
+      "data-layer-serverplan-name-inference": "sha256:5107509774e9e6e057129af25d7b01124caf3f7619c25ea258579347d9a07051",
+      "data-layer-sql-grammar-escape-hatches": "sha256:5961139a92f5987a87ff79a3ef820b06848d41aa7731752287e1b49ee5439417",
+      "data-layer-swallowed-exceptions": "sha256:b3fb96fa63706e2a7725795531374944218108708fd77da95368d9717ac3d53c",
+      "data-layer-transaction-callback-wrappers": "sha256:ec450b584c2d34983aae73770dd03bbb36488ab0de8e8f71fd2bb30c834c7697",
+      "data-layer-transaction-closures": "sha256:888f738714f199e81fbe0e0b34e51dc4109e0b9b4d7016a7444f60b6236b449a",
+      "data-layer-transaction-patterns": "sha256:cb8ed48327845bd31df6d4c2306f055705f28812f39ec9f8b08e95869c9b8968",
+      "data-layer-type-safety-patterns": "sha256:13a97ae41a7e1ebbee159bc9b7c693206b02740698bc5d479f05c8cc45f156ab",
+      "data-layer-unresolved-forward-refs": "sha256:86cdf97aa17812e9cc8b0d4f3edc65e099a7de3fc831426f1d5826ef37b2f94b",
+      "data-layer-versioned-lifecycle-legacy-surfaces": "sha256:579c7656724ba5a24b5ee0733b65f5561881a3df1160d4c48b5d14a63b518a46",
+      "data-layer-rust-sql-grammar-boundary": "sha256:2bb8339680ef9c152f8245bac1499d3938c47dc130609d326b85560fbfa3cbcc"
+    },
+    "earlier_pair": {
+      "native_sha256": "d2616c784b2dbcf7a9751939f465949d9db2e5fb7ee270a601f74bc1deda7494",
+      "full_cold_ms": 26063.654417,
+      "control_cold_ms": 19330.309167
+    },
+    "full": {
+      "coldMs": 18402.55975,
+      "compilationMs": 1245.7365,
+      "unchangedFileMs": 23.037666999996873,
+      "editedFileMs": 71.64466600000014
+    },
+    "control": {
+      "coldMs": 14746.454042,
+      "compilationMs": 1136.050292,
+      "unchangedFileMs": 8.573416999999608,
+      "editedFileMs": 34.271749999999884
+    },
+    "cold_delta_ms": 3656.105708000001,
+    "full_retained_result_bytes_estimate": 17203938,
+    "control_retained_result_bytes_estimate": 367261,
+    "positive_control": {
+      "replayedCalls": 308,
+      "positiveCalls": 191,
+      "cleanCalls": 117,
+      "falsePositives": 0,
+      "falseNegatives": 116,
+      "engineFailures": 0,
+      "executionPathDifferences": 0,
+      "missingCoverage": []
+    },
+    "interpretation": "Graph clauses add measurable cost and retained evidence. The control fails supplemental positives. Default-phase CPU attribution cannot identify a narrower lookup bottleneck."
+  },
+  "tdd_ladder": [
+    {
+      "stage": "Primitive red tests",
+      "result": "Unsupported identifierWords, pythonFString, and evidence closure reproduced before implementation"
+    },
+    {
+      "stage": "Original eight gap cases",
+      "result": "224 compared calls: 14 false negatives and eight backend failures become zero"
+    },
+    {
+      "stage": "Expanded source shapes",
+      "result": "160 source cases; parenthesized patterns and overwritten definitions reproduced and fixed"
+    },
+    {
+      "stage": "Scale red test",
+      "result": "6000-edge staged graph reproduced workspace poll-budget failure; calibrated polling fixes it without increasing limits"
+    },
+    {
+      "stage": "Combined gate",
+      "result": {
+        "replayedCalls": 514,
+        "positiveCalls": 321,
+        "cleanCalls": 193,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "missingCoverage": [],
+        "expected_findings": 471,
+        "retained_calls": 31,
+        "collected_tests": 605
+      }
+    },
+    {
+      "stage": "Pinned repository",
+      "result": {
+        "false_positives": 0,
+        "false_negatives": 0,
+        "failures": []
+      }
+    }
   ]
 }

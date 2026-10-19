@@ -1,4 +1,4 @@
-Current continuation: [batch four](data-layer-batch-four.md) adds ten candidates with explicit unresolved parity gaps.
+Current continuation: [batch four](data-layer-batch-four.md) completes ten further source-detection candidates with passing combined parity.
 The first thirty candidates are committed at `905212f6`.
 
 # Data-layer first-batch execution report

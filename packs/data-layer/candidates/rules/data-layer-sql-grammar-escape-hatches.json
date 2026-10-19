@@ -186,230 +186,54 @@
               }
             ]
           },
-          "grammar-name": {
-            "params": [
-              "NAME"
-            ],
-            "rule": {
-              "any": [
-                {
-                  "all": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "regex": {
-                        "$option": "grammar_class_names",
-                        "escape": "regex",
-                        "join": "|",
-                        "template": "^(?:{})$"
-                      }
-                    }
-                  ]
-                },
-                {
-                  "all": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "inside": {
-                        "all": [
-                          {
-                            "kind": "module"
-                          },
-                          {
-                            "has": {
-                              "all": [
-                                {
-                                  "kind": "class_definition"
-                                },
-                                {
-                                  "has": {
-                                    "pattern": "$NAME",
-                                    "stopBy": "neighbor",
-                                    "field": "name"
-                                  }
-                                },
-                                {
-                                  "has": {
-                                    "has": {
-                                      "all": [
-                                        {
-                                          "pattern": "$BASE"
-                                        },
-                                        {
-                                          "matches": {
-                                            "grammar-name": {
-                                              "NAME": "$BASE"
-                                            }
-                                          }
-                                        }
-                                      ],
-                                      "stopBy": "neighbor"
-                                    },
-                                    "stopBy": "neighbor",
-                                    "field": "superclasses"
-                                  }
-                                }
-                              ],
-                              "stopBy": "end"
-                            }
-                          }
-                        ],
-                        "stopBy": "end"
-                      }
-                    }
-                  ]
-                },
-                {
-                  "all": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "inside": {
-                        "all": [
-                          {
-                            "kind": "module"
-                          },
-                          {
-                            "has": {
-                              "all": [
-                                {
-                                  "kind": "assignment"
-                                },
-                                {
-                                  "has": {
-                                    "pattern": "$NAME",
-                                    "stopBy": "neighbor",
-                                    "field": "left"
-                                  }
-                                },
-                                {
-                                  "has": {
-                                    "all": [
-                                      {
-                                        "pattern": "$BASE"
-                                      },
-                                      {
-                                        "matches": {
-                                          "grammar-alias": {
-                                            "NAME": "$BASE"
-                                          }
-                                        }
-                                      }
-                                    ],
-                                    "stopBy": "neighbor",
-                                    "field": "right"
-                                  }
-                                }
-                              ],
-                              "stopBy": "end"
-                            }
-                          }
-                        ],
-                        "stopBy": "end"
-                      }
-                    }
-                  ]
-                }
-              ]
-            }
-          },
-          "grammar-alias": {
-            "params": [
-              "NAME"
-            ],
-            "rule": {
-              "any": [
-                {
-                  "matches": {
-                    "grammar-name": {
-                      "NAME": "$NAME"
-                    }
+          "base-name": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "pattern": "$BASE"
                   }
-                },
-                {
-                  "all": [
-                    {
-                      "kind": "binary_operator"
-                    },
-                    {
-                      "has": {
-                        "regex": "^\\|$",
-                        "stopBy": "neighbor",
-                        "field": "operator"
-                      }
-                    },
-                    {
-                      "any": [
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "attribute"
+                  },
+                  {
+                    "has": {
+                      "all": [
                         {
-                          "has": {
-                            "all": [
-                              {
-                                "pattern": "$X"
-                              },
-                              {
-                                "matches": {
-                                  "grammar-alias": {
-                                    "NAME": "$X"
-                                  }
-                                }
-                              }
-                            ],
-                            "stopBy": "neighbor",
-                            "field": "left"
-                          }
+                          "kind": "identifier"
                         },
                         {
-                          "has": {
-                            "all": [
-                              {
-                                "pattern": "$Y"
-                              },
-                              {
-                                "matches": {
-                                  "grammar-alias": {
-                                    "NAME": "$Y"
-                                  }
-                                }
-                              }
-                            ],
-                            "stopBy": "neighbor",
-                            "field": "right"
-                          }
+                          "pattern": "$BASE"
                         }
-                      ]
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "attribute"
                     }
-                  ]
-                },
-                {
-                  "all": [
-                    {
-                      "kind": "parenthesized_expression"
-                    },
-                    {
-                      "has": {
-                        "all": [
-                          {
-                            "pattern": "$X"
-                          },
-                          {
-                            "matches": {
-                              "grammar-alias": {
-                                "NAME": "$X"
-                              }
-                            }
-                          }
-                        ],
-                        "stopBy": "neighbor"
-                      }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "subscript"
+                  },
+                  {
+                    "has": {
+                      "matches": "base-name",
+                      "stopBy": "neighbor",
+                      "field": "value"
                     }
-                  ]
-                }
-              ]
-            }
+                  }
+                ]
+              }
+            ]
           },
           "unsafe-leaf": {
             "any": [
@@ -444,17 +268,127 @@
                     "not": {
                       "all": [
                         {
-                          "pattern": "$G"
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:str)$"
+                            }
+                          ]
                         },
                         {
-                          "matches": {
-                            "grammar-name": {
-                              "NAME": "$G"
+                          "inside": {
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "typed_parameter"
+                                  },
+                                  {
+                                    "kind": "typed_default_parameter"
+                                  }
+                                ]
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": {
+                                            "$option": "DATA_VALUE_PARAMS",
+                                            "escape": "regex",
+                                            "join": "|",
+                                            "template": "^(?:{})$"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": {
+                                            "$option": "DATA_VALUE_PARAMS",
+                                            "escape": "regex",
+                                            "join": "|",
+                                            "template": "^(?:{})$"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": {
+                                            "$option": "OPERATOR_PARAMS",
+                                            "escape": "regex",
+                                            "join": "|",
+                                            "template": "^(?:{})$"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": {
+                                            "$option": "OPERATOR_PARAMS",
+                                            "escape": "regex",
+                                            "join": "|",
+                                            "template": "^(?:{})$"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": {
+                              "any": [
+                                {
+                                  "kind": "typed_parameter"
+                                },
+                                {
+                                  "kind": "typed_default_parameter"
+                                }
+                              ]
                             }
                           }
                         }
                       ]
                     }
+                  },
+                  {
+                    "pattern": "$LEAF"
+                  },
+                  {
+                    "pattern": "$ROW"
                   }
                 ]
               },
@@ -564,311 +498,302 @@
               {
                 "all": [
                   {
-                    "kind": "string"
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "not": {
+                              "regex": "(?i)^[rub]*f"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "concatenated_string"
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "string"
+                                  },
+                                  {
+                                    "regex": "(?i)^[rub]*f"
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
                   },
                   {
                     "parse": {
-                      "grammar": "annotation",
+                      "grammar": "identifierWords",
                       "has": {
-                        "matches": "unsafe-leaf",
-                        "stopBy": "end"
+                        "kind": "word",
+                        "all": [
+                          {
+                            "not": {
+                              "regex": {
+                                "$option": "safe_param_types",
+                                "escape": "regex",
+                                "join": "|",
+                                "template": "^(?:{})$"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "regex": "^(?:Iterable|Mapping|Optional|Sequence|dict|frozenset|list|set|tuple)$"
+                            }
+                          }
+                        ],
+                        "capture": "LEAF",
+                        "any": [
+                          {
+                            "capture": "ROW"
+                          }
+                        ],
+                        "not": {
+                          "all": [
+                            {
+                              "regex": "^str$"
+                            },
+                            {
+                              "host": {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "typed_parameter"
+                                        },
+                                        {
+                                          "kind": "typed_default_parameter"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": {
+                                                  "$option": "DATA_VALUE_PARAMS",
+                                                  "escape": "regex",
+                                                  "join": "|",
+                                                  "template": "^(?:{})$"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "neighbor"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": {
+                                                  "$option": "DATA_VALUE_PARAMS",
+                                                  "escape": "regex",
+                                                  "join": "|",
+                                                  "template": "^(?:{})$"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": {
+                                                  "$option": "OPERATOR_PARAMS",
+                                                  "escape": "regex",
+                                                  "join": "|",
+                                                  "template": "^(?:{})$"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "neighbor"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": {
+                                                  "$option": "OPERATOR_PARAMS",
+                                                  "escape": "regex",
+                                                  "join": "|",
+                                                  "template": "^(?:{})$"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "stopBy": {
+                                    "any": [
+                                      {
+                                        "kind": "typed_parameter"
+                                      },
+                                      {
+                                        "kind": "typed_default_parameter"
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
                       }
                     }
                   }
                 ]
               },
               {
-                "any": [
+                "all": [
                   {
-                    "kind": "integer"
+                    "any": [
+                      {
+                        "kind": "integer"
+                      },
+                      {
+                        "kind": "float"
+                      },
+                      {
+                        "kind": "true"
+                      },
+                      {
+                        "kind": "false"
+                      }
+                    ]
                   },
                   {
-                    "kind": "float"
+                    "pattern": "$LEAF"
                   },
                   {
-                    "kind": "true"
-                  },
-                  {
-                    "kind": "false"
+                    "pattern": "$ROW"
                   }
                 ]
               }
             ]
           },
-          "earlier-unsafe-parameter": {
-            "params": [
-              "CURRENT"
-            ],
-            "rule": {
-              "inside": {
+          "alias-target": {
+            "any": [
+              {
                 "all": [
                   {
-                    "kind": "module"
+                    "kind": "identifier"
+                  },
+                  {
+                    "pattern": "$ALIAS_FROM"
+                  },
+                  {
+                    "pattern": "$ROW"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "attribute"
                   },
                   {
                     "has": {
                       "all": [
                         {
-                          "all": [
-                            {
-                              "all": [
-                                {
-                                  "any": [
-                                    {
-                                      "kind": "typed_parameter"
-                                    },
-                                    {
-                                      "kind": "typed_default_parameter"
-                                    }
-                                  ]
-                                },
-                                {
-                                  "not": {
-                                    "has": {
-                                      "all": [
-                                        {
-                                          "kind": "identifier"
-                                        },
-                                        {
-                                          "regex": "^(?:self)$"
-                                        }
-                                      ],
-                                      "stopBy": "neighbor"
-                                    }
-                                  }
-                                },
-                                {
-                                  "has": {
-                                    "matches": "unsafe-leaf",
-                                    "stopBy": "neighbor",
-                                    "field": "type"
-                                  }
-                                },
-                                {
-                                  "inside": {
-                                    "all": [
-                                      {
-                                        "all": [
-                                          {
-                                            "all": [
-                                              {
-                                                "kind": "function_definition"
-                                              },
-                                              {
-                                                "has": {
-                                                  "all": [
-                                                    {
-                                                      "kind": "identifier"
-                                                    },
-                                                    {
-                                                      "regex": "^(?:__init__)$"
-                                                    }
-                                                  ],
-                                                  "stopBy": "neighbor",
-                                                  "field": "name"
-                                                }
-                                              }
-                                            ]
-                                          },
-                                          {
-                                            "regex": "^def\\s"
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "inside": {
-                                          "all": [
-                                            {
-                                              "kind": "class_definition"
-                                            },
-                                            {
-                                              "not": {
-                                                "has": {
-                                                  "any": [
-                                                    {
-                                                      "all": [
-                                                        {
-                                                          "kind": "identifier"
-                                                        },
-                                                        {
-                                                          "regex": {
-                                                            "$option": "ALLOWLISTED_CLASSES",
-                                                            "escape": "regex",
-                                                            "join": "|",
-                                                            "template": "^(?:{})$"
-                                                          }
-                                                        }
-                                                      ]
-                                                    },
-                                                    {
-                                                      "all": [
-                                                        {
-                                                          "kind": "identifier"
-                                                        },
-                                                        {
-                                                          "regex": {
-                                                            "$option": "SCHEMA_METADATA_CLASSES",
-                                                            "escape": "regex",
-                                                            "join": "|",
-                                                            "template": "^(?:{})$"
-                                                          }
-                                                        }
-                                                      ]
-                                                    },
-                                                    {
-                                                      "all": [
-                                                        {
-                                                          "kind": "identifier"
-                                                        },
-                                                        {
-                                                          "regex": {
-                                                            "$option": "CALLSITE_PROTECTED_CLASSES",
-                                                            "escape": "regex",
-                                                            "join": "|",
-                                                            "template": "^(?:{})$"
-                                                          }
-                                                        }
-                                                      ]
-                                                    },
-                                                    {
-                                                      "all": [
-                                                        {
-                                                          "kind": "identifier"
-                                                        },
-                                                        {
-                                                          "regex": "^(?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)$"
-                                                        }
-                                                      ]
-                                                    }
-                                                  ],
-                                                  "stopBy": "neighbor",
-                                                  "field": "name"
-                                                }
-                                              }
-                                            },
-                                            {
-                                              "has": {
-                                                "has": {
-                                                  "all": [
-                                                    {
-                                                      "pattern": "$BASE"
-                                                    },
-                                                    {
-                                                      "matches": {
-                                                        "grammar-name": {
-                                                          "NAME": "$BASE"
-                                                        }
-                                                      }
-                                                    }
-                                                  ],
-                                                  "stopBy": "neighbor"
-                                                },
-                                                "stopBy": "neighbor",
-                                                "field": "superclasses"
-                                              }
-                                            }
-                                          ],
-                                          "stopBy": {
-                                            "kind": "class_definition"
-                                          }
-                                        }
-                                      }
-                                    ],
-                                    "stopBy": {
-                                      "kind": "function_definition"
-                                    }
-                                  }
-                                }
-                              ]
-                            },
-                            {
-                              "not": {
-                                "any": [
-                                  {
-                                    "kind": "list_splat_pattern"
-                                  },
-                                  {
-                                    "kind": "dictionary_splat_pattern"
-                                  },
-                                  {
-                                    "all": [
-                                      {
-                                        "kind": "typed_parameter"
-                                      },
-                                      {
-                                        "has": {
-                                          "any": [
-                                            {
-                                              "kind": "list_splat_pattern"
-                                            },
-                                            {
-                                              "kind": "dictionary_splat_pattern"
-                                            }
-                                          ],
-                                          "stopBy": "neighbor"
-                                        }
-                                      }
-                                    ]
-                                  }
-                                ]
-                              }
-                            },
-                            {
-                              "not": {
-                                "precedes": {
-                                  "kind": "positional_separator",
-                                  "stopBy": "end"
-                                }
-                              }
-                            },
-                            {
-                              "not": {
-                                "follows": {
-                                  "any": [
-                                    {
-                                      "kind": "keyword_separator"
-                                    },
-                                    {
-                                      "kind": "list_splat_pattern"
-                                    },
-                                    {
-                                      "all": [
-                                        {
-                                          "kind": "typed_parameter"
-                                        },
-                                        {
-                                          "has": {
-                                            "kind": "list_splat_pattern",
-                                            "stopBy": "neighbor"
-                                          }
-                                        }
-                                      ]
-                                    }
-                                  ],
-                                  "stopBy": "end"
-                                }
-                              }
-                            }
-                          ]
+                          "kind": "identifier"
                         },
                         {
-                          "layout": {
-                            "after": {
-                              "to": "capture.CURRENT",
-                              "breaks": {
-                                "eq": 0
-                              }
-                            }
-                          }
+                          "pattern": "$ALIAS_FROM"
+                        },
+                        {
+                          "pattern": "$ROW"
                         }
                       ],
-                      "stopBy": "end"
+                      "stopBy": "neighbor",
+                      "field": "attribute"
                     }
                   }
-                ],
-                "stopBy": "end"
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "binary_operator"
+                  },
+                  {
+                    "has": {
+                      "regex": "^\\|$",
+                      "stopBy": "neighbor",
+                      "field": "operator"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "matches": "alias-target",
+                          "stopBy": "neighbor",
+                          "field": "left"
+                        }
+                      },
+                      {
+                        "has": {
+                          "matches": "alias-target",
+                          "stopBy": "neighbor",
+                          "field": "right"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "has": {
+                      "matches": "alias-target",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
               }
-            }
+            ]
           }
         }
       }
@@ -944,293 +869,619 @@
     },
     {
       "id": "unsafe-parameter",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "syntax": "valid",
-          "rule": {
-            "all": [
-              {
-                "all": [
-                  {
-                    "all": [
-                      {
-                        "all": [
-                          {
-                            "any": [
-                              {
-                                "kind": "typed_parameter"
-                              },
-                              {
-                                "kind": "typed_default_parameter"
-                              }
-                            ]
-                          },
-                          {
-                            "not": {
-                              "has": {
-                                "all": [
-                                  {
-                                    "kind": "identifier"
-                                  },
-                                  {
-                                    "regex": "^(?:self)$"
-                                  }
-                                ],
-                                "stopBy": "neighbor"
-                              }
-                            }
-                          },
-                          {
-                            "has": {
-                              "matches": "unsafe-leaf",
-                              "stopBy": "neighbor",
-                              "field": "type"
-                            }
-                          },
-                          {
-                            "inside": {
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "row",
+            "query": {
+              "ast": {
+                "language": "python",
+                "syntax": "valid",
+                "rule": {
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "all": [
+                            {
                               "all": [
                                 {
-                                  "all": [
-                                    {
-                                      "all": [
-                                        {
-                                          "kind": "function_definition"
-                                        },
-                                        {
-                                          "has": {
-                                            "all": [
-                                              {
-                                                "kind": "identifier"
-                                              },
-                                              {
-                                                "regex": "^(?:__init__)$"
-                                              }
-                                            ],
-                                            "stopBy": "neighbor",
-                                            "field": "name"
-                                          }
-                                        }
-                                      ]
-                                    },
-                                    {
-                                      "regex": "^def\\s"
-                                    }
-                                  ]
+                                  "matches": "base-name"
                                 },
                                 {
                                   "inside": {
                                     "all": [
                                       {
-                                        "kind": "class_definition"
+                                        "kind": "argument_list"
                                       },
                                       {
-                                        "not": {
-                                          "has": {
-                                            "any": [
-                                              {
-                                                "all": [
-                                                  {
-                                                    "kind": "identifier"
-                                                  },
-                                                  {
-                                                    "regex": {
-                                                      "$option": "ALLOWLISTED_CLASSES",
-                                                      "escape": "regex",
-                                                      "join": "|",
-                                                      "template": "^(?:{})$"
-                                                    }
-                                                  }
-                                                ]
-                                              },
-                                              {
-                                                "all": [
-                                                  {
-                                                    "kind": "identifier"
-                                                  },
-                                                  {
-                                                    "regex": {
-                                                      "$option": "SCHEMA_METADATA_CLASSES",
-                                                      "escape": "regex",
-                                                      "join": "|",
-                                                      "template": "^(?:{})$"
-                                                    }
-                                                  }
-                                                ]
-                                              },
-                                              {
-                                                "all": [
-                                                  {
-                                                    "kind": "identifier"
-                                                  },
-                                                  {
-                                                    "regex": {
-                                                      "$option": "CALLSITE_PROTECTED_CLASSES",
-                                                      "escape": "regex",
-                                                      "join": "|",
-                                                      "template": "^(?:{})$"
-                                                    }
-                                                  }
-                                                ]
-                                              },
-                                              {
-                                                "all": [
-                                                  {
-                                                    "kind": "identifier"
-                                                  },
-                                                  {
-                                                    "regex": "^(?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)$"
-                                                  }
-                                                ]
+                                        "inside": {
+                                          "all": [
+                                            {
+                                              "kind": "class_definition"
+                                            },
+                                            {
+                                              "pattern": "$CLASS"
+                                            },
+                                            {
+                                              "has": {
+                                                "pattern": "$CLASS_NAME",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
                                               }
-                                            ],
-                                            "stopBy": "neighbor",
-                                            "field": "name"
-                                          }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
                                         }
-                                      },
-                                      {
-                                        "has": {
-                                          "has": {
-                                            "all": [
-                                              {
-                                                "pattern": "$BASE"
-                                              },
-                                              {
-                                                "matches": {
-                                                  "grammar-name": {
-                                                    "NAME": "$BASE"
-                                                  }
-                                                }
-                                              }
-                                            ],
-                                            "stopBy": "neighbor"
-                                          },
-                                          "stopBy": "neighbor",
-                                          "field": "superclasses"
-                                        }
-                                      }
-                                    ],
-                                    "stopBy": {
-                                      "kind": "class_definition"
-                                    }
-                                  }
-                                }
-                              ],
-                              "stopBy": {
-                                "kind": "function_definition"
-                              }
-                            }
-                          }
-                        ]
-                      },
-                      {
-                        "not": {
-                          "any": [
-                            {
-                              "kind": "list_splat_pattern"
-                            },
-                            {
-                              "kind": "dictionary_splat_pattern"
-                            },
-                            {
-                              "all": [
-                                {
-                                  "kind": "typed_parameter"
-                                },
-                                {
-                                  "has": {
-                                    "any": [
-                                      {
-                                        "kind": "list_splat_pattern"
-                                      },
-                                      {
-                                        "kind": "dictionary_splat_pattern"
                                       }
                                     ],
                                     "stopBy": "neighbor"
                                   }
                                 }
                               ]
+                            },
+                            {
+                              "pattern": "$ROW"
                             }
                           ]
-                        }
-                      },
-                      {
-                        "not": {
-                          "precedes": {
-                            "kind": "positional_separator",
-                            "stopBy": "end"
-                          }
-                        }
-                      },
-                      {
-                        "not": {
-                          "follows": {
-                            "any": [
-                              {
-                                "kind": "keyword_separator"
-                              },
-                              {
-                                "kind": "list_splat_pattern"
-                              },
-                              {
+                        },
+                        {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "matches": "base-name"
+                                },
+                                {
+                                  "inside": {
+                                    "all": [
+                                      {
+                                        "kind": "argument_list"
+                                      },
+                                      {
+                                        "inside": {
+                                          "all": [
+                                            {
+                                              "kind": "class_definition"
+                                            },
+                                            {
+                                              "pattern": "$CLASS"
+                                            },
+                                            {
+                                              "has": {
+                                                "pattern": "$CLASS_NAME",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "inside": {
                                 "all": [
                                   {
-                                    "kind": "typed_parameter"
+                                    "kind": "class_definition"
+                                  },
+                                  {
+                                    "not": {
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": {
+                                                  "$option": "ALLOWLISTED_CLASSES",
+                                                  "escape": "regex",
+                                                  "join": "|",
+                                                  "template": "^(?:{})$"
+                                                }
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": {
+                                                  "$option": "SCHEMA_METADATA_CLASSES",
+                                                  "escape": "regex",
+                                                  "join": "|",
+                                                  "template": "^(?:{})$"
+                                                }
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": {
+                                                  "$option": "CALLSITE_PROTECTED_CLASSES",
+                                                  "escape": "regex",
+                                                  "join": "|",
+                                                  "template": "^(?:{})$"
+                                                }
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)$"
+                                              }
+                                            ]
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
                                   },
                                   {
                                     "has": {
-                                      "kind": "list_splat_pattern",
-                                      "stopBy": "neighbor"
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "all": [
+                                              {
+                                                "all": [
+                                                  {
+                                                    "all": [
+                                                      {
+                                                        "kind": "function_definition"
+                                                      },
+                                                      {
+                                                        "has": {
+                                                          "all": [
+                                                            {
+                                                              "kind": "identifier"
+                                                            },
+                                                            {
+                                                              "regex": "^(?:__init__)$"
+                                                            }
+                                                          ],
+                                                          "stopBy": "neighbor",
+                                                          "field": "name"
+                                                        }
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "regex": "^def\\s"
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "has": {
+                                                  "has": {
+                                                    "all": [
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "kind": "typed_parameter"
+                                                          },
+                                                          {
+                                                            "kind": "typed_default_parameter"
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "pattern": "$PARAMETER"
+                                                      },
+                                                      {
+                                                        "not": {
+                                                          "has": {
+                                                            "all": [
+                                                              {
+                                                                "kind": "identifier"
+                                                              },
+                                                              {
+                                                                "regex": "^(?:self)$"
+                                                              }
+                                                            ],
+                                                            "stopBy": "neighbor"
+                                                          }
+                                                        }
+                                                      },
+                                                      {
+                                                        "has": {
+                                                          "matches": "unsafe-leaf",
+                                                          "stopBy": "neighbor",
+                                                          "field": "type"
+                                                        }
+                                                      },
+                                                      {
+                                                        "not": {
+                                                          "any": [
+                                                            {
+                                                              "kind": "list_splat_pattern"
+                                                            },
+                                                            {
+                                                              "kind": "dictionary_splat_pattern"
+                                                            },
+                                                            {
+                                                              "all": [
+                                                                {
+                                                                  "kind": "typed_parameter"
+                                                                },
+                                                                {
+                                                                  "has": {
+                                                                    "any": [
+                                                                      {
+                                                                        "kind": "list_splat_pattern"
+                                                                      },
+                                                                      {
+                                                                        "kind": "dictionary_splat_pattern"
+                                                                      }
+                                                                    ],
+                                                                    "stopBy": "neighbor"
+                                                                  }
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        }
+                                                      },
+                                                      {
+                                                        "not": {
+                                                          "precedes": {
+                                                            "kind": "positional_separator",
+                                                            "stopBy": "end"
+                                                          }
+                                                        }
+                                                      },
+                                                      {
+                                                        "not": {
+                                                          "follows": {
+                                                            "any": [
+                                                              {
+                                                                "kind": "keyword_separator"
+                                                              },
+                                                              {
+                                                                "kind": "list_splat_pattern"
+                                                              },
+                                                              {
+                                                                "all": [
+                                                                  {
+                                                                    "kind": "typed_parameter"
+                                                                  },
+                                                                  {
+                                                                    "has": {
+                                                                      "kind": "list_splat_pattern",
+                                                                      "stopBy": "neighbor"
+                                                                    }
+                                                                  }
+                                                                ]
+                                                              }
+                                                            ],
+                                                            "stopBy": "end"
+                                                          }
+                                                        }
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor"
+                                                  },
+                                                  "stopBy": "neighbor",
+                                                  "field": "parameters"
+                                                }
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "decorated_definition"
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "all": [
+                                                        {
+                                                          "all": [
+                                                            {
+                                                              "kind": "function_definition"
+                                                            },
+                                                            {
+                                                              "has": {
+                                                                "all": [
+                                                                  {
+                                                                    "kind": "identifier"
+                                                                  },
+                                                                  {
+                                                                    "regex": "^(?:__init__)$"
+                                                                  }
+                                                                ],
+                                                                "stopBy": "neighbor",
+                                                                "field": "name"
+                                                              }
+                                                            }
+                                                          ]
+                                                        },
+                                                        {
+                                                          "regex": "^def\\s"
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "has": {
+                                                        "has": {
+                                                          "all": [
+                                                            {
+                                                              "any": [
+                                                                {
+                                                                  "kind": "typed_parameter"
+                                                                },
+                                                                {
+                                                                  "kind": "typed_default_parameter"
+                                                                }
+                                                              ]
+                                                            },
+                                                            {
+                                                              "pattern": "$PARAMETER"
+                                                            },
+                                                            {
+                                                              "not": {
+                                                                "has": {
+                                                                  "all": [
+                                                                    {
+                                                                      "kind": "identifier"
+                                                                    },
+                                                                    {
+                                                                      "regex": "^(?:self)$"
+                                                                    }
+                                                                  ],
+                                                                  "stopBy": "neighbor"
+                                                                }
+                                                              }
+                                                            },
+                                                            {
+                                                              "has": {
+                                                                "matches": "unsafe-leaf",
+                                                                "stopBy": "neighbor",
+                                                                "field": "type"
+                                                              }
+                                                            },
+                                                            {
+                                                              "not": {
+                                                                "any": [
+                                                                  {
+                                                                    "kind": "list_splat_pattern"
+                                                                  },
+                                                                  {
+                                                                    "kind": "dictionary_splat_pattern"
+                                                                  },
+                                                                  {
+                                                                    "all": [
+                                                                      {
+                                                                        "kind": "typed_parameter"
+                                                                      },
+                                                                      {
+                                                                        "has": {
+                                                                          "any": [
+                                                                            {
+                                                                              "kind": "list_splat_pattern"
+                                                                            },
+                                                                            {
+                                                                              "kind": "dictionary_splat_pattern"
+                                                                            }
+                                                                          ],
+                                                                          "stopBy": "neighbor"
+                                                                        }
+                                                                      }
+                                                                    ]
+                                                                  }
+                                                                ]
+                                                              }
+                                                            },
+                                                            {
+                                                              "not": {
+                                                                "precedes": {
+                                                                  "kind": "positional_separator",
+                                                                  "stopBy": "end"
+                                                                }
+                                                              }
+                                                            },
+                                                            {
+                                                              "not": {
+                                                                "follows": {
+                                                                  "any": [
+                                                                    {
+                                                                      "kind": "keyword_separator"
+                                                                    },
+                                                                    {
+                                                                      "kind": "list_splat_pattern"
+                                                                    },
+                                                                    {
+                                                                      "all": [
+                                                                        {
+                                                                          "kind": "typed_parameter"
+                                                                        },
+                                                                        {
+                                                                          "has": {
+                                                                            "kind": "list_splat_pattern",
+                                                                            "stopBy": "neighbor"
+                                                                          }
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ],
+                                                                  "stopBy": "end"
+                                                                }
+                                                              }
+                                                            }
+                                                          ],
+                                                          "stopBy": "neighbor"
+                                                        },
+                                                        "stopBy": "neighbor",
+                                                        "field": "parameters"
+                                                      }
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor",
+                                                  "field": "definition"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ],
+                                        "stopBy": "neighbor"
+                                      },
+                                      "stopBy": "neighbor",
+                                      "field": "body"
                                     }
                                   }
-                                ]
+                                ],
+                                "stopBy": {
+                                  "kind": "class_definition"
+                                }
                               }
-                            ],
-                            "stopBy": "end"
-                          }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "assignment"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "pattern": "$ALIAS_TO"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "left"
+                              }
+                            },
+                            {
+                              "has": {
+                                "matches": "alias-target",
+                                "stopBy": "neighbor",
+                                "field": "right"
+                              }
+                            }
+                          ]
                         }
-                      }
-                    ]
-                  },
-                  {
-                    "pattern": "$CURRENT"
-                  },
-                  {
-                    "not": {
-                      "matches": {
-                        "earlier-unsafe-parameter": {
-                          "CURRENT": "$CURRENT"
-                        }
-                      }
-                    }
-                  }
-                ]
-              },
-              {
-                "inside": {
-                  "all": [
-                    {
-                      "kind": "module"
+                      ]
                     },
                     {
-                      "regex": {
-                        "$option": "sourceGate",
-                        "cases": {
-                          "true": "SqlRenderable|SqlClause|SqlFragment|SqlParam|SqlRaw|SqlBuiltQuery|SqlDdlStatement|SqlAdminQuery|SqlUnsafe|SqlLegacy|_SqlPrebuilt",
-                          "false": "(?s).*"
-                        }
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "module"
+                          },
+                          {
+                            "regex": {
+                              "$option": "sourceGate",
+                              "cases": {
+                                "true": "SqlRenderable|SqlClause|SqlFragment|SqlParam|SqlRaw|SqlBuiltQuery|SqlDdlStatement|SqlAdminQuery|SqlUnsafe|SqlLegacy|_SqlPrebuilt",
+                                "false": "(?s).*"
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "end"
                       }
                     }
-                  ],
-                  "stopBy": "end"
+                  ]
                 }
               }
-            ]
+            },
+            "project": {
+              "path": "file.path",
+              "base": "capture.BASE",
+              "class": "capture.CLASS_NAME",
+              "alias_from": "capture.ALIAS_FROM",
+              "alias_to": "capture.ALIAS_TO",
+              "leaf": "capture.LEAF.text",
+              "position": "capture.PARAMETER.startLine",
+              "owner": "capture.CLASS_NAME",
+              "parameter": "capture.PARAMETER"
+            },
+            "each": "ROW",
+            "anchor": "capture.PARAMETER",
+            "closure": [
+              {
+                "name": "classes",
+                "seeds": {
+                  "$option": "grammar_class_names"
+                },
+                "edges": {
+                  "from": "base",
+                  "to": "class"
+                },
+                "contains": {}
+              },
+              {
+                "name": "aliases",
+                "extends": [
+                  "classes"
+                ],
+                "edges": {
+                  "from": "alias_from",
+                  "to": "alias_to"
+                },
+                "contains": {
+                  "grammar": "base",
+                  "safe": "leaf"
+                }
+              }
+            ],
+            "where": {
+              "all": [
+                {
+                  "eq": [
+                    "row.grammar",
+                    true
+                  ]
+                },
+                {
+                  "eq": [
+                    "row.safe",
+                    false
+                  ]
+                },
+                {
+                  "ne": [
+                    "row.parameter",
+                    null
+                  ]
+                }
+              ]
+            }
           }
-        }
+        },
+        "count": {
+          "lte": 0
+        },
+        "group_by": [
+          "row.path",
+          "row.position",
+          "row.owner"
+        ]
       },
       "violation": {
         "code": "escape_hatch",

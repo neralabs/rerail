@@ -99,30 +99,25 @@ The [third-batch report](data-layer-batch-three.md) records the concrete port an
 An attribute-store mismatch and excessive recursive descendant scans were candidate defects; both were corrected in the policies.
 Signed aggregate reporter integration remains a separate contract, as in the existing migration scope.
 
-## Fourth-batch evidence and proposals
+## Fourth-batch implementation
 
-The [fourth-batch report](data-layer-batch-four.md) records ten additional authored candidates.
-The batch remains incomplete; original-test replay alone does not establish parity.
-No Linear issue was created.
+The [fourth-batch report](data-layer-batch-four.md) records ten further completed source-detection candidates.
+The combined original and supplemental gate compares 514 calls with positive and clean coverage for all ten checks.
+The [failure analysis](data-layer-batch-four-root-causes.md) gives the root causes, source links, and TDD ladders.
+No Linear issue was created or amended.
 
-Burndown probes exposed asynchronous duplicate-owner attribution in the original reporter.
-An ordered-evidence experiment assumed a contract that repeated oracle runs disproved.
-The experiment is preserved in a named stash and is absent from the batch.
-The candidate uses existing budget queries; ambiguous owner cases remain explicit retained contracts.
-No new engine feature or ticket is justified by that ambiguity.
+Three capabilities are now implemented on this branch:
 
-Two feature proposals have concrete source and branch evidence:
+1. Authored evidence closure supports global names, staged inheritance and aliases, and class-local cyclic helper graphs.
+2. Formatted-string parsing exposes decoded parts and an authored interpolation marker without evaluating expressions.
+3. Decoded identifier-word parsing supports quoted aliases inside containers and arbitrary annotation text.
 
-1. **Authored workspace symbol relations and cycle-safe closure.**
-   Constructor-name discovery, inherited safe-type membership, and helper reachability require related graph operations.
-   The report links each original linter, its reproducer, witness requirements, incremental behavior, and failure semantics.
-   One general feature can serve these requirements; separate per-linter tickets are unnecessary.
-2. **Formatted-string projections.**
-   Raw-string detection needs decoded constant parts; SQL regex classification needs a template with an authored interpolation marker.
-   The report links both original implementations and includes positive and clean counterexamples.
-   Existing constant decoding does not provide these dynamic-template projections.
+Native tests cover incremental invalidation, source locations, multiplicity, cache isolation, malformed inputs, and resource limits.
+The repository ladder also exposed excessive work-budget polling; the fix retains both existing limits.
 
-Both proposals remain uncreated and require Jeremy’s explicit approval.
-Quoted aliases inside container annotations remain an unresolved candidate defect.
-The failed annotation-host experiment does not yet justify another feature ticket.
-Signed ceiling integration and speed measurements remain separate migration work.
+Burndown probes still expose asynchronous duplicate-owner attribution in the original reporter.
+The rejected ordering experiment remains in its named stash.
+That ambiguity justifies no new feature or ticket.
+Signed aggregate enforcement remains an integration contract.
+Performance ablation measures added graph-query cost without proposing a feature ticket.
+Any future Linear issue still requires Jeremy's explicit approval.

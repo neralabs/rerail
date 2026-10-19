@@ -4,6 +4,7 @@
 
 pub(in crate::code_rule_dsl) mod crossfile;
 mod line_state;
+pub(in crate::code_rule_dsl) mod name_closure;
 pub(in crate::code_rule_dsl) mod select_when;
 
 use super::model::RegexOptions;

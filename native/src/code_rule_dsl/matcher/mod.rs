@@ -44,7 +44,9 @@ pub(super) use captures::{Capture, CaptureAnalysis, collect_variables, parse_exp
 pub(super) use compare::{Collation, CompareOp, CompareText, Comparison, EqClass, SemanticText};
 pub(super) use count::{Count, CountBinding};
 pub(crate) use each::binding_range;
-pub(crate) use exported::{WITNESS_NODE, export_text, exported_span, is_span_variable};
+pub(crate) use exported::{
+    WITNESS_NODE, export_text, exported_span, exported_text, is_span_variable,
+};
 pub(crate) use format_args::{FormatArgs, Style};
 pub(crate) use layout::{Gap, Layout, LineContext, LineCount, Neighbour};
 pub(super) use memo::with_file as with_file_memo;

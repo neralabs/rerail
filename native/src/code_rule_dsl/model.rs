@@ -424,6 +424,11 @@ pub(super) struct Projection {
 pub(super) enum ProjectionSource {
     /// A capture's text (a multi-node capture's nodes joined as in the source).
     Capture(String),
+    /// A capture's source byte offset, for identity and partition keys.
+    CaptureStart(String),
+    CaptureLine(String),
+    /// Decoded/exported capture text, or a host node's source text.
+    CaptureText(String),
     /// The file's path, its directory, its file name, or its name without extensions.
     Path,
     Directory,
@@ -441,6 +446,22 @@ pub(super) struct FactQuery {
     pub(super) predicate: Option<Value>,
     /// Rows projected from an AST query's matches in every file of the code rule's scope.
     pub(super) ast: Arc<AstRelation>,
+    pub(super) closure: Vec<NameClosure>,
+    pub(super) each: Option<String>,
+    pub(super) anchor: Anchor,
+}
+
+/// A staged, cycle-safe closure over authored relation fields. Earlier sets may seed later sets;
+/// later edges never feed back into an earlier stage.
+#[derive(Clone, Debug)]
+pub(super) struct NameClosure {
+    pub(super) name: String,
+    pub(super) seeds: Vec<String>,
+    pub(super) seed_field: Option<String>,
+    pub(super) edges: Option<(String, String)>,
+    pub(super) extends: Vec<String>,
+    pub(super) partition_by: Vec<String>,
+    pub(super) contains: Vec<(String, String)>,
 }
 
 #[derive(Clone)]

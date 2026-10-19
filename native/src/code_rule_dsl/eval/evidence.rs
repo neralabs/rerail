@@ -2,7 +2,7 @@
 //! `require_each` and `budget` over the rows every file of the relation's domain produced.
 
 use super::output::{failure, violation_from_witness, violation_id};
-use crate::code_rule_dsl::matcher::exported_span;
+use crate::code_rule_dsl::matcher::{exported_span, exported_text};
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledClause, CompiledCodeRule, Evaluation, FactQuery, FileInput, Projection,
     ProjectionSource, Query, ViolationSpec,
@@ -37,9 +37,8 @@ pub(crate) enum Side {
     Counted,
 }
 
-/// The violation spec an evidence producer's witnesses use: the clause's projection and same-node
-/// regex groups, without fixes or `each` (a relation row is one match), and the comments its
-/// `side` answers to.
+/// The violation spec an evidence producer's witnesses use: its projection, enumeration, anchor
+/// and same-node regex groups, without fixes, and the comments its `side` answers to.
 pub(crate) fn producer_violation(
     clause: &CompiledClause,
     relation: &FactQuery,
@@ -49,7 +48,8 @@ pub(crate) fn producer_violation(
     violation.project = relation.ast.project.clone();
     violation.fix = None;
     violation.fix_range = None;
-    violation.each = None;
+    violation.each = relation.each.clone();
+    violation.anchor = relation.anchor.clone();
     // Compiling refuses `suppress` on a relation clause: only `rerail-ignore` reaches its rows.
     violation.suppress = None;
     match side {
@@ -103,6 +103,28 @@ pub(super) fn project<D: Doc>(
                         .and_then(|range| file.source.get(range))
                         .map_or(Value::Null, |text| Value::String(text.to_owned()))
                 }
+                ProjectionSource::CaptureLine(capture) => env
+                    .get_match(capture)
+                    .map(|node| node.start_pos().line())
+                    .or_else(|| {
+                        exported_span(env, capture).map(|span| {
+                            crate::code_rule_dsl::matcher::file_lines(
+                                &file.source,
+                                crate::code_rule_dsl::lines::Terminators::Newlines,
+                            )
+                            .span(span.start, span.end)
+                            .start_line
+                        })
+                    })
+                    .map_or(Value::Null, |line| json!(line)),
+                ProjectionSource::CaptureText(capture) => exported_text(env, capture)
+                    .or_else(|| env.get_match(capture).map(|node| node.text().into_owned()))
+                    .map_or(Value::Null, Value::String),
+                ProjectionSource::CaptureStart(capture) => env
+                    .get_match(capture)
+                    .map(|node| node.range().start)
+                    .or_else(|| exported_span(env, capture).map(|span| span.start))
+                    .map_or(Value::Null, |at| json!(at)),
                 ProjectionSource::Path => Value::String(file.path.clone()),
                 ProjectionSource::Directory => Value::String(directory.to_owned()),
                 ProjectionSource::Name => Value::String(name.to_owned()),
@@ -142,8 +164,23 @@ fn relation(rows: &Rows) -> Relation {
     }
 }
 
+fn derived_relation(
+    query: &FactQuery,
+    rows: &Rows,
+    code_rule: &CompiledCodeRule,
+) -> Result<Relation, crate::code_rule_dsl::query::name_closure::ClosureError> {
+    let mut relation = relation(rows);
+    crate::code_rule_dsl::query::name_closure::derive(
+        &mut relation,
+        &query.closure,
+        code_rule.capabilities.limits.max_visited_nodes,
+    )?;
+    Ok(relation)
+}
+
 /// The witness as the clause reports it: without its projection.
-fn reported(mut witness: Witness) -> Witness {
+fn reported(mut witness: Witness, query: &FactQuery) -> Witness {
+    witness.span = violations::anchored_span(&query.anchor, &witness).0;
     witness.captures.set_projection(None);
     witness
 }
@@ -170,10 +207,22 @@ pub(crate) fn require_each(
         &subject.incomplete,
         "subject evidence in this file is incomplete",
     ));
+    let relations = derived_relation(subject_query, &subject, code_rule).and_then(|subject| {
+        derived_relation(evidence_query, evidence, code_rule).map(|evidence| (subject, evidence))
+    });
+    let (subject_relation, evidence_relation) = match relations {
+        Ok(relations) => relations,
+        Err(error) => {
+            evaluation
+                .failures
+                .push(failure(&clause.id, error.code(), error.message(), None));
+            return evaluation;
+        }
+    };
     let answers = match crossfile::require_each(
-        (&subject_query.alias, &relation(&subject)),
+        (&subject_query.alias, &subject_relation),
         subject_query.predicate.as_ref(),
-        (&evidence_query.alias, &relation(evidence)),
+        (&evidence_query.alias, &evidence_relation),
         evidence_query.predicate.as_ref(),
         crate::code_rule_dsl::budget::matcher_budget_exhausted,
     ) {
@@ -197,7 +246,7 @@ pub(crate) fn require_each(
                     evaluation.violations.push(violation_from_witness(
                         code_rule,
                         clause,
-                        reported(witness),
+                        reported(witness, subject_query),
                     ));
                 }
             }
@@ -245,8 +294,17 @@ pub(crate) fn budget(
         unreachable!("budget checks only");
     };
     let mut evaluation = Evaluation::default();
+    let derived = match derived_relation(query, &rows, code_rule) {
+        Ok(relation) => relation,
+        Err(error) => {
+            evaluation
+                .failures
+                .push(failure(&clause.id, error.code(), error.message(), None));
+            return evaluation;
+        }
+    };
     let groups = match crossfile::budget(
-        (&query.alias, &relation(&rows)),
+        (&query.alias, &derived),
         query.predicate.as_ref(),
         group_by,
         distinct,
@@ -296,7 +354,7 @@ pub(crate) fn budget(
             continue;
         };
         evaluation.metrics.witnesses += 1;
-        let mut violation = violation_from_witness(code_rule, clause, reported(witness));
+        let mut violation = violation_from_witness(code_rule, clause, reported(witness, query));
         // A group is identified by its key, not by whichever witness is first today, so its
         // violation keeps its id as usages come and go and never collides with another group's.
         violation["id"] = Value::String(violation_id(

@@ -914,7 +914,7 @@ struct FileScopes {
     structures: HashMap<(usize, Equality), Rc<Option<Vec<Tok>>>>,
     /// Literals parsed so far, by node and grammar (`parse`); `None` is a literal whose value is
     /// not known.
-    parses: HashMap<(usize, Grammar), Option<Arc<SubTree>>>,
+    parses: HashMap<(usize, Grammar, String), Option<Arc<SubTree>>>,
     /// Strings parsed so far, by node, reading and grammar (`formatArgs` over a PHP format that
     /// is no literal); `None` is a parse whose value is not known.
     value_parses: HashMap<(ValueKey, Grammar), Option<Arc<SubTree>>>,
@@ -1432,11 +1432,11 @@ pub(crate) fn file_sqlfluff(read: impl FnOnce() -> SqlfluffIndex) -> Rc<Sqlfluff
 }
 
 /// A literal parsed earlier in this file: `Some(None)` when its value is not known.
-pub(super) fn memoized_parse(key: &(usize, Grammar)) -> Option<Option<Arc<SubTree>>> {
+pub(super) fn memoized_parse(key: &(usize, Grammar, String)) -> Option<Option<Arc<SubTree>>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.parses.get(key).cloned()))
 }
 
-pub(super) fn memoize_parse(key: (usize, Grammar), tree: Option<Arc<SubTree>>) {
+pub(super) fn memoize_parse(key: (usize, Grammar, String), tree: Option<Arc<SubTree>>) {
     FILE_SCOPES.with_borrow_mut(|slot| {
         if let Some(slot) = slot {
             slot.parses.insert(key, tree);
