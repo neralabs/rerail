@@ -45,6 +45,11 @@ impl TerminalPlan {
         label(self.language).expect("a compiled matcher has a registered dialect")
     }
 
+    #[cfg(test)]
+    pub(super) fn program_digest(&self) -> String {
+        self.program.canonical_digest(self.language(), b"")
+    }
+
     pub(super) fn program(&self) -> &Program {
         &self.program
     }

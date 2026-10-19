@@ -1064,10 +1064,21 @@ pub(super) struct SqlFactRow {
     pub(super) label: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SqlProducerStatusRow {
+    pub(super) producer: i64,
+    pub(super) file: i64,
+    pub(super) complete: i64,
+    pub(super) verdict: Option<i64>,
+    pub(super) work_used: Option<i64>,
+    pub(super) error: Option<String>,
+}
+
 pub(super) struct SqlOutcome {
     pub(super) ranges: Vec<(usize, usize)>,
     pub(super) errors: Vec<String>,
     pub(super) facts: Vec<SqlFactRow>,
+    pub(super) statuses: Vec<SqlProducerStatusRow>,
 }
 
 pub(super) fn sql_outcome(
@@ -1199,6 +1210,18 @@ fn sql_outcome_with_failure(
         .expect("SQL structural query")
         .collect::<rusqlite::Result<Vec<_>>>()
         .expect("typed SQL nodes");
+    let statuses = registry
+        .query_producer_status_rows(token)
+        .into_iter()
+        .map(|row| SqlProducerStatusRow {
+            producer: row.producer,
+            file: row.file,
+            complete: row.complete,
+            verdict: row.verdict,
+            work_used: row.work_used,
+            error: row.error,
+        })
+        .collect::<Vec<_>>();
     let mut facts = registry
         .query_fact_rows(token)
         .into_iter()
@@ -1272,6 +1295,7 @@ fn sql_outcome_with_failure(
         ranges,
         errors,
         facts,
+        statuses,
     }
 }
 

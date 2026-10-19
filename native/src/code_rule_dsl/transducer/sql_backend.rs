@@ -1077,6 +1077,16 @@ struct CaptureData {
 
 #[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::code_rule_dsl) struct TestProducerStatusRow {
+    pub(in crate::code_rule_dsl) producer: i64,
+    pub(in crate::code_rule_dsl) file: i64,
+    pub(in crate::code_rule_dsl) complete: i64,
+    pub(in crate::code_rule_dsl) verdict: Option<i64>,
+    pub(in crate::code_rule_dsl) work_used: Option<i64>,
+    pub(in crate::code_rule_dsl) error: Option<String>,
+}
+
+#[cfg(test)]
 pub(in crate::code_rule_dsl) struct TestFactRow {
     pub(in crate::code_rule_dsl) producer: i64,
     pub(in crate::code_rule_dsl) node: i64,
@@ -1436,6 +1446,30 @@ impl MatchRegistry {
                 }),
             );
         token
+    }
+
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn query_producer_status_rows(
+        &self,
+        token: i64,
+    ) -> Vec<TestProducerStatusRow> {
+        let Some(batch) = self.batch(token) else {
+            return Vec::new();
+        };
+        let Some(rows) = batch.rows.get() else {
+            return Vec::new();
+        };
+        rows.iter()
+            .filter(|row| row.row_kind == RowKind::ProducerStatus)
+            .map(|row| TestProducerStatusRow {
+                producer: row.producer_id.expect("a producer status has a producer"),
+                file: row.file_index.expect("a producer status has a file"),
+                complete: row.complete,
+                verdict: row.verdict,
+                work_used: row.work_used,
+                error: row.error_code.clone(),
+            })
+            .collect()
     }
 
     #[cfg(test)]

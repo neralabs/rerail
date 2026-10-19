@@ -85,6 +85,131 @@ struct ExpectedOracle {
     failures: Vec<Value>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ImplementationGoldenFile {
+    cases: Vec<ImplementationGolden>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ImplementationGolden {
+    name: String,
+    normalized_sql: String,
+    terminal_catalog: Vec<ExpectedTerminal>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ExpectedTerminal {
+    ordinal: usize,
+    kind: String,
+    dialect: String,
+    producer_kind: String,
+    program_digest: String,
+    result_schema: Vec<String>,
+    owning_clause_ids: Vec<String>,
+    result_limit: u32,
+    completion_required: bool,
+}
+
+fn implementation_goldens() -> ImplementationGoldenFile {
+    serde_json::from_str(include_str!(
+        "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.json"
+    ))
+    .expect("the implementation goldens have the strict schema")
+}
+
+fn normalized_sql(sql: &str) -> String {
+    sql.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn terminal_kind(kind: super::relational::TerminalKind) -> String {
+    format!("{kind:?}").to_ascii_lowercase()
+}
+
+fn producer_kind(kind: crate::code_rule_dsl::transducer::sql_backend::ProducerKind) -> String {
+    format!("{kind:?}").to_ascii_lowercase()
+}
+
+fn result_schema(kind: super::relational::TerminalKind) -> Vec<String> {
+    use super::relational::TerminalKind;
+    let rows = match kind {
+        TerminalKind::Pattern => &["producer_status", "terminal_match", "capture"][..],
+        TerminalKind::Navigation => &["producer_status", "navigation"],
+        TerminalKind::Value | TerminalKind::Fact => &["producer_status", "fact"],
+        TerminalKind::Universe
+        | TerminalKind::Kind
+        | TerminalKind::Regex
+        | TerminalKind::Text
+        | TerminalKind::Equality
+        | TerminalKind::Parse
+        | TerminalKind::CallSeed
+        | TerminalKind::Transform => &["producer_status", "terminal_match"],
+    };
+    rows.iter().map(|row| (*row).to_owned()).collect()
+}
+
+fn compiled_case(case: &ContractCase) -> Arc<crate::code_rule_dsl::model::CompiledCodeRule> {
+    CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(case),
+    )
+    .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason))
+    .inner
+}
+
+fn actual_implementation_golden(case: &ContractCase) -> ImplementationGolden {
+    let compiled = compiled_case(case);
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled)]).unwrap_or_else(|error| {
+        panic!("{} lowering: {}", case.name, error.unsupported().join("; "))
+    });
+    let terminal_catalog = plan
+        .terminals()
+        .iter()
+        .enumerate()
+        .map(|(ordinal, terminal)| {
+            let kind = terminal.kind();
+            ExpectedTerminal {
+                ordinal,
+                kind: terminal_kind(kind),
+                dialect: terminal.language().to_owned(),
+                producer_kind: producer_kind(terminal.producer_kind()),
+                program_digest: terminal.program_digest(),
+                result_schema: result_schema(kind),
+                owning_clause_ids: terminal
+                    .clauses()
+                    .iter()
+                    .map(|&(rule, clause)| {
+                        assert_eq!(rule, 0, "{} has one compiled rule", case.name);
+                        format!("{}/{}", compiled.id, compiled.clauses[clause].id)
+                    })
+                    .collect(),
+                result_limit: terminal.result_limit(),
+                completion_required: true,
+            }
+        })
+        .collect();
+    let referenced = plan
+        .clause_terminal_ids()
+        .iter()
+        .flatten()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        referenced,
+        (0..plan.terminals().len()).collect(),
+        "{} has an unreferenced catalog entry",
+        case.name
+    );
+    ImplementationGolden {
+        name: case.name.clone(),
+        normalized_sql: normalized_sql(plan.sql()),
+        terminal_catalog,
+    }
+}
+
 fn authored_cases(source: &str) -> Vec<ContractCase> {
     serde_json::from_str(source).expect("the authored production contracts have the strict schema")
 }
@@ -352,6 +477,79 @@ fn production_contract_phase_two_sql_rows_equal_committed_oracle_rows() {
     }
 }
 
+#[test]
+fn production_contract_phases_two_to_four_have_complete_implementation_goldens() {
+    let goldens = implementation_goldens();
+    let expected_names = PHASE_TWO_CASES
+        .iter()
+        .copied()
+        .chain(PHASE_THREE_CASES.iter().copied())
+        .chain(PHASE_FOUR_CASES.iter().copied())
+        .collect::<BTreeSet<_>>();
+    let actual_names = goldens
+        .cases
+        .iter()
+        .map(|golden| golden.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let missing = expected_names
+        .difference(&actual_names)
+        .copied()
+        .collect::<Vec<_>>();
+    let unexpected = actual_names
+        .difference(&expected_names)
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        (missing, unexpected),
+        (Vec::new(), Vec::new()),
+        "each implemented contract must have one exact SQL and terminal-catalog golden"
+    );
+    assert_eq!(
+        actual_names.len(),
+        goldens.cases.len(),
+        "duplicate golden name"
+    );
+    let cases = cases()
+        .into_iter()
+        .map(|case| (case.name.clone(), case))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for golden in goldens.cases {
+        assert!(!golden.normalized_sql.is_empty(), "{} SQL", golden.name);
+        for (ordinal, terminal) in golden.terminal_catalog.iter().enumerate() {
+            assert_eq!(terminal.ordinal, ordinal, "{} catalog", golden.name);
+            assert!(
+                !terminal.program_digest.is_empty(),
+                "{} digest",
+                golden.name
+            );
+            assert!(!terminal.result_schema.is_empty(), "{} schema", golden.name);
+            assert!(terminal.completion_required, "{} completion", golden.name);
+        }
+        let case = &cases[&golden.name];
+        let actual = actual_implementation_golden(case);
+        assert_eq!(actual, golden, "{} implementation golden", golden.name);
+        assert_eq!(
+            actual_implementation_golden(case),
+            golden,
+            "{} repeated compilation",
+            golden.name
+        );
+        std::thread::scope(|scope| {
+            let parallel = (0..2)
+                .map(|_| scope.spawn(|| actual_implementation_golden(case)))
+                .collect::<Vec<_>>();
+            for result in parallel {
+                assert_eq!(
+                    result.join().expect("parallel compilation completes"),
+                    golden,
+                    "{} parallel compilation",
+                    golden.name
+                );
+            }
+        });
+    }
+}
+
 const PHASE_FOUR_CASES: &[&str] = &[
     "semantic-resolves",
     "semantic-binding-site",
@@ -527,6 +725,45 @@ fn production_contract_phase_four_sql_results_equal_semantic_oracles() {
 }
 
 #[test]
+fn production_contract_phase_four_unknown_fact_never_becomes_true() {
+    let mut case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-arguments-bind")
+        .expect("the arguments contract exists");
+    case.policy["clauses"][0]["forbid"]["ast"]["rule"]
+        .as_object_mut()
+        .expect("the arguments rule is an object")
+        .remove("kind");
+    case.workspace.files[0].source = "f(*xs)\n".to_owned();
+    let oracle = oracle_result(&case);
+    assert!(
+        oracle["violations"].as_array().is_some_and(Vec::is_empty),
+        "the matcher oracle keeps an unknown argument result out of violations"
+    );
+    assert!(
+        oracle["failures"].as_array().is_some_and(Vec::is_empty),
+        "semantic unknown is not an execution failure"
+    );
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+    let outcome = super::policy_lowering_tests::sql_outcome_for_dialect(
+        &compiled,
+        &case.workspace.files[0].source,
+        crate::code_rule_dsl::language::GrammarDialect::Python,
+    );
+    assert!(
+        outcome.facts.iter().any(|fact| fact.flag == Some(-1)),
+        "the producer must emit an explicit unknown fact"
+    );
+    assert!(outcome.ranges.is_empty(), "unknown is not true");
+    assert!(outcome.errors.is_empty(), "unknown is not a failure");
+}
+
+#[test]
 fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
     use super::policy_lowering_tests::SqlFactRow;
 
@@ -553,10 +790,14 @@ fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
                 | "semantic-binding-annotation"
                 | "semantic-binding-occurrence"
                 | "semantic-binds"
+                | "semantic-redefines-any"
                 | "semantic-redefines-every"
                 | "semantic-arguments-bind"
+                | "semantic-arguments-filter"
+                | "semantic-format-unused-arguments"
                 | "semantic-format-missing-fields"
                 | "semantic-layout"
+                | "semantic-calls-direct"
                 | "semantic-calls-through"
         )
     }) {
@@ -603,6 +844,9 @@ fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
                 row(1, (0, 1), None, 0, 0, 0, 1, None, None),
                 row(1, (0, 1), Some((0, 5)), 1, 0, 0, 1, Some(199), None),
             ],
+            "semantic-redefines-any" => {
+                vec![row(1, (19, 20), None, 0, 0, 0, 1, None, None)]
+            }
             "semantic-redefines-every" => vec![
                 row(1, (4, 5), None, 0, 0, 0, 1, None, None),
                 row(1, (20, 21), None, 0, 0, 0, 1, None, None),
@@ -611,6 +855,20 @@ fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
             "semantic-arguments-bind" => vec![
                 row(1, (0, 6), None, 0, 0, 0, 1, None, None),
                 row(1, (0, 6), Some((4, 5)), 15, 0, 0, 1, Some(93), Some("A")),
+            ],
+            "semantic-arguments-filter" => vec![
+                row(1, (0, 10), None, 0, 0, 0, 1, None, None),
+                row(1, (0, 10), Some((4, 9)), 15, 0, 0, 1, Some(1), Some("A")),
+            ],
+            "semantic-format-unused-arguments" => vec![
+                row(1, (0, 18), None, 0, 0, 0, 1, Some(1), None),
+                row(1, (0, 18), Some((16, 17)), 12, 0, 0, 1, Some(1), None),
+                row(1, (0, 18), None, 14, 0, 0, 0, None, None),
+                row(1, (0, 18), None, 14, 0, 1, 0, None, None),
+                row(1, (0, 18), Some((0, 5)), 17, 0, 0, 1, Some(1), Some("S")),
+                row(1, (0, 18), Some((13, 14)), 17, 0, 0, 1, Some(2), Some("A")),
+                row(1, (0, 18), Some((14, 15)), 17, 0, 1, 1, Some(2), Some("A")),
+                row(1, (0, 18), Some((16, 17)), 17, 0, 2, 1, Some(2), Some("A")),
             ],
             "semantic-format-missing-fields" => vec![
                 row(1, (0, 25), None, 0, 0, 0, 1, Some(1), None),
@@ -630,6 +888,10 @@ fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
                 row(1, (2, 7), None, 0, 0, 0, 1, None, None),
                 row(1, (7, 8), None, 0, 0, 0, 1, None, None),
             ],
+            "semantic-calls-direct" => vec![
+                row(2, (23, 31), None, 0, 0, 0, 1, None, None),
+                row(2, (23, 31), Some((0, 22)), 16, 0, 0, 1, Some(145), None),
+            ],
             "semantic-calls-through" => vec![
                 row(2, (42, 50), None, 0, 0, 0, 1, None, None),
                 row(2, (42, 50), Some((0, 22)), 16, 0, 0, 1, Some(145), None),
@@ -639,6 +901,62 @@ fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
             ],
             _ => unreachable!("the exact semantic fact inventory is fixed"),
         };
+        assert_eq!(actual, expected, "{}", case.name);
+    }
+}
+
+#[test]
+fn production_contract_phase_four_fact_producers_have_exact_completion_states() {
+    use super::policy_lowering_tests::SqlProducerStatusRow;
+
+    for case in cases().into_iter().filter(|case| {
+        PHASE_FOUR_CASES.contains(&case.name.as_str())
+            && case.name != "semantic-fact-producer-failure"
+    }) {
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+            .unwrap_or_else(|error| panic!("{} lowering: {:?}", case.name, error.unsupported()));
+        let semantic_producers = plan
+            .terminals()
+            .iter()
+            .enumerate()
+            .filter(|(_, terminal)| {
+                terminal.producer_kind()
+                    == crate::code_rule_dsl::transducer::sql_backend::ProducerKind::SemanticFact
+            })
+            .map(|(producer, _)| producer as i64)
+            .collect::<Vec<_>>();
+        let dialect = match case.workspace.files[0].language.as_str() {
+            "python" => crate::code_rule_dsl::language::GrammarDialect::Python,
+            "typescript" => crate::code_rule_dsl::language::GrammarDialect::TypeScript,
+            other => panic!("{} has unsupported dialect `{other}`", case.name),
+        };
+        let outcome = super::policy_lowering_tests::sql_outcome_for_dialect(
+            &compiled,
+            &case.workspace.files[0].source,
+            dialect,
+        );
+        let actual = outcome
+            .statuses
+            .into_iter()
+            .filter(|status| semantic_producers.contains(&status.producer))
+            .collect::<Vec<_>>();
+        let expected = semantic_producers
+            .into_iter()
+            .map(|producer| SqlProducerStatusRow {
+                producer,
+                file: 0,
+                complete: 1,
+                verdict: Some(1),
+                work_used: None,
+                error: None,
+            })
+            .collect::<Vec<_>>();
         assert_eq!(actual, expected, "{}", case.name);
     }
 }
@@ -667,6 +985,21 @@ fn production_contract_phase_four_real_fact_capacity_is_atomic() {
         "an incomplete producer publishes no facts"
     );
     assert_eq!(outcome.errors, ["semantic-fact-capacity"]);
+    assert_eq!(
+        outcome
+            .statuses
+            .into_iter()
+            .filter(|status| status.error.is_some())
+            .collect::<Vec<_>>(),
+        [super::policy_lowering_tests::SqlProducerStatusRow {
+            producer: 1,
+            file: 0,
+            complete: 0,
+            verdict: None,
+            work_used: None,
+            error: Some("semantic-fact-capacity".to_owned()),
+        }]
+    );
 }
 
 #[test]
@@ -694,6 +1027,21 @@ fn production_contract_phase_four_fact_failure_is_incomplete_and_has_no_partial_
         "an incomplete producer publishes no facts"
     );
     assert_eq!(outcome.errors, ["capacity-failure"]);
+    assert_eq!(
+        outcome
+            .statuses
+            .into_iter()
+            .filter(|status| status.error.is_some())
+            .collect::<Vec<_>>(),
+        [super::policy_lowering_tests::SqlProducerStatusRow {
+            producer: 1,
+            file: 0,
+            complete: 0,
+            verdict: None,
+            work_used: None,
+            error: Some("capacity-failure".to_owned()),
+        }]
+    );
 }
 
 const PHASE_THREE_CASES: &[&str] = &[
