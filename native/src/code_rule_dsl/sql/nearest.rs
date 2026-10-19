@@ -44,7 +44,8 @@ const COL_PRV: c_int = 6;
 const COL_STAGE: c_int = 7;
 const COL_MEMBER: c_int = 8;
 
-const SCHEMA: &CStr = c"CREATE TABLE x(file, id, \"last\", anc, base, nxt, prv, stage HIDDEN, member HIDDEN)";
+const SCHEMA: &CStr =
+    c"CREATE TABLE x(file, id, \"last\", anc, base, nxt, prv, stage HIDDEN, member HIDDEN)";
 
 /// The SQL naming stage `stage`'s rows as the set of a `nearest` table aliased `alias`, in file
 /// `file` (an SQL expression): the constraints to put in its join.
@@ -365,8 +366,14 @@ unsafe impl<'vtab> VTab<'vtab> for NearestTable {
 /// The ids a scan yields, ascending.
 enum Source {
     /// Positions in the file's `ids` (one `anc` group).
-    Group { next: usize, end: usize },
-    Range { next: u32, end: u32 },
+    Group {
+        next: usize,
+        end: usize,
+    },
+    Range {
+        next: u32,
+        end: u32,
+    },
     Done,
 }
 
@@ -415,8 +422,9 @@ unsafe impl VTabCursor for NearestCursor<'_> {
                 "nearest requires a stage, its set and a file".into(),
             ));
         }
-        let value =
-            |argv: usize| -> Result<Option<i64>> { Ok(integer(ValueRef::from(&args.get::<Value>(argv)?))) };
+        let value = |argv: usize| -> Result<Option<i64>> {
+            Ok(integer(ValueRef::from(&args.get::<Value>(argv)?)))
+        };
         let stage = value(0)?
             .ok_or_else(|| Error::ModuleError("nearest: stage must be an integer".into()))?;
         let mut cache = self.cache.lock();

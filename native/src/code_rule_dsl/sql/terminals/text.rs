@@ -59,7 +59,10 @@ impl Scanner {
         }
         // Every match, not only the leftmost-first: the searches stop at the earliest one.
         let config = DFA::config().match_kind(MatchKind::All);
-        let forward = DFA::builder().configure(config.clone()).build(pattern).ok()?;
+        let forward = DFA::builder()
+            .configure(config.clone())
+            .build(pattern)
+            .ok()?;
         let reverse = DFA::builder()
             .configure(config)
             .thompson(thompson::Config::new().reverse(true))
@@ -251,7 +254,9 @@ unsafe impl VTabCursor for TextCursor<'_> {
                     sub.as_ref().is_some_and(|sub| {
                         node(key) < sub.facts.len()
                             && regex.is_match(
-                                &sub.root.adopt(sub.root.root().get_doc().node(node(key))).text(),
+                                &sub.root
+                                    .adopt(sub.root.root().get_doc().node(node(key)))
+                                    .text(),
                             )
                     })
                 }));
@@ -352,8 +357,8 @@ mod tests {
             }
         }
         for pattern in [
-            "ab|b", "a+b", "b", "x", "ba?z", "[a-z]{3}", r"\(\w+,", "é€", "€x 1", ".b", r"\d+", "zzz",
-            "a.*a", "(?s)b.a", "o{2}",
+            "ab|b", "a+b", "b", "x", "ba?z", "[a-z]{3}", r"\(\w+,", "é€", "€x 1", ".b", r"\d+",
+            "zzz", "a.*a", "(?s)b.a", "o{2}",
         ] {
             let regex = Regex::new(pattern).expect("a regex");
             let mut scanner = Scanner::of(pattern).expect("a scanner");

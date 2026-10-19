@@ -490,8 +490,9 @@ fn sql_roots(
 ) -> Option<Option<Arc<[u32]>>> {
     use crate::code_rule_dsl::budget::matcher_budget_exhausted;
     use crate::code_rule_dsl::matcher::{FileAnchorIndex, Selection};
-    let mut found =
-        |text: &str, literal: &str| memchr::memmem::find(text.as_bytes(), literal.as_bytes()).is_some();
+    let mut found = |text: &str, literal: &str| {
+        memchr::memmem::find(text.as_bytes(), literal.as_bytes()).is_some()
+    };
     if grammar
         .text
         .as_ref()

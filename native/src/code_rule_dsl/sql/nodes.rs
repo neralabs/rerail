@@ -84,9 +84,11 @@ struct Positions {
 /// The heap bytes the batches' node facts have held (counted when built), and the nodes they
 /// cover: their bytes per node (`tests::setup`).
 #[cfg(test)]
-pub(super) static FACT_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub(super) static FACT_BYTES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 #[cfg(test)]
-pub(super) static FACT_NODES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub(super) static FACT_NODES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 #[cfg(test)]
 fn count_bytes(bytes: usize) {
@@ -107,7 +109,10 @@ fn derived<'r, D: Doc>(
         COL_NEXT => at(node.next()),
         COL_ANEXT => at(node.next_all().next()),
         COL_APREV => at(node.prev_all().next()),
-        COL_WPAR => Some(node.parent().map_or(i64::from(id), |parent| i64::from(id_of(&parent)))),
+        COL_WPAR => Some(
+            node.parent()
+                .map_or(i64::from(id), |parent| i64::from(id_of(&parent))),
+        ),
         COL_THASH => Some(text_hash(&node.text())),
         _ => None,
     }
@@ -239,7 +244,10 @@ impl NodeFacts {
     /// Where the nodes of `kind` are among the postings (`posted`).
     fn kind_range(&self, kind: u16) -> std::ops::Range<usize> {
         let postings = self.postings_built();
-        match postings.kinds.binary_search_by_key(&kind, |&(kind, _)| kind) {
+        match postings
+            .kinds
+            .binary_search_by_key(&kind, |&(kind, _)| kind)
+        {
             Ok(at) => {
                 let start = postings.kinds[at].1 as usize;
                 let end = postings
@@ -649,12 +657,20 @@ struct Filter {
 
 /// The ids one file's scan yields, ascending, before `Filter`.
 enum Source {
-    Range { next: u32, end: u32 },
+    Range {
+        next: u32,
+        end: u32,
+    },
     Chain(u32),
     /// The cursor's `ids`, from `pos`.
-    Listed { pos: usize },
+    Listed {
+        pos: usize,
+    },
     /// The file's postings (`NodeFacts::posted`) `next..end`.
-    Posted { next: usize, end: usize },
+    Posted {
+        next: usize,
+        end: usize,
+    },
     Done,
 }
 
@@ -759,10 +775,10 @@ impl NodeCursor<'_> {
             // The kinds' postings within `lo..hi`, unless the range is the shorter read.
             let within = |kind: u16| {
                 let range = facts.kind_range(kind);
-                let from = range.start
-                    + partition(range.len(), |at| facts.posted(range.start + at) < lo);
-                let to = range.start
-                    + partition(range.len(), |at| facts.posted(range.start + at) < hi);
+                let from =
+                    range.start + partition(range.len(), |at| facts.posted(range.start + at) < lo);
+                let to =
+                    range.start + partition(range.len(), |at| facts.posted(range.start + at) < hi);
                 from..to
             };
             if let [kind] = self.kinds[..] {

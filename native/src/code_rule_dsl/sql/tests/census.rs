@@ -434,7 +434,9 @@ fn run_corpus() {
     {
         use std::sync::atomic::Ordering::Relaxed;
         let bytes = crate::code_rule_dsl::sql::nodes::FACT_BYTES.load(Relaxed);
-        let nodes = crate::code_rule_dsl::sql::nodes::FACT_NODES.load(Relaxed).max(1);
+        let nodes = crate::code_rule_dsl::sql::nodes::FACT_NODES
+            .load(Relaxed)
+            .max(1);
         eprintln!(
             "node facts: {:.1} B/node beside the tape records ({bytes} B over {nodes} nodes)",
             bytes as f64 / nodes as f64
