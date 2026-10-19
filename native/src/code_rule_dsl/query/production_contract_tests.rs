@@ -61,10 +61,9 @@ fn case(name: &'static str, form: &'static str, input: Value) -> ContractCase {
     }
 }
 
-fn first_twenty_cases() -> Vec<ContractCase> {
+fn authored_cases(source: &str) -> Vec<ContractCase> {
     let fixture: Value =
-        serde_json::from_str(include_str!("fixtures/production_contracts_001_020.json"))
-            .expect("the authored production contracts are valid JSON");
+        serde_json::from_str(source).expect("the authored production contracts are valid JSON");
     fixture
         .as_array()
         .expect("the authored production contracts are an array")
@@ -85,8 +84,6 @@ fn first_twenty_cases() -> Vec<ContractCase> {
 
 fn cases() -> Vec<ContractCase> {
     let pattern = |source: &str| json!({ "pattern": source });
-    let relation =
-        |axis: &str, stop: Value| json!({ axis: { "kind": "identifier", "stopBy": stop } });
     let count = |axis: &str, min: usize, max: Option<usize>| {
         let mut spec = json!({ axis: { "kind": "identifier", "stopBy": "end" }, "min": min });
         if let Some(max) = max {
@@ -96,116 +93,11 @@ fn cases() -> Vec<ContractCase> {
     };
     let util = |rule: Value, utils: Value| ast_query(json!({ "rule": rule, "utils": utils }));
     let semantic = |term: Value| ast(json!({ "kind": "identifier", "all": [term] }));
-    let mut cases = first_twenty_cases();
+    let mut cases = authored_cases(include_str!("fixtures/production_contracts_001_020.json"));
+    cases.extend(authored_cases(include_str!(
+        "fixtures/production_contracts_021_040.json"
+    )));
     cases.extend([
-        case(
-            "not-unknown",
-            "not(value(unknown))",
-            ast(json!({ "not": { "value": { "follow": true, "eq": 1 } } })),
-        ),
-        case(
-            "nested-all-any-not",
-            "all(any(kind, regex), not(pattern))",
-            ast(
-                json!({ "all": [{ "any": [{ "kind": "identifier" }, { "regex": "^x$" }] }, { "not": { "pattern": "y" } }] }),
-            ),
-        ),
-        case(
-            "constraint-bound-capture",
-            "constrained(pattern($A), $A:kind)",
-            ast_query(
-                json!({ "rule": { "pattern": "$A" }, "constraints": { "A": { "kind": "identifier" } } }),
-            ),
-        ),
-        case(
-            "constraint-unbound-capture",
-            "constrained(pattern, $A:kind)",
-            ast_query(
-                json!({ "rule": { "any": [{ "pattern": "$A" }, { "pattern": "x" }] }, "constraints": { "A": { "kind": "identifier" } } }),
-            ),
-        ),
-        case(
-            "never",
-            "never",
-            ast(json!({ "kind": "identifier", "not": { "kind": "identifier" } })),
-        ),
-        case(
-            "disabled-when",
-            "when(false)",
-            ast_query(
-                json!({ "languageOptions": { "pythonVersion": "3.15" }, "when": { "pythonVersion": { "max": "3.7" } }, "rule": { "kind": "identifier" } }),
-            ),
-        ),
-        case(
-            "has-neighbor",
-            "has(kind, stopBy=neighbor)",
-            ast(relation("has", json!("neighbor"))),
-        ),
-        case(
-            "has-end",
-            "has(kind, stopBy=end)",
-            ast(relation("has", json!("end"))),
-        ),
-        case(
-            "has-stop-rule",
-            "has(kind, stopBy=pattern)",
-            ast(relation("has", json!({ "pattern": "stop" }))),
-        ),
-        case(
-            "inside-neighbor",
-            "inside(kind, stopBy=neighbor)",
-            ast(relation("inside", json!("neighbor"))),
-        ),
-        case(
-            "inside-end",
-            "inside(kind, stopBy=end)",
-            ast(relation("inside", json!("end"))),
-        ),
-        case(
-            "inside-stop-rule",
-            "inside(kind, stopBy=pattern)",
-            ast(relation("inside", json!({ "pattern": "stop" }))),
-        ),
-        case(
-            "precedes-neighbor",
-            "precedes(kind, stopBy=neighbor)",
-            ast(relation("precedes", json!("neighbor"))),
-        ),
-        case(
-            "precedes-end",
-            "precedes(kind, stopBy=end)",
-            ast(relation("precedes", json!("end"))),
-        ),
-        case(
-            "precedes-stop-rule",
-            "precedes(kind, stopBy=pattern)",
-            ast(relation("precedes", json!({ "pattern": "stop" }))),
-        ),
-        case(
-            "follows-neighbor",
-            "follows(kind, stopBy=neighbor)",
-            ast(relation("follows", json!("neighbor"))),
-        ),
-        case(
-            "follows-end",
-            "follows(kind, stopBy=end)",
-            ast(relation("follows", json!("end"))),
-        ),
-        case(
-            "follows-stop-rule",
-            "follows(kind, stopBy=pattern)",
-            ast(relation("follows", json!({ "pattern": "stop" }))),
-        ),
-        case(
-            "field-has",
-            "has(field=body, kind)",
-            ast(json!({ "has": { "field": "body", "kind": "identifier" } })),
-        ),
-        case(
-            "field-inside",
-            "inside(field=value, kind)",
-            ast(json!({ "inside": { "field": "value", "kind": "identifier" } })),
-        ),
         case(
             "nth-child-fixed",
             "nthChild(2)",
