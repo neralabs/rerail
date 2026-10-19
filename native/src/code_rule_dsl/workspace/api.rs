@@ -25,7 +25,7 @@ use super::{
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::evidence::Side;
-use crate::code_rule_dsl::eval::{Engine, evaluation_json, overflow_evaluation};
+use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::{self, adapter::package_manifests};
 use crate::code_rule_dsl::model::{
@@ -354,8 +354,8 @@ impl CodeRuleDslWorkspace {
         };
         check_closed(&self.closed)?;
         let request: Request = serde_json::from_str(&request_json).map_err(json_error)?;
-        // The SQL engine matches in batches: its workspace leaves every apply to `applyAsync`.
-        if !is_cheap(&state, &request) || state.engine.engine == Engine::Sql {
+        // The fast path reads regex clauses only (`is_cheap`), so no engine matches AST clauses.
+        if !is_cheap(&state, &request) {
             return Ok(None);
         }
         // The fast path has no parser, global queries, unbounded corpus or lock wait.
