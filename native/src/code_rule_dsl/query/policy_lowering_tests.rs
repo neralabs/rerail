@@ -977,6 +977,41 @@ fn sql_structural_core_matches_the_matcher_oracle() {
 }
 
 #[test]
+fn sql_composition_preserves_input_environments() {
+    let cases = [
+        code_rule(json!({
+            "all": [
+                { "pattern": "$A + $B" },
+                { "any": [
+                    { "pattern": "$X + $A" },
+                    { "pattern": "$A + $Y" }
+                ] }
+            ]
+        })),
+        code_rule(json!({
+            "all": [
+                { "pattern": "$A + $B" },
+                { "not": { "pattern": "$X + $A" } }
+            ]
+        })),
+    ];
+    let outcomes = cases
+        .iter()
+        .map(|compiled| {
+            let source = "x + y\n";
+            (
+                sql_ranges(compiled, source),
+                oracle_ranges(compiled, source),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outcomes.iter().map(|pair| &pair.0).collect::<Vec<_>>(),
+        outcomes.iter().map(|pair| &pair.1).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn compiled_count_applies_exact_bounds_to_the_complete_axis() {
     let compiled = code_rule(json!({
         "count": {
