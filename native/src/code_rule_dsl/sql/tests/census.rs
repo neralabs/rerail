@@ -63,6 +63,16 @@ fn audit(grammar: &crate::code_rule_dsl::matcher::GrammarMatcher, each: Option<&
     }
 }
 
+/// Whether a query's matches come from a three-valued grammar matcher (for `select_when`, its
+/// `select` side, which a clause's `violation.each` enumerates).
+fn three_valued(query: &Query) -> bool {
+    match query {
+        Query::Regex { .. } => false,
+        Query::Ast { matchers, .. } => matchers.iter().any(|grammar| grammar.three_valued),
+        Query::SelectWhen { select, .. } => three_valued(select),
+    }
+}
+
 #[test]
 #[ignore = "reads the data-layer benchmark's policies from outside the repository"]
 fn the_benchmark_policies_census() {
@@ -92,6 +102,9 @@ fn run_census() {
     let started = std::time::Instant::now();
     let mut counts: BTreeMap<String, Count> = BTreeMap::new();
     let (mut clauses, mut matchers, mut lowered) = (0usize, 0usize, 0usize);
+    // The clauses enumerating `violation.each` over a three-valued matcher, and whether each
+    // lowered without a refusal.
+    let mut three_each: Vec<(String, bool)> = Vec::new();
     for path in &policies {
         let started = std::time::Instant::now();
         let source = std::fs::read_to_string(path).expect("policy");
@@ -143,6 +156,12 @@ fn run_census() {
                 ),
                 ClauseKind::Llm => found.push("llm".to_owned()),
             }
+            if let ClauseKind::Forbid(forbid) = &clause.kind
+                && clause.violation.each.is_some()
+                && three_valued(forbid)
+            {
+                three_each.push((format!("{policy}/{}", clause.id), found.is_empty()));
+            }
             for operator in found {
                 if std::env::var_os("RERAIL_CENSUS_VERBOSE").is_some() {
                     eprintln!("  {policy}/{}: {operator}", clause.id);
@@ -166,10 +185,16 @@ fn run_census() {
             count.clauses.len()
         );
     }
+    eprintln!(
+        "three-valued violation.each: {} clauses, {} lowered without a refusal: {three_each:?}",
+        three_each.len(),
+        three_each.iter().filter(|(_, clean)| *clean).count()
+    );
     for gone in [
         "recursive utility",
         "unfilled utility",
         "violation.each",
+        "three-valued violation.each",
         "pattern with more than 32 capture columns",
         "call mapping more than 4 parameters to one capture",
     ] {

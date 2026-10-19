@@ -349,13 +349,149 @@ fn a_three_valued_recursive_utility_returns_unknown_verdicts() {
     }
 }
 
-/// `violation.each` over a three-valued clause is refused by name: its exclusion rounds skip
-/// candidates in the two-valued operators only, not in `AllOpen`, `AnyOpen` or `Search`.
+/// Three-valued `violation.each` (`emit/each.rs`): a strict search passes over a true candidate
+/// whose binding was reported and stops at the unknown one after it (`testUnknown` is unknown
+/// where its regex matches), which leaves the round's match unknown and ends the enumeration
+/// before `b`; where the unknown comes last, `b` is enumerated first.
 #[test]
-fn three_valued_violation_each_is_refused() {
+fn each_passes_over_an_excluded_true_candidate_and_stops_at_an_unknown_one() {
+    use crate::code_rule_dsl::test_support::grammar_matchers;
     let ast = json!({ "rule": {
         "kind": "call_expression",
         "has": { "field": "arguments", "has": { "kind": "identifier", "pattern": "$A", "testUnknown": "^u" } },
+    } });
+    assert!(grammar_matchers(&compile("typescript", ast.clone(), Some("A")))[0].three_valued);
+    assert_eq!(
+        agreed("typescript", ast.clone(), Some("A"), "f(a, u, b);\n"),
+        ["f(a, u, b) A=a"]
+    );
+    assert_eq!(
+        agreed("typescript", ast, Some("A"), "f(a, b, u);\n"),
+        ["f(a, b, u) A=a", "f(a, b, u) A=b"]
+    );
+}
+
+/// An `any` branch whose true trial binds a reported range reads as false: the next branch
+/// decides. An unknown branch that binds nothing then leaves the `any` unknown, so the strict
+/// search over the identifiers stops at `a` in the second round; one that may bind ends the
+/// `any` unknown though a later branch would bind `b`.
+#[test]
+fn each_reads_an_unknown_any_branch_after_an_excluded_one() {
+    let source = "f(a, b);\n";
+    let any = |branches: Value| {
+        json!({ "rule": {
+            "kind": "call_expression",
+            "has": { "field": "arguments", "has": { "kind": "identifier", "any": branches } },
+        } })
+    };
+    let decided = any(json!([{ "pattern": "$A" }, { "regex": "^zzz" }]));
+    assert_eq!(
+        agreed("typescript", decided, Some("A"), source),
+        ["f(a, b) A=a", "f(a, b) A=b"]
+    );
+    let open = any(json!([{ "pattern": "$A" }, { "testUnknown": "^a" }]));
+    assert_eq!(
+        agreed("typescript", open, Some("A"), source),
+        ["f(a, b) A=a"]
+    );
+    let binding = any(json!([
+        { "pattern": "$A", "testUnknown": "^b" },
+        { "pattern": "$A" },
+    ]));
+    assert_eq!(
+        agreed("typescript", binding, Some("A"), source),
+        ["f(a, b) A=a"]
+    );
+}
+
+/// A round whose match is unknown leaves its root unknown: in round 1 the first term binds `u`
+/// and the second is unknown there, so `f` reports `a` only; `g`'s round 0 is unknown already,
+/// and an unknown root is not reported.
+#[test]
+fn an_unknown_each_round_leaves_its_root_unknown() {
+    let ast = json!({ "rule": { "kind": "call_expression", "all": [
+        { "has": { "field": "arguments", "has": { "kind": "identifier", "pattern": "$A" } } },
+        { "has": { "field": "arguments", "has": { "kind": "identifier", "pattern": "$A", "testUnknown": "^u" } } },
+    ] } });
+    assert_eq!(
+        agreed("typescript", ast, Some("A"), "f(a, u, b);\ng(u, a);\n"),
+        ["f(a, u, b) A=a"]
+    );
+}
+
+/// The enumeration of a root ends at a round whose match is unknown, even where the unknown row
+/// holds a fresh binding: a constraint unknown at `u` leaves the round's `A = u` row unknown,
+/// which is neither reported nor enumerated on to `b`.
+#[test]
+fn each_stops_at_a_round_whose_match_is_unknown() {
+    let ast = json!({
+        "rule": { "kind": "call_expression", "has": { "field": "arguments", "has": { "kind": "identifier", "pattern": "$A" } } },
+        "constraints": { "A": { "testUnknown": "^u" } },
+    });
+    assert_eq!(
+        agreed("typescript", ast, Some("A"), "f(a, u, b);\ng(b, a);\n"),
+        ["f(a, u, b) A=a", "g(b, a) A=a", "g(b, a) A=b"]
+    );
+}
+
+/// Inside a candidate that binds a reported range, every choice point passes over its true
+/// candidates, also in a capture-free rule (which reads the trial's binding): the walk up to the
+/// call finds only `u`'s unknown, so the round's candidate `a` is unknown and ends the search
+/// before `u` or `b`. The same capture-free rule as a relation's rule, as a shared utility and as
+/// a capture-free recursive utility, none of which may be read from a stage matched without
+/// exclusion. A kind-only `any` passes over its true branch too: false, it decides the candidate
+/// false though an earlier term was unknown, and the search walks on to `u`.
+#[test]
+fn a_capture_free_rule_inside_an_excluded_candidate_passes_over_its_true_candidates() {
+    let call = json!({ "kind": "call_expression", "has": { "stopBy": "end", "kind": "identifier", "testUnknown": "^u" } });
+    let mut up = call.clone();
+    up["stopBy"] = json!("end");
+    let candidate = |term: (&str, Value)| {
+        let mut rule = json!({ "kind": "identifier", "pattern": "$A" });
+        rule[term.0] = term.1;
+        json!({ "kind": "call_expression", "has": { "field": "arguments", "has": rule } })
+    };
+    let cases = [
+        json!({ "rule": candidate(("inside", up.clone())) }),
+        json!({
+            "rule": candidate(("matches", json!("up"))),
+            "utils": { "up": { "inside": { "stopBy": "end", "matches": "call" } }, "call": call.clone() },
+        }),
+        json!({
+            "rule": candidate(("matches", json!("up"))),
+            "utils": { "up": { "any": [call.clone(), { "inside": { "matches": "up" } }] } },
+        }),
+    ];
+    for ast in cases {
+        assert_eq!(
+            agreed(
+                "typescript",
+                ast.clone(),
+                Some("A"),
+                "f(a, u, b);\ng(a, b);\n"
+            ),
+            ["f(a, u, b) A=a", "g(a, b) A=a", "g(a, b) A=b"],
+            "{ast}"
+        );
+    }
+    let kinds = json!({ "rule": { "kind": "call_expression", "has": { "field": "arguments", "has": { "all": [
+        { "kind": "identifier", "pattern": "$A" },
+        { "inside": up },
+        { "any": [{ "kind": "identifier" }, { "kind": "number" }] },
+    ] } } } });
+    assert_eq!(
+        agreed("typescript", kinds, Some("A"), "f(a, u, b);\n"),
+        ["f(a, u, b) A=a", "f(a, u, b) A=b", "f(a, u, b) A=u"]
+    );
+}
+
+/// Under `each`, a three-valued `nthChild` whose binding `ofRule` may be unknown is refused by
+/// name: the matcher's excluding re-match of `ofRule` can leave `UNKNOWN` set on a true answer.
+#[test]
+fn three_valued_nth_child_with_an_unknowable_commit_is_refused_under_each() {
+    let ast = json!({ "rule": {
+        "kind": "identifier",
+        "nthChild": { "position": 1, "ofRule": { "kind": "identifier", "pattern": "$A", "testUnknown": "^u" } },
     } });
     let compiled = compile("typescript", ast, Some("A"));
     let input = snapshot(&[("typescript", "a.ts", "f(a, u);\n")]);
@@ -368,7 +504,7 @@ fn three_valued_violation_each_is_refused() {
         .expect_err("the SQL engine refuses")
         .reason;
     assert!(
-        reason.contains("Unsupported(three-valued violation.each)"),
+        reason.contains("Unsupported(three-valued nthChild whose excluding commit may be unknown)"),
         "{reason}"
     );
 }
@@ -545,4 +681,63 @@ fn a_recursion_level_runs_a_bounded_number_of_statements_per_batch() {
     }
     eprintln!("statements per recursion level: {passes:?}");
     assert_eq!(passes, [61, 43]);
+}
+
+/// Every table a statement creates has one column list: a three-valued `all`'s frames are not
+/// named like a recursive unit's answer tables (`a{unit}`). The differential found the clash in
+/// this rule, whose `all` frame `a3` and unit 3's answer table were one table.
+#[test]
+fn three_valued_frames_and_unit_tables_have_distinct_names() {
+    use crate::code_rule_dsl::test_support::grammar_matchers;
+    let ast = json!({
+        "rule": {
+            "any": [
+                { "count": { "as": "N", "has": { "kind": "elif_clause", "stopBy": "neighbor" }, "max": 1, "offset": 1 }, "matches": { "u0": { "P": "$C", "Q": "$C" } } },
+                { "kind": "attribute", "pattern": "$A == 1.5" },
+                { "count": { "max": 4, "min": 2, "precedes": { "stopBy": { "any": [{ "kind": "named_expression" }, { "kind": "pattern_list" }] }, "value": { "type": "str" } } } },
+            ],
+            "count": { "as": "N", "inside": { "kind": "none", "stopBy": "end" }, "min": 1, "offset": 0 },
+            "matches": "r0",
+            "pattern": "return 2",
+        },
+        "utils": {
+            "r0": { "all": [
+                { "inside": { "field": "subject", "pattern": "$A", "stopBy": { "kind": "for_in_clause" }, "testUnknown": "^doubled" } },
+                { "follows": { "matches": "r1" } },
+            ] },
+            "r1": { "any": [
+                { "precedes": { "kind": "class_pattern", "stopBy": "end", "testUnknown": "^6" } },
+                { "kind": "escape_sequence", "matches": "r0" },
+            ] },
+            "u0": { "params": ["P", "Q"], "rule": {
+                "matches": "r0",
+                "not": { "layout": { "before": { "blank": { "max": 0 }, "breaks": { "min": 1 }, "comments": true, "to": "token" } }, "regex": "^1" },
+                "pattern": "$P",
+            } },
+        },
+    });
+    let compiled = compile("python", ast.clone(), None);
+    let grammar = &grammar_matchers(&compiled)[0];
+    assert!(grammar.three_valued);
+    let statement = crate::code_rule_dsl::sql::lower::ProgramBuilder::default()
+        .clause_each(grammar, None)
+        .expect("lowers");
+    let mut tables = std::collections::HashMap::<String, String>::new();
+    for sql in crate::code_rule_dsl::sql::emit::clause(&statement) {
+        let Some(rest) = sql
+            .strip_prefix("CREATE TEMP TABLE IF NOT EXISTS ")
+            .or_else(|| sql.strip_prefix("CREATE TEMP TABLE "))
+        else {
+            continue;
+        };
+        let (name, columns) = rest.split_once('(').expect("a column list");
+        let known = tables
+            .entry(name.to_owned())
+            .or_insert_with(|| columns.to_owned());
+        assert_eq!(known, columns, "{name} is created with two column lists");
+    }
+    assert_eq!(
+        agreed("python", ast, None, "def f(x):\n    return 2\n"),
+        Vec::<String>::new()
+    );
 }

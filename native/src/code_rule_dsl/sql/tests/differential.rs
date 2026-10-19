@@ -1017,7 +1017,8 @@ impl Generator<'_> {
         }
         let message = if self.counted { "n=$N" } else { "x" };
         let mut violation = json!({ "anchor": "witness.span", "code": "X", "message": message });
-        // `violation.each` over a capture the rule names, now and then.
+        // `violation.each` over a capture the rule names, now and then; more often in a
+        // three-valued case, whose exclusion meets unknown candidates (`emit/each.rs`).
         let text = serde_json::to_string(&ast).unwrap_or_default();
         let named: Vec<&str> = SINGLE
             .iter()
@@ -1027,7 +1028,7 @@ impl Generator<'_> {
                     .any(|(at, _)| !text[..at].ends_with('$'))
             })
             .collect();
-        if !named.is_empty() && self.rng.chance(30) {
+        if !named.is_empty() && self.rng.chance(if self.three { 45 } else { 30 }) {
             violation["each"] = json!(*self.rng.pick(&named));
         }
         (Value::Object(ast), violation)
@@ -1321,6 +1322,7 @@ fn generated_rules_agree_with_the_native_matcher() {
     let (mut compared, mut rejected, mut generated) = (0usize, 0usize, 0usize);
     let (mut with_violations, mut violations) = (0usize, 0usize);
     let (mut three_valued, mut with_unknown, mut three_recursive) = (0usize, 0usize, 0usize);
+    let (mut three_each, mut three_each_unknown) = (0usize, 0usize);
     let mut operators = std::collections::BTreeMap::new();
     let (mut with_recursion, mut with_each, mut with_either, mut native_limits) =
         (0usize, 0usize, 0usize, 0usize);
@@ -1342,12 +1344,12 @@ fn generated_rules_agree_with_the_native_matcher() {
             })
             .collect();
         for ((_, ast, violation, recursive), outcome) in batch.iter().zip(outcomes) {
+            let each = violation.get("each").is_some();
             if compared >= wanted {
                 break;
             }
             if !matches!(outcome, Outcome::Rejected | Outcome::NativeLimit) {
                 census(ast, &mut operators);
-                let each = violation.get("each").is_some();
                 with_recursion += usize::from(*recursive);
                 with_each += usize::from(each);
                 with_either += usize::from(*recursive || each);
@@ -1370,6 +1372,8 @@ fn generated_rules_agree_with_the_native_matcher() {
                     three_valued += usize::from(three);
                     with_unknown += usize::from(unknown);
                     three_recursive += usize::from(three && *recursive);
+                    three_each += usize::from(three && each);
+                    three_each_unknown += usize::from(three && each && unknown);
                 }
                 Outcome::Differs { native, sql } => {
                     compared += 1;
@@ -1388,7 +1392,7 @@ fn generated_rules_agree_with_the_native_matcher() {
         *refusals.entry(name.to_owned()).or_default() += 1;
     }
     eprintln!(
-        "sql differential: seed {seed:#x}, {compared} cases compared ({generated} generated, {rejected} rejected by the front end), {} differences, {} unsupported {refusals:?}, {with_violations} cases with violations ({violations} violations), {three_valued} three-valued cases, {with_unknown} with an unknown verdict, {with_recursion} reaching a recursive utility ({three_recursive} three-valued), {with_each} under violation.each, {:.1}s",
+        "sql differential: seed {seed:#x}, {compared} cases compared ({generated} generated, {rejected} rejected by the front end), {} differences, {} unsupported {refusals:?}, {with_violations} cases with violations ({violations} violations), {three_valued} three-valued cases, {with_unknown} with an unknown verdict, {with_recursion} reaching a recursive utility ({three_recursive} three-valued), {with_each} under violation.each ({three_each} three-valued, {three_each_unknown} of them with an unknown verdict), {:.1}s",
         differences.len(),
         unsupported.len(),
         started.elapsed().as_secs_f64()
@@ -1425,19 +1429,19 @@ fn generated_rules_agree_with_the_native_matcher() {
     // The generator covers in-scope operators only; the shapes the engine refuses within them
     // are `lower::walk_leak`'s, a stop rule that recurses, a recursion whose reads loop in the
     // fixtures (where the matcher would recurse until its depth limit, or around the loop by
-    // stopping at a first match), and `violation.each` over a three-valued clause (its exclusion
-    // rounds run on two-valued operators only), and it must refuse them rather than answer. The
-    // semantic leaves' refusals (`lower::leaves`): what a parsed tree runs per batch rather than
-    // per tree (patterns, stop rules, recursive utilities, a nested parse), a tree's capture
-    // `violation.each` enumerates, and `redefines.every` with binding sub-rules or under
-    // `violation.each`.
+    // stopping at a first match), and under a three-valued `violation.each`, an `nthChild` whose
+    // binding `ofRule` may be unknown (the matcher's excluding re-match leaves its unknown verdict
+    // on the answer), and it must refuse them rather than answer. The semantic leaves' refusals
+    // (`lower::leaves`): what a parsed tree runs per batch rather than per tree (patterns, stop
+    // rules, recursive utilities, a nested parse), a tree's capture `violation.each` enumerates,
+    // and `redefines.every` with binding sub-rules or under `violation.each`.
     let refused = |reason: &String| {
         [
             "Unsupported(nthChild with a binding ofRule as a relation's rule)",
             "Unsupported(recursion whose reads loop back)",
             "Unsupported(recursion deeper than 256 levels)",
             "Unsupported(recursive utility in a stop rule)",
-            "Unsupported(three-valued violation.each)",
+            "Unsupported(three-valued nthChild whose excluding commit may be unknown)",
             "Unsupported(parse inside parse)",
             "Unsupported(pattern inside parse)",
             "Unsupported(stopBy rule inside parse)",

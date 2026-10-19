@@ -13,8 +13,9 @@
 //! appends: a `ROW_NUMBER() OVER ()` would buffer every row in an ephemeral table first and
 //! insert them by seeking.
 
-mod leaves;
+mod each;
 mod keyed;
+mod leaves;
 mod three;
 
 use super::lower::{INTERNAL, ORIGIN};
@@ -114,12 +115,19 @@ pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Vec<St
         ),
         None => ("NULL, NULL".to_owned(), String::new()),
     };
+    // A root whose verdict is unknown does not match (`run.rs` `enumerate`): it is neither
+    // reported nor enumerated further.
+    let known = if emitter.three {
+        " WHERE o.unk = 0"
+    } else {
+        ""
+    };
     let statements = &mut emitter.statements;
     statements.push(format!(
         "CREATE TEMP TABLE {NAMESPACE}eo(file, node{bare}, es, ee)"
     ));
     statements.push(format!(
-        "INSERT INTO {NAMESPACE}eo SELECT o.file, o.node{}, {range} FROM {out} o{join}",
+        "INSERT INTO {NAMESPACE}eo SELECT o.file, o.node{}, {range} FROM {out} o{join}{known}",
         of("o")
     ));
     statements.push(format!(
