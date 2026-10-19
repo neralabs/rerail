@@ -116,7 +116,8 @@ fn a_sample_clause_set_runs_a_bounded_number_of_statements_per_batch() {
 }
 
 /// Terminals run once per statement over their whole input set, never once per row: a fresh
-/// pattern, an env-input pattern and a regex over a file of many candidate nodes.
+/// pattern, an env-input pattern and a regex over a file of many candidate nodes. The fresh
+/// pattern matches each of its 200 candidate roots once.
 #[test]
 fn terminals_run_once_per_statement_never_per_row() {
     use crate::code_rule_dsl::sql::terminals::calls::{
@@ -134,7 +135,7 @@ fn terminals_run_once_per_statement_never_per_row() {
     }
     let result = same(&rule, &snapshot(&[("typescript", "a.ts", &source)]));
     assert_eq!(result["violations"].as_array().map(Vec::len), Some(200));
-    assert_eq!(FRESH_MATCHES.get(), 1);
+    assert_eq!(FRESH_MATCHES.get(), 200);
     assert_eq!(PATTERN_FILTERS.get(), 2);
     assert_eq!(TEXT_FILTERS.get(), 1);
 }
