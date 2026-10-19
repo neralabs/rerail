@@ -349,13 +349,98 @@ fn a_three_valued_recursive_utility_returns_unknown_verdicts() {
     }
 }
 
-/// `violation.each` over a three-valued clause is refused by name: its exclusion rounds skip
-/// candidates in the two-valued operators only, not in `AllOpen`, `AnyOpen` or `Search`.
+/// Three-valued `violation.each` (`emit/each.rs`): a strict search passes over a true candidate
+/// whose binding was reported and stops at the unknown one after it (`testUnknown` is unknown
+/// where its regex matches), which leaves the round's match unknown and ends the enumeration
+/// before `b`; where the unknown comes last, `b` is enumerated first.
 #[test]
-fn three_valued_violation_each_is_refused() {
+fn each_passes_over_an_excluded_true_candidate_and_stops_at_an_unknown_one() {
+    use crate::code_rule_dsl::test_support::grammar_matchers;
     let ast = json!({ "rule": {
         "kind": "call_expression",
         "has": { "field": "arguments", "has": { "kind": "identifier", "pattern": "$A", "testUnknown": "^u" } },
+    } });
+    assert!(grammar_matchers(&compile("typescript", ast.clone(), Some("A")))[0].three_valued);
+    assert_eq!(
+        agreed("typescript", ast.clone(), Some("A"), "f(a, u, b);\n"),
+        ["f(a, u, b) A=a"]
+    );
+    assert_eq!(
+        agreed("typescript", ast, Some("A"), "f(a, b, u);\n"),
+        ["f(a, b, u) A=a", "f(a, b, u) A=b"]
+    );
+}
+
+/// An `any` branch whose true trial binds a reported range reads as false: the next branch
+/// decides. An unknown branch that binds nothing then leaves the `any` unknown, so the strict
+/// search over the identifiers stops at `a` in the second round; one that may bind ends the
+/// `any` unknown though a later branch would bind `b`.
+#[test]
+fn each_reads_an_unknown_any_branch_after_an_excluded_one() {
+    let source = "f(a, b);\n";
+    let any = |branches: Value| {
+        json!({ "rule": {
+            "kind": "call_expression",
+            "has": { "field": "arguments", "has": { "kind": "identifier", "any": branches } },
+        } })
+    };
+    let decided = any(json!([{ "pattern": "$A" }, { "regex": "^zzz" }]));
+    assert_eq!(
+        agreed("typescript", decided, Some("A"), source),
+        ["f(a, b) A=a", "f(a, b) A=b"]
+    );
+    let open = any(json!([{ "pattern": "$A" }, { "testUnknown": "^a" }]));
+    assert_eq!(
+        agreed("typescript", open, Some("A"), source),
+        ["f(a, b) A=a"]
+    );
+    let binding = any(json!([
+        { "pattern": "$A", "testUnknown": "^b" },
+        { "pattern": "$A" },
+    ]));
+    assert_eq!(
+        agreed("typescript", binding, Some("A"), source),
+        ["f(a, b) A=a"]
+    );
+}
+
+/// A round whose match is unknown leaves its root unknown: in round 1 the first term binds `u`
+/// and the second is unknown there, so `f` reports `a` only; `g`'s round 0 is unknown already,
+/// and an unknown root is not reported.
+#[test]
+fn an_unknown_each_round_leaves_its_root_unknown() {
+    let ast = json!({ "rule": { "kind": "call_expression", "all": [
+        { "has": { "field": "arguments", "has": { "kind": "identifier", "pattern": "$A" } } },
+        { "has": { "field": "arguments", "has": { "kind": "identifier", "pattern": "$A", "testUnknown": "^u" } } },
+    ] } });
+    assert_eq!(
+        agreed("typescript", ast, Some("A"), "f(a, u, b);\ng(u, a);\n"),
+        ["f(a, u, b) A=a"]
+    );
+}
+
+/// The enumeration of a root ends at a round whose match is unknown, even where the unknown row
+/// holds a fresh binding: a constraint unknown at `u` leaves the round's `A = u` row unknown,
+/// which is neither reported nor enumerated on to `b`.
+#[test]
+fn each_stops_at_a_round_whose_match_is_unknown() {
+    let ast = json!({
+        "rule": { "kind": "call_expression", "has": { "field": "arguments", "has": { "kind": "identifier", "pattern": "$A" } } },
+        "constraints": { "A": { "testUnknown": "^u" } },
+    });
+    assert_eq!(
+        agreed("typescript", ast, Some("A"), "f(a, u, b);\ng(b, a);\n"),
+        ["f(a, u, b) A=a", "g(b, a) A=a", "g(b, a) A=b"]
+    );
+}
+
+/// Under `each`, a three-valued `nthChild` whose binding `ofRule` may be unknown is refused by
+/// name: the matcher's excluding re-match of `ofRule` can leave `UNKNOWN` set on a true answer.
+#[test]
+fn three_valued_nth_child_with_an_unknowable_commit_is_refused_under_each() {
+    let ast = json!({ "rule": {
+        "kind": "identifier",
+        "nthChild": { "position": 1, "ofRule": { "kind": "identifier", "pattern": "$A", "testUnknown": "^u" } },
     } });
     let compiled = compile("typescript", ast, Some("A"));
     let input = snapshot(&[("typescript", "a.ts", "f(a, u);\n")]);
@@ -368,7 +453,7 @@ fn three_valued_violation_each_is_refused() {
         .expect_err("the SQL engine refuses")
         .reason;
     assert!(
-        reason.contains("Unsupported(three-valued violation.each)"),
+        reason.contains("Unsupported(three-valued nthChild whose excluding commit may be unknown)"),
         "{reason}"
     );
 }

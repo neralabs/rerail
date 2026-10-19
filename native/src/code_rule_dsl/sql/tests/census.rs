@@ -132,6 +132,7 @@ fn run_census() {
         "recursive utility",
         "unfilled utility",
         "violation.each",
+        "three-valued violation.each",
         "pattern with more than 32 capture columns",
         "call mapping more than 4 parameters to one capture",
     ] {
