@@ -321,21 +321,22 @@ pub(in crate::code_rule_dsl) fn compile_enumerating(
     Ok(Compiled::new(builder, clauses))
 }
 
-/// Compiles every one of `grammars` the engine lowers into one program. Per grammar: its clause
-/// index in the program, or why the engine refuses it. A refused grammar leaves nothing in the
-/// program (no stage or terminal of it runs): each is lowered alone first, and lowering is
-/// deterministic, so one that lowers alone lowers in the shared program.
+/// Compiles every one of `grammars` the engine lowers into one program, each with the capture its
+/// `violation.each` enumerates. Per grammar: its clause index in the program, or why the engine
+/// refuses it. A refused grammar leaves nothing in the program (no stage or terminal of it runs):
+/// each is lowered alone first, and lowering is deterministic, so one that lowers alone lowers in
+/// the shared program.
 pub(in crate::code_rule_dsl) fn compile_each(
-    grammars: &[&GrammarMatcher],
+    grammars: &[(&GrammarMatcher, Option<&str>)],
 ) -> (Compiled, Vec<Result<usize, Unsupported>>) {
     let mut builder = ProgramBuilder::default();
     let mut clauses = Vec::new();
     let outcomes = grammars
         .iter()
-        .map(|grammar| {
-            ProgramBuilder::default().clause_each(grammar, None)?;
-            let statement = builder.clause_each(grammar, None)?;
-            clauses.push(ClauseSql::of(&statement, None));
+        .map(|&(grammar, each)| {
+            ProgramBuilder::default().clause_each(grammar, each)?;
+            let statement = builder.clause_each(grammar, each)?;
+            clauses.push(ClauseSql::of(&statement, each));
             Ok(clauses.len() - 1)
         })
         .collect();

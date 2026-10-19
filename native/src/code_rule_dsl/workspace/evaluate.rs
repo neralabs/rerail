@@ -1401,7 +1401,9 @@ fn evaluate_clauses(
                 if roots.as_deref().is_some_and(<[u32]>::is_empty) {
                     return Ok(());
                 }
-                let _first = each.map(crate::code_rule_dsl::matcher::EachScope::start);
+                let _first = each
+                    .filter(|_| sql.is_none())
+                    .map(crate::code_rule_dsl::matcher::EachScope::start);
                 let bound = limits.visits_for(doc.transducer_len());
                 let mut on_root = |node: u32, first, work: &mut usize| {
                     metrics.ast_matcher_calls += 1;
@@ -1499,7 +1501,9 @@ fn evaluate_clauses(
                         }
                         Ok(true)
                     };
-                    match each {
+                    // The SQL engine enumerated `each` itself: each of its matches at a root is
+                    // one visit.
+                    match each.filter(|_| sql.is_none()) {
                         Some(name) => enumerate(&target, grammar, node, first, work, name, visit),
                         None => visit(first, work),
                     }
