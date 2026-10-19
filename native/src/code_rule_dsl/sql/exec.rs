@@ -686,11 +686,11 @@ struct Prepared {
 }
 
 /// The counted tables of a session, by name: every table its statements create, each stage's
-/// and each enumeration's; `frames`, by id, each one's name where it is a frame.
+/// and each enumeration's; `tables`, by id, each one's name and whether it is a frame.
 #[derive(Default)]
 struct Tables {
     ids: HashMap<String, usize>,
-    frames: Vec<Option<String>>,
+    tables: Vec<(String, bool)>,
 }
 
 impl Tables {
@@ -698,7 +698,7 @@ impl Tables {
         let next = self.ids.len();
         let id = *self.ids.entry(name.to_owned()).or_insert(next);
         if id == next {
-            self.frames.push(frame.then(|| name.to_owned()));
+            self.tables.push((name.to_owned(), frame));
         }
         id
     }
@@ -1042,7 +1042,7 @@ impl Session {
             stages,
             clauses,
             stats: Stats::default(),
-            counts: Counts::new(Arc::clone(&frames), tables.frames, marks),
+            counts: Counts::new(Arc::clone(&frames), tables.tables, marks),
             frames,
         })
     }
@@ -1164,6 +1164,7 @@ impl Session {
             frames,
             stats,
             counts,
+            at: ("", 0),
         };
         let inputs = std::time::Instant::now();
         connection.prepare_cached(CLEAR_RUNS)?.execute([])?;
@@ -1220,6 +1221,7 @@ impl Session {
             if stage_files[stage].is_empty() {
                 continue;
             }
+            runner.at = ("stage", stage);
             let ran = runner.prepared(prepared)?;
             if ran || *MODE == Mode::Check {
                 runner.statement(&prepared.last, !ran)?;
@@ -1238,6 +1240,7 @@ impl Session {
                     position[*file] = at;
                 }
                 let (prepared, captures) = &clauses[run.statement];
+                runner.at = ("clause", run.statement);
                 if let Some(each) = &prepared.each {
                     let rows = connection
                         .prepare_cached(&format!("INSERT INTO {}r VALUES (0)", each.prefix))?
@@ -1341,6 +1344,7 @@ impl Session {
         let started = std::time::Instant::now();
         for (stage, (_, prepared)) in stages.iter().enumerate() {
             if !stage_files[stage].is_empty() {
+                runner.at = ("stage", stage);
                 runner.clear(prepared)?;
             }
         }
@@ -1349,15 +1353,40 @@ impl Session {
     }
 }
 
-/// A session's connection, frames, statistics and counts while a batch runs its statements.
+/// A session's connection, frames, statistics and counts while a batch runs its statements;
+/// `at`, the stage or clause running (`verify`).
 struct Runner<'s> {
     connection: &'s Connection,
     frames: &'s FrameStore,
     stats: &'s mut Stats,
     counts: &'s mut Counts,
+    at: (&'static str, usize),
 }
 
 impl Runner<'_> {
+    /// `RERAIL_SQL_SKIP=check`: panics where a table of `tables` holds other than its count,
+    /// before `sql` decides anything by it.
+    fn verify(&self, tables: &[usize], sql: &str) -> Result<(), SqlError> {
+        if *MODE != Mode::Check {
+            return Ok(());
+        }
+        for &table in tables {
+            let name = self.counts.name(table);
+            let rows: i64 = self
+                .connection
+                .prepare_cached(&format!("SELECT count(*) FROM {name}"))?
+                .query_row([], |row| row.get(0))?;
+            let counted = self.counts.rows(table);
+            assert!(
+                rows == counted,
+                "RERAIL_SQL_SKIP=check: {} {}: {name} holds {rows} rows, counted {counted}, before {sql}",
+                self.at.0,
+                self.at.1
+            );
+        }
+        Ok(())
+    }
+
     /// Runs a stage's or clause's steps, from its root frame on (`skip`): where the root frame is
     /// empty for the batch, every statement after it reads nothing, and is passed over (checking,
     /// run and found to change nothing); returns whether the root frame had rows.
@@ -1453,6 +1482,7 @@ impl Runner<'_> {
         blocks: &[Block],
         known_empty: bool,
     ) -> Result<(), SqlError> {
+        self.verify(&block.demand, "a block's run")?;
         let idle =
             *MODE != Mode::Run && self.counts.sum(&block.demand) == self.counts.marks[block.mark];
         if idle && *MODE == Mode::Skip {
@@ -1477,6 +1507,10 @@ impl Runner<'_> {
     /// Executes one statement that writes rows, unless its rule proves it empty; counts what it
     /// changed.
     fn statement(&mut self, step: &Step, known_empty: bool) -> Result<(), SqlError> {
+        self.verify(&step.effect.inputs, &step.sql)?;
+        if let Writes::Insert(table) | Writes::Delete(table) = step.effect.writes {
+            self.verify(&[table], &step.sql)?;
+        }
         let outcome = self.outcome(step, known_empty);
         if outcome == Outcome::Empty && *MODE == Mode::Skip {
             self.stats.skipped += 1;
@@ -1517,6 +1551,7 @@ impl Runner<'_> {
     /// Empties one table, unless it is empty already: a frame through its buffers
     /// (`frames::CLEAR`, which runs no statement), a B-tree by its `DELETE`.
     fn clear_step(&mut self, clear: &Step) -> Result<(), SqlError> {
+        self.verify(&clear.effect.inputs, &clear.sql)?;
         let outcome = self.outcome(clear, false);
         if outcome == Outcome::Empty && *MODE == Mode::Skip {
             self.stats.skipped_clears += 1;

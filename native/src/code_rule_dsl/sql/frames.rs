@@ -300,6 +300,10 @@ enum Key {
     Primary(Vec<usize>),
 }
 
+/// An index built on a frame's first read constrained on some columns: the columns, and the rows
+/// sorted by them, then in scan order.
+type Lookup = (Vec<usize>, Rc<[u32]>);
+
 struct Frame {
     columns: Vec<Column>,
     len: usize,
@@ -312,8 +316,8 @@ struct Frame {
     ascending: bool,
     dense: bool,
     largest: i64,
-    /// Indexes built since the last write: rows sorted by the columns, then in scan order.
-    lookups: RefCell<Vec<(Vec<usize>, Rc<[u32]>)>>,
+    /// Indexes built since the last write.
+    lookups: RefCell<Vec<Lookup>>,
     /// The scan order where the rows are not stored in it.
     order: RefCell<Option<Rc<[u32]>>>,
 }
