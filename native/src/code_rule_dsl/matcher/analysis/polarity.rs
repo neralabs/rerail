@@ -101,6 +101,7 @@ fn walk(matcher: &AstMatcher, negated: bool, seen: &mut BTreeSet<usize>, out: &m
         | AstMatcher::Semantic(Semantic::Arguments(_))
         | AstMatcher::Semantic(Semantic::Capture(_))
         | AstMatcher::Semantic(Semantic::Layout(_))
+        | AstMatcher::Semantic(Semantic::FilePath(_))
         | AstMatcher::Never => {}
         #[cfg(test)]
         AstMatcher::TestUnknown(_) => {}

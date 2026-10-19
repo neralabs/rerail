@@ -123,6 +123,12 @@ impl Comparison {
                     .get_match(name)
                     .map(|node| node.text().into_owned())
                     .or_else(|| exported_text(env, name))
+                    .or_else(|| {
+                        env.get_transformed(name).map(|bytes| {
+                            <D::Source as ast_grep_core::source::Content>::encode_bytes(bytes)
+                                .into_owned()
+                        })
+                    })
                 {
                     return Some(Some(text));
                 }

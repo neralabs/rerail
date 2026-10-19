@@ -322,6 +322,13 @@ fn scope_names(
     if let Some(capture) = rule.get("capture").and_then(Value::as_str) {
         names.insert(capture.to_owned());
     }
+    if let Some(name) = rule
+        .get("count")
+        .and_then(|count| count.get("as"))
+        .and_then(Value::as_str)
+    {
+        names.insert(name.to_owned());
+    }
     // A parsed tree's captures are exported to the rule that parses it.
     for parsed in [
         rule.get("parse"),
@@ -435,6 +442,13 @@ pub(super) fn binding_site_index(
                 }
                 if let Some(capture) = fields.get("capture").and_then(Value::as_str) {
                     names.insert(capture.to_owned());
+                }
+                if let Some(name) = fields
+                    .get("count")
+                    .and_then(|count| count.get("as"))
+                    .and_then(Value::as_str)
+                {
+                    names.insert(name.to_owned());
                 }
                 if let Some(bind) = fields
                     .get("arguments")

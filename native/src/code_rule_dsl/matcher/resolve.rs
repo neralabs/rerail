@@ -1045,7 +1045,7 @@ pub(crate) fn file_module() -> Option<Arc<ModulePath>> {
 }
 
 /// The host's path of the file being matched, if it gave one.
-fn file_path() -> Option<Arc<str>> {
+pub(super) fn file_path() -> Option<Arc<str>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.path.clone()))
 }
 

@@ -1,0 +1,145 @@
+{
+  "format": "rerail.data-layer-batch-evidence/v1",
+  "batch": 5,
+  "source_commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "base_commit": "01faa7cc",
+  "state": "Work in progress: seven repository detectors match; imperative propagation and two symbol-graph checks remain incomplete",
+  "linear_issues_created": [],
+  "oracle": {
+    "pytest_exit_code": 0,
+    "collected_tests": 646,
+    "loaded_source_files_checked": 1514,
+    "source_mismatches": [],
+    "missing_test_modules": [
+      "scripts/tests/test_check_layer_violations.py"
+    ]
+  },
+  "source_corpus_subset": {
+    "nativeCalls": 168,
+    "replayedCalls": 168,
+    "positiveCalls": 84,
+    "cleanCalls": 84,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "missingCoverage": [],
+    "compilationMs": 647.3505000000002,
+    "elapsedMs": 4343.981875
+  },
+  "checks": [
+    {
+      "check": "missing_async_pairs",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-missing-async-pairs.json",
+      "policy_sha256": "5d2bdf11502aa39982bfc6ea19a4e6cd91e7ddf1f6d63b75fdcaaa392c290bee",
+      "status": "repository detector parity"
+    },
+    {
+      "check": "sync_async_signatures",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-sync-async-signatures.json",
+      "policy_sha256": "ef99509b0a370a866cf85e124284c7bf90ce2e8d3e34f1decf10fae408c8a3c7",
+      "status": "repository detector parity"
+    },
+    {
+      "check": "async_sync_delegation",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-async-sync-delegation.json",
+      "policy_sha256": "912ccf169ede0dc785dfd519fde7a277d5f298bd4ec9efec4e0809ea3071ebec",
+      "status": "repository detector parity"
+    },
+    {
+      "check": "public_api_triples",
+      "candidate": null,
+      "policy_sha256": null,
+      "status": "not ported; requires project symbol relations"
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-data-layer-facade-purity.json",
+      "policy_sha256": "f08348732dcf1827030a1059efb3e6b85e7d92bf3193fd171ae93f9098fdced5",
+      "status": "repository detector parity"
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-data-layer-compat-aliases.json",
+      "policy_sha256": "821e77b0f992fe9397f7820a5e8391c4be607c0a0cd9326233793295f5d24eb4",
+      "status": "repository detector parity"
+    },
+    {
+      "check": "layer_violations",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-layer-violations.json",
+      "policy_sha256": "c1f4d088c6ea43230c0def590327a2065dfe6153f9e757d161187099c562be86",
+      "status": "repository detector parity"
+    },
+    {
+      "check": "backend_coupling",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-backend-coupling.json",
+      "policy_sha256": "54a16169fbba1e0d4372fa9e85a3d2b0b6e05a342620e30cb34c2fa8d3d20d0d",
+      "status": "repository detector parity"
+    },
+    {
+      "check": "internal_dead_code",
+      "candidate": null,
+      "policy_sha256": null,
+      "status": "not ported; requires project symbol relations"
+    },
+    {
+      "check": "imperative_private_functions",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-imperative-private-functions.json",
+      "policy_sha256": "78d442e1dbbf3f14b78faecb81cd028bce1cea6d43be2b20106c77c9c38f8e5a",
+      "status": "source-corpus only; project graph parity fails"
+    }
+  ],
+  "repository": {
+    "files": 5914,
+    "bytes": 106201417,
+    "oracle_ms": 34575.444375004736,
+    "oracle_workers": 1,
+    "native_workers": 4,
+    "cold_ms": 18047.455833,
+    "unchanged_file_ms": 26.21795899999779,
+    "edited_file_ms": 58.11220800000228,
+    "false_positives_by_check_and_code": {
+      "data-layer-imperative-private-functions:calls_imperative": 933
+    },
+    "false_negatives_by_check_and_code": {
+      "data-layer-imperative-private-functions:calls_imperative": 2997
+    },
+    "failures": [
+      {
+        "clauseId": "caller",
+        "code": "budget-exceeded",
+        "message": "clause work budget exceeded",
+        "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+        "ruleId": "data-layer-imperative-private-functions"
+      },
+      {
+        "clauseId": "caller",
+        "code": "budget-exceeded",
+        "message": "clause work budget exceeded",
+        "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+        "ruleId": "data-layer-imperative-private-functions"
+      },
+      {
+        "clauseId": "caller",
+        "code": "budget-exceeded",
+        "message": "clause work budget exceeded",
+        "path": "l2000_connection/schema_transaction.py",
+        "ruleId": "data-layer-imperative-private-functions"
+      }
+    ],
+    "native_sha256": "810c59581ef77538319a7d5bf2360b932ecf5011542799cd06b1eef1e2e5c092",
+    "allocator": "system-shim",
+    "interpretation": "Timings measure incomplete semantics and do not certify a parity-preserving speedup"
+  },
+  "retained_reporter_contracts": [
+    "async_sync_delegation signed category/total baseline reporter"
+  ],
+  "validation": [
+    "646 unchanged upstream tests passed",
+    "168 native source comparisons: 84 positive and 84 clean",
+    "56 existing TypeScript regression tests passed",
+    "4 new native capability tests passed",
+    "10 native comparison compiler tests passed",
+    "TypeScript typecheck passed"
+  ]
+}

@@ -16,6 +16,7 @@ from data_layer_record import BATCH_ONE, blob_id
 from data_layer_batch_two import BATCH_TWO
 from data_layer_batch_three import BATCH_THREE
 from data_layer_batch_four import BATCH_FOUR
+from data_layer_batch_five import BATCH_FIVE, MODULES as BATCH_FIVE_MODULES
 
 
 def main() -> None:
@@ -25,7 +26,8 @@ def main() -> None:
     parser.add_argument("--revision", default="2b1504adc4291daaf080b2e932962b134da1a69a")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--batches", default="1", help="Comma-separated batch numbers, currently 1, 2, 3, and 4.")
+    parser.add_argument("--batches", default="1", help="Comma-separated batch numbers, currently 1 through 5.")
+    parser.add_argument("--checks", help="Optional comma-separated subset of the selected batches")
     args = parser.parse_args()
     root = args.source.resolve()
     sys.path.insert(0, str(root))
@@ -35,12 +37,24 @@ def main() -> None:
 
     plugins, extractors = [], serverplan_fact_extractors(root)
     batch_ids = [int(value) for value in args.batches.split(",")]
-    if any(value not in (1, 2, 3, 4) for value in batch_ids) or len(set(batch_ids)) != len(batch_ids):
-        parser.error("--batches requires distinct batch numbers from 1,2,3,4")
-    batches = {1: BATCH_ONE, 2: BATCH_TWO, 3: BATCH_THREE, 4: BATCH_FOUR}
+    if any(value not in (1, 2, 3, 4, 5) for value in batch_ids) or len(set(batch_ids)) != len(batch_ids):
+        parser.error("--batches requires distinct batch numbers from 1,2,3,4,5")
+    batches = {1: BATCH_ONE, 2: BATCH_TWO, 3: BATCH_THREE, 4: BATCH_FOUR, 5:BATCH_FIVE}
     names = [name for value in batch_ids for name in batches[value]]
+    if args.checks:
+        selected_checks = args.checks.split(',')
+        if len(set(selected_checks)) != len(selected_checks) or set(selected_checks)-set(names):parser.error('--checks must select distinct checks from --batches')
+        names = [name for name in names if name in selected_checks]
+    graph_checks={'public_api_triples','internal_dead_code','imperative_private_functions'}
+    graph_module=None
     for name in names:
-        module = importlib.import_module("scripts.lint_" + name)
+        if name in graph_checks:
+            if graph_module is None:
+                graph_module=importlib.import_module('scripts.lint_symbol_graph_plugins')
+                extractors.update(graph_module.symbol_graph_fact_extractors(root))
+            plugins.append(next(plugin for plugin in graph_module.symbol_graph_linter_plugins(root) if plugin.name==name))
+            continue
+        module = importlib.import_module(BATCH_FIVE_MODULES.get(name,"scripts.lint_" + name))
         if name == "rust_sql_grammar_boundary":
             continue
         factory = getattr(module, name + "_plugin")
@@ -58,6 +72,9 @@ def main() -> None:
     if missing:
         raise ValueError(f"Missing oracle extractors: {sorted(missing)}")
     selected = sorted({path for plan in plans.values() for path in plan.files})
+    if graph_module is not None:
+        from scripts.lint_lib.discovery import discover_python_files, data_layer_production_dirs
+        selected=sorted(set(selected)|set(discover_python_files(root,directories=['api',*data_layer_production_dirs(root)],include_tests=False)))
     if "rust_sql_grammar_boundary" in names:
         module = importlib.import_module("scripts.lint_rust_sql_grammar_boundary")
         selected = sorted(set(selected) | set(module._rust_files()))
@@ -90,15 +107,17 @@ def main() -> None:
     events = []
     reporter_results = []
     for result in results:
-        if result.name == "swallowed_exceptions":
+        if result.name in ("swallowed_exceptions", "async_sync_delegation"):
             reporter_results.append({"check": result.name, "contract": "signed aggregate baseline reporter; retained upstream",
                                      "findings": [{"path": v.path.as_posix(), "line": v.line, "code": v.code, "message": v.message} for v in result.violations]})
             view = captured[0]
             findings = []
             for path, bundle in view.files.items():
-                for fact in bundle.facts.get("swallowed_exceptions.violations", []):
-                    findings.append({"path": str(fact["path"]), "line": fact["line"], "column": fact.get("col"),
-                                     "code": {1: "INFO", 2: "WARNING", 3: "CRITICAL"}[fact["severity"]], "message": fact["message"]})
+                for fact in bundle.facts.get(result.name+".violations", []):
+                    if result.name=='async_sync_delegation':
+                        findings.append({'path':fact['file'],'line':fact['line'],'column':None,'code':fact['category'],'message':fact['description']})
+                    else:findings.append({"path": str(fact["path"]), "line": fact["line"], "column": fact.get("col"),
+                                         "code": {1: "INFO", 2: "WARNING", 3: "CRITICAL"}[fact["severity"]], "message": fact["message"]})
             events.append({"test": "suite:" + result.name, "call": 1, "check": result.name, "entry": "fact-extractor",
                            "upstream_passed": True, "input_mode": "suite", "production_scope": True,
                            "scope": {"include": ["**/*.py"], "exclude": []}, "file_set": "suite", "findings": findings})

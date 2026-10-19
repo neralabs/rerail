@@ -146,7 +146,7 @@ export const codeRuleViolationSpecSchema = z
 export type CodeRuleAstRule = CodeRuleDslAstRule;
 export type CodeRuleAstRelation = CodeRuleDslAstRelation;
 
-const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "host", "calls"] as const;
+const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "filePath", "host", "calls"] as const;
 /** The grammars `parse` applies and their kinds (the engine's `literal::Grammar`). */
 export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat", "identifierWords", "pythonFString"] as const;
 export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[number], readonly string[]> = {
@@ -791,6 +791,7 @@ export const codeRuleAstRuleSchema: z.ZodType<CodeRuleDslAstRule> = z.lazy(() =>
       follows: codeRuleAstRelationSchema.optional(),
       compare: codeRuleCompareSchema.optional(),
       count: codeRuleAstCountSchema.optional(),
+      filePath: z.object({ regex: nonEmptyString.optional(), notRegex: nonEmptyString.optional() }).strict().refine(value => value.regex !== undefined || value.notRegex !== undefined).optional(),
       ...semanticRuleShape({
         resolves: codeRuleResolvesSchema,
         value: codeRuleValueTestSchema,
@@ -826,6 +827,7 @@ export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.la
       follows: codeRuleAstRelationSchema.optional(),
       compare: codeRuleCompareSchema.optional(),
       count: codeRuleAstCountSchema.optional(),
+      filePath: z.object({ regex: nonEmptyString.optional(), notRegex: nonEmptyString.optional() }).strict().refine(value => value.regex !== undefined || value.notRegex !== undefined).optional(),
       ...semanticRuleShape({
         resolves: codeRuleResolvesSchema,
         value: codeRuleValueTestSchema,
@@ -906,7 +908,7 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
       path: ["grammar"],
     })
     .refine(rule => rule.interpolation === undefined || rule.grammar === "pythonFString", "interpolation requires pythonFString.")
-    .refine(rule => AST_RULE_KEYS.some(key => rule[key] !== undefined), "parse must hold a rule over the parsed tree.") as unknown as z.ZodType<CodeRuleDslParse>,
+    .refine(rule => AST_RULE_KEYS.some(key => key !== "filePath" && rule[key] !== undefined), "parse must hold a rule over the parsed tree.") as unknown as z.ZodType<CodeRuleDslParse>,
 );
 export const codeRuleAstCountSchema: z.ZodType<CodeRuleDslAstCount> = z.lazy(() =>
   z
@@ -935,6 +937,10 @@ export const codeRulePredicateSchema: z.ZodType<CodeRuleDslPredicate> = z.lazy((
     z.object({ not: codeRulePredicateSchema }).strict(),
     z.object({ eq: codeRuleValuePair }).strict(),
     z.object({ ne: codeRuleValuePair }).strict(),
+    z.object({ lt: codeRuleValuePair }).strict(),
+    z.object({ le: codeRuleValuePair }).strict(),
+    z.object({ gt: codeRuleValuePair }).strict(),
+    z.object({ ge: codeRuleValuePair }).strict(),
   ]),
 );
 
@@ -1236,7 +1242,11 @@ export const codeRuleEvidenceQuerySchema = z
           .optional(),
         query: z.lazy(() => codeRuleQuerySchema).refine(query => "ast" in query, "An evidence query is an ast query."),
         project: z
-          .record(nonEmptyString, z.string().regex(PROJECTION_SOURCE, "expected capture.<NAME> or file.path|directory|name|stem|module|package"))
+          .record(nonEmptyString, z.union([
+            z.string().regex(PROJECTION_SOURCE, "expected capture.<NAME> or file.path|directory|name|stem|module|package"),
+            z.object({ source: z.string().regex(PROJECTION_SOURCE), regex: nonEmptyString,
+              group: z.number().int().nonnegative() }).strict(),
+          ]))
           .refine(project => Object.keys(project).length > 0, "project names at least one field."),
         where: codeRulePredicateSchema.optional(),
         each: metavariableName.optional(),

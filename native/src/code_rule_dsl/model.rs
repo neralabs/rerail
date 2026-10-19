@@ -418,6 +418,8 @@ pub(super) enum FixPlan {
 pub(super) struct Projection {
     pub(super) field: String,
     pub(super) source: ProjectionSource,
+    /// First regex match's selected group, or null when the source/group does not match.
+    pub(super) extract: Option<(Regex, usize)>,
 }
 
 #[derive(Clone)]

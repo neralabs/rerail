@@ -1023,6 +1023,14 @@ fn compile_query_as(
                     violations::ast_captures(util, &table, &mut summaries, &mut names);
                 }
                 bindable.extend(names.into_iter().map(str::to_owned));
+                bindable.extend(
+                    crate::code_rule_dsl::matcher::CaptureAnalysis::default().binds(&matcher),
+                );
+                for util in table.shared_rules() {
+                    bindable.extend(
+                        crate::code_rule_dsl::matcher::CaptureAnalysis::default().binds(util),
+                    );
+                }
                 if !matches!(matcher, AstMatcher::Never) {
                     let anchors = Arc::new(AnchorPlan::compile(&matcher));
                     let three_valued = reads_values(&matcher, &mut BTreeSet::new());

@@ -780,6 +780,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <dt>Semantics</dt><dd><ul><li>A <code>forbid</code> violation may use any anchor, a fix (over an <code>ast</code> or <code>file.content</code> regex query), <code>each</code> and <code>suppress</code> (over an <code>ast</code> query). The violation of a <code>select_when</code> query reads its <code>select</code> side.</li><li><code>require_each</code>, <code>budget</code> and <code>llm</code> violations take only <code>anchor: "witness.span"</code> and no fix.</li><li>An evidence relation wraps an AST query, gives its rows an <code>as</code> alias, and projects non-empty fields from captures or file metadata. Its optional <code>where</code> predicate compares projected <code>alias.field</code> operands.</li></ul></dd>
 <dt>Derived name sets</dt><dd>An evidence relation can declare up to 32 ordered <code>closure</code> stages. Seeds are literal strings or a projected <code>seed_field</code>. Authored <code>edges.from</code> and <code>edges.to</code> name projected fields. A queue computes finite reachability within each <code>partition_by</code> key. Null fields supply no seed or edge. Earlier sets can seed later stages through <code>extends</code>; their partitions must match. Later edges never feed back into earlier stages. Each <code>contains</code> entry adds a Boolean field that tests a projected name against the completed set. Outputs cannot replace raw fields. Incomplete evidence fails membership explicitly. Closure work obeys <code>maxVisitedNodes</code> and interruption checks. Workspace evidence changes invalidate the derived result.</dd>
 <dt>Evidence rows</dt><dd><code>each</code> enumerates a capture through the existing AST matcher. An optional relation <code>anchor</code> selects the source location its eventual finding reports. <code>capture.NAME.text</code> reads decoded exported text, or a host node's text. <code>startByte</code> and <code>startLine</code> project source identity and line grouping keys. Plain <code>capture.NAME</code> continues to read source text.</dd>
+<dt>Extracted fields</dt><dd>A projection can use <code>{ "source": "file.path", "regex": "l([0-9]{4})_", "group": 1 }</code>. The first match supplies the selected numeric capture group. No match, an absent group, or a non-string source supplies null. Group 0 is the complete match. Patterns obey <code>maxRegexPatternBytes</code>; invalid patterns and group numbers fail compilation. Evidence predicates support <code>lt</code>, <code>le</code>, <code>gt</code>, and <code>ge</code> over strings in UTF-16 ordinal order. Other JSON types do not satisfy these ordered predicates.</dd>
 <dt>Syntax errors</dt><dd>as the evidence query.</dd>
 <dt>Languages</dt><dd>any language supported by the wrapped AST query.</dd>
 <dt>Limits</dt><dd>Evidence queries are AST-only; <code>project</code> is required and must name at least one field.</dd>
@@ -2776,14 +2777,14 @@ Gap = { "to": "token" | "sibling" | "capture.NAME", "comments"?: Bool, "edge"?: 
 <h3><span class="keys">count</span> <a class="anchor" href="#count">#</a><span class="since">M0 · three-valued M9a</span></h3>
 <p>How many nodes one relation reaches that match its rule.</p>
 <dl class="facets">
-<dt>Shape</dt><dd><div class="shape">"count": { "inside" | "has" | "precedes" | "follows": Relation, "min"?: N, "max"?: N }</div></dd>
+<dt>Shape</dt><dd><div class="shape">"count": { "inside" | "has" | "precedes" | "follows": Relation, "min"?: N, "max"?: N, "as"?: Str, "offset"?: Int }</div></dd>
 <dt>Semantics</dt><dd>Exactly one relation; <code>min</code> (default 0) and/or <code>max</code>, with <code>min ≥ 1</code> or a <code>max</code>. The relation walks as usual, except that <code>has</code> keeps descending below a match, so every matching descendant counts. No <code>field</code> in a count.</dd>
 <dt>Composition</dt><dd>A late term (after the ordered group). Existence without binding: <code>count: { …, "min": 1 }</code> searches past unknown candidates where a relation that binds would stop.</dd>
-<dt>Captures</dt><dd>The counted rule reads the caller's metavariables; nothing it binds is kept. A <code>compare</code> inside it may read what the counted rule binds.</dd>
+<dt>Captures</dt><dd>The counted rule reads the caller's metavariables; its own captures remain local. An optional <code>as</code> binds the exact count plus <code>offset</code> as decimal text. Messages and source-text comparisons can read this value. Comparisons use string order; equality compares exact counts. A count under <code>not</code> exports nothing outside that negation.</dd>
 <dt>Unknown</dt><dd>The true count lies between the matches and the matches plus the unknown candidates; the verdict is unknown when that range straddles a bound.</dd>
 <dt>Syntax errors</dt><dd>over <code>has</code> <span class="b ok">sound</span> · over <code>inside</code>, <code>precedes</code>, <code>follows</code> <span class="b bad">source-incomplete</span> (a count is an absence claim too)</dd>
 <dt>Languages</dt><dd>both; inside <code>parse</code> too.</dd>
-<dt>Limits</dt><dd>No count of a relation's matches in a message (the <code>count</code> transform counts a <code>$$$</code> capture's nodes).</dd>
+<dt>Limits</dt><dd>A bound count must finish its walk and know the exact result. Unknown candidates or exhausted work produce an unknown verdict or a failure.</dd>
 </dl>
 <figure class="ex-fig" data-kind="clause"><figcaption>ESLint's <code>max-classes-per-file</code>: a <code>has</code> count on the program, reported once, at the start of its first top-level node that is no comment.</figcaption><div class="src"><span class="src-path">eslint/eslint/max-classes-per-file/ignore-expressions-max-1.json</span> <span class="src-at"><code>/checks/0</code> · ESLint conformance port</span></div><pre class="ex" data-kind="clause">{
   "id": "too-many-classes",
@@ -4776,6 +4777,7 @@ Omitted keys take ESLint's defaults (<code>"latest"</code>, the file's own sourc
 <section class="card" id="file">
 <h3><span class="keys">file</span> <a class="anchor" href="#file">#</a><span class="since">M8 fix · path, declaration M10 fix</span></h3>
 <p>Conditions on the file the query reads.</p>
+<p>Within an AST rule, <code>filePath: { "regex": "...", "notRegex": "..." }</code> tests the current file's path. It can scope a call-graph seed to its defining file. It uses the same path text and regular-expression conditions as <code>file.path</code>.</p>
 <dl class="facets">
 <dt>Shape</dt><dd><div class="shape">"file": { "path"?: TextCond, "declaration"?: Bool, "module"?: TextCond, "moduleName"?: TextCond, "package"?: TextCond | Package, "inPackage"?: Bool,
          "jsxRuntime"?: ["react" | "other" | "unknown"] }
