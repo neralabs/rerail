@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -32,9 +33,11 @@ FIXTURES = "crates/ruff_linter/resources/test/fixtures"
 # Each ported rule, shipped (rules/) or candidate (candidates/rules/), and its own default-settings fixtures: every
 # .py and .pyi file the tests in `crates/ruff_linter/src/rules/<linter>/mod.rs` (and `src/linter.rs`'s syntax-error
 # tests) lint with settings that enable the rule and change no option, preview mode or target version. Notebooks
-# (.ipynb), which the host does not route to Python, are left out. Fixtures of pylint-derived (PL*) and flake8-builtins
-# (A*) rules are GPL-derived and are never copied, so the candidate A005 is not recorded; nor is the candidate INP001,
-# which Ruff's tests lint only with a `namespace-packages` option.
+# (.ipynb), which the host does not route to Python, are left out. Fixtures under the upstream paths that
+# licenses/ruff/UPSTREAM.md lists as "Not copied" (ports of copyleft plugins: pylint, flake8-builtins, flake8-django,
+# flake8-executable, refurb) are never copied (`fixtures` refuses one), so their rules are not recorded: not the
+# candidate A005, nor DJ* or EXE*. Nor is the candidate INP001, which Ruff's tests lint only with a
+# `namespace-packages` option.
 RULES: dict[str, list[str]] = {
     "AIR001": ["airflow/AIR001.py"],
     "AIR002": ["airflow/AIR002.py"],
@@ -251,13 +254,6 @@ RULES: dict[str, list[str]] = {
     ],
     "D418": ["pydocstyle/D.py", "pydocstyle/D418.pyi"],
     "D419": ["pydocstyle/D.py"],
-    "DJ001": ["flake8_django/DJ001.py"],
-    "DJ003": ["flake8_django/DJ003.py"],
-    "DJ006": ["flake8_django/DJ006.py"],
-    "DJ007": ["flake8_django/DJ007.py"],
-    "DJ008": ["flake8_django/DJ008.py"],
-    "DJ012": ["flake8_django/DJ012.py"],
-    "DJ013": ["flake8_django/DJ013.py"],
     "DTZ001": ["flake8_datetimez/DTZ001.py"],
     "DTZ002": ["flake8_datetimez/DTZ002.py"],
     "DTZ003": ["flake8_datetimez/DTZ003.py"],
@@ -292,21 +288,6 @@ RULES: dict[str, list[str]] = {
     "EM102": ["flake8_errmsg/EM.py"],
     "EM103": ["flake8_errmsg/EM.py"],
     "ERA001": ["eradicate/ERA001.py", "ruff/RUF100_5.py"],
-    "EXE001": ["flake8_executable/EXE001_1.py", "flake8_executable/EXE001_2.py", "flake8_executable/EXE001_3.py"],
-    "EXE002": ["flake8_executable/EXE002_1.py", "flake8_executable/EXE002_2.py", "flake8_executable/EXE002_3.py"],
-    "EXE003": [
-        "flake8_executable/EXE003.py",
-        "flake8_executable/EXE003_uv.py",
-        "flake8_executable/EXE003_uv_tool.py",
-        "flake8_executable/EXE003_uvx.py",
-    ],
-    "EXE004": [
-        "flake8_executable/EXE004_1.py",
-        "flake8_executable/EXE004_2.py",
-        "flake8_executable/EXE004_3.py",
-        "flake8_executable/EXE004_4.py",
-    ],
-    "EXE005": ["flake8_executable/EXE005_1.py", "flake8_executable/EXE005_2.py", "flake8_executable/EXE005_3.py"],
     "F401": [
         "pyflakes/F401_0.py",
         "pyflakes/F401_1.py",
@@ -1478,7 +1459,21 @@ def ruff(executable: str, paths: list[str], cwd: pathlib.Path) -> list[dict]:
     return findings
 
 
+def not_copied() -> list[str]:
+    """The upstream path prefixes licenses/ruff/UPSTREAM.md lists as "Not copied": fixtures of copyleft plugins' ports."""
+    record = HERE.parent.parent / "licenses" / "ruff" / "UPSTREAM.md"
+    prefixes = re.findall(r"^- Not copied: `([^`]+)`", record.read_text(encoding="utf-8"), re.MULTILINE)
+    if not prefixes:
+        raise SystemExit(f"{record} lists no \"Not copied\" upstream paths")
+    return prefixes
+
+
 def fixtures(checkout: pathlib.Path, executable: str) -> None:
+    excluded = not_copied()
+    refused = sorted(file for paths in RULES.values() for file in paths
+                     if any(f"{FIXTURES}/{file}".startswith(prefix) for prefix in excluded))
+    if refused:
+        raise SystemExit(f"RULES names fixtures licenses/ruff/UPSTREAM.md lists as not copied: {', '.join(refused)}")
     version = common.tool_version(executable, VERSION)
     head = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True,
                           check=True).stdout.strip()

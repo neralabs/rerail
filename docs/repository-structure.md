@@ -105,6 +105,11 @@ For each rule document of a pack, REUSE's resolved licence (REUSE.toml: the last
 - `packs/<id>/rules/**`: equal (the package's licence describes exactly what it ships);
 - `packs/<id>/candidates/**`: only terms the pack declares (Rerail's own probe rules are Apache-2.0 alone).
 
+And for each file a `packs/<id>/licenses/<project>/UPSTREAM.md` table lists as copied (a row whose upstream path is
+`none` is Rerail's and is skipped): the resolved licence includes the one that UPSTREAM.md records
+(`License: <SPDX id>`), and the resolved `SPDX-FileCopyrightText` names a holder besides Rerail. A copied file left to
+the catch-all annotation passes `reuse lint` but fails here.
+
 ## Contract conformance
 
 ### 8. Packs pass the pack-format layout — target 100%

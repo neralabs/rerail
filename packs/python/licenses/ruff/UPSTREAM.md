@@ -10,6 +10,16 @@ rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders `upst
 
 Ruff's `LICENSE` also carries the notices of the projects Ruff derives from, Pyflakes among them. Ruff's pyflakes fixtures come with that notice.
 
+Some of Ruff's rules are ports of plugins under copyleft licences, and Ruff's fixtures for them carry those plugins' test
+code. Nothing under these upstream paths is copied, so their rules are not recorded (`upstream/ruff/generate.py` and the
+pack check both read this list):
+
+- Not copied: `crates/ruff_linter/resources/test/fixtures/flake8_builtins/` — flake8-builtins, GPL-2.0
+- Not copied: `crates/ruff_linter/resources/test/fixtures/flake8_django/` — flake8-django, GPL-3.0-or-later
+- Not copied: `crates/ruff_linter/resources/test/fixtures/flake8_executable/` — flake8-executable, LGPL-3.0-or-later
+- Not copied: `crates/ruff_linter/resources/test/fixtures/pylint/` — pylint, GPL-2.0-or-later
+- Not copied: `crates/ruff_linter/resources/test/fixtures/refurb/` — refurb, GPL-3.0-only
+
 Paths are relative to the pack directory, `packs/python/`.
 
 | File | Upstream path | Copy |
@@ -179,32 +189,8 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/flake8_datetimez/DTZ012.py` | `crates/ruff_linter/resources/test/fixtures/flake8_datetimez/DTZ012.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_datetimez/DTZ901.py` | `crates/ruff_linter/resources/test/fixtures/flake8_datetimez/DTZ901.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_debugger/T100.py` | `crates/ruff_linter/resources/test/fixtures/flake8_debugger/T100.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_django/DJ001.py` | `crates/ruff_linter/resources/test/fixtures/flake8_django/DJ001.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_django/DJ003.py` | `crates/ruff_linter/resources/test/fixtures/flake8_django/DJ003.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_django/DJ006.py` | `crates/ruff_linter/resources/test/fixtures/flake8_django/DJ006.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_django/DJ007.py` | `crates/ruff_linter/resources/test/fixtures/flake8_django/DJ007.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_django/DJ008.py` | `crates/ruff_linter/resources/test/fixtures/flake8_django/DJ008.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_django/DJ012.py` | `crates/ruff_linter/resources/test/fixtures/flake8_django/DJ012.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_django/DJ013.py` | `crates/ruff_linter/resources/test/fixtures/flake8_django/DJ013.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_errmsg/EM.py` | `crates/ruff_linter/resources/test/fixtures/flake8_errmsg/EM.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_errmsg/EM101_byte_string.py` | `crates/ruff_linter/resources/test/fixtures/flake8_errmsg/EM101_byte_string.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE001_1.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE001_1.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE001_2.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE001_2.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE001_3.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE001_3.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE002_1.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE002_1.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE002_2.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE002_2.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE002_3.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE002_3.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE003.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE003.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE003_uv.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE003_uv.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE003_uv_tool.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE003_uv_tool.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE003_uvx.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE003_uvx.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE004_1.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE004_1.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE004_2.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE004_2.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE004_3.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE004_3.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE004_4.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE004_4.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE005_1.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE005_1.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE005_2.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE005_2.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_executable/EXE005_3.py` | `crates/ruff_linter/resources/test/fixtures/flake8_executable/EXE005_3.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_fixme/T00.py` | `crates/ruff_linter/resources/test/fixtures/flake8_fixme/T00.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_future_annotations/edge_case.py` | `crates/ruff_linter/resources/test/fixtures/flake8_future_annotations/edge_case.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_future_annotations/from_typing_import.py` | `crates/ruff_linter/resources/test/fixtures/flake8_future_annotations/from_typing_import.py` | verbatim |
