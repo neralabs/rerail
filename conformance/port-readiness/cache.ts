@@ -39,7 +39,7 @@ export const GATE_CODE = [
  * here leaves a stale verdict, the opposite of FAMILY_SOURCES (engine.ts), where a missing entry only costs a
  * re-judge; cache.test.ts therefore checks the list against a bundle of run.ts.
  */
-export const GATE_PACKAGES = ["apache-arrow", "better-sqlite3", "diff", "drizzle-orm", "tsx", "yaml", "zod"] as const;
+export const GATE_PACKAGES = ["apache-arrow", "better-sqlite3", "diff", "drizzle-orm", "semver", "tsx", "yaml", "zod"] as const;
 
 /** Tags every cached entry, so an entry written by another layout of the cache is a miss. */
 export const CACHE_FORMAT = "rerail.port-readiness-cache/v1";

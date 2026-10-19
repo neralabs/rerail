@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../../src/engine/native/native.js";
-import { loadBundledRules } from "../../../../src/engine/catalog/bundled-rule-documents.js";
+import { loadPackRuleDocuments } from "../../../../src/engine/catalog/rule-documents.js";
 import { repositoryPath } from "../../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));
@@ -34,7 +34,7 @@ function compile(ruleId: string): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
   // The three ports fail the port readiness gates (B406 differs from Bandit on a Django file, B610 names fixture words, F722
   // fails compact), so they are candidates until they pass.
-  const document = loadBundledRules([repositoryPath("packs", "python", "candidates")]).find(candidate => candidate.rule.id === ruleId);
+  const document = loadPackRuleDocuments([repositoryPath("packs", "python", "candidates")]).find(candidate => candidate.rule.id === ruleId);
   if (document === undefined) throw new Error(`${ruleId} is not in packs/python/candidates`);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }

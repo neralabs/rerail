@@ -23,7 +23,7 @@ function fakeEngine(): Engine {
       findDuplicateJsonKeys: () => [],
       codeRuleSchema: { safeParse: () => ({ success: true, data: RESOLVED }) },
       stableJsonText: (value: unknown) => JSON.stringify(value),
-      loadBundledRules: () => [{ kind: "code", rule: { id: "eslint:no-eval" } }],
+      loadPackRuleDocuments: () => [{ kind: "code", rule: { id: "eslint:no-eval" } }],
       dialectForPath: () => "typescript",
     },
     compile: () => ({ canonicalJson: JSON.stringify({ id: "eslint:no-eval" }), digest: "sha256:0", inScope: () => true, evaluateFile: () => ({ status: "completed", violations: [], failures: [] }) }),
@@ -49,7 +49,7 @@ test("a document rerail's bundled-rule loader rejects is named by its path in th
   try {
     const engine = fakeEngine();
     // rerail's loader names the rejected file by absolute path.
-    engine.rerail.loadBundledRules = (packs: readonly string[]) => {
+    engine.rerail.loadPackRuleDocuments = (packs: readonly string[]) => {
       throw new Error(`${join(packs[0]!, "rules", "assert-used.json")} is neither a rerail.policy/v1 document nor a conversation rule: m`);
     };
     const rule: PackRule = { file: "assert-used.json", path: "packs/python/rules/assert-used.json", rule: "b101", text: "{}", bytes: 2, sha256: "0".repeat(64), id: "bandit:b101" };

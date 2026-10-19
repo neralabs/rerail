@@ -16,7 +16,6 @@ import {
   auditRequestSchema,
 } from "../engine/audit/audit-control-schema.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
-import { loadRulePacks } from "../engine/catalog/rule-packs.js";
 import { rulePackListSchema } from "./rule-pack-contracts.js";
 import { SESSION_EVENT_PAGE_LIMIT } from "../runtime/session-store.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
@@ -360,9 +359,15 @@ export const operations: readonly Operation[] = [
     id: "rule_packs_list",
     method: "GET",
     path: "/api/rule-packs",
-    summary: "List every rule pack that comes with Rerail: what it covers and its rules, each with a title, a group and the mode it starts in. Add a pack to a repository with repository_attachments_set.",
+    summary: "List every rule pack installed on this machine: what it covers, its version and its rules, each with a title, a group and the mode it starts in, and every installed pack left out with the reason. Add a pack to a repository with repository_attachments_set.",
     output: rulePackListSchema,
-    handler: () => ({ packs: loadRulePacks().map(({ match: _match, rules, ...pack }) => ({ ...pack, rules: [...rules] })) }),
+    handler: stores => {
+      const catalog = stores.ruleCatalog();
+      return {
+        packs: [...catalog.packs.values()].map(({ match: _match, rules, ...pack }) => ({ ...pack, rules: [...rules] })),
+        skipped: [...catalog.skipped],
+      };
+    },
   }),
   defineOperation({
     id: "coding_agents_list",

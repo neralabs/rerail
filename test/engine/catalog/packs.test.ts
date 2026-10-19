@@ -1,5 +1,5 @@
 /**
- * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 6, one test per
+ * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 7, one test per
  * check, and reports each rule's status; a rule core cannot read yet is skipped as not supported yet. Check 4 scores
  * ported rules on the tools' fixtures, and on the pinned corpora that are checked out (RERAIL_PACK_CORPORA=1: every
  * corpus, a missing checkout failing; 0: none).
@@ -364,6 +364,23 @@ describe("validatePack", () => {
     expect(validation.pass).toBe(false);
   });
 
+  describe("check 7: manifest", () => {
+    it("fails a pack.json without match, as a manifest failure besides check 1's schema failure", async () => {
+      const validation = await validatePack(changed("valid", directory => editJson(join(directory, "pack.json"), ({ match: _match, ...pack }) => pack)), { corpora: false });
+      expect(failing(validation)).toEqual({
+        rules: ["pack.json: ✖ Invalid input: expected object, received undefined\n  → at match"],
+        proof: ["pack.json does not parse; see check 1"],
+        examples: ["pack.json does not parse; see check 1"],
+        manifest: ["pack.json has no match: set-up could never recommend this pack"],
+      });
+    });
+
+    it("fails a pack core's generated pack list does not name, when it must be listed", async () => {
+      const validation = await validatePack(join(FIXTURES, "valid"), { corpora: false, listed: true });
+      expect(failing(validation)).toEqual({ manifest: ["src/engine/catalog/pack-list.generated.ts does not list valid; run npm run generate:packs"] });
+    });
+  });
+
   it("marks the rule a failure belongs to", async () => {
     const validation = await validatePack(
       changed("valid", directory => writeFileSync(join(directory, "divergences.json"), "[]\n")),
@@ -506,14 +523,14 @@ describe("packedFileFailures", () => {
   });
 
   it("fails an entry files does not publish", () => {
-    expect(packedFileFailures(files, ["pack.json", "CHANGELOG.md", "checks/match.mjs"])).toEqual([
+    expect(packedFileFailures(files, ["pack.json", "CHANGELOG.md", "docs/notes.md"])).toEqual([
       "CHANGELOG.md: package.json files does not publish it",
-      "checks/match.mjs: package.json files does not publish it",
+      "docs/notes.md: package.json files does not publish it",
     ]);
   });
 
-  it("passes a directory a pack adds to files, such as checks/", () => {
-    expect(packedFileFailures([...files, "checks"], ["checks/match.mjs"])).toEqual([]);
+  it("passes a directory a pack adds to files, such as docs/", () => {
+    expect(packedFileFailures([...files, "docs"], ["docs/notes.md"])).toEqual([]);
   });
 
   it("passes files under a folder a glob entry matches, which npm publishes whole", () => {

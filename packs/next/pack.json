@@ -8,9 +8,12 @@
   "match": {
     "any": [
       {
-        "npmDependencies": [
-          "next"
-        ]
+        "dependencies": {
+          "ecosystem": "npm",
+          "names": [
+            "next"
+          ]
+        }
       }
     ]
   },

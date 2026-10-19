@@ -8,7 +8,7 @@ import type { z } from "zod";
 import type { RerailDatabase } from "../engine/storage/database.js";
 import type { AuditReader } from "../engine/audit/audit-store.js";
 import type { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
-import type { ApiCaller, BundledCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
+import type { ApiCaller, RuleCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import type { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import type { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
@@ -29,7 +29,7 @@ export interface RerailApiStores {
   /** Writable handle on the one database: repositories, checkouts, rule configuration and the library. */
   database(): RerailDatabase;
   /** The rules and packs that ship with Rerail. */
-  bundle(): BundledCatalog;
+  ruleCatalog(): RuleCatalog;
   /** Passive checkout lookup (never records), with each workspace's git location cached. */
   checkouts(): (workspace: string) => CheckoutContext | undefined;
   /** Change token over the whole database: other connections' commits and writes through these stores. */

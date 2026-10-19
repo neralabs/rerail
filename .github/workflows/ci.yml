@@ -13,9 +13,10 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Real-session jobs call hosted models with repository secrets. GitHub withholds secrets from fork and
-# Dependabot pull requests, so those jobs run on pushes and same-repository pull requests only; there a
-# missing secret or variable is a configuration error and fails the job.
+# Real-session jobs call hosted models with repository secrets, and the installed-packs job reads the restricted
+# rule packs from npm with one. GitHub withholds secrets from fork and Dependabot pull requests, so those jobs run on
+# pushes and same-repository pull requests only; there a missing secret or variable is a configuration error and
+# fails the job.
 #
 # The Version packs pull request (changeset-release/main, from version-packs.yml) changes only pack versions,
 # changelogs and package-lock.json, and is rewritten on every push to main. It runs the licence and lint jobs only:
@@ -361,6 +362,56 @@ jobs:
 
       - name: Integration tests
         run: npm run test:integration:built
+
+  # Rule packs installed from npm, against the registry: set-up on a project outside this repository, and
+  # `rerail packs` upgrading, downgrading and removing a published pack (integration/installed-packs.test.ts).
+  # NPM_PACKS_READ_TOKEN is a read-only granular token for the restricted @neralabs packs. Only the steps that check it
+  # and read the packs get it; `npm ci` and the build run without it.
+  installed-packs:
+    name: Rule packs installed from npm
+    needs: build
+    if: >-
+      ${{
+        github.event_name != 'pull_request' ||
+        (
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.actor != 'dependabot[bot]' &&
+          github.head_ref != 'changeset-release/main'
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Require the npm read token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::Reading the restricted rule packs needs the repository secret NPM_PACKS_READ_TOKEN"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      # The file names the variable, not the token: npm reads NODE_AUTH_TOKEN from the step that runs it.
+      - name: Authenticate npm to read the packs
+        run: printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+
+      - name: Rule packs from npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+          RERAIL_INSTALLED_PACKS_NPM: "1"
+        run: npx vitest run integration/installed-packs.test.ts
 
   tools:
     name: Scripts, reference examples, conformance, and rule playground

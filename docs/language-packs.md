@@ -184,9 +184,10 @@ or names `runsOn`; when entries name different capabilities; when `runsOn` names
    of it:
    - compiling the rule fails with the stable code `language-not-supported` (the engine's message starts with it and
      names the language), never a schema error;
-   - the catalog stores the rule but keeps it inactive: every audit skips it, it is never an audit failure, and the
-     rule APIs (`GET /api/rules`, `GET /api/rules/{id}`, `PUT /api/rules/{id}`) and the activity API
-     (`GET /api/rules/activity`, `measured: false`) return it with `inactive: { code, reason }`;
+   - the catalog loads the rule but keeps it inactive: every audit skips it, it is never an audit failure, an installed
+     pack holding it is not skipped, and the rule APIs (`GET /api/repository/rules`, `GET /api/rerail-rules`,
+     `GET /api/library-rules`) and the activity API (`GET /api/rules/activity`, `measured: false`) return it with
+     `inactive: { code, reason }`;
    - audits parse no file of it: its suffixes select no dialect, and its files are read as `text` for regex clauses;
    - the pack tests report its rules as `not supported yet` without failing
      ([validation contract](pack-format.md#the-validation-contract)).

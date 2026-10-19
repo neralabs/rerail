@@ -28,6 +28,7 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
 ├── bin/rerail                                          launcher shim → current/dist/cli/cli.js
 ├── update-state.json                                  active + previous version, channel
 ├── daemon.json / daemon.log                           the running daemon
+├── packs/node_modules/@neralabs/rerail-pack-<id>/     the rule packs you installed (`rerail packs`)
 └── versions/<older>/…                                 kept for `rerail update rollback`
 ```
 
@@ -233,13 +234,15 @@ defaults with a note. Rules are never turned on, a file larger than 1 MiB or a
 symlink is not read, nor is a TOML file whose arrays or inline tables nest more
 than 64 deep, and a rule the person already set in the dashboard's
 review (in that folder) keeps that setting. "I'll pick rule packs myself" takes nothing from
-the lint config.
+the lint config, even for the packs the person then picks.
 
 **Without a terminal** (stdin or stdout is not a TTY, as when a coding agent
 runs it), or with `--relay`, each run prints the next question for the coding
 agent to relay, as written, with one command per answer, and exits 0. The
-coding agent runs set-up again with the person's answer: `--answer <yes|other-folder|pick-myself|start|review|other|skip>`,
-`--repo <folder>` and `--agents <ids>` (`omp,pi,claude-code,codex,cursor`).
+coding agent runs set-up again with the person's answer: `--answer <yes|other-folder|pick-myself|start|review|choose|other|skip>`,
+`--repo <folder>`, `--agents <ids>` (`omp,pi,claude-code,codex,cursor`) and
+`--packs <id@version,…>` (the exact versions an answer installs; `none` for
+none).
 Each answer run starts from what it is told, so running one twice repeats no
 earlier step's side effect. Claude Code's, Cursor's and Codex's `/rerail-start`
 runs `rerail start --relay`, and every answer command carries `--relay`, so a
@@ -248,8 +251,8 @@ instead of a prompt waiting on input.
 
 **In a coding agent's own UI**, `--json` on `rerail setup` and on `rerail
 start` prints one JSON object per run and nothing else on stdout:
-`{ step, screen, question }` (`SetupStep` in `src/setup-step.ts`). `step` is
-`sessions`, `read-repo`, `confirm-packs` or `no-repo` at a question, else `done`,
+`{ step, screen, question }` (`SetupStep` in `src/harness/setup-step.ts`). `step` is
+`sessions`, `read-repo`, `confirm-packs`, `pick-packs` or `no-repo` at a question, else `done`,
 `stopped`, or `error` (exit 1); `screen` is plain text for the person; each of
 the question's options carries its answer key, label, `detail`, the arguments
 that give it (`next.args`, starting with `setup` and carrying `--json`), and,
@@ -346,9 +349,9 @@ holding each repository's rule configuration, the rules you created, and the
 sessions, events, and work links of every repository on the machine; each
 session is attributed to its repository (`rerail status` names the file). The
 daemon serves every repository; its pages are scoped to one with
-`?repository=<key>&checkout=<path>`. The rules that ship with Rerail are read
-from the package and run only in repositories that add them (see
-[Rule scoping](rule-scoping.md)).
+`?repository=<key>&checkout=<path>`. The rules of the rule packs you install
+(`$RERAIL_HOME/packs`, see [Rule packs](rule-packs.md#installing-packs)) run only
+in repositories that add them (see [Rule scoping](rule-scoping.md)).
 `rerail update` first copies the database to `~/.rerail/rerail.sqlite.pre-update`
 (kept only when the update changes the version, and recorded with that change), and
 `rerail update rollback` puts that copy back when rolling that change back and the
@@ -384,8 +387,9 @@ the repository. Two clones of one remote are one repository.
   slash-command name) starts Rerail in the current checkout and the checkouts
   inside it. In a repository that is not set up, it runs set-up's steps 2 to 6
   there first: it asks, recommends rule packs, and starts once you confirm
-  ("I'll pick rule packs myself" sets it up with none, and you pick them on
-  the Rule packs page). Until a repository is set up, its sessions are
+  ("I'll pick rule packs myself" lists every rule pack set-up fetched, installs
+  the ones you pick and adds each for the whole repository, without reading
+  it; "None for now" sets it up with none). Until a repository is set up, its sessions are
   recorded but no rules run.
 - `/rerail-stop` or `rerail stop` stops Rerail in the current checkout and the
   checkouts inside it: no recording, evaluation, steering, or daemon autostart

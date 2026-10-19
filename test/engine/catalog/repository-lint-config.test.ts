@@ -3,9 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { readBundledCatalog } from "../../../src/engine/catalog/bundled-rules.js";
+import { readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import { LintConfigFormatError, parseJsonc, readTomlStringLists } from "../../../src/engine/catalog/lint-config-formats.js";
-import type { BundledCatalog } from "../../../src/engine/catalog/repository-model.js";
+import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import {
   proposeLintConfigSettings,
   readLintConfigFiles,
@@ -60,16 +60,17 @@ async function hooksPack(): Promise<string> {
     category: "framework",
     covers: "React hooks.",
     reason: "React.",
+    match: { any: [{ dependencies: { ecosystem: "npm", names: ["react"] } }] },
     rules: [{ id: HOOKS_RULE, document: `rules/${HOOKS_RULE}.json`, title: "Rules of hooks", group: "React" }],
   }));
   return directory;
 }
 
-let bundle: BundledCatalog;
+let ruleCatalog: RuleCatalog;
 let hooksDirectory: string;
 beforeAll(async () => {
   hooksDirectory = await hooksPack();
-  bundle = readBundledCatalog([...["typescript", "javascript", "python"].map(packDirectory), hooksDirectory]);
+  ruleCatalog = readRuleCatalog([...["typescript", "javascript", "python"].map(packDirectory), hooksDirectory]);
   return () => rm(join(hooksDirectory, ".."), { recursive: true, force: true });
 });
 
@@ -276,14 +277,14 @@ describe("readLintConfigFiles", () => {
   it("reports a Ruff config nested deeper than it reads as not read", async () => {
     const root = await repository({ "ruff.toml": `[lint]\nignore = ["E7"]\nx = ${"[".repeat(100_000)}\n` });
     expect(readLintConfigFiles(root)).toMatchObject({ ruff: undefined, notes: [{ linter: "ruff", text: "ruff.toml is not read: line 3: values nest more than 64 deep." }] });
-    expect(readRepositoryLintConfig(root, bundle, ["python"])).toEqual({ settings: [], notes: ["ruff.toml is not read: line 3: values nest more than 64 deep."] });
+    expect(readRepositoryLintConfig(root, ruleCatalog, ["python"])).toEqual({ settings: [], notes: ["ruff.toml is not read: line 3: values nest more than 64 deep."] });
   });
 });
 
 describe("proposeLintConfigSettings", () => {
   it("configures typescript-eslint's consistent-type-definitions from [\"error\", \"type\"]", async () => {
     const root = await repository({ ".eslintrc.json": "{ \"rules\": { \"@typescript-eslint/consistent-type-definitions\": [\"error\", \"type\"] } }" });
-    expect(readRepositoryLintConfig(root, bundle, ["typescript"])).toEqual({
+    expect(readRepositoryLintConfig(root, ruleCatalog, ["typescript"])).toEqual({
       settings: [{
         ruleId: TYPE_DEFINITIONS,
         folder: "",
@@ -297,10 +298,10 @@ describe("proposeLintConfigSettings", () => {
 
   it("turns off the javascript pack's no-console for \"no-console\": \"off\", and only for packs being set up", async () => {
     const root = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": \"off\" } }" });
-    expect(readRepositoryLintConfig(root, bundle, ["javascript"]).settings).toEqual([
+    expect(readRepositoryLintConfig(root, ruleCatalog, ["javascript"]).settings).toEqual([
       { ruleId: "eslint-no-console", folder: "", on: false, config: null, because: ".eslintrc.json: \"no-console\": \"off\"" },
     ]);
-    expect(readRepositoryLintConfig(root, bundle, ["typescript"]).settings).toEqual([]);
+    expect(readRepositoryLintConfig(root, ruleCatalog, ["typescript"]).settings).toEqual([]);
   });
 
   // PR #50 review: ESLint's eslintrc loader lower-cases a severity string. ESLint 9.39.1 with
@@ -308,23 +309,23 @@ describe("proposeLintConfigSettings", () => {
   // from an .eslintrc.json and from package.json eslintConfig alike.
   it("takes an .eslintrc or package.json eslintConfig severity in any case, as ESLint's eslintrc loader does", async () => {
     const off = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": \"OFF\" } }" });
-    expect(readRepositoryLintConfig(off, bundle, ["javascript"])).toEqual({
+    expect(readRepositoryLintConfig(off, ruleCatalog, ["javascript"])).toEqual({
       settings: [{ ruleId: "eslint-no-console", folder: "", on: false, config: null, because: ".eslintrc.json: \"no-console\": \"OFF\"" }],
       notes: [],
     });
     const warn = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": [\"Warn\", { \"allow\": [\"log\"] }] } }" });
-    expect(readRepositoryLintConfig(warn, bundle, ["javascript"])).toEqual({
+    expect(readRepositoryLintConfig(warn, ruleCatalog, ["javascript"])).toEqual({
       settings: [{ ruleId: "eslint-no-console", folder: "", on: null, config: { allow: ["log"] }, because: ".eslintrc.json: \"no-console\": [\"Warn\",{\"allow\":[\"log\"]}]" }],
       notes: [],
     });
     // An override's "WARN" turns the rule back on where it applies.
     const back = await repository({ ".eslintrc.json": JSON.stringify({ rules: { "no-console": "Off" }, overrides: [{ files: ["src/**/*.ts"], rules: { "no-console": "WARN" } }] }) });
-    expect(readRepositoryLintConfig(back, bundle, ["javascript"])).toEqual({
+    expect(readRepositoryLintConfig(back, ruleCatalog, ["javascript"])).toEqual({
       settings: [],
       notes: ["eslint-no-console: .eslintrc.json: \"no-console\": \"Off\" turns it off, but .eslintrc.json: \"no-console\": \"WARN\" turns it back on for [\"src/**/*.ts\"]; it stays on."],
     });
     const manifest = await repository({ "package.json": JSON.stringify({ name: "acme", eslintConfig: { rules: { "no-console": "OFF" } } }) });
-    expect(readRepositoryLintConfig(manifest, bundle, ["javascript"]).settings).toEqual([
+    expect(readRepositoryLintConfig(manifest, ruleCatalog, ["javascript"]).settings).toEqual([
       { ruleId: "eslint-no-console", folder: "", on: false, config: null, because: "package.json eslintConfig: \"no-console\": \"OFF\"" },
     ]);
   });
@@ -334,7 +335,7 @@ describe("proposeLintConfigSettings", () => {
   it("takes a flat config severity in lower case only, as ESLint 9 does", async () => {
     for (const level of ["OFF", "Warn"]) {
       const root = await repository({ "eslint.config.js": `export default [{ rules: { "no-console": "${level}" } }];` });
-      expect(readRepositoryLintConfig(root, bundle, ["javascript"])).toEqual({
+      expect(readRepositoryLintConfig(root, ruleCatalog, ["javascript"])).toEqual({
         settings: [],
         notes: [`eslint-no-console: eslint.config.js: "no-console": "${level}" is not a severity ESLint takes; not read.`],
       });
@@ -343,28 +344,28 @@ describe("proposeLintConfigSettings", () => {
 
   it("maps an option object onto the options the port declares, and skips one it cannot map with a note", async () => {
     const mapped = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": [\"warn\", { \"allow\": [\"warn\", \"error\"] }] } }" });
-    expect(readRepositoryLintConfig(mapped, bundle, ["javascript"]).settings).toMatchObject([{ ruleId: "eslint-no-console", on: null, config: { allow: ["warn", "error"] } }]);
+    expect(readRepositoryLintConfig(mapped, ruleCatalog, ["javascript"]).settings).toMatchObject([{ ruleId: "eslint-no-console", on: null, config: { allow: ["warn", "error"] } }]);
 
     const wrongValue = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": [\"error\", { \"allow\": \"warn\" }] } }" });
-    expect(readRepositoryLintConfig(wrongValue, bundle, ["javascript"])).toEqual({
+    expect(readRepositoryLintConfig(wrongValue, ruleCatalog, ["javascript"])).toEqual({
       settings: [],
       notes: ["eslint-no-console: option not mapped (config.allow: must be an array); it keeps its default options. From .eslintrc.json: \"no-console\": [\"error\",{\"allow\":\"warn\"}]."],
     });
 
     const unknownOption = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": [\"error\", { \"bogus\": true }] } }" });
-    expect(readRepositoryLintConfig(unknownOption, bundle, ["javascript"]).notes).toEqual([
+    expect(readRepositoryLintConfig(unknownOption, ruleCatalog, ["javascript"]).notes).toEqual([
       "eslint-no-console: option not mapped (bogus is not an option the port declares); it keeps its default options. From .eslintrc.json: \"no-console\": [\"error\",{\"bogus\":true}].",
     ]);
   });
 
   it("turns off a port oxlint implements for a plugin-prefixed .oxlintrc.json key, without mapping oxlint's options", async () => {
     const off = await repository({ ".oxlintrc.json": "{ \"rules\": { \"react-hooks/rules-of-hooks\": \"off\" } }" });
-    expect(readRepositoryLintConfig(off, bundle, ["hooks"]).settings).toEqual([
+    expect(readRepositoryLintConfig(off, ruleCatalog, ["hooks"]).settings).toEqual([
       { ruleId: HOOKS_RULE, folder: "", on: false, config: null, because: ".oxlintrc.json: \"react-hooks/rules-of-hooks\": \"off\"" },
     ]);
 
     const options = await repository({ ".oxlintrc.json": "{ \"rules\": { \"rules-of-hooks\": [\"deny\", { \"x\": 1 }] } }" });
-    expect(readRepositoryLintConfig(options, bundle, ["hooks"])).toEqual({
+    expect(readRepositoryLintConfig(options, ruleCatalog, ["hooks"])).toEqual({
       settings: [],
       notes: [`${HOOKS_RULE}: option not mapped: Rerail maps ESLint options, not oxlint's (.oxlintrc.json: "rules-of-hooks": ["deny",{"x":1}]).`],
     });
@@ -373,7 +374,7 @@ describe("proposeLintConfigSettings", () => {
   /** The rules of `packs` an `.oxlintrc.json` with `rules` turns off. */
   async function oxlintOff(rules: Readonly<Record<string, unknown>>, packs: readonly string[]): Promise<string[]> {
     const root = await repository({ ".oxlintrc.json": JSON.stringify({ rules }) });
-    return readRepositoryLintConfig(root, bundle, packs).settings.filter(setting => setting.on === false).map(setting => setting.ruleId);
+    return readRepositoryLintConfig(root, ruleCatalog, packs).settings.filter(setting => setting.on === false).map(setting => setting.ruleId);
   }
 
   it("resolves an .oxlintrc.json key to a built-in rule as oxlint does: another plugin's rule of the same name is not it", async () => {
@@ -414,7 +415,7 @@ describe("proposeLintConfigSettings", () => {
       ".eslintrc.json": "{ \"rules\": { \"react-hooks/rules-of-hooks\": \"error\" } }",
       ".oxlintrc.json": "{ \"rules\": { \"rules-of-hooks\": \"allow\" } }",
     });
-    expect(readRepositoryLintConfig(root, bundle, ["hooks"])).toEqual({
+    expect(readRepositoryLintConfig(root, ruleCatalog, ["hooks"])).toEqual({
       settings: [{ ruleId: HOOKS_RULE, folder: "", on: false, config: null, because: ".oxlintrc.json: \"rules-of-hooks\": \"allow\"" }],
       notes: [`${HOOKS_RULE}: .eslintrc.json: "react-hooks/rules-of-hooks": "error" keeps it on, but .oxlintrc.json: "rules-of-hooks": "allow" turns it off; it starts off.`],
     });
@@ -422,7 +423,7 @@ describe("proposeLintConfigSettings", () => {
 
   it("turns off every shipped Ruff port [tool.ruff.lint] ignore = [\"E7\"] selects, and no candidate", async () => {
     const root = await repository({ "pyproject.toml": "[tool.ruff.lint]\nignore = [\"E7\"]\n", "eslint.config.ts": "import makeConfig from \"shared-config\";\nexport default makeConfig();\n" });
-    expect(readRepositoryLintConfig(root, bundle, ["python"])).toEqual({
+    expect(readRepositoryLintConfig(root, ruleCatalog, ["python"])).toEqual({
       // The python pack's rules/ ports of E7xx; its candidates (E712, E713, E714, E731, E741) do not ship.
       settings: ["ruff-e711-none-comparison", "ruff-e721-type-comparison", "ruff-e722-bare-except", "ruff-e742-ambiguous-class-name", "ruff-e743-ambiguous-function-name"]
         .map(ruleId => ruffOff(ruleId, "pyproject.toml: \"E7\" in tool.ruff.lint.ignore")),
@@ -430,7 +431,7 @@ describe("proposeLintConfigSettings", () => {
       notes: [],
     });
     const files = readLintConfigFiles(root);
-    expect(proposeLintConfigSettings(files, bundle, ["python", "javascript"]).notes).toEqual([
+    expect(proposeLintConfigSettings(files, ruleCatalog, ["python", "javascript"]).notes).toEqual([
       "eslint.config.ts: the rules of makeConfig() are not read: Rerail does not run code to find them.",
     ]);
   });
@@ -439,7 +440,7 @@ describe("proposeLintConfigSettings", () => {
   /** The python pack's settings and notes for a pyproject.toml whose [tool.ruff.lint] section holds `lines`. */
   async function ruffLint(...lines: string[]) {
     const root = await repository({ "pyproject.toml": ["[tool.ruff.lint]", ...lines].join("\n") });
-    return readRepositoryLintConfig(root, bundle, ["python"]);
+    return readRepositoryLintConfig(root, ruleCatalog, ["python"]);
   }
 
   it("lets a more specific select win over an ignore, as Ruff applies selectors from least to most specific", async () => {
@@ -462,7 +463,7 @@ describe("proposeLintConfigSettings", () => {
     const root = await repository({
       "pyproject.toml": "[tool.ruff.lint.per-file-ignores]\n\"tests/**\" = [\"E711\"]\n\"**/test_*.py\" = [\"E721\"]\n",
     });
-    expect(readRepositoryLintConfig(root, bundle, ["python"])).toEqual({
+    expect(readRepositoryLintConfig(root, ruleCatalog, ["python"])).toEqual({
       settings: [ruffOff("ruff-e711-none-comparison", "pyproject.toml: \"E711\" in tool.ruff.lint.per-file-ignores.\"tests/**\"", "tests")],
       notes: ["ruff-e721-type-comparison: pyproject.toml: \"E721\" in tool.ruff.lint.per-file-ignores.\"**/test_*.py\" ignores it only in the files \"**/test_*.py\" matches; it stays on."],
     });
@@ -473,7 +474,7 @@ describe("proposeLintConfigSettings", () => {
   it("follows extend as Ruff layers configs: a later config re-enables, a select replaces, select = [] carries its ignores", async () => {
     const offs = async (pyproject: string, base: string): Promise<string[]> => {
       const root = await repository({ "pyproject.toml": `[tool.ruff]\nextend = "configs/base.toml"\n${pyproject}`, "configs/base.toml": base });
-      return readRepositoryLintConfig(root, bundle, ["python"]).settings.map(setting => setting.ruleId).filter(id => /e71|e72/u.test(id));
+      return readRepositoryLintConfig(root, ruleCatalog, ["python"]).settings.map(setting => setting.ruleId).filter(id => /e71|e72/u.test(id));
     };
     expect(await offs("[tool.ruff.lint]\nextend-select = [\"E711\"]\n", "[lint]\nignore = [\"E7\"]\n")).toEqual(["ruff-e721-type-comparison", "ruff-e722-bare-except"]);
     expect(await offs("[tool.ruff.lint]\nselect = [\"E\"]\n", "[lint]\nignore = [\"E7\"]\n")).toEqual([]);
@@ -486,10 +487,10 @@ describe("proposeLintConfigSettings", () => {
     const base = "[lint.per-file-ignores]\n\"tests/**\" = [\"E711\"]\n";
     for (const own of ["[lint]\nper-file-ignores = {}\n", "[lint.per-file-ignores]\n"]) {
       const root = await repository({ "ruff.toml": `extend = "base.toml"\n${own}`, "base.toml": base });
-      expect(readRepositoryLintConfig(root, bundle, ["python"]).settings).toEqual([]);
+      expect(readRepositoryLintConfig(root, ruleCatalog, ["python"]).settings).toEqual([]);
     }
     const inherited = await repository({ "ruff.toml": "extend = \"base.toml\"\n", "base.toml": base });
-    expect(readRepositoryLintConfig(inherited, bundle, ["python"]).settings).toEqual([
+    expect(readRepositoryLintConfig(inherited, ruleCatalog, ["python"]).settings).toEqual([
       ruffOff("ruff-e711-none-comparison", "base.toml: \"E711\" in lint.per-file-ignores.\"tests/**\"", "tests"),
     ]);
   });
@@ -498,11 +499,11 @@ describe("proposeLintConfigSettings", () => {
 describe("proposeLintConfigSettings for .eslintrc overrides", () => {
   it("turns a rule off in a folder an override covers, and keeps one on that an override turns back on", async () => {
     const scripts = await repository({ ".eslintrc.json": JSON.stringify({ overrides: [{ files: "scripts/**", rules: { "no-console": "off" } }] }) });
-    expect(readRepositoryLintConfig(scripts, bundle, ["javascript"]).settings).toEqual([
+    expect(readRepositoryLintConfig(scripts, ruleCatalog, ["javascript"]).settings).toEqual([
       { ruleId: "eslint-no-console", folder: "scripts", on: false, config: null, because: ".eslintrc.json: \"no-console\": \"off\" for \"scripts/**\"" },
     ]);
     const back = await repository({ ".eslintrc.json": JSON.stringify({ rules: { "no-console": "off" }, overrides: [{ files: ["src/**/*.ts"], rules: { "no-console": "warn" } }] }) });
-    expect(readRepositoryLintConfig(back, bundle, ["javascript"])).toEqual({
+    expect(readRepositoryLintConfig(back, ruleCatalog, ["javascript"])).toEqual({
       settings: [],
       notes: ["eslint-no-console: .eslintrc.json: \"no-console\": \"off\" turns it off, but .eslintrc.json: \"no-console\": \"warn\" turns it back on for [\"src/**/*.ts\"]; it stays on."],
     });
@@ -514,7 +515,7 @@ describe("proposeLintConfigSettings for .eslintrc overrides", () => {
       { files: "scripts/**", rules: { "no-console": "off" } },
       { files: "scripts/**", rules: { "no-console": "error" } },
     ] }) });
-    expect(readRepositoryLintConfig(root, bundle, ["javascript"])).toEqual({
+    expect(readRepositoryLintConfig(root, ruleCatalog, ["javascript"])).toEqual({
       settings: [],
       notes: ["eslint-no-console: .eslintrc.json: \"no-console\": \"off\" for \"scripts/**\" turns it off, but .eslintrc.json: \"no-console\": \"error\" turns it back on for \"scripts/**\"; it stays on."],
     });
@@ -524,15 +525,15 @@ describe("proposeLintConfigSettings for .eslintrc overrides", () => {
   // (ESLINT_USE_FLAT_CONFIG=false eslint 9.39.1 --print-config tests/a.js gives "error" for both).
   it("uses no off an override's extends or nested overrides may replace", async () => {
     const extended = await repository({ ".eslintrc.json": JSON.stringify({ rules: { "no-console": "off" }, overrides: [{ files: ["tests/**"], extends: ["./strict.json"] }] }) });
-    expect(readRepositoryLintConfig(extended, bundle, ["javascript"]).settings).toEqual([]);
+    expect(readRepositoryLintConfig(extended, ruleCatalog, ["javascript"]).settings).toEqual([]);
     const nested = await repository({ ".eslintrc.json": JSON.stringify({ overrides: [{ files: ["tests/**"], rules: { "no-console": "off" }, overrides: [{ files: ["tests/**/*.js"], rules: { "no-console": "error" } }] }] }) });
-    expect(readRepositoryLintConfig(nested, bundle, ["javascript"]).settings).toEqual([]);
+    expect(readRepositoryLintConfig(nested, ruleCatalog, ["javascript"]).settings).toEqual([]);
   });
 
   // Self-review round 4: oxlint 1.88.0 reports no-console in tests/ for this config.
   it("uses no .oxlintrc.json off its overrides, which Rerail does not read, may replace", async () => {
     const root = await repository({ ".oxlintrc.json": JSON.stringify({ rules: { "no-console": "off" }, overrides: [{ files: ["tests/**"], rules: { "no-console": "error" } }] }) });
-    expect(readRepositoryLintConfig(root, bundle, ["javascript"])).toEqual({
+    expect(readRepositoryLintConfig(root, ruleCatalog, ["javascript"])).toEqual({
       settings: [],
       notes: [
         ".oxlintrc.json: only its own rules are read, not overrides.",
@@ -554,7 +555,7 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
   /** The settings and notes for packs `packs` from a repository whose only lint config is `name` holding `text`. */
   async function flat(text: string, packs: readonly string[] = ["typescript"], name = "eslint.config.ts") {
     const root = await repository({ [name]: text });
-    return readRepositoryLintConfig(root, bundle, packs);
+    return readRepositoryLintConfig(root, ruleCatalog, packs);
   }
 
   // NER-1789's repro, dolanmiu/docx at PR 3716: the option is set in a config object for **/src/**/*.ts, after shared

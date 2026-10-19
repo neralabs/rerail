@@ -10,11 +10,11 @@ import { createRerailMcpHandler } from "../../src/api/mcp.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import {
-  type BundledCatalog,
+  type RuleCatalog,
   CALLER_CWD_HEADER,
   codeRuleSchema,
   PACKAGE_ROOT,
-  readBundledCatalog,
+  readRuleCatalog,
   recordCheckout,
   setUpRepository,
   ruleSettings,
@@ -23,11 +23,11 @@ import {
 import { fixturesPath } from "../support/oracles.js";
 
 const RULE = "typescript-eslint-consistent-type-definitions";
-const typescriptPack = readBundledCatalog([join(PACKAGE_ROOT, "packs", "typescript"), fixturesPath("packs", "config-regex")]);
+const typescriptPack = readRuleCatalog([join(PACKAGE_ROOT, "packs", "typescript"), fixturesPath("packs", "config-regex")]);
 
-/** The API over a machine whose bundle is the TypeScript pack and a fixture pack, whose rules declare options. */
+/** The API over a machine whose rule catalog is the TypeScript pack and a fixture pack, whose rules declare options. */
 class TypeScriptPackStores extends DatabaseApiStores {
-  override bundle(): BundledCatalog {
+  override ruleCatalog(): RuleCatalog {
     return typescriptPack;
   }
 }

@@ -7,6 +7,10 @@ import {
   steerHeadlines,
 } from "../../../src/engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../../../src/engine/code-rule/steer-origin.js";
+import { installPack } from "../../support/installed-packs.js";
+
+// The steer names a rule's pack from the installed catalog.
+installPack("complexity");
 
 const DASHBOARD = "http://127.0.0.1:4791/";
 const STEER = { mode: "steer" } as const;

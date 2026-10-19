@@ -83,6 +83,37 @@ describe("a release from before set-up checking an update to this one", () => {
     expect(existsSync(join(env.RERAIL_HOME, "daemon.json"))).toBe(false);
   }, 60_000);
 
+  it("starts Rerail with no rule packs from a later release's check, fetching none, so its session is recorded", async () => {
+    // `startHealthRepository` in updater.ts: state, then `start --answer pick-myself`, in a scratch place with no
+    // coding agent found. npm points nowhere: a run that fetched packs would fail to, and ask rather than start.
+    const root = await scratch("rerail-update-health-");
+    const workspace = join(root, "workspace");
+    const storageRoot = join(root, "sessions");
+    const user = join(root, "user");
+    await mkdir(user);
+    const env = {
+      ...process.env,
+      HOME: user,
+      USERPROFILE: user,
+      RERAIL_HOME: join(root, "home"),
+      RERAIL_STORAGE_ROOT: storageRoot,
+      RERAIL_AUTOSTART: "0",
+      NPM_CONFIG_REGISTRY: "http://127.0.0.1:9/",
+    };
+    await mkdir(workspace);
+    const run = (args: readonly string[]) => promisify(execFile)(
+      process.execPath, ["--import", TSX, join(SOURCE, "cli", "cli.ts"), ...args], { cwd: workspace, env, timeout: 30_000 },
+    );
+
+    await run(["start", "--repo", workspace, "--answer", "pick-myself"]);
+
+    const { code, stderr } = await sessionStart(workspace, env);
+    expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+    expect(await readdir(storageRoot)).not.toEqual([]);
+    expect(workspaceStartState(workspace, defaultRerailDatabasePath(env))).toBe("started");
+    expect(existsSync(join(env.RERAIL_HOME, "packs"))).toBe(false);
+  }, 60_000);
+
   it("leaves every other start to set-up", async () => {
     const root = await scratch("rerail-pre-setup-");
     const empty = join(root, "empty");

@@ -10,7 +10,7 @@ import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import {
-  loadBundledCatalog,
+  loadRuleCatalog,
   openRerailDatabase,
   upsertLibraryRule,
   NativeCodeRuleEnforcer,
@@ -131,7 +131,7 @@ describe("quarantined code rule rows", () => {
       expect(enforcer.snapshotStatus().failures).toEqual([quarantineFailure]);
 
       // Fixing a library rule writes a new revision, which the catalog sees as a configuration change.
-      upsertLibraryRule(catalogs.database, loadBundledCatalog(), { ...codeRule("test:broken"), revision: 2 }, "code");
+      upsertLibraryRule(catalogs.database, loadRuleCatalog(), { ...codeRule("test:broken"), revision: 2 }, "code");
       await enforcer.auditGeneratedEdits("session", {
         revision: 3, checkpoints: ["edit"], edits: [{ path: "api/a.py", language: "python", generatedText: "NEEDLE = 3\n" }],
       });
@@ -151,8 +151,8 @@ describe("quarantined code rule rows", () => {
       origin: () => "http://127.0.0.1:4737",
     });
     try {
-      upsertLibraryRule(stores.database(), loadBundledCatalog(), codeRule("test:kept"), "code");
-      upsertLibraryRule(stores.database(), loadBundledCatalog(), codeRule("test:broken"), "code");
+      upsertLibraryRule(stores.database(), loadRuleCatalog(), codeRule("test:kept"), "code");
+      upsertLibraryRule(stores.database(), loadRuleCatalog(), codeRule("test:broken"), "code");
       const raw = new Database(databasePath);
       raw.prepare("UPDATE library_rules SET document_json = json_set(document_json, '$.rule.clauses', json(?)) WHERE rule_id = ?")
         .run(JSON.stringify([{ id: "x" }]), "test:broken");

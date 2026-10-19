@@ -7,7 +7,7 @@ import {
   type RerailDatabase,
   codeRuleSchema,
   type CodeRule,
-  type BundledCatalog,
+  type RuleCatalog,
   type CheckoutContext,
   type RepositoryStatus,
   type RuleMode,
@@ -64,11 +64,11 @@ export function conversation(id: string): ConversationRule {
 }
 
 /**
- * A small bundle: pack `lint` (`no-console` starts on in Steer, `no-var` starts off in Log), a By Rerail rule
+ * A small rule catalog: pack `lint` (`no-console` starts on in Steer, `no-var` starts off in Log), a By Rerail rule
  * `loose`, and a By Rerail conversation rule `talk`. Documents are Block unless the pack says otherwise. The pack
  * honours suppression comments unless `honourSuppressionComments` is false.
  */
-export function testBundle(overrides: { noConsoleRevision?: number; honourSuppressionComments?: boolean } = {}): BundledCatalog {
+export function testBundle(overrides: { noConsoleRevision?: number; honourSuppressionComments?: boolean } = {}): RuleCatalog {
   const documents: RuleDocument[] = [
     { kind: "code", rule: codeRule("no-console", { revision: overrides.noConsoleRevision ?? 1 }) },
     { kind: "code", rule: codeRule("no-var") },
@@ -78,6 +78,7 @@ export function testBundle(overrides: { noConsoleRevision?: number; honourSuppre
   const pack: RulePack = {
     id: "lint",
     name: "Lint",
+    version: null,
     category: "language",
     covers: "TypeScript",
     reason: "TypeScript files",
@@ -94,6 +95,7 @@ export function testBundle(overrides: { noConsoleRevision?: number; honourSuppre
     packOf: new Map(pack.rules.map(rule => [rule.id, pack.id])),
     sources: new Map(documents.flatMap(document => document.kind === "code" ? [[document.rule.id, document.rule] as const] : [])),
     digest: `test:${overrides.noConsoleRevision ?? 1}`,
+    skipped: [],
   };
 }
 

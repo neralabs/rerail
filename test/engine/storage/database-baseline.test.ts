@@ -14,10 +14,11 @@ import {
   type Migration,
 } from "../../../src/engine/storage/migrations.js";
 import { ruleSettings } from "../../../src/engine/storage/schema.js";
-import { listRepositoryRules, loadBundledCatalog } from "../../../src/engine/index.js";
+import { listRepositoryRules, loadRuleCatalog } from "../../../src/engine/index.js";
 import { RERAIL_SCHEMA_STATEMENTS } from "../../../src/engine/storage/schema-sql.generated.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
 import { fixturesPath } from "../../support/oracles.js";
+import { installPack, uninstallPack } from "../../support/installed-packs.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -460,12 +461,14 @@ describe("the migration path", () => {
       INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('repo', 'repo', 0, 0);
       INSERT INTO rule_attachments (repository_key, folder, source_kind, source_id, created_at) VALUES ('repo', '', 'pack', 'complexity', 0);
       INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, "on", updated_at) VALUES ('repository', 'repo', '', 'rule', 'complexity-cyclomatic-python', 0, 0)`);
+    installPack("complexity");
     const reader = openRerailDatabase(path, { readonly: true });
     try {
-      const python = listRepositoryRules(reader, loadBundledCatalog(), "repo").rules.find(rule => rule.document.rule.id === "complexity-cyclomatic-python");
+      const python = listRepositoryRules(reader, loadRuleCatalog(), "repo").rules.find(rule => rule.document.rule.id === "complexity-cyclomatic-python");
       expect(python).toMatchObject({ on: false, suppressions: "honour", config: null });
     } finally {
       reader.$client.close();
+      uninstallPack("complexity");
     }
     expect(stampOf(path).version).toBe(RERAIL_BASELINE_SCHEMA_VERSION);
     expect(shapeOf(path)).toEqual(shapeOf(await (async () => {
@@ -487,7 +490,7 @@ describe("the migration path", () => {
     try {
       // Twice: the first refusal must not change the file's mode so that the next reader upgrades it after all.
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        expect(() => listRepositoryRules(openRerailDatabase(path, { readonly: true }), loadBundledCatalog(), "repo"))
+        expect(() => listRepositoryRules(openRerailDatabase(path, { readonly: true }), loadRuleCatalog(), "repo"))
           .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
         expect(statSync(path).mode & 0o777).toBe(0o400);
       }

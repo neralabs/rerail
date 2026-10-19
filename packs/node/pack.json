@@ -8,9 +8,12 @@
   "match": {
     "any": [
       {
-        "npmDependencies": [
-          "@types/node"
-        ]
+        "dependencies": {
+          "ecosystem": "npm",
+          "names": [
+            "@types/node"
+          ]
+        }
       },
       {
         "files": [

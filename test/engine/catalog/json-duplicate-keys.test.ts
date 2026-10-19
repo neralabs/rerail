@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRerailApi, createRerailMcpHandler, operations, DatabaseApiStores } from "../../../src/api/index.js";
 import { findDuplicateJsonKeys, parseJsonWithoutDuplicateKeys } from "../../../src/engine/json-duplicate-keys.js";
-import { loadBundledRules } from "../../../src/engine/catalog/bundled-rule-documents.js";
-import { loadBundledCatalog } from "../../../src/engine/catalog/bundled-rules.js";
+import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-documents.js";
+import { loadRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { runRulesCommand, MOCK_CODE_RULES } from "../../../src/cli/index.js";
 import { getLibraryRule, removeLibraryRule, upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
@@ -115,7 +115,7 @@ describe("rule documents with repeated keys are rejected on write", () => {
 
   it("refuses to import a dump with a repeated key, naming its path", () => {
     const dumpPath = join(root, "rules.json");
-    upsertLibraryRule(stores.database(), loadBundledCatalog(), codeRule, "code");
+    upsertLibraryRule(stores.database(), loadRuleCatalog(), codeRule, "code");
     expect(runRulesCommand(["export", "--output", dumpPath], () => "usage")).toBe(0);
     removeLibraryRule(stores.database(), codeRule.id);
     writeFileSync(dumpPath, readFileSync(dumpPath, "utf8").replace('"id": "console-call"', '"id": "first", "id": "console-call"'));
@@ -132,6 +132,6 @@ describe("rule documents with repeated keys are rejected on write", () => {
     const directory = join(root, "pack", "rules");
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, "a.json"), JSON.stringify(codeRule).replace('"format":', '"format":"rerail.policy/v1","format":'));
-    expect(() => loadBundledRules([join(root, "pack")])).toThrow(`${join(directory, "a.json")}: duplicate key \`format\` at /`);
+    expect(() => loadPackRuleDocuments([join(root, "pack")])).toThrow(`${join(directory, "a.json")}: duplicate key \`format\` at /`);
   });
 });

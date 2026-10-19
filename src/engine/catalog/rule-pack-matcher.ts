@@ -1,21 +1,26 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, type Dirent } from "node:fs";
 import { dirname, join, posix, relative, sep } from "node:path";
 import { withinCheckout } from "./checkout-control.js";
+import { readTomlStringLists } from "./lint-config-formats.js";
 import { IGNORED_DIRECTORIES } from "../code-rule/code-rule-enforcer.js";
 import { GitUnavailableError, runGit } from "../git.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 
 /**
- * The local half of rule pack matching: list a repository's files once, read its `package.json`
- * dependencies, and test each pack's match definition against them. No model, no network, and no source text.
+ * The local half of rule pack matching: list a repository's files once, read its dependency manifests
+ * (`package.json`, `requirements*.txt`, `pyproject.toml`, `composer.json`), and test each pack's match definition
+ * against them. No model, no network, no source text, and no code from the pack: a match is data.
  */
+
+export const DEPENDENCY_ECOSYSTEMS = ["npm", "pypi", "composer"] as const;
+export type DependencyEcosystem = (typeof DEPENDENCY_ECOSYSTEMS)[number];
 
 /** One thing in a repository that makes a rule pack fit it. */
 export type RulePackSignal =
   /** Files whose repository-relative path matches one of `files` and none of `exclude`; `label` names them in the reason. */
   | { files: readonly string[]; exclude?: readonly string[] | undefined; label: string }
-  /** Any `package.json` in the repository that depends on one of these npm packages. */
-  | { npmDependencies: readonly string[] };
+  /** Any manifest of `ecosystem` in the repository that depends on one of `names`. */
+  | { dependencies: { ecosystem: DependencyEcosystem; names: readonly string[] } };
 
 /** A pack fits a repository when any of its signals is present. */
 export interface RulePackMatch {
@@ -26,8 +31,8 @@ export interface RulePackMatch {
 export interface RepositoryScan {
   /** Repository-relative paths with `/` separators, outside dependency and build-output directories. */
   readonly files: readonly string[];
-  /** npm package name to every manifest that depends on it, shallowest first, then by path. */
-  readonly npmDependencies: ReadonlyMap<string, readonly string[]>;
+  /** Per ecosystem, package name (normalised) to every manifest that depends on it, shallowest first, then by path. */
+  readonly dependencies: ReadonlyMap<DependencyEcosystem, ReadonlyMap<string, readonly string[]>>;
 }
 
 const GIT_LIST_BUFFER_BYTES = 256 * 1024 * 1024;
@@ -38,7 +43,8 @@ const FIXTURE_DIRECTORIES = new Set(["fixtures", "__fixtures__", "testdata", "te
 /** A reason names at most this many findings, so it stays one short line. */
 const MAX_REASON_PARTS = 2;
 const DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] as const;
-/** A `package.json` larger than this is not a manifest a person wrote; it is skipped unread. */
+const COMPOSER_FIELDS = ["require", "require-dev"] as const;
+/** A manifest larger than this is not one a person wrote; it is skipped unread. */
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 
 /** A folder's entries, or none when the user cannot read it: such a folder says nothing about the stack. */
@@ -110,34 +116,133 @@ function readableManifest(root: string, path: string): boolean {
   }
 }
 
-function readManifestDependencies(root: string, path: string): string[] {
-  if (!readableManifest(root, path)) return [];
-  let manifest: unknown;
+/** The manifest's text, or undefined when it may not be read (see {@link readableManifest}) or cannot be. */
+function manifestText(root: string, path: string): string | undefined {
+  if (!readableManifest(root, path)) return undefined;
   try {
-    manifest = JSON.parse(readFileSync(path, "utf8"));
+    return readFileSync(path, "utf8");
+  } catch {
+    // A manifest that vanished between listing and reading says nothing about the stack.
+    return undefined;
+  }
+}
+
+/** The object a JSON manifest holds, or undefined for one that is unreadable, half-written or not an object. */
+function jsonManifest(root: string, path: string): Record<string, unknown> | undefined {
+  const text = manifestText(root, path);
+  if (text === undefined) return undefined;
+  try {
+    const value: unknown = JSON.parse(text);
+    return typeof value === "object" && value !== null ? value as Record<string, unknown> : undefined;
   } catch {
     // An unreadable or half-written manifest says nothing about the stack; the other signals still count.
+    return undefined;
+  }
+}
+
+function objectKeys(manifest: Record<string, unknown>, fields: readonly string[]): string[] {
+  return fields.flatMap(field => {
+    const value = manifest[field];
+    return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.keys(value) : [];
+  });
+}
+
+/** A Python distribution name as PyPI compares it (PEP 503): lowercase, each run of `-`, `_` and `.` one `-`. */
+export function normalizePythonName(name: string): string {
+  return name.toLowerCase().replace(/[-_.]+/gu, "-");
+}
+
+/** The distribution a PEP 508 requirement names (`Django>=4.2; python_version >= "3.10"` gives `django`). */
+function requirementName(requirement: string): string | undefined {
+  const name = /^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)/u.exec(requirement)?.[1];
+  return name === undefined ? undefined : normalizePythonName(name);
+}
+
+/** `requirements*.txt`: one requirement per line; comments, blank lines and pip options (`-r`, `-e`, `--index-url`) name nothing. */
+function requirementsNames(text: string): string[] {
+  return text.split(/\r?\n/u).flatMap(line => {
+    const requirement = line.replace(/(^|\s)#.*$/u, "").trim();
+    if (requirement === "" || requirement.startsWith("-")) return [];
+    return requirementName(requirement) ?? [];
+  });
+}
+
+const POETRY_DEPENDENCIES = /^tool\.poetry\.(?:dev-dependencies|(?:group\.(?:[A-Za-z0-9_-]+|"(?:[^"\\]|\\.)*")\.)?dependencies)\.(.+)$/u;
+
+/** The first key of a dotted TOML path: bare, or quoted as `readTomlStringLists` writes it. */
+function firstKey(path: string): string | undefined {
+  if (!path.startsWith("\"")) return path.split(".")[0];
+  const quoted = /^"(?:[^"\\]|\\.)*"/u.exec(path)?.[0];
+  return quoted === undefined ? undefined : JSON.parse(quoted) as string;
+}
+
+/**
+ * `pyproject.toml`: PEP 621's `[project] dependencies` and `optional-dependencies`, and Poetry's
+ * `[tool.poetry.dependencies]`, `[tool.poetry.group.<name>.dependencies]` and, from Poetry before 1.2,
+ * `[tool.poetry.dev-dependencies]` (Poetry's `python` entry is the interpreter, not a dependency). A file the TOML
+ * reader cannot read names nothing.
+ */
+function pyprojectNames(text: string): string[] {
+  let read;
+  try {
+    read = readTomlStringLists(text, ["project.dependencies"], ["project.optional-dependencies"]);
+  } catch {
     return [];
   }
-  if (typeof manifest !== "object" || manifest === null) return [];
-  return DEPENDENCY_FIELDS.flatMap(field => {
-    const dependencies = (manifest as Record<string, unknown>)[field];
-    return typeof dependencies === "object" && dependencies !== null ? Object.keys(dependencies) : [];
+  const requirements = [...(read.lists.get("project.dependencies") ?? []), ...[...read.tables.get("project.optional-dependencies")?.values() ?? []].flat()];
+  const poetry = read.paths.flatMap(path => {
+    const rest = POETRY_DEPENDENCIES.exec(path)?.[1];
+    const key = rest === undefined ? undefined : firstKey(rest);
+    return key === undefined || key === "python" ? [] : [normalizePythonName(key)];
   });
+  return [...requirements.flatMap(requirement => requirementName(requirement) ?? []), ...poetry];
+}
+
+/** The ecosystem whose manifest `path` is, or undefined for a file that is no dependency manifest. */
+function manifestEcosystem(path: string): DependencyEcosystem | undefined {
+  const name = posix.basename(path);
+  if (name === "package.json") return "npm";
+  if (name === "composer.json") return "composer";
+  if (name === "pyproject.toml" || /^requirements.*\.txt$/u.test(name)) return "pypi";
+  return undefined;
+}
+
+/** The packages the manifest at repository-relative `path` depends on, named as its ecosystem compares them. */
+function manifestDependencies(root: string, path: string, ecosystem: DependencyEcosystem): string[] {
+  const absolute = join(root, path);
+  if (ecosystem === "npm") {
+    const manifest = jsonManifest(root, absolute);
+    return manifest === undefined ? [] : objectKeys(manifest, DEPENDENCY_FIELDS);
+  }
+  if (ecosystem === "composer") {
+    const manifest = jsonManifest(root, absolute);
+    return manifest === undefined ? [] : objectKeys(manifest, COMPOSER_FIELDS).map(name => name.toLowerCase());
+  }
+  const text = manifestText(root, absolute);
+  if (text === undefined) return [];
+  return posix.basename(path) === "pyproject.toml" ? pyprojectNames(text) : requirementsNames(text);
+}
+
+/** A signal's package name as its ecosystem compares names. */
+export function normalizeDependencyName(ecosystem: DependencyEcosystem, name: string): string {
+  if (ecosystem === "pypi") return normalizePythonName(name);
+  return ecosystem === "composer" ? name.toLowerCase() : name;
 }
 
 export function scanRepository(root: string): RepositoryScan {
   const files = listRepositoryFiles(root);
-  const npmDependencies = new Map<string, readonly string[]>();
+  const dependencies = new Map<DependencyEcosystem, Map<string, string[]>>(DEPENDENCY_ECOSYSTEMS.map(ecosystem => [ecosystem, new Map()]));
   const manifests = files
-    .filter(path => posix.basename(path) === "package.json")
-    .sort((left, right) => left.split("/").length - right.split("/").length || compareDeterministicStrings(left, right));
-  for (const manifest of manifests) {
-    for (const dependency of new Set(readManifestDependencies(root, join(root, manifest)))) {
-      npmDependencies.set(dependency, [...(npmDependencies.get(dependency) ?? []), manifest]);
-    }
+    .flatMap(path => {
+      const ecosystem = manifestEcosystem(path);
+      return ecosystem === undefined ? [] : [{ path, ecosystem }];
+    })
+    .sort((left, right) => left.path.split("/").length - right.path.split("/").length || compareDeterministicStrings(left.path, right.path));
+  for (const { path, ecosystem } of manifests) {
+    const byName = dependencies.get(ecosystem)!;
+    for (const name of new Set(manifestDependencies(root, path, ecosystem))) byName.set(name, [...(byName.get(name) ?? []), path]);
   }
-  return { files, npmDependencies };
+  return { files, dependencies };
 }
 
 /** How many characters the glob token at `index` spans: `**\/`, `**`, a whole `{…}` group, or one character. */
@@ -200,8 +305,10 @@ function commonDirectory(paths: readonly string[]): string {
  * every file its globs match. Empty when the signal is absent.
  */
 export function signalEvidence(signal: RulePackSignal, scan: RepositoryScan): readonly string[] {
-  if ("npmDependencies" in signal) {
-    return [...new Set(signal.npmDependencies.flatMap(dependency => scan.npmDependencies.get(dependency) ?? []))];
+  if ("dependencies" in signal) {
+    const { ecosystem, names } = signal.dependencies;
+    const byName = scan.dependencies.get(ecosystem);
+    return [...new Set(names.flatMap(name => byName?.get(normalizeDependencyName(ecosystem, name)) ?? []))];
   }
   const include = globPattern(signal.files);
   const exclude = signal.exclude === undefined || signal.exclude.length === 0 ? undefined : globPattern(signal.exclude);
@@ -209,10 +316,11 @@ export function signalEvidence(signal: RulePackSignal, scan: RepositoryScan): re
 }
 
 function signalReason(signal: RulePackSignal, scan: RepositoryScan): string | undefined {
-  if ("npmDependencies" in signal) {
-    for (const dependency of signal.npmDependencies) {
-      const manifest = scan.npmDependencies.get(dependency)?.[0];
-      if (manifest !== undefined) return `the ${dependency} dependency in ${manifest}`;
+  if ("dependencies" in signal) {
+    const { ecosystem, names } = signal.dependencies;
+    for (const name of names) {
+      const manifest = scan.dependencies.get(ecosystem)?.get(normalizeDependencyName(ecosystem, name))?.[0];
+      if (manifest !== undefined) return `the ${name} dependency in ${manifest}`;
     }
     return undefined;
   }

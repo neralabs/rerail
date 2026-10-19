@@ -13,7 +13,7 @@ import {
   CODE_RULE_DIALECTS,
   codeRuleLanguageFamily,
   codeRuleSchema,
-  loadBundledRules,
+  loadPackRuleDocuments,
   loadNativeBinding,
   PACKAGE_ROOT,
   parseJsonWithoutDuplicateKeys,
@@ -74,8 +74,8 @@ export interface RerailModules {
   findDuplicateJsonKeys(text: string): { pointer: string; key: string }[];
   codeRuleSchema: ZodLike;
   stableJsonText(value: unknown): string | undefined;
-  /** Each pack directory's `rules/*.json`, read as rerail reads the packs it ships. */
-  loadBundledRules(packs: readonly string[]): { kind: string; rule: { id: string } }[];
+  /** Each pack directory's `rules/*.json`, read as rerail reads the packs it loads. */
+  loadPackRuleDocuments(packs: readonly string[]): { kind: string; rule: { id: string } }[];
   /** The engine dialect for a file path (by its longest known suffix), if any. */
   dialectForPath(path: string): string | undefined;
 }
@@ -431,7 +431,7 @@ export const RERAIL_MODULES: RerailModules = {
   findDuplicateJsonKeys,
   codeRuleSchema,
   stableJsonText,
-  loadBundledRules,
+  loadPackRuleDocuments,
   dialectForPath,
 };
 

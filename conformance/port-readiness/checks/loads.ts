@@ -54,7 +54,7 @@ export function loadAsBundled(engine: Engine, scratch: string, packId: string, r
     const packDirectory = join(directory, packId);
     mkdirSync(join(packDirectory, "rules"), { recursive: true });
     for (const rule of rules) writeFileSync(join(packDirectory, "rules", rule.file), rule.text);
-    const loaded = engine.rerail.loadBundledRules([packDirectory]);
+    const loaded = engine.rerail.loadPackRuleDocuments([packDirectory]);
     return { ids: loaded.map((document) => document.rule.id), kinds: loaded.map((document) => document.kind) };
   } catch (error) {
     // The loader names a file it rejects by absolute path; this directory is new on every run, so the report names the

@@ -20,15 +20,30 @@ import {
   workspaceStartState,
   type RepositorySetupIo,
 } from "../runtime/repository-start.js";
-import { recordSetUp, removeAttachment, setRuleSetting } from "../engine/catalog/rule-configuration.js";
-import { loadRulePacks, recommendRulePacks, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
-import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { addAttachment, recordSetUp, removeAttachment, setRuleSetting } from "../engine/catalog/rule-configuration.js";
+import { loadRulePacks, recommendRulePacks, rulePackPackageName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { readRepositoryLintConfig } from "../engine/catalog/repository-lint-config.js";
+import {
+  discoverPacks,
+  installedPackVersion,
+  installPackVersions,
+  parsePackVersions,
+  type PackDiscovery,
+  type PackStore,
+  type PackVersion,
+} from "../setup/rule-pack-store.js";
+import semver from "semver";
 import { ruleAttachments, ruleSettings } from "../engine/storage/schema.js";
 import { offerSetupReview, setupReviewOffered } from "../engine/catalog/setup-review.js";
 import {
   CONFIRM_PACKS_ANSWERS,
+  confirmPacksAnswers,
+  NO_PACKS,
   NO_REPO_ANSWERS,
+  PICK_PACKS_ANSWERS,
+  pickPacksQuestion,
   noRepoQuestion,
   packReviewQuestion,
   READ_REPO_ANSWERS,
@@ -38,6 +53,7 @@ import {
   SETUP_FLAGS,
   recommendedPacksQuestion,
   renderAgentsPrompt,
+  renderPacksPrompt,
   renderAnswerPrompt,
   renderFolderNotFound,
   renderFolderPrompt,
@@ -49,6 +65,7 @@ import {
   renderStoppedRepo,
   renderSummary,
   setupQuestion,
+  type AvailablePack,
   type CodingAgent,
   type DashboardLink,
   type QuestionForm,
@@ -92,6 +109,21 @@ export function setupAgents(list: string | undefined, answer: string | undefined
   }
 }
 
+/**
+ * `--packs typescript@0.1.1,complexity@0.1.1`, or `none` for no pack, as `setupAgents` takes `--agents`: an answer's
+ * bad list asks again.
+ */
+export function setupPacks(list: string | undefined, answer: string | undefined): Pick<RepositorySetupOptions, "packs" | "packsError"> {
+  if (list === undefined) return {};
+  if (list.trim() === NO_PACKS) return { packs: [] };
+  try {
+    return { packs: parsePackVersions(list) };
+  } catch (error) {
+    if (answer === undefined) throw error;
+    return { packsError: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export type DashboardPage = "rules" | "review";
 
 /** What set-up needs from the machine; the CLI builds it (`setupEnvironment`), tests fake it. */
@@ -111,6 +143,8 @@ export interface SetupEnvironment {
    * browser (E6 says why none opened). False when an earlier run already opened it, so a re-run shows the link alone.
    */
   dashboard(scope: RulesDashboardScope, page: DashboardPage, open: boolean): Promise<DashboardLink>;
+  /** Where rule packs are fetched from and installed to: npm, into the Rerail home. */
+  readonly packs: PackStore;
 }
 
 export interface RepositorySetupOptions {
@@ -119,6 +153,13 @@ export interface RepositorySetupOptions {
   agents?: readonly Harness[];
   /** An answer's `--agents` that `parseCodingAgents` rejected: set-up asks its confirm question again, with this error. */
   agentsError?: string;
+  /**
+   * `--packs`: the rule packs, at exact versions, an answer installs: the ones its question showed, or those the person
+   * chose. Nothing is installed before an answer that names them.
+   */
+  packs?: readonly PackVersion[];
+  /** An answer's `--packs` that is not `<id>@<version>,…`: set-up asks its confirm question again, with this error. */
+  packsError?: string;
   /** `rerail start --repository`: start every checkout of the repository, not just this one and those inside it. */
   repository?: boolean;
   /** `--answer`: the person's answer, relayed by the coding agent. */
@@ -175,6 +216,9 @@ interface Run {
   readonly request: SetupRequest;
   readonly databasePath: string;
 }
+
+/** The Rerail home set-up installs packs into, and so reads them back from: its pack store's. */
+const packsHome = (run: Run): string => run.request.environment.packs.home;
 
 function say(io: RepositorySetupIo, screen: string): void {
   io.say(screen.replace(/\n$/u, ""));
@@ -286,6 +330,34 @@ async function askAgents(io: RepositorySetupIo, found: readonly Harness[]): Prom
   }
 }
 
+/**
+ * The packs a line names: each entry a number from the list, an id, or an id at the listed version. Undefined, with
+ * the reason, for an entry that names none of them.
+ */
+export function pickPacks(line: string, available: readonly AvailablePack[]): PackVersion[] | string {
+  const entries = line.split(",").map(entry => entry.trim()).filter(entry => entry !== "");
+  if (entries.length === 0) return "Name at least one rule pack.";
+  const picked: PackVersion[] = [];
+  for (const entry of entries) {
+    const byNumber = /^\d+$/u.test(entry) ? available[Number.parseInt(entry, 10) - 1] : undefined;
+    const found = byNumber ?? available.find(pack => pack.id === entry || `${pack.id}@${pack.version}` === entry);
+    if (found === undefined) return `${entry} is not one of the rule packs listed.`;
+    if (!picked.some(pack => pack.id === found.id)) picked.push({ id: found.id, version: found.version });
+  }
+  return picked;
+}
+
+async function askPacks(io: RepositorySetupIo, available: readonly AvailablePack[]): Promise<PackVersion[] | undefined> {
+  if (io.ask === undefined) return undefined;
+  for (;;) {
+    const line = await io.ask(renderPacksPrompt({ available }));
+    if (line === undefined) return undefined;
+    const picked = pickPacks(line, available);
+    if (typeof picked !== "string") return picked;
+    say(io, picked);
+  }
+}
+
 
 /** The database, read only, for set-up's reads before the person says yes. Undefined before it exists. */
 function readDatabase<T>(run: Run, read: (database: RerailDatabase) => T): T | undefined {
@@ -335,13 +407,13 @@ function packLabels(packs: readonly { packId: string; folder: string }[]): strin
  * read from its files now. None for a rule the repository has a setting of its own for in that folder (one the person
  * made in the dashboard's review stands).
  */
-function lintConfigSettings(database: RerailDatabase, root: string, repositoryKey: RepositoryKey, packIds: readonly string[]): RuleSetting[] {
+function lintConfigSettings(database: RerailDatabase, home: string, root: string, repositoryKey: RepositoryKey, packIds: readonly string[]): RuleSetting[] {
   const own = new Set(database.select({ folder: ruleSettings.folder, targetId: ruleSettings.targetId }).from(ruleSettings).where(and(
     eq(ruleSettings.ownerKind, "repository"),
     eq(ruleSettings.ownerId, repositoryKey),
     eq(ruleSettings.targetKind, "rule"),
   )).all().map(row => `${row.folder}\0${row.targetId}`));
-  return readRepositoryLintConfig(root, loadBundledCatalog(), packIds).settings
+  return readRepositoryLintConfig(root, loadRuleCatalog(home), packIds).settings
     .filter(setting => !own.has(`${setting.folder}\0${setting.ruleId}`))
     .map(({ ruleId, folder, on, config }) => ({ owner: { kind: "repository", repositoryKey }, folder, targetKind: "rule", targetId: ruleId, on, mode: null, config }));
 }
@@ -411,42 +483,56 @@ async function connect(run: Run, repository: Repository | undefined, chosen?: re
   return agents;
 }
 
+/** What starting Rerail adds to the repository. */
+type StartWith =
+  /** The packs set-up recommended, each at its folder; after the dashboard's review, the packs kept on there instead. */
+  | { readonly kind: "recommended"; readonly packs: readonly RulePackRecommendation[] }
+  /**
+   * Exactly the packs the person chose, replacing any the dashboard's review added. `readRepository`: whether the
+   * repository's lint config may be read for them; not when the person said Rerail may not read the repository.
+   */
+  | { readonly kind: "chosen"; readonly packs: readonly RulePackRecommendation[]; readonly readRepository: boolean };
+
+const recommended = (packs: readonly RulePackRecommendation[]): StartWith => ({ kind: "recommended", packs });
+const chosenPacks = (packs: readonly RulePackRecommendation[], readRepository: boolean): StartWith => ({ kind: "chosen", packs, readRepository });
+
 /**
- * Set the repository up and start Rerail in it: every checkout without its own stop. A repository that is not set up adds `packs`, each at
- * its folder (none for "I'll pick rule packs myself"). One the dashboard's review set up keeps the packs kept on
- * there, or drops every pack for "I'll pick rule packs myself": until Rerail starts, only the person in the
- * dashboard adds packs to it. Either way the packs' rules take the settings the repository's lint config gives them
- * (none with "I'll pick rule packs myself"). Returns how many rule packs are added, or undefined when the repository
- * was set up otherwise, or started (or stopped) already.
+ * Set the repository up and start Rerail in it: every checkout without its own stop. A repository that is not set up
+ * adds `startWith`'s packs, each at its folder. One the dashboard's review set up keeps the packs kept on there for
+ * recommended packs, and swaps them for chosen ones: until Rerail starts, only the person in the dashboard adds packs
+ * to it. The packs' rules take the settings the repository's lint config gives them, unless the person said Rerail may
+ * not read the repository. Returns how many rule packs are added, or undefined when the repository was set up
+ * otherwise, or started (or stopped) already.
  */
-function turnOn(run: Run, repository: Repository, packs: readonly RulePackRecommendation[] | "none"): number | undefined {
+function turnOn(run: Run, repository: Repository, startWith: StartWith): number | undefined {
+  const readRepository = startWith.kind === "recommended" || startWith.readRepository;
+  const adding = startWith.packs.map(({ pack, folder }) => ({ packId: pack.id, folder }));
   return withCheckout(run, repository, (database, checkout) => {
     const { repositoryKey } = checkout;
     if (!checkoutStatus(database, checkout).setUp) {
-      const chosen = packs === "none" ? [] : packs.map(({ pack, folder }) => ({ packId: pack.id, folder }));
       recordSetUp(database, repositoryKey, {
-        packs: chosen,
-        settings: lintConfigSettings(database, repository.root, repositoryKey, chosen.map(({ packId }) => packId)),
+        packs: adding,
+        settings: readRepository ? lintConfigSettings(database, packsHome(run), repository.root, repositoryKey, adding.map(({ packId }) => packId)) : [],
       });
     } else if (!awaitingStartAfterReview(database, repositoryKey)) {
       return undefined;
-    } else if (packs === "none") {
-      for (const { packId, folder } of attachedPacks(database, repositoryKey)) {
-        removeAttachment(database, { repositoryKey, folder, sourceKind: "pack", sourceId: packId });
-      }
     } else {
+      if (startWith.kind === "chosen") {
+        for (const { packId, folder } of attachedPacks(database, repositoryKey)) removeAttachment(database, { repositoryKey, folder, sourceKind: "pack", sourceId: packId });
+        for (const { packId, folder } of adding) addAttachment(database, { repositoryKey, folder, sourceKind: "pack", sourceId: packId });
+      }
       const kept = [...new Set(attachedPacks(database, repositoryKey).map(({ packId }) => packId))];
-      for (const setting of lintConfigSettings(database, repository.root, repositoryKey, kept)) setRuleSetting(database, setting);
+      if (readRepository) for (const setting of lintConfigSettings(database, packsHome(run), repository.root, repositoryKey, kept)) setRuleSetting(database, setting);
     }
     startSetUpRepository(database, checkout, run.request.repository === true);
     return new Set(attachedPacks(database, repositoryKey).map(({ packId }) => packId)).size;
   });
 }
 
-/** Steps 5 and 6. The packs kept on in the dashboard's review win over the recommendation. */
-async function start(run: Run, repository: Repository, recommendations: readonly RulePackRecommendation[], agents?: readonly Harness[]): Promise<SetupOutcome> {
+/** Steps 5 and 6. The packs kept on in the dashboard's review win over recommended ones; chosen ones replace them. */
+async function start(run: Run, repository: Repository, startWith: StartWith, agents?: readonly Harness[]): Promise<SetupOutcome> {
   const connected = await connect(run, repository, agents);
-  const packCount = turnOn(run, repository, recommendations);
+  const packCount = turnOn(run, repository, startWith);
   if (packCount === undefined) return alreadySetUp(run, repository, connected);
   say(run.io, renderStarted({ repoName: repository.name, packCount, connected: codingAgents(connected) }, run.io.lane));
   // The pause is only for reading; Rerail is on either way, so the summary follows even if input ended.
@@ -454,13 +540,79 @@ async function start(run: Run, repository: Repository, recommendations: readonly
   return summary(run, repository, connected, true);
 }
 
-/** E4: on, without reading any code, and every rule pack off. */
+/** E4 with no pack: on, without reading any code, and every rule pack off. */
 async function pickMyself(run: Run, repository: Repository): Promise<SetupOutcome> {
   const connected = await connect(run, repository);
-  if (turnOn(run, repository, "none") === undefined) return alreadySetUp(run, repository, connected);
+  if (turnOn(run, repository, chosenPacks([], false)) === undefined) return alreadySetUp(run, repository, connected);
   const dashboard = await run.request.environment.dashboard(dashboardScope(run, repository), "rules", true);
   say(run.io, renderPickedMyself({ repoName: repository.name, connected: codingAgents(connected), dashboard }, run.io.lane));
   return { status: "started", repositoryName: repository.name, ruleCount: 0 };
+}
+
+/**
+ * E4: "I'll pick rule packs myself". Every pack set-up fetched, to pick from: those that fit first when the person
+ * let Rerail read the repository (`offering`), else unmatched, since it may not. The packs picked are installed and
+ * added for the whole repository, and its lint config is not read; picking none starts Rerail with none. An answer
+ * run (`--packs`) installs what it names, `--packs none` nothing.
+ */
+async function pickPacksMyself(run: Run, repository: Repository, offering?: Pick<Offering, "available" | "unavailable">): Promise<SetupOutcome> {
+  const { packs, packsError } = run.request;
+  if (packsError === undefined && packs !== undefined) return startPicked(run, repository, packs, offering);
+  const offered = offering ?? discoveryOffering(await discoverPacks(undefined, run.request.environment.packs));
+  // Nothing to pick, and nothing went wrong: on with none. When packs could not be fetched or installed, the person
+  // is told why and asked, rather than started without the packs they wanted.
+  if (offered.available.length === 0 && offered.unavailable.length === 0 && packsError === undefined) return pickMyself(run, repository);
+  const question = pickPacksQuestion({
+    repoName: repository.name,
+    repoPath: repository.root,
+    available: offered.available,
+    unavailable: offered.unavailable,
+    ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
+  }, run.io.lane);
+  if (packsError !== undefined) say(run.io, packsError);
+  // Only "None for now" when nothing could be fetched; the keys follow the choices the question shows.
+  const keys = offered.available.length === 0 ? (["none"] as const) : PICK_PACKS_ANSWERS;
+  for (;;) {
+    const picked = await choose(run, question, keys);
+    if (picked === undefined) return halted(run.io);
+    if (picked === "none") return pickMyself(run, repository);
+    const chosen = await askPacks(run.io, offered.available);
+    if (chosen === undefined) return halted(run.io);
+    const problem = await installAnswered(run, chosen);
+    if (problem === undefined) return start(run, repository, chosenPacks(chosenRecommendations(run, repository, chosen, false), false));
+    say(run.io, problem);
+  }
+}
+
+/**
+ * An answer run's `--packs` for "I'll pick rule packs myself": installed and started with, each added for the whole
+ * repository. When one cannot be installed, nothing is changed and the pick question is asked again, with why.
+ */
+async function startPicked(run: Run, repository: Repository, chosen: readonly PackVersion[], offering?: Pick<Offering, "available" | "unavailable">): Promise<SetupOutcome> {
+  if (chosen.length === 0) return pickMyself(run, repository);
+  const problem = await installAnswered(run, chosen);
+  if (problem !== undefined) return pickPacksMyself(withPacksError(run, problem), repository, offering);
+  return start(run, repository, chosenPacks(chosenRecommendations(run, repository, chosen, false), false));
+}
+
+/** The run as an answer whose rule packs could not be installed: no packs, and why, so the question is asked again. */
+function withPacksError(run: Run, problem: string): Run {
+  const { packs: _packs, ...request } = run.request;
+  return { ...run, request: { ...request, packsError: problem } };
+}
+
+/**
+ * Installs the packs an answer names (`installPackVersions`), refusing first to replace an installed pack with an
+ * older version: set-up only offers the newer of the two, so an older one did not come from its question, and
+ * downgrading would change the rules of every repository on this computer. `rerail packs add` can.
+ */
+async function installAnswered(run: Run, packs: readonly PackVersion[]): Promise<string | undefined> {
+  const older = packs.flatMap(pack => {
+    const installed = installedPackVersion(pack.id, packsHome(run));
+    return installed !== null && semver.valid(installed) !== null && semver.lt(pack.version, installed) ? [`${pack.id}@${pack.version} is older than the installed ${installed}`] : [];
+  });
+  if (older.length > 0) return `${older.join("; ")}: set-up does not downgrade a pack every repository uses; rerail packs add does.`;
+  return await installPackVersions(packs, run.request.environment.packs);
 }
 
 /** E5: installed and connected, on in no repo. */
@@ -482,23 +634,92 @@ async function alreadySetUp(run: Run, repository: Repository, connected?: readon
   return { status: "stopped", repositoryName: repository.name, ruleCount: 0 };
 }
 
-function packsInput(run: Run, repository: Repository, recommendations: readonly RulePackRecommendation[]): RecommendedPacksInput {
+/** A rule pack set-up offers to install and add, at the version it installs. */
+interface Offer {
+  readonly recommendation: RulePackRecommendation;
+  readonly version: string;
+  /** The version installed now, if any; installing another replaces it for every repository on this computer. */
+  readonly installed: string | null;
+}
+
+/** What the confirm question shows: the packs it offers, every pack "Choose" lists, and where their rules come from. */
+interface Offering {
+  readonly offers: readonly Offer[];
+  readonly available: readonly AvailablePack[];
+  /** Packs set-up could not fetch or check, and why. */
+  readonly unavailable: readonly string[];
+  /** The catalog the offered packs' rules come from, for the lint config's settings. */
+  readonly catalog: RuleCatalog;
+}
+
+const onRules = (pack: RulePack): number => pack.rules.filter(rule => rule.on).length;
+
+/** What discovery found: the packs that fit, offered at the version fetched. */
+function discoveryOffering(discovery: PackDiscovery): Offering {
+  return {
+    offers: discovery.recommended.flatMap(found => found.match === undefined ? [] : [{
+      recommendation: { pack: found.pack, ruleCount: found.ruleCount, reason: found.match.reason, folder: found.match.folder },
+      version: found.version,
+      installed: found.installed,
+    }]),
+    available: discovery.available.map(found => ({ id: found.pack.id, version: found.version, name: found.pack.name, ...(found.match === undefined ? {} : { reason: found.match.reason }) })),
+    unavailable: discovery.problems,
+    catalog: discovery.catalog,
+  };
+}
+
+/**
+ * The installed packs `chosen` names, each added where its match puts it, or in the whole repository when it does not
+ * fit or `readRepository` is false (the repository is then not read). `installPackVersions` has made sure each is
+ * installed and loaded at that version; throws, naming them, when one is not.
+ */
+function chosenOffering(run: Run, repository: Repository, chosen: readonly PackVersion[], readRepository = true): Offering {
+  const catalog = loadRuleCatalog(packsHome(run));
+  const missing = chosen.filter(({ id, version }) => catalog.packs.get(id)?.version !== version);
+  if (missing.length > 0) throw new Error(`These rule packs are not installed: ${missing.map(pack => `${pack.id}@${pack.version}`).join(", ")}.`);
+  const packs = chosen.map(({ id }) => catalog.packs.get(id)!);
+  const matched = new Map((readRepository ? recommendRulePacks(repository.root, packs) : []).map(found => [found.pack.id, found]));
+  const offers = packs.map(pack => ({
+    recommendation: matched.get(pack.id) ?? { pack, ruleCount: onRules(pack), reason: "you chose it", folder: "" },
+    version: pack.version!,
+    installed: pack.version,
+  }));
+  return {
+    offers,
+    available: offers.map(offer => ({ id: offer.recommendation.pack.id, version: offer.version, name: offer.recommendation.pack.name, reason: offer.recommendation.reason })),
+    unavailable: [],
+    catalog,
+  };
+}
+
+const offeredVersions = (offering: Offering): PackVersion[] => offering.offers.map(offer => ({ id: offer.recommendation.pack.id, version: offer.version }));
+const recommendationsOf = (offering: Offering): RulePackRecommendation[] => offering.offers.map(offer => offer.recommendation);
+const chosenRecommendations = (run: Run, repository: Repository, chosen: readonly PackVersion[], readRepository: boolean): RulePackRecommendation[] =>
+  recommendationsOf(chosenOffering(run, repository, chosen, readRepository));
+
+function packsInput(run: Run, repository: Repository, offering: Offering): RecommendedPacksInput {
   const found = run.request.environment.agentsFound();
   // What the answer will connect: the agents `--agents` named, or every one found.
   const connecting = run.request.agents ?? found;
   return {
     repoName: repository.name,
     repoPath: repository.root,
-    packs: recommendations.map(({ pack, ruleCount, reason }) => ({
+    packs: offering.offers.map(({ recommendation: { pack, ruleCount, reason }, version, installed }) => ({
+      id: pack.id,
       name: pack.name,
       ruleCount,
       reason,
       logRuleCount: pack.rules.filter(rule => rule.mode === "log").length,
+      packageName: rulePackPackageName(pack.id),
+      version,
+      installed,
     })),
+    available: offering.available,
+    unavailable: offering.unavailable,
     agentsFound: codingAgents(connecting),
     agentsNotFound: codingAgents(HARNESSES.filter(id => !found.includes(id) && !connecting.includes(id))),
     ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
-    lintConfig: readRepositoryLintConfig(repository.root, loadBundledCatalog(), recommendations.map(({ pack }) => pack.id)),
+    lintConfig: readRepositoryLintConfig(repository.root, offering.catalog, offering.offers.map(({ recommendation }) => recommendation.pack.id)),
   };
 }
 
@@ -515,29 +736,73 @@ async function reviewQuestion(run: Run, repository: Repository, input: Recommend
   return packReviewQuestion({ ...input, review: await run.request.environment.dashboard(scope, "review", open) }, run.io.lane);
 }
 
-/** Steps 4 and 5: the recommended packs, then the confirm question until the person starts Rerail or picks packs themselves. */
+/**
+ * Steps 4 and 5: the rule packs that fit, then the confirm question until the person starts Rerail or picks packs
+ * themselves. Discovery fetches every pack and matches it, installing none. Only an answer installs: an answer run
+ * installs exactly the packs its `--packs` names (the versions its question showed, or those the person chose), and
+ * never more; re-entering the review, or asking again after a bad answer, installs nothing.
+ */
 async function confirm(run: Run, repository: Repository, answer: string | undefined, reviewed = false): Promise<SetupOutcome> {
-  const recommendations = recommendRulePacks(repository.root);
-  const { agentsError } = run.request;
-  if (agentsError === undefined && (answer === "start" || (answer === "other" && run.request.agents !== undefined))) {
-    return start(run, repository, recommendations);
+  const { agentsError, packsError, packs } = run.request;
+  const store = run.request.environment.packs;
+  const errors = [agentsError, packsError].filter(error => error !== undefined);
+  if (errors.length === 0 && packs !== undefined && (answer === "start" || answer === "other" || answer === "review" || answer === "choose")) {
+    const problem = await installAnswered(run, packs);
+    // The question again, with why, as for an answer's coding agents set-up does not know.
+    if (problem !== undefined) return confirm(withPacksError(run, problem), repository, reviewed ? "review" : undefined, reviewed);
+    if (answer === "choose") return start(run, repository, chosenPacks(chosenRecommendations(run, repository, packs, true), true));
+    const chosen = chosenOffering(run, repository, packs);
+    if (answer !== "review") return start(run, repository, recommended(recommendationsOf(chosen)));
+    // "Choose rule packs…" under the review question still lists every pack set-up can fetch.
+    const discovery = discoveryOffering(await discoverPacks(repository.root, store));
+    const offering = { ...chosen, available: discovery.available, unavailable: discovery.unavailable };
+    return confirmLoop(run, repository, offering, await reviewQuestion(run, repository, packsInput(run, repository, offering), !reviewed));
   }
-  const input = packsInput(run, repository, recommendations);
-  let question = answer === "review" ? await reviewQuestion(run, repository, input, !reviewed) : recommendedPacksQuestion(input, run.io.lane);
-  // A bad answer's coding agents: the same question again, as the terminal asks again after one (`askAgents`).
-  if (agentsError !== undefined) say(run.io, agentsError);
+  // An answer without `--packs` answers a question that offered no rule pack.
+  if (errors.length === 0 && (answer === "start" || (answer === "other" && run.request.agents !== undefined))) return start(run, repository, recommended([]));
+  const offering = discoveryOffering(await discoverPacks(repository.root, store));
+  const input = packsInput(run, repository, offering);
+  // Re-entering a review shows it again with the packs installed then; its answers carry what they install.
+  const question = answer === "review" ? await reviewQuestion(run, repository, input, !reviewed) : recommendedPacksQuestion(input, run.io.lane);
+  // A bad answer's coding agents or rule packs: the same question again, as the terminal asks again after one.
+  for (const error of errors) say(run.io, error);
+  return confirmLoop(run, repository, offering, question);
+}
+
+/**
+ * The confirm question until the person answers it; each answer that installs installs first, then starts. Packs that
+ * cannot be installed change nothing: the person is told why and asked again.
+ */
+async function confirmLoop(run: Run, repository: Repository, offered: Offering, first: QuestionForm): Promise<SetupOutcome> {
+  let offering = offered;
+  let question = first;
   for (;;) {
-    const picked = await choose(run, question, CONFIRM_PACKS_ANSWERS);
+    const picked = await choose(run, question, confirmPacksAnswers(offering.available));
     if (picked === undefined) return halted(run.io);
-    if (picked === "start") return start(run, repository, recommendations);
-    if (picked === "pick-myself") return pickMyself(run, repository);
-    if (picked === "review") {
-      question = await reviewQuestion(run, repository, input, true);
+    if (picked === "pick-myself") return pickPacksMyself(run, repository, offering);
+    if (picked === "choose") {
+      const chosen = await askPacks(run.io, offering.available);
+      if (chosen === undefined) return halted(run.io);
+      const problem = await installAnswered(run, chosen);
+      if (problem === undefined) return start(run, repository, chosenPacks(chosenRecommendations(run, repository, chosen, true), true));
+      say(run.io, problem);
       continue;
     }
-    const agents = await askAgents(run.io, run.request.environment.agentsFound());
-    if (agents === undefined) return halted(run.io);
-    return start(run, repository, recommendations, agents);
+    const agents = picked === "other" ? await askAgents(run.io, run.request.environment.agentsFound()) : undefined;
+    if (picked === "other" && agents === undefined) return halted(run.io);
+    // "Review them first", "Yes" and "Type something else…" install the packs the question offered.
+    const problem = await installAnswered(run, offeredVersions(offering));
+    if (problem !== undefined) {
+      say(run.io, problem);
+      continue;
+    }
+    if (picked === "review") {
+      // Installed now: the review question no longer says a pack replaces an installed version.
+      offering = { ...offering, offers: offering.offers.map(offer => ({ ...offer, installed: offer.version })) };
+      question = await reviewQuestion(run, repository, packsInput(run, repository, offering), true);
+      continue;
+    }
+    return start(run, repository, recommended(recommendationsOf(offering)), agents);
   }
 }
 
@@ -556,14 +821,14 @@ async function setUpOneRepository(run: Run, repository: Repository, chosen: bool
   const reviewing = state === "awaiting-start" || state === "review-offered";
   const { agentsError, ...request } = run.request;
   if (answer === "pick-myself") {
-    if (agentsError === undefined) return pickMyself(run, repository);
+    if (agentsError === undefined) return pickPacksMyself(run, repository);
     // "Rerail reads no code": a bad list asks again the question that offers it, and leaves the repository unread.
     say(run.io, agentsError);
     return askToRead({ ...run, request }, repository);
   }
   if (agentsError !== undefined) return confirm(run, repository, reviewing ? "review" : undefined, reviewing);
-  if (reviewing) return confirm(run, repository, answer === "start" || answer === "other" ? answer : "review", true);
-  if (chosen || answer === "yes" || answer === "start" || answer === "review" || answer === "other") return confirm(run, repository, answer);
+  if (reviewing) return confirm(run, repository, answer === "start" || answer === "other" || answer === "choose" ? answer : "review", true);
+  if (chosen || answer === "yes" || answer === "start" || answer === "review" || answer === "other" || answer === "choose") return confirm(run, repository, answer);
   return askToRead(run, repository);
 }
 

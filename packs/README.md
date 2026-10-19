@@ -3,10 +3,11 @@
 Rule packs for Rerail. Each pack is published to npm as its own package, versioned and released separately from
 the core package at the repository root.
 
-> Status: pre-release. No pack is published yet, and core does not load installed packs yet: core ships the
-> complexity pack inside its own package (`complexity/pack.json` and `complexity/rules/`). The packs here: `python`,
-> `php`, `blade`, `typescript`, `javascript`, `react`, `node`, `next`, `sql` and `complexity`. Every rule document Rerail ships lives in
-> a pack; core has no rules of its own.
+> Status: pre-release (below 1.0.0). Every pack here is published to npm, restricted to the same people who can read
+> core, and core ships none of them: set-up and `rerail packs add` install them into `$RERAIL_HOME/packs`. The packs
+> here: `python`, `php`, `blade`, `rust`, `typescript`, `javascript`, `react`, `vue`, `node`, `next`, `sql` and
+> `complexity`. Every rule document Rerail ships lives in a pack; core has no rules of its own, and lists the packs
+> by name only (`src/engine/catalog/pack-list.generated.ts`).
 
 - [docs/pack-format.md](../docs/pack-format.md): the layout and the validation contract every pack here passes.
 - [docs/port-readiness.md](../docs/port-readiness.md): the port readiness gates every shipped ported rule must pass (`npm run port-readiness`);

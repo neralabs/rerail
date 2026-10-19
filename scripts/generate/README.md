@@ -37,6 +37,7 @@ and `<landing>` a checkout of nera-landing, whose design tokens the UI files pro
 
 | Generated file | Generator | Command |
 |---|---|---|
+| `src/engine/catalog/pack-list.generated.ts` | `scripts/generate/packs/pack-list.ts` | `npm run generate:packs`; pack check 7 (`test/engine/catalog/packs.test.ts`) fails when it is stale |
 | `src/engine/code-rule/code-rule-language-registry.generated.ts` | `scripts/generate/languages/registry.ts` | `npm run generate:languages`; `test/engine/code-rule/language-registry.test.ts` fails when it is stale |
 | `src/engine/storage/schema-sql.generated.ts` | `scripts/generate/schema/schema-sql.ts` | `npm run generate:schema`; `test/engine/catalog/rule-store.test.ts` fails when it is stale |
 | `src/presentation/terminal-brand.generated.ts` | `scripts/generate/ui/terminal-brand.mjs` | `node scripts/generate/ui/terminal-brand.mjs <landing>` |
