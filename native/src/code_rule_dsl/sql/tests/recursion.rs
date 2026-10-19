@@ -14,7 +14,9 @@ fn compile(language: &str, mut ast: Value, each: Option<&str>) -> CompiledCodeRu
         violation["each"] = json!(each);
     }
     compile_document_with(
-        clause_document(json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": violation })),
+        clause_document(
+            json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": violation }),
+        ),
         &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
     )
     .unwrap_or_else(|error| panic!("{}", error.reason))
@@ -74,7 +76,11 @@ fn refused(language: &str, ast: Value, source: &str) -> String {
     let compiled = compile(language, ast, None);
     let input = snapshot(&[(language, &format!("a.{}", extension(language)), source)]);
     compiled
-        .evaluate(input.to_string(), "report".to_owned(), Some("sql".to_owned()))
+        .evaluate(
+            input.to_string(),
+            "report".to_owned(),
+            Some("sql".to_owned()),
+        )
         .expect_err("the SQL engine refuses")
         .reason
 }
@@ -300,7 +306,71 @@ fn a_capture_free_recursive_utility_is_one_stage_shared_by_its_clauses() {
     let (alone, _) = crate::code_rule_dsl::sql::compile(&single)
         .expect("compiles")
         .statement_count();
-    assert_eq!(stages, alone, "the second clause reuses the first one's stage");
+    assert_eq!(
+        stages, alone,
+        "the second clause reuses the first one's stage"
+    );
+}
+
+/// A recursive utility of a three-valued clause returns its body's unknown verdicts through
+/// `matches` (`testUnknown` is unknown where its regex matches): `u.a()` is neither matched nor
+/// matched by the negation, both in a capture-free cycle (a three-valued per-batch stage) and in
+/// one whose frames bind a capture (a unit whose answers carry `unk`).
+#[test]
+fn a_three_valued_recursive_utility_returns_unknown_verdicts() {
+    use crate::code_rule_dsl::sql::terminals::calls::UNKNOWN_VERDICTS;
+    use crate::code_rule_dsl::test_support::grammar_matchers;
+    let source = "x.a();\nu.a();\ny.a();\nx.b.c();\nu.b.c();\n";
+    for (leaf, held_found) in [
+        (
+            json!({ "kind": "identifier", "regex": "^[xu]$", "testUnknown": "^u" }),
+            ["x.a()", "x.b.c()"],
+        ),
+        (
+            json!({ "kind": "identifier", "regex": "^[xu]$", "pattern": "$X", "testUnknown": "^u" }),
+            ["x.a() X=x", "x.b.c() X=x"],
+        ),
+    ] {
+        let utils = json!({ "tail": { "any": [
+            leaf,
+            { "kind": "member_expression", "has": { "field": "object", "matches": "tail" } },
+            { "kind": "call_expression", "has": { "field": "function", "matches": "tail" } },
+        ] } });
+        let held = json!({ "rule": { "kind": "call_expression", "matches": "tail" }, "utils": utils.clone() });
+        assert!(grammar_matchers(&compile("typescript", held.clone(), None))[0].three_valued);
+        UNKNOWN_VERDICTS.set(0);
+        assert_eq!(agreed("typescript", held, None, source), held_found);
+        assert!(UNKNOWN_VERDICTS.get() > 0, "a terminal answered unknown");
+        let negated = json!({
+            "rule": { "kind": "call_expression", "not": { "matches": "tail" } },
+            "utils": utils,
+        });
+        assert_eq!(agreed("typescript", negated, None, source), ["y.a()"]);
+    }
+}
+
+/// `violation.each` over a three-valued clause is refused by name: its exclusion rounds skip
+/// candidates in the two-valued operators only, not in `AllOpen`, `AnyOpen` or `Search`.
+#[test]
+fn three_valued_violation_each_is_refused() {
+    let ast = json!({ "rule": {
+        "kind": "call_expression",
+        "has": { "field": "arguments", "has": { "kind": "identifier", "pattern": "$A", "testUnknown": "^u" } },
+    } });
+    let compiled = compile("typescript", ast, Some("A"));
+    let input = snapshot(&[("typescript", "a.ts", "f(a, u);\n")]);
+    let reason = compiled
+        .evaluate(
+            input.to_string(),
+            "report".to_owned(),
+            Some("sql".to_owned()),
+        )
+        .expect_err("the SQL engine refuses")
+        .reason;
+    assert!(
+        reason.contains("Unsupported(three-valued violation.each)"),
+        "{reason}"
+    );
 }
 
 #[test]
@@ -435,7 +505,12 @@ fn the_capacity_limits_are_far_above_real_patterns_and_calls() {
         "utils": { "all": { "params": params, "rule": { "pattern": pattern } } },
     });
     assert_eq!(
-        agreed("typescript", ast, None, "x(x, x, x, x, x);\nx(x, y, x, x, x);\n"),
+        agreed(
+            "typescript",
+            ast,
+            None,
+            "x(x, x, x, x, x);\nx(x, y, x, x, x);\n"
+        ),
         ["x(x, x, x, x, x) X=x"]
     );
 }
