@@ -74,9 +74,144 @@ pub(super) fn stage_table(stage: usize) -> String {
     format!("stage_{stage}")
 }
 
+/// When a statement's output is empty, read from the rows its `Effect`'s inputs hold for the
+/// batch (`skip`, which documents how the session applies each). The emitter records it as it
+/// writes the statement, from the operator and the frames it reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Rule {
+    /// Never passed over: the statement reads no counted frame (a root frame, a seed), or its
+    /// output does not follow from its inputs' emptiness.
+    #[default]
+    AlwaysRun,
+    /// Empty where any input is: each output row stems from a row of every input (joins,
+    /// semi-joins, relations, terminals over an input set, or a frame derived from them).
+    EmptyIfAnyInputEmpty,
+    /// Empty where every input is: a union whose branches each read one of them.
+    EmptyIfAllInputsEmpty,
+    /// The rows of the first input the others do not remove (an anti-join, `not`, `any`'s
+    /// remainder): empty where it is; where every other input is empty, exactly its rows, so the
+    /// statement still runs.
+    EmptyIfPrimaryEmpty,
+    /// Exactly the rows of its one input.
+    CopyOf,
+}
+
+/// How a statement changes the rows of a counted table.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) enum Writes<T> {
+    /// No table's rows (a query, an `UPDATE`, a marker).
+    #[default]
+    None,
+    /// Adds the rows it changes.
+    Insert(T),
+    /// Removes the rows it changes.
+    Delete(T),
+    /// Empties it.
+    Clear(T),
+}
+
+impl<T> Writes<T> {
+    fn map<U>(self, mut table: impl FnMut(T) -> U) -> Writes<U> {
+        match self {
+            Self::None => Writes::None,
+            Self::Insert(name) => Writes::Insert(table(name)),
+            Self::Delete(name) => Writes::Delete(table(name)),
+            Self::Clear(name) => Writes::Clear(table(name)),
+        }
+    }
+}
+
+/// What one statement reads and writes, recorded at emission: its emptiness rule over `inputs`
+/// (the first is the primary input of `EmptyIfPrimaryEmpty` and `CopyOf`), and its output. Tables
+/// are named as the statement names them (`NAMESPACE`, `EACH` unsubstituted); the session maps
+/// them to its counted tables. A `BLOCK` marker's inputs are its units' demand tables.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Effect<T = String> {
+    pub(super) rule: Rule,
+    pub(super) inputs: Vec<T>,
+    pub(super) writes: Writes<T>,
+}
+
+impl<T> Effect<T> {
+    /// The effect over other table names (or ids).
+    pub(super) fn map<U>(self, mut table: impl FnMut(T) -> U) -> Effect<U> {
+        Effect {
+            rule: self.rule,
+            inputs: self.inputs.into_iter().map(&mut table).collect(),
+            writes: self.writes.map(table),
+        }
+    }
+}
+
+/// A frame statement's rule over the frames it reads; `Reads::writes` adds its output.
+pub(super) struct Reads {
+    rule: Rule,
+    inputs: Vec<String>,
+}
+
+impl Reads {
+    fn new(rule: Rule, inputs: &[&str]) -> Self {
+        Self {
+            rule,
+            inputs: inputs.iter().map(|&input| input.to_owned()).collect(),
+        }
+    }
+
+    /// `Rule::EmptyIfAnyInputEmpty`.
+    pub(super) fn join(inputs: &[&str]) -> Self {
+        Self::new(Rule::EmptyIfAnyInputEmpty, inputs)
+    }
+
+    /// `Rule::EmptyIfAllInputsEmpty`.
+    pub(super) fn union(inputs: &[&str]) -> Self {
+        Self::new(Rule::EmptyIfAllInputsEmpty, inputs)
+    }
+
+    /// `Rule::EmptyIfPrimaryEmpty`: `primary`'s rows that no row of `probes` removes.
+    pub(super) fn anti(primary: &str, probes: &[&str]) -> Self {
+        let mut reads = Self::new(Rule::EmptyIfPrimaryEmpty, probes);
+        reads.inputs.insert(0, primary.to_owned());
+        reads
+    }
+
+    /// `Rule::CopyOf`.
+    pub(super) fn copy(input: &str) -> Self {
+        Self::new(Rule::CopyOf, &[input])
+    }
+
+    /// `Rule::AlwaysRun`.
+    pub(super) fn always() -> Self {
+        Self::new(Rule::AlwaysRun, &[])
+    }
+
+    pub(super) fn writes(self, writes: Writes<String>) -> Effect {
+        Effect {
+            rule: self.rule,
+            inputs: self.inputs,
+            writes,
+        }
+    }
+}
+
+/// A stage's or clause's statements, each with its `Effect`, and its root frame: the frame of
+/// the roots it runs on, which the session reads to pass over the rest where it is empty.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Emitted {
+    pub(super) statements: Vec<String>,
+    pub(super) effects: Vec<Effect>,
+    pub(super) root: Option<String>,
+}
+
+impl Emitted {
+    fn push(&mut self, sql: String, effect: Effect) {
+        self.statements.push(sql);
+        self.effects.push(effect);
+    }
+}
+
 /// A clause's statements: the last selects its matching roots and the clause-scope bindings of
 /// each, `(file, node, columns of every scope-0 slot)`, ordered by file and root.
-pub(super) fn clause(statement: &Statement) -> Vec<String> {
+pub(super) fn clause(statement: &Statement) -> Emitted {
     let mut emitter = Emitter::new(statement);
     let out = emitter.statement(statement);
     let columns: String = statement
@@ -89,10 +224,11 @@ pub(super) fn clause(statement: &Statement) -> Vec<String> {
         .collect();
     // An unknown root does not match.
     let known = if emitter.three { " WHERE unk = 0" } else { "" };
-    emitter.statements.push(format!(
-        "SELECT file, node{columns} FROM {out}{known} ORDER BY file, node"
-    ));
-    emitter.statements
+    emitter.push(
+        format!("SELECT file, node{columns} FROM {out}{known} ORDER BY file, node"),
+        Reads::join(&[&out]).writes(Writes::None),
+    );
+    emitter.out
 }
 
 /// A clause's statements under `violation.each` (the enumerated capture's scope-0 node slot is
@@ -100,7 +236,7 @@ pub(super) fn clause(statement: &Statement) -> Vec<String> {
 /// recorded per root (`EACH` `x`) and the roots that bound one kept for the next round (`a`). The
 /// last selects what the round reports, as `clause`'s does: in round 0 every match, in a later
 /// round the matches that bound a fresh range.
-pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Vec<String> {
+pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Emitted {
     let mut emitter = Emitter::new(statement);
     let out = emitter.statement(statement);
     let columns: Vec<String> = statement
@@ -131,41 +267,63 @@ pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Vec<St
     } else {
         ""
     };
-    let statements = &mut emitter.statements;
-    statements.push(format!(
-        "CREATE TEMP TABLE {NAMESPACE}eo(file, node{bare}, es, ee)"
-    ));
-    statements.push(format!(
-        "INSERT INTO {NAMESPACE}eo SELECT o.file, o.node{}, {range} FROM {out} o{join}{known}",
-        of("o")
-    ));
-    statements.push(format!(
-        "CREATE TEMP TABLE {NAMESPACE}ef(file, node, es, ee)"
-    ));
-    statements.push(format!(
-        "INSERT INTO {NAMESPACE}ef SELECT e.file, e.node, e.es, e.ee FROM {NAMESPACE}eo e \
-         LEFT JOIN {EACH}x x ON x.file = e.file AND x.root = e.node AND x.start = e.es AND x.\"end\" = e.ee \
-         WHERE e.es IS NOT NULL AND x.root IS NULL"
-    ));
-    statements.push(format!(
-        "INSERT INTO {EACH}x SELECT file, node, es, ee FROM {NAMESPACE}ef"
-    ));
-    statements.push(format!("DELETE FROM {EACH}a"));
-    statements.push(format!(
-        "INSERT INTO {EACH}a SELECT file, node FROM {NAMESPACE}ef"
-    ));
-    statements.push(format!(
-        "SELECT e.file, e.node{} FROM {NAMESPACE}eo e WHERE (SELECT round FROM {EACH}r) = 0 \
-         OR (e.file, e.node) IN (SELECT file, node FROM {NAMESPACE}ef) \
-         ORDER BY e.file, e.node",
-        of("e")
-    ));
-    emitter.statements
+    let (eo, ef, x, a) = (
+        format!("{NAMESPACE}eo"),
+        format!("{NAMESPACE}ef"),
+        format!("{EACH}x"),
+        format!("{EACH}a"),
+    );
+    emitter.push(
+        format!("CREATE TEMP TABLE {eo}(file, node{bare}, es, ee)"),
+        Effect::default(),
+    );
+    emitter.push(
+        format!(
+            "INSERT INTO {eo} SELECT o.file, o.node{}, {range} FROM {out} o{join}{known}",
+            of("o")
+        ),
+        Reads::join(&[&out]).writes(Writes::Insert(eo.clone())),
+    );
+    emitter.push(
+        format!("CREATE TEMP TABLE {ef}(file, node, es, ee)"),
+        Effect::default(),
+    );
+    // The ranges not reported yet: an anti-join with `x`, but filtered too (`es IS NOT NULL`).
+    emitter.push(
+        format!(
+            "INSERT INTO {ef} SELECT e.file, e.node, e.es, e.ee FROM {eo} e \
+             LEFT JOIN {x} x ON x.file = e.file AND x.root = e.node AND x.start = e.es AND x.\"end\" = e.ee \
+             WHERE e.es IS NOT NULL AND x.root IS NULL"
+        ),
+        Reads::join(&[&eo]).writes(Writes::Insert(ef.clone())),
+    );
+    emitter.push(
+        format!("INSERT INTO {x} SELECT file, node, es, ee FROM {ef}"),
+        Reads::copy(&ef).writes(Writes::Insert(x.clone())),
+    );
+    emitter.push(
+        format!("DELETE FROM {a}"),
+        Reads::join(&[&a]).writes(Writes::Clear(a.clone())),
+    );
+    emitter.push(
+        format!("INSERT INTO {a} SELECT file, node FROM {ef}"),
+        Reads::join(&[&ef]).writes(Writes::Insert(a.clone())),
+    );
+    emitter.push(
+        format!(
+            "SELECT e.file, e.node{} FROM {eo} e WHERE (SELECT round FROM {EACH}r) = 0 \
+             OR (e.file, e.node) IN (SELECT file, node FROM {ef}) \
+             ORDER BY e.file, e.node",
+            of("e")
+        ),
+        Reads::join(&[&eo]).writes(Writes::None),
+    );
+    emitter.out
 }
 
 /// A stage's statements: the last selects the distinct `(file, node)` its rule matches; in a
 /// three-valued statement `(file, node, unk)`, where it is true or unknown.
-pub(super) fn stage(statement: &Statement) -> Vec<String> {
+pub(super) fn stage(statement: &Statement) -> Emitted {
     let mut emitter = Emitter::new(statement);
     let out = emitter.statement(statement);
     let select = if emitter.three {
@@ -173,8 +331,8 @@ pub(super) fn stage(statement: &Statement) -> Vec<String> {
     } else {
         format!("SELECT DISTINCT file, node FROM {out}")
     };
-    emitter.statements.push(select);
-    emitter.statements
+    emitter.push(select, Reads::join(&[&out]).writes(Writes::None));
+    emitter.out
 }
 
 struct Emitter<'s> {
@@ -184,7 +342,8 @@ struct Emitter<'s> {
     sources: &'s [Source],
     /// Every slot's physical columns, in order.
     physical: Vec<String>,
-    statements: Vec<String>,
+    /// The statements so far, each with its effect.
+    out: Emitted,
     next: usize,
     /// Whether the statement is three-valued (`Op::Unknowable`): frames then carry `unk` and
     /// `masks` withheld-mask columns.
@@ -241,7 +400,7 @@ impl<'s> Emitter<'s> {
             units: &statement.units,
             sources: &statement.sources,
             physical,
-            statements: Vec::new(),
+            out: Emitted::default(),
             next: 0,
             three: false,
             masks: 0,
@@ -258,16 +417,28 @@ impl<'s> Emitter<'s> {
         }
     }
 
+    /// Emits `sql`, which does `effect`.
+    fn push(&mut self, sql: String, effect: Effect) {
+        self.out.push(sql, effect);
+    }
+
     /// Creates the table `name(columns)`; inside a loop, once, emptying it on every pass: the
     /// schema stays as it is, so the loop's statements are prepared once (`exec::execute`).
     fn create(&mut self, name: &str, columns: &str) {
         if self.looping > 0 {
-            self.statements
-                .push(format!("CREATE TEMP TABLE IF NOT EXISTS {name}({columns})"));
-            self.statements.push(format!("DELETE FROM {name}"));
+            self.push(
+                format!("CREATE TEMP TABLE IF NOT EXISTS {name}({columns})"),
+                Effect::default(),
+            );
+            self.push(
+                format!("DELETE FROM {name}"),
+                Reads::join(&[name]).writes(Writes::Clear(name.to_owned())),
+            );
         } else {
-            self.statements
-                .push(format!("CREATE TEMP TABLE {name}({columns})"));
+            self.push(
+                format!("CREATE TEMP TABLE {name}({columns})"),
+                Effect::default(),
+            );
         }
     }
 
@@ -292,8 +463,14 @@ impl<'s> Emitter<'s> {
             .collect()
     }
 
-    /// A frame table filled by `select` (canonical columns, in order), with CTEs `with`.
-    fn frame_with(&mut self, prefix: &str, with: &str, select: &str) -> String {
+    /// Emits `sql`, an `INSERT` into `table`, empty as `reads` says.
+    fn insert(&mut self, table: &str, sql: String, reads: Reads) {
+        self.push(sql, reads.writes(Writes::Insert(table.to_owned())));
+    }
+
+    /// A frame table filled by `select` (canonical columns, in order), with CTEs `with`; empty
+    /// as `reads` says.
+    fn frame_with(&mut self, prefix: &str, with: &str, select: &str, reads: Reads) -> String {
         let name = self.name(prefix);
         let columns = format!(
             "k INTEGER PRIMARY KEY, file, node{}{}",
@@ -301,23 +478,22 @@ impl<'s> Emitter<'s> {
             self.extra_list()
         );
         self.create(&name, &columns);
-        self.statements
-            .push(format!("{with}INSERT INTO {name} {select}"));
+        self.insert(&name, format!("{with}INSERT INTO {name} {select}"), reads);
         name
     }
 
-    fn frame(&mut self, prefix: &str, select: &str) -> String {
-        self.frame_with(prefix, "", select)
+    fn frame(&mut self, prefix: &str, select: &str, reads: Reads) -> String {
+        self.frame_with(prefix, "", select, reads)
     }
 
     /// A table of per-row results keyed by the row's `k` (`pk INTEGER PRIMARY KEY`, then
     /// `columns`), filled by `select`: a frame joins it on `k` through its primary key, whatever
     /// side of the join the frame is on (a grouped CTE has no index, and a `LEFT JOIN` to one
     /// rescans it per row).
-    fn grouped(&mut self, columns: &str, select: &str) -> String {
+    fn grouped(&mut self, columns: &str, select: &str, reads: Reads) -> String {
         let name = self.name("h");
         self.create(&name, &format!("pk INTEGER PRIMARY KEY, {columns}"));
-        self.statements.push(format!("INSERT INTO {name} {select}"));
+        self.insert(&name, format!("INSERT INTO {name} {select}"), reads);
         name
     }
 
@@ -415,7 +591,8 @@ impl<'s> Emitter<'s> {
             Some(kinds) => format!(" AND n.kind IN ({})", list(kinds)),
         };
         // Every root of the clause's kinds in the whole files, then the selected roots of those
-        // kinds in the narrowed files.
+        // kinds in the narrowed files. It reads the batch's own rows (`FILES`, `ROOTS`), which the
+        // session does not count: it always runs, and every later statement reads what it holds.
         let root = self.frame(
             "r",
             &format!(
@@ -425,7 +602,9 @@ impl<'s> Emitter<'s> {
                  ON n.file = r.file AND n.id = r.node WHERE 1{kinds})",
                 self.zeros()
             ),
+            Reads::always(),
         );
+        self.out.root = Some(root.clone());
         // One row per root: a file's roots are either all its nodes or the selected ones.
         self.keyed_by(&root, vec![BTreeSet::new()]);
         self.op(op, &root)
@@ -461,6 +640,7 @@ impl<'s> Emitter<'s> {
                         "SELECT {} FROM {input} f JOIN node n ON n.file = f.file AND n.id = f.node WHERE {test}",
                         self.cols("f")
                     ),
+                    Reads::join(&[input]),
                 )
             }
             Op::Regex(term) => self.frame(
@@ -470,6 +650,7 @@ impl<'s> Emitter<'s> {
                      (SELECT ek FROM text_match WHERE term = {term} AND ek IN (SELECT file * 4294967296 + node FROM {input}))",
                     self.cols("f")
                 ),
+                Reads::join(&[input]),
             ),
             Op::Pattern {
                 term,
@@ -490,12 +671,14 @@ impl<'s> Emitter<'s> {
                 for (index, branch) in branches.iter().enumerate() {
                     let out = self.op(branch, &rest);
                     if index + 1 < branches.len() {
+                        // `rest` without the rows the branch matched: all of it where none did.
                         let next = self.frame(
                             "y",
                             &format!(
                                 "SELECT {} FROM {rest} f WHERE f.k NOT IN (SELECT k FROM {out})",
                                 self.cols("f")
                             ),
+                            Reads::anti(&rest, &[&out]),
                         );
                         self.inherit(&rest, &next, &BTreeSet::new());
                         rest = next;
@@ -507,7 +690,8 @@ impl<'s> Emitter<'s> {
                     .map(|out| format!("SELECT {} FROM {out} f", self.cols("f")))
                     .collect::<Vec<_>>()
                     .join(" UNION ALL ");
-                self.frame("x", &union)
+                let branches: Vec<&str> = outs.iter().map(String::as_str).collect();
+                self.frame("x", &union, Reads::union(&branches))
             }
             Op::Not(inner) => {
                 let out = self.op(inner, input);
@@ -517,9 +701,14 @@ impl<'s> Emitter<'s> {
                         "SELECT {} FROM {input} f WHERE f.k NOT IN (SELECT k FROM {out})",
                         self.cols("f")
                     ),
+                    Reads::anti(input, &[&out]),
                 )
             }
-            Op::Never => self.frame("x", &format!("SELECT {} FROM {input} f WHERE 0", self.cols("f"))),
+            Op::Never => self.frame(
+                "x",
+                &format!("SELECT {} FROM {input} f WHERE 0", self.cols("f")),
+                Reads::join(&[input]),
+            ),
             Op::Relation { walk, sub, binds } => {
                 let candidates = self.candidates(*walk, input);
                 let matched = self.op(sub, &candidates);
@@ -534,7 +723,7 @@ impl<'s> Emitter<'s> {
                         "SELECT {} FROM {input} f JOIN w ON w.pk = f.k",
                         self.select("f", &self.all_from("w"))
                     );
-                    self.frame_with("x", &with, &select)
+                    self.frame_with("x", &with, &select, Reads::join(&[input, &matched, &candidates]))
                 } else {
                     self.frame(
                         "x",
@@ -542,6 +731,7 @@ impl<'s> Emitter<'s> {
                             "SELECT {} FROM {input} f WHERE f.k IN (SELECT g.pk FROM {matched} s JOIN {candidates} g ON g.k = s.k)",
                             self.cols("f")
                         ),
+                        Reads::join(&[input, &matched, &candidates]),
                     )
                 }
             }
@@ -559,6 +749,7 @@ impl<'s> Emitter<'s> {
                     &format!(
                         "SELECT g.pk, COUNT(*) FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk"
                     ),
+                    Reads::join(&[&matched, &candidates]),
                 );
                 let overrides: Vec<(String, String)> = bind
                     .iter()
@@ -571,7 +762,8 @@ impl<'s> Emitter<'s> {
                     "SELECT {} FROM {input} f LEFT JOIN {counts} c ON c.pk = f.k WHERE COALESCE(c.n, 0) >= {min}{upper}",
                     self.select("f", &overrides)
                 );
-                self.frame("x", &select)
+                // A row with no matching candidate counts 0, which `min` may accept.
+                self.frame("x", &select, Reads::join(&[input]))
             }
             Op::NthChild {
                 step,
@@ -594,6 +786,7 @@ impl<'s> Emitter<'s> {
                             "SELECT {} FROM {current} f WHERE f.{column} IS NULL",
                             self.cols("f")
                         ),
+                        Reads::join(&[&current]),
                     );
                     let captured = self.frame(
                         "g",
@@ -601,6 +794,7 @@ impl<'s> Emitter<'s> {
                             "SELECT f.k, f.file, f.{column}{} FROM {current} f WHERE f.{column} IS NOT NULL",
                             self.physical_of("f")
                         ),
+                        Reads::join(&[&current]),
                     );
                     let checked = self.op(constraint, &captured);
                     current = self.frame(
@@ -610,6 +804,7 @@ impl<'s> Emitter<'s> {
                             self.select("f", &self.all_from("c")),
                             self.cols("p")
                         ),
+                        Reads::union(&[&checked, &passed]),
                     );
                 }
                 current
@@ -662,6 +857,7 @@ impl<'s> Emitter<'s> {
                         )]
                     )
                 ),
+                Reads::join(&[input]),
             ),
             Op::Excluded { name, root } => self.frame(
                 "x",
@@ -671,6 +867,7 @@ impl<'s> Emitter<'s> {
                      WHERE e.root IS NULL",
                     self.cols("f")
                 ),
+                Reads::anti(input, &[&format!("{EACH}x")]),
             ),
             Op::NthCommit { nth, commit } => {
                 let positioned = self.op(nth, input);
@@ -680,6 +877,7 @@ impl<'s> Emitter<'s> {
                         "SELECT {} FROM {input} f WHERE f.k IN (SELECT k FROM {positioned})",
                         self.cols("f")
                     ),
+                    Reads::join(&[input, &positioned]),
                 );
                 let committed = self.op(commit, &passed);
                 let overrides: Vec<(String, String)> = self
@@ -698,6 +896,7 @@ impl<'s> Emitter<'s> {
                         "SELECT {} FROM {passed} f LEFT JOIN {committed} c ON c.k = f.k",
                         self.select("f", &overrides)
                     ),
+                    Reads::join(&[&passed]),
                 )
             }
         }
@@ -717,21 +916,29 @@ impl<'s> Emitter<'s> {
         let demand = demand_table(unit);
         let answer = answer_table(unit);
         let unk = if self.three { ", unk" } else { "" };
-        self.statements.push(format!(
-            "CREATE TEMP TABLE IF NOT EXISTS {demand}(id INTEGER PRIMARY KEY, file, node{columns}, dirty INTEGER DEFAULT 1)"
-        ));
+        self.push(
+            format!(
+                "CREATE TEMP TABLE IF NOT EXISTS {demand}(id INTEGER PRIMARY KEY, file, node{columns}, dirty INTEGER DEFAULT 1)"
+            ),
+            Effect::default(),
+        );
         // The whole key: a reference finds its row by `(file, node)` and every key column, and a
         // node can be demanded under many bindings.
-        self.statements.push(format!(
-            "CREATE INDEX IF NOT EXISTS {demand}_at ON {demand}(file, node{columns})"
-        ));
+        self.push(
+            format!("CREATE INDEX IF NOT EXISTS {demand}_at ON {demand}(file, node{columns})"),
+            Effect::default(),
+        );
         // The dirty keys, which every pass reads and the loop's guard counts before it runs.
-        self.statements.push(format!(
-            "CREATE INDEX IF NOT EXISTS {demand}_dirty ON {demand}(id) WHERE dirty = 1"
-        ));
-        self.statements.push(format!(
-            "CREATE TEMP TABLE IF NOT EXISTS {answer}(id INTEGER PRIMARY KEY{columns}{unk})"
-        ));
+        self.push(
+            format!("CREATE INDEX IF NOT EXISTS {demand}_dirty ON {demand}(id) WHERE dirty = 1"),
+            Effect::default(),
+        );
+        self.push(
+            format!(
+                "CREATE TEMP TABLE IF NOT EXISTS {answer}(id INTEGER PRIMARY KEY{columns}{unk})"
+            ),
+            Effect::default(),
+        );
     }
 
     /// A recursive unit's answers at the keys of `input`'s rows (`site`: the frame's slots for the
@@ -762,10 +969,14 @@ impl<'s> Emitter<'s> {
             .iter()
             .map(|column| format!(", f.{column}"))
             .collect();
-        self.statements.push(format!(
-            "INSERT INTO {demand}(file, node{columns}) SELECT DISTINCT f.file, f.node{values} FROM {input} f \
-             WHERE NOT EXISTS (SELECT 1 FROM {demand} d WHERE d.file = f.file AND d.node = f.node{matched})"
-        ));
+        self.insert(
+            &demand,
+            format!(
+                "INSERT INTO {demand}(file, node{columns}) SELECT DISTINCT f.file, f.node{values} FROM {input} f \
+                 WHERE NOT EXISTS (SELECT 1 FROM {demand} d WHERE d.file = f.file AND d.node = f.node{matched})"
+            ),
+            Reads::join(&[input]),
+        );
         let scc = units[unit].scc;
         if !self.emitting.contains(&scc) {
             self.shared_loop(scc);
@@ -773,10 +984,15 @@ impl<'s> Emitter<'s> {
             && units[from].scc == scc
         {
             // A read inside the component's own loop: recorded for the acyclicity check.
-            self.statements.push(format!(
-                "INSERT INTO {NAMESPACE}e{scc} SELECT DISTINCT {from}, f.s{origin}, {unit}, d.id FROM {input} f \
-                 JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched}"
-            ));
+            let reads = format!("{NAMESPACE}e{scc}");
+            self.insert(
+                &reads,
+                format!(
+                    "INSERT INTO {reads} SELECT DISTINCT {from}, f.s{origin}, {unit}, d.id FROM {input} f \
+                     JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched}"
+                ),
+                Reads::join(&[input, &demand]),
+            );
         }
         let overrides: Vec<(String, String)> = site_columns
             .iter()
@@ -794,6 +1010,7 @@ impl<'s> Emitter<'s> {
                 "SELECT {select} FROM {input} f JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched} \
                  JOIN {answer} r ON r.id = d.id"
             ),
+            Reads::join(&[input, &demand, &answer]),
         )
     }
 
@@ -801,13 +1018,24 @@ impl<'s> Emitter<'s> {
     /// again by name (`RUN`) everywhere after. Its statements do not depend on the site: they read
     /// the units' demand and answer tables and frames of their own, and every unit they reach
     /// lies outside the loops being emitted (one that reached back would share the component).
+    /// Both markers' inputs are the members' demand tables: a run that finds no new demand row in
+    /// them has no dirty key, and is passed over (`skip`).
     fn shared_loop(&mut self, scc: usize) {
+        let units = self.units;
+        let demand: Vec<String> = (0..units.len())
+            .filter(|&unit| units[unit].scc == scc)
+            .map(demand_table)
+            .collect();
+        let marker = Effect {
+            inputs: demand,
+            ..Effect::default()
+        };
         if self.blocks.insert(scc) {
-            self.statements.push(format!("{BLOCK}{scc}"));
+            self.push(format!("{BLOCK}{scc}"), marker);
             self.recursion_loop(scc);
-            self.statements.push(END.to_owned());
+            self.push(END.to_owned(), Effect::default());
         } else {
-            self.statements.push(format!("{RUN}{scc}"));
+            self.push(format!("{RUN}{scc}"), marker);
         }
     }
 
@@ -828,23 +1056,18 @@ impl<'s> Emitter<'s> {
         }
         let reads = format!("{NAMESPACE}e{scc}");
         let changed = format!("{NAMESPACE}c{scc}");
-        self.statements.push(format!(
-            "CREATE TEMP TABLE IF NOT EXISTS {reads}(su, s, du, d)"
-        ));
-        self.statements.push(format!(
-            "CREATE INDEX IF NOT EXISTS {reads}_to ON {reads}(du, d)"
-        ));
-        self.statements.push(format!(
-            "CREATE INDEX IF NOT EXISTS {reads}_from ON {reads}(su, s)"
-        ));
-        self.statements
-            .push(format!("CREATE TEMP TABLE IF NOT EXISTS {changed}(u, id)"));
-        self.statements.push(format!(
-            "CREATE INDEX IF NOT EXISTS {changed}_at ON {changed}(u, id)"
-        ));
+        for sql in [
+            format!("CREATE TEMP TABLE IF NOT EXISTS {reads}(su, s, du, d)"),
+            format!("CREATE INDEX IF NOT EXISTS {reads}_to ON {reads}(du, d)"),
+            format!("CREATE INDEX IF NOT EXISTS {reads}_from ON {reads}(su, s)"),
+            format!("CREATE TEMP TABLE IF NOT EXISTS {changed}(u, id)"),
+            format!("CREATE INDEX IF NOT EXISTS {changed}_at ON {changed}(u, id)"),
+        ] {
+            self.push(sql, Effect::default());
+        }
         self.emitting.push(scc);
         self.looping += 1;
-        self.statements.push(LOOP.to_owned());
+        self.push(LOOP.to_owned(), Effect::default());
         for &unit in &members {
             let key = &units[unit].key;
             let key_columns = self.key_columns(key);
@@ -863,17 +1086,20 @@ impl<'s> Emitter<'s> {
             let keys = self.frame(
                 "u",
                 &format!("SELECT {select} FROM {demand} d WHERE d.dirty = 1"),
+                Reads::join(&[&demand]),
             );
             // One row per demanded key, and one per demand row (its origin).
             let mut sets = vec![key.iter().copied().collect::<BTreeSet<SlotId>>()];
             sets.extend(self.origin.map(|origin| BTreeSet::from([origin])));
             self.keyed_by(&keys, sets);
-            self.statements.push(format!(
-                "UPDATE {demand} SET dirty = 0 WHERE id IN (SELECT k FROM {keys})"
-            ));
-            self.statements.push(format!(
-                "DELETE FROM {reads} WHERE su = {unit} AND s IN (SELECT k FROM {keys})"
-            ));
+            self.push(
+                format!("UPDATE {demand} SET dirty = 0 WHERE id IN (SELECT k FROM {keys})"),
+                Reads::join(&[&keys]).writes(Writes::None),
+            );
+            self.push(
+                format!("DELETE FROM {reads} WHERE su = {unit} AND s IN (SELECT k FROM {keys})"),
+                Reads::join(&[&reads, &keys]).writes(Writes::Delete(reads.clone())),
+            );
             self.evaluating.push(unit);
             let out = self.op(&units[unit].body, &keys);
             self.evaluating.pop();
@@ -890,29 +1116,47 @@ impl<'s> Emitter<'s> {
                 .iter()
                 .map(|column| format!(", o.{column}"))
                 .collect();
-            self.statements.push(format!(
-                "INSERT INTO {fresh} SELECT o.k{values}{verdict} FROM {out} o"
-            ));
+            // `out` is a frame, one row per `k`: `fresh` holds as many.
+            self.insert(
+                &fresh,
+                format!("INSERT INTO {fresh} SELECT o.k{values}{verdict} FROM {out} o"),
+                Reads::copy(&out),
+            );
             // The evaluated keys whose answer changed: added, dropped or rebound.
             let before = format!("SELECT * FROM {answer} WHERE id IN (SELECT k FROM {keys})");
-            self.statements.push(format!(
-                "INSERT INTO {changed} SELECT {unit}, id FROM \
-                 (SELECT * FROM {fresh} EXCEPT {before} UNION SELECT * FROM ({before} EXCEPT SELECT * FROM {fresh}))"
-            ));
-            self.statements.push(format!(
-                "DELETE FROM {answer} WHERE id IN (SELECT k FROM {keys})"
-            ));
-            self.statements
-                .push(format!("INSERT INTO {answer} SELECT * FROM {fresh}"));
+            self.insert(
+                &changed,
+                format!(
+                    "INSERT INTO {changed} SELECT {unit}, id FROM \
+                     (SELECT * FROM {fresh} EXCEPT {before} UNION SELECT * FROM ({before} EXCEPT SELECT * FROM {fresh}))"
+                ),
+                Reads::union(&[&fresh, &answer]),
+            );
+            self.push(
+                format!("DELETE FROM {answer} WHERE id IN (SELECT k FROM {keys})"),
+                Reads::join(&[&answer, &keys]).writes(Writes::Delete(answer.clone())),
+            );
+            // The evaluated keys' answers were just deleted: no `id` of `fresh` is left in it.
+            self.insert(
+                &answer,
+                format!("INSERT INTO {answer} SELECT * FROM {fresh}"),
+                Reads::copy(&fresh),
+            );
         }
         for &unit in &members {
-            self.statements.push(format!(
-                "UPDATE {} SET dirty = 1 WHERE id IN (SELECT e.s FROM {reads} e JOIN {changed} c \
-                 ON c.u = e.du AND c.id = e.d WHERE e.su = {unit})",
-                demand_table(unit)
-            ));
+            let demand = demand_table(unit);
+            self.push(
+                format!(
+                    "UPDATE {demand} SET dirty = 1 WHERE id IN (SELECT e.s FROM {reads} e JOIN {changed} c \
+                     ON c.u = e.du AND c.id = e.d WHERE e.su = {unit})"
+                ),
+                Reads::join(&[&reads, &changed]).writes(Writes::None),
+            );
         }
-        self.statements.push(format!("DELETE FROM {changed}"));
+        self.push(
+            format!("DELETE FROM {changed}"),
+            Reads::join(&[&changed]).writes(Writes::Clear(changed.clone())),
+        );
         let dirty = members
             .iter()
             .map(|&unit| {
@@ -923,9 +1167,11 @@ impl<'s> Emitter<'s> {
             })
             .collect::<Vec<_>>()
             .join(" + ");
-        self.statements.push(format!("{UNTIL}SELECT {dirty}"));
-        self.statements
-            .push(format!("{ACYCLIC}SELECT su, s, du, d FROM {reads}"));
+        self.push(format!("{UNTIL}SELECT {dirty}"), Effect::default());
+        self.push(
+            format!("{ACYCLIC}SELECT su, s, du, d FROM {reads}"),
+            Effect::default(),
+        );
         self.looping -= 1;
         self.emitting.pop();
     }
@@ -960,7 +1206,7 @@ impl<'s> Emitter<'s> {
                 "SELECT {} FROM {input} f JOIN p ON p.file = f.file AND p.node = f.node",
                 self.select("f", &overrides)
             );
-            return self.frame_with("x", &with, &select);
+            return self.frame_with("x", &with, &select, Reads::join(&[input]));
         }
         let mut key = String::from("f.file || ',' || f.node");
         for &slot in reads {
@@ -978,7 +1224,7 @@ impl<'s> Emitter<'s> {
             "SELECT {} FROM {input} f JOIN e ON e.k = f.k JOIN p ON p.ek = e.ek",
             self.select("f", &overrides)
         );
-        self.frame_with("x", &with, &select)
+        self.frame_with("x", &with, &select, Reads::join(&[input]))
     }
 
     /// A relation's candidates from each row of `input`: a frame table with a fresh `k` per
@@ -1097,12 +1343,16 @@ impl<'s> Emitter<'s> {
             self.extra_list()
         );
         self.create(&name, &columns);
-        self.statements.push(format!(
-            "{with}INSERT INTO {name} SELECT NULL, c.file, c.node{}, c.pk, {order}{} \
-             FROM ({source}) c JOIN {input} f ON f.k = c.pk",
-            self.physical_of("f"),
-            self.zeros()
-        ));
+        self.insert(
+            &name,
+            format!(
+                "{with}INSERT INTO {name} SELECT NULL, c.file, c.node{}, c.pk, {order}{} \
+                 FROM ({source}) c JOIN {input} f ON f.k = c.pk",
+                self.physical_of("f"),
+                self.zeros()
+            ),
+            Reads::join(&[input]),
+        );
         // A node has one parent and its field's first child one: from a frame unique on a key,
         // the children (or field children) of its rows are unique on it too.
         if matches!(
@@ -1137,6 +1387,7 @@ impl<'s> Emitter<'s> {
                         self.cols("f"),
                         holds(index, step, offset)
                     ),
+                    Reads::join(&[input]),
                 )
             }
             Some(OfRule::Stage(stage)) => {
@@ -1159,7 +1410,7 @@ impl<'s> Emitter<'s> {
                     self.cols("f"),
                     holds(index, step, offset)
                 );
-                self.frame_with("x", &with, &select)
+                self.frame_with("x", &with, &select, Reads::join(&[input, &table]))
             }
             Some(OfRule::Frame(rule)) => {
                 let siblings = self.name("g");
@@ -1169,13 +1420,17 @@ impl<'s> Emitter<'s> {
                     self.extra_list()
                 );
                 self.create(&siblings, &columns);
-                self.statements.push(format!(
-                    "INSERT INTO {siblings} SELECT NULL, c.file, c.id{}, f.k, c.id{} FROM {input} f \
-                     JOIN node fn ON fn.file = f.file AND fn.id = f.node \
-                     JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
-                    self.physical_of("f"),
-                    self.zeros()
-                ));
+                self.insert(
+                    &siblings,
+                    format!(
+                        "INSERT INTO {siblings} SELECT NULL, c.file, c.id{}, f.k, c.id{} FROM {input} f \
+                         JOIN node fn ON fn.file = f.file AND fn.id = f.node \
+                         JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
+                        self.physical_of("f"),
+                        self.zeros()
+                    ),
+                    Reads::join(&[input]),
+                );
                 let matched = self.op(rule, &siblings);
                 let with = format!(
                     "WITH r AS (SELECT g.pk AS pk, g.node AS node, \
@@ -1189,7 +1444,7 @@ impl<'s> Emitter<'s> {
                     self.select("f", &self.all_from("r")),
                     holds(index, step, offset)
                 );
-                self.frame_with("x", &with, &select)
+                self.frame_with("x", &with, &select, Reads::join(&[input, &matched]))
             }
         }
     }
@@ -1226,9 +1481,11 @@ impl<'s> Emitter<'s> {
                 }
             }
         }
+        // The input's rows, each under its own `k`, the parameters bound.
         let framed = self.frame(
             "i",
             &format!("SELECT {} FROM {input} f", self.select("f", &overrides)),
+            Reads::copy(input),
         );
         let bound = self.op(body, &framed);
         if returns.is_empty() {
@@ -1420,6 +1677,7 @@ impl<'s> Emitter<'s> {
         self.frame(
             "x",
             &format!("SELECT {select} FROM {bound} b{joins} WHERE NOT {returned} OR {ok}"),
+            Reads::join(&[&bound]),
         )
     }
 }

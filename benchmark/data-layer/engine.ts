@@ -265,6 +265,11 @@ export const engineReportSchema = z.union([
       selectMilliseconds: z.number().optional(),
       inputMilliseconds: z.number().optional(),
       factsMilliseconds: z.number().optional(),
+      /** Statements the SQL engine's emptiness rules passed over (`sql/skip.rs`); `count` is what ran. */
+      skipped: z.number().optional(),
+      skippedRuns: z.number().optional(),
+      skippedBlocks: z.number().optional(),
+      skippedClears: z.number().optional(),
       profile: statementProfileSchema.optional(),
     }).passthrough(),
     profile: sqlProfileSchema.optional(),

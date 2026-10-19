@@ -2,7 +2,7 @@
 //! frames that carry `unk` and the withheld-capture mask, and the input-set terminals' verdicts
 //! (`Op::Fact`), which two-valued clauses read too.
 
-use super::{Emitter, holds, stage_table};
+use super::{Emitter, Reads, holds, stage_table};
 use crate::code_rule_dsl::sql::nearest;
 use crate::code_rule_dsl::sql::plan::{AllTerm, OfRule, Op, Stop, Walk};
 use std::collections::BTreeSet;
@@ -32,6 +32,7 @@ impl Emitter<'_> {
                         "SELECT {} FROM {input} f LEFT JOIN {out} o ON o.k = f.k WHERE o.k IS NULL OR o.unk = 1",
                         self.verdict("f", &[], "COALESCE(o.unk, 0)")
                     ),
+                    Reads::anti(input, &[&out]),
                 )
             }
             Op::Search {
@@ -92,6 +93,7 @@ impl Emitter<'_> {
                         "SELECT {} FROM {current} p WHERE NOT ({held})",
                         self.cols("p")
                     ),
+                    Reads::join(&[&current]),
                 ),
                 None => current.clone(),
             };
@@ -144,7 +146,13 @@ impl Emitter<'_> {
                 write!(select, " FROM {current} p WHERE {held}").expect("write to a string");
             }
             // `v`, not `a`: `a{unit}` is a recursive unit's answer table (`emit::answer_table`).
-            let next = self.frame("v", &select);
+            // The term's rows, and with `held` the current rows it withholds from.
+            let reads = if held.is_some() {
+                Reads::join(&[&current])
+            } else {
+                Reads::join(&[&out])
+            };
+            let next = self.frame("v", &select, reads);
             let changed = self.touched(&term.op);
             self.inherit(&current, &next, &changed);
             current = next;
@@ -169,6 +177,7 @@ impl Emitter<'_> {
                 "SELECT {} FROM {current} c JOIN {input} f ON f.k = c.k",
                 self.verdict("c", &overrides, "c.unk")
             ),
+            Reads::join(&[&current, input]),
         )
     }
 
@@ -179,6 +188,8 @@ impl Emitter<'_> {
     fn any_open(&mut self, branches: &[(Op, bool)], input: &str) -> String {
         let mut rest = input.to_owned();
         let mut parts = Vec::new();
+        // The frames the parts read: each branch's output, and the last remainder.
+        let mut frames = Vec::new();
         for (index, (branch, may_bind)) in branches.iter().enumerate() {
             let before = if index == 0 { "0" } else { "r.unk" };
             let out = self.op(branch, &rest);
@@ -206,12 +217,17 @@ impl Emitter<'_> {
                         "SELECT {} FROM {rest} r LEFT JOIN {out} o ON o.k = r.k WHERE o.k IS NULL OR ({open})",
                         self.verdict("r", &[], &format!("({before} | (o.k IS NOT NULL))"))
                     ),
+                    Reads::anti(&rest, &[&out]),
                 );
                 self.inherit(&rest, &next, &BTreeSet::new());
                 rest = next;
             }
+            frames.push(out);
         }
-        self.frame("x", &parts.join(" UNION ALL "))
+        frames.push(rest);
+        let reads: Vec<&str> = frames.iter().map(String::as_str).collect();
+        let reads = Reads::union(&reads);
+        self.frame("x", &parts.join(" UNION ALL "), reads)
     }
 
     /// `relation::Search` over a walk: a strict search ends at its first candidate that is true
@@ -221,6 +237,11 @@ impl Emitter<'_> {
         let candidates = self.candidates(walk, input);
         let matched = self.op(sub, &candidates);
         let opened = self.opened(walk, input, &candidates);
+        // Every event is a matched candidate's or an unknown stop's.
+        let reads = match &opened {
+            Some(opened) => Reads::union(&[&matched, opened]),
+            None => Reads::join(&[input, &matched]),
+        };
         let physical = self.physical.clone();
         let from = |alias: &str, test: &str| -> Vec<(String, String)> {
             if !binds {
@@ -252,7 +273,7 @@ impl Emitter<'_> {
                 "SELECT {} FROM {input} f JOIN w ON w.pk = f.k",
                 self.verdict("f", &from("w", "w.uk = 0"), "w.uk")
             );
-            return self.frame_with("x", &with, &select);
+            return self.frame_with("x", &with, &select, reads);
         }
         let stops = opened.map_or(String::new(), |opened| {
             format!(" UNION SELECT pk FROM {opened}")
@@ -263,6 +284,7 @@ impl Emitter<'_> {
                 "SELECT g.pk, MIN(g.ord){} FROM {matched} s JOIN {candidates} g ON g.k = s.k WHERE s.unk = 0 GROUP BY g.pk",
                 self.physical_of("s")
             ),
+            Reads::join(&[&matched, &candidates]),
         );
         let with = format!(
             "WITH u AS (SELECT g.pk AS pk FROM {matched} s JOIN {candidates} g ON g.k = s.k WHERE s.unk = 1{stops}) "
@@ -271,7 +293,7 @@ impl Emitter<'_> {
             "SELECT {} FROM {input} f LEFT JOIN {first} t ON t.pk = f.k WHERE t.pk IS NOT NULL OR f.k IN (SELECT pk FROM u)",
             self.verdict("f", &from("t", "t.pk IS NOT NULL"), "(t.pk IS NULL)")
         );
-        self.frame_with("x", &with, &select)
+        self.frame_with("x", &with, &select, reads)
     }
 
     /// The unknown stops of a walk whose stop rule may be unknown: `(pk, e)`, `e` the order key
@@ -332,10 +354,14 @@ impl Emitter<'_> {
             ),
             Walk::Slot(_) | Walk::Related(_) => return None,
         };
+        // The stops are candidates' (or, `inside` with a field, the walk's from the input).
+        let reads = match walk {
+            Walk::FieldInside(..) => Reads::join(&[input, &table]),
+            _ => Reads::join(&[candidates, &table]),
+        };
         let name = self.name("o");
         self.create(&name, "pk, e");
-        self.statements
-            .push(format!("{with}INSERT INTO {name} {select}"));
+        self.insert(&name, format!("{with}INSERT INTO {name} {select}"), reads);
         Some(name)
     }
 
@@ -362,6 +388,7 @@ impl Emitter<'_> {
             &format!(
                 "SELECT g.pk, SUM(s.unk = 0), SUM(s.unk = 1) FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk"
             ),
+            Reads::join(&[&matched, &candidates]),
         );
         let (t, u) = ("COALESCE(c.t, 0)", "COALESCE(c.u, 0)");
         let exact = if bind.is_some() {
@@ -388,7 +415,8 @@ impl Emitter<'_> {
             "SELECT {} FROM {input} f LEFT JOIN {counts} c ON c.pk = f.k WHERE {holds} OR NOT {fails}",
             self.verdict("f", &overrides, &format!("(NOT {holds})"))
         );
-        self.frame("x", &select)
+        // A row with no candidate counts `t = u = 0`, which may hold.
+        self.frame("x", &select, Reads::join(&[input]))
     }
 
     /// `NthChild::index` with `ofRule`: unknown where a named sibling's probe is (before the
@@ -433,7 +461,7 @@ impl Emitter<'_> {
                     self.verdict("f", &[], "0"),
                     self.verdict("f", &[], "1")
                 );
-                self.frame_with("x", &with, &select)
+                self.frame_with("x", &with, &select, Reads::join(&[input, &table]))
             }
             OfRule::Frame(rule) => {
                 let siblings = self.name("g");
@@ -443,13 +471,17 @@ impl Emitter<'_> {
                     self.extra_list()
                 );
                 self.create(&siblings, &columns);
-                self.statements.push(format!(
-                    "INSERT INTO {siblings} SELECT NULL, c.file, c.id{}, f.k, c.id{} FROM {input} f \
-                     JOIN node fn ON fn.file = f.file AND fn.id = f.node \
-                     JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
-                    self.physical_of("f"),
-                    self.zeros()
-                ));
+                self.insert(
+                    &siblings,
+                    format!(
+                        "INSERT INTO {siblings} SELECT NULL, c.file, c.id{}, f.k, c.id{} FROM {input} f \
+                         JOIN node fn ON fn.file = f.file AND fn.id = f.node \
+                         JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
+                        self.physical_of("f"),
+                        self.zeros()
+                    ),
+                    Reads::join(&[input]),
+                );
                 let matched = self.op(rule, &siblings);
                 let with = format!(
                     "WITH r AS (SELECT g.pk AS pk, g.node AS node, \
@@ -466,7 +498,8 @@ impl Emitter<'_> {
                     self.verdict("f", &self.all_from("r"), "0"),
                     self.verdict("f", &[], "1")
                 );
-                self.frame_with("x", &with, &select)
+                // Both parts read the siblings `ofRule` matched (`r`, `u`).
+                self.frame_with("x", &with, &select, Reads::join(&[input, &matched]))
             }
         }
     }
@@ -483,6 +516,7 @@ impl Emitter<'_> {
                     "SELECT {} FROM {current} f WHERE f.unk = 1 OR f.{column} IS NULL",
                     self.verdict("f", &[], "f.unk")
                 ),
+                Reads::join(&[&current]),
             );
             let captured = self.frame(
                 "g",
@@ -491,6 +525,7 @@ impl Emitter<'_> {
                     self.physical_of("f"),
                     self.zeros()
                 ),
+                Reads::join(&[&current]),
             );
             let checked = self.op(constraint, &captured);
             current = self.frame(
@@ -500,6 +535,7 @@ impl Emitter<'_> {
                     self.verdict("f", &self.all_from("c"), "c.unk"),
                     self.verdict("p", &[], "p.unk")
                 ),
+                Reads::union(&[&checked, &passed]),
             );
         }
         current
@@ -545,6 +581,7 @@ impl Emitter<'_> {
             &format!(
                 "SELECT {select} FROM {input} f JOIN e ON e.k = f.k JOIN t ON t.ek = e.ek{known}"
             ),
+            Reads::join(&[input]),
         )
     }
 }
