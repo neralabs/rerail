@@ -4,6 +4,8 @@ import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parse as parseToml } from "smol-toml";
+
 import { runChecked, type CommandRunner } from "../../port-readiness/process.js";
 import type { Check } from "../../port-readiness/types.js";
 
@@ -142,10 +144,51 @@ export function unpinnedNpmDependencies(manifest: { dependencies?: Record<string
     .map(([name, version]) => `${name}@${version}`);
 }
 
-/** The dependencies of a runtime's pyproject.toml that are not pinned with `==` at an exact version. */
+/** A requirement pinned with `==` at an exact version, extras allowed (`bandit[toml]==1.9.4`). */
+const EXACT_PYTHON = /^[A-Za-z0-9._-]+(?:\[[A-Za-z0-9._-]+(?:,[A-Za-z0-9._-]+)*\])?==\d+(?:\.\d+)*$/u;
+
+/** The `tool.uv` settings the pin check reads; any other (`sources`, `index`) can change what is installed. */
+const UV_SETTINGS = new Set(["package", "dev-dependencies", "override-dependencies"]);
+
+/**
+ * The requirements of a runtime's pyproject.toml that are not pinned with `==` at an exact version, each after the list
+ * it is in (none for `project.dependencies`). Every list `uv sync` can install from is read: the project's dependencies
+ * and extras, the dependency groups (it installs `dev` by default), and uv's dev dependencies and overrides. A
+ * pyproject.toml that is not TOML, a list that is not one, and a `tool.uv` setting the check does not read are reported
+ * too, so nothing it cannot judge passes.
+ */
 export function unpinnedPythonDependencies(pyproject: string): string[] {
-  const list = /^dependencies\s*=\s*\[([^\]]*)\]/mu.exec(pyproject)?.[1] ?? "";
-  return [...list.matchAll(/"([^"]+)"/gu)].map((match) => match[1]!).filter((requirement) => !/^[A-Za-z0-9._-]+==\d+(?:\.\d+)*$/u.test(requirement));
+  let manifest: Record<string, unknown>;
+  try {
+    manifest = parseToml(pyproject);
+  } catch (error) {
+    return [`(not TOML: ${(error instanceof Error ? error.message : String(error)).split("\n")[0]})`];
+  }
+  const table = (value: unknown): Record<string, unknown> => (value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {});
+  const project = table(manifest.project);
+  const uv = table(table(manifest.tool).uv);
+  const lists: [string, unknown][] = [
+    ["", project.dependencies],
+    ...Object.entries(table(project["optional-dependencies"])).map(([extra, list]): [string, unknown] => [`project.optional-dependencies.${extra}: `, list]),
+    ...Object.entries(table(manifest["dependency-groups"])).map(([group, list]): [string, unknown] => [`dependency-groups.${group}: `, list]),
+    ["tool.uv.dev-dependencies: ", uv["dev-dependencies"]],
+    ["tool.uv.override-dependencies: ", uv["override-dependencies"]],
+  ];
+  const unpinned: string[] = [];
+  for (const [label, list] of lists) {
+    if (list === undefined) continue;
+    if (!Array.isArray(list)) {
+      unpinned.push(`${label}(not a list)`);
+      continue;
+    }
+    for (const requirement of list) {
+      // A dependency group may include another group, whose own requirements are read as a list of their own.
+      const includesGroup = requirement !== null && typeof requirement === "object" && Object.keys(requirement).length === 1 && typeof (requirement as Record<string, unknown>)["include-group"] === "string";
+      if (typeof requirement === "string" ? !EXACT_PYTHON.test(requirement) : !includesGroup) unpinned.push(`${label}${typeof requirement === "string" ? requirement : JSON.stringify(requirement)}`);
+    }
+  }
+  for (const setting of Object.keys(uv).filter((key) => !UV_SETTINGS.has(key)).sort()) unpinned.push(`tool.uv.${setting} (not read by the pin check)`);
+  return unpinned;
 }
 
 /** The pin files of `runtimes/<runtime>/`, and a cache directory keyed by their digest. */

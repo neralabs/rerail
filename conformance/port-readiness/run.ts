@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node
 import { mkdir } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
-import { dependencyDigest, ruleKey, readCached, trackedDigest, writeCached, GATE_CODE, type SharedKeyInputs } from "./cache.js";
+import { dependencyDigest, ruleKey, readCached, toolPackKey, trackedDigest, writeCached, GATE_CODE, type SharedKeyInputs } from "./cache.js";
 import { upstreamStatusChecks, defaultOn } from "./checks/upstream-status.js";
 import { loadAsBundled, loadsGate } from "./checks/loads.js";
 import { packConformance, passesConformanceChecks } from "./checks/passes-conformance.js";
@@ -508,21 +508,29 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
   const keyed = rules.map((entry) => {
     const id = entry.rule.id ?? entry.rule.file;
     const caseFiles = [...new Set((inputs.recording.rules[entry.rule.rule]?.cases ?? []).map((testCase) => testCase.file).filter((file): file is string => file !== null))].sort(byText);
+    const families = policyFamilies(entry.rule.text);
+    const caseSources = caseFiles.map((file) => `${file}\0${existsSync(join(directory, file)) ? sha256(readFileSync(join(directory, file))) : "missing"}`);
     const key = ruleKey(shared, {
       // The shared engine and the families this rule's document names; the whole engine when it names none the
       // language registry knows, so a rule the gates cannot place is judged again on any engine change.
-      engine: engineKey(engine.identity, policyFamilies(entry.rule.text)),
+      engine: engineKey(engine.identity, families),
       document: entry.rule.text,
       conformanceEntry: JSON.stringify({ entry: entry.entry, on: entry.location === "shipped" ? (on.get(entry.path) ?? true) : null }),
       goldens: JSON.stringify(goldens.get(id) ?? []),
-      caseSources: caseFiles.map((file) => `${file}\0${existsSync(join(directory, file)) ? sha256(readFileSync(join(directory, file))) : "missing"}`),
+      caseSources,
     });
-    return { ...entry, id, key };
+    return { ...entry, id, key, families, caseSources };
   });
-  // A shard judges only its own rules; the tool-pack checks and the bundled-rule load above still read every rule.
+  // A shard judges only its own rules; the tool-pack checks and the bundled-rule load above still read every rule, so
+  // their key covers what they read of every rule, whichever shard it is in.
   const shard = options.shard;
   const judged = shard === undefined ? keyed : keyed.filter((entry) => shardOf(entry.id, shard.count) === shard.index);
-  const packKey = sha256(judged.map((entry) => entry.key).sort(byText).join("\n"));
+  const packKey = toolPackKey(shared, {
+    engine: engineKey(engine.identity, keyed.some((entry) => entry.families.length === 0) ? [] : keyed.flatMap((entry) => entry.families)),
+    names,
+    goldens: [...goldens].map(([id, list]) => `${id}\0${JSON.stringify(list)}`),
+    caseSources: [...new Set(keyed.flatMap((entry) => entry.caseSources))],
+  }, judged.map((entry) => entry.key));
 
   // Plan: every key first; when all hit, nothing is fetched or evaluated.
   const cached = new Map<string, CachedRule>();

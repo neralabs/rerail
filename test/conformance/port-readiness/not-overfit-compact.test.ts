@@ -205,6 +205,14 @@ test("not-overfit judges every regex over upstream's test text, whatever words i
   assert.deepEqual(flagged(rule({ kind: "comment", regex: "^///\\s*<reference\\s+path=.*$" })), []);
 });
 
+test("not-overfit judges a word in each text it occurs in, whatever order the texts come in", () => {
+  // In the first text `ab \w+` matches whatever `foo` is spelled; in the second only `[f]oo` matches, at the same offset.
+  const texts = ["ab foo\n", "cd foo\n"];
+  const document = rule({ kind: "identifier", regex: "ab \\w+|[f]oo" });
+  assert.deepEqual(flagged(document, { fixtureTexts: texts }), ["foo"]);
+  assert.deepEqual(flagged(document, { fixtureTexts: [...texts].reverse() }), ["foo"]);
+});
+
 test("not-overfit accepts names that upstream's own selective regexes check", () => {
   const regexOnly = rule({ kind: "identifier", regex: "^[f]oo$" });
   assert.deepEqual(flagged(regexOnly, { implementationRegexes: [/^foo$/u] }), []);

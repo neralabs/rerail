@@ -6,11 +6,13 @@ import { join } from "node:path";
 import { test } from "vitest";
 
 import type { CorpusFile } from "../../../conformance/port-readiness/corpus.js";
+import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
 import { gatesCorpusSchema, gatesRecordingSchema, recordingText, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
 import { readCachedRecording, recordingLockSchema, recordingLockText, writeCachedRecording } from "../../../conformance/port-readiness/recording/store.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
-import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
+import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, notCopiedPrefixes, recordedRuntimes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
 import { RUNTIMES_DIRECTORY, unpinnedNpmDependencies, unpinnedPythonDependencies } from "../../../conformance/recorders/port-readiness/runtimes.js";
+import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 
 const MANIFEST = `adapter: bandit
 rerail:
@@ -231,12 +233,26 @@ test("an ESLint case reuses a committed source with its bytes, its own directory
   }
 });
 
+test("a lock pins every runtime the adapter installs, the environment the pack is linted in among them", () => {
+  assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "next", "eslint-plugin-next")), ["eslint-config-next-16.3.8", "eslint-plugin-next-16.3.8", "parsers"]);
+  assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "python", "ruff")), ["python", "ruff-0.16.9"]);
+});
+
 test("a runtime's manifest pins every direct dependency at an exact version", () => {
   assert.deepEqual(unpinnedNpmDependencies({ dependencies: { eslint: "10.11.0", "eslint-v9": "npm:eslint@9.39.5", "@scope/parser-v2": "npm:@typescript-eslint/parser@2.34.0", beta: "1.0.0-rc.1" } }), []);
   assert.deepEqual(unpinnedNpmDependencies({ dependencies: { a: "^1.2.3", b: "~1.2.3", c: "1.x", d: "latest", e: "npm:x@^1.0.0" } }), ["a@^1.2.3", "b@~1.2.3", "c@1.x", "d@latest", "e@npm:x@^1.0.0"]);
   assert.deepEqual(unpinnedNpmDependencies({ overrides: { acorn: "8.18.0", "@typescript-eslint/parser-v2": { eslint: "$eslint" }, "@typescript-eslint/typescript-estree": { minimatch: { ".": "10.2.5", "brace-expansion": "^5.0.5" } } } }), ["@typescript-eslint/typescript-estree > minimatch > brace-expansion@^5.0.5"]);
   assert.deepEqual(unpinnedPythonDependencies('[project]\ndependencies = ["bandit==1.9.4", "libcst==1.9.0"]\n'), []);
   assert.deepEqual(unpinnedPythonDependencies('[project]\ndependencies = ["ruff>=0.16", "libcst~=1.9", "x"]\n'), ["ruff>=0.16", "libcst~=1.9", "x"]);
+  // Single quotes, and requirements after an extras entry's `]`, are read: the list is parsed as TOML.
+  assert.deepEqual(unpinnedPythonDependencies("[project]\ndependencies = ['ruff>=0.16']\n"), ["ruff>=0.16"]);
+  assert.deepEqual(unpinnedPythonDependencies('[project]\ndependencies = [\n  "bandit[toml]==1.9.4",\n  "ruff>=0.16",  # a comment ]\n]\n'), ["ruff>=0.16"]);
+  assert.deepEqual(unpinnedPythonDependencies('[project]\ndependencies = ["bandit[toml,sarif]>=1.9"]\n'), ["bandit[toml,sarif]>=1.9"]);
+  // uv sync installs the dev group by default, and tool.uv can add requirements or change where packages come from.
+  assert.deepEqual(unpinnedPythonDependencies('[project]\ndependencies = ["ruff==0.16.9"]\n[dependency-groups]\ndev = ["pytest>=8", { include-group = "lint" }]\nlint = ["ruff==0.16.9"]\n'), ["dependency-groups.dev: pytest>=8"]);
+  assert.deepEqual(unpinnedPythonDependencies('[project]\ndependencies = ["ruff==0.16.9"]\n[tool.uv]\npackage = false\noverride-dependencies = ["libcst>=1"]\nsources = { ruff = { git = "https://example.com/ruff" } }\n'), ["tool.uv.override-dependencies: libcst>=1", "tool.uv.sources (not read by the pin check)"]);
+  assert.deepEqual(unpinnedPythonDependencies('[project]\ndependencies = "ruff==0.16.9"\n'), ["(not a list)"]);
+  assert.match(unpinnedPythonDependencies('[project]\ndependencies = ["ruff==0.16.9"\n')[0]!, /^\(not TOML: /u);
 });
 
 test("every committed runtime pins its direct dependencies exactly, and has no lockfile", () => {

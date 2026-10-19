@@ -130,6 +130,13 @@ packages the gate process loads, the tool-pack's manifest, recordings and corpus
 conformance entry, goldens and upstream case sources, and the engine, though only the part of the engine the rule can be
 judged by.
 
+The tool-pack checks (the corpus, `corpus-complete` and the known gaps) are cached under a key of their own
+(`toolPackKey`). They read every rule of the tool-pack, whichever shard runs them, so the key covers what they read of
+every rule: each rule's upstream name, goldens and case sources, and the engine over all the rules' families. It also
+covers the shared inputs, and the judged rules' keys, whose results the gap counts come from. An edit to one rule's
+golden or case source therefore moves every shard's key. Otherwise one shard would replay the old checks, another
+would compute new ones, and the merge would refuse them.
+
 The gate code is `conformance/port-readiness/` without what no cached verdict depends on: what only the report job or
 the recorder runs (the summary, the pull request comment, the shard merge, the not-gated and pending lists, the
 recording diff), report rendering (a leg renders `report.md` from a finished report), the leg plan and the README:

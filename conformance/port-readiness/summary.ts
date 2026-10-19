@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { notJudgedNote, renderComment } from "./comment.js";
+import { notJudgedNote, renderComment, unmappedCandidatesLine } from "./comment.js";
 import type { CommandRunner } from "./process.js";
 import { cell, firstFailure, gateTitle } from "./report.js";
 import { blockingFailures, gatedToolPacks, REPORT_FORMAT, unusedGapLine, type GatesReport } from "./run.js";
@@ -37,6 +37,8 @@ export interface Summary {
   notJudged: string[];
   candidateFunnel: Record<string, Record<string, number>>;
   candidateRows: (BlockingRow & { toolPack: string })[];
+  /** Candidates with no conformance.json entry: no gate judged them, so they are neither ready nor stopped at a gate. */
+  unmappedCandidates: { pack: string; file: string }[];
   /** Candidates that pass every gate: the signal to promote them into rules/ (a reviewer still decides). */
   promotable: { toolPack: string; rule: string; upstreamRule: string; startsOn: boolean; startReason: string }[];
   onOff: { pack: string; rule: string; packJson: boolean; upstreamStatus: boolean; reason: string }[];
@@ -85,12 +87,15 @@ export function summarize(reports: GatesReport[], ungated: UngatedResult, gated:
   const missingReports = gatedNames.filter((toolPack) => plannedNames.has(toolPack) && !have.has(toolPack));
   const notJudged = gatedNames.filter((toolPack) => !plannedNames.has(toolPack));
   const blocking: BlockingRow[] = [];
+  const unmappedCandidates: Summary["unmappedCandidates"] = [];
+  // Every tool-pack report of a pack lists the pack's unmapped documents, so each is taken once.
   const seenUnmapped = new Set<string>();
   for (const report of reports) {
-    for (const entry of report.unmapped.filter((item) => item.location === "shipped")) {
+    for (const entry of report.unmapped) {
       if (seenUnmapped.has(entry.file)) continue;
       seenUnmapped.add(entry.file);
-      blocking.push({ pack: report.pack, rule: entry.file, stoppedAt: "Mapping", check: "conformance-entry", why: "not mapped to an upstream rule: add its conformance.json entry" });
+      if (entry.location === "candidate") unmappedCandidates.push({ pack: report.pack, file: entry.file });
+      else blocking.push({ pack: report.pack, rule: entry.file, stoppedAt: "Mapping", check: "conformance-entry", why: "not mapped to an upstream rule: add its conformance.json entry" });
     }
     for (const rule of report.rules.filter((item) => item.location === "shipped" && !item.pass)) {
       const failure = firstFailure(rule)!;
@@ -140,6 +145,7 @@ export function summarize(reports: GatesReport[], ungated: UngatedResult, gated:
     notJudged,
     candidateFunnel,
     candidateRows,
+    unmappedCandidates: unmappedCandidates.sort((a, b) => byText(a.file, b.file)),
     promotable,
     onOff,
     toolPacks: reports.map((report) => ({
@@ -210,6 +216,7 @@ export function renderSummary(summary: Summary): string {
     "",
     "</details>",
     "",
+    ...(summary.unmappedCandidates.length === 0 ? [] : [unmappedCandidatesLine(summary), "", ...summary.unmappedCandidates.map((entry) => `- ${entry.pack}: \`${entry.file}\``), ""]),
     "## On or off",
     "",
     ...(summary.onOff.length === 0 ? ["Every shipped rule's pack.json on agrees with upstream-status."] : table(["Pack", "Rule", "pack.json", "upstream-status", "Reason"], summary.onOff.map((row) => [row.pack, row.rule, row.packJson ? "on" : "off", row.upstreamStatus ? "on" : "off", row.reason]))),

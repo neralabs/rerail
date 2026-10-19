@@ -255,10 +255,12 @@ function regexNames(regex: PolicyRegex, texts: string[], unexplained: (word: str
   };
   const selected = new Set<string>();
   const named = new Set<string>();
-  const tested = new Set<string>();
   // On a string node, letters at the node's start that run into a quote are its prefix (Python's `rb"`), not a name.
   const readsPrefix = !regex.wholeText && anchoredAtStart(regex.text);
   for (const text of texts) {
+    // An occurrence is tested once per text: the same word at the same offset of another text has other surroundings,
+    // so whether the regex depends on it there is a separate question.
+    const tested = new Set<number>();
     const identifiers = [...text.matchAll(IDENTIFIER)].map((match) => ({ start: match.index, end: match.index + match[0].length, word: match[0] }));
     compiled.lastIndex = 0;
     const matches: { start: number; end: number }[] = [];
@@ -270,9 +272,8 @@ function regexNames(regex: PolicyRegex, texts: string[], unexplained: (word: str
       for (const identifier of identifiers) {
         if (identifier.start >= end || identifier.end <= start || selected.has(identifier.word) || !unexplained(identifier.word)) continue;
         if (readsPrefix && identifier.start === start && identifier.end < end && (text[identifier.end] === "'" || text[identifier.end] === '"')) continue;
-        const occurrence = `${identifier.word}\0${identifier.start}`;
-        if (tested.has(occurrence)) continue;
-        tested.add(occurrence);
+        if (tested.has(identifier.start)) continue;
+        tested.add(identifier.start);
         // Whole-text regexes may anchor at the start of the text; node regexes only need the surroundings, and always the
         // whole identifier (ESLint's tests hold 100,000-letter ones, which a fixed margin would cut).
         const from = regex.wholeText ? 0 : Math.max(0, Math.min(start - 512, identifier.start));

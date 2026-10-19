@@ -175,6 +175,16 @@ export function committedSources(directory: string): CommittedSources {
 /** The runtimes each adapter runs besides upstream's own (gates.yaml `upstream.runtime`). */
 const EXTRA_RUNTIMES: Record<GatesManifest["adapter"], string[]> = { bandit: ["python"], ruff: ["python"], eslint: ["parsers"] };
 
+/**
+ * Every runtime the adapter installs to record a tool-pack, which the lock pins: upstream's own, the adapter's, and the
+ * environment the pack is linted in when gates.yaml names one (eslint-config-next's parsers and globals shape upstream's
+ * answers as much as the plugin does).
+ */
+export function recordedRuntimes(manifest: GatesManifest): string[] {
+  const environment = manifest.eslint?.environment?.runtime;
+  return sortedUnique([manifest.upstream.runtime, ...EXTRA_RUNTIMES[manifest.adapter], ...(environment === undefined ? [] : [environment])]);
+}
+
 /** A path's directories, innermost first: `a/b/c.py` gives `a/b` and `a`. */
 function directoriesOf(path: string): string[] {
   const parts = path.split("/").slice(0, -1);
@@ -397,7 +407,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     tool,
     adapter: manifest.adapter,
     pins: { repository: manifest.upstream.repository, commit: manifest.upstream.commit, version: manifest.upstream.version, runtime: manifest.upstream.runtime },
-    runtimes: Object.fromEntries([manifest.upstream.runtime, ...EXTRA_RUNTIMES[manifest.adapter]].sort(byText).map((runtime) => [runtime, runtimeDigests(runtime)])),
+    runtimes: Object.fromEntries(recordedRuntimes(manifest).map((runtime) => [runtime, runtimeDigests(runtime)])),
     identity: adapter.identity,
     packChecks: adapter.packChecks,
     licenseSha256: sha256(adapter.licenseText),

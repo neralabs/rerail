@@ -24,6 +24,7 @@ function summary(candidates: number, blocking: number): Summary {
       check: "identical-results",
       why: "x".repeat(400),
     })),
+    unmappedCandidates: [],
     promotable: [{ toolPack: "python/ruff", rule: "ruff-candidate-0-with-a-long-descriptive-name", upstreamRule: "X100", startsOn: true, startReason: "on in default" }],
     onOff: [],
     toolPacks: [{ toolPack: "python/ruff", shipped: `${100 - blocking}/100`, candidates: `1/${candidates}`, failedGate: {}, integrity: [], gapCandidates: 0, toolPackChecks: true }],
@@ -61,4 +62,11 @@ test("a pull request that judged only some tool-packs says which it left out, an
   assert.match(text, /^## Port readiness: ✅ every shipped rule passes · 🟢 1 candidate ready to promote · in the 1 of 3 tool-packs judged$/mu);
   assert.match(text, /^Not judged on this change: python\/bandit, javascript\/eslint \(nothing they read changed against the base, so main's verdict stands\)\.$/mu);
   assert.doesNotMatch(renderComment(summary(10, 0)), /judged/u);
+});
+
+test("candidates with no conformance entry are listed as not judged, apart from the gate funnel", () => {
+  const text = renderComment({ ...summary(10, 0), unmappedCandidates: [{ pack: "python", file: "packs/python/candidates/rules/ruff-a005-stdlib-module-shadowing.json" }] });
+  const section = text.slice(text.indexOf("### Candidates"));
+  assert.match(section, /<summary>1 candidate is not judged: no conformance\.json entry maps it to an upstream rule, so no gate ran<\/summary>/u);
+  assert.match(section, /^- python: `packs\/python\/candidates\/rules\/ruff-a005-stdlib-module-shadowing\.json`$/mu);
 });

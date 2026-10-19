@@ -176,6 +176,33 @@ export function ruleKey(shared: SharedKeyInputs, rule: RuleKeyInputs): string {
   return sha256(parts.map((part) => sha256(part)).join("\n"));
 }
 
+/** What a tool-pack's own checks read of every rule of it, whichever shard runs them. */
+export interface ToolPackKeyInputs {
+  /** The engine every rule can be judged by: engine.ts's `engineKey` over all their families. */
+  engine: string;
+  /** Every rule's upstream name: the known gaps are proven on their cases. */
+  names: string[];
+  /** Every rule's goldens, as `<id>\0<goldens>`: the corpus and corpus-complete cover them all. */
+  goldens: string[];
+  /** Every committed case source, as `<file>\0<sha256>`: the gap proofs read them. */
+  caseSources: string[];
+}
+
+/**
+ * The key of a run's tool-pack checks (the corpus, corpus-complete and the known gaps): the shared inputs, what the
+ * checks read of every rule, and the judged rules' keys, whose results the gap counts come from. A shard judges only
+ * its own rules, but these checks read all of them, so a shard's cached checks miss when another shard's rule changes
+ * what they read; otherwise one shard replays the old checks, another computes new ones, and the merge refuses them.
+ */
+export function toolPackKey(shared: SharedKeyInputs, pack: ToolPackKeyInputs, judgedKeys: readonly string[]): string {
+  const sorted = (values: readonly string[]) => [...values].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join("\n");
+  const parts = [
+    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.recordingJson, shared.corpusJson, shared.corpusTasks, shared.corpora,
+    pack.engine, sorted(pack.names), sorted(pack.goldens), sorted(pack.caseSources), sorted(judgedKeys),
+  ];
+  return sha256(parts.map((part) => sha256(part)).join("\n"));
+}
+
 /**
  * Where one rule's cached result lives: `<cache>/results/<pack>/<tool>/<key>.json`, or under the shard's directory
  * (`<tool>/shard-<index>of<count>/`) when the tool-pack is sharded, so each CI leg caches its own shard.

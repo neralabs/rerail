@@ -36,6 +36,12 @@ export interface CommentContext {
   runUrl?: string;
 }
 
+/** The line over the candidates no gate judged because conformance.json has no entry for them. */
+export function unmappedCandidatesLine(summary: Summary): string {
+  const count = summary.unmappedCandidates.length;
+  return `${count} candidate${count === 1 ? " is" : "s are"} not judged: no conformance.json entry maps ${count === 1 ? "it" : "them"} to an upstream rule, so no gate ran`;
+}
+
 /**
  * When the plan left tool-packs out, what the counts cover (`the 2 of 9 tool-packs judged`: the planned ones, with a
  * report or missing one) and the line naming the rest; undefined when every gated tool-pack was judged.
@@ -131,6 +137,10 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
     "",
     "Each gate column counts the candidates that stop there first.",
     "",
+    ...(summary.unmappedCandidates.length === 0
+      ? []
+      : details(unmappedCandidatesLine(summary), summary.unmappedCandidates.slice(0, blockerLimit).map((entry) => `- ${entry.pack}: \`${entry.file}\``)
+        .concat(summary.unmappedCandidates.length > blockerLimit ? [`- ${summary.unmappedCandidates.length - blockerLimit} more: see the job summary.`] : []))),
     ...[...candidatesByPack.entries()].flatMap(([toolPack, rows]) =>
       details(`${toolPack}: ${rows.length} candidate${rows.length === 1 ? " stops" : "s stop"} at a gate`, rowLimit === 0 ? ["Too many to list here: see the job summary."] : byGate(rows, rowLimit)),
     ),

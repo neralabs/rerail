@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, it } from "vitest";
 
-import { CACHE_FORMAT, readCached, resultPath, ruleKey, writeCached, type SharedKeyInputs } from "../../../conformance/port-readiness/cache.js";
+import { CACHE_FORMAT, readCached, resultPath, ruleKey, toolPackKey, writeCached, type SharedKeyInputs } from "../../../conformance/port-readiness/cache.js";
 import { engineReadsGoldensCheck } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
 import { sparseDirectoryPattern } from "../../../conformance/port-readiness/recorded-adapter.js";
 import type { CommandOptions, CommandResult, CommandRunner } from "../../../conformance/port-readiness/process.js";
@@ -94,6 +94,16 @@ describe("location-based blocking", () => {
   it("an unmapped shipped document blocks; an unmapped candidate is only reported", () => {
     assert.equal(blockingFailures(report([], [{ file: "packs/python/candidates/rules/x.json", location: "candidate" }])), 0);
     assert.equal(blockingFailures(report([], [{ file: "packs/python/rules/x.json", location: "shipped" }])), 1);
+  });
+
+  it("the summary lists an unmapped candidate once as not judged, outside the blocking rows and the funnel", () => {
+    const unmapped = [{ file: "packs/python/candidates/rules/x.json", location: "candidate" as const }, { file: "packs/python/rules/y.json", location: "shipped" as const }];
+    // Each tool-pack report of the pack lists the pack's unmapped documents.
+    const summary = summarize([report([rule("a", "candidate")], unmapped), { ...report([], unmapped), tool: "ruff", toolPack: "python/ruff" }], noUngated, [{ pack: "python", tool: "bandit" }, { pack: "python", tool: "ruff" }]);
+    assert.deepEqual(summary.unmappedCandidates, [{ pack: "python", file: "packs/python/candidates/rules/x.json" }]);
+    assert.deepEqual(summary.blocking.map((row) => row.rule), ["packs/python/rules/y.json"]);
+    assert.deepEqual(summary.candidateRows.map((row) => row.rule), ["a"]);
+    assert.match(renderSummary(summary), /^1 candidate is not judged: no conformance\.json entry maps it to an upstream rule, so no gate ran\n\n- python: `packs\/python\/candidates\/rules\/x\.json`$/mu);
   });
 
   it("the summary lists shipped failures as blocking and candidates in the funnel, and fails on a missing report", () => {
@@ -253,6 +263,21 @@ describe("cache keys", () => {
   it("a changed engine key changes only the rules that share it", () => {
     assert.notEqual(ruleKey(shared, { ...rules.a, engine: "changed" }), ruleKey(shared, rules.a));
     assert.equal(ruleKey(shared, rules.b), ruleKey(shared, rules.b));
+  });
+
+  // Shard 1 judges a and shard 2 judges b, but both shards' tool-pack checks read the goldens and cases of a and b.
+  it("a shard's tool-pack key moves with what its checks read of another shard's rules", () => {
+    const pack = { engine: "e", names: ["A", "B"], goldens: ['a\0[]', 'b\0[{"task":"t","path":"x.js","sha256":"1"}]'], caseSources: ["fixtures/a.py\0aa", "fixtures/b.py\0bb"] };
+    const shardOne = (inputs: typeof pack) => toolPackKey(shared, inputs, [ruleKey(shared, rules.a)]);
+    const before = shardOne(pack);
+    assert.equal(shardOne({ ...pack, goldens: [...pack.goldens].reverse(), caseSources: [...pack.caseSources].reverse() }), before);
+    assert.notEqual(shardOne({ ...pack, goldens: ['a\0[]', 'b\0[{"task":"t","path":"x.js","sha256":"2"}]'] }), before);
+    assert.notEqual(shardOne({ ...pack, caseSources: ["fixtures/a.py\0aa", "fixtures/b.py\0bc"] }), before);
+    assert.notEqual(shardOne({ ...pack, names: ["A", "B", "C"] }), before);
+    assert.notEqual(shardOne({ ...pack, engine: "changed" }), before);
+    assert.notEqual(toolPackKey({ ...shared, recordingJson: "changed" }, pack, [ruleKey(shared, rules.a)]), before);
+    // The gap counts come from the shard's own results, so its judged rules are part of the key too.
+    assert.notEqual(toolPackKey(shared, pack, [ruleKey(shared, rules.b)]), before);
   });
 });
 
