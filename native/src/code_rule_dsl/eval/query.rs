@@ -433,9 +433,12 @@ impl SqlFiles {
             };
             read.push(Some(match file_tape(grammar.language, file) {
                 Ok((doc, lines)) => {
+                    // As the workspace narrows a clause's roots: none where the file lacks the
+                    // matcher's required text, else the anchor index's selection.
+                    let roots = sql_roots(grammar, &doc, &file.source);
                     inputs.push((
                         doc,
-                        Some(statement),
+                        roots.map(|roots| (statement, roots)),
                         // As the stateless evaluator installs a file's scopes: nothing cached;
                         // and its call-graph closure (`FileCallsSlot::for_path`).
                         crate::code_rule_dsl::sql::FileContext {
@@ -474,6 +477,44 @@ impl SqlFiles {
             })
             .collect();
         Ok(Self { files })
+    }
+}
+
+/// The roots the SQL engine runs `grammar` on in `doc`: `None` where the file lacks the text the
+/// matcher requires (it matches no root), else every root of its kinds (`Some(None)`) or the ones
+/// its anchor index selects. Both are sound narrowings: the workspace's native path runs on them.
+fn sql_roots(
+    grammar: &GrammarMatcher,
+    doc: &crate::code_rule_dsl::tape::TapeDoc,
+    source: &str,
+) -> Option<Option<Arc<[u32]>>> {
+    use crate::code_rule_dsl::budget::matcher_budget_exhausted;
+    use crate::code_rule_dsl::matcher::{FileAnchorIndex, Selection};
+    let mut found =
+        |text: &str, literal: &str| memchr::memmem::find(text.as_bytes(), literal.as_bytes()).is_some();
+    if grammar
+        .text
+        .as_ref()
+        .is_some_and(|text| !text.holds_with(source, &mut found))
+    {
+        return None;
+    }
+    let root = ast_grep_core::AstGrep::doc(doc.clone());
+    let index = FileAnchorIndex::build(
+        &root,
+        &[grammar.anchors.as_ref()],
+        usize::MAX,
+        matcher_budget_exhausted,
+    );
+    match index.select(&grammar.anchors) {
+        Selection::All => Some(None),
+        Selection::Roots(roots) if roots.is_empty() => None,
+        Selection::Roots(roots) => Some(Some(
+            roots
+                .iter()
+                .map(|&ordinal| index.node(ordinal).node_id() as u32)
+                .collect(),
+        )),
     }
 }
 

@@ -518,11 +518,12 @@ impl Compiled {
     }
 
     /// Runs one batch on a session of its own: `files` are its tapes, each with the statement (by
-    /// index into the compiled grammars) that matches it, if any, and what the file's scopes read
+    /// index into the compiled grammars) that matches it, if any, and its roots (every root of the
+    /// statement's kinds, or those an anchor index selected), and what the file's scopes read
     /// beyond its tape (`FileContext`). Returns each file's matches, ordered by root.
     pub(in crate::code_rule_dsl) fn run(
         &self,
-        files: Vec<(TapeDoc, Option<usize>, FileContext)>,
+        files: Vec<(TapeDoc, Option<(usize, Option<Arc<[u32]>>)>, FileContext)>,
     ) -> Result<Vec<Vec<SqlMatch>>, SqlError> {
         let mut runs: Vec<ClauseRun> = (0..self.clauses.len())
             .map(|statement| ClauseRun {
@@ -531,8 +532,8 @@ impl Compiled {
             })
             .collect();
         for (index, (_, statement, _)) in files.iter().enumerate() {
-            if let Some(statement) = statement {
-                runs[*statement].files.push((index, None));
+            if let Some((statement, roots)) = statement {
+                runs[*statement].files.push((index, roots.clone()));
             }
         }
         let mut results: Vec<Vec<SqlMatch>> = files.iter().map(|_| Vec::new()).collect();
