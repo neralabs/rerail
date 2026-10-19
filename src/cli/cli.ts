@@ -452,18 +452,19 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
       ...(agents === undefined ? {} : { agents }),
     });
     const environment = setupEnvironment(context);
+    // An update's health check (`skipsSessionsApproval`) reads no one's sessions, so it is not asked to allow it, and
+    // its "I'll pick rule packs myself" starts with none, as `--packs none` does: no pack fits its empty folder, the
+    // releases that run it expect Rerail on there, and it fetches nothing from npm.
+    const healthCheck = skipsSessionsApproval(args, io.lane, workspace, () => environment.agentsFound());
     const report = await startRerail(workspace, io, {
       ...(databasePath === undefined ? {} : { databasePath }),
       ...(agents === undefined ? {} : { agents }),
       ...(agentsError === undefined ? {} : { agentsError }),
-      ...packs,
+      ...(healthCheck ? { packs: [] } : packs),
       ...(answer === undefined ? {} : { answer }),
       ...(setupCommand === undefined ? {} : { setupCommand }),
       repository,
-      // An update's health check reads no one's sessions, so it is not asked to allow it (`skipsSessionsApproval`).
-      environment: skipsSessionsApproval(args, io.lane, workspace, () => environment.agentsFound())
-        ? { ...environment, sessionsApproved: () => true }
-        : environment,
+      environment: healthCheck ? { ...environment, sessionsApproved: () => true } : environment,
     });
     // The set-up's own summary ends on the dashboard link; ending its questions early is a failure.
     if (report.setUpRan) return report.cancelled ? 1 : 0;
