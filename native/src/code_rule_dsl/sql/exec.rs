@@ -723,6 +723,37 @@ impl Session {
         self.stats
     }
 
+    /// Every statement a batch can run (stages', then clauses'), with its `EXPLAIN QUERY PLAN`
+    /// rows `(id, parent, detail)`, planned as the session prepares it: on its tables, empty.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn plans(&self) -> Result<Vec<(String, QueryPlan)>, SqlError> {
+        let mut plans = Vec::new();
+        let prepared = self
+            .stages
+            .iter()
+            .map(|(_, prepared)| prepared)
+            .chain(self.clauses.iter().map(|(prepared, _)| prepared));
+        for prepared in prepared {
+            for sql in prepared.steps.iter().chain([&prepared.last]) {
+                if sql == emit::LOOP {
+                    continue;
+                }
+                let sql = sql
+                    .strip_prefix(emit::UNTIL)
+                    .or_else(|| sql.strip_prefix(emit::ACYCLIC))
+                    .unwrap_or(sql);
+                let mut statement = self
+                    .connection
+                    .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+                let rows = statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(3)?)))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                plans.push((sql.to_owned(), rows));
+            }
+        }
+        Ok(plans)
+    }
+
     /// Runs one batch of `docs`, each with what its scopes read beyond its tape (`FileContext`):
     /// each of `runs` over its files (a statement in one run at most). Returns, per run and per
     /// file of it (in its order), the file's matches, ordered by root. A batch that fails leaves
@@ -1005,6 +1036,10 @@ thread_local! {
 /// Per statement text: its time, rows and runs.
 #[cfg(test)]
 pub(super) type StatementProfile = std::collections::HashMap<String, (u64, usize, usize)>;
+
+/// A statement's `EXPLAIN QUERY PLAN` rows: `(id, parent, detail)`.
+#[cfg(test)]
+pub(in crate::code_rule_dsl) type QueryPlan = Vec<(i64, i64, String)>;
 
 /// A clause-scope capture's name, kind and first column in a clause's last statement.
 type CaptureColumn = (String, SlotKind, usize);

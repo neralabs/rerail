@@ -141,21 +141,6 @@ impl Lowerer<'_> {
         Walk::Related(self.sources.len() - 1)
     }
 
-    /// A rule lowered as a relation's or terminal walk's sub-rule: staged where it is
-    /// context-free in a three-valued clause, as a relation's (`walked`).
-    fn sub_rule(
-        &mut self,
-        rule: &AstMatcher,
-        scope: usize,
-        bound: &Bound,
-    ) -> Result<(Op, Bound), Unsupported> {
-        if self.three {
-            self.walked(rule, scope, bound)
-        } else {
-            self.lower(rule, scope, bound)
-        }
-    }
-
     /// `rule` over `walk`'s candidates, as a relation searches them: its first match binds;
     /// three-valued, an unknown candidate ends the search where `strict`.
     fn search_over(&self, walk: Walk, sub: Op, strict: bool) -> Op {
@@ -190,7 +175,7 @@ impl Lowerer<'_> {
             let Some(rule) = rule else {
                 continue;
             };
-            let (sub, out) = self.sub_rule(rule, scope, current)?;
+            let (sub, out) = self.lower(rule, scope, current)?;
             *current = out;
             items.push(self.search_over(Walk::Slot(slot), sub, may_bind(rule)));
         }
@@ -207,7 +192,7 @@ impl Lowerer<'_> {
         items: &mut Vec<Op>,
         current: &mut Bound,
     ) -> Result<(), Unsupported> {
-        let (sub, out) = self.sub_rule(rule, scope, current)?;
+        let (sub, out) = self.lower(rule, scope, current)?;
         self.leaks(&sub)?;
         *current = out;
         let sub = self.excluding(scope, sub);

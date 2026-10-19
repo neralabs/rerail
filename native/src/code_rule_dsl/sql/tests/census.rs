@@ -33,6 +33,7 @@ fn query(
                 let refusals = census(grammar, each);
                 if refusals.is_empty() {
                     *lowered += 1;
+                    audit(grammar, each);
                 }
                 found.extend(refusals);
             }
@@ -43,6 +44,22 @@ fn query(
             self::query(select, each, found, lowered, matchers);
             self::query(exists, None, found, lowered, matchers);
         }
+    }
+}
+
+/// The plan audit of `emitted_joins_never_scan_a_whole_table_on_the_inner_side`, on a benchmark
+/// clause the engine lowers: no statement reads a whole table on the inner side of a join.
+fn audit(grammar: &crate::code_rule_dsl::matcher::GrammarMatcher, each: Option<&str>) {
+    let program = crate::code_rule_dsl::sql::compile_enumerating(&[grammar], each)
+        .expect("a clause that lowers compiles");
+    let session = program.session().expect("a session");
+    for (sql, plan) in session.plans().expect("plans") {
+        let scans = super::differential::inner_scans(&plan);
+        assert!(
+            scans.is_empty(),
+            "inner scans {scans:?} in {}",
+            sql.chars().take(600).collect::<String>()
+        );
     }
 }
 
@@ -250,6 +267,18 @@ fn run_corpus() {
             .iter()
             .filter(|clause| clause.get("define").is_none())
         {
+            // `RERAIL_CORPUS_CLAUSES`: only the clauses whose `policy/id` holds this text.
+            let name = format!(
+                "{}/{}",
+                path.parent()
+                    .and_then(|parent| parent.file_name())
+                    .map(|name| name.to_string_lossy())
+                    .unwrap_or_default(),
+                clause["id"].as_str().unwrap_or_default()
+            );
+            if std::env::var("RERAIL_CORPUS_CLAUSES").is_ok_and(|only| !name.contains(&only)) {
+                continue;
+            }
             let mut document = policy.clone();
             document["clauses"] = json!(defines.iter().chain([&clause]).collect::<Vec<_>>());
             let compiled = CodeRuleDslRuntime::compile(
@@ -268,7 +297,11 @@ fn run_corpus() {
                     .map_err(|error| error.reason)
             };
             let clause_started = std::time::Instant::now();
+            crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE.set(Some(Default::default()));
             let sql = evaluate("sql");
+            let profile = crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE
+                .take()
+                .unwrap_or_default();
             if sql
                 .as_ref()
                 .is_err_and(|reason| reason.contains("Unsupported("))
@@ -309,6 +342,18 @@ fn run_corpus() {
             );
             if native != sql {
                 differ.push((text, native, sql));
+            }
+            // Where a slow clause's time went: its costliest statements.
+            if sql_time.as_secs() >= 10 {
+                let mut costly: Vec<_> = profile.iter().collect();
+                costly.sort_by_key(|(_, (nanos, _, _))| std::cmp::Reverse(*nanos));
+                for (statement, (nanos, rows, runs)) in costly.into_iter().take(4) {
+                    eprintln!(
+                        "  {:>8.3}s {rows:>10} rows {runs:>6} runs  {}",
+                        *nanos as f64 / 1e9,
+                        statement.chars().take(300).collect::<String>()
+                    );
+                }
             }
         }
     }

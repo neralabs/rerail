@@ -1064,6 +1064,36 @@ static ENGINE_NANOS: [std::sync::atomic::AtomicU64; 4] = [
     std::sync::atomic::AtomicU64::new(0),
 ];
 
+/// The longest SQL time of one case, in milliseconds, and how many cases took 2 s or more in
+/// either engine.
+static SLOWEST_CASE_MILLIS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static CASES_OVER_TWO_SECONDS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Appends `line` to `RERAIL_SQL_DIFF_SLOW_LOG`, where it is set, one whole line at a time.
+fn slow_log(line: &Value) {
+    use std::io::Write as _;
+    static LOG: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    if let Ok(path) = std::env::var("RERAIL_SQL_DIFF_SLOW_LOG") {
+        let _held = LOG
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| file.write_all(format!("{line}\n").as_bytes()))
+            .expect("the slow-case log");
+    }
+}
+
+thread_local! {
+    /// The native and SQL seconds of the thread's last case.
+    static LAST_TIMES: std::cell::Cell<(f64, f64)> = const { std::cell::Cell::new((0.0, 0.0)) };
+    /// The SQL engine's error on the thread's last case, if it failed.
+    static LAST_SQL_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value) -> Outcome {
     // A case known to take hours on the SQL engine (`RERAIL_SQL_DIFF_SKIP`: a fragment of its
     // rule's JSON) is skipped, and counted.
@@ -1072,6 +1102,7 @@ fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value)
         && ast.to_string().contains(&fragment)
     {
         eprintln!("skipped case: {ast}");
+        slow_log(&json!({ "ast": ast, "violation": violation, "skipped": true }));
         return Outcome::Rejected;
     }
     let document = clause_document(
@@ -1103,6 +1134,8 @@ fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value)
     let unknown = unknowns.get() > 0;
     let at = if three { 2 } else { 0 };
     let (native_time, sql_time) = (between.duration_since(started), between.elapsed());
+    LAST_TIMES.set((native_time.as_secs_f64(), sql_time.as_secs_f64()));
+    LAST_SQL_ERROR.set(sql.as_ref().err().cloned());
     ENGINE_NANOS[at].fetch_add(
         native_time.as_nanos() as u64,
         std::sync::atomic::Ordering::Relaxed,
@@ -1111,13 +1144,29 @@ fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value)
         sql_time.as_nanos() as u64,
         std::sync::atomic::Ordering::Relaxed,
     );
-    if sql_time.max(native_time).as_secs() >= 5 {
+    let slowest = sql_time.max(native_time);
+    if slowest.as_secs() >= 5 {
         eprintln!(
             "slow case: native {:.1}s, sql {:.1}s: {}",
             native_time.as_secs_f64(),
             sql_time.as_secs_f64(),
             ast.to_string().chars().take(800).collect::<String>()
         );
+    }
+    SLOWEST_CASE_MILLIS.fetch_max(
+        sql_time.as_millis() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    if slowest >= std::time::Duration::from_secs(2) {
+        CASES_OVER_TWO_SECONDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // `RERAIL_SQL_DIFF_SLOW_LOG`: every case over 2 s, whole, one JSON line each, for
+        // `replayed_cases_agree`.
+        slow_log(&json!({
+            "ast": ast,
+            "violation": violation,
+            "native": native_time.as_secs_f64(),
+            "sql": sql_time.as_secs_f64(),
+        }));
     }
     if native.as_ref().is_ok_and(|output| {
         output.contains(UtilLimit::Depth.message()) || output.contains(UtilLimit::Work.message())
@@ -1357,6 +1406,11 @@ fn generated_rules_agree_with_the_native_matcher() {
         seconds(2),
         seconds(3)
     );
+    eprintln!(
+        "slowest case: sql {:.1}s; {} cases took 2 s or more",
+        SLOWEST_CASE_MILLIS.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e3,
+        CASES_OVER_TWO_SECONDS.load(std::sync::atomic::Ordering::Relaxed)
+    );
     for (ast, reason) in unsupported.iter().take(5) {
         eprintln!("unsupported: {reason}\n  {ast}");
     }
@@ -1402,5 +1456,217 @@ fn generated_rules_agree_with_the_native_matcher() {
         "{} differences, {} unsupported",
         differences.len(),
         unsupported.len()
+    );
+}
+
+/// The cases of `RERAIL_SQL_DIFF_REPLAY` (lines of `RERAIL_SQL_DIFF_SLOW_LOG`), one at a time on
+/// the differential's inputs: each one's native and SQL time, the rows its statements wrote, and
+/// whether the engines agree. Run by hand:
+/// `RERAIL_SQL_DIFF_REPLAY=<file> cargo test --release sql::tests::differential::replayed -- --ignored --nocapture`.
+#[test]
+#[ignore = "replays a file of cases, run by hand"]
+fn replayed_cases_agree() {
+    use crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE;
+    let path = std::env::var("RERAIL_SQL_DIFF_REPLAY").expect("RERAIL_SQL_DIFF_REPLAY");
+    let inputs: Vec<(&str, Value)> = FIXTURES
+        .iter()
+        .map(|(label, paths)| {
+            let vocabulary = Vocabulary::of(label, paths);
+            let files: Vec<(&str, &str, &str)> = vocabulary
+                .files
+                .iter()
+                .map(|(path, source)| (*label, path.as_str(), source.as_str()))
+                .collect();
+            (*label, snapshot(&files))
+        })
+        .collect();
+    let mut capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
+    capabilities["limits"]["maxWitnesses"] = json!(1_000_000);
+    capabilities["limits"]["maxVisitedNodes"] = json!(1_000_000_000);
+    let mut differ = 0;
+    for line in std::fs::read_to_string(&path).expect("replay file").lines() {
+        let case: Value = serde_json::from_str(line).expect("a JSON case");
+        let (ast, violation) = (&case["ast"], &case["violation"]);
+        let language = ast["language"].as_str().expect("a language");
+        let input = &inputs
+            .iter()
+            .find(|(label, _)| *label == language)
+            .expect("a fixture language")
+            .1;
+        STATEMENT_PROFILE.set(Some(Default::default()));
+        LAST_TIMES.set((0.0, 0.0));
+        let outcome = run_case(ast, violation, input, &capabilities);
+        let profile = STATEMENT_PROFILE.take().unwrap_or_default();
+        let rows: usize = profile.values().map(|(_, rows, _)| rows).sum();
+        let statements: usize = profile.values().map(|(_, _, runs)| runs).sum();
+        let verdict = match &outcome {
+            Outcome::Same { found, .. } => format!("same, {found} violations"),
+            Outcome::Differs { .. } => {
+                differ += 1;
+                "DIFFERS".to_owned()
+            }
+            Outcome::Unsupported(reason) => reason.clone(),
+            Outcome::NativeLimit => "native limit".to_owned(),
+            Outcome::Rejected => "rejected".to_owned(),
+        };
+        let (native, sql) = LAST_TIMES.get();
+        let failed = LAST_SQL_ERROR
+            .take()
+            .map_or(String::new(), |error| format!(" (sql failed: {error})"));
+        eprintln!(
+            "replayed: native {native:.3}s, sql {sql:.3}s (logged {:.1}s); {statements} statements, {rows} rows; {verdict}{failed}: {}",
+            case["sql"].as_f64().unwrap_or(-1.0),
+            ast.to_string().chars().take(300).collect::<String>()
+        );
+        // Where the time of a slow case went: its costliest statements, with their rows and runs.
+        if sql >= 1.0 {
+            let mut costly: Vec<_> = profile.iter().collect();
+            costly.sort_by_key(|(_, (nanos, _, _))| std::cmp::Reverse(*nanos));
+            let shown = env_number("RERAIL_SQL_DIFF_REPLAY_STATEMENTS", 6) as usize;
+            for (statement, (nanos, rows, runs)) in costly.into_iter().take(shown) {
+                eprintln!(
+                    "  {:>8.3}s {rows:>10} rows {runs:>6} runs  {}",
+                    *nanos as f64 / 1e9,
+                    statement.chars().take(400).collect::<String>()
+                );
+            }
+        }
+    }
+    assert_eq!(differ, 0, "{differ} replayed cases differ");
+}
+
+/// The loops of a statement's `EXPLAIN QUERY PLAN` rows `(id, parent, detail)` that read a whole
+/// table once per row of an outer loop: a `SCAN` after the first loop of its join, or in a
+/// correlated subquery. A `node` table loop is bounded where a constraint on `id`, `parent` or
+/// `last` drives it (its index string: `i`, `p`, `l` codes); a terminal's where it has a term
+/// (a nonzero index number). `SEARCH` loops (an index, a primary key, an automatic index) are
+/// bounded by their key.
+pub(super) fn inner_scans(plan: &[(i64, i64, String)]) -> Vec<String> {
+    let parent_of: std::collections::HashMap<i64, i64> =
+        plan.iter().map(|(id, parent, _)| (*id, *parent)).collect();
+    let detail_of: std::collections::HashMap<i64, &str> = plan
+        .iter()
+        .map(|(id, _, detail)| (*id, detail.as_str()))
+        .collect();
+    let is_loop = |detail: &str| {
+        (detail.starts_with("SCAN ") || detail.starts_with("SEARCH "))
+            && detail != "SCAN CONSTANT ROW"
+    };
+    let mut found = Vec::new();
+    for (id, parent, detail) in plan {
+        if !detail.starts_with("SCAN ") || !is_loop(detail) {
+            continue;
+        }
+        let after_another = plan
+            .iter()
+            .any(|(other, up, text)| up == parent && other < id && is_loop(text));
+        let mut correlated = false;
+        let mut at = *parent;
+        while let Some(text) = detail_of.get(&at) {
+            correlated |= text.starts_with("CORRELATED ");
+            at = parent_of[&at];
+        }
+        if !after_another && !correlated {
+            continue;
+        }
+        let bounded = match detail.split_once("VIRTUAL TABLE INDEX ") {
+            Some((_, index)) => {
+                let (number, codes) = index.split_once(':').unwrap_or((index, ""));
+                if codes.is_empty() {
+                    number.trim().parse::<i64>().unwrap_or(0) != 0
+                } else {
+                    ["i=", "p=", "i>", "i}", "i<", "i{", "l}", "l>"]
+                        .iter()
+                        .any(|code| {
+                            codes
+                                .as_bytes()
+                                .chunks(2)
+                                .any(|pair| pair == code.as_bytes())
+                        })
+                }
+            }
+            None => false,
+        };
+        if !bounded {
+            found.push(detail.clone());
+        }
+    }
+    found
+}
+
+/// No statement the engine emits reads a whole table on the inner side of a join: every join
+/// back to a frame goes through a primary key or an index, and every walk through a bounded
+/// `node` constraint. Checked on the plans of the differential's generated clauses (every
+/// operator, two- and three-valued, recursion and `violation.each`), as their sessions prepare
+/// them.
+#[test]
+fn emitted_joins_never_scan_a_whole_table_on_the_inner_side() {
+    use crate::code_rule_dsl::test_support::grammar_matchers;
+    let vocabularies: Vec<Vocabulary> = FIXTURES
+        .iter()
+        .map(|(label, paths)| Vocabulary::of(label, paths))
+        .collect();
+    let mut capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
+    capabilities["limits"]["maxWitnesses"] = json!(1_000_000);
+    let mut generators: Vec<Generator<'_>> = vocabularies
+        .iter()
+        .enumerate()
+        .map(|(index, vocabulary)| Generator {
+            rng: Rng(0x91a7 ^ (index as u64).wrapping_mul(0x2545_f491_4f6c_dd1d)),
+            vocabulary,
+            calls: Vec::new(),
+            plain: Vec::new(),
+            params: None,
+            counted: false,
+            three: false,
+            recursive: false,
+        })
+        .collect();
+    let (mut clauses, mut statements) = (0usize, 0usize);
+    let mut offenders: std::collections::BTreeMap<String, (usize, String)> =
+        std::collections::BTreeMap::new();
+    for case in 0..1500 {
+        let generator = &mut generators[case % 3];
+        let (ast, violation) = generator.case();
+        let document = clause_document(
+            json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": violation }),
+        );
+        let Ok(compiled) = compile_document_with(document, &capabilities) else {
+            continue;
+        };
+        let grammars = grammar_matchers(&compiled);
+        let grammars: Vec<_> = grammars.iter().collect();
+        let each = violation["each"].as_str();
+        let Ok(program) = crate::code_rule_dsl::sql::compile_enumerating(&grammars, each) else {
+            continue;
+        };
+        clauses += 1;
+        let session = program.session().expect("a session");
+        for (sql, plan) in session.plans().expect("plans") {
+            statements += 1;
+            for detail in inner_scans(&plan) {
+                // One example statement per offending plan line, with the tables' numbers cut.
+                let shape: String = detail
+                    .split(' ')
+                    .map(|word| {
+                        word.trim_end_matches(|c: char| c.is_ascii_digit())
+                            .to_owned()
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let entry = offenders.entry(shape).or_insert((0, sql.clone()));
+                entry.0 += 1;
+            }
+        }
+    }
+    eprintln!("plan audit: {clauses} clauses, {statements} statements");
+    for (shape, (count, sql)) in &offenders {
+        eprintln!("inner scan `{shape}` in {count} statements, e.g.:\n  {sql}");
+    }
+    assert!(clauses > 500, "{clauses} clauses audited");
+    assert!(
+        offenders.is_empty(),
+        "{} inner scan shapes",
+        offenders.len()
     );
 }

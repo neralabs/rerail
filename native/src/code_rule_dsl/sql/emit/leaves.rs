@@ -159,24 +159,27 @@ impl Emitter<'_> {
         let candidates = self.candidates(walk, input);
         let matched = self.op(sub, &candidates);
         let unk = if self.three { "s.unk" } else { "0" };
-        let with = format!(
-            "WITH v AS (SELECT g.pk AS pk, g.ord AS ord, CASE WHEN s.k IS NULL THEN 2 WHEN {unk} = 1 THEN 1 ELSE 0 END AS st \
-             FROM {candidates} g LEFT JOIN {matched} s ON s.k = g.k), \
-             w AS (SELECT pk, MIN(ord) AS o FROM v WHERE st > 0 GROUP BY pk), \
-             x AS (SELECT v.pk AS pk, MIN(v.st) AS st FROM v JOIN w ON w.pk = v.pk AND w.o = v.ord GROUP BY v.pk) "
+        let first = self.grouped(
+            "st",
+            &format!(
+                "WITH v AS (SELECT g.pk AS pk, g.ord AS ord, CASE WHEN s.k IS NULL THEN 2 WHEN {unk} = 1 THEN 1 ELSE 0 END AS st \
+                 FROM {candidates} g LEFT JOIN {matched} s ON s.k = g.k), \
+                 w AS (SELECT pk, MIN(ord) AS o FROM v WHERE st > 0 GROUP BY pk) \
+                 SELECT v.pk, MIN(v.st) FROM v JOIN w ON w.pk = v.pk AND w.o = v.ord GROUP BY v.pk"
+            ),
         );
         let select = if self.three {
             format!(
-                "SELECT {} FROM {input} f LEFT JOIN x ON x.pk = f.k WHERE x.pk IS NULL OR x.st = 1",
+                "SELECT {} FROM {input} f LEFT JOIN {first} x ON x.pk = f.k WHERE x.pk IS NULL OR x.st = 1",
                 self.verdict("f", &[], "COALESCE(x.st, 0)")
             )
         } else {
             format!(
-                "SELECT {} FROM {input} f LEFT JOIN x ON x.pk = f.k WHERE x.pk IS NULL",
+                "SELECT {} FROM {input} f LEFT JOIN {first} x ON x.pk = f.k WHERE x.pk IS NULL",
                 self.cols("f")
             )
         };
-        self.frame_with("x", &with, &select)
+        self.frame("x", &select)
     }
 
     /// The CTE and joins that read `exports` of `alias`'s rows (the tree `tree` holds) from the
