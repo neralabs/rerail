@@ -288,7 +288,7 @@ export function sessionsQuestion(input: SessionsInput): QuestionForm {
     ],
     choices: [
       { answer: "allow", label: "Yes, allow it", hint: "for every repo you start Rerail in", args: [SETUP_FLAGS.answer, "allow", ...input.carriedArgs] },
-      { answer: "decline", label: "No, stop set-up", hint: "Rerail connects to nothing", args: [SETUP_FLAGS.answer, "decline"] },
+      { answer: "decline", label: "No, stop set-up", hint: "set-up changes nothing", args: [SETUP_FLAGS.answer, "decline"] },
     ],
     ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
   };
