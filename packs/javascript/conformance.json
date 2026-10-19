@@ -1220,7 +1220,7 @@
         "tool": "eslint",
         "rule": "no-array-constructor"
       },
-      "policy": "rules/eslint-no-array-constructor.json",
+      "policy": "candidates/rules/eslint-no-array-constructor.json",
       "capabilities": [
         "syntax",
         "scope",

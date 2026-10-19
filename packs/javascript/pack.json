@@ -3,7 +3,7 @@
   "id": "javascript",
   "name": "JavaScript",
   "category": "language",
-  "covers": "72 ESLint core rules ported to Rerail, 24 of them on and 48 off until turned on, each scored against ESLint's own recorded findings on its test cases.",
+  "covers": "71 ESLint core rules ported to Rerail, 24 of them on and 47 off until turned on, each scored against ESLint's own recorded findings on its test cases.",
   "reason": "matches JavaScript",
   "match": {
     "any": [
@@ -115,13 +115,6 @@
       "id": "eslint-guard-for-in",
       "document": "rules/eslint-guard-for-in.json",
       "title": "ESLint guard-for-in: Require for-in loops to include an if statement",
-      "group": "ESLint",
-      "on": false
-    },
-    {
-      "id": "eslint-no-array-constructor",
-      "document": "rules/eslint-no-array-constructor.json",
-      "title": "ESLint no-array-constructor: Disallow Array constructors",
       "group": "ESLint",
       "on": false
     },
