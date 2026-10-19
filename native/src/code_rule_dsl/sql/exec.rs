@@ -849,15 +849,8 @@ impl Session {
         stats.statements += 1;
         stats.rows += rows;
         stats.nanos += nanos;
-        #[cfg(test)]
-        STATEMENT_PROFILE.with_borrow_mut(|profile| {
-            if let Some(profile) = profile {
-                let entry = profile.entry(sql.to_owned()).or_default();
-                entry.0 += nanos;
-                entry.1 += rows;
-                entry.2 += 1;
-            }
-        });
+        #[cfg(any(test, feature = "unbounded-work"))]
+        record(sql, nanos, rows);
         Ok(())
     }
 
@@ -938,6 +931,8 @@ impl Session {
             let mut found: Vec<Vec<(usize, SqlMatch)>> =
                 run.files.iter().map(|_| Vec::new()).collect();
             if !run.files.is_empty() {
+                #[cfg(feature = "unbounded-work")]
+                let clause_started = std::time::Instant::now();
                 for (at, (file, _)) in run.files.iter().enumerate() {
                     position[*file] = at;
                 }
@@ -980,6 +975,8 @@ impl Session {
                     stats.rows += count;
                     stats.nanos += elapsed;
                     stats.select_nanos += elapsed;
+                    #[cfg(feature = "unbounded-work")]
+                    record(&prepared.last, elapsed, count);
                     let started = std::time::Instant::now();
                     for clear in &prepared.clear {
                         connection.prepare_cached(clear)?.execute([])?;
@@ -1001,6 +998,12 @@ impl Session {
                 for clear in prepared.each.iter().flatten() {
                     connection.prepare_cached(clear)?.execute([])?;
                 }
+                #[cfg(feature = "unbounded-work")]
+                CLAUSE_PROFILE.with_borrow_mut(|profile| {
+                    if let Some(profile) = profile {
+                        profile.push((run.statement, clause_started.elapsed().as_nanos() as u64));
+                    }
+                });
             }
             results.push(
                 found
@@ -1026,16 +1029,68 @@ impl Session {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "unbounded-work"))]
 thread_local! {
     /// Where set, this thread's frame and stage statements, by text: their time, rows and runs.
+    /// The `unbounded-work` (benchmark) build adds the clauses' final selects.
     pub(super) static STATEMENT_PROFILE: std::cell::RefCell<Option<StatementProfile>> =
         const { std::cell::RefCell::new(None) };
 }
 
 /// Per statement text: its time, rows and runs.
-#[cfg(test)]
-pub(super) type StatementProfile = std::collections::HashMap<String, (u64, usize, usize)>;
+#[cfg(any(test, feature = "unbounded-work"))]
+pub(in crate::code_rule_dsl) type StatementProfile =
+    std::collections::HashMap<String, (u64, usize, usize)>;
+
+/// Adds a statement's run to this thread's `STATEMENT_PROFILE`, where set.
+#[cfg(any(test, feature = "unbounded-work"))]
+fn record(sql: &str, nanos: u64, rows: usize) {
+    STATEMENT_PROFILE.with_borrow_mut(|profile| {
+        if let Some(profile) = profile {
+            // The texts repeat every batch: allocate a key only on a statement's first run.
+            if let Some(entry) = profile.get_mut(sql) {
+                entry.0 += nanos;
+                entry.1 += rows;
+                entry.2 += 1;
+            } else {
+                profile.insert(sql.to_owned(), (nanos, rows, 1));
+            }
+        }
+    });
+}
+
+#[cfg(feature = "unbounded-work")]
+thread_local! {
+    /// Where set, this thread's clause runs: the program's clause and the time its statements took
+    /// over a batch (every `violation.each` round and its tables' clears included).
+    static CLAUSE_PROFILE: std::cell::RefCell<Option<Vec<(usize, u64)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The benchmark build's profile of `body`'s batches on this thread: its statements by text
+/// (`STATEMENT_PROFILE`) and its clause runs (`CLAUSE_PROFILE`). A profile set around the call is
+/// kept, with this one's statements added.
+#[cfg(feature = "unbounded-work")]
+pub(in crate::code_rule_dsl) fn profiled<T>(
+    body: impl FnOnce() -> T,
+) -> (T, StatementProfile, Vec<(usize, u64)>) {
+    let outer = STATEMENT_PROFILE.replace(Some(StatementProfile::default()));
+    let outer_clauses = CLAUSE_PROFILE.replace(Some(Vec::new()));
+    let result = body();
+    let statements = STATEMENT_PROFILE.replace(outer).unwrap_or_default();
+    let clauses = CLAUSE_PROFILE.replace(outer_clauses).unwrap_or_default();
+    STATEMENT_PROFILE.with_borrow_mut(|profile| {
+        if let Some(profile) = profile {
+            for (sql, (nanos, rows, runs)) in &statements {
+                let entry = profile.entry(sql.clone()).or_default();
+                entry.0 += nanos;
+                entry.1 += rows;
+                entry.2 += runs;
+            }
+        }
+    });
+    (result, statements, clauses)
+}
 
 /// A statement's `EXPLAIN QUERY PLAN` rows: `(id, parent, detail)`.
 #[cfg(test)]

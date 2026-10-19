@@ -22,3 +22,5 @@ pub(super) use exec::{
     ClauseRun, Compiled, FileContext, Session, SqlError, SqlMatch, Stats, compile_each,
     compile_enumerating, environment,
 };
+#[cfg(feature = "unbounded-work")]
+pub(super) use exec::{StatementProfile, profiled};
