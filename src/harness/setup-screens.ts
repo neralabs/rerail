@@ -294,12 +294,12 @@ export function sessionsQuestion(input: SessionsInput): QuestionForm {
   };
 }
 
-/** After "No": Rerail cannot work without the sessions, so nothing was set up. */
+/** After "No": nothing new is connected or started. Coding agents connected before stay connected until removed. */
 export function renderSessionsDeclined(lane: SetupLane): string {
   const style = styleFor(lane);
   return lines([
     ...(lane === "terminal" ? [""] : []),
-    bullet("Set-up stopped. Rerail isn’t connected to any coding agent and reads nothing.", style),
+    bullet("Set-up stopped. Nothing new was connected or started.", style),
     `  ${style.dim("Rerail needs your sessions to check rules. Run set-up again whenever you want to allow it.")}`,
   ]);
 }

@@ -53,9 +53,14 @@ person says yes.
      read the sessions of the coding agents it connects to (what you ask, what
      they do, the files they edit) to check them against your rules and show
      their events in the dashboard. "Yes" (`--answer allow`) is kept in
-     `~/.rerail/consent.json` and never asked again; "No" (`--answer decline`)
-     stops set-up with nothing connected or started, and the next set-up asks
-     again. `rerail start` in a repository that is not set up asks it too.
+     `~/.rerail/consent.json` and never asked again; it carries the folder the
+     run was for (`--repo`), and set-up still asks before reading it. "No"
+     (`--answer decline`) stops set-up with nothing new connected or started
+     and removes an earlier yes, so the next set-up asks again; coding agents
+     connected before stay connected until `rerail install --remove`.
+     `rerail start` in a repository that is not set up asks it too. An
+     update's health check (`start --repo <empty scratch folder> --answer
+     pick-myself`, no coding agent) is not asked.
 2. **Ask before reading** — set-up names the Git repository it ran in and asks
    whether it may read it. Outside a repository (or in your home folder) it
    asks which folder to start with instead; `--repo <folder>` names one, which

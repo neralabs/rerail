@@ -11,14 +11,19 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, join, resolve, win32 } from "node:path";
 import { shellQuote } from "../harness/setup-screens.js";
 import { writeTextFile } from "./harness-registration.js";
 
 const BLOCK_START = "# >>> rerail >>>";
 const BLOCK_END = "# <<< rerail <<<";
-/** The block, with the blank line `addBlock` puts before it. */
-const BLOCK = new RegExp(`\\n?${BLOCK_START}\\n[\\s\\S]*?${BLOCK_END}\\n?`, "u");
+/**
+ * The block as whole lines, start marker to the first end marker after it, with no other start marker between: a start
+ * marker left on its own never reaches into a later block. CRLF files match too.
+ */
+const BLOCK = /^# >>> rerail >>>\r?\n(?:(?!# >>> rerail >>>).*\r?\n)*?# <<< rerail <<<(?:\r?\n|$)/mu;
+/** The block with the blank line `addBlock` puts before it, when that line is still blank. */
+const BLOCK_AND_GAP = /(?:^\r?\n)?^# >>> rerail >>>\r?\n(?:(?!# >>> rerail >>>).*\r?\n)*?# <<< rerail <<<(?:\r?\n|$)/mu;
 /** Where `Path` lives on Windows, as reports name it. */
 export const WINDOWS_USER_PATH = String.raw`HKCU\Environment Path`;
 
@@ -72,7 +77,7 @@ export async function addLauncherToPath(options: LauncherPathOptions): Promise<L
   const platform = options.platform ?? process.platform;
   if (env.RERAIL_MODIFY_PATH === "0" || onRunningPath(options.binDir, env, platform)) return { status: "skipped" };
   try {
-    if (platform === "win32") return windowsUserPath(options.binDir, options.dryRun === true ? "check" : "add", env);
+    if (platform === "win32") return windowsUserPath(options.binDir, options.dryRun === true ? "check" : "add", env, options.home);
     const files = startupFiles(options.home, env);
     const changed: string[] = [];
     for (const file of files) {
@@ -94,15 +99,15 @@ export async function removeLauncherFromPath(options: LauncherPathOptions): Prom
   const platform = options.platform ?? process.platform;
   if (env.RERAIL_MODIFY_PATH === "0") return { status: "skipped" };
   try {
-    if (platform === "win32") return windowsUserPath(options.binDir, options.dryRun === true ? "check-remove" : "remove", env);
+    if (platform === "win32") return windowsUserPath(options.binDir, options.dryRun === true ? "check-remove" : "remove", env, options.home);
     const changed: string[] = [];
     for (const path of allStartupFiles(options.home, env)) {
       const existing = await readText(path);
       if (existing === undefined || !BLOCK.test(existing.text)) continue;
       changed.push(path);
       if (options.dryRun === true) continue;
-      // The match takes the blank line `addBlock` put before the block, so the rest reads as it did before.
-      const text = existing.text.replace(BLOCK, "");
+      // Only a line that is still blank goes with the block, so the lines around it stay as they are.
+      const text = existing.text.replace(BLOCK_AND_GAP, "");
       // The fish file is Rerail's own; a shared startup file stays, however little is left in it.
       if (path.endsWith("rerail.fish") && text.trim() === "") await rm(path, { force: true });
       else await writeTextFile(path, text, existing);
@@ -115,7 +120,7 @@ export async function removeLauncherFromPath(options: LauncherPathOptions): Prom
 
 /** `text` with exactly one Rerail block, set to `block`, after a blank line. */
 function addBlock(text: string, block: string): string {
-  if (BLOCK.test(text)) return text.replace(BLOCK, match => `${match.startsWith("\n") ? "\n" : ""}${block}\n`);
+  if (BLOCK.test(text)) return text.replace(BLOCK, `${block}\n`);
   if (text === "") return `${block}\n`;
   return `${text}${text.endsWith("\n") ? "" : "\n"}\n${block}\n`;
 }
@@ -151,11 +156,12 @@ function fishBlock(binDir: string): string {
 }
 
 function zshrc(home: string, env: NodeJS.ProcessEnv): string {
-  return join(env.ZDOTDIR ?? home, ".zshrc");
+  // An empty value is unset (as zsh and the XDG spec read it), never a path relative to the current folder.
+  return join(env.ZDOTDIR || home, ".zshrc");
 }
 
 function fishConfig(home: string, env: NodeJS.ProcessEnv): string {
-  return join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "fish", "conf.d", "rerail.fish");
+  return join(env.XDG_CONFIG_HOME || join(home, ".config"), "fish", "conf.d", "rerail.fish");
 }
 
 /**
@@ -224,11 +230,13 @@ $key.SetValue('Path', $next, $kind)
 'changed'
 `;
 
-function windowsUserPath(binDir: string, mode: "check" | "add" | "check-remove" | "remove", env: NodeJS.ProcessEnv): LauncherPathChange {
+function windowsUserPath(binDir: string, mode: "check" | "add" | "check-remove" | "remove", env: NodeJS.ProcessEnv, home: string): LauncherPathChange {
+  // By absolute path, from the home folder: Windows looks in the current folder (the repository) before PATH.
+  const powershell = win32.join(env.SystemRoot || String.raw`C:\Windows`, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const result = spawnSync(
-    "powershell.exe",
+    powershell,
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(WINDOWS_SCRIPT, "utf16le").toString("base64")],
-    { env: { ...env, RERAIL_PATH_ENTRY: binDir, RERAIL_PATH_MODE: mode }, encoding: "utf8", timeout: 30_000, windowsHide: true },
+    { cwd: home, env: { ...env, RERAIL_PATH_ENTRY: binDir, RERAIL_PATH_MODE: mode }, encoding: "utf8", timeout: 30_000, windowsHide: true },
   );
   const answer = (result.stdout ?? "").trim().split(/\r?\n/u).pop();
   if (result.status !== 0 || (answer !== "changed" && answer !== "unchanged")) {

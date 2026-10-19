@@ -37,8 +37,8 @@ export function fakeSetupEnvironment(options: {
       return connections.at(-1)?.agents ?? [];
     },
     sessionsApproved: () => approved,
-    async approveSessions() {
-      approved = true;
+    async setSessionsApproved(answer) {
+      approved = answer;
     },
     async dashboard(scope, page, open): Promise<DashboardLink> {
       pages.push({ repoRoot: scope.checkoutPath, repositoryKey: scope.repositoryKey, page, open });

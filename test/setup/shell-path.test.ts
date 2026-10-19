@@ -91,4 +91,35 @@ describe.skipIf(process.platform === "win32")("launcher on PATH", () => {
     await mkdir(join(home, ".profile"));
     expect((await addLauncherToPath(options)).status).toBe("failed");
   });
+
+  it("takes out only the block's own lines, whatever the person did around it", async () => {
+    const { home, options } = await machine("/bin/zsh");
+    const zshrc = join(home, ".zshrc");
+    await addLauncherToPath(options);
+    const block = (await readFile(zshrc, "utf8")).trim();
+
+    // The blank line before it removed: the lines either side stay two lines.
+    await writeFile(zshrc, `a\n${block}\nb\n`);
+    await removeLauncherFromPath(options);
+    expect(await readFile(zshrc, "utf8")).toBe("a\nb\n");
+
+    // A start marker left on its own reaches no further than itself, and the real block after it is the one replaced.
+    await writeFile(zshrc, `# >>> rerail >>>\nkeep me\n${block}\n`);
+    await removeLauncherFromPath(options);
+    expect(await readFile(zshrc, "utf8")).toBe("# >>> rerail >>>\nkeep me\n");
+  });
+
+  it("finds its block in a CRLF file, so re-running adds no second one", async () => {
+    const { home, options } = await machine("/bin/zsh");
+    const zshrc = join(home, ".zshrc");
+    await addLauncherToPath(options);
+    await writeFile(zshrc, (await readFile(zshrc, "utf8")).replaceAll("\n", "\r\n"));
+    await addLauncherToPath(options);
+    expect((await readFile(zshrc, "utf8")).match(/# >>> rerail >>>/gu)).toHaveLength(1);
+  });
+
+  it("reads an empty ZDOTDIR as unset, never as the current folder", async () => {
+    const { home, env, options } = await machine("/bin/zsh");
+    expect(await addLauncherToPath({ ...options, env: { ...env, ZDOTDIR: "" } })).toEqual({ status: "changed", locations: [join(home, ".zshrc")] });
+  });
 });

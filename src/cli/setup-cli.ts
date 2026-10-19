@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, realpath, rename, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface, type Interface } from "node:readline";
@@ -299,10 +299,15 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
         return false;
       }
     },
-    async approveSessions() {
+    async setSessionsApproved(approved) {
+      const path = join(context.home, CONSENT_FILE);
+      if (!approved) {
+        await rm(path, { force: true });
+        return;
+      }
       await mkdir(context.home, { recursive: true, mode: 0o700 });
       const consent = { sessions: { approvedAt: new Date().toISOString() } };
-      await writeFile(join(context.home, CONSENT_FILE), `${JSON.stringify(consent, null, 2)}\n`, { mode: 0o600 });
+      await writeFile(path, `${JSON.stringify(consent, null, 2)}\n`, { mode: 0o600 });
     },
     async dashboard(scope, page, open): Promise<DashboardLink> {
       let origin: string;

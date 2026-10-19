@@ -216,6 +216,27 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(step.step).toBe("read-repo");
     expect(step.question!.options[0]!.next.args).toEqual(["setup", "--database", setup.databasePath, "--json", "--answer", "yes", "--repo", setup.repo]);
   });
+
+  it("asks first whether Rerail may read sessions, and its yes still asks before reading the folder start ran for", async () => {
+    const setup = await fixture();
+    const plain = join(setup.root, "notes");
+    mkdirSync(plain);
+    const environment = fakeSetupEnvironment({ sessionsApproved: false });
+    const first = await startRerailStep(plain, { databasePath: setup.databasePath, environment });
+    expect(first.step).toBe("sessions");
+    const allow = first.question!.options.find(option => option.answer === "allow")!;
+    expect(allow.next.args).toEqual(["setup", "--json", "--answer", "allow", "--repo", plain]);
+
+    // Outside Git the folder is still the one asked about, and naming it in the allow answer reads nothing yet.
+    const next = await runSetupStep(request(setup, environment, { cwd: setup.root, answer: "allow", repo: plain }));
+    expect(next.step).toBe("read-repo");
+    expect(next.question!.options[0]!.next.args).toEqual(["setup", "--json", "--answer", "yes", "--repo", plain]);
+    expect(environment.connections).toEqual([]);
+
+    // No takes the yes back, so the next set-up asks again.
+    expect((await runSetupStep(request(setup, environment, { answer: "decline" }))).step).toBe("done");
+    expect((await startRerailStep(plain, { databasePath: setup.databasePath, environment })).step).toBe("sessions");
+  });
 });
 
 describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
@@ -256,10 +277,10 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(existsSync(join(context.home, "consent.json"))).toBe(false);
     expect(workspaceStartState(setup.repo, join(context.home, "rerail.sqlite"))).toBe("stopped");
 
-    // Yes goes straight on to the folder it was named, and set-up never asks again.
+    // Yes carries on to the folder it was named, still asking before reading it, and set-up never asks again.
     said.length = 0;
     expect(await runSetupCommand(["--json", "--answer", "allow", "--repo", setup.repo], context, io)).toBe(0);
-    expect((JSON.parse(said[0]!) as SetupStep).step).toBe("confirm-packs");
+    expect((JSON.parse(said[0]!) as SetupStep).step).toBe("read-repo");
     said.length = 0;
     expect(await runSetupCommand(["--json"], context, io)).toBe(0);
     expect((JSON.parse(said[0]!) as SetupStep).step).toBe("read-repo");
