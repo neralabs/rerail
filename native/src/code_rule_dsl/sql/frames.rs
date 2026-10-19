@@ -28,7 +28,7 @@
 use rusqlite::types::{ToSqlOutput, Value, ValueRef};
 use rusqlite::vtab::{
     Context, CreateVTab, Filters, IndexConstraintOp, IndexFlags, IndexInfo, Inserts, Module,
-    Updates, UpdateVTab, VTab, VTabConnection, VTabCursor, VTabKind, sqlite3_vtab,
+    UpdateVTab, Updates, VTab, VTabConnection, VTabCursor, VTabKind, sqlite3_vtab,
     sqlite3_vtab_cursor,
 };
 use rusqlite::{Connection, Error, Result};
@@ -65,7 +65,9 @@ const SCAN_COST: f64 = 1_048_576.0;
 /// The table a statement's text names after `prefix`, up to a space or parenthesis.
 fn table_after<'s>(sql: &'s str, prefix: &str) -> Option<&'s str> {
     let rest = sql.strip_prefix(prefix)?;
-    rest.split([' ', '(']).next().filter(|name| !name.is_empty())
+    rest.split([' ', '('])
+        .next()
+        .filter(|name| !name.is_empty())
 }
 
 /// A stage's or clause's statements with its frames in Rust memory: each table they create that
@@ -187,7 +189,10 @@ impl FrameStore {
     ) -> Result<&'d str> {
         let bad = || Error::ModuleError(format!("frame: bad declaration {declaration}"));
         let open = declaration.find('(').ok_or_else(bad)?;
-        let close = declaration.rfind(')').filter(|&close| close > open).ok_or_else(bad)?;
+        let close = declaration
+            .rfind(')')
+            .filter(|&close| close > open)
+            .ok_or_else(bad)?;
         let name = declaration[..open].trim();
         if self.frames.lock().contains_key(name) {
             return Ok(name);
@@ -475,13 +480,11 @@ fn compare_mixed(integer: i64, real: f64) -> Ordering {
         return Ordering::Greater;
     }
     let truncated = real.trunc() as i64;
-    integer
-        .cmp(&truncated)
-        .then_with(|| {
-            0.0f64
-                .partial_cmp(&(real - real.trunc()))
-                .unwrap_or(Ordering::Equal)
-        })
+    integer.cmp(&truncated).then_with(|| {
+        0.0f64
+            .partial_cmp(&(real - real.trunc()))
+            .unwrap_or(Ordering::Equal)
+    })
 }
 
 /// One column's values: integers packed while they fit, any value once one does not.
@@ -665,7 +668,10 @@ fn parse(args: &[&str]) -> Result<(CString, Frame)> {
             }
         };
         let decl = decl.replace("NOT NULL", "");
-        let integer = decl.split_whitespace().next().is_some_and(|word| word.contains("INT"));
+        let integer = decl
+            .split_whitespace()
+            .next()
+            .is_some_and(|word| word.contains("INT"));
         declared.push(format!("{name} {}", decl.trim()));
         names.push(name.to_owned());
         columns.push(Column::new(integer, default));
@@ -803,9 +809,12 @@ unsafe impl<'vtab> VTab<'vtab> for FrameTable {
             .any(|columns| used.iter().any(|&(_, column, _)| column == columns[0]));
         let mut constants = Vec::with_capacity(used.len());
         for &(index, _, _) in &used {
-            constants.push(info.rhs_value(index).ok().flatten().map(|value| {
-                matches!(Probe::of(value).numeric(), Probe::Integer(-1..=1))
-            }));
+            constants.push(
+                info.rhs_value(index)
+                    .ok()
+                    .flatten()
+                    .map(|value| matches!(Probe::of(value).numeric(), Probe::Integer(-1..=1))),
+            );
         }
         let (cost, rows) = if unique {
             (20.0, 1)
@@ -814,9 +823,13 @@ unsafe impl<'vtab> VTab<'vtab> for FrameTable {
         } else if constants.iter().any(Option::is_none) {
             (60.0, 20)
         } else {
-            let rows = constants
-                .iter()
-                .fold(SCAN_COST, |rows, small| if *small == Some(true) { rows / 2.0 } else { rows / 4.0 });
+            let rows = constants.iter().fold(SCAN_COST, |rows, small| {
+                if *small == Some(true) {
+                    rows / 2.0
+                } else {
+                    rows / 4.0
+                }
+            });
             (SCAN_COST, rows as i64)
         };
         let mut codes = String::from("@");
@@ -901,9 +914,10 @@ impl UpdateVTab<'_> for FrameTable {
                     Probe::Integer(value) => value,
                     Probe::Real(value) if value.fract() == 0.0 => value as i64,
                     Probe::Null if row == 0 => 1,
-                    Probe::Null => frame.largest.checked_add(1).ok_or_else(|| {
-                        Error::ModuleError("frame: the rowid overflows".into())
-                    })?,
+                    Probe::Null => frame
+                        .largest
+                        .checked_add(1)
+                        .ok_or_else(|| Error::ModuleError("frame: the rowid overflows".into()))?,
                     _ => return Err(Error::ModuleError("frame: datatype mismatch".into())),
                 };
                 if row > 0 {
@@ -1090,11 +1104,7 @@ unsafe impl VTabCursor for FrameCursor<'_> {
         let mut spilled: Option<(Vec<usize>, Vec<Probe<'_>>)> = None;
         let mut empty = false;
         let frame = self.shared.get();
-        for (at, (code, value)) in codes
-            .split_terminator(',')
-            .zip(args.iter())
-            .enumerate()
-        {
+        for (at, (code, value)) in codes.split_terminator(',').zip(args.iter()).enumerate() {
             let (is, column) = match code.as_bytes().first() {
                 Some(b'~') => (true, &code[1..]),
                 Some(b'=') => (false, &code[1..]),
@@ -1239,7 +1249,15 @@ mod tests {
             "/*FRAME*/f(k INTEGER PRIMARY KEY, file); \
              INSERT INTO f VALUES (2, 0), (1, 0), (2, 1);",
         );
-        assert!(connection.prepare("SELECT * FROM f").expect("prepares").query([]).expect("runs").next().is_err());
+        assert!(
+            connection
+                .prepare("SELECT * FROM f")
+                .expect("prepares")
+                .query([])
+                .expect("runs")
+                .next()
+                .is_err()
+        );
     }
 
     #[test]
@@ -1255,7 +1273,10 @@ mod tests {
                 .to_vec()
         );
         assert_eq!(
-            rows(&connection, "SELECT unk FROM s WHERE file = '1' AND node = 4"),
+            rows(
+                &connection,
+                "SELECT unk FROM s WHERE file = '1' AND node = 4"
+            ),
             vec![vec![Value::Integer(0)]]
         );
     }
@@ -1334,7 +1355,10 @@ mod tests {
                 run();
                 best = best.min(started.elapsed().as_secs_f64());
             }
-            eprintln!("{label}: {:.1} ns/row (best of 3)", best * 1e9 / ROWS as f64);
+            eprintln!(
+                "{label}: {:.1} ns/row (best of 3)",
+                best * 1e9 / ROWS as f64
+            );
         };
         time("generate only", &mut || {
             let mut statement = connection.prepare_cached(&source).expect("prepares");

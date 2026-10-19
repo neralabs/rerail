@@ -67,7 +67,12 @@ fn tables_made_alone() {
         let frames = started.elapsed().as_secs_f64();
         let btrees = btrees.map_or_else(
             || "B-trees skipped".to_owned(),
-            |btrees| format!("B-trees {btrees:.3}s ({:.1} µs/table)", btrees * 1e6 / n as f64),
+            |btrees| {
+                format!(
+                    "B-trees {btrees:.3}s ({:.1} µs/table)",
+                    btrees * 1e6 / n as f64
+                )
+            },
         );
         eprintln!(
             "{n:>7} tables: {btrees}, frames made and read once {frames:.3}s ({:.1} µs/table)",

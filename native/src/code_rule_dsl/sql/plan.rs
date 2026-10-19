@@ -204,9 +204,6 @@ pub(super) struct Unit {
     /// The slots the body reads and binds, in the unit's own scope: its key, and its answer.
     pub(super) key: Vec<SlotId>,
     pub(super) body: Op,
-    /// A capture-free unit of a per-batch stage: every node of these kinds (`None`: every node)
-    /// is demanded up front, so references add no demand.
-    pub(super) seed: Option<Option<Vec<u16>>>,
     /// The units that reach each other (a strongly connected component) share one loop.
     pub(super) scc: usize,
 }
@@ -251,8 +248,6 @@ pub(super) enum Op {
         max: Option<usize>,
         bind: Option<(SlotId, i64)>,
     },
-    /// A semi-join with a shared stage: a context-free utility.
-    Stage(usize),
     /// A parameterized call: `entry` copies caller captures into parameters, `body` runs in the
     /// callee's scope, `returns` brings back what it bound.
     Call {
@@ -379,7 +374,7 @@ impl Op {
     /// Whether the operator can bind a slot.
     pub(super) fn binds(&self) -> bool {
         match self {
-            Self::Kinds(_) | Self::Regex(_) | Self::Never | Self::Not(_) | Self::Stage(_) => false,
+            Self::Kinds(_) | Self::Regex(_) | Self::Never | Self::Not(_) => false,
             Self::Unknowable { op, .. } => op.binds(),
             Self::AllOpen(terms) => terms.iter().any(|term| term.op.binds()),
             Self::AnyOpen(branches) => branches.iter().any(|(branch, _)| branch.binds()),

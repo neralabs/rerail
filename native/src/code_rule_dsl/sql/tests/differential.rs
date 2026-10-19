@@ -1603,9 +1603,10 @@ pub(super) fn inner_scans(plan: &[(i64, i64, String)]) -> Vec<String> {
 
 /// No statement the engine emits reads a whole table on the inner side of a join: every join
 /// back to a frame goes through a primary key or an index, and every walk through a bounded
-/// `node` constraint. Checked on the plans of the differential's generated clauses (every
-/// operator, two- and three-valued, recursion and `violation.each`), as their sessions prepare
-/// them.
+/// `node` constraint. And none is a recursive CTE: walks, stops and chains are structural
+/// primitives behind virtual tables. Checked on the plans of the differential's generated clauses
+/// (every operator, two- and three-valued, recursion and `violation.each`), as their sessions
+/// prepare them.
 #[test]
 fn emitted_joins_never_scan_a_whole_table_on_the_inner_side() {
     use crate::code_rule_dsl::test_support::grammar_matchers;
@@ -1651,6 +1652,7 @@ fn emitted_joins_never_scan_a_whole_table_on_the_inner_side() {
         let session = program.session().expect("a session");
         for (sql, plan) in session.plans().expect("plans") {
             statements += 1;
+            assert!(!sql.contains("RECURSIVE"), "a recursive CTE: {sql}");
             for detail in inner_scans(&plan) {
                 // One example statement per offending plan line, with the tables' numbers cut.
                 let shape: String = detail

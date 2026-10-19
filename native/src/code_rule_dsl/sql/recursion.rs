@@ -56,12 +56,8 @@ pub(super) fn util_key(util: &UtilRef) -> UtilKey {
 
 /// A strongly connected component of the utility graph: utilities that reach each other.
 pub(super) struct Cycle {
-    /// The members, by index in their table.
-    pub(super) members: Vec<UtilRef>,
+    /// The members' keys, by index in their table.
     pub(super) keys: Vec<UtilKey>,
-    /// Whether every member is a utility without parameters whose verdict reads and binds no
-    /// capture: the cycle is then a per-batch stage.
-    pub(super) capture_free: bool,
     /// Why the cycle is refused, if it is.
     pub(super) refused: Option<&'static str>,
 }
@@ -192,21 +188,6 @@ pub(super) fn repeated(roots: &[&AstMatcher]) -> HashSet<UtilKey> {
         .collect()
 }
 
-/// Whether a capture-free shared utility: no parameters, no capture read or bound.
-fn capture_free_shared(util: &UtilRef) -> bool {
-    let framed = util
-        .table
-        .upgrade()
-        .is_some_and(|table| table.framed.get(util.index).copied().unwrap_or(false));
-    !framed
-        && util
-            .with_target(|rule| {
-                let mut analysis = crate::code_rule_dsl::matcher::CaptureAnalysis::default();
-                analysis.mentions(rule).is_empty() && analysis.counts(rule).is_empty()
-            })
-            .unwrap_or(true)
-}
-
 impl Cycle {
     /// The cycle `util` belongs to; `None` where it does not reach itself.
     fn of(util: &UtilRef) -> Option<Self> {
@@ -234,8 +215,6 @@ impl Cycle {
             });
         }
         Some(Self {
-            capture_free: members.iter().all(capture_free_shared),
-            members,
             keys,
             refused: in_stop.then_some("recursive utility in a stop rule"),
         })
