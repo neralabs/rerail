@@ -387,6 +387,15 @@ fn run_corpus() {
         differ.len(),
         started.elapsed().as_secs_f64()
     );
+    {
+        use std::sync::atomic::Ordering::Relaxed;
+        let bytes = crate::code_rule_dsl::sql::nodes::FACT_BYTES.load(Relaxed);
+        let nodes = crate::code_rule_dsl::sql::nodes::FACT_NODES.load(Relaxed).max(1);
+        eprintln!(
+            "node facts: {:.1} B/node beside the tape records ({bytes} B over {nodes} nodes)",
+            bytes as f64 / nodes as f64
+        );
+    }
     for (clause, native, sql) in differ.iter().take(3) {
         let cut = |text: &str| text.chars().take(1500).collect::<String>();
         eprintln!(
