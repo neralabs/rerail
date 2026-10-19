@@ -64,8 +64,10 @@ impl Emitter<'_> {
             Op::Constrained { rule, constraints } => {
                 self.constrained_open(rule, constraints, input)
             }
-            Op::All(_) | Op::Any(_) | Op::Relation { .. } => {
-                unreachable!("a three-valued clause lowers them as AllOpen, AnyOpen and Search")
+            Op::All(items) => self.each_open(items, input),
+            Op::NthCommit { nth, commit } => self.nth_commit_open(nth, commit, input),
+            Op::Any(_) | Op::Relation { .. } => {
+                unreachable!("a three-valued clause lowers them as AnyOpen and Search")
             }
             _ => return None,
         })

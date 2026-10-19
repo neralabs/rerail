@@ -77,16 +77,6 @@ impl ProgramBuilder {
         grammar: &GrammarMatcher,
         each: Option<&str>,
     ) -> Result<Statement, Unsupported> {
-        // `violation.each` excludes candidates in the two-valued operators only: a three-valued
-        // `all`, `any` and relation (`AllOpen`, `AnyOpen`, `Search`) thread verdicts the
-        // exclusion rounds do not carry.
-        if grammar.three_valued && each.is_some() {
-            let refusal = Unsupported("three-valued violation.each".into());
-            match &mut self.census {
-                Some(census) => census.push(refusal),
-                None => return Err(refusal),
-            }
-        }
         let kinds = grammar
             .anchors
             .root_kinds()
@@ -960,6 +950,14 @@ impl<'p> Lowerer<'p> {
                     (Some(rule), Some(OfRule::Frame(probe)))
                         if self.exclude.is_some() && probe.binds() =>
                     {
+                        // `NthChild::index` re-matches `ofRule` at the node excluding, and drops
+                        // its verdict: an unknown re-match leaves `UNKNOWN` set on a true or a
+                        // false `nthChild` (see `emit/each.rs`), which no frame verdict is.
+                        if self.three && reads_values(rule, &mut BTreeSet::new()) {
+                            return unsupported(
+                                "three-valued nthChild whose excluding commit may be unknown",
+                            );
+                        }
                         Some(self.lower(rule, scope, bound)?.0)
                     }
                     _ => None,

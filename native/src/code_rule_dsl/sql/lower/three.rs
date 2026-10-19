@@ -64,7 +64,8 @@ impl Lowerer<'_> {
         Ok((Op::AllOpen(terms), current))
     }
 
-    /// `match_any`'s branches, each with whether it may bind (`relation::may_bind`).
+    /// `match_any`'s branches, each with whether it may bind (`relation::may_bind`); under
+    /// `violation.each`, each branch excluding (`emit/each.rs`).
     pub(super) fn any_open(
         &mut self,
         items: &[AstMatcher],
@@ -75,13 +76,14 @@ impl Lowerer<'_> {
         let mut out = bound.clone();
         for item in items {
             let (op, branch) = self.lower(item, scope, bound)?;
-            branches.push((op, may_bind(item)));
+            branches.push((self.excluding(scope, op), may_bind(item)));
             out.extend(branch);
         }
         Ok((Op::AnyOpen(branches), out))
     }
 
-    /// A relation (with or without a field) as `Search` runs it: strict where its rule may bind.
+    /// A relation (with or without a field) as `Search` runs it: strict where its rule may bind;
+    /// under `violation.each`, its rule excluding (`emit/each.rs`).
     pub(super) fn search(
         &mut self,
         matcher: &AstMatcher,
@@ -105,6 +107,7 @@ impl Lowerer<'_> {
         };
         let (sub, out) = self.walked(rule, scope, bound)?;
         self.leaks(&sub)?;
+        let sub = self.excluding(scope, sub);
         let binds = sub.binds();
         Ok((
             Op::Search {
