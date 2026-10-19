@@ -802,6 +802,30 @@ static ENGINE_NANOS: [std::sync::atomic::AtomicU64; 4] = [
     std::sync::atomic::AtomicU64::new(0),
 ];
 
+/// The longest SQL time of one case, in milliseconds, and how many cases took 2 s or more in
+/// either engine.
+static SLOWEST_CASE_MILLIS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static CASES_OVER_TWO_SECONDS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Appends `line` to `RERAIL_SQL_DIFF_SLOW_LOG`, where it is set.
+fn slow_log(line: &Value) {
+    use std::io::Write as _;
+    if let Ok(path) = std::env::var("RERAIL_SQL_DIFF_SLOW_LOG") {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| writeln!(file, "{line}"))
+            .expect("the slow-case log");
+    }
+}
+
+thread_local! {
+    /// The native and SQL seconds of the thread's last case.
+    static LAST_TIMES: std::cell::Cell<(f64, f64)> = const { std::cell::Cell::new((0.0, 0.0)) };
+}
+
 fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value) -> Outcome {
     // A case known to take hours on the SQL engine (`RERAIL_SQL_DIFF_SKIP`: a fragment of its
     // rule's JSON) is skipped, and counted.
@@ -810,6 +834,7 @@ fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value)
         && ast.to_string().contains(&fragment)
     {
         eprintln!("skipped case: {ast}");
+        slow_log(&json!({ "ast": ast, "violation": violation, "skipped": true }));
         return Outcome::Rejected;
     }
     let document = clause_document(
@@ -841,6 +866,7 @@ fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value)
     let unknown = unknowns.get() > 0;
     let at = if three { 2 } else { 0 };
     let (native_time, sql_time) = (between.duration_since(started), between.elapsed());
+    LAST_TIMES.set((native_time.as_secs_f64(), sql_time.as_secs_f64()));
     ENGINE_NANOS[at].fetch_add(
         native_time.as_nanos() as u64,
         std::sync::atomic::Ordering::Relaxed,
@@ -849,13 +875,29 @@ fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value)
         sql_time.as_nanos() as u64,
         std::sync::atomic::Ordering::Relaxed,
     );
-    if sql_time.max(native_time).as_secs() >= 5 {
+    let slowest = sql_time.max(native_time);
+    if slowest.as_secs() >= 5 {
         eprintln!(
             "slow case: native {:.1}s, sql {:.1}s: {}",
             native_time.as_secs_f64(),
             sql_time.as_secs_f64(),
             ast.to_string().chars().take(800).collect::<String>()
         );
+    }
+    SLOWEST_CASE_MILLIS.fetch_max(
+        sql_time.as_millis() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    if slowest >= std::time::Duration::from_secs(2) {
+        CASES_OVER_TWO_SECONDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // `RERAIL_SQL_DIFF_SLOW_LOG`: every case over 2 s, whole, one JSON line each, for
+        // `replayed_cases_agree`.
+        slow_log(&json!({
+            "ast": ast,
+            "violation": violation,
+            "native": native_time.as_secs_f64(),
+            "sql": sql_time.as_secs_f64(),
+        }));
     }
     if native.as_ref().is_ok_and(|output| {
         output.contains(UtilLimit::Depth.message()) || output.contains(UtilLimit::Work.message())
@@ -1055,6 +1097,11 @@ fn generated_rules_agree_with_the_native_matcher() {
         seconds(2),
         seconds(3)
     );
+    eprintln!(
+        "slowest case: sql {:.1}s; {} cases took 2 s or more",
+        SLOWEST_CASE_MILLIS.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e3,
+        CASES_OVER_TWO_SECONDS.load(std::sync::atomic::Ordering::Relaxed)
+    );
     for (ast, reason) in unsupported.iter().take(5) {
         eprintln!("unsupported: {reason}\n  {ast}");
     }
@@ -1088,4 +1135,63 @@ fn generated_rules_agree_with_the_native_matcher() {
         differences.len(),
         unsupported.len()
     );
+}
+
+/// The cases of `RERAIL_SQL_DIFF_REPLAY` (lines of `RERAIL_SQL_DIFF_SLOW_LOG`), one at a time on
+/// the differential's inputs: each one's native and SQL time, the rows its statements wrote, and
+/// whether the engines agree. Run by hand:
+/// `RERAIL_SQL_DIFF_REPLAY=<file> cargo test --release sql::tests::differential::replayed -- --ignored --nocapture`.
+#[test]
+#[ignore = "replays a file of cases, run by hand"]
+fn replayed_cases_agree() {
+    use crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE;
+    let path = std::env::var("RERAIL_SQL_DIFF_REPLAY").expect("RERAIL_SQL_DIFF_REPLAY");
+    let inputs: Vec<(&str, Value)> = FIXTURES
+        .iter()
+        .map(|(label, paths)| {
+            let vocabulary = Vocabulary::of(label, paths);
+            let files: Vec<(&str, &str, &str)> = vocabulary
+                .files
+                .iter()
+                .map(|(path, source)| (*label, path.as_str(), source.as_str()))
+                .collect();
+            (*label, snapshot(&files))
+        })
+        .collect();
+    let mut capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
+    capabilities["limits"]["maxWitnesses"] = json!(1_000_000);
+    capabilities["limits"]["maxVisitedNodes"] = json!(1_000_000_000);
+    let mut differ = 0;
+    for line in std::fs::read_to_string(&path).expect("replay file").lines() {
+        let case: Value = serde_json::from_str(line).expect("a JSON case");
+        let (ast, violation) = (&case["ast"], &case["violation"]);
+        let language = ast["language"].as_str().expect("a language");
+        let input = &inputs
+            .iter()
+            .find(|(label, _)| *label == language)
+            .expect("a fixture language")
+            .1;
+        STATEMENT_PROFILE.set(Some(Default::default()));
+        let outcome = run_case(ast, violation, input, &capabilities);
+        let profile = STATEMENT_PROFILE.take().unwrap_or_default();
+        let rows: usize = profile.values().map(|(_, rows, _)| rows).sum();
+        let statements: usize = profile.values().map(|(_, _, runs)| runs).sum();
+        let verdict = match &outcome {
+            Outcome::Same { found, .. } => format!("same, {found} violations"),
+            Outcome::Differs { .. } => {
+                differ += 1;
+                "DIFFERS".to_owned()
+            }
+            Outcome::Unsupported(reason) => reason.clone(),
+            Outcome::NativeLimit => "native limit".to_owned(),
+            Outcome::Rejected => "rejected".to_owned(),
+        };
+        let (native, sql) = LAST_TIMES.get();
+        eprintln!(
+            "replayed: native {native:.3}s, sql {sql:.3}s (logged {:.1}s); {statements} statements, {rows} rows; {verdict}: {}",
+            case["sql"].as_f64().unwrap_or(-1.0),
+            ast.to_string().chars().take(300).collect::<String>()
+        );
+    }
+    assert_eq!(differ, 0, "{differ} replayed cases differ");
 }
