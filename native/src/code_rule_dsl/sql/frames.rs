@@ -6,6 +6,11 @@
 //! and kept until the frame is written again. The driver empties a frame directly (`CLEAR`), and
 //! an emptied frame keeps its buffers for the next batch, up to `RETAIN` rows.
 //!
+//! Each frame is an eponymous virtual table: a module registered under the frame's name, whose
+//! declaration the module's data carries (`FrameStore::register`). Creating one writes nothing to
+//! the schema, so a session's setup takes time linear in its tables; a `CREATE TABLE` would scan
+//! the whole schema to parse its own entry, and setup would grow with the square of the tables.
+//!
 //! A frame keeps the B-tree semantics the statements rely on:
 //! - an `INTEGER PRIMARY KEY` column is the rowid: a NULL takes the largest key so far plus one,
 //!   a key is unique, and scans run in key order;
@@ -22,10 +27,11 @@
 
 use rusqlite::types::{ToSqlOutput, Value, ValueRef};
 use rusqlite::vtab::{
-    Context, CreateVTab, Filters, IndexConstraintOp, IndexFlags, IndexInfo, Inserts, Updates,
-    UpdateVTab, VTab, VTabConnection, VTabCursor, VTabKind, sqlite3_vtab, sqlite3_vtab_cursor,
+    Context, CreateVTab, Filters, IndexConstraintOp, IndexFlags, IndexInfo, Inserts, Module,
+    Updates, UpdateVTab, VTab, VTabConnection, VTabCursor, VTabKind, sqlite3_vtab,
+    sqlite3_vtab_cursor,
 };
-use rusqlite::{Error, Result};
+use rusqlite::{Connection, Error, Result};
 use std::borrow::Cow;
 use std::cell::{RefCell, UnsafeCell};
 use std::cmp::Ordering;
@@ -39,6 +45,11 @@ use std::sync::atomic::{AtomicUsize, Ordering as Atomic};
 /// A step that empties the frame it names (`CLEAR` then the table's name): the driver runs it on
 /// the frame's buffers instead of a `DELETE`.
 pub(super) const CLEAR: &str = "/*CLEAR*/";
+
+/// A step that makes a frame (`FRAME` then the table's name and its declaration in parentheses:
+/// the column definitions and table constraints of the `CREATE TABLE` it stands for, then its
+/// indexes as `INDEX (…)`): the driver registers it (`FrameStore::register`).
+pub(super) const FRAME: &str = "/*FRAME*/";
 
 /// The most rows a session's frames hold at once: a batch that would hold more fails.
 pub(super) const BUDGET: usize = 1 << 26;
@@ -58,10 +69,9 @@ fn table_after<'s>(sql: &'s str, prefix: &str) -> Option<&'s str> {
 }
 
 /// A stage's or clause's statements with its frames in Rust memory: each table they create that
-/// no statement updates or deletes from by a condition becomes a `frame` virtual table, its
-/// indexes become `INDEX (…)` arguments of the table (the plans weigh them as before; a frame
-/// builds an index on its first read on those columns), and emptying it whole becomes a `CLEAR`
-/// step.
+/// no statement updates or deletes from by a condition becomes a `FRAME` step, its indexes
+/// `INDEX (…)` entries of its declaration (the plans weigh them as before; a frame builds an
+/// index on its first read on those columns), and emptying it whole becomes a `CLEAR` step.
 pub(super) fn rewrite(statements: Vec<String>) -> Vec<String> {
     let mut mutated = std::collections::HashSet::new();
     // Each table's indexed columns, as `INDEX (…)` arguments.
@@ -88,10 +98,7 @@ pub(super) fn rewrite(statements: Vec<String>) -> Vec<String> {
     let mut rewritten = Vec::with_capacity(statements.len());
     for sql in &statements {
         if let Some(rest) = sql.strip_prefix("CREATE TEMP TABLE ") {
-            let (exists, rest) = match rest.strip_prefix("IF NOT EXISTS ") {
-                Some(rest) => ("IF NOT EXISTS ", rest),
-                None => ("", rest),
-            };
+            let rest = rest.strip_prefix("IF NOT EXISTS ").unwrap_or(rest);
             if let (Some(open), Some(close)) = (rest.find('('), rest.rfind(')'))
                 && rest[close + 1..].trim().is_empty()
             {
@@ -100,7 +107,7 @@ pub(super) fn rewrite(statements: Vec<String>) -> Vec<String> {
                 if !mutated.contains(name) && !rest.contains(" DEFAULT ") {
                     frames.insert(name.to_owned());
                     rewritten.push(format!(
-                        "CREATE VIRTUAL TABLE {exists}temp.{name} USING frame({}{})",
+                        "{FRAME}{name}({}{})",
                         &rest[open + 1..close],
                         indexes.get(name).map_or("", String::as_str)
                     ));
@@ -136,7 +143,83 @@ pub(super) struct FrameStore {
     peak: AtomicUsize,
 }
 
+/// The `frame` module: every frame is an eponymous table of its own registration of it.
+const MODULE: Module<'static, FrameTable> = Module::update_module();
+
+/// What a frame's module registration carries: the frame, and the store that counts its rows.
+pub(super) struct FrameAux {
+    store: Arc<FrameStore>,
+    shared: Arc<Shared>,
+    schema: CString,
+}
+
+/// `text` split at its top-level commas (none inside parentheses or quotes), as SQLite splits a
+/// virtual table's arguments.
+fn arguments(text: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let (mut depth, mut quoted, mut from) = (0usize, false, 0);
+    for (at, byte) in text.bytes().enumerate() {
+        match byte {
+            b'"' => quoted = !quoted,
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => depth = depth.saturating_sub(1),
+            b',' if !quoted && depth == 0 => {
+                parts.push(text[from..at].trim());
+                from = at + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(text[from..].trim());
+    parts.retain(|part| !part.is_empty());
+    parts
+}
+
 impl FrameStore {
+    /// Makes the frame a `FRAME` step declares (`declaration` is the step after the marker) on
+    /// `connection`: a registration of the `frame` module under the frame's name, whose eponymous
+    /// table is the frame. A frame of that name already made stays (`CREATE TABLE IF NOT
+    /// EXISTS`). Returns the frame's name.
+    pub(super) fn register<'d>(
+        self: &Arc<Self>,
+        connection: &Connection,
+        declaration: &'d str,
+    ) -> Result<&'d str> {
+        let bad = || Error::ModuleError(format!("frame: bad declaration {declaration}"));
+        let open = declaration.find('(').ok_or_else(bad)?;
+        let close = declaration.rfind(')').filter(|&close| close > open).ok_or_else(bad)?;
+        let name = declaration[..open].trim();
+        if self.frames.lock().contains_key(name) {
+            return Ok(name);
+        }
+        let (schema, frame) = parse(&arguments(&declaration[open + 1..close]))?;
+        let shared = Arc::new(Shared(UnsafeCell::new(frame)));
+        self.frames
+            .lock()
+            .insert(name.to_owned(), Arc::clone(&shared));
+        connection.create_module(
+            name,
+            &MODULE,
+            Some(FrameAux {
+                store: Arc::clone(self),
+                shared,
+                schema,
+            }),
+        )?;
+        Ok(name)
+    }
+
+    /// Whether a frame has the name `name`.
+    pub(super) fn contains(&self, name: &str) -> bool {
+        self.frames.lock().contains_key(name)
+    }
+
+    /// How many frames the store holds.
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.frames.lock().len()
+    }
+
     /// Empties frame `name`, keeping its buffers. `false` where no frame has that name.
     pub(super) fn clear(&self, name: &str) -> bool {
         let Some(shared) = self.frames.lock().get(name).cloned() else {
@@ -531,10 +614,10 @@ impl Column {
     }
 }
 
-/// A frame's declared schema and empty buffers, from its `CREATE VIRTUAL TABLE` arguments: the
+/// A frame's declared schema and empty buffers, from its declaration's entries (`FRAME`): the
 /// column definitions and table constraints of the `CREATE TABLE` it stands for, then the
 /// table's indexes (`INDEX (…)`, `rewrite`).
-fn parse(args: &[&[u8]]) -> Result<(CString, Frame)> {
+fn parse(args: &[&str]) -> Result<(CString, Frame)> {
     let mut declared = Vec::new();
     let mut names: Vec<String> = Vec::new();
     let mut columns = Vec::new();
@@ -545,10 +628,8 @@ fn parse(args: &[&[u8]]) -> Result<(CString, Frame)> {
         let text = text.trim().trim_start_matches('(').trim_end_matches(')');
         text.split(',').map(|name| name.trim().to_owned()).collect()
     };
-    for arg in args {
-        let arg = std::str::from_utf8(arg)
-            .map_err(|_| Error::ModuleError("frame: a column is not UTF-8".into()))?
-            .trim();
+    for &arg in args {
+        let arg = arg.trim();
         if let Some(columns) = arg.strip_prefix("PRIMARY KEY") {
             primary = Some(list(columns));
             continue;
@@ -633,50 +714,32 @@ pub(super) struct FrameTable {
 }
 
 impl FrameTable {
-    fn open_table(
-        aux: Option<&Arc<FrameStore>>,
-        table: &[u8],
-        args: &[&[u8]],
-        fresh: bool,
-    ) -> Result<(Cow<'static, CStr>, Self)> {
-        let store = Arc::clone(aux.ok_or_else(|| Error::ModuleError("frame: no store".into()))?);
-        let name = String::from_utf8_lossy(table).into_owned();
-        let (schema, frame) = parse(args)?;
-        let shared = {
-            let mut frames = store.frames.lock();
-            match frames.get(&name) {
-                Some(shared) if !fresh => Arc::clone(shared),
-                _ => {
-                    let shared = Arc::new(Shared(UnsafeCell::new(frame)));
-                    frames.insert(name, Arc::clone(&shared));
-                    shared
-                }
-            }
-        };
+    fn of(aux: Option<&FrameAux>) -> Result<(Cow<'static, CStr>, Self)> {
+        let aux = aux.ok_or_else(|| Error::ModuleError("frame: no frame".into()))?;
         Ok((
-            Cow::Owned(schema),
+            Cow::Owned(aux.schema.clone()),
             Self {
                 base: sqlite3_vtab::default(),
-                shared,
-                store,
+                shared: Arc::clone(&aux.shared),
+                store: Arc::clone(&aux.store),
             },
         ))
     }
 }
 
 unsafe impl<'vtab> VTab<'vtab> for FrameTable {
-    type Aux = Arc<FrameStore>;
+    type Aux = FrameAux;
     type Cursor = FrameCursor<'vtab>;
 
     fn connect(
         _db: &mut VTabConnection,
-        aux: Option<&Arc<FrameStore>>,
+        aux: Option<&FrameAux>,
         _module: &[u8],
         _database: &[u8],
-        table: &[u8],
-        args: &[&[u8]],
+        _table: &[u8],
+        _args: &[&[u8]],
     ) -> Result<(Cow<'static, CStr>, Self)> {
-        Self::open_table(aux, table, args, false)
+        Self::of(aux)
     }
 
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
@@ -787,26 +850,18 @@ unsafe impl<'vtab> VTab<'vtab> for FrameTable {
 }
 
 impl CreateVTab<'_> for FrameTable {
-    const KIND: VTabKind = VTabKind::Default;
+    // Eponymous: `xCreate` is `xConnect`, so a frame is never in the schema.
+    const KIND: VTabKind = VTabKind::Eponymous;
 
     fn create(
         _db: &mut VTabConnection,
-        aux: Option<&Arc<FrameStore>>,
+        aux: Option<&FrameAux>,
         _module: &[u8],
         _database: &[u8],
-        table: &[u8],
-        args: &[&[u8]],
+        _table: &[u8],
+        _args: &[&[u8]],
     ) -> Result<(Cow<'static, CStr>, Self)> {
-        Self::open_table(aux, table, args, true)
-    }
-
-    fn destroy(&self) -> Result<()> {
-        let shared = &self.shared;
-        self.store
-            .frames
-            .lock()
-            .retain(|_, frame| !Arc::ptr_eq(frame, shared));
-        Ok(())
+        Self::of(aux)
     }
 }
 
@@ -1113,18 +1168,25 @@ unsafe impl VTabCursor for FrameCursor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
-    use rusqlite::vtab::Module;
 
-    const MODULE: Module<'static, FrameTable> = Module::update_module();
-
-    fn connection() -> (Connection, Arc<FrameStore>) {
+    /// A connection and its frame store, with `sql` run on it: its statements in order, a
+    /// `FRAME` step registered.
+    fn connection(sql: &str) -> (Connection, Arc<FrameStore>) {
         let store = Arc::new(FrameStore::default());
         let connection = Connection::open_in_memory().expect("opens");
-        connection
-            .create_module(c"frame", &MODULE, Some(Arc::clone(&store)))
-            .expect("module");
+        run(&connection, &store, sql);
         (connection, store)
+    }
+
+    fn run(connection: &Connection, store: &Arc<FrameStore>, sql: &str) {
+        for statement in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+            match statement.strip_prefix(FRAME) {
+                Some(declaration) => {
+                    store.register(connection, declaration).expect("registers");
+                }
+                None => connection.execute_batch(statement).expect("runs"),
+            }
+        }
     }
 
     fn rows(connection: &Connection, sql: &str) -> Vec<Vec<Value>> {
@@ -1141,15 +1203,12 @@ mod tests {
 
     #[test]
     fn a_rowid_frame_numbers_null_keys_and_scans_in_key_order() {
-        let (connection, store) = connection();
-        connection
-            .execute_batch(
-                "CREATE VIRTUAL TABLE temp.f USING frame(k INTEGER PRIMARY KEY, file, node); \
-                 INSERT INTO f VALUES (5, 0, 50), (2, 0, 20); \
-                 INSERT INTO f SELECT NULL, 1, 60; \
-                 INSERT INTO f(file, node) VALUES (1, 70);",
-            )
-            .expect("fills");
+        let (connection, store) = connection(
+            "/*FRAME*/f(k INTEGER PRIMARY KEY, file, node); \
+             INSERT INTO f VALUES (5, 0, 50), (2, 0, 20); \
+             INSERT INTO f SELECT NULL, 1, 60; \
+             INSERT INTO f(file, node) VALUES (1, 70);",
+        );
         assert_eq!(
             rows(&connection, "SELECT k, file, node FROM f"),
             [[2, 0, 20], [5, 0, 50], [6, 1, 60], [7, 1, 70]]
@@ -1176,25 +1235,19 @@ mod tests {
 
     #[test]
     fn a_duplicate_key_fails() {
-        let (connection, _) = connection();
-        connection
-            .execute_batch(
-                "CREATE VIRTUAL TABLE temp.f USING frame(k INTEGER PRIMARY KEY, file); \
-                 INSERT INTO f VALUES (2, 0), (1, 0), (2, 1);",
-            )
-            .expect("fills");
+        let (connection, _) = connection(
+            "/*FRAME*/f(k INTEGER PRIMARY KEY, file); \
+             INSERT INTO f VALUES (2, 0), (1, 0), (2, 1);",
+        );
         assert!(connection.prepare("SELECT * FROM f").expect("prepares").query([]).expect("runs").next().is_err());
     }
 
     #[test]
     fn defaults_apply_and_a_primary_key_orders_scans() {
-        let (connection, _) = connection();
-        connection
-            .execute_batch(
-                "CREATE VIRTUAL TABLE temp.s USING frame(file INTEGER, node INTEGER, unk INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (file, node)); \
-                 INSERT INTO s(file, node) VALUES (1, 4), (0, 9), (1, 2);",
-            )
-            .expect("fills");
+        let (connection, _) = connection(
+            "/*FRAME*/s(file INTEGER, node INTEGER, unk INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (file, node)); \
+             INSERT INTO s(file, node) VALUES (1, 4), (0, 9), (1, 2);",
+        );
         assert_eq!(
             rows(&connection, "SELECT file, node, unk FROM s"),
             [[0, 9, 0], [1, 2, 0], [1, 4, 0]]
@@ -1209,17 +1262,14 @@ mod tests {
 
     #[test]
     fn lookups_compare_as_sqlite_does() {
-        let (connection, _) = connection();
-        connection
-            .execute_batch(
-                "CREATE VIRTUAL TABLE temp.f USING frame(k INTEGER PRIMARY KEY, file, node, s0); \
-                 INSERT INTO f SELECT NULL, 0, 1, NULL; \
-                 INSERT INTO f SELECT NULL, 0, 1, 'x'; \
-                 INSERT INTO f SELECT NULL, 0, 1, 3000000000; \
-                 INSERT INTO f SELECT NULL, 0, 1, 2.0; \
-                 CREATE TABLE p(v); INSERT INTO p VALUES (NULL), ('x'), (3000000000), (2), (7);",
-            )
-            .expect("fills");
+        let (connection, _) = connection(
+            "/*FRAME*/f(k INTEGER PRIMARY KEY, file, node, s0); \
+             INSERT INTO f SELECT NULL, 0, 1, NULL; \
+             INSERT INTO f SELECT NULL, 0, 1, 'x'; \
+             INSERT INTO f SELECT NULL, 0, 1, 3000000000; \
+             INSERT INTO f SELECT NULL, 0, 1, 2.0; \
+             CREATE TABLE p(v); INSERT INTO p VALUES (NULL), ('x'), (3000000000), (2), (7);",
+        );
         assert_eq!(
             rows(
                 &connection,
@@ -1244,14 +1294,11 @@ mod tests {
 
     #[test]
     fn a_frame_reads_itself_while_appending() {
-        let (connection, store) = connection();
-        connection
-            .execute_batch(
-                "CREATE VIRTUAL TABLE temp.f USING frame(k INTEGER PRIMARY KEY, node); \
-                 INSERT INTO f(node) VALUES (1), (2); \
-                 INSERT INTO f SELECT NULL, node + 10 FROM f;",
-            )
-            .expect("fills");
+        let (connection, store) = connection(
+            "/*FRAME*/f(k INTEGER PRIMARY KEY, node); \
+             INSERT INTO f(node) VALUES (1), (2); \
+             INSERT INTO f SELECT NULL, node + 10 FROM f;",
+        );
         assert_eq!(
             rows(&connection, "SELECT k, node FROM f"),
             [[1, 1], [2, 2], [3, 11], [4, 12]]
@@ -1259,5 +1306,79 @@ mod tests {
                 .to_vec()
         );
         assert_eq!(store.peak(), 4);
+    }
+
+    /// What a frame write costs, by path: a TEMP B-tree's `INSERT … SELECT` (with its index), a
+    /// frame's `INSERT … SELECT` (`xUpdate` per row), and a sink (the driver steps the `SELECT`
+    /// and appends each row to the frame's buffers itself). Run by hand:
+    /// `cargo test --release --lib sql::frames::tests::write_paths -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "a measurement, run by hand"]
+    fn write_paths() {
+        const ROWS: i64 = 2_000_000;
+        let (connection, store) = connection(
+            "PRAGMA temp_store = MEMORY; \
+             CREATE TEMP TABLE b(k INTEGER PRIMARY KEY, file, node, s0); \
+             CREATE INDEX b_at ON b(file, node); \
+             /*FRAME*/f(k INTEGER PRIMARY KEY, file, node, s0, INDEX (file, node)); \
+             /*FRAME*/s(k INTEGER PRIMARY KEY, file, node, s0, INDEX (file, node));",
+        );
+        let source = format!(
+            "WITH RECURSIVE g(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM g WHERE i < {ROWS}) \
+             SELECT NULL, i / 1000, i, i % 7 FROM g"
+        );
+        let time = |label: &str, run: &mut dyn FnMut()| {
+            let mut best = f64::MAX;
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                run();
+                best = best.min(started.elapsed().as_secs_f64());
+            }
+            eprintln!("{label}: {:.1} ns/row (best of 3)", best * 1e9 / ROWS as f64);
+        };
+        time("generate only", &mut || {
+            let mut statement = connection.prepare_cached(&source).expect("prepares");
+            let mut rows = statement.query([]).expect("runs");
+            while rows.next().expect("a row").is_some() {}
+        });
+        time("B-tree INSERT … SELECT", &mut || {
+            connection.execute("DELETE FROM b", []).expect("clears");
+            connection
+                .execute(&format!("INSERT INTO b {source}"), [])
+                .expect("fills");
+        });
+        time("frame INSERT … SELECT (xUpdate)", &mut || {
+            store.clear("f");
+            connection
+                .execute(&format!("INSERT INTO f {source}"), [])
+                .expect("fills");
+        });
+        let shared = Arc::clone(store.frames.lock().get("s").expect("frame s"));
+        time("frame sink (driver appends)", &mut || {
+            store.clear("s");
+            let mut statement = connection.prepare_cached(&source).expect("prepares");
+            let width = statement.column_count();
+            let mut rows = statement.query([]).expect("runs");
+            // SAFETY: no statement reads `s` while it is filled.
+            let frame = unsafe { shared.get_mut() };
+            while let Some(row) = rows.next().expect("a row") {
+                let at = frame.len;
+                for column in 0..width {
+                    let value = row.get_ref(column).expect("a value");
+                    let value = if column == 0 {
+                        ValueRef::Integer(at as i64 + 1)
+                    } else {
+                        value
+                    };
+                    frame.columns[column].push(at, value);
+                }
+                frame.len += 1;
+            }
+            store.live.fetch_add(frame.len, Atomic::Relaxed);
+        });
+        assert_eq!(
+            rows(&connection, "SELECT count(*) FROM f"),
+            rows(&connection, "SELECT count(*) FROM s")
+        );
     }
 }

@@ -1,11 +1,65 @@
-//! How long a session takes to set up for the data-layer benchmark's policies: every clause the
-//! engine lowers, in one program as a workspace compiles them (`workspace::sql::SqlEngine`), and
-//! one session over it, which creates every table the program's statements write. Run by hand:
-//! `cargo test --release sql::tests::setup -- --ignored --nocapture`.
+//! How a session's setup time grows with its tables. Run by hand:
+//! `cargo test --release --lib sql::tests::setup -- --ignored --nocapture --test-threads 1`.
+//!
+//! - `tables_made_alone`: making `n` TEMP B-trees against `n` frames, on a fresh connection each.
+//!   A `CREATE TABLE` scans the whole schema to parse its own entry, so B-trees take time growing
+//!   with the square of `n`; a frame is a module registration and takes constant time.
+//! - `the_benchmark_policies_session_setup`: sessions over growing prefixes of the data-layer
+//!   benchmark's lowered grammar matchers (`RERAIL_SETUP_GRAMMARS`, default `50,100,200,400`),
+//!   each compiled as a workspace compiles them (`workspace::sql::SqlEngine`).
 
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::model::{ClauseKind, Query};
+use crate::code_rule_dsl::sql::frames::FrameStore;
 use crate::code_rule_dsl::test_support::CAPABILITIES;
+use rusqlite::Connection;
+use std::sync::Arc;
+use std::time::Instant;
+
+#[test]
+#[ignore = "a measurement, run by hand"]
+fn tables_made_alone() {
+    for n in [1_000, 2_000, 4_000, 8_000, 16_000] {
+        let connection = Connection::open_in_memory().expect("opens");
+        connection
+            .execute_batch("PRAGMA temp_store = MEMORY")
+            .expect("memory");
+        let started = Instant::now();
+        for table in 0..n {
+            connection
+                .execute_batch(&format!(
+                    "CREATE TEMP TABLE t{table}(k INTEGER PRIMARY KEY, file, node, s0, s1)"
+                ))
+                .expect("a B-tree");
+        }
+        let btrees = started.elapsed().as_secs_f64();
+        let connection = Connection::open_in_memory().expect("opens");
+        let store = Arc::new(FrameStore::default());
+        let started = Instant::now();
+        for table in 0..n {
+            store
+                .register(
+                    &connection,
+                    &format!("t{table}(k INTEGER PRIMARY KEY, file, node, s0, s1)"),
+                )
+                .expect("a frame");
+        }
+        // A frame's table is connected on first use: read each once.
+        for table in 0..n {
+            connection
+                .query_row(&format!("SELECT count(*) FROM t{table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("reads");
+        }
+        let frames = started.elapsed().as_secs_f64();
+        eprintln!(
+            "{n:>6} tables: B-trees {btrees:.3}s ({:.1} µs/table), frames made and read once {frames:.3}s ({:.1} µs/table)",
+            btrees * 1e6 / n as f64,
+            frames * 1e6 / n as f64
+        );
+    }
+}
 
 #[test]
 #[ignore = "reads the data-layer benchmark's policies from outside the repository"]
@@ -26,6 +80,11 @@ fn run() {
             std::env::var("HOME").expect("HOME")
         )
     });
+    let prefixes: Vec<usize> = std::env::var("RERAIL_SETUP_GRAMMARS")
+        .unwrap_or_else(|_| "50,100,200,400".to_owned())
+        .split(',')
+        .map(|count| count.trim().parse().expect("a count"))
+        .collect();
     let mut policies: Vec<_> = std::fs::read_dir(&root)
         .unwrap_or_else(|error| panic!("{root}: {error}"))
         .filter_map(Result::ok)
@@ -54,19 +113,21 @@ fn run() {
             }
         }
     }
-    let started = std::time::Instant::now();
-    let (program, outcomes) = crate::code_rule_dsl::sql::compile_each(&grammars);
-    let compiled_in = started.elapsed();
-    let lowered = outcomes.iter().filter(|outcome| outcome.is_ok()).count();
-    for attempt in 0..3 {
-        let started = std::time::Instant::now();
+    for count in prefixes {
+        let prefix = &grammars[..count.min(grammars.len())];
+        let started = Instant::now();
+        let (program, outcomes) = crate::code_rule_dsl::sql::compile_each(prefix);
+        let compiled_in = started.elapsed();
+        let lowered = outcomes.iter().filter(|outcome| outcome.is_ok()).count();
+        let started = Instant::now();
         let session = program.session().expect("a session");
-        let setup = started.elapsed();
+        let setup = started.elapsed().as_secs_f64();
+        let (btrees, frames) = session.tables().expect("tables");
+        let tables = btrees + frames;
         eprintln!(
-            "session setup {attempt}: {:.3}s for {lowered} of {} grammar matchers ({} tables), program compiled in {:.1}s",
-            setup.as_secs_f64(),
-            grammars.len(),
-            session.tables().expect("tables"),
+            "{:>5} grammar matchers ({lowered} lowered): setup {setup:.3}s for {tables} tables ({btrees} B-trees, {frames} frames), {:.1} µs/table; program compiled in {:.1}s",
+            prefix.len(),
+            setup * 1e6 / tables.max(1) as f64,
             compiled_in.as_secs_f64(),
         );
     }

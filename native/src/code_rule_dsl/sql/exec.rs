@@ -3,7 +3,7 @@
 //! for the native witness rendering.
 
 use super::emit;
-use super::frames::{self, FrameStore, FrameTable};
+use super::frames::{self, FrameStore};
 use super::lower::{ProgramBuilder, Stage};
 use super::nodes::{NodeFacts, NodeTable};
 use super::plan::{SlotKind, Statement, Unsupported};
@@ -177,7 +177,6 @@ const NODE_MODULE: Module<'static, NodeTable> = Module::eponymous_only_module();
 const PATTERN_MODULE: Module<'static, PatternTable> = Module::eponymous_only_module();
 const TEXT_MODULE: Module<'static, TextTable> = Module::eponymous_only_module();
 const FACT_MODULE: Module<'static, FactTable> = Module::eponymous_only_module();
-const FRAME_MODULE: Module<'static, FrameTable> = Module::update_module();
 
 /// An in-memory connection whose virtual tables read `slot`'s batch.
 fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
@@ -606,7 +605,6 @@ impl Session {
         let slot = Arc::new(BatchSlot::default());
         let connection = connect(&slot)?;
         let frames = Arc::new(FrameStore::default());
-        connection.create_module(c"frame", &FRAME_MODULE, Some(Arc::clone(&frames)))?;
         connection.execute_batch(
             "PRAGMA temp_store = MEMORY; \
              CREATE TEMP TABLE runs(run INTEGER NOT NULL, file INTEGER NOT NULL, \
@@ -616,7 +614,9 @@ impl Session {
         )?;
         // Creates the frame tables (and a recursion unit's tables and indexes) of `statements`
         // now, and fixes the text of the rest, loops' markers included (`run_steps`). A table
-        // statements only append to and empty whole is a frame (`frames::rewrite`).
+        // statements only append to and empty whole is a frame (`frames::rewrite`); a name is
+        // never both.
+        let btrees = std::cell::RefCell::new(std::collections::HashSet::new());
         let prepare = |statements: &[String],
                        namespace: &str,
                        run: i64,
@@ -643,11 +643,13 @@ impl Session {
                     connection.execute_batch(&sql)?;
                     continue;
                 }
-                if let Some(table) = sql.strip_prefix("CREATE VIRTUAL TABLE ") {
-                    connection.execute_batch(&sql)?;
-                    let table = table.strip_prefix("IF NOT EXISTS ").unwrap_or(table);
-                    let name = table.strip_prefix("temp.").unwrap_or(table);
-                    let name = name.split(' ').next().unwrap_or_default();
+                if let Some(declaration) = sql.strip_prefix(frames::FRAME) {
+                    let name = frames.register(&connection, declaration)?;
+                    if btrees.borrow().contains(name) {
+                        return Err(SqlError::Sql(format!(
+                            "{name} is both a frame and a B-tree"
+                        )));
+                    }
                     let empty = format!("{}{name}", frames::CLEAR);
                     if !clear.contains(&empty) {
                         clear.push(empty);
@@ -659,6 +661,12 @@ impl Session {
                         connection.execute_batch(&sql)?;
                         let table = table.strip_prefix("IF NOT EXISTS ").unwrap_or(table);
                         let name = table.split(['(', ' ']).next().unwrap_or_default();
+                        if frames.contains(name) {
+                            return Err(SqlError::Sql(format!(
+                                "{name} is both a frame and a B-tree"
+                            )));
+                        }
+                        btrees.borrow_mut().insert(name.to_owned());
                         let empty = format!("DELETE FROM {name}");
                         if !clear.contains(&empty) {
                             clear.push(empty);
@@ -687,9 +695,12 @@ impl Session {
             )?;
             // A three-valued stage keeps the nodes it is unknown at too, with `unk`; a two-valued
             // stage's are all 0.
-            connection.execute_batch(&format!(
-                "CREATE VIRTUAL TABLE temp.{table} USING frame(file INTEGER, node INTEGER, unk INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (file, node))"
-            ))?;
+            frames.register(
+                &connection,
+                &format!(
+                    "{table}(file INTEGER, node INTEGER, unk INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (file, node))"
+                ),
+            )?;
             prepared.clear.push(format!("{}{table}", frames::CLEAR));
             let columns = if stage.three {
                 "file, node, unk"
@@ -749,15 +760,13 @@ impl Session {
 
     /// The session's tables: how many are B-trees and how many frames (`frames`).
     #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn tables(&self) -> Result<String, SqlError> {
-        let (btrees, frames): (i64, i64) = self.connection.query_row(
-            "SELECT count(*) FILTER (WHERE sql NOT LIKE 'CREATE VIRTUAL%'), \
-             count(*) FILTER (WHERE sql LIKE 'CREATE VIRTUAL%') \
-             FROM sqlite_temp_master WHERE type = 'table'",
+    pub(in crate::code_rule_dsl) fn tables(&self) -> Result<(usize, usize), SqlError> {
+        let btrees: i64 = self.connection.query_row(
+            "SELECT count(*) FROM sqlite_temp_master WHERE type = 'table'",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| row.get(0),
         )?;
-        Ok(format!("{btrees} B-trees, {frames} frames"))
+        Ok((btrees as usize, self.frames.len()))
     }
 
     /// Every statement a batch can run (stages', then clauses'), with its `EXPLAIN QUERY PLAN`
