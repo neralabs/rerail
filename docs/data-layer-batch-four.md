@@ -196,4 +196,7 @@ node --import tsx conformance/data-layer/suite.ts \
 The suite accepts `--policies <directory>` for controlled policy comparisons.
 The profiling build emits large diagnostics; direct test output to a regular file.
 Use Vitest's `--pool=threads --maxWorkers=1` to avoid the observed fork-worker stderr abort.
-The TypeScript check retains three dependency errors in unchanged activation and PI integration files.
+The full TypeScript check and TypeScript build pass with the dependencies in `package-lock.json`.
+The earlier three errors came from a borrowed dependency tree with different Pi and Node type versions.
+Installing this checkout's locked dependencies resolves them without source changes.
+All nine activation and installed Pi extension tests pass with those dependencies.

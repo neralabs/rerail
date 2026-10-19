@@ -463,7 +463,7 @@
     "structure_checks": 25,
     "dsl_productions": 38,
     "dsl_differences": 0,
-    "typescript_errors_in_unchanged_files": 3,
+    "typescript_errors_in_unchanged_files": 0,
     "policy_generator": "Ten documents and the public signature artifact reproduce byte for byte",
     "probe_regeneration": "Comparable events reproduce; actual retained duplicate-owner attribution may vary",
     "capability_tests": 14,
@@ -472,7 +472,33 @@
     "combined_source_pin_guard": "Rejects recordings from different commits",
     "runner_timeout": "First run: 285 pass; one batch-two corpus hit its 5000ms runner timeout during concurrent builds. Full rerun with 30000ms runner timeout: 286 pass. Engine limits unchanged.",
     "post_run_eviction_assertion": "Persisted threshold test also passes with an explicit successful-eviction assertion",
-    "host_adapter_entrypoints": "Public engine entrypoints and the shared fixture resolver; two signature tests pass after final import changes"
+    "host_adapter_entrypoints": "Public engine entrypoints and the shared fixture resolver; two signature tests pass after final import changes",
+    "typecheck_resolution": {
+      "cause": "The previous check borrowed dependencies from another checkout instead of using this checkout's package-lock.json. Its Pi and Node typings differed from the pinned versions.",
+      "resolution": "Installed this checkout's locked dependencies with npm ci --ignore-scripts --no-audit --no-fund. The original source types require no changes.",
+      "typecheck": {
+        "command": "tsc --noEmit",
+        "exit_code": 0
+      },
+      "build": {
+        "command": "npm run build:ts",
+        "exit_code": 0
+      },
+      "related_tests": {
+        "files": [
+          "test/activation/customer-profile.test.ts",
+          "integration/pi-extension.test.ts"
+        ],
+        "passed": 9,
+        "failed": 0
+      },
+      "versions": {
+        "@earendil-works/pi-coding-agent": "1.1.0",
+        "@types/node": "26.6.5",
+        "typescript": "5.9.3"
+      },
+      "previous_reported_errors": 3
+    }
   },
   "limits": [
     "573 combined comparisons pass: 570 native evaluations and three host signature rejections. Each check has positive and clean native coverage.",
