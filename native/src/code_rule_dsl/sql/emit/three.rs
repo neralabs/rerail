@@ -2,7 +2,8 @@
 //! frames that carry `unk` and the withheld-capture mask, and the input-set terminals' verdicts
 //! (`Op::Fact`), which two-valued clauses read too.
 
-use super::{Emitter, chain, holds, stage_table};
+use super::{Emitter, holds, stage_table};
+use crate::code_rule_dsl::sql::nearest;
 use crate::code_rule_dsl::sql::plan::{AllTerm, OfRule, Op, Stop, Walk};
 use std::collections::BTreeSet;
 use std::fmt::Write;
@@ -330,9 +331,14 @@ impl Emitter<'_> {
                     unknown("g")
                 ),
             ),
+            // Its walk ends at `f`'s nearest proper ancestor in `S`.
             Walk::FieldInside(..) => (
-                chain(input, stage, "fn.parent", "parent", false),
-                format!("SELECT DISTINCT v.pk, {LAST} FROM v {}", unknown("v")),
+                String::new(),
+                format!(
+                    "SELECT f.k, {LAST} FROM {input} f CROSS JOIN nearest nf ON {} AND nf.id = f.node \
+                     JOIN {table} st ON st.file = f.file AND st.node = nf.anc AND st.unk = 1",
+                    nearest::set_of("nf", stage, "f.file")
+                ),
             ),
             Walk::Slot(_) | Walk::Related(_) => return None,
         };

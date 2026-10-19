@@ -4,6 +4,7 @@
 
 use super::emit;
 use super::lower::{ProgramBuilder, Stage};
+use super::nearest::NearestTable;
 use super::nodes::{NodeFacts, NodeTable};
 use super::plan::{SlotKind, Statement, Unsupported};
 use super::terminals::{
@@ -176,6 +177,7 @@ const NODE_MODULE: Module<'static, NodeTable> = Module::eponymous_only_module();
 const PATTERN_MODULE: Module<'static, PatternTable> = Module::eponymous_only_module();
 const TEXT_MODULE: Module<'static, TextTable> = Module::eponymous_only_module();
 const FACT_MODULE: Module<'static, FactTable> = Module::eponymous_only_module();
+const NEAREST_MODULE: Module<'static, NearestTable> = Module::eponymous_only_module();
 
 /// An in-memory connection whose virtual tables read `slot`'s batch.
 fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
@@ -184,6 +186,7 @@ fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
     connection.create_module(c"pattern", &PATTERN_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"text_match", &TEXT_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"fact", &FACT_MODULE, Some(Arc::clone(slot)))?;
+    connection.create_module(c"nearest", &NEAREST_MODULE, Some(Arc::clone(slot)))?;
     Ok(connection)
 }
 

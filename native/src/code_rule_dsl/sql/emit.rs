@@ -19,6 +19,7 @@ mod leaves;
 mod three;
 
 use super::lower::{INTERNAL, ORIGIN};
+use super::nearest;
 use super::plan::{
     CallReturn, CallSlot, OfRule, Op, Slot, SlotId, SlotKind, Source, Statement, Stop, Unit, Walk,
 };
@@ -1055,46 +1056,52 @@ impl<'s> Emitter<'s> {
             Walk::Has(Stop::End) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id > f.node AND c.id <= fn.\"last\""
             )),
-            Walk::Has(Stop::Rule(stage)) => {
-                let table = stage_table(stage);
-                with = format!(
-                    "WITH RECURSIVE v(pk, file, node) AS (\
-                     SELECT f.k, c.file, c.id FROM {input} f JOIN node c ON c.file = f.file AND c.parent = f.node \
-                     UNION ALL SELECT v.pk, c.file, c.id FROM v LEFT JOIN {table} st ON st.file = v.file AND st.node = v.node \
-                     JOIN node c ON c.file = v.file AND c.parent = v.node WHERE st.node IS NULL) "
-                );
-                "SELECT pk, file, node FROM v".to_owned()
-            }
+            // A rule stop's walks read the stop set `S` through `nearest` (no recursion). `has`
+            // visits a descendant `c` of `f` where no node strictly between them is in `S`: where
+            // `c`'s nearest proper ancestor in `S` is `f`'s nearest ancestor-or-self in `S`.
+            Walk::Has(Stop::Rule(stage)) => simple(&format!(
+                "CROSS JOIN nearest nf ON {} AND nf.id = f.node \
+                 CROSS JOIN nearest c ON {} AND c.anc = nf.base AND c.id > f.node AND c.id <= nf.\"last\"",
+                nearest::set_of("nf", stage, "f.file"),
+                nearest::set_of("c", stage, "f.file")
+            )),
             Walk::Inside(Stop::Neighbor) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id = fn.parent"
             )),
             Walk::Inside(Stop::End) => {
                 simple("JOIN node c ON c.file = f.file AND c.id < f.node AND c.\"last\" >= f.node")
             }
-            Walk::Inside(Stop::Rule(stage)) => {
-                with = chain(input, stage, "fn.parent", "parent", false);
-                "SELECT pk, file, node FROM v".to_owned()
-            }
+            // `inside` ends at `f`'s nearest proper ancestor in `S`, inclusive.
+            Walk::Inside(Stop::Rule(stage)) => simple(&format!(
+                "CROSS JOIN nearest nf ON {} AND nf.id = f.node \
+                 CROSS JOIN node c ON c.file = f.file AND c.id < f.node AND c.\"last\" >= f.node AND c.id >= nf.anc",
+                nearest::set_of("nf", stage, "f.file")
+            )),
             Walk::Precedes(Stop::Neighbor) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id = fn.next"
             )),
             Walk::Precedes(Stop::End) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id >= fn.anext"
             )),
-            Walk::Precedes(Stop::Rule(stage)) => {
-                with = chain(input, stage, "fn.anext", "nsib", false);
-                "SELECT pk, file, node FROM v".to_owned()
-            }
+            // The sibling walks end at the first node in `S` of their chain, inclusive.
+            Walk::Precedes(Stop::Rule(stage)) => simple(&format!(
+                "{at} CROSS JOIN nearest na ON {} AND na.id = fn.anext \
+                 CROSS JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id >= fn.anext \
+                 AND c.id <= COALESCE(na.nxt, 4294967295)",
+                nearest::set_of("na", stage, "f.file")
+            )),
             Walk::Follows(Stop::Neighbor) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id = fn.prev"
             )),
             Walk::Follows(Stop::End) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id <= fn.aprev"
             )),
-            Walk::Follows(Stop::Rule(stage)) => {
-                with = chain(input, stage, "fn.aprev", "prev", false);
-                "SELECT pk, file, node FROM v".to_owned()
-            }
+            Walk::Follows(Stop::Rule(stage)) => simple(&format!(
+                "{at} CROSS JOIN nearest na ON {} AND na.id = fn.aprev \
+                 CROSS JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id <= fn.aprev \
+                 AND c.id >= COALESCE(na.prv, 0)",
+                nearest::set_of("na", stage, "f.file")
+            )),
             Walk::FieldHas(field, Stop::Neighbor) => simple(&format!(
                 "JOIN node c ON c.file = f.file AND c.parent = f.node WHERE c.field = {field} AND c.ffirst = 1"
             )),
@@ -1122,13 +1129,14 @@ impl<'s> Emitter<'s> {
                 "JOIN node w ON w.file = f.file AND w.id <= f.node AND w.\"last\" >= f.node \
                  JOIN node c ON c.file = w.file AND c.id = w.parent WHERE w.field = {field} AND w.ffirst = 1"
             )),
-            Walk::FieldInside(field, Stop::Rule(stage)) => {
-                with = chain(input, stage, "fn.parent", "parent", true);
-                format!(
-                    "SELECT v.pk AS pk, v.file AS file, v.node AS node FROM v \
-                     JOIN node w ON w.file = v.file AND w.id = v.src WHERE w.field = {field} AND w.ffirst = 1"
-                )
-            }
+            // The ancestors `inside` walks to, through a field child `w` of each: `w` an
+            // ancestor-or-self of `f` below its nearest proper ancestor in `S`.
+            Walk::FieldInside(field, Stop::Rule(stage)) => simple(&format!(
+                "CROSS JOIN nearest nf ON {} AND nf.id = f.node \
+                 CROSS JOIN node w ON w.file = f.file AND w.id <= f.node AND w.\"last\" >= f.node AND w.id > nf.anc \
+                 CROSS JOIN node c ON c.file = w.file AND c.id = w.parent WHERE w.field = {field} AND w.ffirst = 1",
+                nearest::set_of("nf", stage, "f.file")
+            )),
             Walk::Slot(_) | Walk::Related(_) => {
                 unreachable!("a terminal's walk (`leaf_candidates`)")
             }
@@ -1492,24 +1500,4 @@ fn first_of(pairs: &[(String, String)]) -> String {
         .map(|(position, value)| format!(" WHEN {position} = {least} THEN {value}"))
         .collect();
     format!("(CASE{arms} END)")
-}
-
-/// A walk along one link (`parent`, `nsib`, `prev`) from `start`, up to and including the first
-/// node of `stage`: the recursive CTE `v(pk, file, node[, src])`, `src` the node each step came
-/// from.
-fn chain(input: &str, stage: usize, start: &str, link: &str, src: bool) -> String {
-    let table = stage_table(stage);
-    let (columns, first_src, step_src) = if src {
-        ("pk, file, node, src", ", f.node", ", v.node")
-    } else {
-        ("pk, file, node", "", "")
-    };
-    format!(
-        "WITH RECURSIVE v({columns}) AS (\
-         SELECT f.k, fn.file, {start}{first_src} FROM {input} f JOIN node fn ON fn.file = f.file AND fn.id = f.node \
-         WHERE {start} IS NOT NULL \
-         UNION ALL SELECT v.pk, v.file, n.{link}{step_src} FROM v \
-         LEFT JOIN {table} st ON st.file = v.file AND st.node = v.node \
-         JOIN node n ON n.file = v.file AND n.id = v.node WHERE st.node IS NULL AND n.{link} IS NOT NULL) "
-    )
 }

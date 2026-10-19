@@ -143,6 +143,68 @@ fn zero_width_siblings_follow_the_tapes_byte_positioned_walks() {
     }
 }
 
+/// The walks with a rule stop read the stop rule's matches through `nearest` (nearest ancestor and
+/// siblings in the set), never a recursive CTE, and agree with the matcher: every relation, with a
+/// field, two- and three-valued (an unknown stop leaves the walk open), around zero-width
+/// siblings.
+#[test]
+fn rule_stop_walks_read_the_stop_set_without_recursion() {
+    use crate::code_rule_dsl::test_support::grammar_matchers;
+    let sources = [
+        "g(x);\nh(y, z);\nlet q = [1, 2;\nlet r = 3;\n",
+        "if (a { b(); }\nc(\nd(e);\n",
+        "function f(a) { if (a) { return g(a, [b, c]); } return h(u1, (d)); }\nlet k = f(u2) + m(n);\n",
+    ];
+    let stops = [
+        json!({ "kind": "call_expression" }),
+        json!({ "any": [{ "kind": "arguments" }, { "kind": "statement_block" }] }),
+        json!({ "regex": "^[a-z(]" }),
+        json!({ "kind": "call_expression", "testUnknown": "^u" }),
+    ];
+    let mut statements = 0;
+    for source in sources {
+        for relation in ["precedes", "follows", "inside", "has"] {
+            for (field, stop) in [None, Some("arguments"), Some("body")]
+                .into_iter()
+                .flat_map(|field| stops.iter().map(move |stop| (field, stop)))
+            {
+                if field.is_some() && !matches!(relation, "inside" | "has") {
+                    continue;
+                }
+                let mut inner = json!({ "stopBy": stop, "pattern": "$A" });
+                if let Some(field) = field {
+                    inner["field"] = json!(field);
+                }
+                let ast = json!({ "rule": { "regex": "^[a-z;,({]", relation: inner } });
+                let compiled = compile("typescript", ast);
+                let input = snapshot(&[("typescript", "a.ts", source)]);
+                assert_eq!(
+                    evaluate(&compiled, &input, "native"),
+                    evaluate(&compiled, &input, "sql"),
+                    "{relation} {field:?} {stop} over {source:?}"
+                );
+                let grammars = grammar_matchers(&compiled);
+                let program =
+                    crate::code_rule_dsl::sql::compile(&[&grammars[0]]).expect("compiles");
+                let session = program.session().expect("a session");
+                let plans = session.plans().expect("plans");
+                // `has` with a field and a rule stop tests one level below the field child: no
+                // walk (`a_field_has_with_a_stop_rule_tests_one_level_below_the_field_child`).
+                assert!(
+                    (relation == "has" && field.is_some())
+                        || plans.iter().any(|(sql, _)| sql.contains("nearest")),
+                    "{relation} {field:?} {stop}: no walk reads `nearest`"
+                );
+                for (sql, _) in &plans {
+                    assert!(!sql.contains("RECURSIVE"), "a recursive walk: {sql}");
+                }
+                statements += plans.len();
+            }
+        }
+    }
+    assert!(statements > 0);
+}
+
 #[test]
 fn blade_overlapping_siblings_scan_the_parents_children() {
     // A Blade tape's embedded PHP sits among the template's nodes; its sibling walks scan.

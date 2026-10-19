@@ -55,19 +55,19 @@ const FIELD_FIRST: u8 = 32;
 /// Every column of one file's nodes, by node id.
 pub(super) struct NodeFacts {
     len: u32,
-    last: Vec<u32>,
-    parent: Vec<u32>,
+    pub(super) last: Vec<u32>,
+    pub(super) parent: Vec<u32>,
     kind: Vec<u16>,
     field: Vec<u16>,
     flags: Vec<u8>,
     named_ix: Vec<u32>,
     named_n: Vec<u32>,
     /// `SgNode::prev` (the structural previous sibling).
-    prev: Vec<u32>,
+    pub(super) prev: Vec<u32>,
     /// `SgNode::next`: the next sibling ending after this node ends (zero-width skip).
     next: Vec<u32>,
     /// The structural next sibling.
-    nsib: Vec<u32>,
+    pub(super) nsib: Vec<u32>,
     /// Where `next_all`/`prev_all` start (`TapeNode::walk_anchor`'s neighbours).
     anext: Vec<u32>,
     aprev: Vec<u32>,
@@ -451,7 +451,10 @@ unsafe impl<'vtab> VTab<'vtab> for NodeTable {
             used.push((index, Used::IdEq));
             cost = 1.0;
         } else if let Some(index) = parent {
+            // Children ascend along the chain: an id range starts it later and ends it earlier.
             used.push((index, Used::Parent));
+            used.extend(id_lo);
+            used.extend(id_hi);
             cost = 10.0;
         } else if let (Some(hi), Some(last)) = (id_hi, last) {
             used.push((hi.0, hi.1));
@@ -565,7 +568,11 @@ pub(super) fn integer(value: ValueRef<'_>) -> Option<i64> {
 }
 
 /// The facts of document `file` of `batch`: a file's, or `sub`'s where it is a parsed tree.
-fn facts_of<'a>(batch: &'a Batch, sub: &'a Option<Arc<SubFile>>, file: u32) -> &'a NodeFacts {
+pub(super) fn facts_of<'a>(
+    batch: &'a Batch,
+    sub: &'a Option<Arc<SubFile>>,
+    file: u32,
+) -> &'a NodeFacts {
     match (batch.files.get(file as usize), sub) {
         (Some(entry), _) => &entry.facts,
         (None, Some(sub)) => &sub.facts,
@@ -588,7 +595,11 @@ impl NodeCursor<'_> {
         let hi = filter.id_hi.map_or(len, |hi| hi.saturating_add(1).min(len));
         self.source = if let Some(parent) = filter.parent {
             if parent < len {
-                let first = facts.first[parent as usize];
+                // From the range's first id where it is a child, else the first child.
+                let first = match filter.id_lo {
+                    Some(lo) if lo < len && facts.parent[lo as usize] == parent => lo,
+                    _ => facts.first[parent as usize],
+                };
                 if first == NONE {
                     Source::Done
                 } else {
@@ -639,7 +650,7 @@ impl NodeCursor<'_> {
             }),
             Source::Chain(next) => {
                 let id = *next;
-                if id == NONE {
+                if id == NONE || self.filter.id_hi.is_some_and(|hi| id > hi) {
                     return None;
                 }
                 *next = facts.nsib[id as usize];

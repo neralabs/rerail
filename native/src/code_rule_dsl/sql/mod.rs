@@ -8,6 +8,7 @@ pub(super) mod crossfile;
 mod emit;
 mod exec;
 mod lower;
+mod nearest;
 mod nodes;
 mod plan;
 mod recursion;
