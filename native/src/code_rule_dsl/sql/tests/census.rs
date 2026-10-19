@@ -250,10 +250,14 @@ fn run_corpus() {
             .iter()
             .filter(|clause| clause.get("define").is_some())
             .collect();
-        for clause in clauses
-            .iter()
-            .filter(|clause| clause.get("define").is_none())
-        {
+        // `RERAIL_CORPUS_CLAUSE`: only the clauses whose id holds it.
+        let only = std::env::var("RERAIL_CORPUS_CLAUSE").unwrap_or_default();
+        for clause in clauses.iter().filter(|clause| {
+            clause.get("define").is_none()
+                && clause["id"]
+                    .as_str()
+                    .is_some_and(|id| id.contains(only.as_str()))
+        }) {
             let mut document = policy.clone();
             document["clauses"] = json!(defines.iter().chain([&clause]).collect::<Vec<_>>());
             let compiled = CodeRuleDslRuntime::compile(

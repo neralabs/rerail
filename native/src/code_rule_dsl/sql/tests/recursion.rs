@@ -682,3 +682,62 @@ fn a_recursion_level_runs_a_bounded_number_of_statements_per_batch() {
     eprintln!("statements per recursion level: {passes:?}");
     assert_eq!(passes, [61, 43]);
 }
+
+/// Every table a statement creates has one column list: a three-valued `all`'s frames are not
+/// named like a recursive unit's answer tables (`a{unit}`). The differential found the clash in
+/// this rule, whose `all` frame `a3` and unit 3's answer table were one table.
+#[test]
+fn three_valued_frames_and_unit_tables_have_distinct_names() {
+    use crate::code_rule_dsl::test_support::grammar_matchers;
+    let ast = json!({
+        "rule": {
+            "any": [
+                { "count": { "as": "N", "has": { "kind": "elif_clause", "stopBy": "neighbor" }, "max": 1, "offset": 1 }, "matches": { "u0": { "P": "$C", "Q": "$C" } } },
+                { "kind": "attribute", "pattern": "$A == 1.5" },
+                { "count": { "max": 4, "min": 2, "precedes": { "stopBy": { "any": [{ "kind": "named_expression" }, { "kind": "pattern_list" }] }, "value": { "type": "str" } } } },
+            ],
+            "count": { "as": "N", "inside": { "kind": "none", "stopBy": "end" }, "min": 1, "offset": 0 },
+            "matches": "r0",
+            "pattern": "return 2",
+        },
+        "utils": {
+            "r0": { "all": [
+                { "inside": { "field": "subject", "pattern": "$A", "stopBy": { "kind": "for_in_clause" }, "testUnknown": "^doubled" } },
+                { "follows": { "matches": "r1" } },
+            ] },
+            "r1": { "any": [
+                { "precedes": { "kind": "class_pattern", "stopBy": "end", "testUnknown": "^6" } },
+                { "kind": "escape_sequence", "matches": "r0" },
+            ] },
+            "u0": { "params": ["P", "Q"], "rule": {
+                "matches": "r0",
+                "not": { "layout": { "before": { "blank": { "max": 0 }, "breaks": { "min": 1 }, "comments": true, "to": "token" } }, "regex": "^1" },
+                "pattern": "$P",
+            } },
+        },
+    });
+    let compiled = compile("python", ast.clone(), None);
+    let grammar = &grammar_matchers(&compiled)[0];
+    assert!(grammar.three_valued);
+    let statement = crate::code_rule_dsl::sql::lower::ProgramBuilder::default()
+        .clause_each(grammar, None)
+        .expect("lowers");
+    let mut tables = std::collections::HashMap::<String, String>::new();
+    for sql in crate::code_rule_dsl::sql::emit::clause(&statement) {
+        let Some(rest) = sql
+            .strip_prefix("CREATE TEMP TABLE IF NOT EXISTS ")
+            .or_else(|| sql.strip_prefix("CREATE TEMP TABLE "))
+        else {
+            continue;
+        };
+        let (name, columns) = rest.split_once('(').expect("a column list");
+        let known = tables
+            .entry(name.to_owned())
+            .or_insert_with(|| columns.to_owned());
+        assert_eq!(known, columns, "{name} is created with two column lists");
+    }
+    assert_eq!(
+        agreed("python", ast, None, "def f(x):\n    return 2\n"),
+        Vec::<String>::new()
+    );
+}
