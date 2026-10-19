@@ -699,8 +699,9 @@ A phase is incomplete while one required test fails or reports a warning.
 - Replace the current fixture model with the strict typed model.
 - Correct every policy substitution listed in this document.
 - Add source files, metadata, maps, limits, and failure injection.
-- Add authored exact SQL and ordered catalog expectations.
-- Add exact oracle violations and failures.
+- Add authored typed relational-plan expectations.
+- Add source fixtures for exact matcher-oracle execution.
+- Reserve exact SQL and catalog expectations for each owning implementation phase.
 
 **TDD red**
 
@@ -709,14 +710,14 @@ The tests must identify missing data and incorrect policy behavior.
 
 **Implementation**
 
-Author all required contract data without using compiler-generated fixture updates.
+Author all required contract data without using production compiler output to create expectations.
 
 **Exit criteria**
 
 - All 108 policies pass public policy compilation.
 - All fixture invariants pass.
-- Exact SQL, catalog, and behavior tests run for all cases.
-- The tests fail only because production lowering or execution is incomplete.
+- Typed relational-plan and matcher-oracle tests pass for all cases.
+- Production lowering failures remain visible in the separate implementation gate.
 
 ### Phase 2: Complete relational comparison and truth semantics
 

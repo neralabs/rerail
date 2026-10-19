@@ -74,37 +74,24 @@ struct FailureInjection {
 #[serde(deny_unknown_fields)]
 #[allow(dead_code)]
 struct ContractExpected {
-    normalized_sql: String,
-    terminal_catalog: Vec<ExpectedTerminal>,
+    relational_plan: ExpectedRelationalPlan,
+    oracle: ExpectedOracle,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ExpectedRelationalPlan {
+    terminals: Vec<String>,
+    operations: Vec<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ExpectedOracle {
     violations: Vec<Value>,
     failures: Vec<Value>,
-    counters: ExpectedCounters,
-}
-
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(dead_code)]
-struct ExpectedTerminal {
-    ordinal: usize,
-    kind: String,
-    language: String,
-    producer_kind: String,
-    program_digest: String,
-    result_schema: String,
-    clauses: Vec<[usize; 2]>,
-    result_limit: u32,
-    completion_required: bool,
-}
-
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(dead_code)]
-struct ExpectedCounters {
-    statements: usize,
-    virtual_table_filters: usize,
-    terminal_executions: usize,
-    scalar_callbacks: usize,
-    matcher_calls: usize,
 }
 
 fn authored_cases(source: &str) -> Vec<ContractCase> {
@@ -165,8 +152,8 @@ fn all_108_contracts_have_complete_execution_contracts() {
             case.name
         );
         assert!(
-            !case.expected.normalized_sql.trim().is_empty(),
-            "{} has no exact SQL",
+            !case.expected.relational_plan.operations.is_empty(),
+            "{} has no relational plan",
             case.name
         );
     }
