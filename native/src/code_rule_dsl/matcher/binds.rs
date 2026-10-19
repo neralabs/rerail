@@ -466,153 +466,187 @@ impl Binds {
             .collect();
         Some((others, false))
     }
+}
 
-    /// TypeScript's and PHP's `redefines` over `Binds::others`: some other binding passes the
-    /// filters and sub-rules, or, with `every`, each one does. `None` when a fact decides and is
-    /// unknown, or a binding the table does not know of might.
-    #[allow(clippy::too_many_arguments)]
+/// The sub-rules of a binding's site, value and annotation, each beside its node.
+fn targets<'a>(
+    rules: [&'a Option<AstMatcher>; 3],
+    nodes: [Option<NodeRef>; 3],
+) -> [(&'a Option<AstMatcher>, Option<NodeRef>); 3] {
+    let [site, value, annotation] = rules;
+    let [site_node, value_node, annotation_node] = nodes;
+    [
+        (site, site_node),
+        (value, value_node),
+        (annotation, annotation_node),
+    ]
+}
+
+/// Whether each listed sub-rule has its node (`match_binding_nodes` fails before matching any
+/// where one lacks it).
+fn listed(rules: [&Option<AstMatcher>; 3], nodes: &[Option<NodeRef>; 3]) -> bool {
+    rules
+        .iter()
+        .zip(nodes)
+        .all(|(rule, node)| rule.is_none() || node.is_some())
+}
+
+impl Redefines {
+    fn rules(&self) -> [&Option<AstMatcher>; 3] {
+        [&self.site, &self.value, &self.annotation]
+    }
+
+    /// One binding read beside a candidate, kept as the matcher reads it: one passing its filters
+    /// whose listed nodes it lacks fails; a failing one is read by `every` only.
+    fn kept(&self, pre: u8, nodes: [Option<NodeRef>; 3]) -> Option<Other> {
+        let pre = if pre == PASSES && !listed(self.rules(), &nodes) {
+            FAILS
+        } else {
+            pre
+        };
+        (pre != FAILS || self.every).then_some(Other { pre, nodes })
+    }
+}
+
+impl Binds {
+    fn rules(&self) -> [&Option<AstMatcher>; 3] {
+        [&self.site, &self.value, &self.annotation]
+    }
+
+    /// Whether `redefines` is read through the shadowed binding (Python), not the others.
+    pub(crate) fn redefines_shadowed(&self) -> bool {
+        with_adapter!(Family::of(self.language), A => <<A as Adapter>::Scope as ScopeRules>::REDEFINES_SHADOWED)
+    }
+
+    /// The tables `binds` reads at a name node; `None` where `node` is none, or a table is missing.
+    pub(crate) fn at<D: Doc>(&self, node: &Node<'_, D>) -> Option<NameSite> {
+        if !self.name_kinds.contains(&node.kind_id()) {
+            return None;
+        }
+        let table = file_table(
+            node,
+            self.language,
+            table_reading(self.options.as_deref(), self.python.as_deref()),
+        )?;
+        let usage = file_usage(node, &table)?;
+        let range = node.range();
+        Some(NameSite {
+            table,
+            usage,
+            start: range.start,
+            end: range.end,
+            kind: node.kind_id(),
+        })
+    }
+
+    /// TypeScript's and PHP's `redefines` over the bindings `NameSite::others` reads beside a
+    /// candidate: some passes the sub-rules, or, with `every`, each one does. `None` when a fact
+    /// decides and is unknown, or a binding the table does not know of might.
     fn redefines_others<'tree, D: Doc>(
         redefines: &Redefines,
-        table: &ScopeTable,
-        usage: &Usage,
-        id: BindingId<'_>,
+        others: impl Iterator<Item = Other>,
         node: &Node<'tree, D>,
         trial: &mut Cow<MetaVarEnv<'tree, D>>,
-        region: Region<'_>,
     ) -> Option<bool> {
-        let Some((others, incomplete)) = Self::others(redefines, table, id) else {
-            return Some(false);
-        };
         let mut unknown = false;
-        for (other, admitted) in others {
-            let passes = if admitted {
-                match redefines.filter.verdict(table, Some(usage), other, region) {
-                    Some(passes) => passes,
-                    None => {
-                        unknown = true;
-                        false
+        for other in others {
+            match other.pre {
+                OPEN if redefines.every => return None,
+                OPEN => unknown = true,
+                FAILS if redefines.every => return Some(false),
+                FAILS => {}
+                _ if redefines.every => {
+                    let targets = targets(redefines.rules(), other.nodes);
+                    if match_binding_nodes(node, targets, trial).is_none() {
+                        return Some(false);
                     }
                 }
-            } else {
-                false
-            };
-            let previous = table.binding_of(other);
-            let targets = [
-                (&redefines.site, previous.site.node),
-                (&redefines.value, previous.site.value),
-                (&redefines.annotation, previous.site.annotation),
-            ];
-            if redefines.every {
-                if !passes || match_binding_nodes(node, targets, trial).is_none() {
-                    return if unknown { None } else { Some(false) };
-                }
-            } else if passes {
-                let mut attempt = Cow::Borrowed(trial.as_ref());
-                if match_binding_nodes(node, targets, &mut attempt).is_some() {
-                    if super::each::active() && super::each::excluded(&attempt) {
-                        continue;
+                _ => {
+                    let targets = targets(redefines.rules(), other.nodes);
+                    let mut attempt = Cow::Borrowed(trial.as_ref());
+                    if match_binding_nodes(node, targets, &mut attempt).is_some() {
+                        if super::each::active() && super::each::excluded(&attempt) {
+                            continue;
+                        }
+                        if let Cow::Owned(bound) = attempt {
+                            *trial = Cow::Owned(bound);
+                        }
+                        return Some(true);
                     }
-                    if let Cow::Owned(bound) = attempt {
-                        *trial = Cow::Owned(bound);
-                    }
-                    return Some(true);
                 }
             }
         }
-        if incomplete || unknown {
-            None
-        } else {
-            Some(redefines.every)
-        }
+        if unknown { None } else { Some(redefines.every) }
     }
 
-    /// A private name's declaration `index` of `member`: the filters, the sub-rules on its
-    /// definition, and `redefines` over the member's other declarations.
+    /// A private name's declaration: its filters, the sub-rules on its definition, and
+    /// `redefines` over the member's other declarations.
     fn match_private<'tree, D: Doc>(
         &self,
         node: Node<'tree, D>,
         env: &mut Cow<MetaVarEnv<'tree, D>>,
-        member: &PrivateMember,
-        index: usize,
+        site: &NameSite,
     ) -> Option<Node<'tree, D>> {
         let caller: &MetaVarEnv<'tree, D> = env.as_ref();
-        let region = |capture: &str| capture_range(caller, capture);
-        let unknown = || {
+        let candidate = site.candidates(self, caller).next()?;
+        if candidate.pre == OPEN {
             UNKNOWN.set(true);
-            None
-        };
-        match self.filter.private_verdict(member, index, &region) {
-            Some(true) => {}
-            Some(false) => return None,
-            None => return unknown(),
+            return None;
         }
-        let targets = |index: usize, site, value, annotation| {
-            let declaration = &member.declarations[index];
-            [
-                (site, Some(declaration.site)),
-                (value, declaration.value),
-                (annotation, declaration.annotation),
-            ]
-        };
-        let mut trial = Cow::Borrowed(env.as_ref());
-        match_binding_nodes(
-            &node,
-            targets(index, &self.site, &self.value, &self.annotation),
-            &mut trial,
-        )?;
+        let mut trial = Cow::Borrowed(caller);
+        match_binding_nodes(&node, targets(self.rules(), candidate.nodes), &mut trial)?;
         if let Some(rule) = &self.occurrence {
-            match_occurrence(&node, rule, &member.occurrences, &mut trial)?;
+            match_occurrence(&node, rule, site.occurrences(PRIVATE), &mut trial)?;
         }
         if let Some(redefines) = self.redefines.as_deref() {
             // The member's other declarations, as TypeScript's variables: some earlier one passes,
             // or with `every` each other one does. All are of the same class body. One whose
             // sub-rules are unknown leaves the answer open unless a later one passes.
-            if redefines.same_scope == Some(false) {
-                return None;
-            }
-            let others = (0..member.declarations.len()).filter(|other| {
-                if redefines.every {
-                    *other != index
-                } else {
-                    *other < index
-                }
-            });
             let three = THREE_VALUED.get();
             let saved = three && UNKNOWN.replace(false);
             let mut open = false;
             let mut found = redefines.every;
-            for other in others {
-                let passes = match redefines.filter.private_verdict(member, other, &region) {
-                    Some(passes) => passes,
-                    None => return unknown(),
-                };
-                let nodes = targets(
-                    other,
-                    &redefines.site,
-                    &redefines.value,
-                    &redefines.annotation,
-                );
-                let mut attempt = Cow::Borrowed(trial.as_ref());
-                let matched = passes && match_binding_nodes(&node, nodes, &mut attempt).is_some();
-                if redefines.every && !matched {
-                    if saved {
+            for other in site.others(self, caller, PRIVATE) {
+                let matched = match other.pre {
+                    OPEN => {
                         UNKNOWN.set(true);
+                        return None;
                     }
-                    return None;
-                }
-                if matched {
-                    if super::each::active() && super::each::excluded(&attempt) {
-                        continue;
+                    FAILS => None,
+                    _ => {
+                        let mut attempt = Cow::Borrowed(trial.as_ref());
+                        match_binding_nodes(
+                            &node,
+                            targets(redefines.rules(), other.nodes),
+                            &mut attempt,
+                        )
+                        .map(|()| attempt)
                     }
-                    if let Cow::Owned(bound) = attempt {
-                        trial = Cow::Owned(bound);
+                };
+                match matched {
+                    None if redefines.every => {
+                        if saved {
+                            UNKNOWN.set(true);
+                        }
+                        return None;
                     }
-                    if !redefines.every {
-                        found = true;
-                        break;
+                    None => {
+                        if three && UNKNOWN.replace(false) {
+                            open = true;
+                        }
                     }
-                } else if three && UNKNOWN.replace(false) {
-                    open = true;
+                    Some(attempt) => {
+                        if super::each::active() && super::each::excluded(&attempt) {
+                            continue;
+                        }
+                        if let Cow::Owned(bound) = attempt {
+                            trial = Cow::Owned(bound);
+                        }
+                        if !redefines.every {
+                            found = true;
+                            break;
+                        }
+                    }
                 }
             }
             if three {
@@ -633,108 +667,83 @@ impl Binds {
         node: Node<'tree, D>,
         env: &mut Cow<MetaVarEnv<'tree, D>>,
     ) -> Option<Node<'tree, D>> {
-        if !self.name_kinds.contains(&node.kind_id()) {
-            return None;
-        }
-        let table = file_table(
-            &node,
-            self.language,
-            table_reading(self.options.as_deref(), self.python.as_deref()),
-        )?;
-        let usage = file_usage(&node, &table)?;
-        let range = node.range();
-        if let Some((member, index)) = usage.private_at(range.start, range.end) {
-            return self.match_private(node, env, member, index);
+        let site = self.at(&node)?;
+        if site.private().is_some() {
+            return self.match_private(node, env, &site);
         }
         let three = THREE_VALUED.get();
         let saved = three && UNKNOWN.replace(false);
         let mut unknown = false;
+        let shadowed_only = self.redefines_shadowed();
         let caller: &MetaVarEnv<'tree, D> = env.as_ref();
-        let region = |capture: &str| capture_range(caller, capture);
-        for id in usage.named_at(range.start, range.end, node.kind_id()) {
+        // The first candidate that passes, with what its sub-rules bound.
+        let mut passed = None;
+        for candidate in site.candidates(self, caller) {
             // A sub-rule the binding before left unknown is that binding's verdict.
             unknown |= three && UNKNOWN.replace(false);
-            match self.filter.verdict(&table, Some(&usage), id, &region) {
-                Some(true) => {}
-                Some(false) => continue,
-                None => {
-                    unknown = true;
-                    continue;
-                }
-            }
-            let shadowed_only = with_adapter!(table.family, A => <<A as Adapter>::Scope as ScopeRules>::REDEFINES_SHADOWED);
-            let shadowed = match self.redefines.as_deref().filter(|_| shadowed_only) {
-                None => None,
-                Some(redefines) => match Self::shadowed(redefines, &table, &usage, id, &region) {
-                    Some(Some(shadowed)) => Some((redefines, shadowed)),
-                    Some(None) => continue,
-                    None => {
-                        unknown = true;
-                        continue;
-                    }
-                },
-            };
-            let binding = table.binding_of(id);
-            let targets = [
-                (&self.site, binding.site.node),
-                (&self.value, binding.site.value),
-                (&self.annotation, binding.site.annotation),
-            ];
-            let mut trial = Cow::Borrowed(env.as_ref());
-            if match_binding_nodes(&node, targets, &mut trial).is_none() {
+            if candidate.pre == OPEN {
+                unknown = true;
                 continue;
             }
-            if let Some(rule) = &self.occurrence
-                && match_occurrence(&node, rule, usage.occurrences(id), &mut trial).is_none()
+            let mut trial = Cow::Borrowed(caller);
+            if match_binding_nodes(&node, targets(self.rules(), candidate.nodes), &mut trial)
+                .is_none()
             {
                 continue;
             }
-            if let Some((redefines, shadowed)) = shadowed {
-                let previous = table.binding_of(shadowed);
-                let targets = [
-                    (&redefines.site, previous.site.node),
-                    (&redefines.value, previous.site.value),
-                    (&redefines.annotation, previous.site.annotation),
-                ];
-                if match_binding_nodes(&node, targets, &mut trial).is_none() {
-                    continue;
-                }
+            if let Some(rule) = &self.occurrence
+                && match_occurrence(&node, rule, site.occurrences(candidate.ordinal), &mut trial)
+                    .is_none()
+            {
+                continue;
             }
-            if let Some(redefines) = self.redefines.as_deref().filter(|_| !shadowed_only) {
-                let verdict = Self::redefines_others(
-                    redefines, &table, &usage, id, &node, &mut trial, &region,
-                );
-                match verdict {
-                    Some(true) => {}
-                    Some(false) => continue,
-                    None => {
-                        unknown = true;
+            if let Some(redefines) = self.redefines.as_deref() {
+                if shadowed_only {
+                    let previous = targets(redefines.rules(), candidate.previous);
+                    if match_binding_nodes(&node, previous, &mut trial).is_none() {
                         continue;
+                    }
+                } else {
+                    let others = site.others(self, caller, candidate.ordinal);
+                    match Self::redefines_others(redefines, others, &node, &mut trial) {
+                        Some(true) => {}
+                        Some(false) => continue,
+                        None => {
+                            unknown = true;
+                            continue;
+                        }
                     }
                 }
             }
-            if three {
-                UNKNOWN.set(saved);
-            }
-            if let Cow::Owned(bound) = trial {
-                *env = Cow::Owned(bound);
-            }
-            return Some(node);
+            passed = Some(match trial {
+                Cow::Owned(bound) => Some(bound),
+                Cow::Borrowed(_) => None,
+            });
+            break;
         }
-        if unknown || saved {
-            UNKNOWN.set(true);
+        let Some(bound) = passed else {
+            if unknown || saved {
+                UNKNOWN.set(true);
+            }
+            return None;
+        };
+        if three {
+            UNKNOWN.set(saved);
         }
-        None
+        if let Some(bound) = bound {
+            *env = Cow::Owned(bound);
+        }
+        Some(node)
     }
 }
 
-/// A step's verdict before its sub-rules, as the SQL engine's terminals return it: it passes, it
-/// is unknown (its sub-rules are not read), or it fails.
+/// A step's verdict before its sub-rules: it passes, it is unknown (its sub-rules are not read),
+/// or it fails. The matcher reads these, and the SQL engine's terminals return them.
 pub(crate) const PASSES: u8 = 0;
 pub(crate) const OPEN: u8 = 1;
 pub(crate) const FAILS: u8 = 2;
 
-/// One binding a `binds` node names, before its sub-rules (`Binds::candidates`).
+/// One binding a `binds` node names, before its sub-rules (`NameSite::candidates`).
 pub(crate) struct Candidate {
     /// Its position among the node's bindings (`Usage::named_at`), or `PRIVATE`.
     pub(crate) ordinal: i64,
@@ -752,278 +761,283 @@ pub(crate) struct Candidate {
 /// A private member's declaration, which `binds` reads alone (`Binds::match_private`).
 pub(crate) const PRIVATE: i64 = -1;
 
-/// One binding `redefines` reads beside a candidate (`Binds::others`), before its sub-rules.
+/// One binding `redefines` reads beside a candidate (`NameSite::others`), before its sub-rules.
 pub(crate) struct Other {
     pub(crate) pre: u8,
     pub(crate) nodes: [Option<NodeRef>; 3],
 }
 
-/// What the SQL engine's terminals read of `binds`: the matcher's steps before each sub-rule
-/// (`Binds::match_node`), the sub-rules being relations over the nodes they return there.
-impl Binds {
-    /// Whether `redefines` is read through the shadowed binding (Python), not the others.
-    pub(crate) fn redefines_shadowed(&self) -> bool {
-        with_adapter!(Family::of(self.language), A => <<A as Adapter>::Scope as ScopeRules>::REDEFINES_SHADOWED)
+/// A `binds` name node's file tables (`Binds::at`): what the matcher and the SQL engine read its
+/// candidates, their occurrences and the bindings `redefines` reads beside each from, in the
+/// matcher's order, each before its sub-rules.
+pub(crate) struct NameSite {
+    table: Arc<ScopeTable>,
+    usage: Arc<Usage>,
+    start: usize,
+    end: usize,
+    kind: u16,
+}
+
+impl NameSite {
+    /// The private member whose declaration the node names, with the declaration's index.
+    fn private(&self) -> Option<(&PrivateMember, usize)> {
+        self.usage.private_at(self.start, self.end)
     }
 
-    /// The table and usage at a name node, as `match_node` reads them.
-    fn tables<D: Doc>(&self, node: &Node<'_, D>) -> Option<(Arc<ScopeTable>, Arc<Usage>)> {
-        if !self.name_kinds.contains(&node.kind_id()) {
-            return None;
-        }
-        let table = file_table(
-            node,
-            self.language,
-            table_reading(self.options.as_deref(), self.python.as_deref()),
-        )?;
-        let usage = file_usage(node, &table)?;
-        Some((table, usage))
+    /// The bindings the node names.
+    fn named(&self) -> impl Iterator<Item = BindingId<'_>> {
+        self.usage.named_at(self.start, self.end, self.kind)
     }
 
-    /// The bindings `node` names, in the matcher's order, each with its verdict before its
-    /// sub-rules; one that fails is left out.
-    pub(crate) fn candidates<'tree, D: Doc>(
-        &self,
-        node: &Node<'tree, D>,
-        env: &MetaVarEnv<'tree, D>,
-    ) -> Vec<Candidate> {
-        let Some((table, usage)) = self.tables(node) else {
-            return Vec::new();
-        };
-        let range = node.range();
-        let private = usage.private_at(range.start, range.end);
-        let region = |capture: &str| capture_range(env, capture);
-        let listed = |rules: [&Option<AstMatcher>; 3], nodes: &[Option<NodeRef>; 3]| {
-            rules
-                .iter()
-                .zip(nodes)
-                .all(|(rule, node)| rule.is_none() || node.is_some())
-        };
-        let own = [&self.site, &self.value, &self.annotation];
-        if let Some((member, index)) = private {
+    /// Candidate `ordinal`'s binding (none for a private member's).
+    fn binding(&self, ordinal: i64) -> Option<BindingId<'_>> {
+        self.named().nth(usize::try_from(ordinal).ok()?)
+    }
+
+    /// The bindings the node names, in the matcher's order, each with its verdict before its
+    /// sub-rules (filters, Python's shadowed binding, the nodes its listed sub-rules read); one
+    /// that fails is left out. A private member's declaration is read alone.
+    pub(crate) fn candidates<'a, 'tree, D: Doc>(
+        &'a self,
+        binds: &'a Binds,
+        env: &'a MetaVarEnv<'tree, D>,
+    ) -> impl Iterator<Item = Candidate> + 'a {
+        let private = self.private();
+        let declaration = private.and_then(|(member, index)| {
+            let region = |capture: &str| capture_range(env, capture);
             let declaration = &member.declarations[index];
             let nodes = [
                 Some(declaration.site),
                 declaration.value,
                 declaration.annotation,
             ];
-            let pre = match self.filter.private_verdict(&member, index, &region) {
-                Some(true) if listed(own, &nodes) => PASSES,
+            let pre = match binds.filter.private_verdict(member, index, &region) {
+                Some(true) if listed(binds.rules(), &nodes) => PASSES,
                 None => OPEN,
-                _ => return Vec::new(),
+                _ => return None,
             };
-            return vec![Candidate {
+            Some(Candidate {
                 ordinal: PRIVATE,
                 pre,
                 nodes,
                 shadow: PASSES,
                 previous: [None; 3],
-            }];
-        }
-        let shadowed_only = self.redefines_shadowed();
-        let mut candidates = Vec::new();
-        for (ordinal, id) in usage
-            .named_at(range.start, range.end, node.kind_id())
-            .enumerate()
-        {
-            let ordinal = ordinal as i64;
-            let open = Candidate {
-                ordinal,
-                pre: OPEN,
-                nodes: [None; 3],
-                shadow: PASSES,
-                previous: [None; 3],
-            };
-            match self.filter.verdict(&table, Some(&usage), id, &region) {
-                Some(true) => {}
-                Some(false) => continue,
-                None => {
-                    candidates.push(open);
-                    continue;
-                }
-            }
-            let shadowed = match self.redefines.as_deref().filter(|_| shadowed_only) {
-                None => None,
-                Some(redefines) => match Self::shadowed(redefines, &table, &usage, id, &region) {
-                    Some(Some(shadowed)) => Some((redefines, shadowed)),
-                    Some(None) => continue,
-                    None => {
-                        candidates.push(open);
-                        continue;
-                    }
-                },
-            };
-            let binding = table.binding_of(id);
-            let nodes = [
-                binding.site.node,
-                binding.site.value,
-                binding.site.annotation,
-            ];
-            if !listed(own, &nodes) {
-                continue;
-            }
-            let (shadow, previous) = match shadowed {
-                None => (PASSES, [None; 3]),
-                Some((redefines, shadowed)) => {
-                    let previous = table.binding_of(shadowed);
-                    let previous = [
-                        previous.site.node,
-                        previous.site.value,
-                        previous.site.annotation,
-                    ];
-                    let rules = [&redefines.site, &redefines.value, &redefines.annotation];
-                    let shadow = if listed(rules, &previous) {
-                        PASSES
-                    } else {
-                        FAILS
-                    };
-                    (shadow, previous)
-                }
-            };
-            candidates.push(Candidate {
-                ordinal,
-                pre: PASSES,
-                nodes,
-                shadow,
-                previous,
-            });
-        }
-        candidates
+            })
+        });
+        let shadowed_only = binds.redefines_shadowed();
+        let named = private.is_none().then(|| {
+            self.named().enumerate().filter_map(move |(ordinal, id)| {
+                self.candidate(binds, env, shadowed_only, ordinal as i64, id)
+            })
+        });
+        declaration.into_iter().chain(named.into_iter().flatten())
     }
 
-    /// The occurrences of candidate `ordinal`'s variable (`Binds::candidates`).
-    pub(crate) fn occurrences<D: Doc>(&self, node: &Node<'_, D>, ordinal: i64) -> Vec<NodeRef> {
-        let Some((_, usage)) = self.tables(node) else {
-            return Vec::new();
-        };
-        let range = node.range();
-        if let Some((member, _)) = usage.private_at(range.start, range.end) {
-            return if ordinal == PRIVATE {
-                member.occurrences.clone()
-            } else {
-                Vec::new()
-            };
-        }
-        usage
-            .named_at(range.start, range.end, node.kind_id())
-            .nth(usize::try_from(ordinal).unwrap_or(usize::MAX))
-            .map(|id| usage.occurrences(id).to_vec())
-            .unwrap_or_default()
-    }
-
-    /// The bindings `redefines` reads beside candidate `ordinal`, in the matcher's order, each
-    /// with its verdict before its sub-rules (`redefines_others`, or `match_private`'s loop): a
-    /// failing one is left out unless `every` reads it, an open one ends a private member's
-    /// search, and an `OPEN` one ends the list where others may exist the table does not know.
-    pub(crate) fn others_of<'tree, D: Doc>(
+    /// Binding `id`, the node's `ordinal`th, as a candidate (`NameSite::candidates`).
+    fn candidate<'tree, D: Doc>(
         &self,
-        node: &Node<'tree, D>,
+        binds: &Binds,
         env: &MetaVarEnv<'tree, D>,
+        shadowed_only: bool,
         ordinal: i64,
-    ) -> Vec<Other> {
-        let (Some(redefines), Some((table, usage))) =
-            (self.redefines.as_deref(), self.tables(node))
-        else {
-            return Vec::new();
-        };
-        let range = node.range();
-        let private = usage.private_at(range.start, range.end);
+        id: BindingId<'_>,
+    ) -> Option<Candidate> {
         let region = |capture: &str| capture_range(env, capture);
-        let rules = [&redefines.site, &redefines.value, &redefines.annotation];
-        let complete = |nodes: &[Option<NodeRef>; 3]| {
-            rules
-                .iter()
-                .zip(nodes)
-                .all(|(rule, node)| rule.is_none() || node.is_some())
+        let open = Candidate {
+            ordinal,
+            pre: OPEN,
+            nodes: [None; 3],
+            shadow: PASSES,
+            previous: [None; 3],
         };
-        let failing = || {
-            if redefines.every {
-                vec![Other {
-                    pre: FAILS,
-                    nodes: [None; 3],
-                }]
-            } else {
-                Vec::new()
-            }
-        };
-        let mut others = Vec::new();
-        // A passing one, or for `every` a failing one, in order.
-        let push = |pre: u8, nodes: [Option<NodeRef>; 3], others: &mut Vec<Other>| {
-            let pre = if pre == PASSES && !complete(&nodes) {
-                FAILS
-            } else {
-                pre
-            };
-            if pre != FAILS || redefines.every {
-                others.push(Other { pre, nodes });
-            }
-        };
-        if let Some((member, index)) = private {
-            if ordinal != PRIVATE || redefines.same_scope == Some(false) {
-                return failing();
-            }
-            for other in 0..member.declarations.len() {
-                if (redefines.every && other == index) || (!redefines.every && other >= index) {
-                    continue;
+        match binds
+            .filter
+            .verdict(&self.table, Some(&self.usage), id, &region)
+        {
+            Some(true) => {}
+            Some(false) => return None,
+            None => return Some(open),
+        }
+        let shadowed = match binds.redefines.as_deref().filter(|_| shadowed_only) {
+            None => None,
+            Some(redefines) => {
+                match Binds::shadowed(redefines, &self.table, &self.usage, id, &region) {
+                    Some(Some(shadowed)) => Some((redefines, shadowed)),
+                    Some(None) => return None,
+                    None => return Some(open),
                 }
+            }
+        };
+        let binding = self.table.binding_of(id);
+        let nodes = [
+            binding.site.node,
+            binding.site.value,
+            binding.site.annotation,
+        ];
+        if !listed(binds.rules(), &nodes) {
+            return None;
+        }
+        let (shadow, previous) = match shadowed {
+            None => (PASSES, [None; 3]),
+            Some((redefines, shadowed)) => {
+                let previous = self.table.binding_of(shadowed);
+                let previous = [
+                    previous.site.node,
+                    previous.site.value,
+                    previous.site.annotation,
+                ];
+                let shadow = if listed(redefines.rules(), &previous) {
+                    PASSES
+                } else {
+                    FAILS
+                };
+                (shadow, previous)
+            }
+        };
+        Some(Candidate {
+            ordinal,
+            pre: PASSES,
+            nodes,
+            shadow,
+            previous,
+        })
+    }
+
+    /// The occurrences of candidate `ordinal`'s variable, which `occurrence` searches.
+    pub(crate) fn occurrences(&self, ordinal: i64) -> &[NodeRef] {
+        if let Some((member, _)) = self.private() {
+            return if ordinal == PRIVATE {
+                &member.occurrences
+            } else {
+                &[]
+            };
+        }
+        self.binding(ordinal)
+            .map_or(&[], |id| self.usage.occurrences(id))
+    }
+
+    /// The bindings `redefines` reads beside candidate `ordinal` (TypeScript and PHP), in the
+    /// matcher's order, each with its verdict before its sub-rules: a failing one is left out
+    /// unless `every` reads it, an open one ends a private member's search, and an `OPEN` one
+    /// ends the list where others may exist the table does not know. Where the candidate
+    /// redefines nothing, `every` reads one failing binding.
+    pub(crate) fn others<'a, 'tree, D: Doc>(
+        &'a self,
+        binds: &'a Binds,
+        env: &'a MetaVarEnv<'tree, D>,
+        ordinal: i64,
+    ) -> impl Iterator<Item = Other> + 'a {
+        let redefines = binds
+            .redefines
+            .as_deref()
+            .filter(|_| !binds.redefines_shadowed());
+        let failing = |redefines: &Redefines| {
+            redefines.every.then_some(Other {
+                pre: FAILS,
+                nodes: [None; 3],
+            })
+        };
+        let (mut private, mut table, mut last) = (None, None, None);
+        match (redefines, self.private()) {
+            (None, _) => {}
+            (Some(redefines), Some((member, index))) => {
+                if ordinal != PRIVATE || redefines.same_scope == Some(false) {
+                    last = failing(redefines);
+                } else {
+                    private = Some(self.private_others(redefines, member, index, env));
+                }
+            }
+            (Some(redefines), None) => {
+                match self
+                    .binding(ordinal)
+                    .map(|id| (id, Binds::others(redefines, &self.table, id)))
+                {
+                    None => {}
+                    Some((_, None)) => last = failing(redefines),
+                    Some((_, Some((list, incomplete)))) => {
+                        table = Some(list.into_iter().filter_map(move |(other, admitted)| {
+                            let region = |capture: &str| capture_range(env, capture);
+                            let previous = self.table.binding_of(other);
+                            let nodes = [
+                                previous.site.node,
+                                previous.site.value,
+                                previous.site.annotation,
+                            ];
+                            let pre = if admitted {
+                                match redefines.filter.verdict(
+                                    &self.table,
+                                    Some(&self.usage),
+                                    other,
+                                    &region,
+                                ) {
+                                    Some(true) => PASSES,
+                                    Some(false) => FAILS,
+                                    None => OPEN,
+                                }
+                            } else {
+                                FAILS
+                            };
+                            redefines.kept(pre, nodes)
+                        }));
+                        last = incomplete.then_some(Other {
+                            pre: OPEN,
+                            nodes: [None; 3],
+                        });
+                    }
+                }
+            }
+        }
+        private
+            .into_iter()
+            .flatten()
+            .chain(table.into_iter().flatten())
+            .chain(last)
+    }
+
+    /// A private member's other declarations `redefines` reads beside declaration `index`: the
+    /// earlier ones, or with `every` each other one; the matcher's answer is unknown from the
+    /// first whose filters are.
+    fn private_others<'a, 'tree, D: Doc>(
+        &'a self,
+        redefines: &'a Redefines,
+        member: &'a PrivateMember,
+        index: usize,
+        env: &'a MetaVarEnv<'tree, D>,
+    ) -> impl Iterator<Item = Other> + 'a {
+        (0..member.declarations.len())
+            .filter(move |other| {
+                if redefines.every {
+                    *other != index
+                } else {
+                    *other < index
+                }
+            })
+            .scan(false, move |ended, other| {
+                if *ended {
+                    return None;
+                }
+                let region = |capture: &str| capture_range(env, capture);
                 let declaration = &member.declarations[other];
                 let nodes = [
                     Some(declaration.site),
                     declaration.value,
                     declaration.annotation,
                 ];
-                match redefines.filter.private_verdict(&member, other, &region) {
-                    Some(true) => push(PASSES, nodes, &mut others),
-                    Some(false) => push(FAILS, nodes, &mut others),
-                    // The matcher's answer is unknown from here on.
-                    None => {
-                        others.push(Other {
-                            pre: OPEN,
-                            nodes: [None; 3],
-                        });
-                        break;
-                    }
-                }
-            }
-            return others;
-        }
-        if self.redefines_shadowed() {
-            return Vec::new();
-        }
-        let Some(id) = usage
-            .named_at(range.start, range.end, node.kind_id())
-            .nth(usize::try_from(ordinal).unwrap_or(usize::MAX))
-        else {
-            return Vec::new();
-        };
-        let Some((list, incomplete)) = Self::others(redefines, &table, id) else {
-            return failing();
-        };
-        for (other, admitted) in list {
-            let previous = table.binding_of(other);
-            let nodes = [
-                previous.site.node,
-                previous.site.value,
-                previous.site.annotation,
-            ];
-            let pre = if admitted {
-                match redefines.filter.verdict(&table, Some(&usage), other, &region) {
-                    Some(true) => PASSES,
-                    Some(false) => FAILS,
-                    None => OPEN,
-                }
-            } else {
-                FAILS
-            };
-            push(pre, nodes, &mut others);
-        }
-        if incomplete {
-            others.push(Other {
-                pre: OPEN,
-                nodes: [None; 3],
-            });
-        }
-        others
+                Some(
+                    match redefines.filter.private_verdict(member, other, &region) {
+                        Some(true) => redefines.kept(PASSES, nodes),
+                        Some(false) => redefines.kept(FAILS, nodes),
+                        None => {
+                            *ended = true;
+                            Some(Other {
+                                pre: OPEN,
+                                nodes: [None; 3],
+                            })
+                        }
+                    },
+                )
+            })
+            .flatten()
     }
 }
 

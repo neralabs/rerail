@@ -9,13 +9,13 @@
 use super::fact::{Verdict, Verdicts, local_id, tree_file};
 use crate::code_rule_dsl::literal::{Parsed as LiteralParsed, SubDoc, sub_tree};
 use crate::code_rule_dsl::matcher::{
-    BindingTest, Binds, FormatArgs, ParseTest, Resolution, Sides, OPEN, PASSES,
+    BindingTest, Binds, FormatArgs, OPEN, PASSES, ParseTest, Prepared, Resolution, missing_fields,
 };
 use crate::code_rule_dsl::tape::TapeDoc;
 use crate::code_rule_dsl::value::NodeRef;
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::source::Content;
-use ast_grep_core::{Doc, Node};
+use ast_grep_core::{AstGrep, Doc, Node};
 use rusqlite::types::Value;
 
 type Rows = Result<Vec<Verdict>, String>;
@@ -46,7 +46,9 @@ fn count<D: Doc>(env: &MetaVarEnv<'_, D>, name: &str) -> Option<i64> {
 /// `resolves.binding` before its sub-rules (`BindingTest::resolve`): false, unknown, or true
 /// with the binding's site, value and annotation (NULL where it has none near the reference); a
 /// listed sub-rule whose node the binding lacks makes it false.
-pub(in crate::code_rule_dsl::sql) struct BindingSites(pub(in crate::code_rule_dsl::sql) BindingTest);
+pub(in crate::code_rule_dsl::sql) struct BindingSites(
+    pub(in crate::code_rule_dsl::sql) BindingTest,
+);
 
 impl Verdicts for BindingSites {
     fn rows<'t>(&self, node: Node<'t, TapeDoc>, env: &MetaVarEnv<'t, TapeDoc>) -> Rows {
@@ -103,10 +105,10 @@ impl Verdicts for Occurrences {
                 _ => return Ok(Vec::new()),
             },
             Self::Binds(test, ordinal) => {
-                let Some(ordinal) = count(env, ordinal) else {
+                let (Some(ordinal), Some(site)) = (count(env, ordinal), test.at(&node)) else {
                     return Ok(Vec::new());
                 };
-                (node.clone(), test.occurrences(&node, ordinal))
+                (node.clone(), site.occurrences(ordinal).to_vec())
             }
         };
         let root = anchor.root().root();
@@ -114,28 +116,23 @@ impl Verdicts for Occurrences {
             .iter()
             .filter_map(|occurrence| occurrence.find_near(root.clone(), &anchor))
             .enumerate()
-            .map(|(ord, found)| {
-                related(
-                    Value::Integer(local_id(found.node_id())),
-                    ord as i64,
-                    [],
-                )
-            })
+            .map(|(ord, found)| related(Value::Integer(local_id(found.node_id())), ord as i64, []))
             .collect())
     }
 }
 
-/// `binds`' candidates (`Binds::candidates`): each binding the name node names, in the matcher's
+/// `binds`' candidates (`NameSite::candidates`): each binding the name node names, in the matcher's
 /// order, writing its ordinal, its verdict before its sub-rules, its site, value and annotation,
 /// the shadowed binding's check and its site, value and annotation (Python's `redefines`).
 pub(in crate::code_rule_dsl::sql) struct BindsCandidates(pub(in crate::code_rule_dsl::sql) Binds);
 
 impl Verdicts for BindsCandidates {
     fn rows<'t>(&self, node: Node<'t, TapeDoc>, env: &MetaVarEnv<'t, TapeDoc>) -> Rows {
-        Ok(self
-            .0
-            .candidates(&node, env)
-            .into_iter()
+        let Some(site) = self.0.at(&node) else {
+            return Ok(Vec::new());
+        };
+        Ok(site
+            .candidates(&self.0, env)
             .enumerate()
             .map(|(ord, candidate)| {
                 let mut sets = vec![
@@ -152,7 +149,7 @@ impl Verdicts for BindsCandidates {
 }
 
 /// The bindings `redefines` reads beside a `binds` candidate (its ordinal in the key, under
-/// `ordinal`), in the matcher's order (`Binds::others_of`), writing each one's verdict before its
+/// `ordinal`), in the matcher's order (`NameSite::others`), writing each one's verdict before its
 /// sub-rules and its site, value and annotation.
 pub(in crate::code_rule_dsl::sql) struct BindsOthers(
     pub(in crate::code_rule_dsl::sql) Binds,
@@ -161,13 +158,11 @@ pub(in crate::code_rule_dsl::sql) struct BindsOthers(
 
 impl Verdicts for BindsOthers {
     fn rows<'t>(&self, node: Node<'t, TapeDoc>, env: &MetaVarEnv<'t, TapeDoc>) -> Rows {
-        let Some(ordinal) = count(env, &self.1) else {
+        let (Some(ordinal), Some(site)) = (count(env, &self.1), self.0.at(&node)) else {
             return Ok(Vec::new());
         };
-        Ok(self
-            .0
-            .others_of(&node, env, ordinal)
-            .into_iter()
+        Ok(site
+            .others(&self.0, env, ordinal)
             .enumerate()
             .map(|(ord, other)| {
                 let mut sets = vec![Value::Integer(i64::from(other.pre))];
@@ -178,7 +173,7 @@ impl Verdicts for BindsOthers {
     }
 }
 
-/// What `formatArgs` reads before its sub-rules (`FormatArgs::sides`), by `part`.
+/// What `formatArgs` reads before its sub-rules (`FormatArgs::prepare`), by `part`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::code_rule_dsl::sql) enum FormatPart {
     /// Its verdict: false, unknown, or true with its template's tree (a document of the batch).
@@ -198,20 +193,18 @@ pub(in crate::code_rule_dsl::sql) struct FormatSides(
 
 impl Verdicts for FormatSides {
     fn rows<'t>(&self, _node: Node<'t, TapeDoc>, env: &MetaVarEnv<'t, TapeDoc>) -> Rows {
-        let (tree, candidates, incomplete) = match self.0.sides(env) {
-            Sides::NoMatch => return Ok(Vec::new()),
-            Sides::Unknown => {
+        let (tree, candidates, incomplete) = match self.0.prepare(env) {
+            Prepared::NoMatch => return Ok(Vec::new()),
+            Prepared::Unknown => {
                 return Ok(match self.1 {
                     FormatPart::Verdict => vec![Verdict::unknown()],
                     _ => Vec::new(),
                 });
             }
-            Sides::Sides {
+            Prepared::Sides {
                 tree,
                 unused,
-                unused_incomplete,
                 missing,
-                missing_incomplete,
             } => match self.1 {
                 FormatPart::Verdict => {
                     return Ok(vec![Verdict::holds(vec![integer(
@@ -221,19 +214,19 @@ impl Verdicts for FormatSides {
                 FormatPart::Unused => (
                     None,
                     unused
+                        .candidates
                         .into_iter()
                         .map(|(node, known)| (Value::Integer(local_id(node.node_id())), known))
                         .collect::<Vec<_>>(),
-                    unused_incomplete,
+                    unused.incomplete,
                 ),
-                FormatPart::Missing => (
-                    tree_file(&tree),
-                    missing
-                        .into_iter()
-                        .map(|(index, known)| (Value::Integer(i64::from(index)), known))
-                        .collect(),
-                    missing_incomplete,
-                ),
+                FormatPart::Missing => {
+                    let root = AstGrep::doc(SubDoc { tree: tree.clone() });
+                    let fields = missing_fields(&root.root(), &missing)
+                        .map(|(index, _, known)| (integer(index), known))
+                        .collect();
+                    (tree_file(&tree), fields, missing.incomplete)
+                }
             },
         };
         let file = tree.map_or(Value::Null, Value::Integer);
@@ -272,7 +265,9 @@ impl Verdicts for Parsed {
     fn rows<'t>(&self, node: Node<'t, TapeDoc>, _env: &MetaVarEnv<'t, TapeDoc>) -> Rows {
         Ok(match self.0.text_tree(&node) {
             Some(LiteralParsed::Tree(tree)) => {
-                vec![Verdict::holds(vec![integer(tree_file(&tree).unwrap_or(-1))])]
+                vec![Verdict::holds(vec![integer(
+                    tree_file(&tree).unwrap_or(-1),
+                )])]
             }
             Some(LiteralParsed::Unknown) => vec![Verdict::unknown()],
             Some(LiteralParsed::NotString) | None => Vec::new(),

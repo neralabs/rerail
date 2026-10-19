@@ -68,9 +68,9 @@ pub(crate) struct FormatArgs {
 
 /// One side's candidates: nodes and whether each is known to be unused (or missing); `incomplete`
 /// when others may be that the analysis cannot name (a `**` splat, a dynamic key).
-struct Side<T> {
-    candidates: Vec<(T, bool)>,
-    incomplete: bool,
+pub(crate) struct Side<T> {
+    pub(crate) candidates: Vec<(T, bool)>,
+    pub(crate) incomplete: bool,
 }
 
 impl<T> Side<T> {
@@ -114,8 +114,9 @@ fn key_of(value: Option<&Value>) -> Option<Key> {
     }
 }
 
-/// What a format call's arguments and template give before any sub-rule is matched.
-enum Prepared<'t, D: Doc> {
+/// What a format call's arguments and template give before any sub-rule is matched: what the
+/// matcher reads, and the SQL engine's terminals return.
+pub(crate) enum Prepared<'t, D: Doc> {
     NoMatch,
     Unknown,
     Sides {
@@ -127,7 +128,7 @@ enum Prepared<'t, D: Doc> {
 
 impl FormatArgs {
     /// The call's unused arguments and missing fields, read from the captures in `env`.
-    fn prepare<'t, D: Doc>(&self, env: &MetaVarEnv<'t, D>) -> Prepared<'t, D> {
+    pub(crate) fn prepare<'t, D: Doc>(&self, env: &MetaVarEnv<'t, D>) -> Prepared<'t, D> {
         match (self.style, &self.reading) {
             (Style::Brace, _) => self.prepare_python(env, true),
             (Style::Percent, _) => self.prepare_python(env, false),
@@ -271,7 +272,6 @@ impl FormatArgs {
             } => (tree, unused, missing),
         };
         let root = AstGrep::doc(SubDoc { tree: tree.clone() });
-        let parsed = root.root();
         let three = THREE_VALUED.get();
         let saved = three && UNKNOWN.replace(false);
         let mut verdict = Some(true);
@@ -283,15 +283,8 @@ impl FormatArgs {
         if let Some(rule) = &self.missing
             && verdict != Some(false)
         {
-            let nodes = parsed
-                .dfs()
-                .filter_map(|part| {
-                    missing
-                        .candidates
-                        .iter()
-                        .find(|(id, _)| *id == part.node_id())
-                        .map(|(_, known)| (part, *known))
-                })
+            let nodes = missing_fields(&root.root(), &missing)
+                .map(|(_, part, known)| (part, known))
                 .collect();
             let mut inner = Cow::Owned(MetaVarEnv::new());
             let hosts = each::active().then(|| HostRanges::enter(host_map(&tree)));
@@ -332,57 +325,19 @@ impl FormatArgs {
     }
 }
 
-/// What the SQL engine's terminals read of `formatArgs` (`FormatArgs::sides`): its verdict before
-/// its sub-rules, and the candidates each sub-rule searches, each with whether it is known to be
-/// unused (or missing), and whether others may be.
-pub(crate) enum Sides<'t, D: Doc> {
-    NoMatch,
-    Unknown,
-    Sides {
-        tree: std::sync::Arc<crate::code_rule_dsl::literal::SubTree>,
-        unused: Vec<(Node<'t, D>, bool)>,
-        unused_incomplete: bool,
-        /// The template's fields by their preorder index in `tree`, in the order `missing`
-        /// searches them (`match_node`'s `dfs`).
-        missing: Vec<(u32, bool)>,
-        missing_incomplete: bool,
-    },
-}
-
-impl FormatArgs {
-    /// `match_node`'s steps before its sub-rules, for the SQL engine.
-    pub(crate) fn sides<'t, D: Doc>(&self, env: &MetaVarEnv<'t, D>) -> Sides<'t, D> {
-        match self.prepare(env) {
-            Prepared::NoMatch => Sides::NoMatch,
-            Prepared::Unknown => Sides::Unknown,
-            Prepared::Sides {
-                tree,
-                unused,
-                missing,
-            } => {
-                let root = AstGrep::doc(SubDoc { tree: tree.clone() });
-                let fields = root
-                    .root()
-                    .dfs()
-                    .enumerate()
-                    .filter_map(|(index, part)| {
-                        missing
-                            .candidates
-                            .iter()
-                            .find(|(id, _)| *id == part.node_id())
-                            .map(|(_, known)| (index as u32, *known))
-                    })
-                    .collect();
-                Sides::Sides {
-                    tree,
-                    unused: unused.candidates,
-                    unused_incomplete: unused.incomplete,
-                    missing: fields,
-                    missing_incomplete: missing.incomplete,
-                }
-            }
-        }
-    }
+/// The template's fields `missing` searches, in the order it searches them (the tree's preorder),
+/// each with its preorder index, and whether it is known to be missing.
+pub(crate) fn missing_fields<'a, 'r>(
+    root: &'a Node<'r, SubDoc>,
+    missing: &'a Side<usize>,
+) -> impl Iterator<Item = (usize, Node<'r, SubDoc>, bool)> + 'a {
+    root.dfs().enumerate().filter_map(|(index, part)| {
+        missing
+            .candidates
+            .iter()
+            .find(|(id, _)| *id == part.node_id())
+            .map(|(_, known)| (index, part, *known))
+    })
 }
 
 /// A search's verdict when more candidates may exist than it saw: a miss is then unknown.

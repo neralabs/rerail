@@ -49,7 +49,7 @@ pub(crate) use each::binding_range;
 pub(crate) use exported::{
     WITNESS_NODE, export_text, exported_span, exported_text, is_span_variable,
 };
-pub(crate) use format_args::{FormatArgs, Sides, Style};
+pub(crate) use format_args::{FormatArgs, Prepared, Style, missing_fields};
 pub(crate) use layout::{Gap, Layout, LineCount, Neighbour};
 pub(super) use memo::with_file as with_file_memo;
 pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
