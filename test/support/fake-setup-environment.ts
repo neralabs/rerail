@@ -6,6 +6,8 @@ import type { Harness } from "../../src/setup/index.js";
 import type { ApiCaller } from "../../src/engine/index.js";
 import type { DashboardPage, SetupEnvironment } from "../../src/cli/index.js";
 import type { DashboardLink } from "../../src/harness/index.js";
+import type { PackStore } from "../../src/setup/index.js";
+import { directoryPackStore } from "./directory-pack-store.js";
 
 export interface FakeSetupEnvironment extends SetupEnvironment {
   /** Every `connect` call, in order. */
@@ -20,12 +22,15 @@ export function fakeSetupEnvironment(options: {
   browser?: boolean;
   /** Runs when a page is asked for, as the person's clicks in the dashboard would. */
   onPage?: (scope: RulesDashboardScope, page: DashboardPage) => void | Promise<void>;
+  /** Where rule packs come from: this repository's TypeScript pack alone by default, as if no other were published. */
+  packs?: PackStore;
 } = {}): FakeSetupEnvironment {
   const connections: FakeSetupEnvironment["connections"] = [];
   const pages: FakeSetupEnvironment["pages"] = [];
   return {
     connections,
     pages,
+    packs: options.packs ?? directoryPackStore(undefined, ["typescript"]),
     agentsFound: () => options.found ?? ["claude-code", "cursor"],
     async connect(agents, repoRoot) {
       connections.push({ agents, repoRoot });

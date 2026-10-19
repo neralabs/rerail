@@ -1,12 +1,13 @@
 /**
- * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 6, one test per
+ * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 7, one test per
  * check, and reports each rule's status; a rule core cannot read yet is skipped as not supported yet. Check 4 scores
  * ported rules on the tools' fixtures, and on the pinned corpora that are checked out (RERAIL_PACK_CORPORA=1: every
  * corpus, a missing checkout failing; 0: none).
  *
  * The validator's own tests run it over the fixture packs in fixtures/packs/: `valid` passes, each negative
  * breaks one check of a copy of it, `exemplar`, for the test-only planned language, passes with its rule not supported
- * yet, and `empty`, whose ports are all candidates, passes with no rules.
+ * yet, `empty`, whose ports are all candidates, passes with no rules, and `match-check`, whose match is its own
+ * executable check, passes check 7 and copies of it fail it.
  */
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -357,6 +358,54 @@ describe("validatePack", () => {
     const validation = await validatePack(changed("valid", change), { corpora: false });
     expect(failing(validation)).toEqual(expected);
     expect(validation.pass).toBe(false);
+  });
+
+  describe("check 7: manifest", () => {
+    const CHECK = "checks/gemfile.mjs";
+
+    it("passes a pack whose match is its own check, published and answering on an empty repository", async () => {
+      const validation = await validatePack(join(FIXTURES, "match-check"), { corpora: false });
+      expect(failing(validation)).toEqual({});
+    });
+
+    it("fails a pack.json without match, as a manifest failure besides check 1's schema failure", async () => {
+      const validation = await validatePack(changed("valid", directory => editJson(join(directory, "pack.json"), ({ match: _match, ...pack }) => pack)), { corpora: false });
+      expect(failing(validation)).toEqual({
+        rules: ["pack.json: ✖ Invalid input: expected object, received undefined\n  → at match"],
+        proof: ["pack.json does not parse; see check 1"],
+        examples: ["pack.json does not parse; see check 1"],
+        manifest: ["pack.json has no match: set-up could never recommend this pack"],
+      });
+    });
+
+    const cases: [string, (directory: string) => void, string][] = [
+      ["a check module that does not exist", directory => rmSync(join(directory, CHECK)), `match check ${CHECK} does not exist`],
+      [
+        "a check module package.json files does not publish",
+        directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, files: z.array(z.string()).parse(manifest.files).filter(file => file !== "checks") })),
+        `match check ${CHECK}: package.json files does not publish it`,
+      ],
+      [
+        "a check that throws on an empty repository",
+        directory => writeFileSync(join(directory, CHECK), 'export default () => { throw new Error("no Gemfile reader"); };\n'),
+        `match check ${CHECK} fails on an empty repository, where it must answer within 5 s: Error: no Gemfile reader`,
+      ],
+      [
+        "a check that answers neither matched nor not",
+        directory => writeFileSync(join(directory, CHECK), "export default () => ({ found: true });\n"),
+        `match check ${CHECK} fails on an empty repository, where it must answer within 5 s: it did not answer { matched: false } or { matched: true, paths: [...] }`,
+      ],
+    ];
+
+    it.each(cases)("fails %s", async (_name, change, expected) => {
+      const validation = await validatePack(changed("match-check", change), { corpora: false });
+      expect(failing(validation)).toEqual({ manifest: [expected] });
+    });
+
+    it("fails a pack core's generated pack list does not name, when it must be listed", async () => {
+      const validation = await validatePack(join(FIXTURES, "match-check"), { corpora: false, listed: true });
+      expect(failing(validation)).toEqual({ manifest: ["src/engine/catalog/pack-list.generated.ts does not list match-check; run npm run generate:packs"] });
+    });
   });
 
   it("marks the rule a failure belongs to", async () => {

@@ -18,7 +18,8 @@ import {
   type RegistrationReport,
 } from "../setup/harness-registration.js";
 import { checkNodeVersion } from "../setup/node-version.js";
-import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
+import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
+import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
 import { renderInstalled, SETUP_FLAGS, shellQuote, type DashboardLink, type SetupLane } from "../harness/setup-screens.js";
 import type { SetupStep } from "../harness/setup-step.js";
@@ -30,6 +31,8 @@ export interface SetupContext {
   /** The package this launcher runs from: an npx cache, a global install, or a checkout. */
   packageRoot: string;
   updater: ManagedUpdater;
+  /** Where rule packs come from and go to; npm, into `home`, unless given. */
+  packs?: PackStore;
 }
 
 interface RegistrationArguments {
@@ -256,9 +259,10 @@ function pageUrl(origin: string, scope: RulesDashboardScope, page: DashboardPage
   return url.href;
 }
 
-/** What set-up needs from this machine: the coding agents, their registration, and the dashboard. */
+/** What set-up needs from this machine: the coding agents, their registration, the dashboard, and npm for rule packs. */
 export function setupEnvironment(context: SetupContext, port?: number): SetupEnvironment {
   return {
+    packs: context.packs ?? npmPackStore(context.home),
     agentsFound: () => detectHarnesses(codingAgentHome()),
     async connect(agents, repoRoot) {
       // Claude Code's project status line lives in the repository: only one the person said yes to.
@@ -378,13 +382,15 @@ interface SetupArguments extends SetupCarry {
   answer?: string;
   repo?: string;
   agentsError?: string;
+  packs?: readonly PackVersion[];
+  packsError?: string;
 }
 
 /** Checked before the install, so a typo changes nothing. */
 function setupArguments(args: readonly string[]): SetupArguments {
   const { flags, options } = parseArguments(
     args,
-    { flags: [JSON_FLAG, SETUP_FLAGS.relay, "--repository"], options: ["--answer", "--repo", "--agents", "--port", "--database"] },
+    { flags: [JSON_FLAG, SETUP_FLAGS.relay, "--repository"], options: ["--answer", "--repo", "--agents", SETUP_FLAGS.packs, "--port", "--database"] },
     argument => `Unknown setup option: ${argument}`,
   );
   const port = options.get("--port");
@@ -399,6 +405,7 @@ function setupArguments(args: readonly string[]): SetupArguments {
     ...(answer === undefined ? {} : { answer }),
     ...(repo === undefined ? {} : { repo }),
     ...setupAgents(agents, answer),
+    ...setupPacks(options.get(SETUP_FLAGS.packs), answer),
   };
 }
 
@@ -450,6 +457,8 @@ function setupRequest(context: SetupContext, parsed: SetupArguments, place: Setu
     ...(parsed.answer === undefined ? {} : { answer: parsed.answer }),
     ...(parsed.agents === undefined ? {} : { agents: parsed.agents }),
     ...(parsed.agentsError === undefined ? {} : { agentsError: parsed.agentsError }),
+    ...(parsed.packs === undefined ? {} : { packs: parsed.packs }),
+    ...(parsed.packsError === undefined ? {} : { packsError: parsed.packsError }),
     ...(setupCommand === undefined ? {} : { setupCommand }),
     environment: place.environment(parsed.port),
   };
@@ -496,7 +505,7 @@ export async function startStep(args: readonly string[], context: SetupContext, 
   try {
     const { flags, options } = parseArguments(
       args,
-      { flags: [JSON_FLAG, SETUP_FLAGS.relay, "--repository"], options: ["--repo", "--agents", "--answer", "--database"] },
+      { flags: [JSON_FLAG, SETUP_FLAGS.relay, "--repository"], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
       argument => `Unknown start option: ${argument}`,
     );
     const agents = options.get("--agents");
@@ -510,6 +519,7 @@ export async function startStep(args: readonly string[], context: SetupContext, 
       const passed = [
         ...(answer === undefined ? [] : ["--answer", answer]),
         ...(agents === undefined ? [] : ["--agents", agents]),
+        ...(options.has(SETUP_FLAGS.packs) ? [SETUP_FLAGS.packs, options.get(SETUP_FLAGS.packs)!] : []),
         ...(databasePath === undefined ? [] : ["--database", databasePath]),
         ...(repository ? ["--repository"] : []),
       ];
@@ -525,6 +535,7 @@ export async function startStep(args: readonly string[], context: SetupContext, 
     return await startRerailStep(workspace, {
       ...carry,
       ...(agentsError === undefined ? {} : { agentsError }),
+      ...setupPacks(options.get(SETUP_FLAGS.packs), answer),
       ...(answer === undefined ? {} : { answer }),
       ...(setupCommand === undefined ? {} : { setupCommand }),
       nextArgs: jsonNextArgs(carry),

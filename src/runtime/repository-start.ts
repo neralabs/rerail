@@ -13,7 +13,7 @@ import {
   recordCheckout,
 } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
-import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { recommendRulePacks, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
 import { checkouts, events, repositories, sessions } from "../engine/storage/schema.js";
 import { clearSetupReview, setupReviewOffered } from "../engine/catalog/setup-review.js";
@@ -187,7 +187,7 @@ export interface RepositoryStopOptions {
 /** The rules that are on in `checkout`, at any folder of its repository, as its own and its parents' settings leave them. */
 export function onRuleCount(database: RerailDatabase, checkout: CheckoutContext): number {
   const parentCheckoutPaths = parentCheckouts(database, checkout).map(row => row.checkoutPath);
-  return listRepositoryRules(database, loadBundledCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
+  return listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
     .rules.filter(rule => rule.on).length;
 }
 

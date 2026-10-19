@@ -5,15 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Core ships no pack with a match definition; set-up's recommendation flow is exercised with the TypeScript pack added.
-vi.mock("../../src/engine/catalog/bundled-rule-documents.js", async (importOriginal) => {
-  const actual = await importOriginal<{ corePackDirectories(): string[]; loadBundledRules(packs: readonly string[]): unknown[] }>();
-  const typescriptPack = decodeURIComponent(new URL("../../packs/typescript", import.meta.url).pathname);
-  const packs = (): string[] => [...actual.corePackDirectories(), typescriptPack];
-  // The shipped documents too, so the TypeScript pack's rules have theirs (set-up reads their upstream names).
-  let shipped: unknown[] | undefined;
-  return { ...actual, corePackDirectories: packs, shippedBundledRules: () => (shipped ??= actual.loadBundledRules(packs())) };
-});
+// Set-up fetches rule packs through the fake environment's store: this repository's TypeScript pack.
 // Passed through, and watched: a run that must read no code never calls the recommender.
 const recommendRulePacks = vi.hoisted(() => vi.fn<(root: string) => unknown>());
 vi.mock("../../src/engine/catalog/rule-packs.js", async (importOriginal) => {
@@ -23,18 +15,21 @@ vi.mock("../../src/engine/catalog/rule-packs.js", async (importOriginal) => {
 });
 import { openRerailDatabase } from "../../src/engine/index.js";
 import { repositoryIdentityLocation } from "../../src/engine/index.js";
-import { listRepositoryRules, loadBundledCatalog, lookupCheckout, recordCheckout, ruleSettings } from "../../src/engine/index.js";
+import { listRepositoryRules, loadRuleCatalog, lookupCheckout, recordCheckout, ruleSettings } from "../../src/engine/index.js";
 import { parseCodingAgents, runSetup, startRerail, startRerailStep, type SetupRequest } from "../../src/cli/repository-setup.js";
 import { onRuleCount, stopRerail, workspaceStartState, type RepositorySetupIo } from "../../src/runtime/index.js";
 import { setUpRepository } from "../../src/engine/index.js";
 import { noBrowserReason, runSetupCommand, type SetupIo } from "../../src/cli/setup-cli.js";
 import { ManagedUpdater } from "../../src/setup/index.js";
+import { directoryPackStore, repositoryPackVersions } from "../support/directory-pack-store.js";
+import { installPack, removeInstalledPacks } from "../support/installed-packs.js";
 import { attachPacks, fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   recommendRulePacks.mockClear();
+  removeInstalledPacks();
   vi.unstubAllEnvs();
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
@@ -133,6 +128,8 @@ function failStarts(databasePath: string): void {
 
 /** Each test sets real Git repositories up against SQLite; a loaded full-suite run needs more than the default 5 s. */
 const SETUP_TIMEOUT_MS = 30_000;
+/** The pack set-up offers the TypeScript fixture, at the version its "Yes" answer carries (`--packs`). */
+const TYPESCRIPT = repositoryPackVersions("typescript");
 
 describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () => {
   it("asks before reading, changes nothing until yes, and repeats no side effect when an answer is run again", async () => {
@@ -148,14 +145,14 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
 
     const recommended = agentIo();
     expect(await runSetup(recommended, request(setup, environment, { answer: "yes", repo: setup.repo }))).toEqual({ status: "waiting" });
-    expect(recommended.text()).toContain("Of the rule packs that come with Rerail, 1 looks right for acme-api.");
+    expect(recommended.text()).toContain("Of Rerail’s rule packs, 1 looks right for acme-api.");
     expect(recommended.text()).toContain("not found: OMP, Pi, Codex");
     expectUntouched(setup);
     expect(existsSync(setup.databasePath)).toBe(false);
     expect(environment.connections).toEqual([]);
 
     const started = agentIo();
-    const outcome = await runSetup(started, request(setup, environment, { answer: "start", repo: setup.repo }));
+    const outcome = await runSetup(started, request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     expect(outcome).toMatchObject({ status: "started", repositoryName: "acme-api" });
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
     expect(selected(setup)).toEqual(TS_PACKS);
@@ -165,7 +162,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const firstStart = startRows(setup);
 
     const again = agentIo();
-    expect(await runSetup(again, request(setup, environment, { answer: "start", repo: setup.repo }))).toMatchObject({ status: "started" });
+    expect(await runSetup(again, request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }))).toMatchObject({ status: "started" });
     expect(again.text()).not.toContain("Connected to");
     expect(again.text()).toContain(`Rerail is on in acme-api. 1 rule pack is on, with ${enabledRules(setup)} rules.`);
     expect(again.text()).toContain("http://127.0.0.1:4737/#rules");
@@ -179,6 +176,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const setup = await fixture();
     // The review page's first switch adds the packs kept on, which sets the repository up: TypeScript off, complexity on.
     const environment = fakeSetupEnvironment({
+      packs: directoryPackStore(undefined, ["typescript", "complexity"]),
       onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["complexity"]) : undefined),
     });
 
@@ -198,7 +196,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(selected(setup)).toEqual(["complexity"]);
 
     const started = agentIo();
-    await runSetup(started, request(setup, environment, { answer: "start", repo: setup.repo }));
+    await runSetup(started, request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     expect(selected(setup)).toEqual(["complexity"]);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
     expect(started.text()).toContain("Rule packs     Cyclomatic complexity (limit 6)");
@@ -213,7 +211,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(selected(setup)).toEqual(["typescript"]);
 
     const picked = agentIo();
-    expect(await runSetup(picked, request(setup, environment, { answer: "pick-myself", repo: setup.repo })))
+    expect(await runSetup(picked, request(setup, environment, { answer: "pick-myself", repo: setup.repo, packs: [] })))
       .toMatchObject({ status: "started", ruleCount: 0 });
     expect(selected(setup)).toEqual([]);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
@@ -250,13 +248,14 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     // Set-up offers the review; the person never changes anything there.
     await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo }));
     const { repositoryKey } = environment.pages[0]!;
-    // Meanwhile the coding agent adds a pack over MCP, which sets the repository up.
+    // Meanwhile the coding agent installs a pack and adds it over MCP, which sets the repository up.
+    installPack("complexity");
     await attachPacks(setup.databasePath, { repositoryKey, checkoutPath: setup.repo }, ["complexity"], {
       kind: "agent", checkout: setup.repo, folder: "",
     });
 
     // "I'll pick rule packs myself" removes nothing the review did not add.
-    expect(await runSetup(agentIo(), request(setup, environment, { answer: "pick-myself", repo: setup.repo }))).toMatchObject({ status: "stopped" });
+    expect(await runSetup(agentIo(), request(setup, environment, { answer: "pick-myself", repo: setup.repo, packs: [] }))).toMatchObject({ status: "stopped" });
     expect(selected(setup)).toEqual(["complexity"]);
 
     const io = agentIo();
@@ -270,6 +269,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
   it("asks the review's confirm question on `rerail start` once the review set the repository up", async () => {
     const setup = await fixture();
     const environment = fakeSetupEnvironment({
+      packs: directoryPackStore(undefined, ["typescript", "complexity"]),
       onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["complexity"]) : undefined),
     });
     await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo }));
@@ -281,7 +281,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
 
     // Once started and stopped, it is plainly set up: starting again asks nothing.
-    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo }));
+    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     stopRerail(setup.repo, agentIo(), { databasePath: setup.databasePath });
     expect(await startRerail(setup.repo, agentIo(), { databasePath: setup.databasePath, environment })).toMatchObject({ setUpRan: false, status: "started" });
     expect(selected(setup)).toEqual(["complexity"]);
@@ -295,7 +295,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: docs });
     const asked = agentIo();
     await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: docs }));
-    expect(asked.text()).toContain("None of the rule packs that come with Rerail look right for docs.");
+    expect(asked.text()).toContain("None of Rerail’s rule packs look right for docs.");
     expect(asked.text()).toContain("Start Rerail in docs with no rule packs on?");
     expect(asked.text()).not.toContain("starts in Steer");
 
@@ -307,7 +307,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
   it("connects only the coding agents named with --agents, and a later plain run connects no others", async () => {
     const setup = await fixture();
     const environment = fakeSetupEnvironment();
-    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, agents: parseCodingAgents("Codex") }));
+    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT, agents: parseCodingAgents("Codex") }));
     expect(environment.connections).toEqual([{ agents: ["codex"], repoRoot: setup.repo }]);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
 
@@ -336,7 +336,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
   it("starts with every pack off, reading no code, when the person picks packs themselves", async () => {
     const setup = await fixture();
     const picked = agentIo();
-    expect(await runSetup(picked, request(setup, fakeSetupEnvironment(), { answer: "pick-myself", repo: setup.repo })))
+    expect(await runSetup(picked, request(setup, fakeSetupEnvironment(), { answer: "pick-myself", repo: setup.repo, packs: [] })))
       .toMatchObject({ status: "started", ruleCount: 0 });
     expect(picked.text()).toContain("Rerail is on in acme-api. No rule packs are on yet.");
     expect(selected(setup)).toEqual([]);
@@ -365,7 +365,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
   it("shows the link and says why when no browser can open", async () => {
     const setup = await fixture();
     const summary = agentIo();
-    await runSetup(summary, request(setup, fakeSetupEnvironment({ browser: false }), { answer: "start", repo: setup.repo }));
+    await runSetup(summary, request(setup, fakeSetupEnvironment({ browser: false }), { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     expect(summary.text()).toContain("http://127.0.0.1:4737/#rules");
     expect(summary.text()).toContain("Couldn’t open a browser from here (this looks like a remote session).");
   });
@@ -442,7 +442,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const before = startRows(setup);
 
     // A fresh start: the checkout, the set-up and its packs are written before the start fails.
-    await expect(runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo }))).rejects.toThrow("disk full");
+    await expect(runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo, packs: TYPESCRIPT }))).rejects.toThrow("disk full");
     expect(startRows(setup)).toEqual(before);
     const reader = openRerailDatabase(setup.databasePath, { readonly: true });
     try {
@@ -455,13 +455,14 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
   it("keeps the review's packs when picking packs myself fails at the start", async () => {
     const setup = await fixture();
     const environment = fakeSetupEnvironment({
+      packs: directoryPackStore(undefined, ["typescript", "complexity"]),
       onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["typescript", "complexity"]) : undefined),
     });
     await runSetup(agentIo(), request(setup, environment, { answer: "review", repo: setup.repo }));
     failStarts(setup.databasePath);
 
     // Each pack is removed before the start fails; none of it stands.
-    await expect(runSetup(agentIo(), request(setup, environment, { answer: "pick-myself", repo: setup.repo }))).rejects.toThrow("disk full");
+    await expect(runSetup(agentIo(), request(setup, environment, { answer: "pick-myself", repo: setup.repo, packs: [] }))).rejects.toThrow("disk full");
     expect(selected(setup)).toEqual(["complexity", "typescript"]);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
   });
@@ -472,7 +473,7 @@ function rulesOf(fixture: Fixture, ruleIds: readonly string[]): Record<string, {
   const database = openRerailDatabase(fixture.databasePath, { readonly: true });
   try {
     const checkout = lookupCheckout(database, fixture.repo)!;
-    const rules = listRepositoryRules(database, loadBundledCatalog(), checkout.repositoryKey).rules;
+    const rules = listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey).rules;
     return Object.fromEntries(ruleIds.map(id => {
       const rule = rules.find(candidate => candidate.document.rule.id === id)!;
       return [id, { on: rule.on, config: rule.config }];
@@ -498,7 +499,7 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts with option = "type"  .eslintrc.json: "@typescript-eslint/consistent-type-definitions": ["error","type"]`);
     expect(asked.text()).toContain(`${TSLINT_COMMENT} starts off  .eslintrc.json: "@typescript-eslint/ban-tslint-comment": "off"`);
 
-    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo }));
+    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     expect(rulesOf(setup, [TYPE_DEFINITIONS, TSLINT_COMMENT])).toEqual({
       // The pack keeps consistent-type-definitions off; the repository's option is there for when it is turned on.
       [TYPE_DEFINITIONS]: { on: false, config: { option: "type" } },
@@ -519,7 +520,7 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     expect(review.text()).toContain(`${TYPE_DEFINITIONS} starts off  eslint.config.ts is not statically readable`);
     expect(review.text()).toContain(`${TSLINT_COMMENT} starts off  eslint.config.ts is not statically readable; .oxlintrc.json: "typescript/ban-tslint-comment": "off"`);
 
-    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo }));
+    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     expect(selected(setup)).toEqual(["typescript"]);
     expect(rulesOf(setup, [TSLINT_COMMENT])).toEqual({ [TSLINT_COMMENT]: { on: false, config: null } });
   });
@@ -544,7 +545,7 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts with option = "type"  eslint.config.ts: "@typescript-eslint/consistent-type-definitions": ["error","type"] for ["**/src/**/*.ts"]`);
     expect(asked.text()).toContain(`${TSLINT_COMMENT} starts off in scripts/  eslint.config.ts: "@typescript-eslint/ban-tslint-comment": "off" for ["scripts/**"]`);
 
-    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo }));
+    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     expect(rulesOf(setup, [TYPE_DEFINITIONS])).toEqual({ [TYPE_DEFINITIONS]: { on: false, config: { option: "type" } } });
     const database = openRerailDatabase(setup.databasePath, { readonly: true });
     try {
@@ -557,10 +558,11 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     }
   });
 
-  it("takes nothing from the lint config when the person picks packs themselves", async () => {
+  it("takes nothing from the lint config when the person picks packs themselves, even for a pack they pick", async () => {
     const setup = await fixture();
     writeFileSync(join(setup.repo, ".eslintrc.json"), JSON.stringify({ rules: { "@typescript-eslint/ban-tslint-comment": "off" } }));
-    await runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "pick-myself", repo: setup.repo }));
+    await runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "pick-myself", repo: setup.repo, packs: TYPESCRIPT }));
+    expect(selected(setup)).toEqual(["typescript"]);
     const database = openRerailDatabase(setup.databasePath, { readonly: true });
     try {
       expect(database.$client.prepare("SELECT COUNT(*) AS count FROM rule_settings").get()).toEqual({ count: 0 });
@@ -605,7 +607,8 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
   it("starts with every pack off when the person picks packs themselves", async () => {
     const setup = await fixture();
     const environment = fakeSetupEnvironment();
-    const io = terminalIo(["3"]);
+    // "I'll pick rule packs myself", then "None for now" from every pack set-up fetched.
+    const io = terminalIo(["3", "2"]);
     expect(await runSetup(io, request(setup, environment))).toMatchObject({ status: "started", ruleCount: 0 });
     expect(io.text()).toContain("Rerail did not read any code.");
     expect(selected(setup)).toEqual([]);
@@ -616,7 +619,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
   it("connects the coding agents the person types, after an unknown one", async () => {
     const setup = await fixture();
     const environment = fakeSetupEnvironment();
-    const io = terminalIo(["1", "3", "vim", "claude code", ""]);
+    const io = terminalIo(["1", "4", "vim", "claude code", ""]);
     await runSetup(io, request(setup, environment));
     expect(io.text()).toContain("Unknown coding agent: vim.");
     expect(environment.connections).toEqual([{ agents: ["claude-code"], repoRoot: setup.repo }]);
@@ -696,7 +699,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
 
   it("does not set a stopped repository up again", async () => {
     const setup = await fixture();
-    await runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo }));
+    await runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     stopRerail(setup.repo, agentIo(), { databasePath: setup.databasePath });
     const io = terminalIo([]);
     expect(await runSetup(io, request(setup, fakeSetupEnvironment()))).toMatchObject({ status: "stopped" });
@@ -737,7 +740,7 @@ describe("a database from before set-up kept its offer of the review", { timeout
 
   it("just starts a repository that is set up and was never started", async () => {
     const setup = await fixture();
-    await runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo }));
+    await runSetup(agentIo(), request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     const writer = openRerailDatabase(setup.databasePath);
     try {
       // Set up some other way (`rerail rules add`) and never started.
@@ -773,5 +776,147 @@ describe("rerail setup", () => {
     expect(noBrowserReason({ BROWSER: "none", DISPLAY: ":0" }, "linux")).toBe("BROWSER is set to none");
     expect(noBrowserReason({ DISPLAY: ":0" }, "linux")).toBeUndefined();
     expect(noBrowserReason({}, "darwin")).toBeUndefined();
+  });
+});
+
+describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => {
+  /** This repository's packs `only` as npm would give them, counting each fetch. */
+  function countingStore(only: readonly string[], failing: readonly string[] = []) {
+    const store = directoryPackStore(undefined, only);
+    const fetches: string[][] = [];
+    return {
+      ...store,
+      fetches,
+      async fetch(ids: readonly string[], tag: string) {
+        fetches.push([...ids]);
+        const result = await store.fetch(ids.filter(id => !failing.includes(id)), tag);
+        return { ...result, problems: [...result.problems, ...failing.map(id => ({ packageName: `@neralabs/rerail-pack-${id}`, reason: "npm error code E401" }))] };
+      },
+    };
+  }
+
+  it("fetches packs only after the person allows reading, installs nothing until an installing answer, then exactly the versions it carries", async () => {
+    const setup = await fixture();
+    const packs = countingStore(["typescript"]);
+    const environment = fakeSetupEnvironment({ packs });
+
+    await runSetup(agentIo(), request(setup, environment));
+    expect(packs.fetches).toEqual([]);
+
+    const asked = agentIo();
+    await runSetup(asked, request(setup, environment, { answer: "yes", repo: setup.repo }));
+    expect(packs.fetches).toHaveLength(1);
+    expect(asked.text()).toContain(`@neralabs/rerail-pack-typescript@${TYPESCRIPT[0]!.version}`);
+    expect(packs.installs).toEqual([]);
+    expect(loadRuleCatalog().packs.size).toBe(0);
+    expectUntouched(setup);
+
+    await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
+    expect(packs.installs).toEqual([[`@neralabs/rerail-pack-typescript@${TYPESCRIPT[0]!.version}`]]);
+    expect([...loadRuleCatalog().packs.keys()]).toEqual(["typescript"]);
+    expect(selected(setup)).toEqual(TS_PACKS);
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
+  });
+
+  it("starts nothing when npm has no such version of a pack its answer names", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment();
+    await expect(runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: [{ id: "typescript", version: "9.9.9" }] })))
+      .rejects.toThrow("@neralabs/rerail-pack-typescript@9.9.9 is not in the registry");
+    expect(loadRuleCatalog().packs.size).toBe(0);
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
+  });
+
+  it("installs only the packs the person chooses at a terminal, by number or id, after one it does not know", async () => {
+    const setup = await fixture();
+    const packs = countingStore(["typescript", "complexity"]);
+    const io = terminalIo(["1", "3", "eslint", "2", ""]);
+    await runSetup(io, request(setup, fakeSetupEnvironment({ packs })));
+    expect(io.text()).toContain("eslint is not one of the rule packs listed.");
+    // Both fit the TypeScript repository; the person chose the second listed.
+    expect(packs.installs).toHaveLength(1);
+    expect(selected(setup)).toHaveLength(1);
+    expect(loadRuleCatalog().packs.size).toBe(1);
+  });
+
+  it("asks the confirm question again, with the error, for an answer's rule packs it cannot read", async () => {
+    const setup = await fixture();
+    const asked = agentIo();
+    expect(await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo, packsError: "Name each rule pack as <id>@<version>, for example typescript@0.1.1, not typescript" })))
+      .toEqual({ status: "waiting" });
+    expect(asked.text()).toContain("Name each rule pack as <id>@<version>, for example typescript@0.1.1, not typescript");
+    expect(asked.text()).toContain("Start Rerail in acme-api with this rule pack?");
+    expect(loadRuleCatalog().packs.size).toBe(0);
+  });
+
+  it("names a pack npm would not give, and offers the others", async () => {
+    const setup = await fixture();
+    const asked = agentIo();
+    await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: countingStore(["typescript"], ["complexity"]) }), { answer: "yes", repo: setup.repo }));
+    expect(asked.text()).toContain("Rule packs set-up could not get:\n    @neralabs/rerail-pack-complexity: npm error code E401");
+    expect(asked.text()).toContain("Start Rerail in acme-api with this rule pack?");
+  });
+
+  it("offers an installed pack npm cannot give now, at its installed version", async () => {
+    const setup = await fixture();
+    installPack("typescript");
+    const asked = agentIo();
+    await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: countingStore([], ["typescript"]) }), { answer: "yes", repo: setup.repo }));
+    expect(asked.text()).toContain(`@neralabs/rerail-pack-typescript@${TYPESCRIPT[0]!.version}  installed already`);
+  });
+
+  it("offers every fetched pack, reading nothing in the repository, when the person picks packs themselves, and installs none until they pick", async () => {
+    const setup = await fixture();
+    const packs = countingStore(["typescript", "complexity"]);
+    const asked = agentIo();
+    expect(await runSetup(asked, request(setup, fakeSetupEnvironment({ packs }), { answer: "pick-myself", repo: setup.repo }))).toEqual({ status: "waiting" });
+    const [complexity] = repositoryPackVersions("complexity");
+    expect(asked.text()).toContain("Which rule packs should Rerail start with in acme-api?");
+    expect(asked.text()).toContain(`complexity@${complexity!.version}  Cyclomatic complexity (limit 6)`);
+    expect(asked.text()).toContain(`--answer pick-myself --repo ${setup.repo} --packs none`);
+    expect(recommendRulePacks).not.toHaveBeenCalled();
+    expect(packs.installs).toEqual([]);
+    expectUntouched(setup);
+  });
+
+  it("installs the packs a person picked themselves and adds each for the whole repository", async () => {
+    const setup = await fixture();
+    const packs = countingStore(["typescript", "complexity"]);
+    const complexity = repositoryPackVersions("complexity");
+    expect(await runSetup(agentIo(), request(setup, fakeSetupEnvironment({ packs }), { answer: "pick-myself", repo: setup.repo, packs: complexity })))
+      .toMatchObject({ status: "started" });
+    expect(packs.installs).toEqual([[`@neralabs/rerail-pack-complexity@${complexity[0]!.version}`]]);
+    // Not `complexity@src`, where its match would put it: the person did not let Rerail read the repository.
+    expect(attachedPacks(setup.repo, setup.databasePath)).toEqual(["complexity"]);
+    expect(recommendRulePacks).not.toHaveBeenCalled();
+  });
+
+  it("lists each pack with why it fits when the person picks packs themselves after Rerail read the repository", async () => {
+    const setup = await fixture();
+    const packs = countingStore(["typescript", "complexity"]);
+    // Yes, read it; then "I'll pick rule packs myself"; then choose the second listed.
+    const io = terminalIo(["1", "5", "1", "2", ""]);
+    expect(await runSetup(io, request(setup, fakeSetupEnvironment({ packs })))).toMatchObject({ status: "started" });
+    const text = io.text().replaceAll(/\u001b\[[0-9;]*m/gu, "");
+    const list = text.slice(text.indexOf("Rerail’s rule packs, from npm:"), text.indexOf("Which rule packs should Rerail start with in acme-api?"));
+    expect(list).toMatch(/typescript@\S+ {2}TypeScript {2}matches /u);
+    expect(packs.installs).toHaveLength(1);
+    expect(selected(setup)).toHaveLength(1);
+  });
+
+  it("checks each pack's core range against the active Rerail, not the package set-up runs from", async () => {
+    const setup = await fixture();
+    // `rerail update` has made 0.2.0 active; this run is the older package a coding agent's session loaded.
+    const current = join(process.env.RERAIL_HOME!, "current");
+    mkdirSync(current, { recursive: true });
+    writeFileSync(join(current, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.2.0" }));
+    try {
+      const asked = agentIo();
+      await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: setup.repo }));
+      expect(asked.text()).toMatch(/@neralabs\/rerail-pack-typescript@\S+: .*0\.2\.0/u);
+      expect(asked.text()).toContain("None of Rerail’s rule packs look right for acme-api.");
+    } finally {
+      await rm(current, { recursive: true, force: true });
+    }
   });
 });

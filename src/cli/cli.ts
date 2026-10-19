@@ -25,7 +25,7 @@ import {
 } from "../runtime/repository-start.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { repositoryName } from "../engine/catalog/repository-identity.js";
-import { checkSetupAnswer, setupAgents, startRerail } from "./repository-setup.js";
+import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
 import { isPreSetupHealthCheck, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
@@ -43,12 +43,13 @@ import { runRerailMcpBridge } from "../api/mcp-bridge.js";
 import { rollbackWithSnapshot, runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-cli.js";
 import { lookupCheckout, parentCheckouts, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
-import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { runShowMeCommand } from "./show-me.js";
+import { runPacksCommand } from "./packs-cli.js";
 import { JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -124,6 +125,10 @@ function usage(): string {
     "  rerail manage [--print]",
     "  rerail seed",
     "  rerail reset",
+    "  rerail packs [list]",
+    "  rerail packs add <id[@version] | package | tarball | folder>...",
+    "  rerail packs remove <id>...",
+    "  rerail packs recommend [--repo <dir>]",
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json>",
     "  rerail rules test <draft.json> [--repo <dir>] [--json]",
@@ -300,7 +305,7 @@ function enabledRuleCount(workspace: string): number | null {
     const checkout = lookupCheckout(database, workspace);
     if (checkout === undefined) return null;
     const parentCheckoutPaths = parentCheckouts(database, checkout).map(row => row.checkoutPath);
-    return listRepositoryRules(database, loadBundledCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
+    return listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
       .rules.filter(rule => rule.on).length;
   } catch (error) {
     process.stderr.write(`rerail: could not count this repo's rules: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -404,7 +409,7 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
       args,
       {
         flags: command === "start" ? ["--repository", SETUP_FLAGS.relay] : ["--repository"],
-        options: command === "start" ? ["--repo", "--agents", "--answer", "--database"] : ["--repo", "--database"],
+        options: command === "start" ? ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] : ["--repo", "--database"],
       },
       argument => `Unknown ${command} option: ${argument}\n\n${usage()}`,
     );
@@ -428,6 +433,7 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
     }
     const answer = checkSetupAnswer(options.get("--answer"));
     const { agents, agentsError } = setupAgents(options.get("--agents"), answer);
+    const packs = setupPacks(options.get(SETUP_FLAGS.packs), answer);
     const setupCommand = setupAnswerCommand(context, {
       ...(databasePath === undefined ? {} : { databasePath }),
       repository,
@@ -438,6 +444,7 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
       ...(databasePath === undefined ? {} : { databasePath }),
       ...(agents === undefined ? {} : { agents }),
       ...(agentsError === undefined ? {} : { agentsError }),
+      ...packs,
       ...(answer === undefined ? {} : { answer }),
       ...(setupCommand === undefined ? {} : { setupCommand }),
       repository,
@@ -551,6 +558,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "rules" && args[0] === "evidence") return await runRuleEvidenceCommand(args.slice(1), usage);
   if (command === "rules") return runRulesCommand(args, usage);
   if (command === "show-me") return runShowMeCommand(args, usage);
+  if (command === "packs") return await runPacksCommand(args, usage);
   if (command === "reset") return runResetCommand(args, usage);
   const daemonExit = await runDaemonCommand(command, args, home);
   if (daemonExit !== undefined) return daemonExit;

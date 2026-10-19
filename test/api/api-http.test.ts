@@ -8,7 +8,7 @@ import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import {
-  loadBundledCatalog,
+  loadRuleCatalog,
   openRerailDatabase,
   type RerailDatabase,
   type CodeRuleViolation,
@@ -23,6 +23,7 @@ import {
 import { MOCK_CODE_RULES, MOCK_CONVERSATION_RULES } from "../../src/cli/index.js";
 import { SqliteSessionStore } from "../../src/runtime/index.js";
 import { codingAgentHome, codingAgentStates, registerHarnesses, registrationRoot } from "../../src/setup/index.js";
+import { installPack } from "../support/installed-packs.js";
 
 /** The host a browser addressed the page to through a container port mapping; the fixture never binds it. */
 const PAGE_HOST = "localhost:35831";
@@ -55,6 +56,8 @@ describe("Rerail API over HTTP", () => {
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-api-"));
     process.env.RERAIL_HOME = join(root, "home");
+    // Core ships no packs; these tests add, configure and copy the complexity pack's rules.
+    installPack("complexity");
     databasePath = join(root, "rerail.sqlite");
     database = openRerailDatabase(databasePath);
     auditStore = new SqliteAuditStore(databasePath);
@@ -95,9 +98,9 @@ describe("Rerail API over HTTP", () => {
   }
 
   function addLibraryRules(): void {
-    const bundle = loadBundledCatalog();
-    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, bundle, rule, "code");
-    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, bundle, rule, "conversation", { revision: 1 });
+    const ruleCatalog = loadRuleCatalog();
+    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, ruleCatalog, rule, "code");
+    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, ruleCatalog, rule, "conversation", { revision: 1 });
   }
 
   function addRepository(key: string, options: { name?: string; configuredAt?: number | null; started?: boolean | null } = {}): void {
@@ -446,7 +449,7 @@ describe("Rerail API over HTTP", () => {
     // "I'll pick rule packs myself": set up, nothing added.
     const configured = await putJson("/api/repository/attachments", { repository: WEB, configure: true });
     expect(await configured.json()).toMatchObject({ repository: { setUp: true }, attachments: [] });
-    const pack = [...loadBundledCatalog().packs.keys()][0]!;
+    const pack = [...loadRuleCatalog().packs.keys()][0]!;
     const added = await putJson("/api/repository/attachments", { repository: WEB, add: [{ sourceKind: "pack", sourceId: pack, folder: "web/" }] });
     expect(await added.json()).toMatchObject({ attachments: [{ folder: "web", sourceKind: "pack", sourceId: pack }] });
     expect((await putJson("/api/repository/attachments", { repository: WEB, add: [{ sourceKind: "pack", sourceId: pack, folder: "../x" }] })).status).toBe(400);

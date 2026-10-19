@@ -8,6 +8,8 @@ Small packs in the [pack format](../../docs/pack-format.md) that tests read, not
   test copies it and breaks one check.
 - `exemplar/` is a pack for the test-only planned language ([`exemplar.json`](../../native/test-languages/exemplar.json)): it passes, its rule reported as not supported yet.
 - `empty/` ships no rules, as a pack does while all its ports are candidates: it passes, with no rules to report.
+- `match-check/` ships no rules and matches by its own executable check, `checks/gemfile.mjs`, which `files`
+  publishes: it passes, and copies of it prove check 7 (a missing, unpublished or failing check).
 - `eslint-port/` ports one ESLint rule whose violation carries `suppress.eslint`, scored on a file Rerail wrote with
   `eslint-disable` comments: it passes, and copies of it prove the suppression check of check 4 (a port without
   `suppress`, an exempted one, a stale exemption).

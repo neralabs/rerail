@@ -6,25 +6,25 @@ import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Core ships no pack with a match definition; set-up's recommendation flow is exercised with the TypeScript pack added.
-vi.mock("../../src/engine/catalog/bundled-rule-documents.js", async (importOriginal) => {
-  const actual = await importOriginal<{ corePackDirectories(): string[] }>();
-  const typescriptPack = decodeURIComponent(new URL("../../packs/typescript", import.meta.url).pathname);
-  return { ...actual, corePackDirectories: () => [...actual.corePackDirectories(), typescriptPack] };
-});
-import { runSetup, runSetupStep, startRerailStep, type SetupRequest } from "../../src/cli/repository-setup.js";
+// Set-up fetches rule packs through the fake environment's store: this repository's TypeScript pack.
+import { runSetup, runSetupStep, setupPacks, startRerailStep, type SetupRequest } from "../../src/cli/repository-setup.js";
 import { workspaceStartState, type RepositorySetupIo } from "../../src/runtime/index.js";
 import { runSetupCommand, runSetupStepArgs, type SetupIo } from "../../src/cli/setup-cli.js";
 import { CONFIRM_PACKS_ANSWERS, NO_REPO_ANSWERS, READ_REPO_ANSWERS, shellQuote } from "../../src/harness/index.js";
 import type { SetupQuestion, SetupStep } from "../../src/harness/index.js";
-import { ManagedUpdater } from "../../src/setup/index.js";
+import { ManagedUpdater, type PackStore } from "../../src/setup/index.js";
+import { directoryPackStore, repositoryPackVersions } from "../support/directory-pack-store.js";
+import { removeInstalledPacks } from "../support/installed-packs.js";
 import { fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
 
 const SETUP_TIMEOUT_MS = 30_000;
+/** The pack set-up offers the TypeScript fixture, at the version its "Yes" answer carries (`--packs`). */
+const TYPESCRIPT = repositoryPackVersions("typescript");
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
+  removeInstalledPacks();
   vi.unstubAllEnvs();
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
@@ -79,6 +79,7 @@ function requestFrom(args: readonly string[], setup: Fixture, environment: FakeS
     ...(answer === undefined ? {} : { answer }),
     ...(repo === undefined ? {} : { repo }),
     ...(value === undefined ? {} : { repo: value }),
+    ...setupPacks(flags.get("--packs"), answer),
   });
 }
 
@@ -132,13 +133,13 @@ describe("rerail setup --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     const environment = fakeSetupEnvironment();
 
     const asked = await runSetupStep(request(setup, environment));
-    expect(asked.screen).toContain("It reads on this computer only.");
+    expect(asked.screen).toContain("Your code never leaves it.");
     const yes = asked.question!.options.find(option => option.answer === "yes")!;
     expect(yes.next.args).toEqual(["setup", "--json", "--answer", "yes", "--repo", setup.repo]);
 
     const packs = await runSetupStep(requestFrom(yes.next.args, setup, environment));
     expect(packs.step).toBe("confirm-packs");
-    expect(packs.screen).toContain("Of the rule packs that come with Rerail, 1 looks right for acme api.");
+    expect(packs.screen).toContain("Of Rerail’s rule packs, 1 looks right for acme api.");
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
     const other = packs.question!.options.find(option => option.answer === "other")!;
     expect(other.input).toEqual({ flag: "--agents", prompt: "Which coding agents should Rerail connect to?", hint: "comma-separated ids from: claude-code (Claude Code), cursor (Cursor)" });
@@ -188,7 +189,7 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(first.question!.options.map(option => option.next.args[0])).toEqual(["setup", "setup", "setup"]);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
 
-    await runSetup({ lane: "agent", say: () => {} }, request(setup, environment, { answer: "start", repo: setup.repo }));
+    await runSetup({ lane: "agent", say: () => {} }, request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     const again = await startRerailStep(setup.repo, { databasePath: setup.databasePath, environment });
     expect(again).toMatchObject({ step: "done", question: null });
     expect(again.screen.split("\n")[0]).toMatch(/^● Rerail is already on in acme api\. \d+ rules are on\.$/u);
@@ -197,7 +198,7 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
   it("ends on the rules dashboard's link, scoped to the repository, where it is set up already", async () => {
     const setup = await fixture();
     const environment = fakeSetupEnvironment();
-    await runSetup({ lane: "agent", say: () => {} }, request(setup, environment, { answer: "start", repo: setup.repo }));
+    await runSetup({ lane: "agent", say: () => {} }, request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     const { repositoryKey } = environment.pages.at(-1)!;
 
     const step = await startRerailStep(setup.repo, { databasePath: setup.databasePath, environment });
@@ -210,7 +211,7 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     const setup = await fixture();
     const home = join(setup.root, "home");
     const packageRoot = join(setup.root, "package");
-    const context = { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0" }) };
+    const context = { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: "0.1.9" }) };
     const place = { cwd: setup.repo, databasePath: setup.databasePath, environment: () => fakeSetupEnvironment() };
     const step = await runSetupStepArgs(["start", "--relay", "--json"], context, place);
     expect(step.step).toBe("read-repo");
@@ -219,18 +220,18 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
 });
 
 describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
-  async function commandFixture(): Promise<{ setup: Fixture; context: { home: string; packageRoot: string; updater: ManagedUpdater }; said: string[]; io: SetupIo }> {
+  async function commandFixture(): Promise<{ setup: Fixture; context: { home: string; packageRoot: string; updater: ManagedUpdater; packs: PackStore }; said: string[]; io: SetupIo }> {
     const setup = await fixture();
     const home = join(setup.root, "home");
     const packageRoot = join(setup.root, "package");
     mkdirSync(join(packageRoot, "dist"), { recursive: true });
-    writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
+    writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.9" }));
     vi.stubEnv("RERAIL_HOME", home);
     vi.stubEnv("HOME", join(setup.root, "user"));
     vi.spyOn(process, "cwd").mockReturnValue(setup.repo);
     const said: string[] = [];
     const io: SetupIo = { lane: "agent", say: text => { said.push(text); }, close: () => {} };
-    return { setup, context: { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0" }) }, said, io };
+    return { setup, context: { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: "0.1.9" }), packs: directoryPackStore(undefined, ["typescript"]) }, said, io };
   }
 
   it("says Rerail is installed only on the run that installed it", async () => {
@@ -274,13 +275,13 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     await context.updater.activateRoot(context.packageRoot);
     expect(await runSetupCommand(["--agents", "Cursor", "--answer", "yes", "--repo", setup.repo], context, io)).toBe(0);
     const { commands } = agentQuestion(said.join("\n"));
-    expect(commands).toHaveLength(4);
+    expect(commands).toHaveLength(5);
     for (const command of commands) expect(command).toContain("setup --relay --agents cursor --answer ");
 
     said.length = 0;
     expect(await runSetupCommand(["--json", "--agents", "cursor", "--answer", "yes", "--repo", setup.repo], context, io)).toBe(0);
     const step = JSON.parse(said[0]!) as SetupStep;
-    expect(step.question!.options.map(option => option.next.args.slice(0, 4))).toEqual(Array(4).fill(["setup", "--agents", "cursor", "--json"]));
+    expect(step.question!.options.map(option => option.next.args.slice(0, 4))).toEqual(Array(5).fill(["setup", "--agents", "cursor", "--json"]));
     expect(step.question!.options.find(option => option.answer === "other")!.input!.hint).toBe("comma-separated ids from: cursor (Cursor)");
     expect(step.screen).toMatch(/^ {2}Connected to +Cursor\b/mu);
   });
@@ -328,7 +329,7 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     const next = terminal();
     expect(await runSetupCommand(["--relay", "--answer", "yes", "--repo", setup.repo], context)).toBe(0);
     const confirm = agentQuestion(next.output());
-    expect(confirm.commands).toHaveLength(4);
+    expect(confirm.commands).toHaveLength(5);
     for (const command of confirm.commands) expect(command).toContain("setup --relay --answer ");
     expect(tty.listenedToStdin() || next.listenedToStdin()).toBe(false);
   });

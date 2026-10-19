@@ -5,15 +5,15 @@
  */
 import { z } from "zod";
 
-/** The three questions set-up asks; each is also the step a run that stops there reports. */
-export type SetupQuestionId = "read-repo" | "confirm-packs" | "no-repo";
+/** The questions set-up asks; each is also the step a run that stops there reports. */
+export type SetupQuestionId = "read-repo" | "confirm-packs" | "pick-packs" | "no-repo";
 
 /** `done`: set-up finished (started, picked packs, skipped, or already on). `stopped`: set up here and stopped. */
 export type SetupStepName = SetupQuestionId | "done" | "stopped" | "error";
 
 export interface SetupOptionInput {
   /** Append `[flag, value]` to the option's `next.args`. */
-  readonly flag: "--repo" | "--agents";
+  readonly flag: "--repo" | "--agents" | "--packs";
   /** What to ask the person for the value. */
   readonly prompt: string;
   /** An example, or the values it takes. */
@@ -52,15 +52,15 @@ const setupOptionSchema = z.object({
   label: z.string(),
   detail: z.string().nullable(),
   next: z.object({ args: z.array(z.string()) }),
-  input: z.object({ flag: z.enum(["--repo", "--agents"]), prompt: z.string(), hint: z.string() }).nullable(),
+  input: z.object({ flag: z.enum(["--repo", "--agents", "--packs"]), prompt: z.string(), hint: z.string() }).nullable(),
 });
 
 /** Validates what `rerail setup --json` / `rerail start --json` printed, for callers that run the CLI. */
 export const setupStepSchema: z.ZodType<SetupStep> = z.object({
-  step: z.enum(["read-repo", "confirm-packs", "no-repo", "done", "stopped", "error"]),
+  step: z.enum(["read-repo", "confirm-packs", "pick-packs", "no-repo", "done", "stopped", "error"]),
   screen: z.string(),
   question: z.object({
-    id: z.enum(["read-repo", "confirm-packs", "no-repo"]),
+    id: z.enum(["read-repo", "confirm-packs", "pick-packs", "no-repo"]),
     prompt: z.string(),
     options: z.array(setupOptionSchema),
   }).nullable(),

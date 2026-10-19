@@ -5,17 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Core ships no pack with a match definition; set-up's recommendation flow is exercised with the TypeScript pack added.
-vi.mock("../../src/engine/catalog/bundled-rule-documents.js", async (importOriginal) => {
-  const actual = await importOriginal<{ corePackDirectories(): string[] }>();
-  const typescriptPack = decodeURIComponent(new URL("../../packs/typescript", import.meta.url).pathname);
-  return { ...actual, corePackDirectories: () => [...actual.corePackDirectories(), typescriptPack] };
-});
+// Set-up fetches rule packs through the fake environment's store: this repository's TypeScript pack.
 import { repositoryIdentityLocation } from "../../src/engine/index.js";
 import { workspaceStartState } from "../../src/runtime/index.js";
 import { runSetupCommand, runSetupStepArgs, type SetupContext } from "../../src/cli/index.js";
 import { pickSetup, SETUP_CANCELLED, type SetupPickerUi } from "../../src/harness/setup-picker.js";
 import { ManagedUpdater } from "../../src/setup/index.js";
+import { removeInstalledPacks } from "../support/installed-packs.js";
+import { directoryPackStore, repositoryPackVersions } from "../support/directory-pack-store.js";
 import { attachPacks, fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
 
@@ -23,6 +20,7 @@ const SETUP_TIMEOUT_MS = 30_000;
 const TS_PACKS = ["typescript"];
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
+  removeInstalledPacks();
   vi.unstubAllEnvs();
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
@@ -50,11 +48,11 @@ async function machine(): Promise<Machine> {
   const home = join(root, "home");
   const packageRoot = join(root, "package");
   mkdirSync(join(packageRoot, "dist"), { recursive: true });
-  writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
+  writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.9" }));
   vi.stubEnv("RERAIL_HOME", home);
-  const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0" });
+  const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "0.1.9" });
   await updater.activateRoot(packageRoot);
-  return { root, repo: gitRepository(join(root, "acme-api")), databasePath: join(home, "rerail.sqlite"), context: { home, packageRoot, updater } };
+  return { root, repo: gitRepository(join(root, "acme-api")), databasePath: join(home, "rerail.sqlite"), context: { home, packageRoot, updater, packs: directoryPackStore(undefined, ["typescript"]) } };
 }
 
 /** The steps as OMP's and Pi's `/rerail-start` gets them from the launcher, run in-process from `cwd` against a fake machine. */
@@ -110,7 +108,7 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
       "Use a different folder… — for example “~/code/landing-page”",
       "I’ll pick rule packs myself — Rerail won’t read the repo",
     ]);
-    expect(ui.notices[1]!.message).toContain("Of the rule packs that come with Rerail, 1 looks right for acme-api.");
+    expect(ui.notices[1]!.message).toContain("Of Rerail’s rule packs, 1 looks right for acme-api.");
     expect(last).toMatchObject({ step: "done", question: null });
     expect(ui.notices.at(-1)).toEqual({ message: last!.screen, level: "info" });
     expect(last!.screen).toContain("● Rerail is on in acme-api. 1 rule pack is on");
@@ -121,9 +119,9 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(environment.connections).toEqual([{ agents: ["claude-code", "cursor"], repoRoot: setup.repo }]);
   });
 
-  it("starts with every pack off, reading nothing, when the person picks packs themselves", async () => {
+  it("starts with every pack off, reading nothing, when the person picks packs themselves and then none", async () => {
     const setup = await machine();
-    const ui = fakeUi(["I’ll pick rule packs myself"]);
+    const ui = fakeUi(["I’ll pick rule packs myself", "None for now"]);
     const last = await pickSetup(ui, steps(setup, fakeSetupEnvironment()));
     expect(last).toMatchObject({ step: "done" });
     expect(last!.screen).toContain("Rerail is on in acme-api. No rule packs are on yet.");
@@ -131,10 +129,20 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(selected(setup)).toEqual([]);
   });
 
+  it("installs the pack the person types after picking packs themselves", async () => {
+    const setup = await machine();
+    const [typescript] = repositoryPackVersions("typescript");
+    const ui = fakeUi(["I’ll pick rule packs myself", "Choose rule packs…"], [`typescript@${typescript!.version}`]);
+    expect(await pickSetup(ui, steps(setup, fakeSetupEnvironment()))).toMatchObject({ step: "done" });
+    expect(ui.inputs.map(input => input.title)).toContain("Which rule packs should Rerail install?");
+    expect(selected(setup)).toEqual(TS_PACKS);
+  });
+
   it("opens the review, asks again, and starts with the packs kept on there", async () => {
     const setup = await machine();
     // The person switches complexity on in the review, which adds the packs kept on and sets the repository up.
     const environment = fakeSetupEnvironment({
+      packs: directoryPackStore(undefined, ["typescript", "complexity"]),
       onPage: (scope, page) => (page === "review" ? attachPacks(setup.databasePath, scope, ["typescript", "complexity"]) : undefined),
     });
     const ui = fakeUi(["Yes, read acme-api", "Review them first", "Yes, start Rerail"]);
@@ -243,9 +251,10 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     const last = await pickSetup(ui, args => { asked.push(args); return run(args); }, ["start", "--json", "--agents", "cursor"]);
 
     expect(last?.step).toBe("done");
+    const [typescript] = repositoryPackVersions("typescript");
     expect(asked.slice(1)).toEqual([
       ["setup", "--agents", "cursor", "--json", "--answer", "yes", "--repo", setup.repo],
-      ["setup", "--agents", "cursor", "--json", "--answer", "start", "--repo", setup.repo],
+      ["setup", "--agents", "cursor", "--json", "--answer", "start", "--repo", setup.repo, "--packs", `typescript@${typescript!.version}`],
     ]);
     expect(environment.connections).toEqual([{ agents: ["cursor"], repoRoot: setup.repo }]);
     // The confirm screen names only what the answer connects, not every coding agent found.
@@ -256,11 +265,11 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
 
   it("never installs the session's own package over the active one, so answering after /rerail-update keeps the update", async () => {
     const setup = await machine();
-    // The session loaded 0.9.0; `/rerail-update` has since made 1.0.0 the active install.
+    // The session loaded 0.1.8; `/rerail-update` has since made 0.1.9 the active install.
     const sessionPackage = join(setup.root, "session-package");
     mkdirSync(join(sessionPackage, "dist"), { recursive: true });
-    writeFileSync(join(sessionPackage, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.9.0" }));
-    const updater = new ManagedUpdater({ home: setup.context.home, packageRoot: sessionPackage, packageVersion: "0.9.0" });
+    writeFileSync(join(sessionPackage, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.8" }));
+    const updater = new ManagedUpdater({ home: setup.context.home, packageRoot: sessionPackage, packageVersion: "0.1.8" });
     const install = vi.spyOn(updater, "install").mockResolvedValue(undefined as never);
     const session: Machine = { ...setup, context: { home: setup.context.home, packageRoot: sessionPackage, updater } };
 

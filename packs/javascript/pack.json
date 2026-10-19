@@ -1,10 +1,10 @@
 {
   "format": "rerail.rule-pack/v1",
   "id": "javascript",
-  "name": "JavaScript",
+  "name": "JavaScript and TypeScript (ESLint core)",
   "category": "language",
   "covers": "65 ESLint core rules ported to Rerail, 22 of them on and 43 off until turned on, each scored against ESLint's own recorded findings on its test cases.",
-  "reason": "matches JavaScript",
+  "reason": "matches JavaScript or TypeScript source",
   "match": {
     "any": [
       {

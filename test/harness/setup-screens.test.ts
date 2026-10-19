@@ -40,8 +40,13 @@ const PACKS: RecommendedPacksInput = {
   repoName: "acme-web",
   repoPath: "/Users/me/code/acme-web",
   packs: [
-    { name: "TSLint", ruleCount: 74, reason: "matches the typescript dependency in package.json and *.ts files" },
-    { name: "acme-api", ruleCount: 92, reason: "matches the acme_api package" },
+    { id: "typescript", name: "TypeScript", ruleCount: 74, reason: "matches the typescript dependency in package.json and *.ts files", packageName: "@neralabs/rerail-pack-typescript", version: "0.1.1", installed: false },
+    { id: "acme-api", name: "acme-api", ruleCount: 92, reason: "matches the acme_api package", packageName: "@neralabs/rerail-pack-acme-api", version: "1.2.0", installed: true },
+  ],
+  available: [
+    { id: "typescript", version: "0.1.1", name: "TypeScript", reason: "matches the typescript dependency in package.json and *.ts files" },
+    { id: "acme-api", version: "1.2.0", name: "acme-api", reason: "matches the acme_api package" },
+    { id: "python", version: "0.1.2", name: "Python" },
   ],
   agentsFound: [CLAUDE, CURSOR],
   agentsNotFound: NOT_FOUND,
@@ -49,7 +54,7 @@ const PACKS: RecommendedPacksInput = {
 
 const SUMMARY: SummaryInput = {
   repoName: "acme-web",
-  packNames: ["TSLint", "acme-api"],
+  packNames: ["TypeScript", "acme-api"],
   ruleCount: 166,
   connected: [CLAUDE, CURSOR],
   dashboard: OPENED,
@@ -108,8 +113,8 @@ describe("T3 / C3 ask before reading", () => {
   it.each(LANES)("names the repo, says how it reads, and offers three answers (%s)", lane => {
     const text = stripAnsi(renderReadRepoQuestion(input, lane));
     expect(text).toContain("You’re working in acme-web. Can Rerail read it to pick the rule packs that look right?");
-    expect(text).toContain("It matches the files in this repo against the rule packs that come with Rerail.");
-    expect(text).toContain("It reads on this computer only. Nothing leaves it. Nothing is turned on yet.");
+    expect(text).toContain("It fetches Rerail’s rule packs from npm and matches this repo’s files against them, on this computer.");
+    expect(text).toContain("Your code never leaves it. Nothing is installed or turned on yet.");
     expect(text).toContain("1. Yes, read acme-web");
     expect(text).toContain("2. Use a different folder…  for example “~/code/landing-page”");
     expect(text).toContain("3. I’ll pick rule packs myself  Rerail won’t read the repo");
@@ -143,22 +148,33 @@ describe("T3 / C3 ask before reading", () => {
 });
 
 describe("T4 / C4 recommended rule packs", () => {
-  it.each(LANES)("lists each rule pack first, then its rule count, then why (%s)", lane => {
+  it.each(LANES)("lists each rule pack first, then its rule count, then why, then the exact npm packages a yes installs (%s)", lane => {
     const text = stripAnsi(renderRecommendedPacks(PACKS, lane));
-    expect(text).toContain("Of the rule packs that come with Rerail, 2 look right for acme-web.");
+    expect(text).toContain("Of Rerail’s rule packs, 2 look right for acme-web.");
     expect(text).toMatch(/Rule pack\s+Rules\s+Why/);
-    expect(text).toMatch(/TSLint\s+74\s+matches the typescript dependency in package\.json and \*\.ts files/);
+    expect(text).toMatch(/TypeScript\s+74\s+matches the typescript dependency in package\.json and \*\.ts files/);
     expect(text).toMatch(/acme-api\s+92\s+matches the acme_api package/);
+    expect(text).toContain("Installs from npm once you say yes:\n    @neralabs/rerail-pack-typescript@0.1.1\n    @neralabs/rerail-pack-acme-api@1.2.0  installed already");
     expect(text).toContain("Connected to   Claude Code, Cursor  not found: Codex, OMP, Pi");
     expect(text).toContain("Every rule starts in Steer: your coding agent is told as it works, and fixes it.");
-    expect(text).toContain("More rule packs are in the dashboard, off until you turn them on.");
+    expect(text).toContain("“Choose rule packs” lists all 3 of Rerail’s rule packs.");
     expect(text).toContain("Start Rerail in acme-web with these 2 rule packs?");
-    expect(text).toContain("Nothing is on until you say yes.");
+    expect(text).toContain("Nothing is installed or on until you say yes.");
     expect(text).toContain("1. Yes, start Rerail");
     expect(text).toContain("2. Review them first  opens the dashboard");
-    expect(text).toContain("3. Type something else…  only some coding agents, by id");
-    expect(text).toContain("4. I’ll pick rule packs myself");
+    expect(text).toContain("3. Choose rule packs…  only some, or others");
+    expect(text).toContain("4. Type something else…  only some coding agents, by id");
+    expect(text).toContain("5. I’ll pick rule packs myself");
     expect(text).not.toMatch(/not covered|not relevant/i);
+  });
+
+  it("carries the versions shown in every answer that installs, and lists every pack for choosing", () => {
+    const text = renderRecommendedPacks(PACKS, "agent");
+    expect(text).toContain("1. rerail setup --answer start --repo /Users/me/code/acme-web --packs typescript@0.1.1,acme-api@1.2.0");
+    expect(text).toContain("2. rerail setup --answer review --repo /Users/me/code/acme-web --packs typescript@0.1.1,acme-api@1.2.0");
+    expect(text).toContain("3. To choose the rule packs: rerail setup --answer start --repo /Users/me/code/acme-web --packs <packs>, with comma-separated packs from: typescript@0.1.1,acme-api@1.2.0,python@0.1.2.");
+    expect(text).toContain("5. rerail setup --answer pick-myself --repo /Users/me/code/acme-web");
+    expect(renderRecommendedPacks({ ...PACKS, packs: [] }, "agent")).toContain("1. rerail setup --answer start --repo /Users/me/code/acme-web\n");
   });
 
   it("says how many rules start in Log when a rule pack starts some there, and leaves the line out with no packs", () => {
@@ -168,7 +184,7 @@ describe("T4 / C4 recommended rule packs", () => {
   });
 
   it("aligns the table columns for long rule pack names", () => {
-    const text = renderRecommendedPacks({ ...PACKS, packs: [{ name: "A very long rule pack name", ruleCount: 12, reason: "the reason" }] }, "agent");
+    const text = renderRecommendedPacks({ ...PACKS, packs: [{ ...PACKS.packs[0]!, name: "A very long rule pack name", ruleCount: 12, reason: "the reason" }] }, "agent");
     const header = text.split("\n").find(line => line.includes("Rule pack")) ?? "";
     const row = text.split("\n").find(line => line.includes("A very long")) ?? "";
     expect(row.indexOf("12")).toBe(header.indexOf("Rules"));
@@ -198,7 +214,7 @@ describe("T4 / C4 recommended rule packs", () => {
 
   it("speaks of one rule pack in the singular", () => {
     const text = renderRecommendedPacks({ ...PACKS, packs: PACKS.packs.slice(0, 1) }, "agent");
-    expect(text).toContain("Of the rule packs that come with Rerail, 1 looks right for acme-web.");
+    expect(text).toContain("Of Rerail’s rule packs, 1 looks right for acme-web.");
     expect(text).toContain("Start Rerail in acme-web with this rule pack?");
   });
 
@@ -206,14 +222,10 @@ describe("T4 / C4 recommended rule packs", () => {
     expect(renderRecommendedPacks({ ...PACKS, agentsNotFound: [] }, "agent")).not.toContain("not found");
   });
 
-  it("gives the coding agent one command per answer, carrying the repo", () => {
+  it("gives the coding agent one command per answer, carrying the repo and the coding agents to choose from", () => {
     const text = renderRecommendedPacks(PACKS, "agent");
-    expect(CONFIRM_PACKS_ANSWERS).toEqual(["start", "review", "other", "pick-myself"]);
-    expect(text).toContain("1. rerail setup --answer start --repo /Users/me/code/acme-web");
-    expect(text).toContain("2. rerail setup --answer review --repo /Users/me/code/acme-web");
-    expect(text).toContain("--answer start --repo /Users/me/code/acme-web --agents <ids>");
+    expect(text).toContain("--answer start --repo /Users/me/code/acme-web --packs typescript@0.1.1,acme-api@1.2.0 --agents <ids>");
     expect(text).toContain("claude (Claude Code), cursor (Cursor)");
-    expect(text).toContain("4. rerail setup --answer pick-myself --repo /Users/me/code/acme-web");
   });
 });
 
@@ -250,7 +262,7 @@ describe("T6 / C6 summary", () => {
   it.each(LANES)("has every decided line, ending on the link (%s)", lane => {
     const text = stripAnsi(renderSummary(SUMMARY, lane));
     expect(text).toContain("● Rerail is on in acme-web. 2 rule packs are on, with 166 rules.");
-    expect(text).toContain("Rule packs     TSLint · acme-api");
+    expect(text).toContain("Rule packs     TypeScript · acme-api");
     expect(text).toContain("Your own       /rerail-create  create a rule in your own words, in a session");
     expect(text).toContain("Other repos    Rerail has not been started there  type /rerail-start there to set one up");
     expect(text).toContain("Connected      Claude Code and Cursor");
@@ -364,7 +376,6 @@ describe("E4 pick rule packs myself", () => {
     expect(text).toContain("Next           Turn on the rule packs you want.  then open a new session");
     expect(text).toContain("Try it         /rerail-show-me  in a new session: see Rerail catch and fix a broken rule");
     expect(text).toContain("Manage rules   http://127.0.0.1:7777/#rules  opening in your browser");
-    expect(text).toContain("Rerail did not read this repo. Changed your mind? Ask it to recommend rule packs, in the dashboard.");
   });
 
   it("echoes the choice in the terminal only", () => {

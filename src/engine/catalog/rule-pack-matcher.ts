@@ -1,21 +1,34 @@
+import { spawnSync } from "node:child_process";
 import { lstatSync, readdirSync, readFileSync, realpathSync, type Dirent } from "node:fs";
 import { dirname, join, posix, relative, sep } from "node:path";
+import { z } from "zod";
 import { withinCheckout } from "./checkout-control.js";
+import { readTomlStringLists } from "./lint-config-formats.js";
 import { IGNORED_DIRECTORIES } from "../code-rule/code-rule-enforcer.js";
 import { GitUnavailableError, runGit } from "../git.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 
 /**
- * The local half of rule pack matching: list a repository's files once, read its `package.json`
- * dependencies, and test each pack's match definition against them. No model, no network, and no source text.
+ * The local half of rule pack matching: list a repository's files once, read its dependency manifests
+ * (`package.json`, `requirements*.txt`, `pyproject.toml`, `composer.json`), and test each pack's match definition
+ * against them. No model, no network, and no source text; a pack's own check reads only what it asks for.
  */
+
+export const DEPENDENCY_ECOSYSTEMS = ["npm", "pypi", "composer"] as const;
+export type DependencyEcosystem = (typeof DEPENDENCY_ECOSYSTEMS)[number];
 
 /** One thing in a repository that makes a rule pack fit it. */
 export type RulePackSignal =
   /** Files whose repository-relative path matches one of `files` and none of `exclude`; `label` names them in the reason. */
   | { files: readonly string[]; exclude?: readonly string[] | undefined; label: string }
-  /** Any `package.json` in the repository that depends on one of these npm packages. */
-  | { npmDependencies: readonly string[] };
+  /** Any manifest of `ecosystem` in the repository that depends on one of `names`. */
+  | { dependencies: { ecosystem: DependencyEcosystem; names: readonly string[] } }
+  /**
+   * The pack's own check, `checks/<name>.mjs`: its default export gets `{ root, files }` and answers
+   * `{ matched: false }` or `{ matched: true, paths }`. In `pack.json` the path is relative to the pack; once the pack
+   * is read it is absolute. `label` names what it found in the reason.
+   */
+  | { check: string; label: string };
 
 /** A pack fits a repository when any of its signals is present. */
 export interface RulePackMatch {
@@ -24,10 +37,12 @@ export interface RulePackMatch {
 
 /** What the matcher read from a repository. */
 export interface RepositoryScan {
+  /** The repository's root, which a pack's check may read. */
+  readonly root: string;
   /** Repository-relative paths with `/` separators, outside dependency and build-output directories. */
   readonly files: readonly string[];
-  /** npm package name to every manifest that depends on it, shallowest first, then by path. */
-  readonly npmDependencies: ReadonlyMap<string, readonly string[]>;
+  /** Per ecosystem, package name (normalised) to every manifest that depends on it, shallowest first, then by path. */
+  readonly dependencies: ReadonlyMap<DependencyEcosystem, ReadonlyMap<string, readonly string[]>>;
 }
 
 const GIT_LIST_BUFFER_BYTES = 256 * 1024 * 1024;
@@ -38,8 +53,12 @@ const FIXTURE_DIRECTORIES = new Set(["fixtures", "__fixtures__", "testdata", "te
 /** A reason names at most this many findings, so it stays one short line. */
 const MAX_REASON_PARTS = 2;
 const DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] as const;
-/** A `package.json` larger than this is not a manifest a person wrote; it is skipped unread. */
+const COMPOSER_FIELDS = ["require", "require-dev"] as const;
+/** A manifest larger than this is not one a person wrote; it is skipped unread. */
 const MAX_MANIFEST_BYTES = 1024 * 1024;
+/** How long a pack's check may run; one that runs longer counts as no match. */
+export const MATCH_CHECK_TIMEOUT_MS = 5_000;
+const MATCH_CHECK_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 /** A folder's entries, or none when the user cannot read it: such a folder says nothing about the stack. */
 function readableEntries(directory: string): Dirent[] {
@@ -110,34 +129,132 @@ function readableManifest(root: string, path: string): boolean {
   }
 }
 
-function readManifestDependencies(root: string, path: string): string[] {
-  if (!readableManifest(root, path)) return [];
-  let manifest: unknown;
+/** The manifest's text, or undefined when it may not be read (see {@link readableManifest}) or cannot be. */
+function manifestText(root: string, path: string): string | undefined {
+  if (!readableManifest(root, path)) return undefined;
   try {
-    manifest = JSON.parse(readFileSync(path, "utf8"));
+    return readFileSync(path, "utf8");
+  } catch {
+    // A manifest that vanished between listing and reading says nothing about the stack.
+    return undefined;
+  }
+}
+
+/** The object a JSON manifest holds, or undefined for one that is unreadable, half-written or not an object. */
+function jsonManifest(root: string, path: string): Record<string, unknown> | undefined {
+  const text = manifestText(root, path);
+  if (text === undefined) return undefined;
+  try {
+    const value: unknown = JSON.parse(text);
+    return typeof value === "object" && value !== null ? value as Record<string, unknown> : undefined;
   } catch {
     // An unreadable or half-written manifest says nothing about the stack; the other signals still count.
+    return undefined;
+  }
+}
+
+function objectKeys(manifest: Record<string, unknown>, fields: readonly string[]): string[] {
+  return fields.flatMap(field => {
+    const value = manifest[field];
+    return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.keys(value) : [];
+  });
+}
+
+/** A Python distribution name as PyPI compares it (PEP 503): lowercase, each run of `-`, `_` and `.` one `-`. */
+export function normalizePythonName(name: string): string {
+  return name.toLowerCase().replace(/[-_.]+/gu, "-");
+}
+
+/** The distribution a PEP 508 requirement names (`Django>=4.2; python_version >= "3.10"` gives `django`). */
+function requirementName(requirement: string): string | undefined {
+  const name = /^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)/u.exec(requirement)?.[1];
+  return name === undefined ? undefined : normalizePythonName(name);
+}
+
+/** `requirements*.txt`: one requirement per line; comments, blank lines and pip options (`-r`, `-e`, `--index-url`) name nothing. */
+function requirementsNames(text: string): string[] {
+  return text.split(/\r?\n/u).flatMap(line => {
+    const requirement = line.replace(/(^|\s)#.*$/u, "").trim();
+    if (requirement === "" || requirement.startsWith("-")) return [];
+    return requirementName(requirement) ?? [];
+  });
+}
+
+const POETRY_DEPENDENCIES = /^tool\.poetry\.(?:group\.(?:[A-Za-z0-9_-]+|"(?:[^"\\]|\\.)*")\.)?dependencies\.(.+)$/u;
+
+/** The first key of a dotted TOML path: bare, or quoted as `readTomlStringLists` writes it. */
+function firstKey(path: string): string | undefined {
+  if (!path.startsWith("\"")) return path.split(".")[0];
+  const quoted = /^"(?:[^"\\]|\\.)*"/u.exec(path)?.[0];
+  return quoted === undefined ? undefined : JSON.parse(quoted) as string;
+}
+
+/**
+ * `pyproject.toml`: PEP 621's `[project] dependencies` and `optional-dependencies`, and Poetry's
+ * `[tool.poetry.dependencies]` and `[tool.poetry.group.<name>.dependencies]` (Poetry's `python` entry is the
+ * interpreter, not a dependency). A file the TOML reader cannot read names nothing.
+ */
+function pyprojectNames(text: string): string[] {
+  let read;
+  try {
+    read = readTomlStringLists(text, ["project.dependencies"], ["project.optional-dependencies"]);
+  } catch {
     return [];
   }
-  if (typeof manifest !== "object" || manifest === null) return [];
-  return DEPENDENCY_FIELDS.flatMap(field => {
-    const dependencies = (manifest as Record<string, unknown>)[field];
-    return typeof dependencies === "object" && dependencies !== null ? Object.keys(dependencies) : [];
+  const requirements = [...(read.lists.get("project.dependencies") ?? []), ...[...read.tables.get("project.optional-dependencies")?.values() ?? []].flat()];
+  const poetry = read.paths.flatMap(path => {
+    const rest = POETRY_DEPENDENCIES.exec(path)?.[1];
+    const key = rest === undefined ? undefined : firstKey(rest);
+    return key === undefined || key === "python" ? [] : [normalizePythonName(key)];
   });
+  return [...requirements.flatMap(requirement => requirementName(requirement) ?? []), ...poetry];
+}
+
+/** The ecosystem whose manifest `path` is, or undefined for a file that is no dependency manifest. */
+function manifestEcosystem(path: string): DependencyEcosystem | undefined {
+  const name = posix.basename(path);
+  if (name === "package.json") return "npm";
+  if (name === "composer.json") return "composer";
+  if (name === "pyproject.toml" || /^requirements.*\.txt$/u.test(name)) return "pypi";
+  return undefined;
+}
+
+/** The packages the manifest at repository-relative `path` depends on, named as its ecosystem compares them. */
+function manifestDependencies(root: string, path: string, ecosystem: DependencyEcosystem): string[] {
+  const absolute = join(root, path);
+  if (ecosystem === "npm") {
+    const manifest = jsonManifest(root, absolute);
+    return manifest === undefined ? [] : objectKeys(manifest, DEPENDENCY_FIELDS);
+  }
+  if (ecosystem === "composer") {
+    const manifest = jsonManifest(root, absolute);
+    return manifest === undefined ? [] : objectKeys(manifest, COMPOSER_FIELDS).map(name => name.toLowerCase());
+  }
+  const text = manifestText(root, absolute);
+  if (text === undefined) return [];
+  return posix.basename(path) === "pyproject.toml" ? pyprojectNames(text) : requirementsNames(text);
+}
+
+/** A signal's package name as its ecosystem compares names. */
+export function normalizeDependencyName(ecosystem: DependencyEcosystem, name: string): string {
+  if (ecosystem === "pypi") return normalizePythonName(name);
+  return ecosystem === "composer" ? name.toLowerCase() : name;
 }
 
 export function scanRepository(root: string): RepositoryScan {
   const files = listRepositoryFiles(root);
-  const npmDependencies = new Map<string, readonly string[]>();
+  const dependencies = new Map<DependencyEcosystem, Map<string, string[]>>(DEPENDENCY_ECOSYSTEMS.map(ecosystem => [ecosystem, new Map()]));
   const manifests = files
-    .filter(path => posix.basename(path) === "package.json")
-    .sort((left, right) => left.split("/").length - right.split("/").length || compareDeterministicStrings(left, right));
-  for (const manifest of manifests) {
-    for (const dependency of new Set(readManifestDependencies(root, join(root, manifest)))) {
-      npmDependencies.set(dependency, [...(npmDependencies.get(dependency) ?? []), manifest]);
-    }
+    .flatMap(path => {
+      const ecosystem = manifestEcosystem(path);
+      return ecosystem === undefined ? [] : [{ path, ecosystem }];
+    })
+    .sort((left, right) => left.path.split("/").length - right.path.split("/").length || compareDeterministicStrings(left.path, right.path));
+  for (const { path, ecosystem } of manifests) {
+    const byName = dependencies.get(ecosystem)!;
+    for (const name of new Set(manifestDependencies(root, path, ecosystem))) byName.set(name, [...(byName.get(name) ?? []), path]);
   }
-  return { files, npmDependencies };
+  return { root, files, dependencies };
 }
 
 /** How many characters the glob token at `index` spans: `**\/`, `**`, a whole `{…}` group, or one character. */
@@ -196,23 +313,105 @@ function commonDirectory(paths: readonly string[]): string {
 }
 
 /**
- * The repository-relative files that make `signal` present: every manifest that depends on one of its packages, or
- * every file its globs match. Empty when the signal is absent.
+ * The module a pack's check runs in: its own Node process, under the permission model, so it reads only the
+ * repository and the pack and can write nothing, start no process or worker and load no addon. The model denies the
+ * network only from Node 25; under Node 24 a check could reach it, which is why only `@neralabs` packs, installed
+ * without scripts, are fetched. It reads `{ check, root, files }` on stdin and writes the check's answer on stdout.
+ */
+const MATCH_CHECK_RUNNER = [
+  "import { readFileSync } from 'node:fs';",
+  "import { pathToFileURL } from 'node:url';",
+  "const input = JSON.parse(readFileSync(0, 'utf8'));",
+  "const check = (await import(pathToFileURL(input.check).href)).default;",
+  "if (typeof check !== 'function') throw new Error('its default export is not a function');",
+  "process.stdout.write(JSON.stringify((await check({ root: input.root, files: input.files })) ?? null));",
+].join("\n");
+
+const checkResults = new WeakMap<RepositoryScan, Map<string, readonly string[]>>();
+
+/** What a pack's check answers. */
+const checkAnswerSchema = z.union([
+  z.object({ matched: z.literal(false) }),
+  z.object({ matched: z.literal(true), paths: z.array(z.string()) }),
+]);
+
+/** The error a failed check printed (`Error: …`, the permission model's refusal), else its last line. */
+function checkFailure(stderr: string, status: number | null): string {
+  const lines = stderr.split("\n").map(line => line.trim()).filter(line => line !== "");
+  return lines.find(line => /^[A-Za-z]*(?:Error|Exception)\b/u.test(line)) ?? lines.at(-1) ?? `it exited with ${String(status)}`;
+}
+
+/**
+ * The paths a check's run reports, or the problem that makes it count as no match. The check is given the repository's
+ * real path, the one the permission model lets it read. The pack validator runs it too, on an empty repository.
+ */
+export function runMatchCheck(check: string, scan: RepositoryScan): { paths: readonly string[] } | { problem: string } {
+  const root = realpathSync(scan.root);
+  const run = spawnSync(process.execPath, [
+    "--permission",
+    `--allow-fs-read=${root}`,
+    `--allow-fs-read=${realpathSync(dirname(dirname(check)))}`,
+    "--input-type=module",
+    "--eval", MATCH_CHECK_RUNNER,
+  ], {
+    input: JSON.stringify({ check: realpathSync(check), root, files: scan.files }),
+    encoding: "utf8",
+    timeout: MATCH_CHECK_TIMEOUT_MS,
+    maxBuffer: MATCH_CHECK_OUTPUT_BYTES,
+  });
+  if (run.error !== undefined) return { problem: run.error.message };
+  if (run.status !== 0) return { problem: checkFailure(run.stderr, run.status) };
+  let output: unknown;
+  try {
+    output = JSON.parse(run.stdout);
+  } catch {
+    return { problem: "it wrote no JSON answer" };
+  }
+  const answer = checkAnswerSchema.safeParse(output);
+  if (!answer.success) return { problem: "it did not answer { matched: false } or { matched: true, paths: [...] }" };
+  return { paths: answer.data.matched ? answer.data.paths : [] };
+}
+
+/**
+ * The files a pack's check found, those of them in the scan; none when it does not match. A check that fails, runs
+ * past `MATCH_CHECK_TIMEOUT_MS` or answers anything else counts as no match, and is reported on stderr. One run per
+ * check per scan.
+ */
+function checkEvidence(check: string, scan: RepositoryScan): readonly string[] {
+  let results = checkResults.get(scan);
+  if (results === undefined) checkResults.set(scan, results = new Map());
+  const known = results.get(check);
+  if (known !== undefined) return known;
+  const run = runMatchCheck(check, scan);
+  if ("problem" in run) process.stderr.write(`rerail: the rule pack check ${check} counts as no match: ${run.problem}\n`);
+  const files = new Set(scan.files);
+  const evidence = "problem" in run ? [] : [...new Set(run.paths)].filter(path => files.has(path)).sort(compareDeterministicStrings);
+  results.set(check, evidence);
+  return evidence;
+}
+
+/**
+ * The repository-relative files that make `signal` present: every manifest that depends on one of its packages,
+ * every file its globs match, or the files the pack's check found. Empty when the signal is absent.
  */
 export function signalEvidence(signal: RulePackSignal, scan: RepositoryScan): readonly string[] {
-  if ("npmDependencies" in signal) {
-    return [...new Set(signal.npmDependencies.flatMap(dependency => scan.npmDependencies.get(dependency) ?? []))];
+  if ("dependencies" in signal) {
+    const { ecosystem, names } = signal.dependencies;
+    const byName = scan.dependencies.get(ecosystem);
+    return [...new Set(names.flatMap(name => byName?.get(normalizeDependencyName(ecosystem, name)) ?? []))];
   }
+  if ("check" in signal) return checkEvidence(signal.check, scan);
   const include = globPattern(signal.files);
   const exclude = signal.exclude === undefined || signal.exclude.length === 0 ? undefined : globPattern(signal.exclude);
   return scan.files.filter(path => include.test(path) && exclude?.test(path) !== true);
 }
 
 function signalReason(signal: RulePackSignal, scan: RepositoryScan): string | undefined {
-  if ("npmDependencies" in signal) {
-    for (const dependency of signal.npmDependencies) {
-      const manifest = scan.npmDependencies.get(dependency)?.[0];
-      if (manifest !== undefined) return `the ${dependency} dependency in ${manifest}`;
+  if ("dependencies" in signal) {
+    const { ecosystem, names } = signal.dependencies;
+    for (const name of names) {
+      const manifest = scan.dependencies.get(ecosystem)?.get(normalizeDependencyName(ecosystem, name))?.[0];
+      if (manifest !== undefined) return `the ${name} dependency in ${manifest}`;
     }
     return undefined;
   }

@@ -39,7 +39,7 @@ import {
   CODE_RULE_FORMAT,
   openRerailDatabase,
   recordCheckout,
-  loadBundledCatalog,
+  loadRuleCatalog,
   setUpRepository,
   upsertLibraryRule,
 } from "../../src/engine/index.js";
@@ -252,8 +252,8 @@ async function project(): Promise<Workspace> {
   // The project runs the one inline rule from the library, set up and started as `rerail start` would leave it.
   const database = openRerailDatabase(databasePath);
   try {
-    const bundle = loadBundledCatalog();
-    upsertLibraryRule(database, bundle, CODE_RULE, "code");
+    const ruleCatalog = loadRuleCatalog();
+    upsertLibraryRule(database, ruleCatalog, CODE_RULE, "code");
     const { repositoryKey } = recordCheckout(database, root);
     setUpRepository(database, repositoryKey, { packs: [], rules: [{ sourceKind: "library_rule", sourceId: CODE_RULE.id, folder: "" }] });
     setRepositoryStarted(database, repositoryKey, true);

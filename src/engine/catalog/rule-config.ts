@@ -1,19 +1,19 @@
 /**
  * A repository's option values for a code rule by Rerail (a rule setting's `config`). A bundled document is stored
  * resolved, every `$option` reference already replaced by its option's value, so `config` is applied to the
- * document as written (`BundledCatalog.sources`) and that is resolved again, as the engine resolves options.
+ * document as written (`RuleCatalog.sources`) and that is resolved again, as the engine resolves options.
  */
 import { ZodError } from "zod";
 import { CodeRuleCompileError, EngineUnavailableError, storableCodeRule } from "../code-rule/code-rule-compile.js";
 import { applyCodeRuleConfig, CodeRuleOptionError } from "../code-rule/code-rule-options.js";
 import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
 import { stableJsonText } from "../stable-json.js";
-import type { BundledCatalog, RuleConfig } from "./repository-model.js";
+import type { RuleCatalog, RuleConfig } from "./repository-model.js";
 
 export type ConfiguredCodeRule = { readonly ok: true; readonly rule: CodeRule } | { readonly ok: false; readonly reason: string };
 
-/** Per bundle, `<rule id>\0<config as stable JSON>` → the outcome; a repository's config changes rarely. */
-const configured = new WeakMap<BundledCatalog, Map<string, ConfiguredCodeRule>>();
+/** Per rule catalog, `<rule id>\0<config as stable JSON>` → the outcome; a repository's config changes rarely. */
+const configured = new WeakMap<RuleCatalog, Map<string, ConfiguredCodeRule>>();
 
 /** `config.<option>...: <problem>` for a problem in the patched document, else the message. */
 function reasonOf(error: unknown): string {
@@ -49,16 +49,16 @@ function configuredRule(document: unknown): CodeRule {
  * code rule by Rerail, names an option the document does not declare, or a value its declaration or the engine does
  * not allow.
  */
-export function configureBundledCodeRule(bundle: BundledCatalog, ruleId: string, config: RuleConfig): ConfiguredCodeRule {
+export function configureBundledCodeRule(ruleCatalog: RuleCatalog, ruleId: string, config: RuleConfig): ConfiguredCodeRule {
   const key = `${ruleId}\0${stableJsonText(config) ?? ""}`;
-  let outcomes = configured.get(bundle);
+  let outcomes = configured.get(ruleCatalog);
   if (outcomes === undefined) {
     outcomes = new Map();
-    configured.set(bundle, outcomes);
+    configured.set(ruleCatalog, outcomes);
   }
   let outcome = outcomes.get(key);
   if (outcome === undefined) {
-    const source = bundle.sources.get(ruleId);
+    const source = ruleCatalog.sources.get(ruleId);
     if (source === undefined) {
       outcome = { ok: false, reason: `config applies to code rules by Rerail; ${ruleId} is not one` };
     } else {

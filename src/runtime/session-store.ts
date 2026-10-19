@@ -4,7 +4,7 @@ import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-or
 import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
 import type { DiscoveryPendingBoundary } from "../engine/code-rule/code-rule-bridge.js";
-import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
 import { ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
@@ -379,7 +379,7 @@ export class SqliteSessionReader {
       // Coverage written before repository configuration has no rule signature and is never current.
       const current = coverage?.repositoryId != null && coverage.ruleSignature !== null && coverage.ownerCheckoutPaths !== null
         && coverage.ruleSignature === ruleConfigurationSignature(
-          database, loadBundledCatalog(), coverage.repositoryId, JSON.parse(coverage.ownerCheckoutPaths) as string[],
+          database, loadRuleCatalog(), coverage.repositoryId, JSON.parse(coverage.ownerCheckoutPaths) as string[],
         );
       // Per rule, not per hook output (plan D5): the person counts the steer lines they saw, and one edit can steer two
       // rules. A receipt naming no rules still delivered one steer.

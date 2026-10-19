@@ -1,11 +1,12 @@
 /**
- * The pack validation contract (docs/pack-format.md, "The validation contract"): checks 1 to 6 over one
+ * The pack validation contract (docs/pack-format.md, "The validation contract"): checks 1 to 7 over one
  * `packs/<id>/` directory. Test support, not runtime: test/engine/catalog/packs.test.ts calls it for every pack, and it reuses the
  * conformance runner for ported rules, so it lives beside that runner and stays out of the published core.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { isDeepStrictEqual } from "node:util";
-import { basename, join, matchesGlob, posix, relative, sep } from "node:path";
+import { basename, dirname, join, matchesGlob, posix, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import {
   languageFor,
@@ -21,7 +22,12 @@ import {
   type RulePackFile,
   compareDeterministicStrings,
   LANGUAGE_REGISTRY,
+  MATCH_CHECK_TIMEOUT_MS,
+  RULE_PACK_LIST,
+  runMatchCheck,
+  scanRepository,
 } from "../src/engine/index.js";
+import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
 import { CONFORMANCE_FILE, defaultCorpusRoot, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
 import { capabilitiesJson } from "./engine.js";
@@ -34,6 +40,7 @@ export const PACK_CHECKS = [
   { number: 4, name: "ports" },
   { number: 5, name: "package" },
   { number: 6, name: "licences" },
+  { number: 7, name: "manifest" },
 ] as const;
 export type PackCheckName = (typeof PACK_CHECKS)[number]["name"];
 
@@ -66,6 +73,12 @@ export interface ValidatePackOptions {
   corpora?: boolean;
   /** Corpus checkouts, `<corpusRoot>/<corpus name>`; default the nearest `.rerail/corpora/<pack>`. */
   corpusRoot?: string;
+  /**
+   * Whether the pack must be in core's generated pack list (`src/engine/catalog/pack-list.generated.ts`), and that
+   * list current. Default: when `directory` is one of the repository's `packs/` directories, the packs Rerail
+   * publishes; a fixture pack elsewhere is published nowhere, so no list names it.
+   */
+  listed?: boolean;
 }
 
 /** Validation material: kept in the repository, never published. */
@@ -407,13 +420,53 @@ function readAuthored(directory: string): { authored: Set<string>; failures: str
   return { authored, failures };
 }
 
+const PACK_LIST_MODULE = "src/engine/catalog/pack-list.generated.ts";
+
+/**
+ * Check 7 (manifest): `pack.json` has a `match`, every `check` signal's module exists, `files` publishes it and it
+ * answers on an empty repository within the matcher's timeout, run by the matcher's own runner; and, when `listed`,
+ * core's generated pack list is current and names the pack. `published` is undefined when package.json fails check 5.
+ */
+function manifestFailures(directory: string, packJson: unknown, published: readonly string[] | undefined, listed: boolean): string[] {
+  const failures: string[] = [];
+  const id = basename(directory);
+  if (listed) {
+    if (readFileSync(PACK_LIST_MODULE_PATH, "utf8") !== renderPackListModule()) failures.push(`${PACK_LIST_MODULE} is stale; run npm run generate:packs`);
+    if (!RULE_PACK_LIST.some(entry => entry.id === id)) failures.push(`${PACK_LIST_MODULE} does not list ${id}; run npm run generate:packs`);
+  }
+  if (packJson === undefined) return [...failures, "pack.json does not parse; see check 1"];
+  const raw = z.looseObject({ match: z.unknown() }).safeParse(packJson);
+  if (!raw.success || raw.data.match === undefined) return [...failures, "pack.json has no match: set-up could never recommend this pack"];
+  const match = rulePackFileSchema.shape.match.safeParse(raw.data.match);
+  if (!match.success) return [...failures, "pack.json: match does not pass the schema; see check 1"];
+  const checks = match.data.any.flatMap(signal => ("check" in signal ? [signal.check] : []));
+  if (checks.length === 0) return failures;
+  const empty = mkdtempSync(join(tmpdir(), "rerail-pack-check-"));
+  try {
+    const scan = scanRepository(empty);
+    for (const check of checks) {
+      if (!existsSync(join(directory, check))) {
+        failures.push(`match check ${check} does not exist`);
+        continue;
+      }
+      if (published !== undefined && !published.some(file => publishes(file, check))) failures.push(`match check ${check}: package.json files does not publish it`);
+      const run = runMatchCheck(join(directory, check), scan);
+      if ("problem" in run)
+        failures.push(`match check ${check} fails on an empty repository, where it must answer within ${MATCH_CHECK_TIMEOUT_MS / 1000} s: ${run.problem}`);
+    }
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+  }
+  return failures;
+}
+
 /**
  * Validates `packs/<id>/` against the contract. Check 4 runs the conformance runner (the engine's production workspace
  * path), so a pack that ports rules takes as long as its fixture tier.
  */
 export async function validatePack(directory: string, options: ValidatePackOptions = {}): Promise<PackValidation> {
   const id = basename(directory);
-  const checks: Record<PackCheckName, string[]> = { rules: [], proof: [], examples: [], ports: [], package: [], licences: [] };
+  const checks: Record<PackCheckName, string[]> = { rules: [], proof: [], examples: [], ports: [], package: [], licences: [], manifest: [] };
   /** Failures per pack.json rule id, for the rule's status. */
   const ruleFailures = new Map<string, string[]>();
   const fail = (check: PackCheckName, text: string, rule?: string): void => {
@@ -424,11 +477,14 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   // Check 1: rules. pack.json parses, every rules/*.json is listed, every listed document is named for its id, exists,
   // carries the listed id and compiles against core's capabilities; candidates and ports follow the same id rule.
   let pack: RulePackFile | undefined;
+  /** pack.json as JSON, before the schema: check 7 reads its `match` even when another field fails check 1. */
+  let packJson: unknown;
   const packPath = join(directory, "pack.json");
   if (!existsSync(packPath)) fail("rules", "pack.json is missing");
   else {
     try {
-      const parsed = rulePackFileSchema.safeParse(parseJsonWithoutDuplicateKeys(readFileSync(packPath, "utf8"), "pack.json"));
+      packJson = parseJsonWithoutDuplicateKeys(readFileSync(packPath, "utf8"), "pack.json");
+      const parsed = rulePackFileSchema.safeParse(packJson);
       if (parsed.success) pack = parsed.data;
       else fail("rules", `pack.json: ${z.prettifyError(parsed.error)}`);
     } catch (error) {
@@ -585,6 +641,8 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   // dependencies, no validation material published, licence agreeing with what licenses/ records.
   const licences = readLicences(directory);
   const packagePath = join(directory, "package.json");
+  /** What package.json `files` publishes, once it passes the schema: check 7 reads it for the match checks. */
+  let published: readonly string[] | undefined;
   if (!existsSync(packagePath)) fail("package", "package.json is missing");
   else {
     let raw: unknown;
@@ -600,6 +658,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     if (parsed !== undefined && !parsed.success) fail("package", `package.json: ${z.prettifyError(parsed.error)}`);
     if (parsed?.success === true) {
       const manifest = parsed.data;
+      published = manifest.files;
       if (manifest.name !== rulePackPackageName(id)) fail("package", `package.json: name is ${manifest.name}, not ${rulePackPackageName(id)}`);
       const repository = { type: "git", url: repositoryUrl(), directory: `packs/${id}` };
       if (!isDeepStrictEqual(manifest.repository, repository))
@@ -639,6 +698,10 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   for (const [file, record] of licences.listed) {
     if (!existsSync(join(directory, file))) fail("licences", `${record} lists ${file}, which does not exist`);
   }
+
+  // Check 7: manifest. Set-up can recommend the pack: its match is there and every check it runs answers, and core's
+  // pack list names it.
+  for (const failure of manifestFailures(directory, packJson, published, options.listed ?? resolve(dirname(directory)) === PACKS_DIRECTORY)) fail("manifest", failure);
 
   const rules = (pack?.rules ?? []).map((rule): PackRuleResult => {
     const failures = ruleFailures.get(rule.id) ?? [];

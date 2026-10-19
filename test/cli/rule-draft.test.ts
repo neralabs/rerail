@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  loadBundledCatalog,
+  loadRuleCatalog,
   defaultRerailDatabasePath,
   openRerailDatabase,
   recordCheckout,
@@ -16,6 +16,10 @@ import {
   checkoutStatus,
 } from "../../src/engine/index.js";
 import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-draft.js";
+import { installPack } from "../support/installed-packs.js";
+
+// Core ships no packs; these tests add, configure and copy the complexity pack's rules.
+installPack("complexity");
 
 const directories: string[] = [];
 
@@ -86,7 +90,7 @@ function rulesOf(repo: string) {
     return {
       library: listLibraryRules(database).map(rule => rule.document.rule.id),
       setUp: checkoutStatus(database, checkout).setUp,
-      repository: listRepositoryRules(database, loadBundledCatalog(), checkout.repositoryKey).rules
+      repository: listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey).rules
         .map(rule => ({ id: rule.source.id, kind: rule.source.kind, folder: rule.attachmentFolder, on: rule.on })),
     };
   } finally {
@@ -412,7 +416,7 @@ describe("rerail rules add", () => {
 
   it("refuses to replace a rule by Rerail with the same id", async () => {
     const repo = await repository();
-    const bundled = [...loadBundledCatalog().documents.values()].find(document => document.kind === "code");
+    const bundled = [...loadRuleCatalog().documents.values()].find(document => document.kind === "code");
     if (bundled === undefined) throw new Error("expected a code rule by Rerail");
     const file = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(), id: bundled.rule.id } });
 
