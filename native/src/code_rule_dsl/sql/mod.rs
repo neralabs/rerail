@@ -12,6 +12,7 @@ mod nodes;
 mod plan;
 mod recursion;
 pub(super) mod select_when;
+mod skip;
 mod terminals;
 #[cfg(test)]
 mod tests;

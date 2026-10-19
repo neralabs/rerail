@@ -140,6 +140,8 @@ For each batch, the driver:
 
 Workers process batches in parallel, with the same thread count as native. Batch size is a tuning parameter.
 
+A batch runs every compiled statement of every clause, most of them over empty frames, so the driver passes over the statements that cannot write a row. The emitter records each statement's effect as it writes it: the frames it reads, the table it writes and an emptiness rule (`EmptyIfAnyInputEmpty` for joins, semi-joins, relations and terminals over an input set; `EmptyIfAllInputsEmpty` for unions of branches; `EmptyIfPrimaryEmpty` for anti-joins, which still run when only their probe is empty; `CopyOf`; `AlwaysRun`). The session counts every frame's rows per batch from `sqlite3_changes()` and reads the rule before each statement. A clause or stage whose root frame is empty (no root of its kinds, or the RequiredText gate and anchors settled every document) skips everything after its root frame; a recursion block skips a run with no new demand rows; `each` rounds end on an empty enumeration. `RERAIL_SQL_SKIP=check` runs everything and panics where a statement the rules would skip changed a row; `RERAIL_SQL_SKIP=0` runs everything. The rules are documented with their dispatch in `skip.rs`.
+
 The engine is selected at runtime (`engine: native|sql` in the evaluation options) so a single build can A/B and run differential tests. That switch is removed when native leaves production; native remains only as a `cfg(test)` oracle.
 
 ## Code layout
@@ -151,6 +153,7 @@ The engine is selected at runtime (`engine: native|sql` in the evaluation option
 - `emit.rs`: IR → SQL;
 - `terminals/`: one module per terminal family;
 - `exec.rs`: batch driver and host loops;
+- `skip.rs`: the per-batch row counts and the emptiness rules the driver skips statements by;
 - `tests/`.
 
 ## Gates

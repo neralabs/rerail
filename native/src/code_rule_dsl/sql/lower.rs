@@ -33,12 +33,12 @@ pub(super) const ORIGIN: &str = "\0origin";
 /// A per-batch shared stage: a rule matched in a fresh environment at every node of its root kinds
 /// in the files of its dialect, computed once per batch into `stage_<index>`. Stop rules and
 /// context-free utilities are stages; equal ones (equal SQL) are one, keyed by digest. The last
-/// of `statements` selects the stage's distinct `(file, node)` rows; its root frame reads the
+/// of its statements selects the stage's distinct `(file, node)` rows; its root frame reads the
 /// `/*FILES*/` the driver substitutes. A three-valued clause's stages are three-valued (`three`):
 /// they keep the nodes their rule is unknown at, with `unk`.
 pub(super) struct Stage {
     pub(super) dialect: GrammarDialect,
-    pub(super) statements: Vec<String>,
+    pub(super) sql: emit::Emitted,
     pub(super) three: bool,
 }
 
@@ -591,7 +591,7 @@ impl<'p> Lowerer<'p> {
         let op = lowerer.unknowable(Op::Never);
         let statement = lowerer.finish(None, op);
         let leader = emit::recursive_stage(&statement);
-        let digest = format!("{dialect}:recursive:{}", leader.join(";\n"));
+        let digest = format!("{dialect}:recursive:{}", leader.statements.join(";\n"));
         let stages = match self.program.recursive_stage_index.get(&digest) {
             Some(stages) => stages.clone(),
             None => {
@@ -599,7 +599,7 @@ impl<'p> Lowerer<'p> {
                 let namespace = emit::stage_namespace(first);
                 self.program.stages.push(Stage {
                     dialect: self.dialect,
-                    statements: leader,
+                    sql: leader,
                     three: self.three,
                 });
                 let mut stages = vec![first];
@@ -607,7 +607,7 @@ impl<'p> Lowerer<'p> {
                     stages.push(self.program.stages.len());
                     self.program.stages.push(Stage {
                         dialect: self.dialect,
-                        statements: vec![emit::recursive_member(&namespace, unit, self.three)],
+                        sql: emit::recursive_member(&namespace, unit, self.three),
                         three: self.three,
                     });
                 }
@@ -837,8 +837,8 @@ impl<'p> Lowerer<'p> {
             let op = lowerer.unknowable(op);
             lowerer.finish(kinds, op)
         };
-        let statements = emit::stage(&statement);
-        let digest = format!("{}:{}", self.dialect, statements.join(";\n"));
+        let sql = emit::stage(&statement);
+        let digest = format!("{}:{}", self.dialect, sql.statements.join(";\n"));
         if let Some(&existing) = self.program.stage_index.get(&digest) {
             return Ok(existing);
         }
@@ -846,7 +846,7 @@ impl<'p> Lowerer<'p> {
         self.program.stage_index.insert(digest, id);
         self.program.stages.push(Stage {
             dialect: self.dialect,
-            statements,
+            sql,
             three: self.three,
         });
         Ok(id)

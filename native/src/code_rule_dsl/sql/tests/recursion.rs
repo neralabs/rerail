@@ -814,7 +814,7 @@ fn three_valued_frames_and_unit_tables_have_distinct_names() {
         .clause_each(grammar, None)
         .expect("lowers");
     let mut tables = std::collections::HashMap::<String, String>::new();
-    for sql in crate::code_rule_dsl::sql::emit::clause(&statement) {
+    for sql in crate::code_rule_dsl::sql::emit::clause(&statement).statements {
         let Some(rest) = sql
             .strip_prefix("CREATE TEMP TABLE IF NOT EXISTS ")
             .or_else(|| sql.strip_prefix("CREATE TEMP TABLE "))
