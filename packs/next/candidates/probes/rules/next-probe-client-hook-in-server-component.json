@@ -3,7 +3,7 @@
   "id": "next-probe-client-hook-in-server-component",
   "revision": 1,
   "mode": "log",
-  "description": "Next pack probe. React (inherited) + file role + directive: a call of a client-only hook imported from react, in an app/ file without a \"use client\" directive.",
+  "description": "Next pack probe. React (inherited) + file role + module graph + directive: a call of a client-only hook imported from react, in a file under app/ or src/app/ of a package that depends on next which is in the app's server module graph (reached from a server page, layout or route by imports that pass no \"use client\" module), without a \"use client\" directive.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -24,8 +24,14 @@
         "ast": {
           "language": "typescript",
           "file": {
-            "path": {
-              "regex": "^(?:src/)?app/"
+            "package": {
+              "dependsOn": [
+                "next"
+              ],
+              "path": {
+                "regex": "^(?:src/)?app/"
+              },
+              "serverGraph": true
             }
           },
           "rule": {
@@ -103,7 +109,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "next/client-hook-in-server-component",
-        "message": "React (inherited) + file role + directive: a call of a client-only hook imported from react, in an app/ file without a \"use client\" directive."
+        "message": "React (inherited) + file role + module graph + directive: a call of a client-only hook imported from react, in a file under app/ or src/app/ of a package that depends on next which is in the app's server module graph (reached from a server page, layout or route by imports that pass no \"use client\" module), without a \"use client\" directive."
       }
     }
   ]

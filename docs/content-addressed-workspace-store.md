@@ -445,6 +445,51 @@ A publication transaction contains at most 64 files.
 A busy concurrent writer causes a complete transaction retry.
 The runtime reports the retry count as `workspaceProfile.storageRetries`.
 
+### Documents of a file
+
+A file can be several documents.
+Its primary document is its own tree over its bytes.
+An embedder can derive more documents from it: Blade's compiled view, a Vue component's script program.
+
+Every tape holds exactly one source, one grammar, and one tree (tape format 7, magic `TMPTAPE7`).
+No tape holds another tape, a derived text, or a source map.
+A derived document is stored as ordinary objects: its text is a `source_objects` row, deduplicated by SHA-256, and its tree is a `tape_objects` row over that text.
+The derived tape has the primary tape's grammar version and format.
+Its grammar ID is the derived dialect's tape tag with bit 8 set and, above it, a fingerprint of the placeholders its source map omits (0 where it omits none).
+A derived tape is its text's tree less those placeholders, so one text can hold two tapes under maps omitting different ones; the grammar ID keeps each its own row, never a primary's, and derived documents with the same text and omissions share one.
+
+A sparse table relates derived documents to the primary document's tape:
+
+```sql
+CREATE TABLE file_documents (
+    tape_id          INTEGER NOT NULL REFERENCES tape_objects(tape_id) ON DELETE CASCADE,
+    ordinal          INTEGER NOT NULL CHECK(ordinal > 0),
+    parent_ordinal   INTEGER NOT NULL CHECK(parent_ordinal >= 0 AND parent_ordinal < ordinal),
+    role_id          INTEGER NOT NULL CHECK(role_id > 0),
+    via_id           INTEGER NOT NULL,
+    document_tape_id INTEGER NOT NULL REFERENCES tape_objects(tape_id),
+    source_map       BLOB NOT NULL,
+    host_errors      BLOB NOT NULL,
+    PRIMARY KEY (tape_id, ordinal)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX file_documents_by_document ON file_documents(document_tape_id);
+```
+
+The key is the primary tape, not a path: a file's documents are a function of its source, grammar version, and tape format.
+Ordinal 0 is the primary document and has no row.
+A single-language file has no rows, so its stored objects are unchanged.
+`parent_ordinal` names the document a row's document was derived from; embedders derive from the primary only.
+`role_id` is 1 for an embedded document, whose text is one contiguous byte-exact slice of its parent (one copied segment over the whole text), and 2 for a generated one (any other source map).
+`via_id` is the embedding's registry name read as a nonnegative integer: the first eight bytes of its SHA-256.
+`source_map` holds the segment map's persisted segments; `host_errors` holds the parent byte ranges the document cannot be read through, as little-endian `u32` pairs.
+
+Publication writes the primary tape, every derived source and tape, and their `file_documents` rows in one object transaction.
+Only a tape that is not stored yet writes its documents: a stored tape's documents were written with it.
+Loading reads a file's primary tape, its rows, and its derived tapes and texts in bulk, then checks each derived document against its parent.
+A missing or invalid derived part makes the stored tape absent: the file is parsed again, never restored without its derived documents.
+The search indexer reads a derived tape as an ordinary row, in its own dialect over its own text, so every document has its own search index.
+A clause over a derived document consults that document's index.
+
 ## Git implementation boundary
 
 Rerail uses `gix` for Git repository and worktree discovery.
@@ -639,6 +684,7 @@ These records keep objects live:
 - active workspace roots.
 - retained immutable snapshots.
 - workspace overlays.
+- `file_documents` rows, for the derived tapes they name and so those tapes' sources.
 - explicit pins from indexing workers.
 - explicit pins from in-flight edits.
 
@@ -653,7 +699,7 @@ The collector uses this order:
 1. It marks expired workspaces as retiring.
 2. It removes overlay rows in bounded batches.
 3. It removes unreferenced snapshots in bounded batches.
-4. It removes unreferenced tape objects in bounded batches.
+4. It removes unreferenced tape objects in bounded batches. Removing a primary tape cascades to its `file_documents` rows; a later batch then removes the derived tapes no row names.
 5. It removes unreferenced source objects in bounded batches.
 6. It removes unused paths, strings, hashes, and Git tree metadata. It deletes an unreachable Git tree whole: the tree row and all of its entries in the same transaction.
 7. It performs bounded WAL and free-page maintenance.

@@ -114,6 +114,7 @@ fn walk(rule: &AstMatcher, stop: bool, found: &mut dyn FnMut(&UtilRef, bool)) {
                 Semantic::FormatArgs(test) => inner.extend(test.unused.iter()),
                 Semantic::Parse(test) => inner.push(&test.rule),
                 Semantic::Host(test) => inner.push(&test.rule),
+                Semantic::Embedded(test) => inner.extend(test.rules()),
                 Semantic::Resolves(_)
                 | Semantic::Value(_)
                 | Semantic::Arguments(_)
@@ -351,6 +352,11 @@ fn holds(rule: &AstMatcher, scopes: &[Held], names: &mut Held) {
                 );
             }
             Semantic::Parse(test) => names.extend(
+                test.exports
+                    .iter()
+                    .map(|name| (name.clone(), SlotKind::Text)),
+            ),
+            Semantic::Embedded(test) => names.extend(
                 test.exports
                     .iter()
                     .map(|name| (name.clone(), SlotKind::Text)),

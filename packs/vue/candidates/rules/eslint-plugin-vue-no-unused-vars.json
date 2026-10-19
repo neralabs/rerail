@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-unused-vars",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-unused-vars` with default options (no ignorePattern): a template variable that nothing reads: a v-for alias or a slot parameter (`v-slot`, `#name`, Vue 2 `slot-scope`/`scope`). Reads the view program: the parameters of the arrow that stands for a v-for (`expression_statement > sequence_expression > arrow_function`) or a slot (`expression_statement > arrow_function`) inside the template block, resolved by the engine's per-binding occurrences (a reference that is neither the definition nor the bare `Tag;` read the view writes for a component tag, which vue-eslint-parser does not make a reference). A variable that is unreferenced is still exempt when a descendant element's raw tag name is the variable's (upstream's isUsedAsComponentTag: the view's read of a descendant component tag, never the `v-for` element's own, which is its arrow's first statement, read at the arrow's own tag name). Parameters before a referenced one in the same arrow are exempt (after-used) unless destructured (an object-pattern property or an array-pattern element; a rest element of an object pattern is not). A v-for alias that a v-if/v-else-if condition of the same element reads is used (upstream resolves that condition in the element's scope; Vue 3 compiles it outside the v-for). Reported at the parameter identifier.",
+  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-unused-vars` with default options (no ignorePattern): a template variable that nothing reads: a v-for alias or a slot parameter (`v-slot`, `#name`, Vue 2 `slot-scope`/`scope`). Reads the script-block program (`ast.embedded`): the parameters of the arrow that stands for a v-for (`expression_statement > sequence_expression > arrow_function`) or a slot (`expression_statement > arrow_function`) inside the template block, resolved by the engine's per-binding occurrences (a reference that is neither the definition nor the bare `Tag;` read the view writes for a component tag, which vue-eslint-parser does not make a reference). A variable that is unreferenced is still exempt when a descendant element's raw tag name is the variable's (upstream's isUsedAsComponentTag: through `host`, the start tag of any element below the one whose `v-for` or slot directive declares the variable, a native tag included, compared by its tag name; a dotted tag's raw name is never an identifier). Parameters before a referenced one in the same arrow are exempt (after-used) unless destructured (an object-pattern property or an array-pattern element; a rest element of an object pattern is not). A v-for alias that a v-if/v-else-if condition of the same element reads (the v-for statement's host element holds that directive) is used (upstream resolves that condition in the element's scope; Vue 3 compiles it outside the v-for). Reported at the parameter identifier.",
   "scope": {
     "include": [
       "**/*.vue"
@@ -16,6 +16,7 @@
       "forbid": {
         "ast": {
           "language": "vue",
+          "embedded": "script-block",
           "utils": {
             "view-arrow": {
               "kind": "arrow_function",
@@ -37,7 +38,9 @@
               "inside": {
                 "stopBy": "end",
                 "kind": "statement_block",
-                "regex": "^<template"
+                "host": {
+                  "kind": "template_element"
+                }
               }
             },
             "view-param": {
@@ -98,16 +101,40 @@
                     "kind": "sequence_expression",
                     "inside": {
                       "kind": "expression_statement",
-                      "pattern": "$QS",
+                      "host": {
+                        "any": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "directive_attribute",
+                              "regex": "^v-(?:else-)?if(?:[.:=\\s]|$)"
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "kind": "start_tag"
+                                },
+                                {
+                                  "kind": "self_closing_tag"
+                                }
+                              ],
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "directive_attribute",
+                                "regex": "^v-(?:else-)?if(?:[.:=\\s]|$)"
+                              }
+                            }
+                          }
+                        ]
+                      },
                       "inside": {
+                        "stopBy": "neighbor",
                         "kind": "statement_block",
-                        "pattern": "$QB",
-                        "compare": {
-                          "left": "QS",
-                          "op": "eq",
-                          "right": "QB"
-                        },
                         "inside": {
+                          "stopBy": "neighbor",
                           "kind": "if_statement",
                           "has": {
                             "field": "condition",
@@ -146,16 +173,40 @@
                     "kind": "sequence_expression",
                     "inside": {
                       "kind": "expression_statement",
-                      "pattern": "$NAMES",
+                      "host": {
+                        "any": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "directive_attribute",
+                              "regex": "^v-(?:else-)?if(?:[.:=\\s]|$)"
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "kind": "start_tag"
+                                },
+                                {
+                                  "kind": "self_closing_tag"
+                                }
+                              ],
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "directive_attribute",
+                                "regex": "^v-(?:else-)?if(?:[.:=\\s]|$)"
+                              }
+                            }
+                          }
+                        ]
+                      },
                       "inside": {
+                        "stopBy": "neighbor",
                         "kind": "statement_block",
-                        "pattern": "$NAMEB",
-                        "compare": {
-                          "left": "NAMES",
-                          "op": "eq",
-                          "right": "NAMEB"
-                        },
                         "inside": {
+                          "stopBy": "neighbor",
                           "kind": "if_statement",
                           "has": {
                             "field": "condition",
@@ -308,122 +359,67 @@
                 }
               ]
             },
-            "tag-used-name": {
-              "inside": {
-                "stopBy": "end",
-                "kind": "formal_parameters",
+            "tag-used-host": {
+              "host": {
                 "inside": {
-                  "kind": "arrow_function",
-                  "has": {
-                    "stopBy": "end",
-                    "kind": "identifier",
-                    "pattern": "$TAGT",
-                    "compare": {
-                      "left": "NAME",
-                      "op": "eq",
-                      "right": "TAGT"
-                    },
+                  "stopBy": "end",
+                  "kind": "directive_attribute",
+                  "inside": {
+                    "stopBy": "neighbor",
                     "any": [
                       {
-                        "inside": {
+                        "kind": "start_tag"
+                      },
+                      {
+                        "kind": "self_closing_tag"
+                      }
+                    ],
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "element"
+                        },
+                        {
+                          "kind": "template_element"
+                        }
+                      ],
+                      "has": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "element"
+                          },
+                          {
+                            "kind": "template_element"
+                          }
+                        ],
+                        "has": {
                           "stopBy": "neighbor",
-                          "kind": "expression_statement",
+                          "any": [
+                            {
+                              "kind": "start_tag"
+                            },
+                            {
+                              "kind": "self_closing_tag"
+                            }
+                          ],
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "tag_name",
+                            "pattern": "$TN",
+                            "compare": {
+                              "left": "NAME",
+                              "op": "eq",
+                              "right": "TN"
+                            }
+                          },
                           "not": {
-                            "nthChild": 1
-                          }
-                        }
-                      },
-                      {
-                        "inside": {
-                          "stopBy": "neighbor",
-                          "kind": "expression_statement",
-                          "nthChild": 1,
-                          "inside": {
-                            "stopBy": "neighbor",
-                            "kind": "statement_block",
-                            "inside": {
-                              "stopBy": "neighbor",
-                              "kind": "arrow_function",
-                              "not": {
-                                "matches": "declares-name"
-                              }
-                            }
-                          }
-                        }
-                      },
-                      {
-                        "inside": {
-                          "stopBy": "neighbor",
-                          "kind": "expression_statement",
-                          "nthChild": 1,
-                          "inside": {
-                            "stopBy": "neighbor",
-                            "kind": "statement_block",
-                            "inside": {
-                              "stopBy": "neighbor",
-                              "kind": "arrow_function",
-                              "matches": "declares-name",
-                              "not": {
-                                "inside": {
-                                  "stopBy": "neighbor",
-                                  "kind": "sequence_expression"
-                                }
-                              }
-                            }
-                          }
-                        }
-                      },
-                      {
-                        "inside": {
-                          "stopBy": "neighbor",
-                          "kind": "expression_statement",
-                          "nthChild": 1,
-                          "inside": {
-                            "stopBy": "neighbor",
-                            "kind": "statement_block",
-                            "inside": {
-                              "stopBy": "neighbor",
-                              "kind": "arrow_function",
-                              "matches": "declares-name",
-                              "pattern": "$OWNER",
-                              "compare": {
-                                "left": "OWN",
-                                "op": "ne",
-                                "right": "TAGT"
-                              },
-                              "inside": {
-                                "stopBy": "neighbor",
-                                "kind": "sequence_expression"
-                              }
-                            }
+                            "regex": "^<[^\\s/>.]+\\."
                           }
                         }
                       }
-                    ]
-                  }
-                }
-              }
-            },
-            "declares-name": {
-              "has": {
-                "stopBy": "neighbor",
-                "kind": "formal_parameters",
-                "has": {
-                  "stopBy": "end",
-                  "any": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "kind": "shorthand_property_identifier_pattern"
                     }
-                  ],
-                  "pattern": "$ZP",
-                  "compare": {
-                    "left": "NAME",
-                    "op": "eq",
-                    "right": "ZP",
-                    "text": "node"
                   }
                 }
               }
@@ -456,7 +452,7 @@
               },
               {
                 "not": {
-                  "matches": "tag-used-name"
+                  "matches": "tag-used-host"
                 }
               },
               {
@@ -474,15 +470,6 @@
                 }
               }
             ]
-          },
-          "transform": {
-            "OWN": {
-              "replace": {
-                "source": "$OWNER",
-                "replace": "^<([^\\s/>]+)[\\s\\S]*$",
-                "by": "$1"
-              }
-            }
           }
         }
       },

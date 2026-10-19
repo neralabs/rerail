@@ -26,11 +26,13 @@ pub(crate) use format_args::{FormatArgFeature, FormatArgRules};
 pub(crate) use rust::Rust;
 pub(crate) use scope::{ScopeFeature, ScopeRules};
 pub(crate) use sql::Sql;
-pub(crate) use syntax::{SyntaxFeature, SyntaxRules};
+pub(crate) use syntax::{QueryWhen, SyntaxFeature, SyntaxRules};
 pub(crate) use value::{ValueFeature, ValueRules};
 pub(crate) use vue::Vue;
 
-use super::{Family, GrammarDialect, language_not_supported};
+use super::{
+    Family, GrammarDialect, PackageType, SourceType, is_declaration_file, language_not_supported,
+};
 use crate::code_rule_dsl::identifier::python_name;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
@@ -43,7 +45,6 @@ use crate::code_rule_dsl::suppress::{
     BiomeSuppressions, EslintDirectives, NoqaIndex, NosecIndex, OxlintDirectives, PhpcsIndex,
     PhpstanIndex, PsalmIndex, Suppress, parent_statement, root,
 };
-use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Doc, Node};
 use ast_grep_language::LanguageExt;
@@ -57,57 +58,13 @@ pub(crate) struct Python;
 pub(crate) struct Ecma;
 /// PHP's family.
 pub(crate) struct Php;
-/// Blade templates: their semantics are those of the PHP the template embeds (`blade::view`).
-/// Each concern impl delegates to PHP's, apart from what reads the template itself: scope reads
-/// the compiled view (`php::visit_blade_program`), calls come from the tape, and refusals name
-/// Blade.
+/// Blade templates' own tree (`blade::forte`). A template's semantics are those of the PHP it
+/// embeds (`blade::view`), a guest document read with PHP's family (`embed`): a clause reads
+/// them with `ast.embedded` or `embedded`. The concerns name PHP's, which the compile refuses on
+/// the template's own tree (`compile::refuse_unavailable_semantics`).
 pub(crate) struct Blade;
 /// The adapter of a capability a family does not read (registry `refused` or `not-supported-yet`).
 pub(crate) struct Refused;
-
-/// A part of a document a family's semantics read: the root of its tree, and the dialect that
-/// tree is read as (the file's own, or the one its embedder built an embedded program in:
-/// `tape::EmbeddedProgram`).
-pub(crate) struct Region<'r, D: Doc> {
-    pub(crate) root: Node<'r, D>,
-    pub(crate) dialect: GrammarDialect,
-}
-
-/// The parts of the document of `dialect` rooted at `root` that its family's semantics read: the
-/// root itself, but in a dialect that embeds others (`GrammarDialect::embeds`) the programs its
-/// tape embeds (`embed`), each read as the dialect its embedder built it in, which a tape records
-/// (`tape::EmbeddedProgram`): a Blade template's compiled view, PHP; none where it embeds nothing
-/// (or is no tape). At most one program per registry `via`. Consumers read every region; call
-/// summaries read the first (`calls::summarize`), so a family whose documents may hold several
-/// refuses calls.
-pub(crate) fn regions<'r, D: Doc>(
-    root: &Node<'r, D>,
-    dialect: GrammarDialect,
-) -> impl Iterator<Item = Region<'r, D>> + use<'r, D> {
-    let doc: &'r dyn std::any::Any = root.get_doc();
-    let programs = doc
-        .downcast_ref::<TapeDoc>()
-        .map_or(&[][..], TapeDoc::programs);
-    let embedding = dialect.kinds().has_embedded();
-    let whole = (!embedding).then(|| Region {
-        root: root.clone(),
-        dialect,
-    });
-    // The programs are the root's last children, in tape order.
-    let host = root.clone();
-    let count = if embedding { host.children().len() } else { 0 };
-    let embedded = (count.saturating_sub(programs.len())..count).filter_map(move |nth| {
-        let child = host.child(nth)?;
-        let program = programs
-            .iter()
-            .find(|program| program.root as usize == child.node_id())?;
-        Some(Region {
-            root: child,
-            dialect: program.dialect,
-        })
-    });
-    whole.into_iter().chain(embedded)
-}
 
 /// A registry family's semantics.
 pub(crate) trait Adapter: 'static {
@@ -121,6 +78,12 @@ pub(crate) trait Adapter: 'static {
     /// Whether the family names a file's module from the package markers around it (Python's
     /// `__init__.py`): a file without a host module gets the markers' module.
     const PACKAGES: bool;
+    /// Whether the family's files read their nearest `package.json`: its `type` decides an ECMA
+    /// file's module system (`packageType`, `SourceType::of_file`).
+    const PACKAGE_MANIFESTS: bool;
+    /// Whether an ast query's `file` may ask for the file's JSX runtime (`jsxRuntime`: its
+    /// pragmas, imports and manifest's dependencies).
+    const JSX_RUNTIMES: bool;
     /// Whether an ast query's `file` may ask for declaration files (`declaration`,
     /// typescript-eslint's `.d.ts` predicate). Python has stubs instead and refuses it.
     const DECLARATION_FILES: bool;
@@ -150,6 +113,13 @@ pub(crate) trait Adapter: 'static {
         anchored: Range<usize>,
         witness: (usize, usize),
     ) -> bool;
+    /// The module system of the file at `path` whose nearest `package.json` has `package` as
+    /// its type (`None`: no manifest), for a query that leaves `sourceType` to the file; `None`
+    /// where the file's syntax decides (`has_module_syntax`). A family without module systems
+    /// reads every file as a module, the `sourceType` its queries default to.
+    fn source_type(_path: &str, _package: Option<PackageType>) -> Option<SourceType> {
+        Some(SourceType::Module)
+    }
 }
 
 impl Adapter for Python {
@@ -157,6 +127,8 @@ impl Adapter for Python {
     const LABEL: &'static str = "python";
     const TERMINATORS: Terminators = Terminators::Newlines;
     const PACKAGES: bool = true;
+    const PACKAGE_MANIFESTS: bool = false;
+    const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
     type Scope = Self;
     type Value = Self;
@@ -205,6 +177,8 @@ impl Adapter for Ecma {
     const LABEL: &'static str = "typescript";
     const TERMINATORS: Terminators = Terminators::Eslint;
     const PACKAGES: bool = false;
+    const PACKAGE_MANIFESTS: bool = true;
+    const JSX_RUNTIMES: bool = true;
     const DECLARATION_FILES: bool = true;
     type Scope = Self;
     type Value = Self;
@@ -249,6 +223,25 @@ impl Adapter for Ecma {
             suppressions.suppresses(rules, anchored.clone())
         })
     }
+
+    /// `.cjs` and `.cts` (`.d.cts` declarations included) are CommonJS; `.mjs`, `.mts`, `.tsx`
+    /// and other declaration files modules. A `.js`, `.jsx` or `.ts` file follows its package's
+    /// `type`, as Node reads `.ts` files the same way as `.js` ones (type stripping), and is a
+    /// module without a manifest (ESLint's default config, which upstream fixtures assume); where
+    /// the manifest sets no valid `type`, Node's syntax detection decides.
+    fn source_type(path: &str, package: Option<PackageType>) -> Option<SourceType> {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        match name.rsplit_once('.').map(|(_, extension)| extension) {
+            Some("cjs" | "cts") => Some(SourceType::CommonJs),
+            Some("ts") if is_declaration_file(name) => Some(SourceType::Module),
+            Some("js" | "jsx" | "ts") => match package {
+                None | Some(PackageType::Module) => Some(SourceType::Module),
+                Some(PackageType::CommonJs) => Some(SourceType::CommonJs),
+                Some(PackageType::Unset) => None,
+            },
+            _ => Some(SourceType::Module),
+        }
+    }
 }
 
 impl Adapter for Php {
@@ -256,6 +249,8 @@ impl Adapter for Php {
     const LABEL: &'static str = "php";
     const TERMINATORS: Terminators = Terminators::Newlines;
     const PACKAGES: bool = false;
+    const PACKAGE_MANIFESTS: bool = false;
+    const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = true;
     type Scope = Self;
     type Value = Self;
@@ -306,12 +301,14 @@ impl Adapter for Blade {
     const LABEL: &'static str = "blade";
     const TERMINATORS: Terminators = Terminators::Newlines;
     const PACKAGES: bool = false;
+    const PACKAGE_MANIFESTS: bool = false;
+    const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = true;
-    type Scope = Self;
-    type Value = Self;
-    type Arguments = Self;
+    type Scope = Php;
+    type Value = Php;
+    type Arguments = Php;
     type Calls = Self;
-    type FormatArgs = Self;
+    type FormatArgs = Php;
 
     fn name(text: Cow<'_, str>) -> Cow<'_, str> {
         text
@@ -347,6 +344,21 @@ pub(crate) fn module_path(label: &str, file: &Path) -> Option<serde_json::Value>
     with_adapter!(Family::of(dialect), A => A::module_path(file))
 }
 
+/// The module system of the file at `path` in the dialect labelled `label`
+/// (`Adapter::source_type`); a module for a label no dialect has.
+pub(crate) fn source_type(
+    label: &str,
+    path: &str,
+    package: Option<PackageType>,
+) -> Option<SourceType> {
+    match super::dialect_by_label(label) {
+        Some(dialect) => {
+            with_adapter!(Family::of(dialect), A => A::source_type(path, package))
+        }
+        None => Some(SourceType::Module),
+    }
+}
+
 /// Whether files of the dialect labelled `label` take their module from package markers
 /// (`Adapter::PACKAGES`); `false` for a label no dialect has.
 pub(crate) fn packages(label: &str) -> bool {
@@ -371,6 +383,13 @@ pub(crate) fn ast_grep(dialect: GrammarDialect, source: &str) -> AstGrep<StrDoc<
             AstGrep::doc(doc)
         }
     }
+}
+
+/// Whether files of the dialect labelled `label` read their nearest `package.json`
+/// (`Adapter::PACKAGE_MANIFESTS`); `false` for a label no dialect has.
+pub(crate) fn package_manifests(label: &str) -> bool {
+    super::dialect_by_label(label)
+        .is_some_and(|dialect| with_adapter!(Family::of(dialect), A => A::PACKAGE_MANIFESTS))
 }
 
 /// Why a family refuses a DSL feature, with the message the refusal reports.

@@ -1,6 +1,6 @@
 //! Value decoding and comparison (`value`, `compare`): `Semantic::Value`.
 
-use super::{Blade, Ecma, Php, Python, Refusal};
+use super::{Ecma, Php, Python, Refusal};
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::matcher::SemanticText;
 use crate::code_rule_dsl::value::structure::{self, Equality, Tok};
@@ -363,8 +363,11 @@ impl ValueRules for Ecma {
         Value::Float(number.as_f64().unwrap_or(f64::NAN))
     }
 
-    fn spelled<D: Doc>(_: &Node<'_, D>) -> bool {
-        true
+    /// Whether no token of the node is one an embedder wrote (a Vue view's `(` and `);` around an
+    /// interpolation, a character reference's character), which a comparison of tokens must not
+    /// read as the file's (`embed::rewritten`).
+    fn spelled<D: Doc>(node: &Node<'_, D>) -> bool {
+        !crate::code_rule_dsl::embed::rewritten(node)
     }
 
     /// ESTree's name.
@@ -494,8 +497,10 @@ impl ValueRules for Php {
         }
     }
 
-    fn spelled<D: Doc>(_: &Node<'_, D>) -> bool {
-        true
+    /// Whether no token of the node is one an embedder wrote (a Blade view's `@unless` `!(`),
+    /// which a comparison of tokens must not read as the template's (`embed::rewritten`).
+    fn spelled<D: Doc>(node: &Node<'_, D>) -> bool {
+        !crate::code_rule_dsl::embed::rewritten(node)
     }
 
     /// The name PHP looks a symbol up by, or a string literal's value.
@@ -547,118 +552,11 @@ impl ValueRules for Php {
     }
 }
 
-/// Blade's values are those of the PHP its template embeds (`blade::view`), but for the tokens
-/// the view writes, which the template does not spell.
-impl ValueRules for Blade {
-    const SUPPORTED: bool = <Php as ValueRules>::SUPPORTED;
-    const LANG: Family = <Php as ValueRules>::LANG;
-    const EXPRESSION_KINDS: &'static [&'static str] = <Php as ValueRules>::EXPRESSION_KINDS;
-    const VALUE_KINDS: &'static [&'static str] = <Php as ValueRules>::VALUE_KINDS;
-    const NAME_KINDS: &'static [&'static str] = <Php as ValueRules>::NAME_KINDS;
-
-    fn truthy(value: &Value) -> Option<bool> {
-        <Php as ValueRules>::truthy(value)
-    }
-
-    fn type_name(value: &Value) -> Option<&'static str> {
-        <Php as ValueRules>::type_name(value)
-    }
-
-    fn equals(left: &Value, right: &Value) -> Option<bool> {
-        <Php as ValueRules>::equals(left, right)
-    }
-
-    fn order(left: &Value, right: &Value) -> Option<Option<Ordering>> {
-        <Php as ValueRules>::order(left, right)
-    }
-
-    fn relation(operator: &str, left: &Value, right: &Value) -> Option<bool> {
-        <Php as ValueRules>::relation(operator, left, right)
-    }
-
-    fn numeric(value: &Value) -> bool {
-        <Php as ValueRules>::numeric(value)
-    }
-
-    fn integer(value: &Value) -> Option<BigInt> {
-        <Php as ValueRules>::integer(value)
-    }
-
-    fn to_str<D: Doc>(value: &Value, node: &Node<'_, D>) -> Option<String> {
-        <Php as ValueRules>::to_str(value, node)
-    }
-
-    fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
-        <Php as ValueRules>::decode(node, context)
-    }
-
-    /// The embedded PHP's; `compare` reads none where Blade wrote a token (`spelled`).
-    fn structure<D: Doc>(
-        node: &Node<'_, D>,
-        equality: Equality,
-        context: &mut Context<'_>,
-    ) -> Option<Vec<Tok>> {
-        <Php as ValueRules>::structure(node, equality, context)
-    }
-
-    fn string(text: &str) -> Value {
-        <Php as ValueRules>::string(text)
-    }
-
-    fn number(number: &serde_json::Number) -> Value {
-        <Php as ValueRules>::number(number)
-    }
-
-    /// Whether no token of the node is one the view writes (`@unless`'s `!(`), which a
-    /// comparison of tokens must not read as the template's (`embed::rewritten`).
-    fn spelled<D: Doc>(node: &Node<'_, D>) -> bool {
-        !crate::code_rule_dsl::embed::rewritten(node)
-    }
-
-    fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
-        <Php as ValueRules>::node_name(node)
-    }
-
-    fn key_name<'r, D: Doc>(
-        node: &Node<'r, D>,
-        value: &mut dyn FnMut(&Node<'r, D>) -> Value,
-    ) -> Option<Vec<u16>> {
-        <Php as ValueRules>::key_name(node, value)
-    }
-
-    fn member_name<'r, D: Doc>(
-        node: &Node<'r, D>,
-        value: &mut dyn FnMut(&Node<'r, D>) -> Value,
-    ) -> Option<Vec<u16>> {
-        <Php as ValueRules>::member_name(node, value)
-    }
-
-    fn same_reference<D: Doc>(
-        left: &Node<'_, D>,
-        right: &Node<'_, D>,
-        static_keys: bool,
-    ) -> Option<bool> {
-        <Php as ValueRules>::same_reference(left, right, static_keys)
-    }
-
-    fn feature(feature: ValueFeature<'_>) -> Result<(), Refusal> {
-        match feature {
-            ValueFeature::Compare(SemanticText::Structure(Equality::Parts), _) => Err(Refusal::Refused(
-                "`structure-parts` compares Python's implicitly concatenated string parts; blade embeds PHP, which has no implicit string concatenation"
-                    .into(),
-            )),
-            ValueFeature::Type(_) | ValueFeature::Compare(..) => {
-                <Php as ValueRules>::feature(feature)
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 pub(super) mod kit {
     use super::super::{Adapter, Refusal};
     use super::{ValueFeature, ValueRules};
-    use crate::code_rule_dsl::language::{Family, GrammarDialect};
+    use crate::code_rule_dsl::language::Family;
     use crate::code_rule_dsl::matcher::SemanticText;
     use crate::code_rule_dsl::tape::TapeDoc;
     use crate::code_rule_dsl::value::structure::Equality;
@@ -671,7 +569,7 @@ pub(super) mod kit {
         /// The rule values of the JSON string `é` and the JSON numbers `16` and `2^64 - 1`.
         pub(in super::super) string: Value,
         pub(in super::super) numbers: [Value; 2],
-        /// A document, the kind of the first node of that kind in its regions, and that node's
+        /// A source, the kind of the first node of that kind in its document, and that node's
         /// value.
         pub(in super::super) decoded: (&'static str, &'static str, Value),
         pub(in super::super) name_kinds: &'static [&'static str],
@@ -679,9 +577,9 @@ pub(super) mod kit {
         pub(in super::super) str_type: Result<(), &'static str>,
         /// The verdict on `compare`'s `structure-parts`.
         pub(in super::super) structure_parts: Result<(), &'static str>,
-        /// A document and whether its regions' roots are spelled.
+        /// A source and whether its document's root is spelled.
         pub(in super::super) spelled: (&'static str, bool),
-        /// A document, the kind of the first node of that kind in its regions, and its name
+        /// A source, the kind of the first node of that kind in its document, and its name
         /// (`None`: `name` is refused).
         pub(in super::super) name: Option<(&'static str, &'static str, &'static str)>,
     }
@@ -694,26 +592,25 @@ pub(super) mod kit {
         })
     }
 
-    /// The first node of `kind` in `source`'s regions, read by `with`.
+    /// The first node of `kind` in a document, read by `with`.
     fn first<A: Adapter, T>(
         doc: &AstGrep<TapeDoc>,
         kind: &str,
         with: impl FnOnce(&ast_grep_core::Node<'_, TapeDoc>) -> T,
     ) -> T {
-        let root = doc.root();
-        let node = crate::code_rule_dsl::language::adapter::regions(
-            &root,
-            *ast_grep_core::Doc::get_lang(root.get_doc()),
-        )
-        .find_map(|region| region.root.dfs().find(|node| node.kind() == kind))
-        .unwrap_or_else(|| panic!("no {kind}"));
+        let node = doc
+            .root()
+            .dfs()
+            .find(|node| node.kind() == kind)
+            .unwrap_or_else(|| panic!("no {kind}"));
         with(&node)
     }
 
+    /// Checks `A`'s values against `expect`, over the documents its semantics read of each source
+    /// (`tape`).
     pub(in super::super) fn check<A: Adapter>(
         expect: &Expect,
-        dialect: GrammarDialect,
-        tape: fn(&str, GrammarDialect) -> AstGrep<TapeDoc>,
+        tape: impl Fn(&str) -> AstGrep<TapeDoc>,
     ) {
         assert_eq!(<A::Value as ValueRules>::LANG, expect.lang);
         assert_eq!(<A::Value as ValueRules>::string("é"), expect.string);
@@ -727,7 +624,7 @@ pub(super) mod kit {
         let (source, kind, decoded) = &expect.decoded;
         assert!(<A::Value as ValueRules>::EXPRESSION_KINDS.contains(kind));
         assert!(<A::Value as ValueRules>::VALUE_KINDS.contains(kind));
-        let doc = tape(source, dialect);
+        let doc = tape(source);
         let mut spend = || true;
         let value = first::<A, _>(&doc, kind, |node| {
             <A::Value as ValueRules>::decode(node, &mut Context::new(&mut spend))
@@ -746,16 +643,14 @@ pub(super) mod kit {
             expect.structure_parts.map_err(str::to_owned)
         );
         let (source, spelled) = expect.spelled;
-        let doc = tape(source, dialect);
-        let root = doc.root();
+        let doc = tape(source);
         assert_eq!(
-            crate::code_rule_dsl::language::adapter::regions(&root, dialect)
-                .all(|region| <A::Value as ValueRules>::spelled(&region.root)),
+            <A::Value as ValueRules>::spelled(&doc.root()),
             spelled,
             "{source:?}"
         );
         if let Some((source, kind, name)) = expect.name {
-            let doc = tape(source, dialect);
+            let doc = tape(source);
             let read = first::<A, _>(&doc, kind, <A::Value as ValueRules>::node_name);
             assert_eq!(read, Some(name.encode_utf16().collect()), "{source:?}");
         }

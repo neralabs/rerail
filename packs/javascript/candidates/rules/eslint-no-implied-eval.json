@@ -6,10 +6,6 @@
   "description": "ESLint 10.11.0 no-implied-eval, default options. Port of ESLint's `no-implied-eval` rule (https://eslint.org/docs/latest/rules/no-implied-eval). Flags `setTimeout`/`setInterval`/`execScript` called (directly or through `window`/`self`/`global`/`globalThis`) with a first argument whose value is a string (through an effectively constant binding: `value.follow`), a template literal, or a `+` with such an operand. Those names count only when the configured ecmaVersion and globals declare them (`ast.languageOptions`) and nothing shadows them (`resolves`).",
   "scope": {
     "include": [
-      "**/*.ts",
-      "**/*.tsx",
-      "**/*.mts",
-      "**/*.cts",
       "**/*.js",
       "**/*.jsx",
       "**/*.mjs",

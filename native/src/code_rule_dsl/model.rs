@@ -2,7 +2,8 @@ use super::calls::{SeedScope, TermId, Through};
 use super::json::invalid;
 use super::matcher::{GrammarMatcher, Transform};
 use super::module_path::ModulePath;
-use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::{GrammarDialect, PackageType};
+use crate::code_rule_dsl::package_manifest::Manifest;
 use ast_grep_core::replacer::TemplateFix;
 use globset::GlobSet;
 use napi::Result;
@@ -489,6 +490,24 @@ impl Query {
             Query::Regex { .. } => Vec::new(),
         }
     }
+
+    /// Whether an AST query here reads `file.package.serverGraph`, so the files' manifests need
+    /// their package's server graph.
+    pub(super) fn reads_server_graph(&self) -> bool {
+        match self {
+            Query::Ast { matchers, .. } => matchers.iter().any(|matcher| {
+                matcher.file.as_ref().is_some_and(|file| {
+                    file.manifest
+                        .as_ref()
+                        .is_some_and(|package| package.server_graph.is_some())
+                })
+            }),
+            Query::SelectWhen { select, exists } => {
+                select.reads_server_graph() || exists.reads_server_graph()
+            }
+            Query::Regex { .. } => false,
+        }
+    }
 }
 
 /// A `calls` term: its inner rule as a seed query over definitions, and what chains pass through.
@@ -608,6 +627,20 @@ pub(super) struct CompiledCodeRule {
     pub(super) capabilities: Capabilities,
 }
 
+impl CompiledCodeRule {
+    /// Whether any clause reads `file.package.serverGraph` (`Query::reads_server_graph`).
+    pub(super) fn reads_server_graph(&self) -> bool {
+        self.clauses.iter().any(|clause| match &clause.kind {
+            ClauseKind::Forbid(query) => query.reads_server_graph(),
+            ClauseKind::RequireEach { subject, evidence } => {
+                subject.ast.query.reads_server_graph() || evidence.ast.query.reads_server_graph()
+            }
+            ClauseKind::Budget { query, .. } => query.ast.query.reads_server_graph(),
+            ClauseKind::Llm => false,
+        })
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct FileInput {
     pub(super) path: String,
@@ -615,18 +648,23 @@ pub(super) struct FileInput {
     pub(super) source: Arc<String>,
     /// A Python file's module path: the host's (`module`), else the file's stem.
     pub(super) module: Option<Arc<ModulePath>>,
+    /// An ECMA file's nearest `package.json` (`package`); `None` without one.
+    pub(super) package: Option<Arc<Manifest>>,
 }
 
 impl FileInput {
     /// `module` is the module path a host derived for a Python file (Ruff's package walk): a
     /// dotted string, or a list of names when one keeps a dot (`["json.d", "__init__"]`). Without
     /// it a Python file is named by its stem, as Ruff names a file outside any package; a file set
-    /// that holds package markers derives it first (`python_module_in`).
+    /// that holds package markers derives it first (`python_module_in`). `package` is the ECMA
+    /// file's nearest `package.json` (`Manifest::from_wire`, `Manifests`); without it the file
+    /// has none.
     pub(super) fn new(
         path: String,
         language: String,
         source: Arc<String>,
         module: Option<&Value>,
+        package: Option<Arc<Manifest>>,
         at: &str,
     ) -> Result<Self> {
         let module = match module {
@@ -645,7 +683,13 @@ impl FileInput {
             language,
             source,
             module: module.map(Arc::new),
+            package,
         })
+    }
+
+    /// The `type` of the file's nearest `package.json`, which decides a `.js` file's module system.
+    pub(super) fn package_type(&self) -> Option<PackageType> {
+        self.package.as_deref().map(Manifest::package_type)
     }
 }
 

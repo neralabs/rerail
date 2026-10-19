@@ -61,3 +61,7 @@ rerail-query-parity *args:
 # The nera-data-layer benchmark: whole-tree | profile | conformance --corpus <nera-data-layer> --policies <ported rules> [--addon <addon>] (benchmark/README.md).
 rerail-data-layer *args:
     @node --import tsx benchmark/data-layer/data-layer.ts {{ args }}
+
+# Dashboard history load: seed a throwaway database with N audits, then time each history read, a poll, and /healthz under polling (--audits 4000).
+rerail-dashboard-history *args:
+    @node --import tsx benchmark/dashboard-history.ts {{ args }}

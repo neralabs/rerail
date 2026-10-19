@@ -230,10 +230,11 @@ impl Drop for BatchScopes {
     }
 }
 
-/// Runs `body` with file `index`'s scopes installed: those parked by an earlier statement of the
-/// batch, else fresh ones as the native evaluator installs them per file (its cached scope
-/// tables, module, path and whether its syntax errors hide bindings), and its call-graph closure
-/// where it has one, as the evaluator installs it for `calls`.
+/// Runs `body` with document `index`'s scopes installed: those parked by an earlier statement of
+/// the batch, else fresh ones as the native evaluator installs them per document (its file's
+/// cached scope tables, module, path and manifest, and whether the document's syntax errors hide
+/// bindings), and its call-graph closure where it has one, as the evaluator installs it for
+/// `calls`.
 pub(in crate::code_rule_dsl::sql) fn with_scopes<T>(
     index: usize,
     file: &BatchFile,
@@ -244,13 +245,14 @@ pub(in crate::code_rule_dsl::sql) fn with_scopes<T>(
         Some(parked) => FileScopeSlot::resume(parked),
         None => {
             let errors = SyntaxErrors::of_doc(file.root.root().get_doc());
+            let input = file.context.input.as_deref();
             let slot = FileScopeSlot::install(
                 file.context.scopes.clone(),
-                file.context.module.clone(),
+                input.and_then(|input| input.module.clone()),
                 errors.hide_bindings(),
             );
-            match &file.context.path {
-                Some(path) => slot.path(path),
+            match input {
+                Some(input) => slot.file(input),
                 None => slot,
             }
         }

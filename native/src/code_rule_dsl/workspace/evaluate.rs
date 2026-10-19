@@ -17,13 +17,14 @@ use crate::code_rule_dsl::budget::{
     MatchBudget, SuspendedBudget, matcher_budget_exhausted, matcher_budget_observed, with_allowance,
 };
 use crate::code_rule_dsl::eval::{
-    WitnessError, file_language, grammar_matcher, witness_from_match, witnesses_from_match,
+    WitnessError, document_matcher, file_language, grammar_matcher, witness_from_match,
+    witnesses_from_match,
 };
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
-    FileAnchorIndex, FileScopeSlot, GrammarMatcher, Selection, UtilLimit,
+    FileAnchorIndex, FileGates, FileScopeSlot, GrammarMatcher, Selection, UtilLimit,
 };
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledCodeRule, FILE_BUDGET_EXCEEDED, FileInput, INPUT_LIMIT, Metrics, Query,
@@ -306,21 +307,22 @@ fn restore_consumer_budget(previous: Option<Option<u64>>) {
 }
 
 /// A job of a SQL batch between its steps before the batch's matching and those after.
-struct Started {
+struct Started<'c> {
     budget: SuspendedBudget,
     transient: bool,
     storage_read_nanoseconds: u64,
     pass: FilePass,
-    ast: Option<SqlFile>,
+    ast: Option<SqlFile<'c>>,
 }
 
 /// Evaluates a batch of jobs with their AST clauses matched on the SQL engine: each file's native
-/// steps up to its clauses' matching (storage, regex clauses, input limits, the tape, syntax
-/// errors, required text and anchor selection), one SQL run for the batch's AST clauses, then
-/// each file's native rendering of the matches and the rest of its steps.
-fn sql_batch(
+/// steps up to its clauses' matching (storage, regex clauses, input limits, the tape, its
+/// documents' syntax errors, required text and anchor selection), one SQL run for the batch's AST
+/// clauses, each document a clause reads a batch document of its own (`embed`), then each file's
+/// native rendering of the matches and the rest of its steps.
+fn sql_batch<'c>(
     batch: Vec<Job>,
-    context: &JobContext<'_>,
+    context: &JobContext<'c>,
     sql: &SqlEngine,
     grammars: &mut Grammars,
     read: &impl Fn(&str, &mut FileState, &mut Grammars) -> Result<u64>,
@@ -353,7 +355,7 @@ fn sql_batch(
             let mut pass = FilePass::begin(&mut file, context.code_rules, partial);
             let mut ast = None;
             if pass.ast
-                && let Some(doc) = restore_ast_file(
+                && let Some(restored) = restore_ast_file(
                     &mut file,
                     context.code_rules,
                     grammars,
@@ -365,7 +367,7 @@ fn sql_batch(
                 ast = Some(SqlFile::plan(
                     &mut file,
                     context.code_rules,
-                    doc,
+                    restored,
                     &mut pass.metrics,
                     sql,
                 ));
@@ -380,23 +382,22 @@ fn sql_batch(
         });
         started.push((path, file, consumes, crossfile, start));
     }
-    // One run for the batch: each statement over the files whose clause it matches.
+    // One run for the batch: each statement over the documents whose clause it matches.
     let mut docs = Vec::new();
     let mut runs: Vec<ClauseRun> = Vec::new();
     let mut run_of = HashMap::new();
-    // Per clause run of a file: its job, slot, run and position in the run.
+    // Per clause run on a document: its job, document, position in the document's slots, run and
+    // position in the run.
     let mut wanted = Vec::new();
     for (job, (_, file, _, crossfile, start)) in started.iter().enumerate() {
         let Ok(Started { ast: Some(ast), .. }) = start else {
             continue;
         };
-        let index = docs.len();
-        // The file's scopes as the native dispatch installs them (`evaluate_ast_file`): its
-        // cached tables of this revision, module and host path; and the call-graph closure a
-        // consumer's evaluation installs (`CrossFileScheduler::install`).
+        // The file's scopes as the native dispatch installs them (`DocumentRead::evaluate`): its
+        // cached tables of this revision and the file (module, host path, manifest); and the
+        // call-graph closure a consumer's evaluation installs (`CrossFileScheduler::install`).
         let context = FileContext {
-            path: Some(file.input.path.clone()),
-            module: file.input.module.clone(),
+            input: Some(Arc::new(file.input.clone())),
             scopes: file
                 .scopes
                 .as_ref()
@@ -405,20 +406,29 @@ fn sql_batch(
                 .unwrap_or_default(),
             calls: CrossFileScheduler::calls(crossfile.as_ref()),
         };
-        docs.push((ast.doc.restored.clone(), context));
-        for (slot, planned) in ast.runs.iter().enumerate() {
-            let Some((statement, roots)) = planned else {
+        for (document, planned) in ast.documents.iter().enumerate() {
+            if planned.runs.iter().all(Option::is_none) {
                 continue;
-            };
-            let run = *run_of.entry(*statement).or_insert_with(|| {
-                runs.push(ClauseRun {
-                    statement: *statement,
-                    files: Vec::new(),
+            }
+            let index = docs.len();
+            docs.push((
+                planned.read.root.root().get_doc().clone(),
+                context.clone(),
+            ));
+            for (position, run) in planned.runs.iter().enumerate() {
+                let Some((statement, roots)) = run else {
+                    continue;
+                };
+                let run = *run_of.entry(*statement).or_insert_with(|| {
+                    runs.push(ClauseRun {
+                        statement: *statement,
+                        files: Vec::new(),
+                    });
+                    runs.len() - 1
                 });
-                runs.len() - 1
-            });
-            wanted.push((job, slot, run, runs[run].files.len()));
-            runs[run].files.push((index, roots.clone()));
+                wanted.push((job, document, position, run, runs[run].files.len()));
+                runs[run].files.push((index, roots.clone()));
+            }
         }
     }
     let found = if runs.is_empty() {
@@ -428,9 +438,10 @@ fn sql_batch(
     };
     match found {
         Ok(mut found) => {
-            for (job, slot, run, position) in wanted {
+            for (job, document, position, run, at) in wanted {
                 if let Ok(Started { ast: Some(ast), .. }) = &mut started[job].4 {
-                    ast.matches[slot] = std::mem::take(&mut found[run][position]);
+                    ast.documents[document].matches[position] =
+                        std::mem::take(&mut found[run][at]);
                 }
             }
         }
@@ -733,31 +744,104 @@ impl FilePass {
     }
 }
 
-/// A file's restored document, as its AST clauses read it.
-struct AstDoc {
-    /// The document, for the job's summary pass.
+/// A file's AST clauses placed on its documents (`embed`): its own tree, then each program it
+/// embeds. Each clause reads one of them (`ast.embedded`), with that document's syntax errors,
+/// anchors, scope tables and coordinates.
+struct AstFile<'c> {
+    /// The file's own document, for the job's summary pass.
     restored: tape::TapeDoc,
-    root: Root<tape::TapeDoc>,
-    errors: SyntaxErrors,
     lines: Arc<LineTable>,
-    /// Its nodes.
-    nodes: usize,
-    /// The most nodes a clause that runs may visit (`Limits::visits_for`).
-    max_nodes: usize,
+    /// Each candidate slot's document (by its index in `documents`) and matcher; `None` where the
+    /// file holds no program the clause reads.
+    placed: Vec<Option<(usize, &'c GrammarMatcher)>>,
+    /// Every document's errors, which a clause crossing between the documents (`embedded`,
+    /// `host`) reads around; gathered only where some clause crosses.
+    file_errors: SyntaxErrors,
+    /// Which clauses ran to an answer (or failed on their own); the rest are failed once the
+    /// documents ran (`settle`). A clause over a program the file does not embed has nothing to
+    /// read: it answers.
+    settled: Vec<bool>,
     #[cfg(feature = "code-rule-profile")]
     _doc_owner: profile::DocOwner,
 }
 
-/// Restores the file's document for its AST clauses: from its tape (encoded first where it has
-/// none), with its syntax errors read. `None`, with every candidate failed, where it cannot be.
-fn restore_ast_file(
+impl<'c> AstFile<'c> {
+    /// The file's documents: its own tree, then each program it embeds.
+    fn documents(&self) -> Vec<tape::TapeDoc> {
+        let mut documents = vec![self.restored.clone()];
+        if let Some(guests) = self.restored.guests() {
+            documents.extend(guests.iter().map(|guest| guest.doc.clone()));
+        }
+        documents
+    }
+
+    /// The candidate slots that read document `index`, each with its matcher.
+    fn slots(&self, index: usize) -> Vec<(usize, &'c GrammarMatcher)> {
+        self.placed
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, place)| {
+                place
+                    .filter(|(at, _)| *at == index)
+                    .map(|(_, grammar)| (slot, grammar))
+            })
+            .collect()
+    }
+
+    /// Reads `document`, the file's document `index`, for the clauses that read it; `None` where
+    /// none does, its syntax errors still the file's (it was read around them).
+    fn read(
+        &self,
+        file: &mut FileState,
+        code_rules: &[Arc<CompiledCodeRule>],
+        index: usize,
+        document: tape::TapeDoc,
+    ) -> Option<DocumentRead<'c>> {
+        let slots = self.slots(index);
+        if slots.is_empty() {
+            let errors = SyntaxErrors::of_doc(&document);
+            if !errors.is_empty() {
+                let (SyntaxReading::Partial(message) | SyntaxReading::Unread(message)) =
+                    errors.reading(&self.lines, file.input.source.len());
+                file.syntax.get_or_insert(message);
+            }
+            return None;
+        }
+        Some(DocumentRead::new(
+            file,
+            code_rules,
+            document,
+            slots,
+            &self.file_errors,
+            &self.lines,
+        ))
+    }
+
+    /// Fails the candidates that did not settle (`settle_ast_file`); returns the file's own
+    /// document.
+    fn settle(
+        self,
+        file: &mut FileState,
+        code_rules: &[Arc<CompiledCodeRule>],
+        metrics: &Metrics,
+    ) -> tape::TapeDoc {
+        let nodes = self.restored.transducer_len();
+        settle_ast_file(file, code_rules, nodes, &self.settled, metrics);
+        self.restored
+    }
+}
+
+/// Restores the file's documents for its AST clauses: from its tape (encoded first where it has
+/// none), each candidate placed on the document it reads. `None`, with every candidate failed,
+/// where they cannot be.
+fn restore_ast_file<'c>(
     file: &mut FileState,
-    code_rules: &[Arc<CompiledCodeRule>],
+    code_rules: &'c [Arc<CompiledCodeRule>],
     grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
     closed: &AtomicBool,
     lines: Option<Arc<LineTable>>,
     metrics: &mut Metrics,
-) -> Result<Option<AstDoc>> {
+) -> Result<Option<AstFile<'c>>> {
     let language = file_language(&file.input).expect("AST candidate has a supported language");
     let lines = lines.expect("eligible AST file has a line index");
     let grammar = if let Some(grammar) = grammars.get(&file.input.language) {
@@ -827,121 +911,236 @@ fn restore_ast_file(
         drop(_decode_timer);
         profile::record_transient(doc.navigation_bytes());
     }
-    let errors = SyntaxErrors::of_doc(&doc);
-    if !errors.is_empty() {
-        match errors.reading(&lines, file.input.source.len()) {
-            // No AST clause runs on a file the parser did not read, sound or not; the failure
-            // reports `file.syntax` in place of its static message (`results::failure_message`).
-            SyntaxReading::Unread(message) => {
-                for &id in &file.candidates.ast {
-                    file.failures
-                        .entry(id)
-                        .or_insert(("source-incomplete", UNREAD));
-                }
-                file.syntax = Some(message);
-            }
-            SyntaxReading::Partial(message) => {
-                for &id in &file.candidates.ast {
-                    if !file.failures.contains_key(&id)
-                        && errors.incomplete(candidate_grammar(
-                            &code_rules[id.0],
-                            id.1,
-                            &file.input,
-                        ))
-                    {
-                        file.failures
-                            .insert(id, ("source-incomplete", "file has syntax errors"));
-                    }
-                }
-                file.syntax = Some(message);
-            }
-        }
-    }
     #[cfg(feature = "code-rule-profile")]
     let _doc_owner = profile::DocOwner::start();
-    let restored = doc.clone();
-    let root = Root::doc(doc);
-    #[cfg(test)]
-    pause_at_test_phase("restored-doc", &file.input.source);
-    // A file's node and utility visits grow with the file (`Limits::visits_for`).
-    let nodes = restored.transducer_len();
-    let max_nodes = file
+    let mut documents = vec![doc.clone()];
+    if let Some(guests) = doc.guests() {
+        documents.extend(guests.iter().map(|guest| guest.doc.clone()));
+    }
+    let placed = file
         .candidates
         .ast
         .iter()
-        .filter(|id| !file.failures.contains_key(id))
-        .map(|id| code_rules[id.0].capabilities.limits.visits_for(nodes))
-        .max()
-        .unwrap_or(0);
-    Ok(Some(AstDoc {
-        restored,
-        root,
-        errors,
+        .map(|id| {
+            let matchers = clause_matchers(&code_rules[id.0], id.1);
+            documents.iter().enumerate().find_map(|(index, document)| {
+                document_matcher(matchers, &file.input, document).map(|grammar| (index, grammar))
+            })
+        })
+        .collect::<Vec<_>>();
+    let settled = placed.iter().map(Option::is_none).collect();
+    let file_errors = if placed.iter().flatten().any(|(_, grammar)| grammar.crosses) {
+        SyntaxErrors::of_file(&doc)
+    } else {
+        SyntaxErrors::from_ranges(Vec::new())
+    };
+    Ok(Some(AstFile {
+        restored: doc,
         lines,
-        nodes,
-        max_nodes,
+        placed,
+        file_errors,
+        settled,
         #[cfg(feature = "code-rule-profile")]
         _doc_owner,
     }))
 }
 
-/// The candidates' grammar matchers, and which of them run: a clause whose matcher needs text the
-/// file lacks matches no root, so it selects none (the clauses share many literals, each searched
-/// for once).
-fn clause_grammars<'c>(
-    file: &FileState,
-    code_rules: &'c [Arc<CompiledCodeRule>],
-) -> (Vec<&'c GrammarMatcher>, Vec<bool>) {
-    let grammars = file
-        .candidates
-        .ast
-        .iter()
-        .map(|id| candidate_grammar(&code_rules[id.0], id.1, &file.input))
-        .collect::<Vec<_>>();
-    let mut searched = rustc_hash::FxHashMap::<&str, bool>::default();
-    let mut found = |text: &str, literal| {
-        *searched
-            .entry(literal)
-            .or_insert_with(|| memchr::memmem::find(text.as_bytes(), literal.as_bytes()).is_some())
-    };
-    let runs = file
-        .candidates
-        .ast
-        .iter()
-        .zip(&grammars)
-        .map(|(id, grammar)| {
-            !file.failures.contains_key(id)
-                && grammar
-                    .text
-                    .as_ref()
-                    .is_none_or(|text| text.holds_with(&file.input.source, &mut found))
-        })
-        .collect::<Vec<_>>();
-    (grammars, runs)
+/// One document of a file as the clauses that read it (`slots`: slot, matcher) read it: its syntax
+/// errors (as ranges of the file), and which of the clauses run.
+struct DocumentRead<'c> {
+    root: Root<tape::TapeDoc>,
+    errors: SyntaxErrors,
+    slots: Vec<(usize, &'c GrammarMatcher)>,
+    /// By position in `slots`: whether the clause runs. It failed before dispatch otherwise, or
+    /// its matcher needs text the document lacks, so it matches no root and selects none.
+    runs: Vec<bool>,
+    /// The document's nodes; its node and utility visits grow with it (`Limits::visits_for`).
+    nodes: usize,
+    /// The most nodes a clause that runs may visit.
+    max_nodes: usize,
 }
 
-/// The anchor index over the plans of the clauses that run, its visits counted in `metrics`.
-fn anchor_index<'d>(
-    doc: &'d AstDoc,
-    grammars: &[&GrammarMatcher],
-    runs: &[bool],
-    metrics: &mut Metrics,
-) -> FileAnchorIndex<'d, tape::TapeDoc> {
-    let plans = grammars
-        .iter()
-        .zip(runs)
-        .filter(|(_, runs)| **runs)
-        .map(|(grammar, _)| grammar.anchors.as_ref())
-        .collect::<Vec<_>>();
-    #[cfg(feature = "code-rule-profile")]
-    let index_timer = profile::PhaseTimer::start(profile::Phase::Index);
-    let index = FileAnchorIndex::build(&doc.root, &plans, doc.max_nodes, matcher_budget_exhausted);
-    metrics.visited_nodes += index.visited_nodes();
-    #[cfg(feature = "code-rule-profile")]
-    drop(index_timer);
-    #[cfg(feature = "code-rule-profile")]
-    profile::record_index(index.len(), index.estimated_bytes(), index.complete());
-    index
+impl<'c> DocumentRead<'c> {
+    /// Reads `doc` for the clauses `slots`: its syntax errors decide which of them run around
+    /// them (a clause crossing to the file's other documents reads around `file_errors`), and
+    /// set the file's `syntax`.
+    fn new(
+        file: &mut FileState,
+        code_rules: &[Arc<CompiledCodeRule>],
+        doc: tape::TapeDoc,
+        slots: Vec<(usize, &'c GrammarMatcher)>,
+        file_errors: &SyntaxErrors,
+        lines: &Arc<LineTable>,
+    ) -> Self {
+        let errors = SyntaxErrors::of_doc(&doc);
+        if !errors.is_empty() {
+            match errors.reading(lines, file.input.source.len()) {
+                // No AST clause runs on a document the parser did not read, sound or not; the
+                // failure reports `file.syntax` in place of its static message
+                // (`results::failure_message`).
+                SyntaxReading::Unread(message) => {
+                    for &(slot, _) in &slots {
+                        file.failures
+                            .entry(file.candidates.ast[slot])
+                            .or_insert(("source-incomplete", UNREAD));
+                    }
+                    file.syntax.get_or_insert(message);
+                }
+                SyntaxReading::Partial(message) => {
+                    file.syntax.get_or_insert(message);
+                }
+            }
+        }
+        let root = Root::doc(doc);
+        // The gates' file facts are read once for the document, whichever candidate reads them.
+        let gates = FileGates::new(&file.input, root.root());
+        for &(slot, grammar) in &slots {
+            let id = file.candidates.ast[slot];
+            // A clause reads around its document's errors, or, crossing to the file's other
+            // document, every document's. A file the query's file gates exclude matches nothing,
+            // errors or not.
+            let read = if grammar.crosses {
+                file_errors
+            } else {
+                &errors
+            };
+            if !file.failures.contains_key(&id) && read.incomplete(grammar) && gates.admit(grammar)
+            {
+                file.failures
+                    .insert(id, ("source-incomplete", "file has syntax errors"));
+            }
+        }
+        #[cfg(test)]
+        pause_at_test_phase("restored-doc", &file.input.source);
+        let nodes = root.root().get_doc().transducer_len();
+        let max_nodes = slots
+            .iter()
+            .map(|&(slot, _)| file.candidates.ast[slot])
+            .filter(|id| !file.failures.contains_key(id))
+            .map(|id| code_rules[id.0].capabilities.limits.visits_for(nodes))
+            .max()
+            .unwrap_or(0);
+        // The clauses share many literals, each searched for once.
+        let text = ast_grep_core::Doc::get_source(root.root().get_doc()).as_str();
+        let mut searched = rustc_hash::FxHashMap::<&str, bool>::default();
+        let mut found = |text: &str, literal| {
+            *searched.entry(literal).or_insert_with(|| {
+                memchr::memmem::find(text.as_bytes(), literal.as_bytes()).is_some()
+            })
+        };
+        let runs = slots
+            .iter()
+            .map(|&(slot, grammar)| {
+                !file.failures.contains_key(&file.candidates.ast[slot])
+                    && grammar
+                        .text
+                        .as_ref()
+                        .is_none_or(|required| required.holds_with(text, &mut found))
+            })
+            .collect();
+        Self {
+            root,
+            errors,
+            slots,
+            runs,
+            nodes,
+            max_nodes,
+        }
+    }
+
+    /// The anchor index over the plans of the clauses that run, its visits counted in `metrics`.
+    fn anchor_index(&self, metrics: &mut Metrics) -> FileAnchorIndex<'_, tape::TapeDoc> {
+        let plans = self
+            .slots
+            .iter()
+            .zip(&self.runs)
+            .filter(|(_, runs)| **runs)
+            .map(|((_, grammar), _)| grammar.anchors.as_ref())
+            .collect::<Vec<_>>();
+        #[cfg(feature = "code-rule-profile")]
+        let index_timer = profile::PhaseTimer::start(profile::Phase::Index);
+        let index =
+            FileAnchorIndex::build(&self.root, &plans, self.max_nodes, matcher_budget_exhausted);
+        metrics.visited_nodes += index.visited_nodes();
+        #[cfg(feature = "code-rule-profile")]
+        drop(index_timer);
+        #[cfg(feature = "code-rule-profile")]
+        profile::record_index(index.len(), index.estimated_bytes(), index.complete());
+        index
+    }
+
+    /// Runs the clauses on the document (`evaluate_clauses`), each selecting its roots
+    /// (`select`, by position), or rendering the SQL engine's matches (`sql`, by position) in
+    /// place of the matcher's; marks in `settled` the slots that ran to an answer. The
+    /// document's scope tables join the file's, which hold every document's.
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate(
+        &self,
+        file: &mut FileState,
+        code_rules: &[Arc<CompiledCodeRule>],
+        file_errors: &SyntaxErrors,
+        metrics: &mut Metrics,
+        work: &mut ClauseWork,
+        settled: &mut [bool],
+        select: impl Fn(usize) -> Option<Arc<[u32]>>,
+        sql: Option<&[Vec<SqlMatch>]>,
+    ) -> Result<()> {
+        let mut util_work = file
+            .candidates
+            .ast
+            .iter()
+            .map(|id| code_rules[id.0].capabilities.limits.visits_for(self.nodes))
+            .collect::<Vec<_>>();
+        #[cfg(feature = "code-rule-profile")]
+        let _dispatch_timer = profile::PhaseTimer::start(profile::Phase::Dispatch);
+        let scopes = FileScopeSlot::install(
+            file.scopes
+                .as_ref()
+                .filter(|(revision, _)| *revision == file.source_revision)
+                .map(|(_, tables)| tables.clone())
+                .unwrap_or_default(),
+            file.input.module.clone(),
+            self.errors.hide_bindings(),
+        )
+        .file(&file.input);
+        let match_started = Instant::now();
+        let ran = evaluate_clauses(
+            file,
+            code_rules,
+            &self.slots,
+            self.root.root().get_doc(),
+            (&self.errors, file_errors),
+            metrics,
+            &mut util_work,
+            work,
+            &self.runs,
+            select,
+            sql,
+        )?;
+        for (&(slot, _), ran) in self.slots.iter().zip(ran) {
+            settled[slot] = ran;
+        }
+        // The file keeps the tables every document's evaluation built.
+        let tables = scopes.tables();
+        if !tables.is_empty() {
+            match &mut file.scopes {
+                Some((revision, known)) if *revision == file.source_revision => {
+                    for table in tables {
+                        if !known.iter().any(|known| {
+                            known.language == table.language && known.reading == table.reading
+                        }) {
+                            known.push(table);
+                        }
+                    }
+                }
+                scopes => *scopes = Some((file.source_revision, tables)),
+            }
+        }
+        metrics.ast_match_nanoseconds += match_started.elapsed().as_nanos() as u64;
+        #[cfg(test)]
+        pass_deadline_at_test_phase("checks-done");
+        Ok(())
+    }
 }
 
 /// The roots an anchor index selects for a clause: node ids, `None` for every root.
@@ -1013,127 +1212,114 @@ fn evaluate_ast_file(
     work: &mut ClauseWork,
     metrics: &mut Metrics,
 ) -> Result<Option<tape::TapeDoc>> {
-    let Some(doc) = restore_ast_file(file, code_rules, grammars, closed, lines, metrics)? else {
+    let Some(mut ast) = restore_ast_file(file, code_rules, grammars, closed, lines, metrics)? else {
         return Ok(None);
     };
-    let nodes = doc.nodes;
-    let settled = {
-        let (grammars, runs) = clause_grammars(file, code_rules);
-        let index = anchor_index(&doc, &grammars, &runs, metrics);
+    for (index, document) in ast.documents().into_iter().enumerate() {
+        let Some(read) = ast.read(file, code_rules, index, document) else {
+            continue;
+        };
+        let anchors = read.anchor_index(metrics);
         // A clause's anchor selection is its own work: it runs under the clause's allowance.
-        let select = |slot: usize| -> Option<Arc<[u32]>> {
-            if !runs[slot] {
+        let select = |position: usize| -> Option<Arc<[u32]>> {
+            if !read.runs[position] {
                 return Some(Arc::from([]));
             }
-            select_roots(&index, grammars[slot])
+            select_roots(&anchors, read.slots[position].1)
         };
-        let mut util_work = file
-            .candidates
-            .ast
-            .iter()
-            .map(|id| code_rules[id.0].capabilities.limits.visits_for(nodes))
-            .collect::<Vec<_>>();
-        #[cfg(feature = "code-rule-profile")]
-        let _dispatch_timer = profile::PhaseTimer::start(profile::Phase::Dispatch);
-        let scopes = FileScopeSlot::install(
-            file.scopes
-                .as_ref()
-                .filter(|(revision, _)| *revision == file.source_revision)
-                .map(|(_, tables)| tables.clone())
-                .unwrap_or_default(),
-            file.input.module.clone(),
-            doc.errors.hide_bindings(),
-        )
-        .path(&file.input.path);
-        let match_started = Instant::now();
-        let settled = evaluate_clauses(
+        read.evaluate(
             file,
             code_rules,
-            &grammars,
-            doc.root.root().get_doc(),
-            &doc.errors,
-            &doc.lines,
+            &ast.file_errors,
             metrics,
-            &mut util_work,
             work,
-            &runs,
+            &mut ast.settled,
             select,
             None,
         )?;
-        let tables = scopes.tables();
-        if !tables.is_empty() {
-            file.scopes = Some((file.source_revision, tables));
-        }
-        metrics.ast_match_nanoseconds += match_started.elapsed().as_nanos() as u64;
-        #[cfg(test)]
-        pass_deadline_at_test_phase("checks-done");
-        settled
+    }
+    Ok(Some(ast.settle(file, code_rules, metrics)))
+}
+
+/// The matchers of an AST clause, one per dialect it compiled for.
+fn clause_matchers(code_rule: &CompiledCodeRule, clause: usize) -> &[GrammarMatcher] {
+    let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &code_rule.clauses[clause].kind else {
+        unreachable!("an AST candidate is an AST clause")
     };
-    settle_ast_file(file, code_rules, nodes, &settled, metrics);
-    Ok(Some(doc.restored))
+    matchers
 }
 
 /// A clause's statement in the SQL program and its selected roots (`None`: every root).
 type PlannedRun = (usize, Option<Arc<[u32]>>);
 
-/// A file's AST clauses on the SQL engine: its document, which candidates run (`runs` of
-/// `clause_grammars`), the statement and roots of each that the engine matches, and, after the
-/// batch, their matches.
-struct SqlFile {
-    doc: AstDoc,
-    gate: Vec<bool>,
+/// One document of a file on the SQL engine: as its clauses read it, the statement and roots of
+/// each that the engine matches (by position in its slots), and, after the batch, their matches.
+struct SqlDocument<'c> {
+    read: DocumentRead<'c>,
     runs: Vec<Option<PlannedRun>>,
     matches: Vec<Vec<SqlMatch>>,
 }
 
-impl SqlFile {
-    /// What the batch matches for the file: the anchor index and each running clause's selected
-    /// roots, as the native dispatch computes them (`evaluate_ast_file`). A clause the engine
-    /// refuses fails where it would run.
+/// A file's AST clauses on the SQL engine: the file, and each of its documents some clause reads,
+/// in order.
+struct SqlFile<'c> {
+    ast: AstFile<'c>,
+    documents: Vec<SqlDocument<'c>>,
+}
+
+impl<'c> SqlFile<'c> {
+    /// What the batch matches for the file: per document a clause reads, its anchor index and
+    /// each running clause's selected roots, as the native dispatch computes them
+    /// (`evaluate_ast_file`). A clause the engine refuses fails where it would run.
     fn plan(
         file: &mut FileState,
         code_rules: &[Arc<CompiledCodeRule>],
-        doc: AstDoc,
+        ast: AstFile<'c>,
         metrics: &mut Metrics,
         sql: &SqlEngine,
     ) -> Self {
-        let (grammars, gate) = clause_grammars(file, code_rules);
-        let runs = {
-            let index = anchor_index(&doc, &grammars, &gate, metrics);
-            let mut runs = Vec::with_capacity(gate.len());
-            for (slot, &id) in file.candidates.ast.iter().enumerate() {
-                if !gate[slot] {
-                    runs.push(None);
-                    continue;
-                }
-                let Some(statement) = sql.statement(code_rules, id, grammars[slot]) else {
-                    file.failures
-                        .insert(id, (SQL_UNSUPPORTED, SQL_UNSUPPORTED_MESSAGE));
-                    file.unstored.insert(id);
-                    runs.push(None);
-                    continue;
-                };
-                let roots = select_roots(&index, grammars[slot]);
-                // An anchor selection of no roots leaves nothing for the clause to match.
-                if roots.as_deref().is_some_and(<[u32]>::is_empty) {
-                    runs.push(None);
-                } else {
-                    runs.push(Some((statement, roots)));
+        let mut documents = Vec::new();
+        for (index, document) in ast.documents().into_iter().enumerate() {
+            let Some(read) = ast.read(file, code_rules, index, document) else {
+                continue;
+            };
+            let mut runs = Vec::with_capacity(read.slots.len());
+            {
+                let anchors = read.anchor_index(metrics);
+                for (&(slot, grammar), &gate) in read.slots.iter().zip(&read.runs) {
+                    if !gate {
+                        runs.push(None);
+                        continue;
+                    }
+                    let id = file.candidates.ast[slot];
+                    let Some(statement) = sql.statement(code_rules, id, grammar) else {
+                        file.failures
+                            .insert(id, (SQL_UNSUPPORTED, SQL_UNSUPPORTED_MESSAGE));
+                        file.unstored.insert(id);
+                        runs.push(None);
+                        continue;
+                    };
+                    let roots = select_roots(&anchors, grammar);
+                    // An anchor selection of no roots leaves nothing for the clause to match.
+                    if roots.as_deref().is_some_and(<[u32]>::is_empty) {
+                        runs.push(None);
+                    } else {
+                        runs.push(Some((statement, roots)));
+                    }
                 }
             }
-            runs
-        };
-        let matches = runs.iter().map(|_| Vec::new()).collect();
-        Self {
-            doc,
-            gate,
-            runs,
-            matches,
+            let matches = runs.iter().map(|_| Vec::new()).collect();
+            documents.push(SqlDocument {
+                read,
+                runs,
+                matches,
+            });
         }
+        Self { ast, documents }
     }
 
     /// Renders the batch's matches for the file as the native dispatch renders the matcher's
-    /// (`evaluate_clauses`), and settles its clauses. Returns the document they were read on.
+    /// (`DocumentRead::evaluate`), and settles its clauses. Returns the file's own document.
     fn render(
         self,
         file: &mut FileState,
@@ -1141,55 +1327,27 @@ impl SqlFile {
         pass: &mut FilePass,
     ) -> Result<tape::TapeDoc> {
         let Self {
-            doc, gate, matches, ..
+            mut ast, documents, ..
         } = self;
-        let (grammars, _) = clause_grammars(file, code_rules);
-        let nodes = doc.nodes;
-        let mut util_work = file
-            .candidates
-            .ast
-            .iter()
-            .map(|id| code_rules[id.0].capabilities.limits.visits_for(nodes))
-            .collect::<Vec<_>>();
-        let scopes = FileScopeSlot::install(
-            file.scopes
-                .as_ref()
-                .filter(|(revision, _)| *revision == file.source_revision)
-                .map(|(_, tables)| tables.clone())
-                .unwrap_or_default(),
-            file.input.module.clone(),
-            doc.errors.hide_bindings(),
-        )
-        .path(&file.input.path);
-        let match_started = Instant::now();
-        let settled = evaluate_clauses(
-            file,
-            code_rules,
-            &grammars,
-            doc.root.root().get_doc(),
-            &doc.errors,
-            &doc.lines,
-            &mut pass.metrics,
-            &mut util_work,
-            &mut pass.work,
-            &gate,
-            |_| None,
-            Some(&matches),
-        )?;
-        let tables = scopes.tables();
-        if !tables.is_empty() {
-            file.scopes = Some((file.source_revision, tables));
+        for document in &documents {
+            document.read.evaluate(
+                file,
+                code_rules,
+                &ast.file_errors,
+                &mut pass.metrics,
+                &mut pass.work,
+                &mut ast.settled,
+                |_| None,
+                Some(&document.matches),
+            )?;
         }
-        pass.metrics.ast_match_nanoseconds += match_started.elapsed().as_nanos() as u64;
-        #[cfg(test)]
-        pass_deadline_at_test_phase("checks-done");
-        settle_ast_file(file, code_rules, nodes, &settled, &pass.metrics);
-        Ok(doc.restored)
+        Ok(ast.settle(file, code_rules, &pass.metrics))
     }
 }
 
-/// Parses `file`'s source and keeps its tape for this source revision. `Ok(Err(failure))` where the
-/// parse ran out of time or the tape could not be encoded.
+/// Parses `file`'s source and keeps its documents (its tape and the ones it derives) for this
+/// source revision. `Ok(Err(failure))` where the parse ran out of time or a tape could not be
+/// encoded.
 pub(super) fn encode_tape(
     file: &mut FileState,
     language: GrammarDialect,
@@ -1208,20 +1366,26 @@ pub(super) fn encode_tape(
         #[cfg(feature = "code-rule-profile")]
         let parse_timer = profile::PhaseTimer::start(profile::Phase::Parse);
         let parse_started = Instant::now();
-        let tree = parse_tree(file.input.source.as_bytes());
+        let parsed = parse_tree(file.input.source.as_bytes());
         #[cfg(feature = "code-rule-profile")]
         drop(parse_timer);
         metrics.ast_parse_nanoseconds += parse_started.elapsed().as_nanos() as u64;
+        // Forte stopping at a limit says nothing about the template: no tape, and no clause runs.
+        let tree = match parsed {
+            Ok(tree) => tree,
+            Err(error) => return Ok(Err((FILE_BUDGET_EXCEEDED, error.message()))),
+        };
         #[cfg(test)]
         pause_at_test_phase("native-tree", &file.input.source);
         #[cfg(feature = "code-rule-profile")]
         let _encode_timer = profile::PhaseTimer::start(profile::Phase::TapeEncode);
-        Some(tape::TapeImage::encode_blade(
-            &tree,
-            grammar,
-            &file.input.source,
-            &interrupted,
-        ))
+        match tape::TapeImage::encode_blade(&tree, grammar, &file.input.source, &interrupted) {
+            Ok(image) => Some(Ok(image)),
+            Err(tape::TemplateError::Parser(error)) => {
+                return Ok(Err((FILE_BUDGET_EXCEEDED, error.message())));
+            }
+            Err(tape::TemplateError::Encode(error)) => Some(Err(error)),
+        }
     } else {
         #[cfg(feature = "code-rule-profile")]
         let _native_owner = profile::NativeOwner::start();
@@ -1338,22 +1502,21 @@ impl ClauseWork {
     }
 }
 
-/// Runs every candidate AST clause (`matcher::run_clause`) over one restored document and records
-/// their witnesses: syntax-error regions and the witness budget apply to each match, roots past
-/// `maxVisitedNodes` are not matched, and a decision stops at its first witness. Each clause
-/// selects its roots (`select`: node ids, `None` for every root) and runs under an allowance of
-/// its own (`work`), and fails alone where it runs out. With `sql`, each clause's matches (by
-/// slot, roots in preorder) are the SQL engine's, rendered in place of the matcher's. Returns which
-/// clauses ran: the others were cut short before they started, by the workspace closing or the
-/// file's budget running out.
+/// Runs the candidate AST clauses `slots` (slot, matcher) read on one restored document
+/// (`matcher::run_clause`) and records their witnesses: syntax-error regions and the witness budget
+/// apply to each match, roots past `maxVisitedNodes` are not matched, and a decision stops at its
+/// first witness. Each clause selects its roots (`select`, by its position in `slots`: node ids,
+/// `None` for every root) and runs under an allowance of its own (`work`), and fails alone where it
+/// runs out. With `sql`, each clause's matches (by its position in `slots`, roots in preorder) are
+/// the SQL engine's, rendered in place of the matcher's. Returns which of `slots` ran: the others
+/// were cut short before they started, by the workspace closing or the file's budget running out.
 #[allow(clippy::too_many_arguments)]
 fn evaluate_clauses(
     file: &mut FileState,
     code_rules: &[Arc<CompiledCodeRule>],
-    grammars: &[&GrammarMatcher],
+    slots: &[(usize, &GrammarMatcher)],
     doc: &tape::TapeDoc,
-    errors: &SyntaxErrors,
-    lines: &Arc<LineTable>,
+    (errors, file_errors): (&SyntaxErrors, &SyntaxErrors),
     metrics: &mut Metrics,
     util_work: &mut [usize],
     work: &mut ClauseWork,
@@ -1363,12 +1526,14 @@ fn evaluate_clauses(
 ) -> Result<Vec<bool>> {
     use crate::code_rule_dsl::matcher::{Stopped, enumerate, node_at, run_clause, with_file_memo};
     let target = ast_grep_core::AstGrep::doc(doc.clone());
-    let mut settled = vec![false; file.candidates.ast.len()];
+    // A guest document's nodes span its program's text; error regions are the file's (`origin`).
+    let place = crate::code_rule_dsl::origin::InFile::tape(doc);
+    let mut settled = vec![false; slots.len()];
     with_file_memo(&target, || -> Result<()> {
-        for slot in 0..file.candidates.ast.len() {
+        for (position, &(slot, grammar)) in slots.iter().enumerate() {
             let id = file.candidates.ast[slot];
             #[cfg(test)]
-            if slot > 0 {
+            if position > 0 {
                 pass_deadline_at_test_phase("clause-done");
             }
             if file.failures.contains_key(&id) {
@@ -1376,8 +1541,8 @@ fn evaluate_clauses(
             }
             // A clause whose required text the file lacks matches nothing, at no cost: it answers
             // whatever the file's budget and the ceiling have left.
-            if !runs[slot] {
-                settled[slot] = true;
+            if !runs[position] {
+                settled[position] = true;
                 continue;
             }
             // Polls the file's budget, so a deadline that passed after the last clause's final
@@ -1386,7 +1551,6 @@ fn evaluate_clauses(
                 continue;
             }
             let code_rule = &code_rules[id.0];
-            let grammar = grammars[slot];
             let violation = &code_rule.clauses[id.1].violation;
             let decision = code_rule.clauses[id.1].decision;
             let each = violation.each.as_deref();
@@ -1396,7 +1560,7 @@ fn evaluate_clauses(
             let honour_suppressions = code_rule.scope.honours_suppressions_at(&file.input.path);
             let ignorable = violations::names_rerail_ignore(violation, &target.root());
             let Some((result, ran)) = work.run(file.input.source.len(), || {
-                let roots = select(slot);
+                let roots = select(position);
                 // An anchor selection of no roots leaves nothing for the clause to match.
                 if roots.as_deref().is_some_and(<[u32]>::is_empty) {
                     return Ok(());
@@ -1424,13 +1588,18 @@ fn evaluate_clauses(
                             }
                             *work = crate::code_rule_dsl::matcher::end_clause().0;
                         }
-                        if errors.overlaps(&matched.get_node().range()) {
+                        let errors = if grammar.crosses { file_errors } else { errors };
+                        if errors.meets(&place.place(matched.get_node())) {
                             return Ok(true);
                         }
                         let matched_node = matched.get_node();
                         let keep = |witness: &mut Witness| {
                             if honour_suppressions
-                                && violations::suppresses(Some(violation), matched_node, witness)
+                                && violations::suppresses(
+                                    Some(violation),
+                                    matched_node,
+                                    witness,
+                                )
                             {
                                 return false;
                             }
@@ -1457,7 +1626,6 @@ fn evaluate_clauses(
                                 violation,
                                 (limits.max_witnesses + 1).saturating_sub(reported),
                                 matcher_budget_exhausted,
-                                |start, end| lines.span(start, end),
                                 keep,
                             )
                         } else {
@@ -1466,7 +1634,6 @@ fn evaluate_clauses(
                                 &matched,
                                 grammar.language,
                                 Some(violation),
-                                |start, end| lines.span(start, end),
                             )
                             .map(|mut witness| {
                                 if keep(&mut witness) {
@@ -1485,11 +1652,14 @@ fn evaluate_clauses(
                             }
                         };
                         for witness in found {
-                            let witnesses = file.witnesses.get_mut(&id).expect("eligible check");
+                            let witnesses =
+                                file.witnesses.get_mut(&id).expect("eligible check");
                             if witnesses.len() >= limits.max_witnesses {
                                 // An output cap, not a work limit.
-                                file.failures
-                                    .insert(id, (WITNESS_LIMIT, "file witness budget exceeded"));
+                                file.failures.insert(
+                                    id,
+                                    (WITNESS_LIMIT, "file witness budget exceeded"),
+                                );
                                 return Ok(false);
                             }
                             witnesses.push(witness);
@@ -1519,7 +1689,7 @@ fn evaluate_clauses(
                     )
                     .and_then(|result| result),
                     Some(matches) => {
-                        for found in matches[slot]
+                        for found in matches[position]
                             .iter()
                             .take_while(|found| (found.root as usize) < bound)
                         {
@@ -1533,13 +1703,13 @@ fn evaluate_clauses(
                 }
             }) else {
                 // The clauses before it spent the file's clause-work ceiling.
-                settled[slot] = true;
+                settled[position] = true;
                 file.failures
                     .insert(id, (FILE_BUDGET_EXCEEDED, FILE_CLAUSE_WORK_EXCEEDED));
                 file.unstored.insert(id);
                 continue;
             };
-            settled[slot] = true;
+            settled[position] = true;
             match (result, ran) {
                 (_, Ran::Ceiling) => {
                     file.failures

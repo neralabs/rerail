@@ -96,6 +96,10 @@ export class DatabaseApiStores implements RerailApiStores {
     return `${sqliteVersion}:${this.#localRevision}`;
   }
 
+  historyVersion(): string | undefined {
+    return existsSync(this.#path) ? this.dataVersion() : undefined;
+  }
+
   markChanged(): void {
     this.#localRevision += 1;
   }

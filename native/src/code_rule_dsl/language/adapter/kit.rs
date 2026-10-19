@@ -19,26 +19,34 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// A document, and the kind and range of each of its regions' roots.
-type Document = (&'static str, &'static [(&'static str, Range<usize>)]);
+/// A file, and the kind and file range of each of its documents' roots (`embed`): its own tree's,
+/// then each embedded program's.
+type Documents = (&'static str, &'static [(&'static str, Range<usize>)]);
 
 /// What one family's adapter answers: the expectations `kit` checks. `family`, `label` and
-/// `terminators` identify the adapter; `dialect` is the grammar its documents are read in; `name` is
-/// what the identifier `ﬁle` normalises to; `regions` lists each document with the kind and range of
-/// its regions' roots; `module` is the family's file suffix and the module of `pkg/mod<suffix>`; and
-/// `value`, `calls`, `arguments`, `format_args`, `syntax` and `scope` are the expectations of each
-/// concern's kit.
+/// `terminators` identify the adapter; `dialect` is the grammar its files are read in; `name` is
+/// what the identifier `ﬁle` normalises to; `documents` lists files with the kind and file range of
+/// each of their documents' roots; `module` is the family's file suffix and the module of
+/// `pkg/mod<suffix>`; and `value`, `calls`, `arguments`, `format_args`, `syntax` and `scope` are the
+/// expectations of each concern's kit, whose documents are the ones its semantics read
+/// (`semantic`).
 struct Expect {
     family: Family,
     label: &'static str,
     terminators: Terminators,
-    /// The dialect the family's documents are read in.
+    /// The dialect the family's files are read in.
     dialect: GrammarDialect,
+    /// The dialect of the documents the family's semantics read: its files', or (an embedding
+    /// family's) the programs they embed, as the kit's sources write them.
+    semantic: GrammarDialect,
     /// The name of the identifier `ﬁle`.
     name: &'static str,
-    regions: &'static [Document],
+    documents: &'static [Documents],
     /// The suffix of the family's files, and the module of `pkg/mod<suffix>` in a package `pkg`.
     module: (&'static str, Option<&'static str>),
+    /// Whether the family's files read their nearest `package.json` (`Adapter::PACKAGE_MANIFESTS`),
+    /// and whether `file.jsxRuntime` asks for their JSX runtime (`Adapter::JSX_RUNTIMES`).
+    package_manifests: (bool, bool),
     value: value_kit::Expect,
     /// What the family's calls answer.
     calls: super::calls::kit::Calls,
@@ -48,17 +56,24 @@ struct Expect {
     scope: super::scope::kit::Expect,
 }
 
-/// A tape of `source` in `dialect`, as files are read: Blade's from its Forte tree, the rest from
-/// tree-sitter's.
-fn tape(source: &str, dialect: GrammarDialect) -> AstGrep<TapeDoc> {
+/// The tape of a file of `source` in `dialect`, as files are read: Blade's from its Forte tree,
+/// the rest from tree-sitter's.
+fn file(source: &str, dialect: GrammarDialect) -> TapeDoc {
     let grammar = Grammar::new(dialect).expect("grammar");
     let image = TapeImage::parse(&grammar, source, &|| false)
         .expect("parses")
         .expect("encodes");
-    AstGrep::doc(
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
-            .expect("restores"),
-    )
+    TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).expect("restores")
+}
+
+/// The document of a file of `source` in `dialect` its family's semantics read: the program the
+/// file embeds, where its dialect embeds one (`embed`), else the file's own tree.
+pub(super) fn semantic(source: &str, dialect: GrammarDialect) -> AstGrep<TapeDoc> {
+    let host = file(source, dialect);
+    let guest = host
+        .guests()
+        .and_then(|guests| guests.first().map(|guest| guest.doc.clone()));
+    AstGrep::doc(guest.unwrap_or(host))
 }
 
 /// A directory holding a package `pkg`, removed when dropped.
@@ -95,13 +110,22 @@ fn kit<A: Adapter>(expect: &Expect) {
         A::name(Cow::Borrowed("file")),
         Cow::Borrowed("file")
     ));
-    for (source, regions) in expect.regions {
-        let doc = tape(source, expect.dialect);
-        let root = doc.root();
-        let read = super::regions(&root, expect.dialect)
-            .map(|region| (region.root.kind().into_owned(), region.root.range()))
+    for (source, documents) in expect.documents {
+        let host = file(source, expect.dialect);
+        let read = std::iter::once(host.clone())
+            .chain(
+                host.guests()
+                    .iter()
+                    .flat_map(|guests| guests.iter().map(|guest| guest.doc.clone())),
+            )
+            .map(|doc| {
+                let root = AstGrep::doc(doc.clone());
+                let root = root.root();
+                let file = crate::code_rule_dsl::origin::InFile::tape(&doc);
+                (root.kind().into_owned(), file.node(&root))
+            })
             .collect::<Vec<_>>();
-        let expected = regions
+        let expected = documents
             .iter()
             .map(|(kind, range)| ((*kind).to_owned(), range.clone()))
             .collect::<Vec<_>>();
@@ -115,13 +139,17 @@ fn kit<A: Adapter>(expect: &Expect) {
     );
     // A family names modules from package markers exactly when it derives one for `pkg/mod`.
     assert_eq!(A::PACKAGES, module.is_some());
-    value_kit::check::<A>(&expect.value, expect.dialect, tape);
+    assert_eq!(
+        (A::PACKAGE_MANIFESTS, A::JSX_RUNTIMES),
+        expect.package_manifests
+    );
+    value_kit::check::<A>(&expect.value, |s| semantic(s, expect.dialect));
     super::calls::kit::check::<A>(&expect.calls, expect.dialect);
-    super::arguments::kit::check::<A>(&expect.arguments, expect.dialect, |s| {
-        tape(s, expect.dialect)
+    super::arguments::kit::check::<A>(&expect.arguments, expect.semantic, |s| {
+        semantic(s, expect.dialect)
     });
     super::format_args::kit::check::<A>(&expect.format_args);
-    with_adapter!(expect.family, B => super::syntax::kit::check::<B>(&expect.syntax, expect.dialect, |s| tape(s, expect.dialect)));
+    with_adapter!(expect.family, B => super::syntax::kit::check::<B>(&expect.syntax));
     super::scope::kit::kit::<A>(expect.dialect, expect.module.0, &expect.scope);
 }
 
@@ -132,9 +160,11 @@ fn python() {
         label: "python",
         terminators: Terminators::Newlines,
         dialect: GrammarDialect::Python,
+        semantic: GrammarDialect::Python,
         name: "file",
-        regions: &[("x = 1\n", &[("module", 0..6)])],
+        documents: &[("x = 1\n", &[("module", 0..6)])],
         module: (".py", Some("pkg.mod")),
+        package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Python,
             string: Value::Str("é".to_owned()),
@@ -151,7 +181,6 @@ fn python() {
             function_kinds: &["function_definition"],
             refusal: None,
             seed_language: None,
-            taped: false,
             subclasses: true,
             summary: ("def f():\n    g()\n", &["f"]),
             unread: Some("pkg.mod"),
@@ -188,8 +217,8 @@ fn python() {
             language_options: None,
             compiled_options: Some((r#"{"pythonVersion": "3.12"}"#, None, Some(12))),
             when: &[
-                (r#"{"pythonVersion": {"min": "3.10"}}"#, Ok(true)),
-                (r#"{"pythonVersion": {"max": "3.9"}}"#, Ok(false)),
+                (r#"{"pythonVersion": {"min": "3.10"}}"#, Ok((true, None))),
+                (r#"{"pythonVersion": {"max": "3.9"}}"#, Ok((false, None))),
                 (
                     r#"{"ecmaVersion": {"min": 2015}}"#,
                     Err("unknown field `ecmaVersion` at /q/when"),
@@ -207,8 +236,6 @@ fn python() {
                 Some("`phpDoc` parses PHP doc comments"),
                 Some("`rustFormat` parses Rust strings"),
             ],
-            embeds: &[("sprintf($F, $$$A)", false)],
-            php_comments: ("# c\nx = 1\n", 1),
         },
         scope: super::scope::kit::Expect {
             flow: false,
@@ -252,9 +279,11 @@ fn ecma() {
         label: "typescript",
         terminators: Terminators::Eslint,
         dialect: GrammarDialect::TypeScript,
+        semantic: GrammarDialect::TypeScript,
         name: "ﬁle",
-        regions: &[("let x = 1;\n", &[("program", 0..11)])],
+        documents: &[("let x = 1;\n", &[("program", 0..11)])],
         module: (".ts", None),
+        package_manifests: (true, true),
         value: value_kit::Expect {
             lang: Family::Ecma,
             string: Value::Utf16(vec![0xe9]),
@@ -278,7 +307,6 @@ fn ecma() {
             function_kinds: &[],
             refusal: Some("calls follows Python, PHP and Rust calls only"),
             seed_language: None,
-            taped: false,
             subclasses: false,
             summary: ("function f() { g(); }\n", &[]),
             unread: None,
@@ -311,8 +339,11 @@ fn ecma() {
                 None,
             )),
             when: &[
-                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
-                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok((true, None))),
+                (
+                    r#"{"sourceType": "script"}"#,
+                    Ok((true, Some(&[SourceType::Script]))),
+                ),
                 (
                     r#"{"pythonVersion": {"min": "3.10"}}"#,
                     Err("unknown field `pythonVersion` at /q/when"),
@@ -328,12 +359,10 @@ fn ecma() {
                 Some("`phpDoc` parses PHP doc comments"),
                 Some("`rustFormat` parses Rust strings"),
             ],
-            embeds: &[("sprintf($F, $$$A)", false)],
-            php_comments: ("// c\nlet x = 1;\n", 1),
         },
         scope: super::scope::kit::Expect {
             flow: false,
-            declared: (Some((2026, SourceType::Module)), None),
+            declared: (Some((2026, None)), None),
             unresolved: &[
                 ("undefinedName;\n", "undefinedName", true),
                 ("Math;\n", "Math", false),
@@ -382,9 +411,11 @@ fn php() {
         label: "php",
         terminators: Terminators::Newlines,
         dialect: GrammarDialect::Php,
+        semantic: GrammarDialect::Php,
         name: "ﬁle",
-        regions: &[("<?php $x = 1;\n", &[("program", 0..14)])],
+        documents: &[("<?php $x = 1;\n", &[("program", 0..14)])],
         module: (".php", None),
+        package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Php,
             string: Value::PhpStr(vec![0xc3, 0xa9]),
@@ -422,7 +453,6 @@ fn php() {
             ],
             refusal: None,
             seed_language: None,
-            taped: false,
             subclasses: false,
             summary: ("<?php function f() { g(); }\n", &["\\f"]),
             unread: None,
@@ -469,8 +499,8 @@ fn php() {
             language_options: Some("`languageOptions` is not available for php policies"),
             compiled_options: None,
             when: &[
-                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
-                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok((true, None))),
+                (r#"{"sourceType": "script"}"#, Ok((false, None))),
                 (
                     r#"{"pythonVersion": {"min": "3.10"}}"#,
                     Err("unknown field `pythonVersion` at /q/when"),
@@ -492,8 +522,6 @@ fn php() {
                 None,
                 Some("`rustFormat` parses Rust strings"),
             ],
-            embeds: &[("sprintf($F, $$$A)", false)],
-            php_comments: ("<?php /** d */ // c\n", 2),
         },
         scope: super::scope::kit::Expect {
             flow: true,
@@ -531,12 +559,17 @@ fn blade() {
         label: "blade",
         terminators: Terminators::Newlines,
         dialect: GrammarDialect::Blade,
+        semantic: GrammarDialect::Php,
         name: "ﬁle",
-        regions: &[
-            ("<p>{{ $x }}</p>\n", &[("program", 3..11)]),
-            ("<p>x</p>\n", &[]),
+        documents: &[
+            (
+                "<p>{{ $x }}</p>\n",
+                &[("document", 0..16), ("program", 3..11)],
+            ),
+            ("<p>x</p>\n", &[("document", 0..9)]),
         ],
         module: (".blade.php", None),
+        package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Php,
             string: Value::PhpStr(vec![0xc3, 0xa9]),
@@ -553,7 +586,7 @@ fn blade() {
                 "`str` is not a PHP type name; expected one of int, float, string, bool, null, array",
             ),
             structure_parts: Err(
-                "`structure-parts` compares Python's implicitly concatenated string parts; blade embeds PHP, which has no implicit string concatenation",
+                "`structure-parts` compares Python's implicitly concatenated string parts; PHP has no implicit string concatenation",
             ),
             // `@unless($x)` is `if (!($x))`, whose `!(` the template does not spell.
             spelled: ("@unless($x) a @endunless\n", false),
@@ -575,7 +608,6 @@ fn blade() {
             ],
             refusal: None,
             seed_language: Some("php"),
-            taped: true,
             subclasses: false,
             summary: ("@php function f() { g(); } @endphp\n", &["\\f"]),
             unread: None,
@@ -596,7 +628,7 @@ fn blade() {
                 ),
                 None,
                 Some(
-                    "`estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; blade has none (use language or syntactic)",
+                    "`estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; php has none (use language or syntactic)",
                 ),
             ],
             passed: ("{{ f(1, b: 2) }}\n", ["1", "2"]),
@@ -605,15 +637,15 @@ fn blade() {
             follows_strings: true,
             styles: [
                 Some(
-                    "`brace` reads Python's `str.format` calls; blade embeds PHP, which has no such templates (its printf-family calls are style `printf`)",
+                    "`brace` reads Python's `str.format` calls; PHP has no such templates (its printf-family calls are style `printf`)",
                 ),
                 Some(
-                    "`percent` reads Python's `%` formats; blade embeds PHP, whose printf-family calls are style `printf`",
+                    "`percent` reads Python's `%` formats; PHP's printf-family calls are style `printf`",
                 ),
                 None,
                 None,
                 Some(
-                    "`rust` reads Rust's format macros; blade embeds PHP, whose printf-family calls are style `printf`",
+                    "`rust` reads Rust's format macros; PHP's printf-family calls are style `printf`",
                 ),
             ],
         },
@@ -622,31 +654,40 @@ fn blade() {
             language_options: Some("`languageOptions` is not available for blade policies"),
             compiled_options: None,
             when: &[
-                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
-                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok((true, None))),
+                (r#"{"sourceType": "script"}"#, Ok((false, None))),
                 (
                     r#"{"pythonVersion": {"min": "3.10"}}"#,
                     Err("unknown field `pythonVersion` at /q/when"),
                 ),
             ],
+            // A template's own tree hosts no literal: its PHP is the view's.
             parse: [
                 Some(
-                    "`percentFormat` parses Python literals; blade embeds PHP, whose printf formats are `printfFormat`",
+                    "`percentFormat` parses Python literals; a template's PHP is its embedded program's: read it with `ast.embedded: compiled-view` or `embedded`",
                 ),
                 Some(
-                    "`braceFormat` parses Python literals; blade embeds PHP, which has no str.format templates (its printf formats are `printfFormat`)",
+                    "`braceFormat` parses Python literals; a template's PHP is its embedded program's: read it with `ast.embedded: compiled-view` or `embedded`",
                 ),
                 Some(
-                    "`annotation` parses Python literals; blade embeds PHP, which holds no type in a string: its declared types are syntax, and its PHPDoc types are `phpDoc`",
+                    "`annotation` parses Python literals; a template's PHP is its embedded program's: read it with `ast.embedded: compiled-view` or `embedded`",
                 ),
-                Some("`eslintDirective` parses TypeScript comments"),
-                None,
-                None,
-                None,
-                Some("`rustFormat` parses Rust strings"),
+                Some(
+                    "`eslintDirective` parses TypeScript comments; a template's PHP is its embedded program's: read it with `ast.embedded: compiled-view` or `embedded`",
+                ),
+                Some(
+                    "`printfFormat` parses PHP strings; a template's PHP is its embedded program's: read it with `ast.embedded: compiled-view` or `embedded`",
+                ),
+                Some(
+                    "`scanfFormat` parses PHP strings; a template's PHP is its embedded program's: read it with `ast.embedded: compiled-view` or `embedded`",
+                ),
+                Some(
+                    "`phpDoc` parses PHP doc comments; a template's PHP is its embedded program's: read it with `ast.embedded: compiled-view` or `embedded`",
+                ),
+                Some(
+                    "`rustFormat` parses Rust strings; a template's PHP is its embedded program's: read it with `ast.embedded: compiled-view` or `embedded`",
+                ),
             ],
-            embeds: &[("sprintf($F, $$$A)", true), ("<p>{{ $x }}</p>", false)],
-            php_comments: ("{{-- a --}}\n@php /** b */ @endphp\n", 1),
         },
         scope: super::scope::kit::Expect {
             flow: true,
@@ -664,11 +705,11 @@ fn blade() {
             refuses: &[
                 (
                     super::ScopeFeature::StarImports,
-                    "blade policies ask `unresolved: true`",
+                    "php policies ask `unresolved: true`",
                 ),
                 (
                     super::ScopeFeature::SameImport,
-                    "qualified import names are Python's; a blade variable is never bound by an import",
+                    "qualified import names are Python's; a PHP variable is never bound by an import",
                 ),
             ],
             reads: &[super::ScopeFeature::Imports, super::ScopeFeature::Every],
@@ -684,18 +725,26 @@ fn vue() {
         label: "vue",
         terminators: Terminators::Eslint,
         dialect: GrammarDialect::Vue,
+        semantic: GrammarDialect::JavaScript,
         name: "ﬁle",
-        regions: &[
-            // The program spans the script's start tag (its `;` marker) to its content's end.
-            ("<script>\nlet x = 1;\n</script>\n", &[("program", 0..19)]),
+        documents: &[
+            // The program stands for the script's start tag (its `;` marker) to its content's end.
+            (
+                "<script>\nlet x = 1;\n</script>\n",
+                &[("document", 0..30), ("program", 0..19)],
+            ),
             (
                 "<template><p>{{ x }}</p></template>\n",
-                &[("program", 0..35)],
+                &[("document", 0..36), ("program", 0..35)],
             ),
-            ("<style>p {}</style>\n", &[]),
-            ("<script lang=\"coffee\">x = 1</script>\n", &[]),
+            ("<style>p {}</style>\n", &[("document", 0..20)]),
+            (
+                "<script lang=\"coffee\">x = 1</script>\n",
+                &[("document", 0..37)],
+            ),
         ],
         module: (".vue", None),
+        package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Ecma,
             string: Value::Utf16(vec![0xe9]),
@@ -724,7 +773,6 @@ fn vue() {
             function_kinds: &[],
             refusal: Some("calls follows Python, PHP and Rust calls only"),
             seed_language: None,
-            taped: false,
             subclasses: false,
             summary: ("<script>\nfunction f() { g(); }\n</script>\n", &[]),
             unread: None,
@@ -757,33 +805,44 @@ fn vue() {
                 None,
             )),
             when: &[
-                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
-                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok((true, None))),
+                (r#"{"sourceType": "script"}"#, Ok((false, None))),
                 (
                     r#"{"pythonVersion": {"min": "3.10"}}"#,
                     Err("unknown field `pythonVersion` at /q/when"),
                 ),
             ],
+            // A component's own tree hosts no literal: its scripts are the program's.
             parse: [
-                Some("`percentFormat` parses Python literals"),
-                Some("`braceFormat` parses Python literals"),
-                Some("`annotation` parses Python literals"),
-                None,
-                Some("`printfFormat` parses PHP strings"),
-                Some("`scanfFormat` parses PHP strings"),
-                Some("`phpDoc` parses PHP doc comments"),
-                Some("`rustFormat` parses Rust strings"),
+                Some(
+                    "`percentFormat` parses Python literals; a component's scripts are its embedded program: read them with `ast.embedded: script-block` or `embedded`",
+                ),
+                Some(
+                    "`braceFormat` parses Python literals; a component's scripts are its embedded program: read them with `ast.embedded: script-block` or `embedded`",
+                ),
+                Some(
+                    "`annotation` parses Python literals; a component's scripts are its embedded program: read them with `ast.embedded: script-block` or `embedded`",
+                ),
+                Some(
+                    "`eslintDirective` parses TypeScript comments; a component's scripts are its embedded program: read them with `ast.embedded: script-block` or `embedded`",
+                ),
+                Some(
+                    "`printfFormat` parses PHP strings; a component's scripts are its embedded program: read them with `ast.embedded: script-block` or `embedded`",
+                ),
+                Some(
+                    "`scanfFormat` parses PHP strings; a component's scripts are its embedded program: read them with `ast.embedded: script-block` or `embedded`",
+                ),
+                Some(
+                    "`phpDoc` parses PHP doc comments; a component's scripts are its embedded program: read them with `ast.embedded: script-block` or `embedded`",
+                ),
+                Some(
+                    "`rustFormat` parses Rust strings; a component's scripts are its embedded program: read them with `ast.embedded: script-block` or `embedded`",
+                ),
             ],
-            embeds: &[
-                ("foo($A, $$$B)", true),
-                ("<p v-html=\"$X\" />", false),
-                ("{{ $X }}", false),
-            ],
-            php_comments: ("<!-- a -->\n<script>\n// b\n</script>\n", 2),
         },
         scope: super::scope::kit::Expect {
             flow: false,
-            declared: (Some((2026, SourceType::Module)), None),
+            declared: (Some((2026, None)), None),
             unresolved: &[
                 (
                     "<template>{{ undefinedName }}</template>\n",
@@ -837,9 +896,11 @@ fn sql() {
         label: "sql",
         terminators: Terminators::Newlines,
         dialect: GrammarDialect::Sql,
+        semantic: GrammarDialect::Sql,
         name: "ﬁle",
-        regions: &[("SELECT 1;\n", &[("program", 0..10)])],
+        documents: &[("SELECT 1;\n", &[("program", 0..10)])],
         module: (".sql", None),
+        package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Sql,
             string: Value::Str("é".to_owned()),
@@ -860,7 +921,6 @@ fn sql() {
             function_kinds: &[],
             refusal: Some("calls follows Python, PHP and Rust calls only"),
             seed_language: None,
-            taped: false,
             subclasses: false,
             summary: ("SELECT f();\n", &[]),
             unread: None,
@@ -891,7 +951,7 @@ fn sql() {
             language_options: Some("`languageOptions` is not available for sql policies"),
             compiled_options: None,
             when: &[
-                ("{}", Ok(true)),
+                ("{}", Ok((true, None))),
                 (
                     r#"{"ecmaVersion": {"min": 2015}}"#,
                     Err("unknown field `ecmaVersion` at /q/when"),
@@ -907,8 +967,6 @@ fn sql() {
                 Some("`phpDoc` parses PHP doc comments"),
                 Some("`rustFormat` parses Rust strings"),
             ],
-            embeds: &[("SELECT $A", false)],
-            php_comments: ("-- c\nSELECT 1;\n", 1),
         },
         scope: super::scope::kit::Expect {
             flow: false,
@@ -949,9 +1007,11 @@ fn rust() {
         label: "rust",
         terminators: Terminators::Newlines,
         dialect: GrammarDialect::Rust,
+        semantic: GrammarDialect::Rust,
         name: "ﬁle",
-        regions: &[("fn f() {}\n", &[("source_file", 0..10)])],
+        documents: &[("fn f() {}\n", &[("source_file", 0..10)])],
         module: (".rs", None),
+        package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Rust,
             string: Value::Str("é".to_owned()),
@@ -988,7 +1048,6 @@ fn rust() {
             function_kinds: &["function_item"],
             refusal: None,
             seed_language: None,
-            taped: false,
             subclasses: false,
             summary: ("fn f() {\n    g();\n}\n", &["kit/crate::f"]),
             unread: None,
@@ -1029,8 +1088,8 @@ fn rust() {
             language_options: Some("`languageOptions` is not available for rust policies"),
             compiled_options: None,
             when: &[
-                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok(true)),
-                (r#"{"sourceType": "script"}"#, Ok(false)),
+                (r#"{"ecmaVersion": {"min": 2015}}"#, Ok((true, None))),
+                (r#"{"sourceType": "script"}"#, Ok((false, None))),
                 (
                     r#"{"pythonVersion": {"min": "3.10"}}"#,
                     Err("unknown field `pythonVersion` at /q/when"),
@@ -1050,8 +1109,6 @@ fn rust() {
                 Some("`phpDoc` parses PHP doc comments"),
                 None,
             ],
-            embeds: &[("println!($F, $$$A)", false)],
-            php_comments: ("// c\nfn f() {}\n", 0),
         },
         scope: super::scope::kit::Expect {
             flow: false,

@@ -51,13 +51,13 @@ struct SubFiles {
     index: HashMap<usize, u32>,
 }
 
-/// What the native evaluator installs for a file besides its tree: its host path, its Python
-/// module path and the scope tables it has cached for the file's revision (the workspace's),
-/// which the input-set terminals' file scopes read (`FileScopeSlot::install`).
+/// What the native evaluator installs for a document besides its tree: the file it is of (its
+/// host path, Python module path and manifest, `FileScopeSlot::file`) and the scope tables it has
+/// cached for the file's revision (the workspace's), which the input-set terminals' file scopes
+/// read (`FileScopeSlot::install`). Every document of a file shares them.
 #[derive(Clone, Default)]
 pub(in crate::code_rule_dsl) struct FileContext {
-    pub(in crate::code_rule_dsl) path: Option<String>,
-    pub(in crate::code_rule_dsl) module: Option<Arc<crate::code_rule_dsl::module_path::ModulePath>>,
+    pub(in crate::code_rule_dsl) input: Option<Arc<crate::code_rule_dsl::model::FileInput>>,
     pub(in crate::code_rule_dsl) scopes: Vec<Arc<crate::code_rule_dsl::scope::ScopeTable>>,
     /// The workspace's (or stateless evaluation's) call-graph closure and the file's summary,
     /// which `calls` reads as `calls::FileCallsSlot` installs them for the file's evaluation.

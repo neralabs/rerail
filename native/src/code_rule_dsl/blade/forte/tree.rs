@@ -75,9 +75,10 @@
 //! `trees_are_well_formed` checks that children lie in their parent, in order, without overlap
 //! (so every byte is in at most one leaf), over every recorded tree.
 //!
-//! None of these nodes is an error node: a template's lexer errors and a parse's failure are
-//! byte ranges on the tree (`error_ranges`), as a tape's syntax errors are. A template Forte does
-//! not parse (`ParseError`) is a `document` alone.
+//! None of these nodes is an error node: a template's lexer errors are byte ranges on the tree
+//! (`error_ranges`), which its tape records as ERROR leaves, as a tree-sitter tree's are (`tape`).
+//! A template Forte stops on at a limit (its nesting depth, the step budget) has no tree at all
+//! (`parse_tree` is `Err`): the limit says nothing about the template's syntax.
 
 use super::ast::{Ast, ElementClass};
 use super::directives::Directives;
@@ -309,7 +310,6 @@ pub(crate) struct BladeTree {
     /// The flat node each node stands for (`NONE` for leaves).
     forte: Vec<u32>,
     errors: Vec<Range<usize>>,
-    parse_error: Option<ParseError>,
     base: usize,
 }
 
@@ -511,22 +511,13 @@ fn unclaimed(next: &mut [u32], mut at: usize) -> usize {
 
 impl BladeTree {
     /// The tree of a parse of `source`.
-    pub(crate) fn new(source: Vec<u8>, parsed: Result<Parsed, ParseError>) -> Self {
-        match parsed {
-            Ok(parsed) => Self::build(
-                source,
-                &parsed.tokens,
-                &parsed.nodes,
-                parsed.errors.iter().map(|e| e.offset),
-            ),
-            Err(error) => {
-                let len = source.len();
-                let mut tree = Self::build(source, &[], &[], std::iter::empty());
-                tree.errors.push(0..len);
-                tree.parse_error = Some(error);
-                tree
-            }
-        }
+    pub(crate) fn new(source: Vec<u8>, parsed: Parsed) -> Self {
+        Self::build(
+            source,
+            &parsed.tokens,
+            &parsed.nodes,
+            parsed.errors.iter().map(|e| e.offset),
+        )
     }
 
     /// The tree over Forte's flat arrays.
@@ -548,7 +539,6 @@ impl BladeTree {
             nodes: Vec::new(),
             forte: Vec::new(),
             errors,
-            parse_error: None,
             base: 0,
         };
         tree.link(tokens, flat);
@@ -840,16 +830,9 @@ impl BladeTree {
         }
     }
 
-    /// Where the template has lexer errors (zero-wide, at the error's offset), or the whole
-    /// template when Forte did not parse it.
+    /// Where the template has lexer errors (zero-wide, at the error's offset).
     pub(crate) fn error_ranges(&self) -> &[Range<usize>] {
         &self.errors
-    }
-
-    /// Why the template has no tree, when it has none.
-    #[cfg(test)]
-    pub(crate) fn parse_error(&self) -> Option<&ParseError> {
-        self.parse_error.as_ref()
     }
 
     /// The flat node (index into Forte's array) the node with this id stands for.
@@ -865,12 +848,15 @@ impl BladeTree {
 /// (`@ray(...)`, `@livewire(...)`, a `Blade::if` pair) is a `directive` node a rule can name, as
 /// Blade's tooling reads it, not text. The view reads such a directive as Blade does
 /// (`blade::view`): one `BladeCompiler` does not compile is not PHP the template shows.
-pub(crate) fn parse_tree(source: &[u8]) -> BladeTree {
+///
+/// `Err` where Forte stopped at a limit (its nesting depth, or Rerail's step budget): that says
+/// nothing about the template, which then has no tree, not a tree of one syntax error.
+pub(crate) fn parse_tree(source: &[u8]) -> Result<BladeTree, ParseError> {
     let mut budget = Budget::for_template(source.len());
     let mut directives = Directives::with_defaults();
     directives.set_accept_all(true);
-    let parsed = super::parse(source, directives, DepthLimits::default(), &mut budget);
-    BladeTree::new(source.to_vec(), parsed)
+    let parsed = super::parse(source, directives, DepthLimits::default(), &mut budget)?;
+    Ok(BladeTree::new(source.to_vec(), parsed))
 }
 
 /// The Blade language of Forte's trees; patterns are parsed with `parse_tree`. A metavariable is
@@ -880,12 +866,12 @@ pub(crate) fn parse_tree(source: &[u8]) -> BladeTree {
 pub(crate) struct BladeLang;
 
 impl BladeLang {
-    /// A document over a template, parsed as patterns are.
-    pub(crate) fn doc(self, source: &[u8]) -> BladeDoc {
-        BladeDoc {
-            tree: Arc::new(parse_tree(source)),
+    /// A document over a template, parsed as patterns are; `Err` where Forte stopped at a limit.
+    pub(crate) fn doc(self, source: &[u8]) -> Result<BladeDoc, ParseError> {
+        Ok(BladeDoc {
+            tree: Arc::new(parse_tree(source)?),
             lang: self,
-        }
+        })
     }
 }
 
@@ -931,7 +917,10 @@ impl Language for BladeLang {
         Cow::Owned(processed)
     }
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
-        builder.build(|src| Ok(self.doc(src.as_bytes())))
+        builder.build(|src| {
+            self.doc(src.as_bytes())
+                .map_err(|error| error.message().to_owned())
+        })
     }
 }
 
@@ -1000,6 +989,10 @@ impl<'r> BladeNode<'r> {
             0 => None,
             field => FIELD_NAMES.get(usize::from(field)).copied(),
         }
+    }
+    /// The id of the field this node is its parent's (`FIELD_NAMES`), 0 for none.
+    pub(crate) fn field_id(&self) -> u16 {
+        self.rec().field
     }
     /// The template's bytes this node spans.
     pub(crate) fn bytes(&self) -> &'r [u8] {

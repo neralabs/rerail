@@ -85,12 +85,22 @@ const DATABASE_ETAG_OPERATIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * GET operations that read audit history, which has no cheap change token: their tag is a
- * digest of the result, so the handler runs and only the response body is saved.
+ * GET operations that read audit history. Their tag is a digest of the result, so a result is computed once per
+ * change of the database (`historyVersion`) and every poll in between, from any number of dashboard tabs, is answered
+ * from it without running the handler.
  */
 const RESULT_ETAG_OPERATIONS: ReadonlySet<string> = new Set(["rules_activity", "violations_list", "sessions_list"]);
 
 const ETAG_OPERATIONS: ReadonlySet<string> = new Set([...DATABASE_ETAG_OPERATIONS, ...RESULT_ETAG_OPERATIONS]);
+
+/** Remembered history results; the dashboard asks for a handful of distinct reads per repository and range. */
+const REMEMBERED_RESULTS = 64;
+
+interface RememberedResult {
+  readonly version: string;
+  readonly etag: string;
+  readonly result: unknown;
+}
 
 /** Key order in a query string must not change the tag; two filters that differ must. */
 function normalizedInput(input: Record<string, unknown>): string {
@@ -196,6 +206,8 @@ export function createRerailApi(
   // `PRAGMA data_version` counts from zero on each new SQLite connection, so a catalog tag minted
   // before a restart could otherwise match one minted after.
   const instanceSalt = randomBytes(8).toString("hex");
+  /** `RESULT_ETAG_OPERATIONS` results by operation and input, oldest first. */
+  const remembered = new Map<string, RememberedResult>();
   const publicHosts = info.publicHosts ?? new Set<string>();
   const app = new OpenAPIHono({
     defaultHook: (result, context) =>
@@ -260,12 +272,22 @@ export function createRerailApi(
           const unchanged = conditional(entityTag(operation.id, instanceSalt, normalizedInput(input), stores.dataVersion()));
           if (unchanged !== undefined) return unchanged;
         }
+        if (RESULT_ETAG_OPERATIONS.has(operation.id)) {
+          const key = `${operation.id}\u0000${normalizedInput(input)}`;
+          const version = stores.historyVersion();
+          const known = remembered.get(key);
+          if (known !== undefined && known.version === version) {
+            return conditional(known.etag) ?? context.json(known.result, 200);
+          }
+          const result = await invokeOperation(operation, stores, input, { kind: "person" });
+          const etag = entityTag(operation.id, JSON.stringify(result) ?? "");
+          remembered.delete(key);
+          if (version !== undefined) remembered.set(key, { version, etag, result });
+          if (remembered.size > REMEMBERED_RESULTS) remembered.delete(remembered.keys().next().value!);
+          return conditional(etag) ?? context.json(result, 200);
+        }
         // `/api` callers are people (the dashboard, the CLI); coding agents come through `/mcp`.
         const result = await invokeOperation(operation, stores, input, { kind: "person" });
-        if (RESULT_ETAG_OPERATIONS.has(operation.id)) {
-          const unchanged = conditional(entityTag(operation.id, JSON.stringify(result) ?? ""));
-          if (unchanged !== undefined) return unchanged;
-        }
         return context.json(result, 200);
       } catch (error) {
         if (error instanceof ApiError) return context.json({ error: error.code, message: error.message }, error.status as 400);

@@ -28,10 +28,16 @@
                 "follows": {
                   "stopBy": {
                     "kind": "empty_statement",
-                    "regex": "^<script"
+                    "host": {
+                      "kind": "start_tag",
+                      "regex": "^<script"
+                    }
                   },
                   "kind": "empty_statement",
-                  "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                  "host": {
+                    "kind": "start_tag",
+                    "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                  }
                 }
               }
             ]
@@ -470,10 +476,16 @@
                         "follows": {
                           "stopBy": {
                             "kind": "empty_statement",
-                            "regex": "^<script"
+                            "host": {
+                              "kind": "start_tag",
+                              "regex": "^<script"
+                            }
                           },
                           "kind": "empty_statement",
-                          "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                          "host": {
+                            "kind": "start_tag",
+                            "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                          }
                         }
                       }
                     }
@@ -8374,6 +8386,7 @@
       "forbid": {
         "ast": {
           "language": "vue",
+          "embedded": "script-block",
           "rule": {
             "any": [
               {
@@ -8698,6 +8711,7 @@
       "forbid": {
         "ast": {
           "language": "vue",
+          "embedded": "script-block",
           "rule": {
             "any": [
               {
@@ -8969,6 +8983,7 @@
       "forbid": {
         "ast": {
           "language": "vue",
+          "embedded": "script-block",
           "rule": {
             "any": [
               {

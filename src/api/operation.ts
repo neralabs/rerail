@@ -13,6 +13,7 @@ import type { CodingAgentState } from "../engine/adapter-contract.js";
 import type { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import type { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
+import { InvalidCursorError } from "../engine/storage/page-cursor.js";
 
 export interface RerailApiStores {
   /** Read-only view; tolerates a database that does not exist yet. */
@@ -33,6 +34,8 @@ export interface RerailApiStores {
   checkouts(): (workspace: string) => CheckoutContext | undefined;
   /** Change token over the whole database: other connections' commits and writes through these stores. */
   dataVersion(): string;
+  /** {@link dataVersion} once the database exists; undefined before, without creating it. */
+  historyVersion(): string | undefined;
   /** Count a write made through these stores, for {@link dataVersion}. */
   markChanged(): void;
   /** Whether Rerail is on in the checkout a workspace is in, over one held connection with cached identities. */
@@ -97,6 +100,9 @@ export class ApiError extends Error {
 export async function invokeOperation(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
   try {
     return await operation.handler(stores, input as never, caller);
+  } catch (error) {
+    if (error instanceof InvalidCursorError) throw new ApiError(400, "invalid-cursor", error.message);
+    throw error;
   } finally {
     // A write that failed half way may still have committed; counting it costs one extra miss.
     if (operation.method !== "GET") stores.markChanged();
