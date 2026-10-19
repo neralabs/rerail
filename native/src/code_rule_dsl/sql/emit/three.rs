@@ -150,7 +150,8 @@ impl Emitter<'_> {
                 }
                 write!(select, " FROM {current} p WHERE {held}").expect("write to a string");
             }
-            let next = self.frame("a", &select);
+            // `v`, not `a`: `a{unit}` is a recursive unit's answer table (`emit::answer_table`).
+            let next = self.frame("v", &select);
             let changed = self.touched(&term.op);
             self.inherit(&current, &next, &changed);
             current = next;
