@@ -3,6 +3,7 @@
 //! for the native witness rendering.
 
 use super::emit;
+use super::frames::{self, FrameStore, FrameTable};
 use super::lower::{ProgramBuilder, Stage};
 use super::nodes::{NodeFacts, NodeTable};
 use super::plan::{SlotKind, Statement, Unsupported};
@@ -176,6 +177,7 @@ const NODE_MODULE: Module<'static, NodeTable> = Module::eponymous_only_module();
 const PATTERN_MODULE: Module<'static, PatternTable> = Module::eponymous_only_module();
 const TEXT_MODULE: Module<'static, TextTable> = Module::eponymous_only_module();
 const FACT_MODULE: Module<'static, FactTable> = Module::eponymous_only_module();
+const FRAME_MODULE: Module<'static, FrameTable> = Module::update_module();
 
 /// An in-memory connection whose virtual tables read `slot`'s batch.
 fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
@@ -595,12 +597,16 @@ pub(in crate::code_rule_dsl) struct Session {
     stages: Vec<(GrammarDialect, Prepared)>,
     clauses: Vec<(Prepared, Vec<CaptureColumn>)>,
     stats: Stats,
+    /// The frame tables' buffers (`frames`).
+    frames: Arc<FrameStore>,
 }
 
 impl Session {
     fn new(compiled: &Compiled) -> Result<Self, SqlError> {
         let slot = Arc::new(BatchSlot::default());
         let connection = connect(&slot)?;
+        let frames = Arc::new(FrameStore::default());
+        connection.create_module(c"frame", &FRAME_MODULE, Some(Arc::clone(&frames)))?;
         connection.execute_batch(
             "PRAGMA temp_store = MEMORY; \
              CREATE TEMP TABLE runs(run INTEGER NOT NULL, file INTEGER NOT NULL, \
@@ -609,7 +615,8 @@ impl Session {
              node INTEGER NOT NULL, PRIMARY KEY (run, file, node)) WITHOUT ROWID;",
         )?;
         // Creates the frame tables (and a recursion unit's tables and indexes) of `statements`
-        // now, and fixes the text of the rest, loops' markers included (`run_steps`).
+        // now, and fixes the text of the rest, loops' markers included (`run_steps`). A table
+        // statements only append to and empty whole is a frame (`frames::rewrite`).
         let prepare = |statements: &[String],
                        namespace: &str,
                        run: i64,
@@ -620,15 +627,31 @@ impl Session {
             let mut steps = Vec::new();
             let mut clear = Vec::new();
             let mut stages = Vec::new();
-            for statement in statements {
-                let sql = statement
-                    .replace(emit::NAMESPACE, namespace)
-                    .replace(emit::FILES, &files)
-                    .replace(emit::ROOTS, &roots)
-                    .replace(emit::EACH, each);
+            let statements = statements
+                .iter()
+                .map(|statement| {
+                    statement
+                        .replace(emit::NAMESPACE, namespace)
+                        .replace(emit::FILES, &files)
+                        .replace(emit::ROOTS, &roots)
+                        .replace(emit::EACH, each)
+                })
+                .collect();
+            for sql in frames::rewrite(statements) {
                 stages_read(&sql, &mut stages);
                 if sql.starts_with("CREATE INDEX IF NOT EXISTS ") {
                     connection.execute_batch(&sql)?;
+                    continue;
+                }
+                if let Some(table) = sql.strip_prefix("CREATE VIRTUAL TABLE ") {
+                    connection.execute_batch(&sql)?;
+                    let table = table.strip_prefix("IF NOT EXISTS ").unwrap_or(table);
+                    let name = table.strip_prefix("temp.").unwrap_or(table);
+                    let name = name.split(' ').next().unwrap_or_default();
+                    let empty = format!("{}{name}", frames::CLEAR);
+                    if !clear.contains(&empty) {
+                        clear.push(empty);
+                    }
                     continue;
                 }
                 match sql.strip_prefix("CREATE TEMP TABLE ") {
@@ -665,9 +688,9 @@ impl Session {
             // A three-valued stage keeps the nodes it is unknown at too, with `unk`; a two-valued
             // stage's are all 0.
             connection.execute_batch(&format!(
-                "CREATE TEMP TABLE {table}(file INTEGER, node INTEGER, unk INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (file, node)) WITHOUT ROWID"
+                "CREATE VIRTUAL TABLE temp.{table} USING frame(file INTEGER, node INTEGER, unk INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (file, node))"
             ))?;
-            prepared.clear.push(format!("DELETE FROM {table}"));
+            prepared.clear.push(format!("{}{table}", frames::CLEAR));
             let columns = if stage.three {
                 "file, node, unk"
             } else {
@@ -715,12 +738,26 @@ impl Session {
             stages,
             clauses,
             stats: Stats::default(),
+            frames,
         })
     }
 
     /// What the session's statements did so far.
     pub(in crate::code_rule_dsl) fn stats(&self) -> Stats {
         self.stats
+    }
+
+    /// The session's tables: how many are B-trees and how many frames (`frames`).
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn tables(&self) -> Result<String, SqlError> {
+        let (btrees, frames): (i64, i64) = self.connection.query_row(
+            "SELECT count(*) FILTER (WHERE sql NOT LIKE 'CREATE VIRTUAL%'), \
+             count(*) FILTER (WHERE sql LIKE 'CREATE VIRTUAL%') \
+             FROM sqlite_temp_master WHERE type = 'table'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok(format!("{btrees} B-trees, {frames} frames"))
     }
 
     /// Every statement a batch can run (stages', then clauses'), with its `EXPLAIN QUERY PLAN`
@@ -735,7 +772,7 @@ impl Session {
             .chain(self.clauses.iter().map(|(prepared, _)| prepared));
         for prepared in prepared {
             for sql in prepared.steps.iter().chain([&prepared.last]) {
-                if sql == emit::LOOP {
+                if sql == emit::LOOP || sql.starts_with(frames::CLEAR) {
                     continue;
                 }
                 let sql = sql
@@ -783,10 +820,24 @@ impl Session {
                 .map(String::as_str)
                 .chain([CLEAR_RUNS, CLEAR_ROOTS]);
             for clear in clears {
-                self.connection.execute(clear, [])?;
+                Self::empty(&self.connection, &self.frames, clear)?;
             }
         }
+        self.frames.trim();
         result
+    }
+
+    /// Empties a table: a frame through its buffers (`frames::CLEAR`), another by its `DELETE`.
+    fn empty(connection: &Connection, frames: &FrameStore, sql: &str) -> Result<(), SqlError> {
+        match sql.strip_prefix(frames::CLEAR) {
+            Some(name) => {
+                frames.clear(name);
+            }
+            None => {
+                connection.prepare_cached(sql)?.execute([])?;
+            }
+        }
+        Ok(())
     }
 
     /// Executes a stage's or clause's statements, each loop (`emit::LOOP` … `emit::UNTIL`) again
@@ -795,6 +846,7 @@ impl Session {
     /// recursion that deep is not evaluated.
     fn run_steps(
         connection: &Connection,
+        frames: &FrameStore,
         stats: &mut Stats,
         steps: &[String],
     ) -> Result<(), SqlError> {
@@ -802,6 +854,11 @@ impl Session {
         while at < steps.len() {
             if let Some(reads) = steps[at].strip_prefix(emit::ACYCLIC) {
                 acyclic(connection, reads)?;
+                at += 1;
+                continue;
+            }
+            if let Some(name) = steps[at].strip_prefix(frames::CLEAR) {
+                frames.clear(name);
                 at += 1;
                 continue;
             }
@@ -824,7 +881,7 @@ impl Session {
             let until = &steps[end][emit::UNTIL.len()..];
             let mut passes = 0;
             loop {
-                Self::run_steps(connection, stats, &steps[at + 1..end])?;
+                Self::run_steps(connection, frames, stats, &steps[at + 1..end])?;
                 passes += 1;
                 let changed: i64 = connection
                     .prepare_cached(until)?
@@ -871,6 +928,7 @@ impl Session {
             stages,
             clauses,
             stats,
+            frames,
             ..
         } = self;
         let inputs = std::time::Instant::now();
@@ -928,7 +986,7 @@ impl Session {
             if stage_files[stage].is_empty() {
                 continue;
             }
-            Self::run_steps(connection, stats, &prepared.steps)?;
+            Self::run_steps(connection, frames, stats, &prepared.steps)?;
             Self::execute(connection, stats, &prepared.last)?;
         }
         stats.stage_nanos += started.elapsed().as_nanos() as u64;
@@ -956,7 +1014,7 @@ impl Session {
                 // reported for the root excluded; each reports what it found, after the earlier
                 // rounds' findings for the same root.
                 for round in 0.. {
-                    Self::run_steps(connection, stats, &prepared.steps)?;
+                    Self::run_steps(connection, frames, stats, &prepared.steps)?;
                     let started = std::time::Instant::now();
                     let mut statement = connection.prepare_cached(&prepared.last)?;
                     let mut rows = statement.query([])?;
@@ -982,7 +1040,7 @@ impl Session {
                     stats.select_nanos += elapsed;
                     let started = std::time::Instant::now();
                     for clear in &prepared.clear {
-                        connection.prepare_cached(clear)?.execute([])?;
+                        Self::empty(connection, frames, clear)?;
                     }
                     stats.input_nanos += started.elapsed().as_nanos() as u64;
                     let Some(each) = &each else {
@@ -1017,7 +1075,7 @@ impl Session {
         for (stage, (_, prepared)) in stages.iter().enumerate() {
             if !stage_files[stage].is_empty() {
                 for clear in &prepared.clear {
-                    connection.prepare_cached(clear)?.execute([])?;
+                    Self::empty(connection, frames, clear)?;
                 }
             }
         }

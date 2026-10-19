@@ -8,7 +8,7 @@ use crate::code_rule_dsl::matcher::node_at;
 use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::{AstGrep, Doc};
 use rusqlite::fallible_iterator::FallibleIterator;
-use rusqlite::types::{Value, ValueRef};
+use rusqlite::types::ValueRef;
 use rusqlite::vtab::{
     Context, Filters, IndexConstraintOp, IndexInfo, VTab, VTabConfig, VTabConnection, VTabCursor,
     sqlite3_vtab, sqlite3_vtab_cursor,
@@ -344,20 +344,20 @@ impl Used {
         }
     }
 
-    fn parse(code: &str) -> Option<Self> {
+    fn parse(code: &[u8]) -> Option<Self> {
         Some(match code {
-            "f=" => Self::File { list: false },
-            "f*" => Self::File { list: true },
-            "i=" => Self::IdEq,
-            "i>" => Self::IdGt,
-            "i}" => Self::IdGe,
-            "i<" => Self::IdLt,
-            "i{" => Self::IdLe,
-            "p=" => Self::Parent,
-            "l}" => Self::LastGe,
-            "l>" => Self::LastGt,
-            "k=" => Self::Kind { list: false },
-            "k*" => Self::Kind { list: true },
+            b"f=" => Self::File { list: false },
+            b"f*" => Self::File { list: true },
+            b"i=" => Self::IdEq,
+            b"i>" => Self::IdGt,
+            b"i}" => Self::IdGe,
+            b"i<" => Self::IdLt,
+            b"i{" => Self::IdLe,
+            b"p=" => Self::Parent,
+            b"l}" => Self::LastGe,
+            b"l>" => Self::LastGt,
+            b"k=" => Self::Kind { list: false },
+            b"k*" => Self::Kind { list: true },
             _ => return None,
         })
     }
@@ -512,7 +512,9 @@ unsafe impl<'vtab> VTab<'vtab> for NodeTable {
             files: Vec::new(),
             file_pos: 0,
             filter: Filter::default(),
+            kinds: Vec::new(),
             source: Source::Done,
+            ids: Vec::new(),
             current: None,
             sub: None,
             phantom: PhantomData,
@@ -521,13 +523,14 @@ unsafe impl<'vtab> VTab<'vtab> for NodeTable {
 }
 
 /// What the constraints left to check on every row, exactly (they were all omitted).
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct Filter {
     id_lo: Option<u32>,
     id_hi: Option<u32>,
     parent: Option<u32>,
     last_lo: Option<u32>,
-    kinds: Option<Vec<u16>>,
+    /// The node's kind is one of the cursor's `kinds`.
+    kinds: bool,
     /// No row can satisfy the constraints (a NULL or out-of-range value).
     empty: bool,
 }
@@ -536,10 +539,14 @@ struct Filter {
 enum Source {
     Range { next: u32, end: u32 },
     Chain(u32),
-    List { ids: Vec<u32>, pos: usize },
+    /// The cursor's `ids`, from `pos`.
+    Listed { pos: usize },
     Done,
 }
 
+/// A cursor answers each `xFilter` in time proportional to what it yields: its buffers (`files`,
+/// `kinds`, `ids`) are reused across the filters of a statement, and the batch is read from the
+/// slot once per statement (a batch outlives every statement run on it).
 #[repr(C)]
 pub(super) struct NodeCursor<'vtab> {
     base: sqlite3_vtab_cursor,
@@ -548,7 +555,11 @@ pub(super) struct NodeCursor<'vtab> {
     files: Vec<u32>,
     file_pos: usize,
     filter: Filter,
+    /// The kinds a `Filter::kinds` row is one of, ascending.
+    kinds: Vec<u16>,
     source: Source,
+    /// `Source::Listed`'s ids.
+    ids: Vec<u32>,
     current: Option<(u32, u32)>,
     /// The parsed tree being scanned, where the file is one (`exec::SubFile`).
     sub: Option<Arc<SubFile>>,
@@ -582,7 +593,7 @@ impl NodeCursor<'_> {
         let batch = self.batch.as_ref().expect("filtered");
         self.sub = batch.subfile(file as usize);
         let facts = facts_of(batch, &self.sub, file);
-        let filter = &self.filter;
+        let filter = self.filter;
         let len = facts.len();
         let lo = filter.id_lo.unwrap_or(0);
         let hi = filter.id_hi.map_or(len, |hi| hi.saturating_add(1).min(len));
@@ -601,26 +612,23 @@ impl NodeCursor<'_> {
             && id_hi <= last
         {
             // `id <= hi <= x` and `last >= x`: the ancestors-or-self of `x`.
-            let mut ids = Vec::new();
+            self.ids.clear();
             let mut at = last;
             while at < len {
-                ids.push(at);
+                self.ids.push(at);
                 at = facts.parent[at as usize];
             }
-            ids.reverse();
-            Source::List { ids, pos: 0 }
-        } else if let Some(kinds) = &filter.kinds
-            && filter.id_lo.is_none()
-            && filter.id_hi.is_none()
-        {
-            let mut ids: Vec<u32> = kinds
-                .iter()
-                .flat_map(|&kind| facts.of_kind(kind).iter().copied())
-                .collect();
-            if kinds.len() > 1 {
-                ids.sort_unstable();
+            self.ids.reverse();
+            Source::Listed { pos: 0 }
+        } else if filter.kinds && filter.id_lo.is_none() && filter.id_hi.is_none() {
+            self.ids.clear();
+            for &kind in &self.kinds {
+                self.ids.extend_from_slice(facts.of_kind(kind));
             }
-            Source::List { ids, pos: 0 }
+            if self.kinds.len() > 1 {
+                self.ids.sort_unstable();
+            }
+            Source::Listed { pos: 0 }
         } else if lo < hi {
             Source::Range { next: lo, end: hi }
         } else {
@@ -645,8 +653,8 @@ impl NodeCursor<'_> {
                 *next = facts.nsib[id as usize];
                 Some(id)
             }
-            Source::List { ids, pos } => {
-                let id = ids.get(*pos).copied();
+            Source::Listed { pos } => {
+                let id = self.ids.get(*pos).copied();
                 *pos += 1;
                 id
             }
@@ -667,10 +675,7 @@ impl NodeCursor<'_> {
                 .parent
                 .is_none_or(|parent| facts.parent[index] == parent)
             && filter.last_lo.is_none_or(|last| facts.last[index] >= last)
-            && filter
-                .kinds
-                .as_ref()
-                .is_none_or(|kinds| kinds.contains(&facts.kind[index]))
+            && (!filter.kinds || self.kinds.contains(&facts.kind[index]))
     }
 
     fn advance(&mut self) {
@@ -693,16 +698,23 @@ impl NodeCursor<'_> {
 
 unsafe impl VTabCursor for NodeCursor<'_> {
     fn filter(&mut self, _: c_int, idx_str: Option<&str>, args: &Filters<'_>) -> Result<()> {
-        let batch = self
-            .slot
-            .current()
-            .ok_or_else(|| Error::ModuleError("node: no batch installed".into()))?;
+        if self.batch.is_none() {
+            self.batch = Some(
+                self.slot
+                    .current()
+                    .ok_or_else(|| Error::ModuleError("node: no batch installed".into()))?,
+            );
+        }
+        let batch = self.batch.as_deref().expect("installed above");
         let codes = idx_str.unwrap_or("");
         let mut filter = Filter::default();
-        let mut files: Option<Vec<u32>> = None;
+        let mut constrained_files = false;
         // Without a file constraint the batch's files; with one, its parsed trees too.
         let count = batch.files.len() as i64;
-        let documents = batch.documents() as i64;
+        let document = |file: i64| -> Option<u32> {
+            ((0..count).contains(&file) || (0..batch.documents() as i64).contains(&file))
+                .then_some(file as u32)
+        };
         let clamp = |value: i64| u32::try_from(value.max(0)).unwrap_or(u32::MAX - 1);
         let narrow = |filter: &mut Filter, lo: Option<i64>, hi: Option<i64>| {
             if let Some(lo) = lo {
@@ -718,52 +730,41 @@ unsafe impl VTabCursor for NodeCursor<'_> {
                 }
             }
         };
-        for (argv, code) in codes.as_bytes().chunks(2).enumerate() {
-            let used = std::str::from_utf8(code)
-                .ok()
-                .and_then(Used::parse)
+        for ((argv, code), value) in codes.as_bytes().chunks(2).enumerate().zip(args.iter()) {
+            let used = Used::parse(code)
                 .ok_or_else(|| Error::ModuleError(format!("node: bad plan {codes}")))?;
-            let value = || -> Result<Option<i64>> {
-                Ok(integer(ValueRef::from(&args.get::<Value>(argv)?)))
-            };
-            let list = || -> Result<Vec<i64>> {
-                let mut values = Vec::new();
-                let mut items = args.in_values(argv)?;
-                while let Some(item) = items.next()? {
-                    values.extend(integer(item));
-                }
-                Ok(values)
-            };
             match used {
-                Used::File { list: is_list } => {
-                    let mut wanted: Vec<u32> = if is_list {
-                        list()?
+                Used::File { list } => {
+                    constrained_files = true;
+                    self.files.clear();
+                    if list {
+                        let mut items = args.in_values(argv)?;
+                        while let Some(item) = items.next()? {
+                            self.files.extend(integer(item).and_then(document));
+                        }
+                        self.files.sort_unstable();
+                        self.files.dedup();
                     } else {
-                        value()?.into_iter().collect()
+                        self.files.extend(integer(value).and_then(document));
                     }
-                    .into_iter()
-                    .filter(|file| (0..documents).contains(file))
-                    .map(|file| file as u32)
-                    .collect();
-                    wanted.sort_unstable();
-                    wanted.dedup();
-                    files = Some(wanted);
                 }
-                Used::Kind { list: is_list } => {
-                    let mut kinds: Vec<u16> = if is_list {
-                        list()?
+                Used::Kind { list } => {
+                    filter.kinds = true;
+                    self.kinds.clear();
+                    let kind = |value: i64| u16::try_from(value).ok();
+                    if list {
+                        let mut items = args.in_values(argv)?;
+                        while let Some(item) = items.next()? {
+                            self.kinds.extend(integer(item).and_then(kind));
+                        }
+                        self.kinds.sort_unstable();
+                        self.kinds.dedup();
                     } else {
-                        value()?.into_iter().collect()
+                        self.kinds.extend(integer(value).and_then(kind));
                     }
-                    .into_iter()
-                    .filter_map(|kind| u16::try_from(kind).ok())
-                    .collect();
-                    kinds.sort_unstable();
-                    kinds.dedup();
-                    filter.kinds = Some(kinds);
                 }
                 other => {
-                    let Some(value) = value()? else {
+                    let Some(value) = integer(value) else {
                         filter.empty = true;
                         continue;
                     };
@@ -795,9 +796,11 @@ unsafe impl VTabCursor for NodeCursor<'_> {
                 }
             }
         }
-        self.files = files.unwrap_or_else(|| (0..count as u32).collect());
+        if !constrained_files {
+            self.files.clear();
+            self.files.extend(0..count as u32);
+        }
         self.filter = filter;
-        self.batch = Some(batch);
         self.file_pos = 0;
         self.start_file();
         self.advance();
