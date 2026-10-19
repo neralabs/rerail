@@ -45,33 +45,51 @@ cost. `npm run build:native:unbounded-work` builds `target/unbounded-work/rerail
 
 `just rerail-sql-loop [args]` takes an edit under `native/src/code_rule_dsl/sql/` to a verdict in minutes. It
 builds the `loop` cargo profile (release optimisation without LTO, incremental, into `target-loop/`), then runs
-`data-layer/loop.ts run`. Every reporting clause runs alone, with its policy's `define`s, as
-`sql::tests::census` runs it, over the files in `data-layer/loop-subset.json`. Clauses run on native and on SQL in
-alternating rounds (`--rounds`, default 2), spread over `--jobs` child processes (default 3). A clause that passes
-its cap (`--cap`, default 30 s) is killed and reported as a TIMEOUT row with its time, and it stays out of later rounds.
+`data-layer/loop.ts run` over the files in `data-layer/loop-subset.json`.
+
+The reporting clauses run in units. A unit is one workspace over the subset, holding a chunk of one policy's clauses
+(`--group`, default 40) with that policy's `define`s. Units run on SQL, then on native, for `--rounds` rounds
+(default 2), spread over `--jobs` child processes (default 4).
+
+Caps:
+
+- A chunk that passes its cap (`--group-cap`, default 40 s) is killed and split, and each of its clauses runs alone.
+- A clause alone that passes its cap (`--cap`, default 20 s) is reported as a TIMEOUT row with its time. It stays
+  out of later rounds.
+- A clause that timed out, or that took 5 s or more in the previous run, starts alone.
+
+The SQL program compiles, and each worker's session opens, inside the timed apply, as they do in the whole-tree run.
+
 The verdict reports:
 
-- **Parity:** each clause's SQL lines against native's, ignoring files where native ran out of its work budget.
-- **Speed:** SQL and native wall and CPU time, summed per clause, and their ratio. It lists the costliest
-  statements, clauses, and (clause, file)s from the `unbounded-work` build's profile, and the change since the
-  previous run on the same subset and clause set.
-- **Projection:** each clause's subset SQL time is scaled to the full corpus by native's full ÷ subset time for that
-  clause, then multiplied by the calibration's correction.
-- **Program:** the whole-program SQL setup, capped by `--program-cap` (default 30 s). This compiles every clause into
-  one program and opens a first session, which the whole-tree run pays before it reads any file.
+- **Parity:** each clause's SQL lines against native's over the subset, ignoring files where native ran out of its
+  work budget.
+- **Speed:** SQL and native CPU and wall time over the units both engines finished, and their ratio. It lists the
+  costliest statements, clauses (by the statement time the profile gives each clause) and (clause, file)s. It also
+  shows the change since the previous run on the same subset and clause set.
+- **Projection:** native's whole-tree wall time times the subset's SQL/native CPU ratio, times the calibration's
+  correction.
+- **Program:** the whole-program SQL setup, capped by `--program-cap` (default 30 s). Every clause is compiled into
+  one program, and each worker's session opens. The whole-tree run pays this before it reads any file.
 
-A run is untrusted when the 1-minute load average before it is above 6, when its rounds differ by more than 10% in
-CPU time, or when any clause timed out. `--clauses a,b` keeps only the clauses whose `linter/clause` name contains
-one of the filters. Native's per-clause lines and times are cached per native source hash in
-`~/rerail-bench/data-layer/loop-cache/`. Each run is recorded in `~/rerail-bench/data-layer/loop-runs/`. Set
-`RERAIL_BENCH_LOCK=<command>` to prefix the timed run, for example with a lock that serializes measurements.
+A run is untrusted when:
+
+- the 1-minute load average before it is above 6;
+- its comparable rounds differ by more than 10% in CPU time;
+- any clause timed out.
+
+`--clauses a,b` keeps only the clauses whose `linter/clause` name contains one of the filters.
+
+Native's lines over the subset (the oracle) and its whole-tree time are cached per native source hash in
+`~/rerail-bench/data-layer/loop-cache/`. Each run is recorded in `~/rerail-bench/data-layer/loop-runs/`. To prefix
+the timed run with a command, set `RERAIL_BENCH_LOCK=<command>`, for example a lock that serializes measurements.
 
 `just rerail-sql-loop-tool <command>` runs the loop's other commands:
 
-- **`costs`** times every (clause, file) on SQL, one file per apply, each capped by `--cap`. It merges the times into
-  `~/rerail-bench/data-layer/loop-costs.json`.
-- **`select`** writes the subset. It takes a finding file and a clean file per clause, the cheapest first, and a
-  fixed-seed sample stratified by top directory and size quartile. For each hot clause it adds at most one file that
-  costs more than `--file-limit`, as long as the subset's summed SQL stays within `--sql-budget`.
-- **`calibrate`** runs each clause alone on SQL over the full corpus. It compares those times with the latest run's
-  projection, then writes the correction factor and its error into the manifest. Run it again after every `select`.
+- **`select --from <subset.json>`** writes the manifest from a distilled subset: each file, the reason it is there,
+  and each clause's native coverage over the subset.
+- **`calibrate`** runs the latest run's units over the full corpus on SQL and native. It compares the full-corpus
+  SQL/native ratio with the subset's, then writes the correction and its error into the manifest. Run it again after
+  every `select`.
+- **`costs`** times every subset file on SQL with every clause in one program, one file per apply, each capped by
+  `--cap`. The profile gives each (clause, file) its statement time. It writes `~/rerail-bench/data-layer/loop-costs.json`.

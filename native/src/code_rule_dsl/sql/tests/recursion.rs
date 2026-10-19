@@ -375,38 +375,42 @@ fn a_recursion_whose_reads_loop_back_is_refused() {
     );
 }
 
+/// A `matches` of a capture-free utility, recursive or not, kind-less or not, runs on the keys its
+/// frame demands: no per-batch stage evaluates it over every node of its root kinds.
 #[test]
-fn a_capture_free_recursive_utility_is_one_stage_shared_by_its_clauses() {
+fn a_capture_free_utility_runs_on_the_keys_its_references_demand() {
     use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
-    let utils = json!({ "tail": { "any": [
-        { "kind": "identifier", "regex": "^x$" },
-        { "kind": "member_expression", "has": { "field": "object", "matches": "tail" } },
-    ] } });
+    let utils = json!({
+        "tail": { "any": [
+            { "kind": "identifier", "regex": "^x$" },
+            { "kind": "member_expression", "has": { "field": "object", "matches": "tail" } },
+        ] },
+        "top": { "not": { "inside": { "stopBy": "end", "kind": "function_declaration" } } },
+    });
     let rules = [
         json!({ "rule": { "kind": "call_expression", "has": { "field": "function", "matches": "tail" } }, "utils": utils.clone() }),
-        json!({ "rule": { "kind": "assignment_expression", "has": { "field": "left", "matches": "tail" } }, "utils": utils }),
+        json!({ "rule": { "kind": "call_expression", "matches": "top", "any": [
+            { "has": { "field": "function", "matches": "top" } },
+            { "has": { "field": "function", "matches": "tail" } },
+        ] }, "utils": utils }),
     ];
-    let compiled: Vec<CompiledCodeRuleDsl> = rules.into_iter().map(compiled).collect();
-    let grammars: Vec<_> = compiled
-        .iter()
-        .map(|rule| &grammar_matchers(rule)[0])
-        .collect();
-    let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
-    let (stages, _) = program.statement_count();
-    let single: Vec<_> = grammars[..1].to_vec();
-    let (alone, _) = crate::code_rule_dsl::sql::compile(&single)
-        .expect("compiles")
-        .statement_count();
-    assert_eq!(
-        stages, alone,
-        "the second clause reuses the first one's stage"
-    );
+    let source = "x.a();\nfunction f() { x.b(); y.c(); }\ny.d();\n";
+    for rule in rules {
+        let found = agreed("typescript", rule.clone(), None, source);
+        assert!(!found.is_empty(), "{rule}");
+        let rule = compiled(rule);
+        let grammars = vec![&grammar_matchers(&rule)[0]];
+        let (stages, _) = crate::code_rule_dsl::sql::compile(&grammars)
+            .expect("compiles")
+            .statement_count();
+        assert_eq!(stages, 0, "a stage stands for a `matches`");
+    }
 }
 
 /// A recursive utility of a three-valued clause returns its body's unknown verdicts through
 /// `matches` (`testUnknown` is unknown where its regex matches): `u.a()` is neither matched nor
-/// matched by the negation, both in a capture-free cycle (a three-valued per-batch stage) and in
-/// one whose frames bind a capture (a unit whose answers carry `unk`).
+/// matched by the negation, both in a capture-free cycle and in one whose frames bind a capture
+/// (units whose answers carry `unk`).
 #[test]
 fn a_three_valued_recursive_utility_returns_unknown_verdicts() {
     use crate::code_rule_dsl::sql::terminals::calls::UNKNOWN_VERDICTS;
@@ -745,7 +749,8 @@ fn the_capacity_limits_are_far_above_real_patterns_and_calls() {
 #[test]
 fn a_recursion_level_runs_a_bounded_number_of_statements_per_batch() {
     use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
-    // A capture-free recursion (a per-batch stage) and one that binds a capture (a frame loop).
+    // A capture-free recursion and one that binds a capture: both are frame loops over the keys
+    // their references demand.
     let rules = [
         json!({
             "rule": { "kind": "call_expression", "matches": "tail" },
@@ -771,7 +776,7 @@ fn a_recursion_level_runs_a_bounded_number_of_statements_per_batch() {
         passes.extend(program.loop_statements());
     }
     eprintln!("statements per recursion level: {passes:?}");
-    assert_eq!(passes, [61, 43]);
+    assert_eq!(passes, [63, 43]);
 }
 
 /// Every table a statement creates has one column list: a three-valued `all`'s frames are not

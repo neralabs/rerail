@@ -58,10 +58,6 @@ pub(super) struct ProgramBuilder {
     /// stage again (to key it by its SQL) reuses them.
     leaves: HashMap<(usize, Vec<(String, SlotKind)>), usize>,
     recursion: Recursion,
-    /// A capture-free recursive utility's stage, per utility and dialect.
-    recursive_stages: HashMap<(UtilKey, String), usize>,
-    /// The stages of each capture-free cycle's members, by the digest of the cycle's loop.
-    recursive_stage_index: HashMap<String, Vec<usize>>,
     /// The members of the cycles whose units are being lowered.
     in_progress: HashSet<UtilKey>,
     /// When set, an operator the engine does not lower is recorded here and lowered as `Never`,
@@ -131,8 +127,6 @@ struct Lowerer<'p> {
     exclude: Option<String>,
     /// The slot of each row's root, under `violation.each`.
     root: Option<SlotId>,
-    /// While lowering a capture-free cycle's stage: its members' units.
-    stage_members: HashMap<UtilKey, usize>,
     /// The terminals' related-node walks lowered so far (`Walk::Related`).
     sources: Vec<Source>,
     /// While lowering a parsed tree's rule (`parse`): where its host is. Its nodes are no
@@ -244,7 +238,6 @@ fn referred(op: &Op, out: &mut Vec<usize>) {
         | Op::Pattern { .. }
         | Op::Never
         | Op::NthChild { .. }
-        | Op::Stage(_)
         | Op::EachRoot { .. }
         | Op::Excluded { .. }
         | Op::Fact { .. }
@@ -341,7 +334,6 @@ impl<'p> Lowerer<'p> {
             unit_utils: Vec::new(),
             exclude: None,
             root: None,
-            stage_members: HashMap::new(),
             sources: Vec::new(),
             tree: None,
             shared: HashSet::new(),
@@ -444,9 +436,7 @@ impl<'p> Lowerer<'p> {
             })
             .unwrap_or(true);
         (!leaky).then(|| Cycle {
-            members: vec![util.clone()],
             keys: vec![key],
-            capture_free: false,
             refused: None,
         })
     }
@@ -504,7 +494,6 @@ impl<'p> Lowerer<'p> {
         self.units.push(Unit {
             key: key.clone(),
             body: Op::Never,
-            seed: None,
             scc: 0,
         });
         self.unit_utils.push(util.clone());
@@ -526,108 +515,6 @@ impl<'p> Lowerer<'p> {
             self.units[id].body = lowered?.0;
         }
         Ok((id, own))
-    }
-
-    /// The stage of `util`, a member of the capture-free `cycle`: every member is a unit of one
-    /// statement, evaluated over every node of its root kinds in a loop, and each member's
-    /// matches are a stage of their own. Equal cycles (equal SQL) are one.
-    fn recursive_stage(&mut self, cycle: &Cycle, util: &UtilRef) -> Result<usize, Unsupported> {
-        let dialect = self.stage_key();
-        if let Some(&stage) = self
-            .program
-            .recursive_stages
-            .get(&(util_key(util), dialect.clone()))
-        {
-            return Ok(stage);
-        }
-        let mut lowerer = Lowerer::new(self.program, self.dialect);
-        lowerer.three = self.three;
-        lowerer.slot(INTERNAL, ORIGIN, SlotKind::Node);
-        let targets: Vec<AstMatcher> = cycle
-            .members
-            .iter()
-            .filter_map(|member| member.with_target(Clone::clone))
-            .collect();
-        lowerer.shared = recursion::repeated(&targets.iter().collect::<Vec<_>>());
-        for (index, member) in cycle.members.iter().enumerate() {
-            let seed = member
-                .with_target(|rule| root_kinds(rule, 0).map(|kinds| kinds.into_iter().collect()))
-                .flatten();
-            lowerer.units.push(Unit {
-                key: Vec::new(),
-                body: Op::Never,
-                seed: Some(seed),
-                scc: 0,
-            });
-            lowerer.unit_utils.push(member.clone());
-            lowerer.stage_members.insert(cycle.keys[index], index);
-        }
-        let entered: Vec<UtilKey> = cycle
-            .keys
-            .iter()
-            .copied()
-            .filter(|key| lowerer.program.in_progress.insert(*key))
-            .collect();
-        let mut bodies = Vec::new();
-        for member in &cycle.members {
-            let lowered = member.with_target(|rule| lowerer.lower(rule, 0, &BTreeSet::new()));
-            match lowered {
-                Some(Ok((body, _))) => bodies.push(body),
-                Some(Err(error)) => {
-                    for key in &entered {
-                        lowerer.program.in_progress.remove(key);
-                    }
-                    return Err(error);
-                }
-                None => bodies.push(Op::Never),
-            }
-        }
-        for key in &entered {
-            lowerer.program.in_progress.remove(key);
-        }
-        for (unit, body) in lowerer.units.iter_mut().zip(bodies) {
-            unit.body = body;
-        }
-        let op = lowerer.unknowable(Op::Never);
-        let statement = lowerer.finish(None, op);
-        let leader = emit::recursive_stage(&statement);
-        let digest = format!("{dialect}:recursive:{}", leader.statements.join(";\n"));
-        let stages = match self.program.recursive_stage_index.get(&digest) {
-            Some(stages) => stages.clone(),
-            None => {
-                let first = self.program.stages.len();
-                let namespace = emit::stage_namespace(first);
-                self.program.stages.push(Stage {
-                    dialect: self.dialect,
-                    sql: leader,
-                    three: self.three,
-                });
-                let mut stages = vec![first];
-                for unit in 1..cycle.members.len() {
-                    stages.push(self.program.stages.len());
-                    self.program.stages.push(Stage {
-                        dialect: self.dialect,
-                        sql: emit::recursive_member(&namespace, unit, self.three),
-                        three: self.three,
-                    });
-                }
-                self.program
-                    .recursive_stage_index
-                    .insert(digest, stages.clone());
-                stages
-            }
-        };
-        for (key, stage) in cycle.keys.iter().zip(&stages) {
-            self.program
-                .recursive_stages
-                .insert((*key, dialect.clone()), *stage);
-        }
-        let index = cycle
-            .keys
-            .iter()
-            .position(|key| *key == util_key(util))
-            .expect("a member");
-        Ok(stages[index])
     }
 
     fn slot(&mut self, scope: usize, name: &str, kind: SlotKind) -> SlotId {
@@ -1145,38 +1032,25 @@ impl<'p> Lowerer<'p> {
                     if self.tree.is_some() {
                         return unsupported("recursive utility inside parse");
                     }
-                    if let Some(&unit) = self.stage_members.get(&util_key(util)) {
-                        return Ok((Op::Recur { unit, slots: None }, bound.clone()));
-                    }
-                    if cycle.capture_free && !self.excluding_bound(scope, bound) {
-                        let stage = self.recursive_stage(&cycle, util)?;
-                        return Ok((Op::Stage(stage), bound.clone()));
-                    }
                     let exclude = self.exclude.clone();
                     let (unit, _) = self.unit(&cycle, util, None, scope, exclude)?;
                     let mut out = bound.clone();
                     out.extend(self.units[unit].key.iter().copied());
                     return Ok((Op::Recur { unit, slots: None }, out));
                 }
-                let staged = self.tree.is_none()
-                    && !self.excluding_bound(scope, bound)
-                    && util.with_target(capture_free).unwrap_or(false);
-                if !staged && let Some(cycle) = self.shared_unit(util) {
+                // A `matches` evaluates its utility on the frame's nodes only (demand-driven, as
+                // the matcher's memo): inlined, or a unit where two or more references reach it.
+                // Only whole-set readers (stop rules, `ofRule`) make a capture-free rule a
+                // per-batch stage over every node of its root kinds.
+                if let Some(cycle) = self.shared_unit(util) {
                     let exclude = self.exclude.clone();
                     let (unit, _) = self.unit(&cycle, util, None, scope, exclude)?;
                     let mut out = bound.clone();
                     out.extend(self.units[unit].key.iter().copied());
                     return Ok((Op::Recur { unit, slots: None }, out));
                 }
-                util.with_target(|rule| {
-                    if staged {
-                        self.stage(rule)
-                            .map(|stage| (Op::Stage(stage), bound.clone()))
-                    } else {
-                        self.lower(rule, scope, bound)
-                    }
-                })
-                .expect("a filled utility")
+                util.with_target(|rule| self.lower(rule, scope, bound))
+                    .expect("a filled utility")
             }
             AstMatcher::Call(call) => {
                 if call.util.with_target(|_| ()).is_none() {

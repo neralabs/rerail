@@ -264,6 +264,8 @@ fn attribute(profile: std::collections::HashMap<String, (u64, usize, usize)>) {
             "stage result"
         } else if sql.contains("WITH RECURSIVE") {
             "recursive walk (rule stop)"
+        } else if sql.contains("nearest") {
+            "rule-stop walk (nearest)"
         } else if sql.contains("FROM runs") {
             "root frame"
         } else if sql.contains("GROUP BY") {

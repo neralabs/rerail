@@ -46,12 +46,12 @@
 //!   `unk`, and an unknown answer keeps the key's bindings, so a reference reads it as the
 //!   matcher's `matches` does. Units are emptied between rounds, as the memo's generation
 //!   changes with each recorded range.
-//! - **Stages** (capture-free shared utilities and recursive cycles, matched once per batch
-//!   excluding nothing; a relation's rule is not staged but keyed, `emit/keyed.rs`): a
+//! - **Stages** (stop rules and capture-free `ofRule`s, matched once per batch excluding
+//!   nothing; a `matches` is never staged, and a relation's rule is keyed, `emit/keyed.rs`): a
 //!   capture-free rule binds nothing, but its choice points test the trial it runs on, so where
 //!   the excluded capture may be bound on entry (`Lowerer::excluding_bound`) it is lowered in
-//!   place, with its wrappers, and a capture-free cycle becomes units; elsewhere no row it runs
-//!   on binds the capture and its stage is exact.
+//!   place, with its wrappers; elsewhere no row it runs on binds the capture and its stage is
+//!   exact.
 //! - **Rounds** (`run.rs` `enumerate`, `match_rule`): a root whose verdict is unknown does not
 //!   match, so it is not visited and its enumeration ends. `clause_each` reads the matches with
 //!   `unk = 0` only: an unknown root is neither reported nor kept for the next round.

@@ -557,16 +557,28 @@ unsafe impl<'vtab> VTab<'vtab> for NodeTable {
             used.push((index, Used::IdEq));
             cost = 1.0;
         } else if let Some(index) = parent {
+            // Children ascend along the chain: an id range starts it later and ends it earlier.
             used.push((index, Used::Parent));
+            used.extend(id_lo);
+            used.extend(id_hi);
             cost = 10.0;
         } else if let (Some(hi), Some(last)) = (id_hi, last) {
             used.push((hi.0, hi.1));
             used.push((last.0, last.1));
             cost = 10.0;
         } else if id_lo.is_some() || id_hi.is_some() {
+            // A range bounded on both sides (a subtree's) yields fewer ids than one bounded on one
+            // side, which runs to an end of the file: the planner must prefer it, or it bounds the
+            // range on one side and filters the rest of the file row by row.
+            cost = if id_lo.is_some() && id_hi.is_some() {
+                20.0
+            } else if kind.is_some() {
+                50.0
+            } else {
+                100.0
+            };
             used.extend(id_lo);
             used.extend(id_hi);
-            cost = if kind.is_some() { 50.0 } else { 100.0 };
         } else if kind.is_some() {
             cost = 1_000.0;
         } else {
@@ -734,10 +746,11 @@ impl NodeCursor<'_> {
         let lo = filter.id_lo.unwrap_or(0);
         let hi = filter.id_hi.map_or(len, |hi| hi.saturating_add(1).min(len));
         self.source = if let Some(parent) = filter.parent {
-            let first = if parent < len {
-                facts.first(parent)
-            } else {
-                NONE
+            // From the range's first id where it is a child, else the first child.
+            let first = match filter.id_lo {
+                _ if parent >= len => NONE,
+                Some(lo) if lo < len && facts.parent(lo) == parent => lo,
+                _ => facts.first(parent),
             };
             if first == NONE {
                 Source::Done
@@ -798,7 +811,7 @@ impl NodeCursor<'_> {
             }),
             Source::Chain(next) => {
                 let id = *next;
-                if id == NONE {
+                if id == NONE || self.filter.id_hi.is_some_and(|hi| id > hi) {
                     return None;
                 }
                 *next = facts.nsib(id);
