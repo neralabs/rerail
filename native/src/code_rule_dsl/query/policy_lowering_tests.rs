@@ -859,7 +859,7 @@ fn packed_repeated_capture_pattern_and_sql_equality_execute_together() {
 }
 
 #[test]
-fn phase_two_comparison_and_value_have_exact_relational_sql_and_catalogs() {
+fn phase_two_comparison_and_value_have_relational_sql_and_ordered_catalogs() {
     let comparison = code_rule(json!({
         "all": [
             { "pattern": "$A + $B" },
@@ -991,7 +991,7 @@ fn disabled_when_is_an_executable_empty_relation_without_terminal_work() {
     assert_eq!(sql_ranges(&compiled, "x\n"), Vec::<(usize, usize)>::new());
 }
 
-fn sql_ranges(
+pub(super) fn sql_ranges(
     compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
     source: &str,
 ) -> Vec<(usize, usize)> {
