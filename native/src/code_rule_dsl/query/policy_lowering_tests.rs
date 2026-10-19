@@ -1211,11 +1211,28 @@ fn sql_outcome_with_failure(
         .prepare(statement.unwrap_or_else(|| plan.sql()))
         .expect("executable SQL plan")
         .query_map([token], |row| {
+            let named = |name| row.as_ref().column_index(name).ok();
+            let get_optional = |name| {
+                named(name)
+                    .map(|index| row.get::<_, Option<i64>>(index))
+                    .transpose()
+                    .map(Option::flatten)
+            };
             Ok((
-                row.get::<_, i64>(1)?,
-                row.get::<_, Option<i64>>(10)?,
-                row.get::<_, Option<String>>(26)?,
-                row.get::<_, String>(35)?,
+                named("row_kind")
+                    .map(|index| row.get::<_, i64>(index))
+                    .transpose()?
+                    .unwrap_or(3),
+                get_optional("node")?,
+                named("error_code")
+                    .map(|index| row.get::<_, Option<String>>(index))
+                    .transpose()?
+                    .flatten(),
+                named("bindings")
+                    .map(|index| row.get::<_, String>(index))
+                    .transpose()?
+                    .unwrap_or_else(|| "[]".to_owned()),
+                get_optional("argument_node")?.or(get_optional("target_node")?),
             ))
         })
         .expect("SQL structural query")
@@ -1276,15 +1293,15 @@ fn sql_outcome_with_failure(
     let anchor = &compiled.inner.clauses[0].violation.anchor;
     let mut errors = rows
         .iter()
-        .filter(|(row_kind, _, _, _)| *row_kind == 8)
-        .map(|(_, _, error, _)| error.clone().expect("a failure row has an error code"))
+        .filter(|(row_kind, _, _, _, _)| *row_kind == 8)
+        .map(|(_, _, error, _, _)| error.clone().expect("a failure row has an error code"))
         .collect::<Vec<_>>();
     errors.sort();
     errors.dedup();
     let mut ranges = rows
         .into_iter()
-        .filter(|(row_kind, _, _, _)| *row_kind != 8)
-        .map(|(_, node, _, bindings)| {
+        .filter(|(row_kind, _, _, _, _)| *row_kind != 8)
+        .map(|(_, node, _, bindings, argument_node)| {
             let node = node.expect("a violation row has a node");
             let node = match anchor {
                 Anchor::Capture(label) => serde_json::from_str::<serde_json::Value>(&bindings)
@@ -1294,6 +1311,7 @@ fn sql_outcome_with_failure(
                     .iter()
                     .find(|binding| binding["label"] == *label && binding["kind"] == 1)
                     .and_then(|binding| binding["node"].as_i64())
+                    .or(argument_node)
                     .unwrap_or(node),
                 Anchor::Span | Anchor::Start | Anchor::End | Anchor::FileStart => node,
             };
