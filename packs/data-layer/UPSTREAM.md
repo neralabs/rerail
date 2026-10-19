@@ -27,3 +27,9 @@ It preserves original parsed source, caller configuration, and analyzer/reporter
 Its supplemental corpus is `batch-03-probes.json`.
 Swallowed-exception source detections and signed aggregate reporter results remain separate contracts.
 See [the third-batch report](../../docs/data-layer-batch-three.md).
+
+The fourth batch records nine available original pytest modules and mechanically translates literal classifier inputs.
+Its Rust check has no upstream test module at this pin.
+`batch-04-probes.json` provides positive and clean Rust cases and preserves unresolved native failures.
+This batch does not have complete detection parity.
+See [the fourth-batch report](../../docs/data-layer-batch-four.md).

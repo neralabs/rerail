@@ -22,3 +22,10 @@ The [second-batch report](../../../docs/data-layer-batch-two.md) explains produc
 The native gate compares 167 calls and retains nine signed aggregate reporter calls separately.
 `batch-03-evidence.json` distinguishes source detection parity from retained integration contracts.
 See [the third-batch report](../../../docs/data-layer-batch-three.md).
+
+`batch-04-recording.json` contains the fourth batch’s original analyzer calls and mechanically translated classifier inputs.
+`batch-04-probes.json` contains 118 supplemental cases, including positive and clean Rust cases.
+The strict replay currently fails on explicit gaps; these files are not a passing parity certificate.
+`batch-04-evidence.json` records exact failures and repository measurements.
+Use `data_layer_record.py --batch 4` and `data_layer_probe_four.py` to regenerate their oracle results.
+See [the fourth-batch report](../../../docs/data-layer-batch-four.md).

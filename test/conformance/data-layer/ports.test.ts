@@ -167,3 +167,51 @@ it.each([
   expect(result.failures).toEqual([]);
   expect(result.violations.map((finding: { code: string; span: { startLine: number } }) => [finding.code, finding.span.startLine + 1])).toEqual(codes);
 });
+
+it("matches fourth-batch upstream detections without claiming missing positive coverage", async () => {
+  const { passed, summary } = await run(undefined, fixturesPath("host", "data-layer-port", "batch-04-recording.json"));
+  expect(passed).toBe(false);
+  expect(summary).toEqual({ replayedCalls: 206, positiveCalls: 130, cleanCalls: 76,
+    falsePositives: 0, falseNegatives: 0, engineFailures: 0, executionPathDifferences: 0,
+    missingCoverage: [{ check: "grammar_allowlist_burndown", positive: 0, clean: 0 },
+      { check: "rust_sql_grammar_boundary", positive: 0, clean: 0 }] });
+}, 60_000);
+
+it("keeps the fourth-batch positive gaps and helper-cycle failures explicit", async () => {
+  const output = join(mkdtempSync(join(tmpdir(), "rerail-data-layer-fourth-gaps-")), "report.json");
+  const passed = await replay(fixturesPath("host", "data-layer-port", "batch-04-probes.json"), output);
+  const report = z.object({
+    rows: z.array(z.object({ test: z.string(), falsePositives: z.array(z.string()), falseNegatives: z.array(z.string()),
+      engineFailures: z.array(z.unknown()), statelessFailures: z.array(z.unknown()) })),
+  }).parse(JSON.parse(readFileSync(output, "utf8")));
+  const summary = summarySchema.parse(JSON.parse(readFileSync(output, "utf8")));
+  expect(passed).toBe(false);
+  expect(summary).toEqual({ replayedCalls: 224, positiveCalls: 133, cleanCalls: 91,
+    falsePositives: 0, falseNegatives: 14, engineFailures: 8, executionPathDifferences: 0, missingCoverage: [] });
+  const failingCases = [...new Set(report.rows.filter(row => row.falsePositives.length + row.falseNegatives.length
+    + row.engineFailures.length + row.statelessFailures.length > 0).map(row => row.test.replace(/:(analyzer|plugin|production-detector)$/, "")))].sort();
+  expect(failingCases).toEqual([
+    "probe:grammar_callable_constructors:cross-file-constructor",
+    "probe:grammar_fragment_usage:alias-string-container",
+    "probe:grammar_fragment_usage:cycle",
+    "probe:grammar_fragment_usage:unreachable-cycle",
+    "probe:regex_sql_parsing:fstring",
+    "probe:render_raw_strings:fstring",
+    "probe:render_raw_strings:nested",
+    "probe:sql_grammar_escape_hatches:cross-file-inheritance",
+  ]);
+}, 60_000);
+
+it("rejects an empty fourth-batch detector on the original positive corpus", async () => {
+  const { passed, summary } = await run(sentinel("\\b\\B"), fixturesPath("host", "data-layer-port", "batch-04-recording.json"));
+  expect(passed).toBe(false);
+  expect(summary.falseNegatives).toBe(146);
+  expect(summary.engineFailures).toBe(0);
+}, 60_000);
+
+it("rejects an always-reporting fourth-batch detector on the original clean corpus", async () => {
+  const { passed, summary } = await run(sentinel("\\A"), fixturesPath("host", "data-layer-port", "batch-04-recording.json"));
+  expect(passed).toBe(false);
+  expect(summary.falsePositives).toBeGreaterThan(0);
+  expect(summary.engineFailures).toBe(0);
+}, 60_000);

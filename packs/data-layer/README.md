@@ -1,6 +1,7 @@
 # Data-layer candidate rules
 
-This private pack contains the first thirty ports from the pinned data-layer revision.
+This private pack contains forty authored candidates from the pinned data-layer revision.
+The fourth batch has unresolved parity gaps and is incomplete.
 The policies are in `candidates/rules/` and are not activated by the pack manifest.
 
 Run the original tests with `scripts/dsl/data_layer_record.py`.
@@ -13,3 +14,5 @@ The [second-batch report](../../docs/data-layer-batch-two.md) covers annotation,
 The source reference is in [UPSTREAM.md](UPSTREAM.md).
 
 The [third-batch report](../../docs/data-layer-batch-three.md) covers ownership, callbacks, exception detection, and caches.
+
+The [fourth-batch report](../../docs/data-layer-batch-four.md) records SQL grammar candidates, Rust coverage, upstream ambiguities, and explicit failures.

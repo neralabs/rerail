@@ -1,3 +1,6 @@
+Current continuation: [batch four](data-layer-batch-four.md) adds ten candidates with explicit unresolved parity gaps.
+The first thirty candidates are committed at `905212f6`.
+
 # Data-layer first-batch execution report
 
 The first ten checks now have native Rerail candidate policies and a working recording and replay harness.

@@ -1,0 +1,2245 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-regex-sql-parsing",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer regex_sql_parsing at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "data_layer/**/*.py",
+      "impl/**/*.py",
+      "_internal/**/*.py",
+      "l[0-9][0-9][0-9][0-9]_*/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/tests/**",
+      "**/test/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "language": "python",
+        "utils": {
+          "regex-false-positive": {
+            "value": {
+              "regex": "(?:(?i:-----BEGIN))|(?:(?i:-----END))|(?:(?i:File\\\\s\\+\"))|(?:(?i:at\\\\s\\+line))|(?:\\^\\s*sys_)|(?:\\^\\s*\\w+_embeddings\\$)|(?:Invalid ID value)|(?:internal\\|prod\\|staging)|(?:\\\\.internal\\\\b)|(?:(?i:collection))|(?:(?i:branch\\\\s))|(?:(?i:revision\\\\s))|(?:\\\\bRow\\\\b)|(?:ns not found)|(?:field not found|unknown field)|(?:(?i:api\\[_\\-\\]\\?key))|(?:(?i:api_key))|(?:(?i:secret\\[_\\-\\]\\?key))|(?:(?i:secret_key))|(?:(?i:password|passwd|pwd))|(?:(?i:token\\[\\\\\"))|(?:(?i:bearer\\\\s))|(?:(?i:host\\|password\\|user\\|pwd\\|passwd\\|secret\\|token\\|key\\|auth))|(?:\\[SQL statement\\]|\\[table\\]|\\[column\\])|(?:table\\\\s\\+\\[)|(?:column\\\\s\\+\\[)|(?:field\\\\s\\+\\[)|(?:mode=\\[?\\^?\\&?\\]?\\*?$)"
+            }
+          },
+          "regex-error-message": {
+            "value": {
+              "regex": "(?:(?i:no such table))|(?:(?i:no such column))|(?:(?i:Unknown column))|(?:(?i:Unknown table))|(?:(?i:does not exist))|(?:(?i:not found))|(?:(?i:relation.*\\\"))|(?:(?i:Table\\\\s\\+'))|(?:(?i:column\\\\s\\+\\\"))|(?:(?i:table not found))"
+            }
+          },
+          "regex-sql-syntax": {
+            "value": {
+              "regex": "(?:(?i:\\\\b(?:SELECT|INSERT|UPDATE|DELETE)\\\\b))|(?:(?i:\\bSELECT\\b.*\\bFROM\\b))|(?:(?i:\\b(?:SELECT|INSERT|UPDATE|DELETE)\\b))|(?:(?i:\\b(?:DROP|TRUNCATE|ALTER|CREATE)\\b.*\\bTABLE\\b))|(?:(?i:\\b(?:DROP|TRUNCATE|ALTER)\\b))|(?:(?i:\\bFROM\\\\s))|(?:(?i:\\bINTO\\\\s))|(?:(?i:\\bJOIN\\\\s))|(?:(?i:\\bWHERE\\\\s))|(?:(?i:\\bSET\\\\s))|(?:(?i:ON\\s+(?:DELETE|UPDATE)\\s+))|(?:(?i:ON DELETE))|(?:(?i:ON UPDATE))|(?:(?i:\\\\bBEFORE\\\\b))|(?:(?i:\\\\bAFTER\\\\b))|(?:(?i:INSTEAD\\\\s\\+OF))|(?:(?i:INSTEAD\\s+OF))|(?:(?i:WHEN.*BEGIN))|(?:(?i:CHECK\\\\s\\*\\\\))|(?:(?i:\\bCHECK\\s*\\())|(?:(?i:json_valid))|(?:(?i:=\\s*ANY\\s*\\\\?\\())|(?:(?i:\\bIN\\s*\\\\?\\())|(?:--\\[\\\\?\\^)|(?:/\\\\\\*)|(?:(?:^|[^%])%s)|(?:\\\\\\$\\\\d)|(?:\\\\bIN\\\\s\\*\\\\)|(?:(?i:\\\\bLIKE\\\\s))|(?:(?i:\\bLIKE\\b))|(?:(?i:\\bCONSTRAINT\\\\s))|(?:(?i:\\bUSING\\\\s))|(?:(?i:INTEGER\\\\s\\+PRIMARY))|(?:(?i:\\\\bINDEX\\\\b))|(?:(?i:nera_session))|(?:(?i:mode=\\[))|(?:(?i:\\bKEY\\b|\\bINDEX\\b|\\bFULLTEXT\\b))|(?:(?i:fts5))|(?:(?i:=\\\\s\\*NULL|!=\\\\s\\*NULL|IS NULL|IS NOT NULL))|(?:(?i:=\\s*NULL))|(?:%\\(\\\\w)"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "category-0",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:re)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:compile|findall|fullmatch|match|search|split|sub)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "string"
+                                          },
+                                          {
+                                            "not": {
+                                              "regex": "(?i)^[rub]*f"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "concatenated_string"
+                                          },
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "regex": "(?i)^[rub]*f"
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "not": {
+                                      "inside": {
+                                        "kind": "concatenated_string",
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "value": {
+                                      "type": "str"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-false-positive"
+                                }
+                              },
+                              {
+                                "matches": "regex-error-message"
+                              }
+                            ]
+                          },
+                          {
+                            "nthChild": {
+                              "position": 1,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "ERROR_MSG_PARSE",
+        "anchor": "witness.span",
+        "message": "ERROR_MSG_PARSE: category-0"
+      }
+    },
+    {
+      "id": "category-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:re)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:compile|findall|fullmatch|match|search|split|sub)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "string"
+                                          },
+                                          {
+                                            "not": {
+                                              "regex": "(?i)^[rub]*f"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "concatenated_string"
+                                          },
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "regex": "(?i)^[rub]*f"
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "not": {
+                                      "inside": {
+                                        "kind": "concatenated_string",
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "value": {
+                                      "type": "str"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-false-positive"
+                                }
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "matches": "regex-sql-syntax"
+                                  },
+                                  {
+                                    "value": {
+                                      "regex": "--\\[?\\\\?\\^|/\\\\\\*"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-error-message"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "nthChild": {
+                              "position": 1,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SQL_COMMENT_STRIP",
+        "anchor": "witness.span",
+        "message": "SQL_COMMENT_STRIP: category-1"
+      }
+    },
+    {
+      "id": "category-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:re)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:compile|findall|fullmatch|match|search|split|sub)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "string"
+                                          },
+                                          {
+                                            "not": {
+                                              "regex": "(?i)^[rub]*f"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "concatenated_string"
+                                          },
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "regex": "(?i)^[rub]*f"
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "not": {
+                                      "inside": {
+                                        "kind": "concatenated_string",
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "value": {
+                                      "type": "str"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-false-positive"
+                                }
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "matches": "regex-sql-syntax"
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "value": {
+                                              "regex": "(?i)(?:^|[^%])%S|\\\\?\\\\\\$\\\\?\\\\?D|\\\\\\?"
+                                            }
+                                          },
+                                          {
+                                            "not": {
+                                              "value": {
+                                                "regex": "(?i)SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "value": {
+                                          "regex": "(?i)\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*\\\\\\?|\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*%s"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-error-message"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "--\\[?\\\\?\\^|/\\\\\\*"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "nthChild": {
+                              "position": 1,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SQL_PARAM_NORMALIZE",
+        "anchor": "witness.span",
+        "message": "SQL_PARAM_NORMALIZE: category-2"
+      }
+    },
+    {
+      "id": "category-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:re)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:compile|findall|fullmatch|match|search|split|sub)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "string"
+                                          },
+                                          {
+                                            "not": {
+                                              "regex": "(?i)^[rub]*f"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "concatenated_string"
+                                          },
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "regex": "(?i)^[rub]*f"
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "not": {
+                                      "inside": {
+                                        "kind": "concatenated_string",
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "value": {
+                                      "type": "str"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-false-positive"
+                                }
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "matches": "regex-sql-syntax"
+                                  },
+                                  {
+                                    "value": {
+                                      "regex": "(?i)ON\\s+DELETE|ON\\s+UPDATE|ON DELETE|ON UPDATE|CHECK|json_valid|=\\s*ANY\\s*\\("
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-error-message"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "--\\[?\\\\?\\^|/\\\\\\*"
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "all": [
+                                            {
+                                              "value": {
+                                                "regex": "(?i)(?:^|[^%])%S|\\\\?\\\\\\$\\\\?\\\\?D|\\\\\\?"
+                                              }
+                                            },
+                                            {
+                                              "not": {
+                                                "value": {
+                                                  "regex": "(?i)SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN"
+                                                }
+                                              }
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": {
+                                            "regex": "(?i)\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*\\\\\\?|\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*%s"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "nthChild": {
+                              "position": 1,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "CONSTRAINT_PARSE",
+        "anchor": "witness.span",
+        "message": "CONSTRAINT_PARSE: category-3"
+      }
+    },
+    {
+      "id": "category-4",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:re)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:compile|findall|fullmatch|match|search|split|sub)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "string"
+                                          },
+                                          {
+                                            "not": {
+                                              "regex": "(?i)^[rub]*f"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "concatenated_string"
+                                          },
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "regex": "(?i)^[rub]*f"
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "not": {
+                                      "inside": {
+                                        "kind": "concatenated_string",
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "value": {
+                                      "type": "str"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-false-positive"
+                                }
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "matches": "regex-sql-syntax"
+                                  },
+                                  {
+                                    "value": {
+                                      "regex": "(?i)IN\\s*\\\\\\(|\\\\s\\+IN\\\\s"
+                                    }
+                                  },
+                                  {
+                                    "not": {
+                                      "value": {
+                                        "regex": "(?i)SELECT|INSERT|DELETE|FROM|WHERE"
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-error-message"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "--\\[?\\\\?\\^|/\\\\\\*"
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "all": [
+                                            {
+                                              "value": {
+                                                "regex": "(?i)(?:^|[^%])%S|\\\\?\\\\\\$\\\\?\\\\?D|\\\\\\?"
+                                              }
+                                            },
+                                            {
+                                              "not": {
+                                                "value": {
+                                                  "regex": "(?i)SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN"
+                                                }
+                                              }
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": {
+                                            "regex": "(?i)\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*\\\\\\?|\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*%s"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)ON\\s+DELETE|ON\\s+UPDATE|ON DELETE|ON UPDATE|CHECK|json_valid|=\\s*ANY\\s*\\("
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "nthChild": {
+                              "position": 1,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "CONSTRAINT_PARSE",
+        "anchor": "witness.span",
+        "message": "CONSTRAINT_PARSE: category-4"
+      }
+    },
+    {
+      "id": "category-5",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:re)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:compile|findall|fullmatch|match|search|split|sub)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "string"
+                                          },
+                                          {
+                                            "not": {
+                                              "regex": "(?i)^[rub]*f"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "concatenated_string"
+                                          },
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "regex": "(?i)^[rub]*f"
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "not": {
+                                      "inside": {
+                                        "kind": "concatenated_string",
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "value": {
+                                      "type": "str"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-false-positive"
+                                }
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "matches": "regex-sql-syntax"
+                                  },
+                                  {
+                                    "value": {
+                                      "regex": "(?i)BEFORE|AFTER|INSTEAD|WHEN.*BEGIN"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-error-message"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "--\\[?\\\\?\\^|/\\\\\\*"
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "all": [
+                                            {
+                                              "value": {
+                                                "regex": "(?i)(?:^|[^%])%S|\\\\?\\\\\\$\\\\?\\\\?D|\\\\\\?"
+                                              }
+                                            },
+                                            {
+                                              "not": {
+                                                "value": {
+                                                  "regex": "(?i)SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN"
+                                                }
+                                              }
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": {
+                                            "regex": "(?i)\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*\\\\\\?|\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*%s"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)ON\\s+DELETE|ON\\s+UPDATE|ON DELETE|ON UPDATE|CHECK|json_valid|=\\s*ANY\\s*\\("
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)IN\\s*\\\\\\(|\\\\s\\+IN\\\\s"
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "value": {
+                                          "regex": "(?i)SELECT|INSERT|DELETE|FROM|WHERE"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "nthChild": {
+                              "position": 1,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "TRIGGER_PARSE",
+        "anchor": "witness.span",
+        "message": "TRIGGER_PARSE: category-5"
+      }
+    },
+    {
+      "id": "category-6",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:re)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:compile|findall|fullmatch|match|search|split|sub)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "string"
+                                          },
+                                          {
+                                            "not": {
+                                              "regex": "(?i)^[rub]*f"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "concatenated_string"
+                                          },
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "regex": "(?i)^[rub]*f"
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "not": {
+                                      "inside": {
+                                        "kind": "concatenated_string",
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "value": {
+                                      "type": "str"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-false-positive"
+                                }
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "matches": "regex-sql-syntax"
+                                  },
+                                  {
+                                    "value": {
+                                      "regex": "(?i)LIKE"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-error-message"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "--\\[?\\\\?\\^|/\\\\\\*"
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "all": [
+                                            {
+                                              "value": {
+                                                "regex": "(?i)(?:^|[^%])%S|\\\\?\\\\\\$\\\\?\\\\?D|\\\\\\?"
+                                              }
+                                            },
+                                            {
+                                              "not": {
+                                                "value": {
+                                                  "regex": "(?i)SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN"
+                                                }
+                                              }
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": {
+                                            "regex": "(?i)\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*\\\\\\?|\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*%s"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)ON\\s+DELETE|ON\\s+UPDATE|ON DELETE|ON UPDATE|CHECK|json_valid|=\\s*ANY\\s*\\("
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)IN\\s*\\\\\\(|\\\\s\\+IN\\\\s"
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "value": {
+                                          "regex": "(?i)SELECT|INSERT|DELETE|FROM|WHERE"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)BEFORE|AFTER|INSTEAD|WHEN.*BEGIN"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "nthChild": {
+                              "position": 1,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SQL_STRUCTURE_PARSE",
+        "anchor": "witness.span",
+        "message": "SQL_STRUCTURE_PARSE: category-6"
+      }
+    },
+    {
+      "id": "category-7",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:re)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:sub)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "string"
+                                          },
+                                          {
+                                            "not": {
+                                              "regex": "(?i)^[rub]*f"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "concatenated_string"
+                                          },
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "regex": "(?i)^[rub]*f"
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "not": {
+                                      "inside": {
+                                        "kind": "concatenated_string",
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "value": {
+                                      "type": "str"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-false-positive"
+                                }
+                              },
+                              {
+                                "matches": "regex-sql-syntax"
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-error-message"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "--\\[?\\\\?\\^|/\\\\\\*"
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "all": [
+                                            {
+                                              "value": {
+                                                "regex": "(?i)(?:^|[^%])%S|\\\\?\\\\\\$\\\\?\\\\?D|\\\\\\?"
+                                              }
+                                            },
+                                            {
+                                              "not": {
+                                                "value": {
+                                                  "regex": "(?i)SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN"
+                                                }
+                                              }
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": {
+                                            "regex": "(?i)\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*\\\\\\?|\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*%s"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)ON\\s+DELETE|ON\\s+UPDATE|ON DELETE|ON UPDATE|CHECK|json_valid|=\\s*ANY\\s*\\("
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)IN\\s*\\\\\\(|\\\\s\\+IN\\\\s"
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "value": {
+                                          "regex": "(?i)SELECT|INSERT|DELETE|FROM|WHERE"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)BEFORE|AFTER|INSTEAD|WHEN.*BEGIN"
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)LIKE"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "nthChild": {
+                              "position": 1,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SQL_REWRITE",
+        "anchor": "witness.span",
+        "message": "SQL_REWRITE: category-7"
+      }
+    },
+    {
+      "id": "category-8",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:re)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:compile|findall|fullmatch|match|search|split)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "string"
+                                          },
+                                          {
+                                            "not": {
+                                              "regex": "(?i)^[rub]*f"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "concatenated_string"
+                                          },
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "string"
+                                                  },
+                                                  {
+                                                    "regex": "(?i)^[rub]*f"
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "not": {
+                                      "inside": {
+                                        "kind": "concatenated_string",
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "value": {
+                                      "type": "str"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-false-positive"
+                                }
+                              },
+                              {
+                                "matches": "regex-sql-syntax"
+                              },
+                              {
+                                "not": {
+                                  "matches": "regex-error-message"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "--\\[?\\\\?\\^|/\\\\\\*"
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "all": [
+                                            {
+                                              "value": {
+                                                "regex": "(?i)(?:^|[^%])%S|\\\\?\\\\\\$\\\\?\\\\?D|\\\\\\?"
+                                              }
+                                            },
+                                            {
+                                              "not": {
+                                                "value": {
+                                                  "regex": "(?i)SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN"
+                                                }
+                                              }
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": {
+                                            "regex": "(?i)\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*\\\\\\?|\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*%s"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)ON\\s+DELETE|ON\\s+UPDATE|ON DELETE|ON UPDATE|CHECK|json_valid|=\\s*ANY\\s*\\("
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)IN\\s*\\\\\\(|\\\\s\\+IN\\\\s"
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "value": {
+                                          "regex": "(?i)SELECT|INSERT|DELETE|FROM|WHERE"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)BEFORE|AFTER|INSTEAD|WHEN.*BEGIN"
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "all": [
+                                    {
+                                      "matches": "regex-sql-syntax"
+                                    },
+                                    {
+                                      "value": {
+                                        "regex": "(?i)LIKE"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "nthChild": {
+                              "position": 1,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SQL_STRUCTURE_PARSE",
+        "anchor": "witness.span",
+        "message": "SQL_STRUCTURE_PARSE: category-8"
+      }
+    }
+  ]
+}

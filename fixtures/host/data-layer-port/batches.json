@@ -3,7 +3,7 @@
   "source_commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "unit": "LinterConfig check, including all its diagnostic clauses and policy behavior",
   "batch_size": 10,
-  "status": "Batches 1, 2, and 3 have candidate ports and passing recorded detection parity; batches 4\u201315 remain planned.",
+  "status": "Batches 1\u20133 have candidate ports with passing recorded detection parity; batch 4 has ten candidates with explicit unresolved parity gaps; batches 5\u201315 remain planned.",
   "batches": [
     {
       "id": 1,
@@ -73,7 +73,9 @@
         "grammar_fragment_usage",
         "grammar_allowlist_burndown",
         "rust_sql_grammar_boundary"
-      ]
+      ],
+      "status": "partial-candidate-ports",
+      "evidence": "batch-04-evidence.json"
     },
     {
       "id": 5,
