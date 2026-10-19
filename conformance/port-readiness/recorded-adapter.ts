@@ -154,6 +154,14 @@ export function readRecordedInputs(root: string, cacheRoot: string, pack: string
 }
 
 /**
+ * `loads`'s in-scope samples: upstream's (one example file per type its approved configuration lints), narrowed to the
+ * types gates.yaml's `rerail.in_scope` names when the pack deliberately covers fewer.
+ */
+export function inScopeSamples(samples: readonly string[], inScope: readonly string[] | undefined): string[] {
+  return inScope === undefined ? [...samples] : samples.filter((sample) => inScope.includes(extname(sample)));
+}
+
+/**
  * The tool-pack checks the gates make on a recording: pins agree (gates.yaml, recording.lock, recording.json,
  * conformance.json), the lock pins every runtime gates.yaml installs and no other (recordedRuntimes, or with
  * `liftedRuntimes` for a recording uploaded by hand before the recorder pinned them all), the runtimes' pins
@@ -165,14 +173,6 @@ export function readRecordedInputs(root: string, cacheRoot: string, pack: string
  * must agree with it: a pull request whose pins moved is stale on its own commit, before any byte is fetched, and a
  * lock that disagrees with the recording it names means the two were written by different runs.
  */
-/**
- * `loads`'s in-scope samples: upstream's (one example file per type its approved configuration lints), narrowed to the
- * types gates.yaml's `rerail.in_scope` names when the pack deliberately covers fewer.
- */
-export function inScopeSamples(samples: readonly string[], inScope: readonly string[] | undefined): string[] {
-  return inScope === undefined ? [...samples] : samples.filter((sample) => inScope.includes(extname(sample)));
-}
-
 export function toolPackChecks(
   inputs: RecordedInputs,
   liftedCaseSources: ReadonlyMap<string, string> = LIFTED_CASE_SOURCES,

@@ -94,26 +94,8 @@ export type RecordingLock = z.infer<typeof recordingLockSchema>;
  * attested recording, nothing joins it once the record workflow runs from main, and a test fails while an entry is
  * named by no committed lock.
  */
-export const LIFTED_ASSETS: ReadonlySet<string> = new Set([
-  "javascript-eslint-corpus-4e955069b420e258c368e99c0cba326b987ade51c0232c19fca8cbef2bb2cee4.json.gz",
-  "javascript-eslint-plugin-unicorn-corpus-58f3d9e9b7a813b10c921c110ead51ccb2443e8caa08b18b1d2f62c05d9b5267.json.gz",
-  "javascript-eslint-plugin-unicorn-recording-030ae504d4d81216fadb2759ee942ec5a9604f4de75a92621fbea8375337228a.json.gz",
-  "javascript-eslint-recording-e91788d9a22310304f9f913971a5ca224b981a825a965c05cf75865207c544a4.json.gz",
-  "next-eslint-plugin-next-corpus-220df27c30349a333b333cc17bf70af7213f44f063c570406ac53ad330bd0f0b.json.gz",
-  "next-eslint-plugin-next-recording-824360574a54f5a3e9b42c76b507ee87522169e9502d88ebdaadb5802483fced.json.gz",
-  "python-bandit-corpus-ead66a1ebf52f6daa1a94556eea9e4443f675f275ae79fe6ab7af9f152b1d949.json.gz",
-  "python-bandit-recording-2baa8fc4fc3fdcde02845a367113b58861d05ea897a6edb8ad8e8acb455fa802.json.gz",
-  "python-ruff-corpus-941b451583ab220d51a50cd883fa9c47e80e606bc62bdcbde0332ce2438fb5f5.json.gz",
-  "python-ruff-recording-34a2fac3e70ef1fb025ccc1beaedcc6f9207a5128d5030caf7a1a39e90e565a1.json.gz",
-  "react-eslint-plugin-react-corpus-1c9eaeebcd65f8b67b37f3859e6827a8d7942702f0491e5531d23e8e64f8eb91.json.gz",
-  "react-eslint-plugin-react-hooks-corpus-b85afe644972c47e475a26ff186273468bb7317e7211863d6f0c8a2626222e1c.json.gz",
-  "react-eslint-plugin-react-hooks-recording-11e50fbaf44ab74565931616b6c90fa69db7b8303d11f6a87b251dcc3b88710e.json.gz",
-  "react-eslint-plugin-react-recording-e171b74355708619ec757af1570fb5db03db8bf8675d34f3fb9b7c5e83d25d6e.json.gz",
-  "typescript-eslint-plugin-vitest-corpus-2062b527fbdb0816a05de3ddd8cb88f5dc8bea720acdf757a1c9011d693d0084.json.gz",
-  "typescript-eslint-plugin-vitest-recording-2cf5e774987e23a649aa5d6b8375dec162f293da8396cb53553ba7ec4ac3318f.json.gz",
-  "typescript-typescript-eslint-corpus-a722b4540559768f80e7d7502952e74b5aa74a909126c3d7b3a305b15cd1d4a5.json.gz",
-  "typescript-typescript-eslint-recording-aece5f8587bf60f4e561124a0746b5f0a4673b5406776e084b7af5e9c1ad88df.json.gz",
-]);
+// Empty: run 39319650531 recorded every tool-pack from main, so every committed lock names attested recordings.
+export const LIFTED_ASSETS: ReadonlySet<string> = new Set();
 
 /**
  * The case sources of each hand-uploaded `recording.json` (LIFTED_ASSETS) made before a case carried the sha256 of its
@@ -124,7 +106,7 @@ export const LIFTED_ASSETS: ReadonlySet<string> = new Set([
  * covers that one recording and no other. A recording whose cases carry their own sha256 needs no entry. The list only
  * shrinks: an entry goes with the asset's entry in LIFTED_ASSETS, when the tool-pack gets an attested recording.
  */
-// Empty: every hand-uploaded recording now carries a sha256 per case.
+// Empty: every hand-uploaded recording carried a sha256 per case, and since run 39319650531 no lock names one.
 export const LIFTED_CASE_SOURCES: ReadonlyMap<string, string> = new Map();
 
 /**
@@ -136,12 +118,8 @@ export const LIFTED_CASE_SOURCES: ReadonlyMap<string, string> = new Map();
  * Keyed by asset name, like LIFTED_CASE_SOURCES, so an entry covers that one recording and no other. The list only
  * shrinks: an entry goes with the asset's entry in LIFTED_ASSETS, when the tool-pack gets an attested recording.
  */
-const ESLINT_CONFIG_NEXT = { "eslint-config-next-16.3.8": { "package.json": "fa48caee62a30874dd792a0b9a48721a2c2e3fed58c128918c7c8f0f4e6542d4" } };
-export const LIFTED_RUNTIMES: ReadonlyMap<string, RecordingLock["runtimes"]> = new Map([
-  ["next-eslint-plugin-next-recording-824360574a54f5a3e9b42c76b507ee87522169e9502d88ebdaadb5802483fced.json.gz", ESLINT_CONFIG_NEXT],
-  ["react-eslint-plugin-react-hooks-recording-11e50fbaf44ab74565931616b6c90fa69db7b8303d11f6a87b251dcc3b88710e.json.gz", ESLINT_CONFIG_NEXT],
-  ["react-eslint-plugin-react-recording-e171b74355708619ec757af1570fb5db03db8bf8675d34f3fb9b7c5e83d25d6e.json.gz", ESLINT_CONFIG_NEXT],
-]);
+// Empty: since run 39319650531 the next, react and react-hooks locks pin eslint-config-next-16.3.8 themselves.
+export const LIFTED_RUNTIMES: ReadonlyMap<string, RecordingLock["runtimes"]> = new Map();
 
 /**
  * One digest over a set of case sources: sha256 of `<sha256 of the file's bytes>  <file>\n` per file (sha256sum's

@@ -1,11 +1,12 @@
 # Port readiness
 
 The port readiness gates judge every rule document of a gated tool-pack (one upstream tool in one pack: `python/ruff`,
-`typescript/typescript-eslint`) against the upstream linter it ports, from recordings committed in the pack. They are a layer on top
-of the pack contract (`test/engine/catalog/packs.test.ts`) and the conformance check, and a superset of the check: its
-verdict is the `passes-conformance` gate (checks/passes-conformance.ts), for candidates as well as shipped rules.
-Documents under `packs/<pack>/rules/` ship, and a failing one fails CI. Documents under `packs/<pack>/candidates/**`
-(except `candidates/probes/**`) go through the same gates and are only reported.
+`typescript/typescript-eslint`) against the upstream linter it ports, from the recordings each tool-pack's committed
+`recording.lock` names. They are a layer on top of the pack contract (`test/engine/catalog/packs.test.ts`) and the
+conformance check, and a superset of the check: its verdict is the `passes-conformance` gate
+(checks/passes-conformance.ts), for candidates as well as shipped rules. Documents under `packs/<pack>/rules/` ship, and
+a failing one fails CI. Documents under `packs/<pack>/candidates/**` (except `candidates/probes/**`) go through the same
+gates and are only reported.
 
 | V1 gate | Gate id | Blocking |
 | --- | --- | --- |
