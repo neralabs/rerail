@@ -3,10 +3,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
- * One golden test of `matches-upstream-tests`: a real-code file where `matches-real-code` found the rule and upstream
- * differ. Its source is the pinned corpus file at `task`/`path` (a catalog task, or a rerail corpus as
- * `rerail:<name>`), checked against `sha256`. Its expected answer is not stored here: it is the pinned upstream's
- * findings on that file.
+ * One golden test of `matches-upstream-tests`: a real-code file of a shipped rule, imported from NRV, whose source is
+ * the pinned corpus file at `task`/`path` (a catalog task, or a rerail corpus as `rerail:<name>`), checked against
+ * `sha256`. Its expected answer is not stored here: it is the pinned upstream's findings on that file.
  */
 export interface Golden {
   task: string;
@@ -14,7 +13,11 @@ export interface Golden {
   sha256: string;
 }
 
-/** A pack's goldens, by document id. Goldens are never removed: once promoted, a case stays a regression test. */
+/**
+ * A tool-pack's goldens, by document id: a reviewed list the gates read and never write. A shipped rule's goldens are
+ * the files NRV's real-code gate found it differing on (NRV's validation/goldens/<pack>.tsv, under its id there), and,
+ * when no upstream test file proves the rule stays silent, a file where upstream reports nothing.
+ */
 export type Goldens = Map<string, Golden[]>;
 
 /** A tool-pack's goldens file: `goldens.tsv` in its directory, `packs/<pack>/upstream/<tool>/`. */
@@ -24,7 +27,7 @@ export function goldensPath(toolPackDirectory: string): string {
   return join(toolPackDirectory, GOLDENS_FILE);
 }
 
-const HEADER = "# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run port-readiness -- --write, sorted; a golden is never removed.";
+const HEADER = "# matches-upstream-tests goldens of the shipped rules, imported from NRV and reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.";
 const SHA256 = /^[0-9a-f]{64}$/u;
 const FIELD = /^[^\t\r\n]+$/u;
 
@@ -33,8 +36,8 @@ export const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const byPlace = (a: Golden, b: Golden) => byText(a.task, b.task) || byText(a.path, b.path) || byText(a.sha256, b.sha256);
 
 /**
- * The goldens file's text: one golden per line, grouped by rule and then by task or corpus, every level sorted, so a
- * run writes it the same way every time and a new golden is one added line.
+ * The goldens file's text: one golden per line, grouped by rule and then by task or corpus, every level sorted, so the
+ * file has one form and an imported golden is one added line.
  */
 export function serializeGoldens(goldens: Goldens): string {
   const lines = [HEADER];
@@ -76,7 +79,7 @@ export function parseGoldens(text: string, label: string): Goldens {
       goldens.get(id)!.push({ task, path: fields[0]!, sha256: fields[1]! });
     }
   });
-  if (serializeGoldens(goldens) !== text) throw new Error(`${label} is not in the form npm run port-readiness writes (sorted, grouped, with its header)`);
+  if (serializeGoldens(goldens) !== text) throw new Error(`${label} is not in its one form (sorted, grouped, with its header)`);
   return goldens;
 }
 
@@ -84,12 +87,4 @@ export function parseGoldens(text: string, label: string): Goldens {
 export async function readGoldens(toolPackDirectory: string, label: string = GOLDENS_FILE): Promise<Goldens> {
   const path = goldensPath(toolPackDirectory);
   return existsSync(path) ? parseGoldens(await readFile(path, "utf8"), label) : new Map();
-}
-
-/** Add each differing file the rule has no golden for yet, a file being its task, path and content (sha256). Returns the goldens added. */
-export function promote(goldens: Goldens, ruleId: string, differing: Golden[]): Golden[] {
-  const entries = goldens.get(ruleId) ?? [];
-  const added = differing.filter((golden) => !entries.some((entry) => entry.task === golden.task && entry.path === golden.path && entry.sha256 === golden.sha256));
-  if (added.length > 0) goldens.set(ruleId, [...entries, ...added].sort(byPlace));
-  return added;
 }

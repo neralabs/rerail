@@ -277,8 +277,8 @@ jobs:
 
       # A fork records against the upstream the base branch's gates.yaml names. Its repository, commit, runtime and test
       # paths decide which code the recorder runs and whose tests it records, so a fork that changed them would record
-      # answers of its own. Only `popularity`, `known_gaps` and comments may differ; a branch here is not checked, since
-      # whoever can push one can already run any workflow with this repository's token.
+      # answers of its own. Only `popularity`, `known_gaps`, `real_code_gaps` and comments may differ; a branch here is not
+      # checked, since whoever can push one can already run any workflow with this repository's token.
       - name: Refuse a fork's change to the upstream it is recorded against
         if: needs.authorize.outputs.fork == 'true'
         env:
@@ -293,12 +293,12 @@ jobs:
             const { parse } = require("yaml");
             const { readFileSync } = require("node:fs");
             const pinned = (file) => {
-              const { popularity, known_gaps, ...rest } = parse(readFileSync(file, "utf8")) ?? {};
+              const { popularity, known_gaps, real_code_gaps, ...rest } = parse(readFileSync(file, "utf8")) ?? {};
               return JSON.stringify(rest);
             };
             process.exit(pinned(process.argv[1]) === pinned(process.argv[2]) ? 0 : 1);
           ' "$RUNNER_TEMP/base-gates.yaml" "$manifest"; then
-            echo "::error::pull request #$PR comes from a fork and changes $manifest beyond popularity and known_gaps: land that change on the base branch first, then record"
+            echo "::error::pull request #$PR comes from a fork and changes $manifest beyond popularity, known_gaps and real_code_gaps: land that change on the base branch first, then record"
             exit 1
           fi
 

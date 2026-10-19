@@ -29,7 +29,7 @@ export function upstreamStatusChecks(name: string, adapter: PackAdapter): Check[
         ? "not on in any approved upstream configuration"
         : recommended.options.length === 0
           ? `on in ${recommended.config} with default options`
-          : `on in ${recommended.config} with options ${JSON.stringify(recommended.options)}; matches-upstream-tests and matches-real-code check the rule with these options`,
+          : `on in ${recommended.config} with options ${JSON.stringify(recommended.options)}; matches-upstream-tests checks the rule with these options`,
     },
   ];
 }

@@ -14,12 +14,14 @@ Documents under `packs/<pack>/rules/` ship, and a failing one fails CI. Document
 | 3 | `not-overfit` | yes |
 | 4 | `compact` | yes |
 | 5 | `matches-upstream-tests` | yes |
-| 6 | `matches-real-code` (its disagreements become goldens of `matches-upstream-tests`) | no |
+| 6 | none: real code runs in NRV only; `matches-upstream-tests` judges the goldens imported from it | — |
 | — | `passes-conformance` (the pack's `test:conformance` verdict on the rule, judged after V1's gates; never cached) | yes |
 
 A rule's verdict is the first blocking gate it fails. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
 that differs where the engine reported `source-partial`, `source-incomplete` or `budget-exceeded` fails the rule; the
-fix belongs in the engine (NER-1764).
+fix belongs in the engine (NER-1764). It also includes `no-real-code-gap`: a rule `gates.yaml` lists under
+`real_code_gaps` fails. The goldens and real-code gaps are reviewed data, imported from NRV's goldens and never written by
+the gates (docs/port-readiness.md, "Goldens").
 
 ## Where the code comes from
 
@@ -33,7 +35,8 @@ and `77c266a` on branch `ner-1762-engine-gaps`.
 
 | NRV `src/validation/` | Here |
 | --- | --- |
-| `gates/compile.ts`, `generality.ts`, `size.ts`, `upstream-tests.ts`, `real-code.ts`, `provenance.ts` | `checks/loads.ts`, `not-overfit.ts`, `compact.ts`, `matches-upstream-tests.ts`, `matches-real-code.ts`, `upstream-status.ts` |
+| `gates/compile.ts`, `generality.ts`, `size.ts`, `upstream-tests.ts`, `provenance.ts` | `checks/loads.ts`, `not-overfit.ts`, `compact.ts`, `matches-upstream-tests.ts`, `upstream-status.ts` |
+| `gates/real-code.ts` | none: Gate 6 runs in NRV only, and its goldens are imported |
 | `adapters/`, `languages/`, `runtimes.ts` | `conformance/recorders/port-readiness/adapters/` (`eslint_*` files are `eslint-*`), `languages/`, `runtimes.ts` |
 | `pack.ts`; `cli.ts`, `corpus.ts`, `engine.ts`, `goldens.ts`, `policy-literals.ts`, `report.ts`, `run.ts`, `spans.ts`, `types.ts` | `manifest.ts`; the file of the same name, most of them rewritten |
 | `rerail.ts` | none: the gates read this checkout, not a pinned rerail commit |
@@ -60,8 +63,7 @@ npm run port-readiness                                   # every gated tool-pack
 npm run port-readiness -- --pack python --tool bandit    # one tool-pack
 npm run port-readiness -- --no-cache                     # judge every rule again; read and save no results
 npm run port-readiness -- --refresh-cache                # judge every rule again and save the fresh results (the nightly)
-npm run port-readiness -- --write                        # also write this run's golden promotions to goldens.tsv
-npm run port-readiness -- --pack typescript --tool typescript-eslint --shard 2/8   # one shard: rules with sha256(id) mod 8 = 1
+npm run port-readiness -- --pack javascript --tool eslint --shard 2/4   # one shard: rules with sha256(id) mod 4 = 1
 npm run port-readiness -- merge .rerail/reports/port-readiness    # join each tool-pack's shard-<i>of<n>/ reports (shard.ts, merge.ts)
 npm run port-readiness -- summary .rerail/reports/port-readiness --base <sha>
 npm run port-readiness -- summary .rerail/reports/port-readiness --planned '["python/ruff"]'   # the others: not judged
@@ -69,8 +71,8 @@ node conformance/port-readiness/plan.mjs [--diff <from> <to>]   # CI's legs: eve
 ```
 
 Exit 1 when a shipped rule fails (or the summary has a blocking failure), 2 on an exception. The run needs the built
-native engine; it reads no upstream runtime. It fetches only the pinned corpora (catalog task files and the pack's
-`conformance.json` corpora), cached under `.rerail/port-readiness/corpus/`.
+native engine; it reads no upstream runtime. It fetches only the pinned corpora the goldens are read from (catalog task
+files and the pack's `conformance.json` corpora), cached under `.rerail/port-readiness/corpus/`.
 
 Per-rule results are cached under `.rerail/port-readiness/results/<pack>/<tool>/<key>.json`, a shard's under
 `<tool>/shard-<i>of<n>/` (`--cache <dir>` moves the root).
@@ -87,7 +89,7 @@ request's cache to that pull request, so main reads only what main's pushes and 
 ```
 packs/<pack>/upstream/<tool>/gates.yaml         the tool-pack's manifest (manifest.ts)
 packs/<pack>/upstream/<tool>/recording.lock     which recording this commit is judged against (recording/store.ts)
-packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id
+packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests: shipped rules', by document id, imported from NRV
 
 .rerail/port-readiness/recordings/<sha256>.json          the recordings themselves, fetched or recorded, cached by digest
   recording.json                                upstream's recorded answers (recording/schema.ts, rerail.port-readiness-recording/v2)

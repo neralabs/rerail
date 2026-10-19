@@ -48,6 +48,20 @@ const knownGapSchema = z.strictObject({
  */
 export type KnownGap = z.infer<typeof knownGapSchema>;
 
+const realCodeGapSchema = z.strictObject({
+  /** The document id of a rule of this tool-pack. */
+  rule: nonEmpty,
+  /** How many of NRV's goldens for the rule it differs on, engine gaps included, when the entry was written: what it stands for. */
+  differing_files: z.number().int().positive(),
+});
+
+/**
+ * A rule that differs from upstream on real code throughout, as NRV's real-code gate found: one entry in place of a
+ * golden per differing file. The rule fails `matches-upstream-tests` until it agrees there and its goldens are imported
+ * (docs/port-readiness.md, "Goldens").
+ */
+export type RealCodeGap = z.infer<typeof realCodeGapSchema>;
+
 /**
  * An ESLint-family upstream: ESLint's own rules (no plugin; eslint:recommended comes from @eslint/js) or one plugin's.
  * Paths are relative to upstream's repository at the pinned commit.
@@ -172,8 +186,8 @@ export const gatesManifestSchema = z.strictObject({
     license: nonEmpty,
     /**
      * The upstream configurations that count as recommended, in order. A rule starts on when one turns it on
-     * (`upstream-status`), and `matches-upstream-tests` and `matches-real-code` check it with the options of the first
-     * that does.
+     * (`upstream-status`), and `matches-upstream-tests` checks it with the options of the first that does, on
+     * upstream's tests and on its goldens.
      */
     recommended_configs: unique(nonEmpty).min(1),
     /** The directory under conformance/recorders/port-readiness/runtimes/ that pins the runtime upstream is run with. */
@@ -185,6 +199,7 @@ export const gatesManifestSchema = z.strictObject({
     evidence: z.array(nonEmpty).min(1),
   }),
   known_gaps: z.array(knownGapSchema),
+  real_code_gaps: z.array(realCodeGapSchema).default([]),
   eslint: eslintSchema.optional(),
 }).superRefine((manifest, context) => {
   if ((manifest.adapter === "eslint") !== (manifest.eslint !== undefined)) {
@@ -193,6 +208,9 @@ export const gatesManifestSchema = z.strictObject({
   const ids = manifest.known_gaps.map((gap) => gap.id);
   const repeated = ids.find((id, index) => ids.indexOf(id) !== index);
   if (repeated !== undefined) context.addIssue({ code: "custom", path: ["known_gaps"], message: `lists the known gap ${repeated} twice` });
+  const rules = manifest.real_code_gaps.map((gap) => gap.rule);
+  const twice = rules.find((rule, index) => rules.indexOf(rule) !== index);
+  if (twice !== undefined) context.addIssue({ code: "custom", path: ["real_code_gaps"], message: `lists ${twice} twice` });
 });
 
 export type GatesManifest = z.infer<typeof gatesManifestSchema>;

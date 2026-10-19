@@ -1,4 +1,91 @@
-# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run port-readiness -- --write, sorted; a golden is never removed.
+# matches-upstream-tests goldens of the shipped rules, imported from NRV and reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.
+ruff-async100-cancel-scope-no-checkpoint
+	dask-dask-2022.9.2-2022.10.0
+		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361
+ruff-async105-trio-sync-call
+	dask-dask-2022.9.2-2022.10.0
+		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361
+ruff-async115-async-zero-sleep
+	conan-io-conan-2.0.14-2.0.15
+		conans/client/downloaders/file_downloader.py	cb020e1a0738cac6703321c8afc27efc7d16608cef7446c989fe368814c1c620
+ruff-async116-long-sleep-not-forever
+	conan-io-conan-2.0.14-2.0.15
+		conans/client/downloaders/file_downloader.py	cb020e1a0738cac6703321c8afc27efc7d16608cef7446c989fe368814c1c620
+ruff-async210-blocking-http-call-in-async-function
+	rerail:django
+		django/test/client.py	ab020c3890100cf4cba91107d62b5a7a070bfa61d0490837b13ac5b97743b5d2
+ruff-async221-run-process-in-async-function
+	dask-dask-2022.9.2-2022.10.0
+		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361
+ruff-async222-wait-for-process-in-async-function
+	dask-dask-2022.9.2-2022.10.0
+		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361
+ruff-async230-blocking-open-call-in-async-function
+	dask-dask-2022.9.2-2022.10.0
+		dask/dataframe/io/parquet/core.py	0c3d1d381617b749848a752bb0997cbb2a5c9e7a88a92e5497ad24cf6855d39f
+ruff-async250-blocking-input-in-async-function
+	dask-dask-2022.9.2-2022.10.0
+		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361
+ruff-async251-blocking-sleep-in-async-function
+	dask-dask-2022.9.2-2022.10.0
+		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361
+ruff-b002-unary-prefix-increment-decrement
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-b003-assignment-to-os-environ
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/subapi/profiles.py	db4399b51bc887d3c6970ac95348900622cc3313fd43343d173991d9a152fe29
+ruff-b004-unreliable-callable-check
+	dask-dask-2022.9.2-2022.10.0
+		dask/utils.py	346d9f475f8816f5b660b8a268c31ead3beddf3536c24920edd1881af645e61c
+ruff-b005-strip-with-multi-characters
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/output.py	19bd6a904b24e738e5999b478a549c4ad801bc5d7e71f7d478dd8dde03b16a55
+ruff-b007-unused-loop-control-variable
+	dask-dask-2022.9.2-2022.10.0
+		dask/utils.py	346d9f475f8816f5b660b8a268c31ead3beddf3536c24920edd1881af645e61c
+ruff-b009-get-attr-with-constant
+	dask-dask-2023.6.0-2023.6.1
+		dask/base.py	cc4aacceed035cfd8d201e31b494d5d960fc9d3bfc0d5fbab4948712d7eb29fa
+ruff-b010-set-attr-with-constant
+	dask-dask-2023.6.0-2023.6.1
+		dask/base.py	cc4aacceed035cfd8d201e31b494d5d960fc9d3bfc0d5fbab4948712d7eb29fa
+ruff-b011-assert-false
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/subapi/cache.py	2325eec36ee6aa3472300fe972f7eceeb17ac37964d6b6a2154517681e52b1c1
+ruff-b013-redundant-tuple-in-exception-handler
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/output.py	19bd6a904b24e738e5999b478a549c4ad801bc5d7e71f7d478dd8dde03b16a55
+ruff-b014-duplicate-handler-exception
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/output.py	19bd6a904b24e738e5999b478a549c4ad801bc5d7e71f7d478dd8dde03b16a55
+ruff-b016-raise-literal
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-b020-loop-variable-overrides-iterator
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/subapi/profiles.py	db4399b51bc887d3c6970ac95348900622cc3313fd43343d173991d9a152fe29
+ruff-b021-f-string-docstring
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-b022-useless-contextlib-suppress
+	dask-dask-2022.9.2-2022.10.0
+		dask/array/core.py	07fb92d4b4d52cced73b376ab6fbbf652e6cf4955a505e1fe2165e5daae8c1f4
+ruff-b023-function-uses-loop-variable
+	dask-dask-2022.9.2-2022.10.0
+		dask/dataframe/core.py	abf5f400851cfe1611a4ffcc04a50a7df732b7046410b8c4e7896d8a0bd3ba67
+ruff-b025-duplicate-try-block-exception
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/output.py	19bd6a904b24e738e5999b478a549c4ad801bc5d7e71f7d478dd8dde03b16a55
+ruff-b026-star-arg-unpacking-after-keyword-arg
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-b028-no-explicit-stacklevel
+	rerail:django
+		django/http/response.py	178a3723c058ab091d4a29ee4daeaa33b4573fc07505d236539599ca436f7648
+ruff-b029-except-with-empty-tuple
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/output.py	19bd6a904b24e738e5999b478a549c4ad801bc5d7e71f7d478dd8dde03b16a55
 ruff-b030-except-with-non-exception-classes
 	conan-io-conan-2.0.14-2.0.15
 		conan/api/subapi/config.py	f6a3eb5663b46afc4450057277846876ca7bf13f4de0af6c54b485c371d3f513
@@ -443,955 +530,192 @@ ruff-b030-except-with-non-exception-classes
 		app/dashboard/views/mailbox.py	d52622f0fc1bf0de390038e22a7d67737a125bb76b32681c9b8512289901135b
 	task-69d196f015a150488265afb6
 		scapy/tools/UTscapy.py	0d9c7e3269b33fa765f606d878ea07a45f630e387f54082a12109bf91f5650d2
-ruff-b031-reuse-of-groupby-generator
+ruff-b032-unintentional-type-annotation
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/subapi/config.py	f6a3eb5663b46afc4450057277846876ca7bf13f4de0af6c54b485c371d3f513
+ruff-b033-duplicate-value
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-b034-re-sub-positional-args
 	dask-dask-2022.9.2-2022.10.0
 		dask/array/core.py	07fb92d4b4d52cced73b376ab6fbbf652e6cf4955a505e1fe2165e5daae8c1f4
-		dask/dataframe/core.py	abf5f400851cfe1611a4ffcc04a50a7df732b7046410b8c4e7896d8a0bd3ba67
-	dask-dask-2023.3.2-2023.4.0
-		dask/array/core.py	46e503f0b7be72da36ce74db6bd3ef758fef47f9a160c672adf01b5a75c48bf8
-		dask/dataframe/core.py	388ff0ca77977441f3e94125fe1a528b6df9ff3c4894af3a2b20960cdb6e432f
-		dask/dataframe/groupby.py	3244b3ed1f5ce59c92c180f342b88564b298537bd78a53bc05141cc322752d18
-	dask-dask-2023.6.0-2023.6.1
-		dask/array/core.py	bd6c146363f7009db941083a1345ac1f3a900ce6bae332725de023b298060df1
-		dask/dataframe/core.py	9677e2d9f7c23c9c7031b4df6ce31c9ee263c5781e0451af5ea50a68eda32a5d
-		dask/dataframe/groupby.py	6d941777fad849ebb7f6999db9932872e98de2e64a6bcad986b8a1fc1808fb71
-	dask-dask-2023.6.1-2023.7.0
-		dask/dataframe/core.py	25a11e2a53a71eb234fbaeab8e4c63b926971b42407f9ee25373bbc30af96d7d
-	dask-dask-2023.8.0-2023.8.1
-		dask/dataframe/core.py	fddd0c7cb1b4db52c805fe01b30e719a10a3933ba30428e75424e1e5bf066567
-		dask/dataframe/groupby.py	4a8265cbc1063e4dd397d42327272cec83152a642311a5eb61ea07fc27431c1c
-	dask-dask-2023.9.2-2023.9.3
-		dask/dataframe/core.py	10f7c583949f8f7e162ec569a8d2f0a524eebebe85736078db31ba0f1fd1df62
-	dask-dask-2024.1.0-2024.1.1
-		dask/dataframe/core.py	b741fe8e9a345cca00f484cb988ed8d40d0ac93f9070ead67c2af7a15458a742
-		dask/dataframe/groupby.py	e3d668f90639321eb1a71f73799aa606ab0a2500412b8e1c75b8e3b97f84f818
-	dask-dask-2024.3.1-2024.4.0
-		dask/dataframe/groupby.py	a9b6a56327ea66ea165f1e5962f45afe5d5b5e83592234e06056a59b762b0125
-	iterative-dvc-1.0.0a1-1.0.0a2
-		dvc/remote/base.py	8a0d1ef350d1e5243df4ef806b7440778c0774fa8676b6af6401d81c582eea85
-	iterative-dvc-3.15.0-3.15.1
-		dvc/output.py	09a52839283d4232adb2c95e8bc26bd36b5cb7ce9a93cf3b60a6631923fcc33f
-	iterative-dvc-3.4.0-3.5.0
-		dvc/output.py	c712f0813feb5f6aea572a4bd99e0520696e0064f27278e019a0f58462380168
-	iterative-dvc-3.43.1-3.44.0
-		dvc/output.py	d4e267da935070c2e650de61ea3c57ceb72a94335e86ea9a664d283266d51f1f
-	modin-project-modin-0.24.0-0.24.1
-		modin/core/dataframe/pandas/dataframe/dataframe.py	93eec407afe6f605b070d7f9f3609c468ae5e568e866247ea43ac616babc5df1
-		modin/experimental/core/execution/native/implementations/hdk_on_native/dataframe/dataframe.py	8d14afb3613d15b05fad828dbcf0b1fe5699a18e2729e6aca971e2bd6db76b34
-	modin-project-modin-0.25.0-0.25.1
-		modin/pandas/base.py	4e8a37a1c21803a39a89c8d537cac7975daae402054a3e7470910bba3459b04f
-		modin/pandas/groupby.py	dc90f077497d772fa50621f9a7770375ec9da27437a20f893c257159742485d9
-	modin-project-modin-0.27.0-0.27.1
-		modin/pandas/groupby.py	43c19be9e5e6ea2606562f2ee784148da4286dc21bf472f4c8ad87dc5607fc72
-		modin/pandas/series.py	049dcbbeb1960498ac2a811f1f54db4e0c46f56124ad9d3c1ff10125efb8f8b6
-	pydantic-pydantic-v2.6.0b1-v2.6.0
-		pydantic/_internal/_generate_schema.py	4aefcd26a9f16d1441913fc01f5dccdfa3ad41f5898caecfe366d5bd8273c68b
-	pydantic-pydantic-v2.7.0-v2.7.1
-		pydantic/_internal/_generate_schema.py	017f7ea4722d9a054cc4b842464eeac7e600912169d72c0f64cb128436e41b83
-		pydantic/json_schema.py	3e5afce5c056ecb17875ae52422aafbd4ada1906c83823dbf5dd1cffd231d2d4
-		pydantic/main.py	7126ccf67e7235dd1ed972897b1355e09da66ddb130ce74746105a4ddeae4c98
-	pydantic-pydantic-v2.7.1-v2.7.2
-		pydantic/_internal/_generate_schema.py	d83f4cd7a5b496e5a58d4d274878cfc9f00cc065f5ea27ad25ba146248c67cfb
+ruff-b039-mutable-contextvar-default
 	rerail:django
-		django/contrib/admin/options.py	a9d39833f314b2d4d57220fce776cfbfb17036dc6a9aa1f758fc6c81dd763004
-		django/db/backends/base/schema.py	0a1229be23bbf215b31e17904f74933ec12082deb35964f015adc7599a54e9f4
-		django/db/migrations/autodetector.py	235c4c6875c1d7a09e729dd4ac5991f41cdb68c2b44cab91cb6aca935b1c51f5
-		django/db/models/base.py	924cb2668bbe7b7f55bfe204528984bd484398f0e0911d1fbfa9967438f809ea
 		django/db/models/fields/__init__.py	9ed3436cd4b17f2c8ece368acfc4f7e099bde8a9fd5eeaeaab7d9c3cd4bceb27
-		django/db/models/fields/related.py	5bfa250736d590802c26fefaff2e04ec009d9057dfe2150458d59419f65af047
-		django/db/models/query.py	af89f1454778a7b3e49652b28bd97dee7756bf28a1bb4e83ba5d751fec7d9149
-		django/db/models/sql/compiler.py	4a2992654f9c628caa61ab2d89f97e9528c102808112e5015d9d34de3635fcea
-		django/db/models/sql/query.py	1c99477b335cf1af59f863ff0c9c5531faab3b9ab8e7b3619946b0d99e2433d0
-		django/test/runner.py	031e5fad322d39e15909842f99396021bf113a0ea5dda7e9fe66a9e19b9c3c9f
-	task-694b4b99829f00e24fd118a1
-		scapy/packet.py	dd1a27c65bcf3efa3724e8747bdfae36e9d3afbf93dbca7484d3d6b2ada8b99d
-	task-696719205599a51110d4b473
-		scapy/packet.py	2379f7a17ad059172d8aa4b1fc0d20c6ff9bd0361ac7246c9ca0b087780571de
-ruff-ble001-blind-except
-	iterative-dvc-3.43.1-3.44.0
-		dvc/repo/experiments/executor/base.py	cc384ded264a74ea822f0b44940963a62fb7c52dafcbd7994ff470e7c8ecd5ef
-ruff-f821-undefined-name
-	pydantic-pydantic-v2.6.0b1-v2.6.0
-		pydantic/_internal/_generate_schema.py	4aefcd26a9f16d1441913fc01f5dccdfa3ad41f5898caecfe366d5bd8273c68b
-	pydantic-pydantic-v2.7.0-v2.7.1
-		pydantic/_internal/_generate_schema.py	017f7ea4722d9a054cc4b842464eeac7e600912169d72c0f64cb128436e41b83
-		pydantic/json_schema.py	3e5afce5c056ecb17875ae52422aafbd4ada1906c83823dbf5dd1cffd231d2d4
-		pydantic/main.py	7126ccf67e7235dd1ed972897b1355e09da66ddb130ce74746105a4ddeae4c98
-		pydantic/types.py	dd2d33f923c761ab6031029d061e755ef1271f4edabf2bf49ac4774eb806cd38
-	pydantic-pydantic-v2.7.1-v2.7.2
-		pydantic/_internal/_generate_schema.py	d83f4cd7a5b496e5a58d4d274878cfc9f00cc065f5ea27ad25ba146248c67cfb
-ruff-n999-invalid-module-name
-	rerail:django
-		django/conf/locale/ar_DZ/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/de_CH/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/en_AU/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/en_CA/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/en_GB/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/en_IE/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/es_AR/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/es_CO/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/es_MX/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/es_NI/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/es_PR/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/fr_BE/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/fr_CA/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/fr_CH/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/is/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/pt_BR/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/sr_Latn/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/zh_Hans/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-		django/conf/locale/zh_Hant/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-ruff-sim102-collapsible-if
+ruff-b904-raise-without-from-inside-except
 	conan-io-conan-2.0.14-2.0.15
-		conan/cli/commands/graph.py	ddfa723cd6de6b87a9989f709e312135938e1e20c1a06b882be0fe8cb51cf8b0
-		conan/tools/cmake/presets.py	fc6e646128197d5872378daa19a16e935e577a32f4f6b357c517d5f818c23da9
-		conan/tools/cmake/toolchain/blocks.py	8d4b39f5ece9c709e1eba93fa53e8b49ef60aad4089b75f54c849b507363a7af
-		conan/tools/env/virtualbuildenv.py	80678746a18eccc2147eb85c9f6926a5e2392e31e169e8c3b30ba8dba3b4e4cc
-		conans/client/graph/graph_binaries.py	02965690291ab9e2f1e293dab83c5219d208aec8a10137215300ab34a7a29f2c
-		conans/client/graph/graph_builder.py	dfb83b40a0aa7104bb92d7a4efa371c9b3597d5f45630bce077e996b20d2c90d
-		conans/model/profile.py	423b2d889e529ff232df10b0977f5a9c4d9d026324b65e49dd4ff8276f66194a
-	conan-io-conan-2.0.2-2.0.3
-		conan/tools/build/flags.py	6796d61a9e38570d791448dcb5b0f6515005d0cd1b012a557b7e82f790294327
-		conan/tools/cmake/presets.py	1bf983d29efd8d327ee7bd89097811faef00754c252c90a1dd67e5ad39b36e40
-		conan/tools/cmake/toolchain/blocks.py	1b569253b69b2339c0399d52afa97f02f62becf2120c2c6542222c39dc2e947b
-		conans/client/graph/graph_binaries.py	57bce257f0598c42fa9121a379eb9a237d82ad19ce92ddd524940bebecdeca7b
-		conans/client/rest/conan_requester.py	599f802c56f2f59ad3a4cd10f3afc49e287ff85c24078a03ee9fc283b0cf0fc7
-		conans/model/conf.py	f13a9a00f233cc864086b0590fc1d833c97467fac660785203fae6fcd22c2efd
-		conans/model/options.py	91d1b89cf2e4d9c1fcc6edd69b18a0b64db6b090434a4692d75771be10aee2b7
+		conans/model/conf.py	a9155562451f54f2425016a48a3fb98b7ecb7c70b35c984ffb99b081869124ac
+ruff-b905-zip-without-explicit-strict
+	scikit-learn-scikit-learn-0.20.1-0.20.2
+		sklearn/preprocessing/data.py	17c3b83be54cab8c73d4740e74efb2e56be11b77a5a6acc7e848d09c2d70eb9a
+ruff-e711-none-comparison
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-e721-type-comparison
+	dask-dask-2024.1.0-2024.1.1
+		dask/utils.py	853daea0da7ad0eea489f6b55f0d751e3e47fb2eb81297a7708e2e04af5daa62
+ruff-e722-bare-except
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-e742-ambiguous-class-name
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-e743-ambiguous-function-name
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f403-undefined-local-with-import-star
 	dask-dask-2022.9.2-2022.10.0
 		dask/array/core.py	07fb92d4b4d52cced73b376ab6fbbf652e6cf4955a505e1fe2165e5daae8c1f4
-		dask/dataframe/core.py	abf5f400851cfe1611a4ffcc04a50a7df732b7046410b8c4e7896d8a0bd3ba67
-		dask/dataframe/groupby.py	46e71ec990dd6ca93f56d2021a1259bcd96ac65a8cc9be516816466598b308f2
-		dask/dataframe/rolling.py	1c85c64f112a777c056a63af2d93c132a5382de879e0e89964d10226b91486b5
-	dask-dask-2023.3.2-2023.4.0
-		dask/array/core.py	46e503f0b7be72da36ce74db6bd3ef758fef47f9a160c672adf01b5a75c48bf8
-		dask/dataframe/core.py	388ff0ca77977441f3e94125fe1a528b6df9ff3c4894af3a2b20960cdb6e432f
-		dask/dataframe/groupby.py	3244b3ed1f5ce59c92c180f342b88564b298537bd78a53bc05141cc322752d18
-		dask/dataframe/io/parquet/arrow.py	9faeff0d93044e12a70f5955b3156e390b8d7752e666b98525c68cc3aa0ddb0b
-		dask/dataframe/io/parquet/fastparquet.py	a2c0e74a8cdf566932ec68607f2a47e63c62022f56ca24ed8c03b60ef38743d6
-		dask/highlevelgraph.py	c4ee4f71e3ac461b558d477c68236120774ad279af8a3781b56a436f6c3c478c
-	dask-dask-2023.6.0-2023.6.1
-		dask/array/core.py	bd6c146363f7009db941083a1345ac1f3a900ce6bae332725de023b298060df1
-		dask/array/rechunk.py	6e40521c1f5251dcebfd5432fe1df418784efd512ec5c2c54b04569692396b16
-		dask/array/routines.py	1e4253ab9e61f4ce05721a7455c6a94bf180b14504adf64e7d29752b1dd436aa
-		dask/dataframe/core.py	9677e2d9f7c23c9c7031b4df6ce31c9ee263c5781e0451af5ea50a68eda32a5d
-		dask/dataframe/groupby.py	6d941777fad849ebb7f6999db9932872e98de2e64a6bcad986b8a1fc1808fb71
-		dask/dataframe/multi.py	70cd6dd5692f8ff0bc861da754ce3748ed9b09436465d89002cb3660441f7308
-		dask/highlevelgraph.py	da47744c1775f870496df348a284772d8b458bdf50207da39768474cb7c6fe45
-	dask-dask-2023.6.1-2023.7.0
-		dask/dataframe/core.py	25a11e2a53a71eb234fbaeab8e4c63b926971b42407f9ee25373bbc30af96d7d
-	dask-dask-2023.8.0-2023.8.1
-		dask/dataframe/core.py	fddd0c7cb1b4db52c805fe01b30e719a10a3933ba30428e75424e1e5bf066567
-		dask/dataframe/groupby.py	4a8265cbc1063e4dd397d42327272cec83152a642311a5eb61ea07fc27431c1c
-	dask-dask-2023.9.2-2023.9.3
-		dask/dataframe/core.py	10f7c583949f8f7e162ec569a8d2f0a524eebebe85736078db31ba0f1fd1df62
-	dask-dask-2024.1.0-2024.1.1
-		dask/array/routines.py	11101b085cb1dba371ad6f1109ddf9554155b9f8afb794528b67d87f87d1d6d7
-		dask/dataframe/core.py	b741fe8e9a345cca00f484cb988ed8d40d0ac93f9070ead67c2af7a15458a742
-		dask/dataframe/groupby.py	e3d668f90639321eb1a71f73799aa606ab0a2500412b8e1c75b8e3b97f84f818
-		dask/highlevelgraph.py	9cbd990e63a470c0409e9aa1b37adc978e8c23e5c62d9b318b146f8494d9f223
-	dask-dask-2024.3.1-2024.4.0
-		dask/dataframe/groupby.py	a9b6a56327ea66ea165f1e5962f45afe5d5b5e83592234e06056a59b762b0125
-	iterative-dvc-0.33.1-0.34.0
-		dvc/output/base.py	6fbfcabee6e92ea73b15060c41d34526c0726985575064ede92ae4bfc526790e
-		dvc/stage.py	82eab6268a12f4e5099c5b66a6f800c6109c5c59d13643669776376403bc9ef6
-	iterative-dvc-0.52.1-0.53.1
-		dvc/output/base.py	36711a18ddd601312a344b7640b0aca033d58442c1a774ee00870dc6b548eba1
-	iterative-dvc-0.91.2-0.91.3
-		dvc/remote/gdrive.py	d93c04ca269c2b23afe07d79bfee2e3db45fed293bea5ffe347023e0dfc30c70
-	iterative-dvc-1.0.0a1-1.0.0a2
-		dvc/output/base.py	bd9db572d0b182a810b492051b866b98dc512d8e9bae0777c807aa0cde70645a
-		dvc/remote/gdrive.py	3de2ca710b7da967c5a29670588ab6f8bf40dda6276bcaacfbbe20b5460a13dd
-		dvc/repo/plots/data.py	4c95d61528e91a3688fdcc7c8a43388cdae3ea8588c325591dec84c1432c98bc
-	iterative-dvc-1.10.2-1.11.0
-		dvc/parsing/__init__.py	87c7558008fed8bbb6ff31977a5aa143de52d6939d9f522aadd1b939f598cc01
-	iterative-dvc-2.19.0-2.20.0
-		dvc/output.py	39e9379e630aee91a2b1f3617ca04a11db3daaf434d76dae96c3e864f8308877
-	iterative-dvc-2.5.0-2.5.1
-		dvc/fs/gdrive.py	6ea87e13cd8227f25eed3e56a9cf66f02b8a3948d89b3a5959d89dd06e23aa1d
-		dvc/fs/local.py	74be1ae8185611547c73bb82c19acd588cba17035d4f835898b8248aee07a38f
-	iterative-dvc-2.7.2-2.7.3
-		dvc/fs/gdrive.py	362364b453398d8cd838330080c77b724d1fb2350689aa6edb43a2da3451f291
-		dvc/fs/local.py	8b25d41d68b025339ed2babf853f9040d3b1e851cf802ce73bde34037096bfa9
-	iterative-dvc-2.8.1-2.8.2
-		dvc/fs/gdrive.py	bf5a493bd8695308ab134b59a539723b8dc03bf0cc42e21684cbe419997bfed4
-		dvc/ignore.py	94d579c9b33e05e8692bf241d8fa7142829466d09c61259b6eb2828cb3ef9efb
-		dvc/output.py	2b6841fd0ad0676e13a576358b6c27d9f7cfd89b17ee972ab68f466c2ce52b83
-		dvc/utils/collections.py	c1a4ef2c6dc9f8ab64ee8a6c85c58b1648ad5725ac22267d31779fc56929fccc
-	modin-project-modin-0.24.0-0.24.1
-		modin/core/dataframe/pandas/dataframe/dataframe.py	93eec407afe6f605b070d7f9f3609c468ae5e568e866247ea43ac616babc5df1
-	modin-project-modin-0.25.0-0.25.1
-		modin/pandas/base.py	4e8a37a1c21803a39a89c8d537cac7975daae402054a3e7470910bba3459b04f
-		modin/pandas/groupby.py	dc90f077497d772fa50621f9a7770375ec9da27437a20f893c257159742485d9
-	modin-project-modin-0.27.0-0.27.1
-		modin/pandas/groupby.py	43c19be9e5e6ea2606562f2ee784148da4286dc21bf472f4c8ad87dc5607fc72
-	psf-requests-v2.27.0-v2.27.1
-		requests/utils.py	30a4cadddbbf5a698eda7bff4a4795f3cd15c1f2188496ef7752f3eee0e2a0ff
-	psf-requests-v2.4.0-v2.4.1
-		requests/utils.py	0e6b1161f51379b653eea51c574e00707842496f08b7d365d4fca79f7ca3bdf1
-	psf-requests-v2.9.0-v2.9.1
-		requests/cookies.py	9abad2ad1621c72b6e2c32ab2397321f934be33be9037ef762f3bb027b7daf17
-		requests/utils.py	a47e43c28c99663c330d6ff638bae6d1ab03b366fff668f369fc1f9b949fccb4
-	pydantic-pydantic-v2.6.0b1-v2.6.0
-		pydantic/_internal/_generate_schema.py	4aefcd26a9f16d1441913fc01f5dccdfa3ad41f5898caecfe366d5bd8273c68b
-	pydantic-pydantic-v2.7.0-v2.7.1
-		pydantic/main.py	7126ccf67e7235dd1ed972897b1355e09da66ddb130ce74746105a4ddeae4c98
-	rerail:django
-		django/contrib/admin/filters.py	c5671ad30b00fdf1a592057d9805c0dd18a9997be3f0429aba65387ff2b293db
-		django/contrib/admin/options.py	a9d39833f314b2d4d57220fce776cfbfb17036dc6a9aa1f758fc6c81dd763004
-		django/contrib/admin/templatetags/log.py	018d40be66af5149875bb6e89f39bbd39c24bc7841784144af5bcfad0bc0cd34
-		django/contrib/admin/views/main.py	a9be697e00caf46542abbc12384e9a9a1a641e8c6a6815e4312c5542fa7fd5a8
-		django/contrib/auth/forms.py	6c572868521f2b8023f3d5da86cc0d7f75974447f277b37eef7e17108453df25
-		django/contrib/gis/db/backends/mysql/operations.py	6c111372752b6528d387501582e65247c2f5cc09c1a938d61ad580b4f993d89f
-		django/contrib/gis/db/backends/oracle/adapter.py	b3c27987b83a89420d5d47905dc5739956d983e718d5613874ec08c2f62447fa
-		django/contrib/gis/db/models/functions.py	b3b04d0ccef2ab4e5ff2bfa8ddbadeca28d290fd1a6ccb98d03e58dd9b7c497c
-		django/contrib/gis/forms/widgets.py	8f9385db76935700010ff05a850ab6795f588690779139cf5724af5fbffc956f
-		django/contrib/gis/geos/mutable_list.py	2ca179bfc24550b44e767057cab337a82d5ff59577fc5180581eba53c00ed738
-		django/contrib/postgres/fields/array.py	50ed5084283cc907066e545e88ea2547425141c563195f79d1f37632b25a6e94
-		django/contrib/staticfiles/storage.py	d46286159e9bc71b2a01f94b0c474d6b5d04d7f80cce56cd0a4e1f0ddc22c3e7
-		django/core/mail/deprecation.py	de90f8570f9940397f34ed8474af1551580b215ac432de9f5be02b5fa519b794
-		django/core/mail/message.py	2ee6a995165f8572f8838408bf018caf22bd459c20f42c0a37269c07366c169e
-		django/core/management/commands/inspectdb.py	f476c4a072e02400b222448c5a9814971c049477da6be007235f929d98b8b62a
-		django/core/management/commands/makemessages.py	48c55af9566c2f38b960dd4aea6570209ed4c1624665e19786bbb8c3f27eced8
-		django/core/serializers/base.py	f510a55ae1d12bfea2bb4bbf7f99543b7206e44b0691bd2b038778e508f1a920
-		django/core/serializers/xml_serializer.py	d6e91a6b347c18f3cfac4d023b969aaee6e4d5a3df9c16225a60bd05275bab24
-		django/db/backends/mysql/operations.py	d515e4e0da1a37fe325853c06298f91b85a72dc7381313f4ad413ba89e7c188a
-		django/db/backends/postgresql/operations.py	49cde1854e7cee24f376fff3b2647c8ff315b854e96224241154ec167cb345ef
-		django/db/backends/sqlite3/introspection.py	71ca1221e3485c2abcc97c2f9a3219c99f5814d0bf28c67e28b78889bc5572d1
-		django/db/backends/sqlite3/operations.py	48722a9cfd15c6041fe4a45c395f3ad40f1c1accb8ea3fd52cecb50b2a95dd6c
-		django/db/migrations/autodetector.py	235c4c6875c1d7a09e729dd4ac5991f41cdb68c2b44cab91cb6aca935b1c51f5
-		django/db/migrations/state.py	ae5a45dc89edb7947a32ddfc6245d4dff92ab25f4adb3478fb533911e3dc0dab
-		django/db/models/base.py	924cb2668bbe7b7f55bfe204528984bd484398f0e0911d1fbfa9967438f809ea
-		django/db/models/fields/__init__.py	9ed3436cd4b17f2c8ece368acfc4f7e099bde8a9fd5eeaeaab7d9c3cd4bceb27
-		django/db/models/fields/related.py	5bfa250736d590802c26fefaff2e04ec009d9057dfe2150458d59419f65af047
-		django/db/models/fields/reverse_related.py	fcb8b2f9e2ed9729a27922358661011aaa3cd6f962b0990455e49dc5bc6e4434
-		django/db/models/functions/text.py	7a8e46475579a9996259cd65f7132c627f4882ac3de7617dbdbec8935fcb7be5
-		django/db/models/functions/uuid.py	92b979275b7ab16b06bc8adc3c5def8e9b686b94ea2084680e71745ebc1c6f77
-		django/db/models/query.py	af89f1454778a7b3e49652b28bd97dee7756bf28a1bb4e83ba5d751fec7d9149
-		django/db/models/query_utils.py	c9c672bcb9711400674b90554c8415f0f5b3d6ed498f3d592ab8562d676bf923
-		django/db/models/sql/compiler.py	4a2992654f9c628caa61ab2d89f97e9528c102808112e5015d9d34de3635fcea
-		django/db/models/sql/query.py	1c99477b335cf1af59f863ff0c9c5531faab3b9ab8e7b3619946b0d99e2433d0
-		django/forms/boundfield.py	e6f0c461d07f5700a952706671ba2ab1e76a756ca3091379b0ebf61ac2c1331d
-		django/http/response.py	178a3723c058ab091d4a29ee4daeaa33b4573fc07505d236539599ca436f7648
-		django/urls/resolvers.py	ed87b99ee423f09c1d95373c55fb747d84d62258f8f4942cdaae0107fc0a4dfa
-		django/utils/feedgenerator.py	6a112e13dcfa2f0a109ebac49f109aafdaa829c3c298ab67a2ab298caef1d88c
-		django/views/decorators/http.py	7412c653dcfc82409d3bed3dcb2dca9ebd62c03403f5d8f0fcda7d8bd95cd084
-	scikit-learn-scikit-learn-0.20.1-0.20.2
-		sklearn/feature_extraction/text.py	9e13b0aee48cce75d6df4ee8b2c0a9f377d11537af211a4c4a51def2447cf934
-	scikit-learn-scikit-learn-0.21.1-0.21.2
-		sklearn/metrics/classification.py	562a7740ed7473830f19f785eb7acaee1172d8747a0e39a017b8621a3c282887
-		sklearn/preprocessing/_encoders.py	a03bbba8663053e8bcc1033433b75f751bd43aaed7b8ed88c7fa67f96b1882bb
-	task-69391d8d1ce51c407be1e533
-		app/dashboard/views/domain_detail.py	1a12e83a5494218ae41ec4c820debff031a32ceb51268aab6bb8212ab96bf1c4
-	task-694b4b99829f00e24fd118a1
-		scapy/packet.py	dd1a27c65bcf3efa3724e8747bdfae36e9d3afbf93dbca7484d3d6b2ada8b99d
-		scapy/plist.py	6f6091781622849362db5ec6bee41a561a1c060d3d986e3042ea72cc2aa5a84b
-		scapy/supersocket.py	0c3a69267e7382df8cf1e7775489a81c9436112c39339d5f89065144567d7a0f
-	task-696719205599a51110d4b471
-		scapy/contrib/openflow.py	ed98a65b7a285f104f59d75e3925ad9f6a4fbd364445b8dbcc8ae8e3f0fbff28
-		scapy/contrib/socks.py	23a0623fbdbdd1fd61835710afb424e0963d1fdbc8c4b1e5f34aaa1d00213442
-	task-696719205599a51110d4b473
-		scapy/packet.py	2379f7a17ad059172d8aa4b1fc0d20c6ff9bd0361ac7246c9ca0b087780571de
-	task-697e7458be1623d850a88838
-		scapy/contrib/automotive/scanner/enumerator.py	5d66e6b86aada26611679e8a5278e835a0950217ea0ec4440e6356460aecb27c
-	task-69d196f015a150488265afb6
-		scapy/contrib/homeplugav.py	330f7ab9ecc8a498c0438a71d5f7e3fd55ba888fe4527c3ab30ea81c4ac7dcfc
-	task-69d196f015a150488265afb7
-		scapy/contrib/gtp.py	b8c90b69e306799bdcde15388d6f6ff2b8c73deec285666ae09434817275c6bf
-	task-69d196f015a150488265afb8
-		scapy/layers/dot11.py	3ef99e8fa614188c1865c3a87f69301d8500b009a97a452bd2220e4e9976c4d9
-ruff-sim103-needless-bool
+ruff-f405-undefined-local-with-import-star-usage
 	conan-io-conan-2.0.14-2.0.15
-		conans/client/graph/build_mode.py	1f343de1e65322578b9a23543bad7306bf58499b736037ad6a7e5e95cdf91651
-	dask-dask-2023.3.2-2023.4.0
-		dask/blockwise.py	6cbe7fc2dd544c494241f9c9c666c061bf33e9ed95c3250b6b18396dace91844
-		dask/dataframe/io/parquet/arrow.py	9faeff0d93044e12a70f5955b3156e390b8d7752e666b98525c68cc3aa0ddb0b
-		dask/dataframe/utils.py	69ad192cd6c0e5c49a0a9df47fe04c85dd0dd9efd47b91f38a20cf4886836730
-	iterative-dvc-0.33.1-0.34.0
-		dvc/repo/__init__.py	8dd69841a88422023793c7098a6efce6a346dedb1022f3b5b894be7849d68aa3
-	iterative-dvc-0.52.1-0.53.1
-		dvc/remote/local/__init__.py	4063b4c1f362c7535dbf6e66d867f23235fa69b69d4ef692d2a80dada393d300
-	iterative-dvc-0.89.0-0.90.0
-		dvc/remote/local.py	c8bf4392455aa5648253180ada8a155717b1f475b133d818d6c27b5cc6f9bb15
-	iterative-dvc-1.0.0a1-1.0.0a2
-		dvc/remote/local.py	cd0d52dbdc60dbd57b0b5f8b489f8041aa517604a0e36d346087c47d75491f62
-		dvc/repo/__init__.py	218c4853b7c3e72033c6c30ecb506e381f63fe0f56f96e887972b49e35fa46ce
-	iterative-dvc-1.1.7-1.1.8
-		dvc/ignore.py	f06500d1bfa7114b453fc3205b4a933274014186996b24d1c00d302492a81f07
-	iterative-dvc-1.10.2-1.11.0
-		dvc/repo/__init__.py	4aa0ec11b29f3867f498ee444e9e547afbbdc6bd6417c9d98a1d7daf9a1efcea
-		dvc/stage/utils.py	0a08afc10a0f34bed25a5e27e086f3d9b12803de64c09630d44382c6e8885afd
-	iterative-dvc-1.11.12-1.11.13
-		dvc/tree/local.py	1dbf2257c7751c0d103294bafdb6cbbf4123338a2e32f7aa2547401c1ec53aa4
-	iterative-dvc-2.19.0-2.20.0
-		dvc/repo/__init__.py	0d5447aa518039df18ed4551a2a22d60c474922fb185d2614ed3e07c4d6c3dd5
-	iterative-dvc-2.5.0-2.5.1
-		dvc/fs/local.py	74be1ae8185611547c73bb82c19acd588cba17035d4f835898b8248aee07a38f
-	iterative-dvc-2.7.2-2.7.3
-		dvc/fs/local.py	8b25d41d68b025339ed2babf853f9040d3b1e851cf802ce73bde34037096bfa9
-	iterative-dvc-2.8.1-2.8.2
-		dvc/ignore.py	94d579c9b33e05e8692bf241d8fa7142829466d09c61259b6eb2828cb3ef9efb
-		dvc/repo/__init__.py	2c4546b6b13a63698a4c9783a680388448eb6bf4569b518a45bc8fff38e46ab2
-		dvc/stage/utils.py	e9ef865f02b20dc5c1f1b96cde5997f46b638bf6248e43e7dc3aa9727e02a073
-	iterative-dvc-3.13.3-3.14.0
-		dvc/repo/__init__.py	f6cf320f9a0f944886ca75e9887b24589693c93f87b72764bde84866a25dbd90
-	iterative-dvc-3.4.0-3.5.0
-		dvc/repo/__init__.py	4a7dcb48a6723c528b8bd46e0f2b839a4b00abc5f51ab6680baf7a002a8931a3
-		dvc/stage/utils.py	f0239bfcadfe5e5d42e723ea9e6a2bbfdf3e20d896fa8221a8a858541bf37563
-	iterative-dvc-3.43.1-3.44.0
-		dvc/repo/__init__.py	84ce65683de378193caee31c27b9086d3cb9591254da7473021fc2598c6eee3c
-		dvc/repo/plots/__init__.py	119188d0f83ff48a63e6e53b34c750f9fb7ffa4c3a1dbebeeb1a232195be166f
-	psf-requests-v2.27.0-v2.27.1
-		requests/utils.py	30a4cadddbbf5a698eda7bff4a4795f3cd15c1f2188496ef7752f3eee0e2a0ff
-	psf-requests-v2.4.0-v2.4.1
-		requests/utils.py	0e6b1161f51379b653eea51c574e00707842496f08b7d365d4fca79f7ca3bdf1
-	psf-requests-v2.9.0-v2.9.1
-		requests/utils.py	a47e43c28c99663c330d6ff638bae6d1ab03b366fff668f369fc1f9b949fccb4
-	pydantic-pydantic-v2.7.0-v2.7.1
-		pydantic/json_schema.py	3e5afce5c056ecb17875ae52422aafbd4ada1906c83823dbf5dd1cffd231d2d4
-	rerail:django
-		django/contrib/auth/tokens.py	963a9058ed1d024778e7e6c127a5bce6865953da448f3361dd56d97de00dc314
-		django/db/backends/base/operations.py	1fe091964e3633c6ed2dfdf45cd785083a01c69e7e32dabdb5c0c55f06e90b99
-		django/db/backends/mysql/features.py	2ba36dd9d8eaf5abf73298d197485d63b7408a14b6eb5243eaa11970e9c64647
-		django/db/backends/mysql/schema.py	1578016a7a25137b155eddd1e29ba6852b7689b0843c11c2f597af00efb7e46e
-		django/db/models/query.py	af89f1454778a7b3e49652b28bd97dee7756bf28a1bb4e83ba5d751fec7d9149
-		django/utils/inspect.py	11c7e764b7619077ed14c0f226a31fd3318c0258c4fb1a05c9226fb6b2d6f97d
-	scikit-learn-scikit-learn-0.20.1-0.20.2
-		sklearn/compose/_column_transformer.py	c98649f9686a4cede9f56be0d0efe2cf8bb7ee9b8811374c5eb4e943bc828791
-	task-694b4b99829f00e24fd118a1
-		scapy/packet.py	dd1a27c65bcf3efa3724e8747bdfae36e9d3afbf93dbca7484d3d6b2ada8b99d
-	task-696719205599a51110d4b473
-		scapy/packet.py	2379f7a17ad059172d8aa4b1fc0d20c6ff9bd0361ac7246c9ca0b087780571de
-	task-69d196f015a150488265afb6
-		scapy/contrib/loraphy2wan.py	0685e06bc0ed6ac2b9e9de7464ff26030641ac4df1053e8be932824b2b4a1154
-ruff-sim105-suppressible-exception
-	iterative-dvc-0.92.0-0.92.1
-		setup.py	8c85a3b9f122ac8e08b96467d1950817d650ed2914c93866ae669c8d23bded4f
-	iterative-dvc-1.0.0a1-1.0.0a2
-		setup.py	96806a658385a59e31c358a7761b951a59b530a0190245004eed3703e6479e7a
-	iterative-dvc-1.0.0b6-1.0.0
-		setup.py	064b6d6a898b2c5449b962dc8d9fc8840d36e4374bc3f3ae89fd3295be0524f9
-	iterative-dvc-1.0.1-1.0.2
-		setup.py	9ce51a71d16d24af49f65aef7d19cb1d3b25d86d0346bfaf687aeb5e8505dca1
-	iterative-dvc-1.1.0-1.1.1
-		setup.py	e9ea461b696e3ad0eabedb880371baa51068cb5521f658f7932173192fe1bdf4
-	iterative-dvc-1.1.7-1.1.8
-		setup.py	d33844dc3c932a12d59b59209d768690d06c1ef0f29826001a595aac8022d5bb
-	iterative-dvc-1.10.2-1.11.0
-		setup.py	c31252a16e64a4fe1290b61690c9b4114032e257b8f7abfd7608a83537b6fa2c
-	iterative-dvc-2.5.0-2.5.1
-		setup.py	efe25b155a1c6d2a3bdeeb26da97e57ccedc5c29084a6e256458bbb12849a0e7
-	iterative-dvc-2.7.2-2.7.3
-		setup.py	4e00f1964dfe26c0de19cf29c531d3604536d97c333969f86a09ffc1d45abd4d
-	rerail:django
-		django/contrib/admin/templatetags/admin_list.py	f1fda4e7be54176dabc2256d2e001827d113869e594da620567981f402753cea
-		django/contrib/contenttypes/fields.py	4cd6da462046217d23ebfa54c010a3071b7acc404a978595589fb22b0edcb83c
-		django/contrib/gis/ptr.py	35e20107ea65c0eeb5c0638ec4683b7c5c955c8e1ae6f6c019475a27f1668eaa
-		django/db/models/fields/related_descriptors.py	4d45a9ef5adf0aade02fe3d5fafc41acdfdcd293399117cc1622d0a7682348a7
-ruff-sim108-if-else-block-instead-of-if-exp
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f406-undefined-local-with-nested-import-star-usage
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f407-future-feature-not-defined
+	dask-dask-2022.9.2-2022.10.0
+		dask/dataframe/core.py	abf5f400851cfe1611a4ffcc04a50a7df732b7046410b8c4e7896d8a0bd3ba67
+ruff-f501-percent-format-invalid-format
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f502-percent-format-expected-mapping
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f503-percent-format-expected-sequence
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f504-percent-format-extra-named-arguments
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f506-percent-format-mixed-positional-and-named
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f507-percent-format-positional-count-mismatch
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f508-percent-format-star-requires-sequence
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f509-percent-format-unsupported-format-character
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f521-string-dot-format-invalid-format
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f522-string-dot-format-extra-named-arguments
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f523-string-dot-format-extra-positional-arguments
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f524-string-dot-format-missing-arguments
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f525-string-dot-format-mixing-automatic
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f601-multi-value-repeated-key-literal
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f602-multi-value-repeated-key-variable
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f622-multiple-starred-expressions
 	conan-io-conan-2.0.14-2.0.15
 		conan/api/output.py	19bd6a904b24e738e5999b478a549c4ad801bc5d7e71f7d478dd8dde03b16a55
-		conan/api/subapi/list.py	8386e23dbb47429fefa92ab0022e96613457b8c48450ecc9ad066e9fdd5902a7
-		conan/api/subapi/lockfile.py	cf113e9a2789c0cfa5c1696a88640dec0dc43cbb659eb4957d5237f732aa9372
-		conan/cli/commands/graph.py	ddfa723cd6de6b87a9989f709e312135938e1e20c1a06b882be0fe8cb51cf8b0
-		conan/cli/commands/install.py	4a99b9e76aff89f183aac9d79ffd849744ddc3cea0e50126350afd79b80511de
-		conan/cli/commands/lock.py	25e78a6af6f1236f9c8c3115a7a7ab9a1b54961e54e97bf2a2e54e5a6ab38b6c
-		conan/cli/printers/graph.py	3f8b0b82a774eb996020fac3c0caf722152359d0b1afd6d2b629fe02eb2972ff
-		conan/internal/api/detect_api.py	f5d34c48d98a251871e1837a2adcff69b872ddd91b4f9c3a5f9be5b0d416bfeb
-		conan/tools/cmake/cmake.py	5b3e75894f30d541939196330996d2152994f06cd76a286579814b12bb282ccb
-		conan/tools/cmake/toolchain/blocks.py	8d4b39f5ece9c709e1eba93fa53e8b49ef60aad4089b75f54c849b507363a7af
-		conan/tools/files/files.py	76fd85d2b2a07d4fc51231f9de1534b03860960d2f5f34f2fe26918d27f101c9
-		conan/tools/microsoft/toolchain.py	99123702c20873c31a291f276ef849a76a1f11a42f436ba9506ec6c368a895de
-		conan/tools/microsoft/visual.py	11d7650b5c6f2a46f969eb0b8620a1da6d80514a8febeed71eb2d79d57da2140
-		conans/client/graph/install_graph.py	95902d0f0c7442036945fc41fd32307d0ea36d5061159419dfd980abe26aec77
-		conans/client/rest/rest_client_v2.py	a2c7e5c047d82b96efcc862f276db0547f5826fc9896999a1a8b74651960864f
-		conans/model/graph_lock.py	3213dd38670490ad2037772fbfb7df8cbab52ccdd83cfbb2d490e1af21963aa5
-		pyinstaller.py	ee01dc28886b186e07bab28be39a94483b30a5ea9ad1655c7be1c2bcb0818fa2
-	conan-io-conan-2.0.2-2.0.3
-		conan/cli/commands/install.py	e9716809f30794888a4838c35234ff5b3edf442c3800d69a753f77e452b81977
-		conan/tools/cmake/layout.py	5822b75f216d066057b0cd4307ee5d3033f53efa6d20d8941cda2e5c24499a95
-		conan/tools/cmake/toolchain/blocks.py	1b569253b69b2339c0399d52afa97f02f62becf2120c2c6542222c39dc2e947b
-		conan/tools/files/files.py	67f8d424e6bcb934e2b89ff71cbb5a2881850acf716eaba761b42f5c1997f984
-		conans/client/downloaders/download_cache.py	2b3de044d7a8184cddf5a2f8156f089411002ed8f4ea721d58332c6e55df5e39
-		conans/client/graph/proxy.py	72580579a0a1d12169728916d4fdf92576e633af1996460c8bde7f04d27a2f44
-		conans/client/profile_loader.py	90783561327c6930ede55d6b9124eecdfd01ed583b3b6803d3561fc66d61b18a
-		conans/client/rest/rest_client_v2.py	42156f68d832fc8c0d6953516d6622e1c9db876b8f7432fa0d148e89885bd7b3
+ruff-f632-is-literal
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f633-invalid-print-syntax
 	dask-dask-2022.9.2-2022.10.0
-		dask/array/backends.py	699bace2368aafa735667290361473455a902731cb3a38cfc75af597d8b0b589
-		dask/array/core.py	07fb92d4b4d52cced73b376ab6fbbf652e6cf4955a505e1fe2165e5daae8c1f4
-		dask/array/creation.py	5aa47031b14972103b544385d74f7aa30568202a58e215f15b1f46f4f0288557
-		dask/array/wrap.py	3cfb782c6a1bafc26c856e4c1512d544aee9a39df9a30adf934040f28f58bea8
-		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361
-		dask/dataframe/backends.py	894ffb245b33ebf44062208ac576325779d2f42b4bf21fedf3937b5348619b5f
-		dask/dataframe/core.py	abf5f400851cfe1611a4ffcc04a50a7df732b7046410b8c4e7896d8a0bd3ba67
-		dask/dataframe/groupby.py	46e71ec990dd6ca93f56d2021a1259bcd96ac65a8cc9be516816466598b308f2
-		dask/dataframe/io/csv.py	6836dcf49e9a89c271d1ac29b6ac0d8861ad734dd73ea50a50b7662324747417
-		dask/dataframe/io/demo.py	f79bbbb7efb7a2f377af098dfddb105d8223440e7f973b8ddf083b2a2d550fdf
-		dask/dataframe/io/hdf.py	cccacad2a5a43ca584b78a0860347156f0516a8b082b67a709ef2160af913fa8
-		dask/dataframe/io/io.py	a22b7e1c8f4e7c4def78637861f3fbb96eeec1cba229377ecbfd8c77f4da97ae
-		dask/dataframe/io/parquet/core.py	0c3d1d381617b749848a752bb0997cbb2a5c9e7a88a92e5497ad24cf6855d39f
-		dask/dataframe/rolling.py	1c85c64f112a777c056a63af2d93c132a5382de879e0e89964d10226b91486b5
 		dask/delayed.py	1fb63c814b06ab52a0e3bfb2a11b6836939b7caad2d719949d299dd4377c62bf
-		dask/utils.py	346d9f475f8816f5b660b8a268c31ead3beddf3536c24920edd1881af645e61c
-		setup.py	cbb8e5652543163ca244b855ee90bd08e88ea965912215c579cc76b88d4e4a5f
-	dask-dask-2023.3.2-2023.4.0
-		dask/array/core.py	46e503f0b7be72da36ce74db6bd3ef758fef47f9a160c672adf01b5a75c48bf8
-		dask/array/ufunc.py	123bc1d46f54bcd09501c8ff5bfdc2bbf69784c3e683d65de24769bfafc80162
-		dask/base.py	d1ec93b58715da6369757a552cceaac41f8ee792eda8f58ddeabeb2269a7c75a
-		dask/config.py	43b5e995322dd0a8fa2d7a1a86b8d8a68ef451079992e37245c4d8889869099b
-		dask/dataframe/_compat.py	f909f69149b22c5b56d83ba040bdbba9d739c59094e2742c18d098c0fe2fb9e3
-		dask/dataframe/_pyarrow.py	eac1cd135ef281c09e9981f481e496a2e2f6c458bd05beb9c458babca979095d
-		dask/dataframe/accessor.py	a96900b4a64cdd36aab69913279c1efedded929bc32e531ee80372b873d6c732
-		dask/dataframe/backends.py	7a54286b9c0cc2c901a795644ccbb83533967ceeb5b32b035b5591a871490882
-		dask/dataframe/categorical.py	69e1d8f9c7cf42205798cf1ad9dbf9c330ee76bf123e2d973d9b7f302c95d614
-		dask/dataframe/core.py	388ff0ca77977441f3e94125fe1a528b6df9ff3c4894af3a2b20960cdb6e432f
-		dask/dataframe/groupby.py	3244b3ed1f5ce59c92c180f342b88564b298537bd78a53bc05141cc322752d18
-		dask/dataframe/io/hdf.py	7e7fd9e42a5aa9d2d1ca705b7b353dec2577bbad077bee426a7d5246e7ee9f44
-		dask/dataframe/io/parquet/arrow.py	9faeff0d93044e12a70f5955b3156e390b8d7752e666b98525c68cc3aa0ddb0b
-		dask/dataframe/io/parquet/core.py	d235f91eb1e4322fb70c05f249dbef01457ad9da125caeb7dd9a0715031a1fb0
-		dask/dataframe/io/parquet/fastparquet.py	a2c0e74a8cdf566932ec68607f2a47e63c62022f56ca24ed8c03b60ef38743d6
-		dask/dataframe/io/parquet/utils.py	eab9c40af64e68df5f7ac5c3e866c001c9994309f7808e13e5fa4f8d9ca87e20
-		dask/dataframe/io/utils.py	2a038ffcc5121ed2ab4ca9600e9562c4398e12a472f16bea6a628e6991330fbb
-		dask/dataframe/methods.py	011eee86697191e193d6bd8fc907800dbe5f904f0ceacf59c689a45da5b09ea0
-		dask/dataframe/reshape.py	63c2b83ef416eb83da87c3d3a8d4c7348788ca6daff309af6a397b7841bf8f65
-		dask/dataframe/utils.py	69ad192cd6c0e5c49a0a9df47fe04c85dd0dd9efd47b91f38a20cf4886836730
-		dask/layers.py	76fbf90912d9d49c04acfe7d53824630ce8536725c0f478df7939a8d5231c517
-	dask-dask-2023.6.0-2023.6.1
-		dask/array/core.py	bd6c146363f7009db941083a1345ac1f3a900ce6bae332725de023b298060df1
-		dask/array/rechunk.py	6e40521c1f5251dcebfd5432fe1df418784efd512ec5c2c54b04569692396b16
-		dask/array/routines.py	1e4253ab9e61f4ce05721a7455c6a94bf180b14504adf64e7d29752b1dd436aa
-		dask/bag/core.py	f814f8309a5f8d1587c4aa477b5eff7cd8ef6995df2bd208f04fa588d28616dd
-		dask/base.py	cc4aacceed035cfd8d201e31b494d5d960fc9d3bfc0d5fbab4948712d7eb29fa
-		dask/config.py	8c71cd61adf6e2c831f137868e9e0aff268511ce2df468a26d24d144a4687d11
-		dask/dataframe/backends.py	d43e9d5f18bccd3673109ae3087f9f6dc80b55ebf6ee5a5b4d9bca853ae1d13b
-		dask/dataframe/core.py	9677e2d9f7c23c9c7031b4df6ce31c9ee263c5781e0451af5ea50a68eda32a5d
-		dask/dataframe/groupby.py	6d941777fad849ebb7f6999db9932872e98de2e64a6bcad986b8a1fc1808fb71
-		dask/dataframe/io/csv.py	265365d2405417938f927686bd355e680b53fa5ccc6325f46745280514ae5481
-		dask/dataframe/io/hdf.py	f81e7350a5494061c38408514dd9e0657c57eff0525f80fe5c202495541dce7e
-		dask/dataframe/io/parquet/core.py	7f202afb9d4dd7e5b45c25a469e0af55487d543d97181091c9c4566b3419ffae
-		dask/dataframe/io/utils.py	0e2c60a91588fe6660dab30c727f9029fa4ff2a99bed236318044137ecd92343
-		dask/dataframe/methods.py	97b195706e1d0ce5faf4c5b7360b598b2a28d34a60c267671efaf4336cd14b41
-		dask/dataframe/multi.py	70cd6dd5692f8ff0bc861da754ce3748ed9b09436465d89002cb3660441f7308
-		dask/dataframe/shuffle.py	121c76e63f7eb8b237bd7f6dc6207db974746004bcec73013aa409b6c962c535
-		dask/utils.py	3732667943b9b707777370eae035195087ad05c8281473a1f189be208fc786dc
-	dask-dask-2023.6.1-2023.7.0
-		dask/base.py	e22e312b903044231d26b6996d2a1e9aaeddb0d134a9c03b4b7f06c9acb589f0
-		dask/dataframe/core.py	25a11e2a53a71eb234fbaeab8e4c63b926971b42407f9ee25373bbc30af96d7d
-		dask/dataframe/io/io.py	ceb6f633ba4bbe219375d2dd94200b4e5caf628b35bb6b3cf1868d551b32cf43
-	dask-dask-2023.8.0-2023.8.1
-		dask/dataframe/backends.py	2f285ae17a2c65a9649cda4e0603a635b2a9cdfa4b8342c7da9bc73e8554aedb
-		dask/dataframe/core.py	fddd0c7cb1b4db52c805fe01b30e719a10a3933ba30428e75424e1e5bf066567
-		dask/dataframe/groupby.py	4a8265cbc1063e4dd397d42327272cec83152a642311a5eb61ea07fc27431c1c
-		dask/dataframe/io/csv.py	e8d3523c8d5d15c40617ecea24a5e6a1d6992ab58719c625b711211c03312086
-	dask-dask-2023.9.2-2023.9.3
-		dask/array/reductions.py	efece1d0c9948e8afe60f3072379e9adb26c035e26fe40f3b4419f271f5549b0
-		dask/config.py	0743039430bf16346d9eb8e18a7f860ee6a374ea1bee09a1fd56d481059fecb6
-		dask/dataframe/core.py	10f7c583949f8f7e162ec569a8d2f0a524eebebe85736078db31ba0f1fd1df62
-	dask-dask-2024.1.0-2024.1.1
-		dask/array/reductions.py	42836acb31a3d9e7e78b89adf1f6d4afef7e5674cc945e0e51086d877bde1776
-		dask/array/routines.py	11101b085cb1dba371ad6f1109ddf9554155b9f8afb794528b67d87f87d1d6d7
-		dask/dataframe/backends.py	68a13d64486b481acf7ae270f1996c83498bbf088923e7a8f7e5dbe692c609ab
-		dask/dataframe/core.py	b741fe8e9a345cca00f484cb988ed8d40d0ac93f9070ead67c2af7a15458a742
-		dask/dataframe/groupby.py	e3d668f90639321eb1a71f73799aa606ab0a2500412b8e1c75b8e3b97f84f818
-		dask/dataframe/io/demo.py	325730b16156a3b20f889e5975ffcd08014cdb3429596248c55544f8953a81fd
-		dask/dataframe/methods.py	74643d29c5736ab3e5c350c3b09f4e778561d1d3d2cae1d121dcb8e1a6d42966
-		dask/dataframe/shuffle.py	db235741fea30f5b17450db27796f6bea514212d70261355cf48ba3bcee5b078
-		dask/sizeof.py	aaa1b71dc7ce0363b0b07e00cff71b4ba1b35d8a2fe3a48b104bb9264e4a5961
-		dask/utils.py	853daea0da7ad0eea489f6b55f0d751e3e47fb2eb81297a7708e2e04af5daa62
-	dask-dask-2024.3.1-2024.4.0
-		dask/base.py	ceaff9e5b5f6cc221a1e611d4b97c7405dc225b4313aaa1bf76277530c423b09
-		dask/dataframe/groupby.py	a9b6a56327ea66ea165f1e5962f45afe5d5b5e83592234e06056a59b762b0125
-	iterative-dvc-0.33.1-0.34.0
-		dvc/output/local.py	335956a8d11302da8ecd4549c418751b7d66ff377ee076830927695d9ecb30b6
-		dvc/output/ssh.py	0d6e1852ce9f4675845fc3d177ff0e6a328d1fea2075fe673158c5da52a1c76d
-		dvc/progress.py	3ff90b8f58740afcb3cdd2b33a620e8cfea89061e192d68223026ef51ddaea75
-		dvc/repo/__init__.py	8dd69841a88422023793c7098a6efce6a346dedb1022f3b5b894be7849d68aa3
-	iterative-dvc-0.35.3-0.35.4
-		dvc/utils/__init__.py	70e32e455917a1fcdba06b7170813ea8b437914e9296451f62854c7aa673dbe2
-	iterative-dvc-0.52.1-0.53.1
-		dvc/config.py	bac83c423a06fd3959423b96002272b4068a40fbdf2ccf079349b7644f768818
-		dvc/remote/base.py	ead6125f40dac585c567096d7c734465baab65d37519df739e8f7b5867604614
-		dvc/repo/reproduce.py	605fdcef971b191d44e26a5f60bc6a15aee798d6fd5acfd92f7621d6b11f7d4a
-	iterative-dvc-0.89.0-0.90.0
-		dvc/remote/base.py	2c6320d59f2600e782939bf9b0eb9c90775e7eb8bfabb2ad7326287959ff748a
-	iterative-dvc-0.91.2-0.91.3
-		dvc/remote/base.py	a69423d0044b9416d0a348429ebdac0e42f262a043471994c04cb53aab070a36
-	iterative-dvc-0.92.0-0.92.1
-		dvc/logger.py	dece47448046a485c87f956702762bddd9a7a237ab5fbb9b0fd7497cdcd88034
-		dvc/repo/status.py	7194ae89f24f931c4ef4114ae61e377baccaaf16475fefd698f49cc9d38d850b
-	iterative-dvc-1.0.0a1-1.0.0a2
-		dvc/data_cloud.py	7b51a354d8e12e7955bd800025bd0ccb9fa2f70f5e3534ce0db32d57485f63c8
-		dvc/exceptions.py	f1bf9c23b15ec5b7301ab0987bf7ed92a90e8b16624c1a4bcebdbbc881d62990
-		dvc/output/local.py	76668bff8ba4a9c6492eaab42804ae3830f295658e40d8f9bab30c98d7ce81ad
-		dvc/remote/azure.py	dd923b48fa0aa4ea54c7fce75822c68c3e8fb2ef96f12c9948376c93ded324d3
-		dvc/remote/base.py	8a0d1ef350d1e5243df4ef806b7440778c0774fa8676b6af6401d81c582eea85
-		dvc/remote/gdrive.py	3de2ca710b7da967c5a29670588ab6f8bf40dda6276bcaacfbbe20b5460a13dd
-		dvc/remote/gs.py	fb2bc46bb5276b86f84a64b145267aeaea98084b0ad617d07608b0243aa2a360
-		dvc/remote/hdfs.py	f957f354698255429d9ee0cfed59437fcd0ffc81af84ff10225fb1f4b64dbf8f
-		dvc/remote/oss.py	8c9eeee9632b42f438096943f743f96156ad2b6f7344b0a8e166363f78e63943
-		dvc/remote/s3.py	051fa5df1efd7143792246f043d56a6438011fd7d1d69c7940e81a398b13ae84
-		dvc/remote/ssh/__init__.py	9ba59ef2fbcb59bfaec07e3d114a2381d42f43a26faf58985cd7c031223b2fe6
-		dvc/repo/plots/data.py	4c95d61528e91a3688fdcc7c8a43388cdae3ea8588c325591dec84c1432c98bc
-		dvc/repo/plots/show.py	d7c35aa476fc4c462f829e22bcb2cc593fec7a5561f863e54c1195226a85427d
-		dvc/repo/plots/template.py	3601ffe9a4e8f27f319ebc7425d40a0e8e91ee5d98336bd8ae64a16eb5e11ca0
-		dvc/repo/status.py	10ca7d4540c1664949e5ae9d1af02e2a036c8df182067067267d6e88d43cefc2
-	iterative-dvc-1.0.1-1.0.2
-		dvc/exceptions.py	ab5a523795b8f4040a20f5a8ed876ad1a5b8fe989426d17cb25406794ae0e3f6
-	iterative-dvc-1.10.2-1.11.0
-		dvc/command/experiments.py	cbfc5fc5be8a26813234df004e4dd3eca546f53525bbc394c749d85776a8ccc4
-		dvc/repo/add.py	cca0ba69e82fb579cd461ab728c8ab2fa9bc58ff324818dd4a3fe536592ec84f
-		dvc/repo/experiments/__init__.py	8f67dc3341d1bfc9b004a99e409957de22805d06f145651aebbb468a777796cb
-		dvc/repo/experiments/diff.py	9908cdc46feb622c3bb0e71fea5c6395428a436e1248d5cbc568bac03ecce55d
-		dvc/scm/git/__init__.py	d2f00b620ec2fb527fb646a1a509ae5173ecd549694bba6b287cde247f2edaa2
-		dvc/stage/__init__.py	00228834aac65af92d178abbf715546b322a1662af84588b178f27a8561c58bb
-		dvc/tree/base.py	54975bee70d762b9e85d3c0cb61c06d58803fc96738da8a8f14b40afe1bf20cc
-	iterative-dvc-1.6.3-1.6.4
-		dvc/data_cloud.py	5f9155e269b2477e10deaf3b6a4c06d0c3338a162cb3e9acfd0411ceb3372f25
-		dvc/repo/experiments/__init__.py	cd6f2e20a3999e91ddc52fc64cabff5cfb295742911c5b81da9d4a0b45c22ea3
-		dvc/repo/plots/__init__.py	80e7b430d84bcae285fb8775e55856d99f392006f26ad7ce5e7e8e217982956e
-		dvc/tree/dvc.py	e521676370fccfeea6340cb79fe325445bdab3ef30e0d6bbe0f7c933cc9a660e
-	iterative-dvc-2.19.0-2.20.0
-		dvc/fs/dvc.py	bace347e0b93909b77c35f6dd424775c971f11b7a1f5cf4cdeb59ab28588cccf
-		dvc/output.py	39e9379e630aee91a2b1f3617ca04a11db3daaf434d76dae96c3e864f8308877
-		dvc/stage/__init__.py	49a8bc967b25155061438aa7acd9c6dcde94746c042106e7d96bc2b1c42c60c5
-	iterative-dvc-2.5.0-2.5.1
-		dvc/fs/dvc.py	e49c8b6a0876a95fa3aae3d43676b65b2000fc16c95b1a08789618a8e6324883
-		dvc/fs/gdrive.py	6ea87e13cd8227f25eed3e56a9cf66f02b8a3948d89b3a5959d89dd06e23aa1d
-		dvc/fs/git.py	ad9c209c1090dee11ab9505dfe8faff8f9faed30221804edb2a9a50f17cd1990
-		dvc/fs/webhdfs.py	f3a4195b35f4d79c9a0c59b8d4b139943d56ec74485357c279d84d12c410a62f
-		dvc/objects/stage.py	9cac9f570a7bc1ad477f64b0a0ea69f14130742e30a1d8b7d5a5fbd514d45d88
-		dvc/repo/experiments/__init__.py	1849e8977d347ea05921c37118f95d0cab23ca67cb5077b9ed5e865fb23d96e4
-		dvc/stage/__init__.py	b4ebb52bf2706a202f648bb67394ddcd65c329dc51df74cfad84f8c2151aa36b
-	iterative-dvc-2.7.2-2.7.3
-		dvc/command/experiments.py	cad1a0afb12928088be5800d1c0a88ad13b73ff71d3444709c826018cab4f47c
-		dvc/fs/gdrive.py	362364b453398d8cd838330080c77b724d1fb2350689aa6edb43a2da3451f291
-		dvc/fs/ssh.py	5c4a4828b6989c6665bf1d24eb46efa2834104485b83b8e88d7cd1e728544f42
-		dvc/fs/webhdfs.py	e2f8d42d7f489afe38ce4eb2fae1339e9bf095fb66c63ba4385d52e94d2812e4
-		dvc/objects/stage.py	02a1e4337a050840e6e8324bee6dedf6a7929a39fa53a0705f684e52e3f8db15
-		dvc/repo/diff.py	9aa0463b41d99de5656660994018e75b92e03e60fb637885f72ecffdcb622012
-	iterative-dvc-2.8.1-2.8.2
-		dvc/command/experiments.py	b4522aa9d57adfc6d0ef3b3d8d506e9fcfe3eaac3877ee157eb9c1f41e4a40fc
-		dvc/fs/dvc.py	6dc9b8520274b29a9a6ed998082451d11d91b53360a9aadeb9bd0d5d39faeb7e
-		dvc/fs/gdrive.py	bf5a493bd8695308ab134b59a539723b8dc03bf0cc42e21684cbe419997bfed4
-		dvc/ignore.py	94d579c9b33e05e8692bf241d8fa7142829466d09c61259b6eb2828cb3ef9efb
-		dvc/machine/__init__.py	ae4dc4d0987ffb394f15de1e32e7c2980d5fdba35261022b37ffc0bec3af7bff
-		dvc/objects/stage.py	b1061d20075cab59758593d8d4b1b0a348bbca7b26378e498e3c250be3157eee
-		dvc/output.py	2b6841fd0ad0676e13a576358b6c27d9f7cfd89b17ee972ab68f466c2ce52b83
-		dvc/repo/diff.py	f9b0c5aaaa5af314eca335e7d6ebaaddc32dcf0e8a46bdc8eb411f48923c0dfa
-		dvc/repo/experiments/__init__.py	c0d934de8dafb405325b88db1ace750c379257b229cfe2a17b41b85492b0e87f
-		dvc/repo/plots/__init__.py	0478f922b7535e51404c9fbd72c9c68b889c856e7f74188d12e07c8e3bf81cc2
-		dvc/scm/git/backend/gitpython.py	bbce1b6e45954f56d499f5ac1c71103a8f265b3c76a2d27be2a2757c899c5b74
-	iterative-dvc-3.12.0-3.13.0
-		dvc/repo/experiments/queue/base.py	ec068881858d55d0fbff555d53cfba2bcca18c9ba5136a97426c525494cea276
-	iterative-dvc-3.15.0-3.15.1
-		dvc/output.py	09a52839283d4232adb2c95e8bc26bd36b5cb7ce9a93cf3b60a6631923fcc33f
-	iterative-dvc-3.4.0-3.5.0
-		dvc/output.py	c712f0813feb5f6aea572a4bd99e0520696e0064f27278e019a0f58462380168
-	iterative-dvc-3.43.1-3.44.0
-		dvc/fs/__init__.py	046875cac4cb1c1ee57e3a4296835295b14797847be5411314ddb4f9dc93e71b
-		dvc/output.py	d4e267da935070c2e650de61ea3c57ceb72a94335e86ea9a664d283266d51f1f
-		dvc/render/converter/vega.py	31e7e5811beba436c8bdf143725b09646ebf8ce043247122105a572c12a36c7c
-		dvc/render/match.py	6432824179f76351d709c38c850dbcc89c19d2bbde900f2f79d634e35b80835d
-		dvc/repo/experiments/queue/base.py	dad1c08cea84782e2c5308133ac41424c7a38b8d28f38531f5350532f2fd6bcd
-		dvc/repo/ls.py	87e5b282d21eb019411dd1cb6c1f696126a21877ed980d335c9bfe4d48e8e18f
-		dvc/repo/plots/__init__.py	119188d0f83ff48a63e6e53b34c750f9fb7ffa4c3a1dbebeeb1a232195be166f
-	modin-project-modin-0.24.0-0.24.1
-		modin/core/dataframe/pandas/dataframe/dataframe.py	93eec407afe6f605b070d7f9f3609c468ae5e568e866247ea43ac616babc5df1
-		modin/experimental/core/execution/native/implementations/hdk_on_native/dataframe/dataframe.py	8d14afb3613d15b05fad828dbcf0b1fe5699a18e2729e6aca971e2bd6db76b34
-	modin-project-modin-0.25.0-0.25.1
-		modin/pandas/base.py	4e8a37a1c21803a39a89c8d537cac7975daae402054a3e7470910bba3459b04f
-		modin/pandas/groupby.py	dc90f077497d772fa50621f9a7770375ec9da27437a20f893c257159742485d9
-	modin-project-modin-0.27.0-0.27.1
-		modin/pandas/groupby.py	43c19be9e5e6ea2606562f2ee784148da4286dc21bf472f4c8ad87dc5607fc72
-		modin/pandas/series.py	049dcbbeb1960498ac2a811f1f54db4e0c46f56124ad9d3c1ff10125efb8f8b6
-	psf-requests-v2.12.2-v2.12.3
-		requests/models.py	6e3d4269cdf1af4f52e7574d1e8ccd297ca9877ce3476348c0b96182eafddd42
-	psf-requests-v2.27.0-v2.27.1
-		requests/utils.py	30a4cadddbbf5a698eda7bff4a4795f3cd15c1f2188496ef7752f3eee0e2a0ff
-	psf-requests-v2.4.0-v2.4.1
-		requests/sessions.py	812c97ee9486f326c6a976de10121be1a220950bf2062f959a6cd6cba2dc86fc
-	psf-requests-v2.9.0-v2.9.1
-		requests/cookies.py	9abad2ad1621c72b6e2c32ab2397321f934be33be9037ef762f3bb027b7daf17
-		requests/models.py	41028d011e1b5e9b74ab647029302b690972ac526b64dfff96f2346e98cf26fc
-	pydantic-pydantic-v2.6.0b1-v2.6.0
-		pydantic/_internal/_generate_schema.py	4aefcd26a9f16d1441913fc01f5dccdfa3ad41f5898caecfe366d5bd8273c68b
-	pydantic-pydantic-v2.7.0-v2.7.1
-		pydantic/_internal/_generate_schema.py	017f7ea4722d9a054cc4b842464eeac7e600912169d72c0f64cb128436e41b83
-		pydantic/_internal/_std_types_schema.py	c4fbc6e2f4b1358e08f67cad2ba3a7de7c9b44777b311c568d3fd49f0d6dc5b6
-		pydantic/json_schema.py	3e5afce5c056ecb17875ae52422aafbd4ada1906c83823dbf5dd1cffd231d2d4
-		pydantic/main.py	7126ccf67e7235dd1ed972897b1355e09da66ddb130ce74746105a4ddeae4c98
-	pydantic-pydantic-v2.7.1-v2.7.2
-		pydantic/_internal/_generate_schema.py	d83f4cd7a5b496e5a58d4d274878cfc9f00cc065f5ea27ad25ba146248c67cfb
-	rerail:django
-		django/apps/config.py	d59871b783abc119ce9ac4ff07f06eac89b3de88bcdf7d13246d2b451279f1b4
-		django/apps/registry.py	ec931677450952aad787249d5582cc3fe0cb0bdb2a9a7ee7fdd817c4263a0d66
-		django/contrib/admin/actions.py	7c5c039b6b5b5f056cb67e2ffe2bc592e1bd732a30b9106fab87b6b9052eae32
-		django/contrib/admin/filters.py	c5671ad30b00fdf1a592057d9805c0dd18a9997be3f0429aba65387ff2b293db
-		django/contrib/admin/helpers.py	a739b24854952ee42bfde4f44e40c5197a0404af1b6020cd4969c511530c6616
-		django/contrib/admin/options.py	a9d39833f314b2d4d57220fce776cfbfb17036dc6a9aa1f758fc6c81dd763004
-		django/contrib/admin/sites.py	a0113723d55dbd6a2bac997f123655595266f4262b63cb290c47a567d094d1b0
-		django/contrib/admin/templatetags/admin_list.py	f1fda4e7be54176dabc2256d2e001827d113869e594da620567981f402753cea
-		django/contrib/admin/utils.py	bf9458244b0af872f267dd4dd439edba516f6a787caa2fb6923030f2b0fb1014
-		django/contrib/admin/views/main.py	a9be697e00caf46542abbc12384e9a9a1a641e8c6a6815e4312c5542fa7fd5a8
-		django/contrib/admindocs/views.py	c795b8e7d25de6c0c431243ca5943e3aa59421939e60300847f2ab90f09864cb
-		django/contrib/auth/admin.py	6500e817a9aaae8322d43ec8cc1712fc6eedb053af7d47bed92875f811fc01a4
-		django/contrib/auth/backends.py	710db3f09a4077517737c4a424e93df0ba44b607614271fefc91318e2a7535cf
-		django/contrib/auth/checks.py	02c65fba7d371b365b50a29daa8165876fbedebba801d76c47379e8070f18a40
-		django/contrib/auth/decorators.py	eb2e08bf11421b851f9c7da67729000e0b1b6c23ecfd2d719bdce475bafa4675
-		django/contrib/auth/mixins.py	1d91cedc84f64c55265524c951936e77d0ec0aeaf7f8831cad50b9dd2c2b8c71
-		django/contrib/contenttypes/admin.py	7c5e99832ae3d3a92c8806923c42126a931daff460b389e68e33026d0269afa9
-		django/contrib/contenttypes/checks.py	9679e379f3cd99467004cbc9bbe805fe12c462530e86dd47f0ba472670a5c26f
-		django/contrib/flatpages/templatetags/flatpages.py	407facbb3b283c8312ae0c8747d3bcb8e7667c8901bffc372ccfa119f42f9d4f
-		django/contrib/flatpages/views.py	1f82c6ec96a76fa0dc9fecc834b9a9df9f2147ad098a000a1b38780383cc3da3
-		django/contrib/gis/db/backends/oracle/operations.py	9b4f163d91690efd387cf5f9c8ffccbb68246d26d779dcf23cfd6ad4c75e224c
-		django/contrib/gis/db/models/lookups.py	82ca436e50e48ed40e43ef4d7f1d543fc314823563efba849c90b37de57b944e
-		django/contrib/gis/gdal/driver.py	81048d4ad765fa3d875ef569c8ba49b752b9928f4ff363019730beeffa9467c5
-		django/contrib/gis/gdal/geometries.py	12d16673c09d40e6fe1c9f070952288e3460d87dd2c1d56cc79f6fc14581d834
-		django/contrib/gis/gdal/raster/band.py	b5234fb68b82dde307adf8c8b3b41481030c3c78859ac2e4d8d6662c02408639
-		django/contrib/gis/geos/coordseq.py	d8b1fb13dd9bbc7c9825242b8ee6b0be547454042c18debea9c5042eedb755a2
-		django/contrib/gis/geos/polygon.py	3272f4d404a913940f5ca2fada4355b44cace10e0dcd633ff2d7e0301613dcfd
-		django/contrib/gis/geos/prototypes/coordseq.py	1bf108d56c1d4a59925b58141bb9e579dcf0d767ddd464b1ce9ef6c9fcdefbcb
-		django/contrib/gis/utils/layermapping.py	2c81853c739332dd412ce4a0c5202db440704eb8e8feb3f1978411c48ff81ae8
-		django/contrib/sitemaps/views.py	1c7789b1db3cffee05c696d9f8fbdfad32d10c21a7959c9de841796451361a1e
-		django/contrib/staticfiles/management/commands/collectstatic.py	293f77d1ed7f22e5e543dab7733cc8aca7822bdd3ebf1bebc64d397860b7a68a
-		django/contrib/staticfiles/management/commands/findstatic.py	3f5d8617eebc6c8d5cb15b632f42760f029c117f093417851e691181ba659ee2
-		django/contrib/staticfiles/storage.py	d46286159e9bc71b2a01f94b0c474d6b5d04d7f80cce56cd0a4e1f0ddc22c3e7
-		django/contrib/syndication/views.py	9d8836bf61e7b804932362bd0c4affb8e9ea88e651322098cecf2f0da944bbcb
-		django/core/cache/backends/memcached.py	a8f3d70453679aa1b48f9216adbfa41fbc7b4cc6e3d41f2d0947152ea20e656e
-		django/core/checks/mail.py	bf6e236d0bdf135ff4c7318b6076e186c12eb4a5a4fa9b614211178c42f43c49
-		django/core/checks/model_checks.py	76a1af9a3976650f51baead720c054c8c46ccf190d5e13707636281625bbae63
-		django/core/checks/security/base.py	7b5b8474c233817039368272fe1d54ad6725eee633997791406d246d4ba5f22e
-		django/core/files/storage/memory.py	7940d107b075b9355bd5aef4cde6ac225577dd3de47c5705f5ccafcfde12e24f
-		django/core/handlers/base.py	b661b5d782bed13a74805e9ab239da89e8369f0bcd51d4a4d31274cc3d4f9ce9
-		django/core/handlers/exception.py	4e57c7fc0dfe6d6b56ee7124a9531c033442c69298c20fe886d43c83a3aef2c4
-		django/core/mail/message.py	2ee6a995165f8572f8838408bf018caf22bd459c20f42c0a37269c07366c169e
-		django/core/management/__init__.py	ccb6999196de52d827fcfd8022e7da0558cd2b9ed18ec9e7ccf11f10b15ec2cd
-		django/core/management/commands/check.py	5faf01e154d2f22fb72cf6344e3b9039cf403399bd1ce30134f19bcefdc50df0
-		django/core/management/commands/compilemessages.py	909a39e128439207e0cc94ddb35dbf57c280b992e075122668dae333f3ea463c
-		django/core/management/commands/dumpdata.py	0cdebfcd79b0150c708948f5d066de782292560cf65de0aa5ea63ab285e0e31c
-		django/core/management/commands/flush.py	d22225b79d50652514f9c8f40d91b38cab1494f5ed05430a4a056413a4e7f7b3
-		django/core/management/commands/inspectdb.py	f476c4a072e02400b222448c5a9814971c049477da6be007235f929d98b8b62a
-		django/core/management/commands/makemessages.py	48c55af9566c2f38b960dd4aea6570209ed4c1624665e19786bbb8c3f27eced8
-		django/core/management/commands/makemigrations.py	5618130483880b063f71a3b46b5061ebd35c5b3a8e2483b46455cf60e05c1154
-		django/core/management/templates.py	28eb1ae97be8a01d47e944912028c2c46facf7a860515b8afe81e1309d4a4dcc
-		django/core/serializers/python.py	5fce4946b468e25cb82bb72dca2d36c88370d951d25758c12789bb025a809e62
-		django/core/servers/basehttp.py	aae42b603c5267476cff0c2e1688124cee370551d3bc26aadbbf213306965d01
-		django/db/backends/base/base.py	e3e63238ea9d22c542fa452ef0d71192224755d0f53f89bfc95b4c5f052c6d4b
-		django/db/backends/base/creation.py	2697faf70ca7c3e99811e9fb68748a96b0f0fcb27ed32046a83ff8c5a4b98531
-		django/db/backends/base/schema.py	0a1229be23bbf215b31e17904f74933ec12082deb35964f015adc7599a54e9f4
-		django/db/backends/mysql/introspection.py	5dc986be2379163b6ea73740a86ce2140306bb6a074181869bb1d9f3db681d85
-		django/db/backends/oracle/base.py	fea2aed7e2fa21032c7954e675ed0c9ae607c34270580d3e32b42a9ce951a695
-		django/db/backends/oracle/creation.py	c8eb24701125295b59dae5afb155f4e59ca3a877b83885c414efce1fc434179f
-		django/db/backends/postgresql/base.py	6bed565f8e0a9b969cd3fb973ef8c5c14a0eb0c4151c77f99ae3f0faf5226fa6
-		django/db/backends/postgresql/operations.py	49cde1854e7cee24f376fff3b2647c8ff315b854e96224241154ec167cb345ef
-		django/db/backends/sqlite3/base.py	d6cf5c71329f9af2e16150d53d3ac8bf799c7b99c244e0182f4eccf7ff6d4d7b
-		django/db/migrations/autodetector.py	235c4c6875c1d7a09e729dd4ac5991f41cdb68c2b44cab91cb6aca935b1c51f5
-		django/db/migrations/executor.py	a41c86b8bb744c3b70128ff1f321dd373d5acd96ca46cd3513adc44c975ca26a
-		django/db/migrations/loader.py	cdc323bdf802553cd668a6df85f5032b5d37922226234a625dac60380b632f91
-		django/db/migrations/serializer.py	0fc85085419c1af89710fc777acc8ccbd4feb63646cce2abc7597da38cc0a59f
-		django/db/migrations/state.py	ae5a45dc89edb7947a32ddfc6245d4dff92ab25f4adb3478fb533911e3dc0dab
-		django/db/models/aggregates.py	5306e824e61be06dc20c1d322586f84697f9ecec7064b33405235feae5441eb1
-		django/db/models/base.py	924cb2668bbe7b7f55bfe204528984bd484398f0e0911d1fbfa9967438f809ea
-		django/db/models/constraints.py	ab316097eb974835dcdbfb0b919652a53690ab8bdc80589bfb58cdde30e9451d
-		django/db/models/expressions.py	5e2cd9d23b08da0ff7cfedab7f20164bce1f0ab61de9947a7219d2a14d344971
-		django/db/models/fields/__init__.py	9ed3436cd4b17f2c8ece368acfc4f7e099bde8a9fd5eeaeaab7d9c3cd4bceb27
-		django/db/models/fields/json.py	dcb73f55edbaf119d26ffe1c301f8dc3b788e0c0e04f225ebfc50f3839304bb3
-		django/db/models/fields/related.py	5bfa250736d590802c26fefaff2e04ec009d9057dfe2150458d59419f65af047
-		django/db/models/fields/related_descriptors.py	4d45a9ef5adf0aade02fe3d5fafc41acdfdcd293399117cc1622d0a7682348a7
-		django/db/models/fields/related_lookups.py	fe5d41664c8ed3933bf2f8fc357c3d0e16b39a0550dbab4edb914b83bbc1525b
-		django/db/models/functions/datetime.py	10863bf6b1bb0586835ba068ce57e34455dace22fddf2e58b7ea71656ac662c9
-		django/db/models/indexes.py	484f6ca7c96126a50130e31fc2572466ea7d1dc6c7eceded0898790822661a26
-		django/db/models/lookups.py	821457dd4115467270b61c79291cad0723c191da1dd22dae1e477d634e5aabe6
-		django/db/models/query.py	af89f1454778a7b3e49652b28bd97dee7756bf28a1bb4e83ba5d751fec7d9149
-		django/db/models/sql/compiler.py	4a2992654f9c628caa61ab2d89f97e9528c102808112e5015d9d34de3635fcea
-		django/db/models/sql/datastructures.py	2bca04f33c1de63b6198b4120a09afc0e95fa3a2b516281f3fadc7055e423b2f
-		django/db/models/sql/query.py	1c99477b335cf1af59f863ff0c9c5531faab3b9ab8e7b3619946b0d99e2433d0
-		django/dispatch/dispatcher.py	1f6c1c36a2403914e7a39c35d7240e16e5467aa3219b13de95d069c64c65ec36
-		django/forms/boundfield.py	e6f0c461d07f5700a952706671ba2ab1e76a756ca3091379b0ebf61ac2c1331d
-		django/forms/fields.py	ee608e8fc0e7d70407d22e37c4f04f30298d90c12b4330584d7992a8ccd05687
-		django/forms/forms.py	96e0a533d1baf2738c6aba616a24b1d876062a5b41b607612f79a1cfdedb410a
-		django/forms/formsets.py	de64ae2a70f2e85b2b479b93cea8fb315f39ab9beaf9840d2306c842f9e71380
-		django/forms/models.py	a4c9552bfa15ec2edc527c7454504cea11667fdb4025821683019de56213475f
-		django/http/request.py	b508ab0390a82003e7c968d258d45c5d74dfa14b11d463ac2989e6bc9cfc7610
-		django/middleware/common.py	22c70cc78895a5bdd34b81564eda661563d330b14d7e2ee6bcee332b72eee47b
-		django/tasks/backends/immediate.py	2d2c892f509bc4059d396268366a9e15efbf12ff14a8d05818702762aefaf183
-		django/template/backends/dummy.py	33adacb46fe49dfec0755a78d9959675d90dbfa83a724fec7359d147a49cff10
-		django/template/base.py	8081c7be906f9c1598bd499d704ae5a3785d30b3ca2480fdf00c70c294ebaf3b
-		django/template/defaultfilters.py	040aeab122c4db17116c8259b06d53682c98449286092f339911c09ed301ebb9
-		django/template/engine.py	9be5db0f333f4f91cd90916635903523f964b2a34bcfe89f6c73388b82e0cea9
-		django/template/loader.py	3d515452d0b95a08915554e296143a345667be3972eac3fdb3b6a716632829da
-		django/template/loader_tags.py	03e4dc32358716f8f97c21a4960f45b3c171a6e84a4ff2cbee95ec39f0765335
-		django/templatetags/i18n.py	52b4be684dd70842bfa17d7c9261fc812800d743061cc78c4cb3801120edb9f2
-		django/test/client.py	ab020c3890100cf4cba91107d62b5a7a070bfa61d0490837b13ac5b97743b5d2
-		django/test/testcases.py	1b360268bc91f7256d84dad6df53ec8ddffe6caec8258202026bf982ae58e3e6
-		django/urls/base.py	671d154a8564abe6f0882ee2ccb1187f8df267ab83f5fb3813a5262441eecaf4
-		django/urls/resolvers.py	ed87b99ee423f09c1d95373c55fb747d84d62258f8f4942cdaae0107fc0a4dfa
-		django/utils/autoreload.py	993ebf655deb5ecd58528a0eafa190172ca0607a038ea79d89ad6fcde8d8005c
-		django/utils/cache.py	cef63ee1b300683e517241a7232d111dd627a61ab86abc3b6c273cb8ee81da4e
-		django/utils/feedgenerator.py	6a112e13dcfa2f0a109ebac49f109aafdaa829c3c298ab67a2ab298caef1d88c
-		django/utils/functional.py	2a0d3a34bf2a002d21c13a5c98f1f269b08e6faaf0285ae5bb923bbd11ad1f5b
-		django/utils/html.py	b0d3fce78b92485dccfc2f1ecceadff2da547b54e673ff12ce0a8e0d6b05d991
-		django/utils/http.py	aca6086ffea6bad36551911bca667f41e80a559106b61eb0f7ea455bb7a6703f
-		django/utils/text.py	19fcdf84584bda013d8e50b0eca9e6e041e623456be0548d7185379fb8f2d05c
-		django/utils/translation/__init__.py	233b8c6475d8d39f53e2139cb2a4230e648e4f68ad1106fc381b0d8bcf1a5110
-		django/utils/translation/trans_real.py	6775b7a47508827cf210f890ac00bcdc5705e14c5bf97657f5c6fdd530622726
-		django/views/debug.py	9f5ffe7cba2932b5acc8f7d16e748b6885fb705ca2bf07365efcd4b9b7a0de55
-		django/views/generic/base.py	c0a4661dff91e7e41a30249e8ecaff7e199708e31c6d1219c8e6cc7b76bd1884
-		django/views/generic/dates.py	9cbb2c422ad6fc337284337f0725f514d57f4d704d5f48ab37e10e44f73c0c66
-		django/views/generic/list.py	2b25717fc317690836b981b7be621541785292aecf89333ab139099582b2d661
-	scikit-learn-scikit-learn-0.20.1-0.20.2
-		examples/compose/plot_transformed_target.py	1c06dc0a616ffc3a921185a51607d3b7780187b358a6c0de1f0015387b806d37
-		examples/neighbors/plot_kde_1d.py	0c1e377176adfff11dbf76498ec2f0cc7cc60da1f6a26c68438e012336e0f699
-		examples/plot_anomaly_comparison.py	c974e583454fc6d4b3c387578ecf05b097acdb66256eec9ad75dd6e57384979d
-		examples/plot_johnson_lindenstrauss_bound.py	366c16c37b18d647e835d43e2e18908b84166f6b7a6d6a82ad48f7a16ea05ff5
-		examples/text/plot_document_classification_20newsgroups.py	f0a1c8397477a7de36bcb978c842ab4ff773a03c4455a19f240ef82fd553e664
-		sklearn/linear_model/logistic.py	ed49180211b2fd9b9f88d3433ebb63d107599fbe72cafbc287f34d2e80c46985
-		sklearn/metrics/pairwise.py	07b5bf359d3558bbfecde6c13e08b8951644a09a23d7930dffe2517f38ec7475
-		sklearn/neural_network/multilayer_perceptron.py	e5bc3b5b66b1f52d412f656d554cd657229c8ab52a0124c96ad8b45247abd191
-		sklearn/preprocessing/data.py	17c3b83be54cab8c73d4740e74efb2e56be11b77a5a6acc7e848d09c2d70eb9a
-		sklearn/svm/base.py	f394a18bba7f4328cc9c65ee1f3d0fd22d809710daf09031a58e5d4e7d9d83fa
-		sklearn/utils/validation.py	a05718cfd8d7c180635af9abbb57548d5c59ea82a39a6245dffe529c57b0d774
-	scikit-learn-scikit-learn-0.21.1-0.21.2
-		sklearn/metrics/classification.py	562a7740ed7473830f19f785eb7acaee1172d8747a0e39a017b8621a3c282887
-		sklearn/metrics/pairwise.py	d488f600b2ec7b0f4877db50d243fe037987d7753ad50f03704002c144eaed22
-		sklearn/preprocessing/_encoders.py	a03bbba8663053e8bcc1033433b75f751bd43aaed7b8ed88c7fa67f96b1882bb
-		sklearn/utils/sparsefuncs.py	5716e98bde9ca8a243f405d5a15d69543cb2caefd074c0a4f8ee8cb87a3f2ebf
-	task-694b4b99829f00e24fd118a1
-		scapy/packet.py	dd1a27c65bcf3efa3724e8747bdfae36e9d3afbf93dbca7484d3d6b2ada8b99d
-		scapy/plist.py	6f6091781622849362db5ec6bee41a561a1c060d3d986e3042ea72cc2aa5a84b
-		scapy/supersocket.py	0c3a69267e7382df8cf1e7775489a81c9436112c39339d5f89065144567d7a0f
-		scapy/volatile.py	081e89078a3f9331c1db484dbfd4ddf177577c3024f84f5ef3b72c2fc7024f3b
-	task-696719205599a51110d4b473
-		scapy/packet.py	2379f7a17ad059172d8aa4b1fc0d20c6ff9bd0361ac7246c9ca0b087780571de
-		scapy/volatile.py	d67b2cf21f7462f9bc61ea14e6c1fc7e8380aad58fe175a5d2507e41ba66b382
-	task-69d196f015a150488265afb4
-		app/mailbox_utils.py	b88fb84906ef6824c896ee5cd051b190b3656abc853f1e8cb53f4121991dacaf
-	task-69d196f015a150488265afb7
-		scapy/fields.py	812994d493ab290ea39f930269f7a9551e25e90d424e910c445d40771bcbdee5
-	task-69d196f015a150488265afb8
-		scapy/layers/dot11.py	3ef99e8fa614188c1865c3a87f69301d8500b009a97a452bd2220e4e9976c4d9
-ruff-sim110-reimplemented-builtin
+ruff-f701-break-outside-loop
 	conan-io-conan-2.0.14-2.0.15
-		conans/client/graph/build_mode.py	1f343de1e65322578b9a23543bad7306bf58499b736037ad6a7e5e95cdf91651
-		conans/model/dependencies.py	88df760157da3e179159a0230e45a347f9841df553322610491bfe17dd989ac4
-	iterative-dvc-0.33.1-0.34.0
-		dvc/repo/__init__.py	8dd69841a88422023793c7098a6efce6a346dedb1022f3b5b894be7849d68aa3
-	iterative-dvc-0.52.1-0.53.1
-		dvc/config.py	bac83c423a06fd3959423b96002272b4068a40fbdf2ccf079349b7644f768818
-		dvc/scm/git/tree.py	1402e639aa463e9c5049df9ed61fe33e1f2a5f0c6624932d94756ea700f6a8d9
-	iterative-dvc-1.0.0a1-1.0.0a2
-		dvc/scm/git/tree.py	1369777c3f838e75ed9e616fcf2f092daaa7588599db3311b5e927bab2a69d07
-	iterative-dvc-2.7.2-2.7.3
-		dvc/scm/git/backend/dulwich.py	5bb78418609a6df8e93c923fa47eafceeb021f1fb39f67987f8241cec036f6f0
-	iterative-dvc-2.8.1-2.8.2
-		dvc/scm/git/backend/dulwich/__init__.py	ceb7d09ac1165ed31af8cccea4719ea2288fc9c3ae86fdf137553199179500b1
-		dvc/stage/cache.py	d478497ffddd9b6d28aa0df4022bda30fa483a10c1184b70be649654a06a9171
-	pydantic-pydantic-v2.6.0b1-v2.6.0
-		pydantic/_internal/_generate_schema.py	4aefcd26a9f16d1441913fc01f5dccdfa3ad41f5898caecfe366d5bd8273c68b
-	pydantic-pydantic-v2.7.0-v2.7.1
-		pydantic/_internal/_generate_schema.py	017f7ea4722d9a054cc4b842464eeac7e600912169d72c0f64cb128436e41b83
-	pydantic-pydantic-v2.7.1-v2.7.2
-		pydantic/_internal/_generate_schema.py	d83f4cd7a5b496e5a58d4d274878cfc9f00cc065f5ea27ad25ba146248c67cfb
-	rerail:django
-		django/core/mail/message.py	2ee6a995165f8572f8838408bf018caf22bd459c20f42c0a37269c07366c169e
-		django/db/migrations/loader.py	cdc323bdf802553cd668a6df85f5032b5d37922226234a625dac60380b632f91
-		django/db/migrations/operations/models.py	abfa523998a4bf50a88f93c72579ac24266208726f98b6e93bbc0e4a94fd8494
-	task-69391d8d1ce51c407be1e533
-		app/custom_domain_utils.py	4036ab3a39206ce9e6f1dd781b84cc109e83623f196346a674c6b5308259c263
-	task-697e7458be1623d850a8883b
-		scapy/contrib/automotive/ecu.py	63cd3922cd230ad6c3ba1053aae6b40f1a98dc4493aaa72da45fd768459c8473
-ruff-sim114-if-with-same-arms
+		conans/client/graph/graph_binaries.py	02965690291ab9e2f1e293dab83c5219d208aec8a10137215300ab34a7a29f2c
+ruff-f702-continue-outside-loop
 	conan-io-conan-2.0.14-2.0.15
-		conan/cli/commands/list.py	a9223d544c4494cf7ef9bab3e9c9112159dfac613a9084f5c2683be7d5a11e48
-		conan/internal/api/detect_api.py	f5d34c48d98a251871e1837a2adcff69b872ddd91b4f9c3a5f9be5b0d416bfeb
+		conans/client/graph/graph.py	1d051d70abe5b67b1e76027d46869a14bf9c73d53998ee72af8375c667ddbf35
+ruff-f706-return-outside-function
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f707-default-except-not-last
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f823-undefined-local
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f842-unused-annotation
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f901-raise-not-implemented
 	dask-dask-2022.9.2-2022.10.0
 		dask/array/core.py	07fb92d4b4d52cced73b376ab6fbbf652e6cf4955a505e1fe2165e5daae8c1f4
-		dask/dataframe/backends.py	894ffb245b33ebf44062208ac576325779d2f42b4bf21fedf3937b5348619b5f
-	dask-dask-2023.3.2-2023.4.0
-		dask/array/core.py	46e503f0b7be72da36ce74db6bd3ef758fef47f9a160c672adf01b5a75c48bf8
-		dask/dataframe/backends.py	7a54286b9c0cc2c901a795644ccbb83533967ceeb5b32b035b5591a871490882
-		dask/dataframe/io/parquet/arrow.py	9faeff0d93044e12a70f5955b3156e390b8d7752e666b98525c68cc3aa0ddb0b
-	dask-dask-2023.6.0-2023.6.1
-		dask/array/core.py	bd6c146363f7009db941083a1345ac1f3a900ce6bae332725de023b298060df1
-		dask/dataframe/backends.py	d43e9d5f18bccd3673109ae3087f9f6dc80b55ebf6ee5a5b4d9bca853ae1d13b
-	dask-dask-2023.8.0-2023.8.1
-		dask/dataframe/backends.py	2f285ae17a2c65a9649cda4e0603a635b2a9cdfa4b8342c7da9bc73e8554aedb
-	dask-dask-2024.1.0-2024.1.1
-		dask/array/slicing.py	bb6635798b14ab4f5a4229f1cd7ec6ba777886bc0fbf504c2e3fb643929c57f7
-		dask/dataframe/backends.py	68a13d64486b481acf7ae270f1996c83498bbf088923e7a8f7e5dbe692c609ab
-	psf-requests-v2.12.2-v2.12.3
-		requests/models.py	6e3d4269cdf1af4f52e7574d1e8ccd297ca9877ce3476348c0b96182eafddd42
-	psf-requests-v2.4.0-v2.4.1
-		requests/utils.py	0e6b1161f51379b653eea51c574e00707842496f08b7d365d4fca79f7ca3bdf1
-	psf-requests-v2.9.0-v2.9.1
-		requests/models.py	41028d011e1b5e9b74ab647029302b690972ac526b64dfff96f2346e98cf26fc
-	rerail:django
-		django/contrib/admin/checks.py	e971969add6e4b868dd6b52c160d4e15a183de52782b161f6a04626b7c42a5f4
-		django/contrib/admindocs/views.py	c795b8e7d25de6c0c431243ca5943e3aa59421939e60300847f2ab90f09864cb
-		django/contrib/gis/geos/coordseq.py	d8b1fb13dd9bbc7c9825242b8ee6b0be547454042c18debea9c5042eedb755a2
-		django/db/models/query.py	af89f1454778a7b3e49652b28bd97dee7756bf28a1bb4e83ba5d751fec7d9149
-		django/db/models/sql/compiler.py	4a2992654f9c628caa61ab2d89f97e9528c102808112e5015d9d34de3635fcea
-		django/forms/models.py	a4c9552bfa15ec2edc527c7454504cea11667fdb4025821683019de56213475f
-	scikit-learn-scikit-learn-0.20.1-0.20.2
-		sklearn/compose/_column_transformer.py	c98649f9686a4cede9f56be0d0efe2cf8bb7ee9b8811374c5eb4e943bc828791
-		sklearn/utils/validation.py	a05718cfd8d7c180635af9abbb57548d5c59ea82a39a6245dffe529c57b0d774
-	scikit-learn-scikit-learn-0.21.1-0.21.2
-		sklearn/utils/sparsefuncs.py	5716e98bde9ca8a243f405d5a15d69543cb2caefd074c0a4f8ee8cb87a3f2ebf
-ruff-sim116-if-else-block-instead-of-dict-lookup
-	conan-io-conan-2.0.2-2.0.3
-		conan/tools/build/flags.py	6796d61a9e38570d791448dcb5b0f6515005d0cd1b012a557b7e82f790294327
-ruff-sim117-multiple-with-statements
+ruff-pie794-duplicate-class-field-definition
 	conan-io-conan-2.0.14-2.0.15
-		conan/api/subapi/local.py	03f966bc1062ca63826a77c1e77a64613fa1ccc0d9a2d4c6ef23204500f9a58e
-		conan/tools/files/files.py	76fd85d2b2a07d4fc51231f9de1534b03860960d2f5f34f2fe26918d27f101c9
-		conans/client/cmd/export.py	2e51f77d85319e5ef65f932668c84d4bafb839e19bdb064bd46b5a1cc36bf759
-		conans/client/generators/__init__.py	8dec60921890c2fe2b2c16e2e587e14c6720105d1332796d02b8ca3966bcd102
-		conans/client/installer.py	935067f8aa281f7238d89bdc630bbb877db630737bd61c7dc2bbd9d5813db349
-		conans/client/source.py	e7c83d7596552988ee769cf166ee409f0c9fc21eb32937ad7ebd33d0c49e3869
-	conan-io-conan-2.0.2-2.0.3
-		conan/tools/files/files.py	67f8d424e6bcb934e2b89ff71cbb5a2881850acf716eaba761b42f5c1997f984
-		conans/client/cmd/export.py	923201bddc4d586c742891686f99ac6fd815e4b1151cc7c7b6974aa82e7c59f1
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-pie800-unnecessary-spread
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-pie804-unnecessary-dict-kwargs
+	dask-dask-2023.6.0-2023.6.1
+		dask/base.py	cc4aacceed035cfd8d201e31b494d5d960fc9d3bfc0d5fbab4948712d7eb29fa
+ruff-pie807-reimplemented-container-builtin
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/subapi/profiles.py	db4399b51bc887d3c6970ac95348900622cc3313fd43343d173991d9a152fe29
+ruff-pie810-multiple-starts-ends-with
 	dask-dask-2022.9.2-2022.10.0
 		dask/utils.py	346d9f475f8816f5b660b8a268c31ead3beddf3536c24920edd1881af645e61c
-	dask-dask-2023.3.2-2023.4.0
-		dask/dataframe/accessor.py	a96900b4a64cdd36aab69913279c1efedded929bc32e531ee80372b873d6c732
-		dask/dataframe/methods.py	011eee86697191e193d6bd8fc907800dbe5f904f0ceacf59c689a45da5b09ea0
+ruff-ret501-unnecessary-return-none
 	dask-dask-2023.6.0-2023.6.1
-		dask/dataframe/methods.py	97b195706e1d0ce5faf4c5b7360b598b2a28d34a60c267671efaf4336cd14b41
 		dask/utils.py	3732667943b9b707777370eae035195087ad05c8281473a1f189be208fc786dc
-	dask-dask-2024.1.0-2024.1.1
-		dask/dataframe/methods.py	74643d29c5736ab3e5c350c3b09f4e778561d1d3d2cae1d121dcb8e1a6d42966
-		dask/utils.py	853daea0da7ad0eea489f6b55f0d751e3e47fb2eb81297a7708e2e04af5daa62
-	iterative-dvc-0.52.1-0.53.1
-		dvc/remote/hdfs.py	4b2eb56638ac26357aa8cf24488c455fb7718285a65f17373b99e39b2297ba4e
-	iterative-dvc-0.89.0-0.90.0
-		dvc/remote/http.py	e54fedcc8680641c2280d09281ff5a5d24c4ede5372780defa0b420f8a4301ec
-	iterative-dvc-1.0.0a1-1.0.0a2
-		dvc/api.py	59c732c739003a9de2bbd3903769cdeffe9a13af2dbc2572ff2e300cd92922af
-		dvc/remote/gs.py	fb2bc46bb5276b86f84a64b145267aeaea98084b0ad617d07608b0243aa2a360
-		dvc/remote/hdfs.py	f957f354698255429d9ee0cfed59437fcd0ffc81af84ff10225fb1f4b64dbf8f
-		dvc/remote/http.py	0af0fef1af5f71842ea6f7e70004248ea501fb6ebfcc672511f14516a8f993c9
-		dvc/utils/__init__.py	6c26aea978355f18ab75fa1834e018b620dfa636c7fbea8dc02c9e94c987ceb1
-		dvc/utils/fs.py	727ce87a4b0349c0ea944bd341ac9c2205802afd6054de2e3b522da53687ca79
-	iterative-dvc-1.0.1-1.0.2
-		dvc/api.py	975d1963f1c08390d04c218dbaa577c4105c66f246df4dbedd5eaf6ad81f8ed9
-		dvc/utils/fs.py	b7792bc2a086fa3f5c52ab470f9aaca12e7ce350fd367037618de135ae06ceca
-	iterative-dvc-1.10.2-1.11.0
-		dvc/repo/__init__.py	4aa0ec11b29f3867f498ee444e9e547afbbdc6bd6417c9d98a1d7daf9a1efcea
-		dvc/utils/__init__.py	6dee8eb8a13210879cd44367408f78c9cc12475a241aadf1ed4765a60fe9e72c
-	iterative-dvc-2.5.0-2.5.1
-		dvc/fs/fsspec_wrapper.py	353197b7d4958dd109a6b7c0bcbb6941c86030185201564d9141779f81f049f2
-		dvc/fs/hdfs.py	69ea13733c8a3f2808dff4a27f9f8142f5e4ebbedae5992ea7e9ada6c2798442
-		dvc/fs/http.py	44154f52d459bc8e6cb2aa1ca17d4a1433fafa201745e59ffe32f7a6f1fd3a85
-		dvc/fs/webhdfs.py	f3a4195b35f4d79c9a0c59b8d4b139943d56ec74485357c279d84d12c410a62f
-	iterative-dvc-2.7.2-2.7.3
-		dvc/fs/fsspec_wrapper.py	b8c08d4d9162d8e0d0ba82c46f42e4ceca43fd878ab05cdfe1a226c41002197f
-		dvc/fs/hdfs.py	18ecc1f62d548e325add5c69d4bf00e333097f78aca03b0d17c4887aed298c05
-		dvc/fs/webhdfs.py	e2f8d42d7f489afe38ce4eb2fae1339e9bf095fb66c63ba4385d52e94d2812e4
-		dvc/objects/transfer.py	c1e085fe0595cea6319b5ea48f01a32e6b8fad18a1cb94ea22df2a6e6ed097ff
-	iterative-dvc-2.8.1-2.8.2
-		dvc/api.py	d3a95ad961aceb4de13c06474fc062bfb0e20679c4f75653cf3426f831d0afd9
-		dvc/objects/transfer.py	f233104246b4c0a0e8d5702b5874e243392bed7138e3a593f0afe321cd73c03b
-	iterative-dvc-3.12.0-3.13.0
-		dvc/repo/experiments/queue/base.py	ec068881858d55d0fbff555d53cfba2bcca18c9ba5136a97426c525494cea276
-	iterative-dvc-3.4.0-3.5.0
-		dvc/api/data.py	9ccc383ce38345982941917d74fe0aabdc8c028d09914f33067d32b4c954c815
-	iterative-dvc-3.43.1-3.44.0
-		dvc/repo/experiments/queue/base.py	dad1c08cea84782e2c5308133ac41424c7a38b8d28f38531f5350532f2fd6bcd
-		dvc/repo/plots/__init__.py	119188d0f83ff48a63e6e53b34c750f9fb7ffa4c3a1dbebeeb1a232195be166f
-	rerail:django
-		django/core/management/commands/createcachetable.py	6dd29fc5fb5f7e3a0a4204897c2049460542c3386a9d49fcf0cbc030f3538adb
-		django/db/backends/base/operations.py	1fe091964e3633c6ed2dfdf45cd785083a01c69e7e32dabdb5c0c55f06e90b99
-		django/test/testcases.py	1b360268bc91f7256d84dad6df53ec8ddffe6caec8258202026bf982ae58e3e6
-ruff-sim118-in-dict-keys
+ruff-ret502-implicit-return-value
 	conan-io-conan-2.0.14-2.0.15
 		conan/tools/env/environment.py	e4fbb0d74d1f75fa3ed173d7f36cf39a7304c509380ae27e1c5673fd5f2a9b42
-		conans/client/rest/rest_client_v2.py	a2c7e5c047d82b96efcc862f276db0547f5826fc9896999a1a8b74651960864f
-		conans/model/conf.py	a9155562451f54f2425016a48a3fb98b7ecb7c70b35c984ffb99b081869124ac
-		conans/model/info.py	1d3a1396544a16904529774f6c0eaa27a80c66e4e5cf22b55a9f8884021c86f0
-	conan-io-conan-2.0.2-2.0.3
-		conan/tools/env/environment.py	6c4e4bcd9bcaa5bdd7c216c75e64fda60b02d0fcb1e64599742e79f4c5fb90b0
-		conans/client/rest/rest_client_v2.py	42156f68d832fc8c0d6953516d6622e1c9db876b8f7432fa0d148e89885bd7b3
-		conans/model/conf.py	f13a9a00f233cc864086b0590fc1d833c97467fac660785203fae6fcd22c2efd
-	dask-dask-2022.9.2-2022.10.0
-		dask/dataframe/core.py	abf5f400851cfe1611a4ffcc04a50a7df732b7046410b8c4e7896d8a0bd3ba67
-		dask/dataframe/io/hdf.py	cccacad2a5a43ca584b78a0860347156f0516a8b082b67a709ef2160af913fa8
-		dask/utils.py	346d9f475f8816f5b660b8a268c31ead3beddf3536c24920edd1881af645e61c
-	dask-dask-2023.3.2-2023.4.0
-		dask/dataframe/core.py	388ff0ca77977441f3e94125fe1a528b6df9ff3c4894af3a2b20960cdb6e432f
-		dask/dataframe/io/hdf.py	7e7fd9e42a5aa9d2d1ca705b7b353dec2577bbad077bee426a7d5246e7ee9f44
-		dask/dataframe/io/parquet/arrow.py	9faeff0d93044e12a70f5955b3156e390b8d7752e666b98525c68cc3aa0ddb0b
-		dask/dataframe/utils.py	69ad192cd6c0e5c49a0a9df47fe04c85dd0dd9efd47b91f38a20cf4886836730
-	dask-dask-2023.6.0-2023.6.1
-		dask/dataframe/core.py	9677e2d9f7c23c9c7031b4df6ce31c9ee263c5781e0451af5ea50a68eda32a5d
-		dask/dataframe/io/hdf.py	f81e7350a5494061c38408514dd9e0657c57eff0525f80fe5c202495541dce7e
-		dask/utils.py	3732667943b9b707777370eae035195087ad05c8281473a1f189be208fc786dc
-	dask-dask-2023.6.1-2023.7.0
-		dask/dataframe/core.py	25a11e2a53a71eb234fbaeab8e4c63b926971b42407f9ee25373bbc30af96d7d
-	dask-dask-2023.8.0-2023.8.1
-		dask/dataframe/core.py	fddd0c7cb1b4db52c805fe01b30e719a10a3933ba30428e75424e1e5bf066567
-	dask-dask-2023.9.2-2023.9.3
-		dask/dataframe/core.py	10f7c583949f8f7e162ec569a8d2f0a524eebebe85736078db31ba0f1fd1df62
-	dask-dask-2024.1.0-2024.1.1
-		dask/dataframe/core.py	b741fe8e9a345cca00f484cb988ed8d40d0ac93f9070ead67c2af7a15458a742
-		dask/utils.py	853daea0da7ad0eea489f6b55f0d751e3e47fb2eb81297a7708e2e04af5daa62
-	iterative-dvc-0.33.1-0.34.0
-		dvc/command/remote.py	0857ddd14458ed8a70521c5db7c3459dd776d9f4268ca79842094fb3d847a552
-	iterative-dvc-0.52.1-0.53.1
-		dvc/config.py	bac83c423a06fd3959423b96002272b4068a40fbdf2ccf079349b7644f768818
+ruff-ret505-superfluous-else-return
 	iterative-dvc-2.8.1-2.8.2
-		dvc/render/utils.py	239443cd40ddeeb9b8ab84d37903f864af85f489736cf6aed10e577c25ea98d6
-	modin-project-modin-0.24.0-0.24.1
-		modin/core/dataframe/pandas/dataframe/dataframe.py	93eec407afe6f605b070d7f9f3609c468ae5e568e866247ea43ac616babc5df1
-	modin-project-modin-0.25.0-0.25.1
-		modin/pandas/groupby.py	dc90f077497d772fa50621f9a7770375ec9da27437a20f893c257159742485d9
-	modin-project-modin-0.27.0-0.27.1
-		modin/pandas/groupby.py	43c19be9e5e6ea2606562f2ee784148da4286dc21bf472f4c8ad87dc5607fc72
+		dvc/ignore.py	94d579c9b33e05e8692bf241d8fa7142829466d09c61259b6eb2828cb3ef9efb
+ruff-ret506-superfluous-else-raise
+	conan-io-conan-2.0.14-2.0.15
+		conan/tools/env/environment.py	e4fbb0d74d1f75fa3ed173d7f36cf39a7304c509380ae27e1c5673fd5f2a9b42
+ruff-ret507-superfluous-else-continue
+	conan-io-conan-2.0.14-2.0.15
+		conan/tools/env/environment.py	e4fbb0d74d1f75fa3ed173d7f36cf39a7304c509380ae27e1c5673fd5f2a9b42
+ruff-ret508-superfluous-else-break
+	conan-io-conan-2.0.14-2.0.15
+		conan/tools/env/environment.py	e4fbb0d74d1f75fa3ed173d7f36cf39a7304c509380ae27e1c5673fd5f2a9b42
+ruff-sim101-duplicate-isinstance-call
+	dask-dask-2022.9.2-2022.10.0
+		dask/utils.py	346d9f475f8816f5b660b8a268c31ead3beddf3536c24920edd1881af645e61c
+ruff-sim107-return-in-try-except-finally
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/subapi/profiles.py	db4399b51bc887d3c6970ac95348900622cc3313fd43343d173991d9a152fe29
+ruff-sim109-compare-with-tuple
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-sim112-uncapitalized-environment-variables
+	conan-io-conan-2.0.2-2.0.3
+		conans/client/rest/conan_requester.py	599f802c56f2f59ad3a4cd10f3afc49e287ff85c24078a03ee9fc283b0cf0fc7
+ruff-sim113-enumerate-for-loop
 	rerail:django
-		django/contrib/auth/checks.py	02c65fba7d371b365b50a29daa8165876fbedebba801d76c47379e8070f18a40
-		django/core/mail/backends/base.py	6025110558c92ed852bcb912852bd02736f1ca8ef17a25adb5328d25c770a9b9
-		django/db/migrations/loader.py	cdc323bdf802553cd668a6df85f5032b5d37922226234a625dac60380b632f91
-	task-697e7458be1623d850a88838
-		scapy/contrib/automotive/scanner/enumerator.py	5d66e6b86aada26611679e8a5278e835a0950217ea0ec4440e6356460aecb27c
-	task-697e7458be1623d850a8883b
-		scapy/contrib/automotive/ecu.py	63cd3922cd230ad6c3ba1053aae6b40f1a98dc4493aaa72da45fd768459c8473
-ruff-sim222-expr-or-true
-	dask-dask-2022.9.2-2022.10.0
-		dask/dataframe/core.py	abf5f400851cfe1611a4ffcc04a50a7df732b7046410b8c4e7896d8a0bd3ba67
+		django/db/models/query.py	af89f1454778a7b3e49652b28bd97dee7756bf28a1bb4e83ba5d751fec7d9149
+ruff-sim208-double-negation
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-sim210-if-expr-with-true-false
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-sim211-if-expr-with-false-true
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-sim212-if-expr-with-twisted-arms
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-sim905-split-static-string
+	conan-io-conan-2.0.14-2.0.15
+		conan/tools/scm/git.py	2ffbf86146a97584e9d92eb9e19208a41260da2d6a33377fe6157f6bf90a3335
+ruff-sim910-dict-get-with-none-default
 	dask-dask-2023.3.2-2023.4.0
-		dask/dataframe/core.py	388ff0ca77977441f3e94125fe1a528b6df9ff3c4894af3a2b20960cdb6e432f
-	dask-dask-2023.6.0-2023.6.1
-		dask/dataframe/core.py	9677e2d9f7c23c9c7031b4df6ce31c9ee263c5781e0451af5ea50a68eda32a5d
-	dask-dask-2023.6.1-2023.7.0
-		dask/dataframe/core.py	25a11e2a53a71eb234fbaeab8e4c63b926971b42407f9ee25373bbc30af96d7d
-	dask-dask-2023.8.0-2023.8.1
-		dask/dataframe/core.py	fddd0c7cb1b4db52c805fe01b30e719a10a3933ba30428e75424e1e5bf066567
-	dask-dask-2023.9.2-2023.9.3
-		dask/dataframe/core.py	10f7c583949f8f7e162ec569a8d2f0a524eebebe85736078db31ba0f1fd1df62
-	dask-dask-2024.1.0-2024.1.1
-		dask/dataframe/core.py	b741fe8e9a345cca00f484cb988ed8d40d0ac93f9070ead67c2af7a15458a742
-	scikit-learn-scikit-learn-0.21.1-0.21.2
-		sklearn/cross_decomposition/pls_.py	4dbc99eac7963b82bb0c655c3cfef50962f4353905b773b0e62502f118b6ed3b
-ruff-sim223-expr-and-false
-	dask-dask-2022.9.2-2022.10.0
-		dask/dataframe/core.py	abf5f400851cfe1611a4ffcc04a50a7df732b7046410b8c4e7896d8a0bd3ba67
-	dask-dask-2023.3.2-2023.4.0
-		dask/dataframe/core.py	388ff0ca77977441f3e94125fe1a528b6df9ff3c4894af3a2b20960cdb6e432f
-	dask-dask-2023.6.0-2023.6.1
-		dask/dataframe/core.py	9677e2d9f7c23c9c7031b4df6ce31c9ee263c5781e0451af5ea50a68eda32a5d
-	dask-dask-2023.6.1-2023.7.0
-		dask/dataframe/core.py	25a11e2a53a71eb234fbaeab8e4c63b926971b42407f9ee25373bbc30af96d7d
-	dask-dask-2023.8.0-2023.8.1
-		dask/dataframe/core.py	fddd0c7cb1b4db52c805fe01b30e719a10a3933ba30428e75424e1e5bf066567
-	dask-dask-2023.9.2-2023.9.3
-		dask/dataframe/core.py	10f7c583949f8f7e162ec569a8d2f0a524eebebe85736078db31ba0f1fd1df62
-	dask-dask-2024.1.0-2024.1.1
-		dask/dataframe/core.py	b741fe8e9a345cca00f484cb988ed8d40d0ac93f9070ead67c2af7a15458a742
-ruff-w605-invalid-escape-sequence
-	psf-requests-v2.12.2-v2.12.3
-		requests/models.py	6e3d4269cdf1af4f52e7574d1e8ccd297ca9877ce3476348c0b96182eafddd42
-	psf-requests-v2.4.0-v2.4.1
-		requests/api.py	0eb08c379c428453895953cd5d73c35dfeec7d91cc8e7abb63a3af757dd56ad8
-		requests/sessions.py	812c97ee9486f326c6a976de10121be1a220950bf2062f959a6cd6cba2dc86fc
-	psf-requests-v2.9.0-v2.9.1
-		requests/models.py	41028d011e1b5e9b74ab647029302b690972ac526b64dfff96f2346e98cf26fc
+		dask/config.py	43b5e995322dd0a8fa2d7a1a86b8d8a68ef451079992e37245c4d8889869099b
+ruff-t100-debugger
+	rerail:django
+		django/core/management/commands/shell.py	4f94ac80c84c21943e8f969c3534fda605e0e203a9e6f05aa68d79fad6fcfcf9

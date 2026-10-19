@@ -25,6 +25,13 @@ popularity:
     - "npm: 121,229,108 downloads of eslint-plugin-react-hooks in the week 2026-09-28 to 2026-10-04 (api.npmjs.org)"
     - "GitHub: facebook/react (now reported as react/react) has 250,912 stars and is not archived"
 known_gaps: []
+# Candidates that differ from upstream on real code (docs/port-readiness.md, "Goldens"): one entry per rule in place of
+# a golden per differing file. differing_files counts the goldens of NRV's validation/goldens/react-react-hooks.tsv (NRV
+# e8727c7) the rule differed on, engine gaps included, in rerail CI run 38969340726. A listed rule fails
+# no-real-code-gap; once it agrees there, import its NRV goldens into goldens.tsv in place of its entry.
+real_code_gaps:
+  - rule: react-hooks-exhaustive-deps
+    differing_files: 23
 # Decisions for the team to confirm (the eslint adapter's literal readings for this plugin):
 # - Pack precondition: packages/eslint-plugin-react-hooks/package.json at the pinned tag says 7.0.0, because React stamps each
 #   package's published version from ReactVersions.js ('eslint-plugin-react-hooks': '7.1.1') when it builds.

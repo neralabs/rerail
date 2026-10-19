@@ -1,4 +1,4 @@
-# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run port-readiness -- --write, sorted; a golden is never removed.
+# matches-upstream-tests goldens of the shipped rules, imported from NRV and reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.
 next-inline-script-id
 	rerail:next-examples
 		examples/cms-buttercms/pages/_document.js	f45d1e630b2fff8bd72e22ed2ec0a4b37937df25b70711cf9c0e9da5f95bee19

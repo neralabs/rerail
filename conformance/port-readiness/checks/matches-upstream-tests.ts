@@ -4,7 +4,7 @@ import type { CompiledPolicy, Engine, EngineEvaluation } from "../engine.js";
 import { formatSpan, spanKey, startKey, unmatched } from "../spans.js";
 import type { CorpusFile } from "../corpus.js";
 import type { Golden } from "../goldens.js";
-import type { Check, KnownGap, PackAdapter, ParserVerdict, Span, SpanParts, UpstreamCase } from "../types.js";
+import type { Check, KnownGap, PackAdapter, ParserVerdict, RealCodeGap, Span, SpanParts, UpstreamCase } from "../types.js";
 
 /** How matches-upstream-tests judges, recorded in every report so a reader knows what "identical" and "excused" meant on that run. */
 export const MATCHES_UPSTREAM_TESTS_METHOD = {
@@ -15,8 +15,9 @@ export const MATCHES_UPSTREAM_TESTS_METHOD = {
   evaluation: "stateless CompiledCodeRuleDsl.evaluate in report mode, one file per snapshot, with no wall-clock budget; production evaluates through the workspace path with a 500 ms per-file budget",
   excused: "a differing file is excused only when a listed known gap that holds names it and the engine reported a parse failure on it; a gap holds when its probe occurs in every file it names, the engine still fails to parse the probe, and independent parsers read the probe as valid source; a listed gap that does not hold, or excuses nothing, fails the run; nothing else excuses a difference",
   fires: "at least one upstream finding reproduced in an upstream test file that agrees: the golden test that proves a shipped rule fires, so a rule without one does not ship",
-  "stays silent": "at least one case where upstream reports nothing and the rule agrees, from an upstream test file, a golden, or one of matches-real-code's negative files: the golden test that proves a shipped rule stays silent, so a rule without one does not ship",
-  goldens: "the rule produces exactly what the pinned upstream reports on every golden of the tool-pack's goldens.tsv (each a real-code file where matches-real-code once found the rule and upstream differ, read from the pinned corpus and checked against its sha256), compared as upstream's test files are; a golden whose corpus file is gone from the pinned corpus fails",
+  "stays silent": "at least one case where upstream reports nothing and the rule agrees, from an upstream test file or a golden: the golden test that proves a shipped rule stays silent, so a rule without one does not ship",
+  goldens: "the rule produces exactly what the pinned upstream reports on every golden of the tool-pack's goldens.tsv, compared as upstream's test files are; a golden is a real-code file read from the pinned corpus and checked against its sha256, and goldens.tsv is a reviewed list the gates never write: the files NRV's real-code gate found a shipped rule differing on (imported from NRV's goldens), and for a shipped rule no upstream test file proves silent, a file where upstream reports nothing; a golden whose corpus file is gone from the pinned corpus fails",
+  "real-code gaps": "a rule gates.yaml lists under real_code_gaps differs from upstream on real code throughout (NRV's goldens hold every such file; the entry stands for them), and fails no-real-code-gap: a candidate cannot be promoted, nor a rule ship, until it agrees there and its goldens are imported",
   "engine gaps": "a golden that differs where the engine could not fully read the file (it reported source-partial, source-incomplete or budget-exceeded) is an engine gap: identical-on-goldens judges only the goldens the engine read fully, and engine-reads-goldens fails the rule on every engine gap, since the rule must not ship until the engine reads the file; the fix belongs in the engine (NER-1764), and once the engine reads the file the golden is judged like any other",
   "gap candidates": "every file the engine cannot fully parse is read by independent parsers, each reporting syntax errors and grammar errors (what the language forbids in a tree the parser built): invalid source when every parser reports one, valid source (the engine's parser is wrong) when none does, and parsers disagree otherwise",
 } as const;
@@ -49,7 +50,7 @@ export type CaseStatus = "agree" | "mismatch" | "excused" | "not-scored";
  * `parsers-disagree`: some do and some do not.
  */
 export interface GapCandidate {
-  gate: "matches-upstream-tests" | "matches-real-code";
+  gate: "matches-upstream-tests";
   /** The upstream test file, or `<task>/<path>` for a corpus file. */
   file: string;
   engine: string;
@@ -438,16 +439,29 @@ interface JudgedCase {
 
 /**
  * matches-upstream-tests's stays-silent check, the counterpart of fires: the golden test proving a shipped rule stays
- * silent. At least one case where upstream reports nothing and the rule agrees, from upstream's own test files, the
- * rule's goldens, or matches-real-code's negative files (those richest in the rule's own constructs, so near misses).
+ * silent. At least one case where upstream reports nothing and the rule agrees, from upstream's own test files or the
+ * rule's goldens. A rule whose upstream test files all have findings (Ruff's do) needs a golden where upstream reports
+ * nothing.
  */
-export function staysSilentCheck(upstreamTests: JudgedCase[], goldens: JudgedCase[], realCode: (JudgedCase & { kind: "positive" | "negative" })[]): Check {
+export function staysSilentCheck(upstreamTests: JudgedCase[], goldens: JudgedCase[]): Check {
   const silent = (cases: JudgedCase[]) => cases.filter((testCase) => testCase.expected === 0 && testCase.status === "agree").length;
-  const counts = { tests: silent(upstreamTests), goldens: silent(goldens), realCode: silent(realCode.filter((testCase) => testCase.kind === "negative")) };
-  const total = counts.tests + counts.goldens + counts.realCode;
+  const counts = { tests: silent(upstreamTests), goldens: silent(goldens) };
+  const total = counts.tests + counts.goldens;
   return {
     id: "stays-silent",
     ok: total > 0,
-    detail: `${total} case(s) where upstream reports nothing and the rule agrees: ${counts.tests} upstream test file(s), ${counts.goldens} golden(s), ${counts.realCode} real-code negative(s)`,
+    detail: total > 0
+      ? `${total} case(s) where upstream reports nothing and the rule agrees: ${counts.tests} upstream test file(s), ${counts.goldens} golden(s)`
+      : "no case where upstream reports nothing and the rule agrees, in upstream's test files or the rule's goldens: add a golden, a pinned corpus file where upstream reports nothing (docs/port-readiness.md, \"Goldens\")",
   };
+}
+
+/**
+ * matches-upstream-tests's no-real-code-gap check: a rule gates.yaml lists under `real_code_gaps` differs from upstream
+ * on real code throughout, so it fails until it agrees there and the entry gives way to its imported goldens.
+ */
+export function realCodeGapCheck(gap: RealCodeGap | undefined): Check {
+  return gap === undefined
+    ? { id: "no-real-code-gap", ok: true, detail: "gates.yaml lists no real-code gap for the rule" }
+    : { id: "no-real-code-gap", ok: false, detail: `gates.yaml lists a real-code gap: the rule differs from upstream on ${gap.differing_files} of NRV's goldens for it; it cannot ship until it agrees there and those goldens are imported in place of the entry` };
 }

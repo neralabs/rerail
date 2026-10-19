@@ -18,11 +18,12 @@ export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
 
 /**
  * Legs per tool-pack too slow for one; every other gated tool-pack runs in one. Shard i of n judges the rules whose
- * sha256(id) mod n is i - 1, and the report job merges the shards (docs/port-readiness.md, "Sharding"). Cold, Ruff took
- * 31 min and javascript/eslint over an hour; typescript-eslint runs 47 rules on vscode's 10,176 files, so one leg would
- * run about two hours. The leg's job name, report artifact and results-cache key all carry the count.
+ * sha256(id) mod n is i - 1, and the report job merges the shards (docs/port-readiness.md, "Sharding"). Cold,
+ * javascript/eslint took over an hour, on upstream's tests alone. Since no rule runs over the real-code corpus, Ruff and
+ * typescript-eslint each run in one leg: cold on a laptop, 7 min and 2 min. The leg's job name, report artifact and
+ * results-cache key all carry the count.
  */
-export const SHARDS = Object.freeze({ "python/ruff": 2, "javascript/eslint": 4, "typescript/typescript-eslint": 8 });
+export const SHARDS = Object.freeze({ "javascript/eslint": 4 });
 
 /** What a leg reads: ci.yml's `port-readiness` paths filter, glob for glob. `x/**` is a path prefix, anything else a path. */
 export const ROOTS = Object.freeze([

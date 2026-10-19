@@ -6,8 +6,9 @@ import { test } from "vitest";
 
 import type { CorpusFile } from "../../../conformance/port-readiness/corpus.js";
 import type { CompiledPolicy, Engine } from "../../../conformance/port-readiness/engine.js";
-import { GOLDENS_FILE, parseGoldens, promote, readGoldens, serializeGoldens, type Golden, type Goldens } from "../../../conformance/port-readiness/goldens.js";
-import { goldensGate } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
+import { GOLDENS_FILE, parseGoldens, readGoldens, serializeGoldens, type Golden, type Goldens } from "../../../conformance/port-readiness/goldens.js";
+import { goldensGate, realCodeGapCheck } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
+import { goldenListLines } from "../../../conformance/port-readiness/run.js";
 import type { PackAdapter, Span } from "../../../conformance/port-readiness/types.js";
 
 // Sources are single lines of ASCII, so a byte offset is the column.
@@ -39,28 +40,26 @@ function corpusFile(task: string, path: string): CorpusFile {
 const SHA = "0".repeat(64);
 const golden = (task: string, path: string, sha256 = SHA): Golden => ({ task, path, sha256 });
 
-test("promotion adds each differing file the rule has no golden for, and a second run adds nothing", () => {
-  const goldens: Goldens = new Map();
-  const differing = [golden("t2", "src/b.ts"), golden("t1", "src/a.ts")];
-  assert.equal(promote(goldens, "eslint:no-debugger", differing).length, 2);
-  const first = serializeGoldens(goldens);
-  // The next run reads what this one wrote and finds every differing file already a golden.
-  const reread = parseGoldens(first, "goldens.tsv");
-  assert.equal(promote(reread, "eslint:no-debugger", differing).length, 0);
-  assert.equal(serializeGoldens(reread), first);
-  // A golden is never removed: a run that no longer differs there promotes nothing and keeps it.
-  assert.equal(promote(reread, "eslint:no-debugger", []).length, 0);
-  assert.equal(reread.get("eslint:no-debugger")!.length, 2);
+test("goldens are for shipped rules: a candidate's goldens or a stale entry are named, and a real-code gap must name a rule", () => {
+  const rules = [{ id: "shipped-rule", location: "shipped" as const }, { id: "candidate-rule", location: "candidate" as const }];
+  const goldens: Goldens = new Map([
+    ["shipped-rule", [golden("t1", "a.ts")]],
+    ["candidate-rule", [golden("t1", "a.ts"), golden("t1", "b.ts")]],
+    ["gone-rule", [golden("t1", "a.ts")]],
+  ]);
+  assert.deepEqual(goldenListLines(goldens, [{ rule: "candidate-rule", differing_files: 6898 }, { rule: "gone-gap", differing_files: 3 }], rules), [
+    "goldens.tsv lists 2 golden(s) of the candidate candidate-rule; goldens are imported for shipped rules, and a candidate that differs on real code takes a real_code_gaps entry",
+    "goldens.tsv lists 1 golden(s) of gone-rule, which is no rule of this tool-pack",
+    "gates.yaml lists a real-code gap for gone-gap, which is no rule of this tool-pack",
+  ]);
+  assert.deepEqual(goldenListLines(new Map([["shipped-rule", [golden("t1", "a.ts")]]]), [{ rule: "candidate-rule", differing_files: 1 }], rules), []);
 });
 
-test("a file whose content changed is a new golden, and the old one stays", () => {
-  const goldens: Goldens = new Map();
-  const before = { task: "rerail:vscode", path: "src/a.ts", sha256: "a".repeat(64) };
-  const after = { ...before, sha256: "b".repeat(64) };
-  assert.equal(promote(goldens, "eslint:no-debugger", [before]).length, 1);
-  assert.deepEqual(promote(goldens, "eslint:no-debugger", [after]), [after]);
-  assert.deepEqual(goldens.get("eslint:no-debugger"), [before, after]);
-  assert.deepEqual(parseGoldens(serializeGoldens(goldens), "goldens.tsv"), goldens);
+test("a rule with a real-code gap fails no-real-code-gap, naming how many files NRV found it differing on", () => {
+  assert.deepEqual(realCodeGapCheck(undefined), { id: "no-real-code-gap", ok: true, detail: "gates.yaml lists no real-code gap for the rule" });
+  const failing = realCodeGapCheck({ rule: "typescript-eslint-consistent-type-imports", differing_files: 6898 });
+  assert.equal(failing.ok, false);
+  assert.match(failing.detail, /differs from upstream on 6898 of NRV's goldens for it/u);
 });
 
 test("the goldens file is one golden per line, grouped by rule and then task, every level sorted", () => {
@@ -90,10 +89,10 @@ test("the goldens file is one golden per line, grouped by rule and then task, ev
   assert.deepEqual([...parseGoldens(text, "goldens.tsv")], [...b].map(([id, entries]) => [id, [...entries].sort((x, y) => (x.task + x.path < y.task + y.path ? -1 : 1))]));
 });
 
-test("a goldens file that is not exactly what a run writes is refused", () => {
+test("a goldens file not in its one form is refused", () => {
   const text = serializeGoldens(new Map([["r", [golden("t1", "a.ts"), golden("t1", "b.ts")]]]));
   const swapped = text.replace(`\t\ta.ts\t${SHA}\n\t\tb.ts`, `\t\tb.ts\t${SHA}\n\t\ta.ts`);
-  assert.throws(() => parseGoldens(swapped, "goldens.tsv"), /not in the form/u);
+  assert.throws(() => parseGoldens(swapped, "goldens.tsv"), /not in its one form/u);
   assert.throws(() => parseGoldens(text.replace(SHA, "x"), "goldens.tsv"), /not a golden/u);
   assert.throws(() => serializeGoldens(new Map([["r", [golden("t1", "a\tb.ts")]]])), /cannot be written/u);
 });

@@ -1,13 +1,13 @@
 import type { CorpusFile } from "./corpus.js";
 import type { GatesManifest } from "./manifest.js";
 
-export type { EslintUpstream, KnownGap } from "./manifest.js";
+export type { EslintUpstream, KnownGap, RealCodeGap } from "./manifest.js";
 
 /**
  * The gates in the order a rule meets them. `loads` to `passes-conformance` decide whether a rule ships (`blocking`);
- * `upstream-status` only decides whether it ships on or off, and `matches-real-code` is an end-to-end check whose every
- * disagreement becomes a golden that `matches-upstream-tests` judges. `passes-conformance` is the pack contract's own
- * check (`test:conformance`), so the gates are a superset of it; it comes last, after V1's gates.
+ * `upstream-status` only decides whether it ships on or off. `passes-conformance` is the pack contract's own check
+ * (`test:conformance`), so the gates are a superset of it; it comes last, after V1's gates. V1's Gate 6 (real code) is
+ * NRV's alone: rerail judges the goldens it imports from NRV, in `matches-upstream-tests`.
  */
 export const GATES = [
   { id: "upstream-status", title: "Upstream status (decides on or off)", blocking: false },
@@ -16,7 +16,6 @@ export const GATES = [
   { id: "compact", title: "Compact (no written-out expansion)", blocking: true },
   { id: "matches-upstream-tests", title: "Matches upstream on its own tests", blocking: true },
   { id: "passes-conformance", title: "Passes the pack's conformance check", blocking: true },
-  { id: "matches-real-code", title: "Matches upstream on real code", blocking: false },
 ] as const;
 
 type BlockingGate = Extract<(typeof GATES)[number], { blocking: true }>;
@@ -71,8 +70,7 @@ export interface PackRule {
 /**
  * A finding's position: 0-based lines and columns, with columns in the unit upstream counts in (ESLint UTF-16 code
  * units, Ruff code points, Bandit UTF-8 bytes), and only the parts upstream reports. A part upstream does not report
- * is null on both sides of a comparison, so `matches-upstream-tests` and `matches-real-code` compare exactly the
- * positions upstream reports.
+ * is null on both sides of a comparison, so `matches-upstream-tests` compares exactly the positions upstream reports.
  */
 export interface Span {
   startLine: number;
@@ -100,7 +98,7 @@ export interface UpstreamRule {
   deprecation: string | null;
   /** The first approved configuration that turns the rule on, with the options it sets; null when none does. */
   recommended: { config: string; options: unknown[] } | null;
-  /** Why upstream cannot lint real code for the rule, or null when it can; `matches-real-code` does not run on such a rule. */
+  /** Why upstream cannot lint real code for the rule (a type-checked rule), or null when it can: its corpus answers are empty. */
   notOnRealCode: string | null;
 }
 
@@ -187,7 +185,7 @@ export interface PackAdapter {
   cases(name: string): UpstreamCase[];
   /** Convert an engine byte span to upstream's coordinates and to the precision upstream reports for the rule. */
   toSpan(name: string, source: string, startByte: number, endByte: number): Span;
-  /** Whether `matches-real-code` takes a file a task solution leaves behind: a file type upstream lints. */
+  /** Whether a corpus file is of a type upstream lints, so a golden can name it. */
   inCorpus(path: string): boolean;
   /**
    * Upstream's findings on each corpus file for every named rule, configured as upstream recommends; a file

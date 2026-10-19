@@ -12,7 +12,7 @@ import { runChecked, type CommandRunner } from "./process.js";
 import type { Check } from "./types.js";
 
 /**
- * The corpus `matches-real-code` reads: the code a SWE Atlas/Evo task ends with. For every pinned task
+ * The corpus goldens are read from: the code a SWE Atlas/Evo task ends with. For every pinned task
  * (corpus-tasks.json), its reference solution (the vetted code diff at the end of the task, pinned by sha256, read
  * from a pinned GitHub file or a pinned Hugging Face dataset cell) is applied to the files it touches at the task's
  * base commit, and each resulting file of a type the pack lints is one corpus file. The corpora a rerail pack pins in
@@ -240,7 +240,7 @@ async function patchedFiles(cacheRoot: string, task: string, repository: string,
   await git("sparse-checkout", "set", "--no-cone", ...touched.map((path) => `/${path}`));
   await git("fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", baseSha);
   await git("checkout", "-q", "--force", "FETCH_HEAD");
-  // Only the kept files' hunks are applied, so a hunk matches-real-code never reads (a CRLF batch file, a binary)
+  // Only the kept files' hunks are applied, so a hunk no golden can name (a CRLF batch file, a binary)
   // cannot drop the task.
   const kept = patchedPaths(patch.text).filter(({ after }) => after !== null && wanted.includes(after))
     .flatMap(({ before, after }) => [before, after]).filter((path): path is string => path !== null);
@@ -258,7 +258,8 @@ async function patchedFiles(cacheRoot: string, task: string, repository: string,
 /**
  * corpus-complete: every file `corpus.json` holds upstream's answers for was fetched on this run with the bytes it
  * was recorded on. A task that failed to fetch (a download, a git fetch) or a file whose bytes differ would otherwise
- * drop out of matches-real-code without a word, and the rules judged on the rest would pass.
+ * fail each golden that names one of its files as though the rule differed there; this says why, and keeps the run's
+ * results out of the cache.
  */
 export function corpusCompleteCheck(recorded: readonly { task: string; path: string; sha256: string }[], fetched: readonly CorpusFile[], tasks: readonly CorpusTask[]): Check {
   const have = new Set(fetched.map((file) => `${file.task}\0${file.path}\0${file.sha256}`));

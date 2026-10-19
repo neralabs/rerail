@@ -40,26 +40,18 @@ const EVERY_LEG: Leg[] = [
   { pack: "javascript", tool: "eslint-plugin-unicorn" },
   { pack: "next", tool: "eslint-plugin-next" },
   { pack: "python", tool: "bandit" },
-  { pack: "python", tool: "ruff", shard: 1, shards: 2 },
-  { pack: "python", tool: "ruff", shard: 2, shards: 2 },
+  { pack: "python", tool: "ruff" },
   { pack: "react", tool: "eslint-plugin-react" },
   { pack: "react", tool: "eslint-plugin-react-hooks" },
   { pack: "typescript", tool: "eslint-plugin-vitest" },
-  { pack: "typescript", tool: "typescript-eslint", shard: 1, shards: 8 },
-  { pack: "typescript", tool: "typescript-eslint", shard: 2, shards: 8 },
-  { pack: "typescript", tool: "typescript-eslint", shard: 3, shards: 8 },
-  { pack: "typescript", tool: "typescript-eslint", shard: 4, shards: 8 },
-  { pack: "typescript", tool: "typescript-eslint", shard: 5, shards: 8 },
-  { pack: "typescript", tool: "typescript-eslint", shard: 6, shards: 8 },
-  { pack: "typescript", tool: "typescript-eslint", shard: 7, shards: 8 },
-  { pack: "typescript", tool: "typescript-eslint", shard: 8, shards: 8 },
+  { pack: "typescript", tool: "typescript-eslint" },
 ];
 
 const TOOL_PACKS = gatedToolPacks();
 const names = (entries: readonly { pack: string; tool: string }[]): string[] => entries.map(({ pack, tool }) => `${pack}/${tool}`).sort();
 
 describe("every leg", () => {
-  it("is the 20 legs the workflow listed, sharded as SHARDS says", () => {
+  it("is one leg per gated tool-pack, sharded as SHARDS says", () => {
     assert.deepEqual(plan(TOOL_PACKS).legs, EVERY_LEG);
     assert.deepEqual(plan(TOOL_PACKS).toolPacks, names(TOOL_PACKS));
     for (const toolPack of Object.keys(SHARDS)) assert.ok(names(TOOL_PACKS).includes(toolPack), `SHARDS names ${toolPack}, which is not gated`);

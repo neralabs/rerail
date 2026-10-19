@@ -35,7 +35,7 @@ test("a rerail pack's corpora are read from its conformance manifests, by name",
   }
 });
 
-test("a pinned corpus gives matches-real-code every file of the linted type under its paths, sorted, named rerail:<corpus>", async () => {
+test("a pinned corpus gives the goldens every file of the linted type under its paths, sorted, named rerail:<corpus>", async () => {
   const scratch = await mkdtemp(join(tmpdir(), "validation-rerail-corpora-"));
   try {
     const source = join(scratch, "upstream");

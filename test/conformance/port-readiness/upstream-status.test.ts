@@ -54,7 +54,7 @@ test("upstream-status checks that the rule exists upstream, is stable and is on 
   assert.equal(upstreamStatusChecks("b101", adapter({ b101: upstream({}) })).some((check) => check.id === "pack"), false);
 
   const withOptions = upstreamStatusChecks("b101", adapter({ b101: upstream({ recommended: { config: "default", options: [{ skips: [] }] } }) }));
-  assert.equal(withOptions.find((check) => check.id === "recommended")!.detail, 'on in default with options [{"skips":[]}]; matches-upstream-tests and matches-real-code check the rule with these options');
+  assert.equal(withOptions.find((check) => check.id === "recommended")!.detail, 'on in default with options [{"skips":[]}]; matches-upstream-tests checks the rule with these options');
 });
 
 test("a rule starts on exactly when it exists upstream, is stable and is recommended", () => {
@@ -72,13 +72,13 @@ test("a rule starts on exactly when it exists upstream, is stable and is recomme
   assert.match(defaultOn([check("upstream-rule", true), check("stable", true), check("recommended", false)]).reason, /^experimental: recommended \(recommended detail\)$/u);
 });
 
-test("upstream-status and matches-real-code never decide the verdict: a rule ships when it passes the blocking gates", () => {
+test("upstream-status never decides the verdict: a rule ships when it passes the blocking gates", () => {
   const pass = { pass: true };
   const fail = { pass: false };
   assert.deepEqual(verdict({ loads: pass, "not-overfit": pass, compact: pass, "matches-upstream-tests": pass, "passes-conformance": pass }), { pass: true, stoppedAt: null });
   assert.deepEqual(verdict({ loads: pass, "not-overfit": fail, compact: pass, "matches-upstream-tests": fail, "passes-conformance": pass }), { pass: false, stoppedAt: "not-overfit" });
-  // upstream-status and matches-real-code are not among the gates a verdict reads, whatever they say.
-  const gates = { "upstream-status": fail, loads: pass, "not-overfit": pass, compact: pass, "matches-upstream-tests": pass, "matches-real-code": fail, "passes-conformance": pass };
+  // upstream-status is not among the gates a verdict reads, whatever it says.
+  const gates = { "upstream-status": fail, loads: pass, "not-overfit": pass, compact: pass, "matches-upstream-tests": pass, "passes-conformance": pass };
   assert.deepEqual(verdict(gates), { pass: true, stoppedAt: null });
   assert.deepEqual(verdict({ ...gates, "matches-upstream-tests": fail }), { pass: false, stoppedAt: "matches-upstream-tests" });
 });

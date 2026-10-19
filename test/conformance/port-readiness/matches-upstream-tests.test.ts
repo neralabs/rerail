@@ -226,17 +226,16 @@ test("a case upstream's parser read in another language than its path's is evalu
   assert.deepEqual(seen, [["pages/index.ts", "javascript"], ["src/a.ts", "typescript"]]);
 });
 
-test("negative evidence needs one case where upstream reports nothing and the rule agrees, from any source", () => {
+test("negative evidence needs one case where upstream reports nothing and the rule agrees, from its tests or its goldens", () => {
   const agree = (expected: number) => ({ expected, status: "agree" });
-  const negative = (status: string) => ({ expected: 0, status, kind: "negative" as const });
-  assert.equal(staysSilentCheck([agree(2)], [], []).ok, false);
-  assert.equal(staysSilentCheck([agree(2), { expected: 0, status: "mismatch" }], [{ expected: 0, status: "mismatch" }], [negative("mismatch")]).ok, false);
-  // A positive real-code case where upstream reports nothing cannot occur, and never counts.
-  assert.equal(staysSilentCheck([], [], [{ expected: 0, status: "agree", kind: "positive" }]).ok, false);
-  assert.equal(staysSilentCheck([agree(0)], [], []).ok, true);
-  assert.equal(staysSilentCheck([], [agree(0)], []).ok, true);
-  const check = staysSilentCheck([agree(1)], [], [negative("agree"), negative("agree")]);
+  const none = staysSilentCheck([agree(2)], []);
+  assert.equal(none.ok, false);
+  assert.match(none.detail, /^no case where upstream reports nothing and the rule agrees.*add a golden/u);
+  assert.equal(staysSilentCheck([agree(2), { expected: 0, status: "mismatch" }], [{ expected: 0, status: "mismatch" }]).ok, false);
+  assert.equal(staysSilentCheck([agree(0)], []).ok, true);
+  // A rule whose upstream test files all have findings (Ruff's) stays silent on a golden where upstream reports nothing.
+  const check = staysSilentCheck([agree(1)], [agree(0), agree(3)]);
   assert.equal(check.id, "stays-silent");
   assert.equal(check.ok, true);
-  assert.equal(check.detail, "2 case(s) where upstream reports nothing and the rule agrees: 0 upstream test file(s), 0 golden(s), 2 real-code negative(s)");
+  assert.equal(check.detail, "1 case(s) where upstream reports nothing and the rule agrees: 0 upstream test file(s), 1 golden(s)");
 });

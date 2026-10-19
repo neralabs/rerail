@@ -50,7 +50,6 @@ function passingGates(): RuleReport["gates"] {
     "not-overfit": { ...ok, flagged: [], words: {}, uncheckedRegexes: [] },
     compact: { ...ok, metrics: null },
     "matches-upstream-tests": { ...ok, totals: null, cases: {}, differences: [], goldens: { count: 0, differing: { count: 0, first: [] }, engineGaps: { count: 0, first: [] } } },
-    "matches-real-code": { checks: [], eligible: 0, positives: 0, cases: [], disagreementsElsewhere: { count: 0, first: [] } },
     "passes-conformance": ok,
   };
 }
@@ -73,12 +72,12 @@ function report(rules: RuleReport[], unmapped: GatesReport["unmapped"] = []): Ga
     format: "rerail.port-readiness/v1", pack: "python", tool: "bandit", toolPack: "python/bandit",
     upstream: { name: "", repository: "", commit: "", version: "", license: "", recommended_configs: [], runtime: "", identity: {} },
     engine: { sha256: "" }, gates: [], method: {} as GatesReport["method"], toolPackChecks: { pass: true, checks: [] }, integrity: [], knownGaps: [], gapCandidates: [],
-    corpus: null, unmapped, listedWithoutDocument: 0, cache: { rules: rules.length, hits: 0 }, uncommittedPromotions: 0,
+    corpus: null, unmapped, listedWithoutDocument: 0, cache: { rules: rules.length, hits: 0 },
     summary: {
       shipped: { rules: rules.filter((r) => r.location === "shipped").length, pass: rules.filter((r) => r.location === "shipped" && r.pass).length },
       candidates: { rules: rules.filter((r) => r.location === "candidate").length, pass: rules.filter((r) => r.location === "candidate" && r.pass).length },
       stoppedAt: { shipped: { ...zero }, candidate: { ...zero } }, failedGate: { ...zero },
-      endToEnd: { cases: 0, mismatches: 0, goldens: 0, goldensDiffering: 0, goldensEngineGaps: 0 },
+      goldens: { count: 0, differing: 0, engineGaps: 0 },
     },
     rules,
   };
