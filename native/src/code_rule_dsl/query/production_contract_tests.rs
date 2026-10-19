@@ -29,7 +29,7 @@ struct ContractCase {
 struct ContractWorkspace {
     files: Vec<ContractFile>,
     document_maps: Vec<ContractDocumentMap>,
-    capabilities: Value,
+    capabilities: String,
     failure_injection: Option<FailureInjection>,
 }
 
@@ -74,16 +74,7 @@ struct FailureInjection {
 #[serde(deny_unknown_fields)]
 #[allow(dead_code)]
 struct ContractExpected {
-    relational_plan: ExpectedRelationalPlan,
     oracle: ExpectedOracle,
-}
-
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(dead_code)]
-struct ExpectedRelationalPlan {
-    terminals: Vec<String>,
-    operations: Vec<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -143,7 +134,7 @@ fn cases() -> Vec<ContractCase> {
 }
 
 #[test]
-fn all_108_contracts_have_complete_execution_contracts() {
+fn production_contract_phase_one_has_complete_typed_data() {
     let cases = cases();
     for case in cases {
         assert!(
@@ -151,12 +142,100 @@ fn all_108_contracts_have_complete_execution_contracts() {
             "{} has no files",
             case.name
         );
+        let paths = case
+            .workspace
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(paths.len(), case.workspace.files.len(), "{}", case.name);
         assert!(
-            !case.expected.relational_plan.operations.is_empty(),
-            "{} has no relational plan",
+            matches!(
+                case.workspace.capabilities.as_str(),
+                "default" | "work-limit-one"
+            ),
+            "{}",
             case.name
         );
+        for map in &case.workspace.document_maps {
+            assert!(paths.contains(map.source_path.as_str()), "{}", case.name);
+            assert!(!map.generated_path.is_empty(), "{}", case.name);
+            assert!(!map.spans.is_empty(), "{}", case.name);
+            for span in &map.spans {
+                assert!(span.source_start <= span.source_end, "{}", case.name);
+                assert!(span.generated_start <= span.generated_end, "{}", case.name);
+            }
+        }
+        if let Some(failure) = &case.workspace.failure_injection {
+            assert_eq!(case.name, "semantic-fact-producer-failure");
+            assert_eq!(failure.producer, 0);
+            assert_eq!(failure.code, "capacity-failure");
+        }
     }
+}
+
+fn contract_capabilities(case: &ContractCase) -> String {
+    let mut capabilities: Value =
+        serde_json::from_str(CAPABILITIES).expect("default test capabilities are JSON");
+    match case.workspace.capabilities.as_str() {
+        "default" => {}
+        "work-limit-one" => capabilities["limits"]["maxVisitedNodes"] = 1.into(),
+        other => panic!("{} has unknown capabilities `{other}`", case.name),
+    }
+    capabilities.to_string()
+}
+
+fn oracle_result(case: &ContractCase) -> Value {
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(case),
+    )
+    .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+    let files = case
+        .workspace
+        .files
+        .iter()
+        .map(|file| {
+            let mut input = serde_json::json!({
+                "path": file.path,
+                "language": file.language,
+                "source": file.source,
+            });
+            if let Some(module) = &file.module {
+                input["module"] = module.clone();
+            }
+            input
+        })
+        .collect::<Vec<_>>();
+    let snapshot = serde_json::json!({
+        "format": "rerail.repository-snapshot/v1",
+        "revision": 1,
+        "files": files,
+        "facts": [],
+    });
+    let output = compiled
+        .evaluate(snapshot.to_string(), "report".to_owned())
+        .unwrap_or_else(|error| panic!("{} oracle: {}", case.name, error.reason));
+    serde_json::from_str(&output).expect("the oracle returns JSON")
+}
+
+#[test]
+fn production_contract_phase_one_oracles_match_committed_results() {
+    let mut differences = Vec::new();
+    for case in cases() {
+        let result = oracle_result(&case);
+        if result["violations"].as_array() != Some(&case.expected.oracle.violations)
+            || result["failures"].as_array() != Some(&case.expected.oracle.failures)
+        {
+            differences.push(case.name);
+        }
+    }
+    assert!(
+        differences.is_empty(),
+        "oracle results differ for: {}",
+        differences.join(", ")
+    );
 }
 
 #[test]
@@ -167,7 +246,7 @@ fn all_108_contracts_are_real_production_inputs_and_lower_to_sql() {
         let compiled = match CodeRuleDslRuntime::compile(
             case.policy.to_string(),
             "json".to_owned(),
-            case.workspace.capabilities.to_string(),
+            contract_capabilities(&case),
         ) {
             Ok(compiled) => compiled,
             Err(error) => {

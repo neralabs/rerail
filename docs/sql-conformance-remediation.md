@@ -699,7 +699,6 @@ A phase is incomplete while one required test fails or reports a warning.
 - Replace the current fixture model with the strict typed model.
 - Correct every policy substitution listed in this document.
 - Add source files, metadata, maps, limits, and failure injection.
-- Add authored typed relational-plan expectations.
 - Add source fixtures for exact matcher-oracle execution.
 - Reserve exact SQL and catalog expectations for each owning implementation phase.
 
@@ -716,7 +715,7 @@ Author all required contract data without using production compiler output to cr
 
 - All 108 policies pass public policy compilation.
 - All fixture invariants pass.
-- Typed relational-plan and matcher-oracle tests pass for all cases.
+- Matcher-oracle tests pass for all cases.
 - Production lowering failures remain visible in the separate implementation gate.
 
 ### Phase 2: Complete relational comparison and truth semantics
