@@ -95,7 +95,7 @@ pub(super) struct SqlEngine {
 impl SqlEngine {
     pub(super) fn new(code_rules: &[Arc<CompiledCodeRule>], batch_size: usize) -> Self {
         let mut keys = Vec::new();
-        let mut grammars: Vec<&GrammarMatcher> = Vec::new();
+        let mut grammars: Vec<(&GrammarMatcher, Option<&str>)> = Vec::new();
         let mut refusals = Vec::new();
         let mut clauses = HashMap::new();
         let refuse = |refusals: &mut Vec<Refusal>, key: (ClauseId, usize), reason: String| {
@@ -117,19 +117,8 @@ impl SqlEngine {
                     continue;
                 };
                 for (index, grammar) in matchers.iter().enumerate() {
-                    let key = ((rule, clause), index);
-                    // `violation.each` re-matches each root natively (`matcher::enumerate`).
-                    if compiled.violation.each.is_some() {
-                        clauses.insert(key, None);
-                        refuse(
-                            &mut refusals,
-                            key,
-                            SqlError::unsupported("violation.each").to_string(),
-                        );
-                        continue;
-                    }
-                    keys.push(key);
-                    grammars.push(grammar);
+                    keys.push(((rule, clause), index));
+                    grammars.push((grammar, compiled.violation.each.as_deref()));
                 }
             }
         }

@@ -32,6 +32,25 @@ pub(in crate::code_rule_dsl) struct BatchFile {
     pub(super) context: FileContext,
 }
 
+/// A parsed literal's tree (`parse`, `formatArgs`): a document of the batch's own, numbered after
+/// the batch's files in the order the terminals parsed them, which the `node` table and the
+/// terminals read as they read a file.
+pub(in crate::code_rule_dsl) struct SubFile {
+    pub(in crate::code_rule_dsl) root: AstGrep<crate::code_rule_dsl::literal::SubDoc>,
+    pub(super) facts: NodeFacts,
+    /// The batch file the literal is in.
+    pub(super) host: usize,
+    /// An annotation's: the file's scope table its names are read in (`ParseTest::tree_at`).
+    pub(super) table: Option<Arc<crate::code_rule_dsl::scope::ScopeTable>>,
+}
+
+/// The batch's parsed trees, each once by its tree (parsed trees are remembered per file).
+#[derive(Default)]
+struct SubFiles {
+    files: Vec<Arc<SubFile>>,
+    index: HashMap<usize, u32>,
+}
+
 /// What the native evaluator installs for a file besides its tree: its host path, its Python
 /// module path and the scope tables it has cached for the file's revision (the workspace's),
 /// which the input-set terminals' file scopes read (`FileScopeSlot::install`).
@@ -40,6 +59,12 @@ pub(in crate::code_rule_dsl) struct FileContext {
     pub(in crate::code_rule_dsl) path: Option<String>,
     pub(in crate::code_rule_dsl) module: Option<Arc<crate::code_rule_dsl::module_path::ModulePath>>,
     pub(in crate::code_rule_dsl) scopes: Vec<Arc<crate::code_rule_dsl::scope::ScopeTable>>,
+    /// The workspace's (or stateless evaluation's) call-graph closure and the file's summary,
+    /// which `calls` reads as `calls::FileCallsSlot` installs them for the file's evaluation.
+    pub(in crate::code_rule_dsl) calls: Option<(
+        Arc<crate::code_rule_dsl::calls::CallsView>,
+        Arc<crate::code_rule_dsl::calls::summary::Summary>,
+    )>,
 }
 
 /// The terminals and stages of the clauses a batch runs.
@@ -53,6 +78,7 @@ pub(super) struct Batch {
     pub(super) files: Vec<BatchFile>,
     pub(super) program: Arc<Program>,
     fresh: Vec<OnceLock<Arc<Vec<PatternRow>>>>,
+    subfiles: parking_lot::Mutex<SubFiles>,
 }
 
 impl Batch {
@@ -84,7 +110,47 @@ impl Batch {
             files,
             fresh: program.terminals.iter().map(|_| OnceLock::new()).collect(),
             program,
+            subfiles: parking_lot::Mutex::default(),
         })
+    }
+
+    /// How many documents the batch holds: its files, then the trees parsed so far.
+    pub(super) fn documents(&self) -> usize {
+        self.files.len() + self.subfiles.lock().files.len()
+    }
+
+    /// The parsed tree numbered `file` (after the batch's files).
+    pub(super) fn subfile(&self, file: usize) -> Option<Arc<SubFile>> {
+        let index = file.checked_sub(self.files.len())?;
+        self.subfiles.lock().files.get(index).cloned()
+    }
+
+    /// The number of `tree`, a tree parsed from a node of file `host` (an annotation's, with the
+    /// table its names are read in): a document of the batch from now on.
+    pub(super) fn add_subfile(
+        &self,
+        host: usize,
+        tree: &Arc<crate::code_rule_dsl::literal::SubTree>,
+        table: Option<Arc<crate::code_rule_dsl::scope::ScopeTable>>,
+    ) -> u32 {
+        let key = Arc::as_ptr(tree) as usize;
+        let mut subfiles = self.subfiles.lock();
+        if let Some(&file) = subfiles.index.get(&key) {
+            return file;
+        }
+        let root = AstGrep::doc(crate::code_rule_dsl::literal::SubDoc {
+            tree: Arc::clone(tree),
+        });
+        let facts = NodeFacts::of_tree(&root);
+        let file = (self.files.len() + subfiles.files.len()) as u32;
+        subfiles.files.push(Arc::new(SubFile {
+            root,
+            facts,
+            host,
+            table,
+        }));
+        subfiles.index.insert(key, file);
+        file
     }
 
     /// The fresh-env matches of pattern terminal `term`, computed once per batch.
@@ -144,6 +210,8 @@ pub(in crate::code_rule_dsl) enum Captured {
     List(Option<(u32, u32)>),
     /// A count's `as`.
     Count(i64),
+    /// An exported text and its source range.
+    Text(String, std::ops::Range<usize>),
 }
 
 /// One matching root of a clause and its bindings.
@@ -253,21 +321,22 @@ pub(in crate::code_rule_dsl) fn compile_enumerating(
     Ok(Compiled::new(builder, clauses))
 }
 
-/// Compiles every one of `grammars` the engine lowers into one program. Per grammar: its clause
-/// index in the program, or why the engine refuses it. A refused grammar leaves nothing in the
-/// program (no stage or terminal of it runs): each is lowered alone first, and lowering is
-/// deterministic, so one that lowers alone lowers in the shared program.
+/// Compiles every one of `grammars` the engine lowers into one program, each with the capture its
+/// `violation.each` enumerates. Per grammar: its clause index in the program, or why the engine
+/// refuses it. A refused grammar leaves nothing in the program (no stage or terminal of it runs):
+/// each is lowered alone first, and lowering is deterministic, so one that lowers alone lowers in
+/// the shared program.
 pub(in crate::code_rule_dsl) fn compile_each(
-    grammars: &[&GrammarMatcher],
+    grammars: &[(&GrammarMatcher, Option<&str>)],
 ) -> (Compiled, Vec<Result<usize, Unsupported>>) {
     let mut builder = ProgramBuilder::default();
     let mut clauses = Vec::new();
     let outcomes = grammars
         .iter()
-        .map(|grammar| {
-            ProgramBuilder::default().clause_each(grammar, None)?;
-            let statement = builder.clause_each(grammar, None)?;
-            clauses.push(ClauseSql::of(&statement, None));
+        .map(|&(grammar, each)| {
+            ProgramBuilder::default().clause_each(grammar, each)?;
+            let statement = builder.clause_each(grammar, each)?;
+            clauses.push(ClauseSql::of(&statement, each));
             Ok(clauses.len() - 1)
         })
         .collect();
@@ -961,6 +1030,16 @@ fn bindings(
                 (Some(lo), Some(hi)) => Some(Captured::List(Some((lo as u32, hi as u32)))),
                 _ => None,
             },
+            SlotKind::Text => match (row.get::<_, Value>(*at)?, row.get::<_, Value>(at + 1)?) {
+                (Value::Text(text), Value::Text(range)) => {
+                    let (start, end) = range.split_once(':').unwrap_or_default();
+                    match (start.parse(), end.parse()) {
+                        (Ok(start), Ok(end)) => Some(Captured::Text(text, start..end)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            },
         };
         if let Some(captured) = captured {
             bound.push((name.clone(), captured));
@@ -1005,6 +1084,9 @@ pub(in crate::code_rule_dsl) fn environment<'t>(
                 let bytes = <<TapeDoc as Doc>::Source as Content>::decode_str(&value.to_string())
                     .into_owned();
                 env.insert_transformation(&MetaVariable::Multiple, name, bytes);
+            }
+            Captured::Text(text, range) => {
+                crate::code_rule_dsl::matcher::export_text(&mut env, name, text, range.clone());
             }
         }
     }

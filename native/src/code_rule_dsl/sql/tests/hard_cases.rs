@@ -8,7 +8,7 @@ use crate::code_rule_dsl::test_support::{CAPABILITIES, clause_document, compile_
 use serde_json::{Value, json};
 
 /// One clause in `language` with `ast` (`rule`, `utils`, `constraints`).
-fn compile(language: &str, mut ast: Value) -> CompiledCodeRuleDsl {
+pub(super) fn compile(language: &str, mut ast: Value) -> CompiledCodeRuleDsl {
     ast["language"] = json!(language);
     compile_document_with(
         clause_document(json!({
@@ -51,7 +51,7 @@ fn texts(result: &Value, source: &str) -> Vec<String> {
 }
 
 /// Both engines' findings for `ast` over `source`, which must agree; their texts.
-fn agreed(language: &str, ast: Value, source: &str) -> Vec<String> {
+pub(super) fn agreed(language: &str, ast: Value, source: &str) -> Vec<String> {
     let extension = match language {
         "python" => "py",
         "php" => "php",
@@ -245,9 +245,13 @@ fn every_out_of_scope_operator_is_refused_by_name() {
             error.reason
         );
     };
+    // A stop rule is a per-batch stage over the batch's files: a parsed tree's nodes are none.
     refused(
-        json!({ "rule": { "kind": "call_expression", "resolves": { "global": true } } }),
-        "resolves",
+        json!({ "rule": { "kind": "comment", "parse": {
+            "grammar": "eslintDirective",
+            "has": { "stopBy": { "kind": "item" }, "kind": "item" },
+        } } }),
+        "stopBy rule inside parse",
     );
     // A recursion that reads its own answer at the node it started at (its parent's children
     // include it) loops: the matcher recurses until its depth limit.

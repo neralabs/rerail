@@ -66,61 +66,51 @@ pub(super) fn following_key() -> Vec<(usize, usize)> {
     FOLLOWING.with_borrow(Clone::clone)
 }
 
+/// What `resolves.binding` reads of a node before its sub-rules (`BindingTest::resolve`): the
+/// node the binding's nodes are found near, and the binding's site, value and annotation, and
+/// its variable's occurrences where an `occurrence` rule reads them.
+pub(crate) enum Resolution<'tree, D: Doc> {
+    No,
+    Unknown,
+    Found {
+        anchor: Node<'tree, D>,
+        site: Option<NodeRef>,
+        value: Option<NodeRef>,
+        annotation: Option<NodeRef>,
+        occurrences: Vec<NodeRef>,
+    },
+}
+
 impl BindingTest {
     pub(super) fn match_node<'tree, D: Doc>(
         &self,
         node: Node<'tree, D>,
         env: &mut Cow<MetaVarEnv<'tree, D>>,
     ) -> Option<Node<'tree, D>> {
-        let reference = unparenthesized(&self.paren_kinds, node.clone());
-        if self.write_last {
-            return self.match_anchor(node, reference, env);
-        }
-        if !self.reference_kinds.contains(&reference.kind_id()) {
-            return None;
-        }
-        let table = file_table(
-            &reference,
-            self.language,
-            table_reading(self.options.as_deref(), self.python.as_deref()),
-        )?;
-        let found = table.reference(&reference.range())?;
-        let name = name_in(self.language, reference.text());
-        if undecided(&table, found) {
-            UNKNOWN.set(true);
-            return None;
-        }
-        let (binding, value) = table.binding_by(found, &name, self.lookup)?;
-        let (scope, index) = resolved_index(&table, found, &name, self.lookup)?;
-        let id = crate::code_rule_dsl::scope::usage::BindingId {
-            scope,
-            name: &name,
-            index,
-        };
-        let usage = if self.filter.reads_usage() || self.occurrence.is_some() {
-            Some(file_usage(&reference, &table)?)
-        } else {
-            None
-        };
-        let region = |capture: &str| capture_range(env, capture);
-        let verdict = self.filter.verdict(&table, usage.as_deref(), id, &region);
-        match verdict {
-            Some(true) => {}
-            Some(false) => return None,
-            None => {
+        let (anchor, site, value, annotation, occurrences) = match self.resolve(&node, env.as_ref())
+        {
+            Resolution::No => return None,
+            Resolution::Unknown => {
                 UNKNOWN.set(true);
                 return None;
             }
-        }
+            Resolution::Found {
+                anchor,
+                site,
+                value,
+                annotation,
+                occurrences,
+            } => (anchor, site, value, annotation, occurrences),
+        };
         let targets = [
-            (&self.site, binding.site.node),
-            (&self.value, self.value_of(binding.site.node, value)),
-            (&self.annotation, binding.site.annotation),
+            (&self.site, site),
+            (&self.value, value),
+            (&self.annotation, annotation),
         ];
         let mut trial = Cow::Borrowed(env.as_ref());
-        match_binding_nodes(&reference, targets, &mut trial)?;
-        if let (Some(rule), Some(usage)) = (&self.occurrence, &usage) {
-            match_occurrence(&reference, rule, usage.occurrences(id), &mut trial)?;
+        match_binding_nodes(&anchor, targets, &mut trial)?;
+        if let Some(rule) = &self.occurrence {
+            match_occurrence(&anchor, rule, &occurrences, &mut trial)?;
         }
         if let Cow::Owned(bound) = trial {
             *env = Cow::Owned(bound);
@@ -128,51 +118,123 @@ impl BindingTest {
         Some(node)
     }
 
-    /// `resolves.write: "last"`: `reference` (the node without parentheses) is its variable's
-    /// anchor, and the variable passes the filters and sub-rules.
-    fn match_anchor<'tree, D: Doc>(
+    /// The binding `node` resolves to, through the filters (which read `env`'s captures), before
+    /// any sub-rule: the matcher's and the SQL engine's first step (its sub-rules are relations
+    /// over these nodes there).
+    pub(crate) fn resolve<'tree, D: Doc>(
         &self,
-        node: Node<'tree, D>,
-        reference: Node<'tree, D>,
-        env: &mut Cow<MetaVarEnv<'tree, D>>,
-    ) -> Option<Node<'tree, D>> {
-        let kind = reference.kind_id();
-        if !self.reference_kinds.contains(&kind) && !self.name_kinds.contains(&kind) {
-            return None;
+        node: &Node<'tree, D>,
+        env: &MetaVarEnv<'tree, D>,
+    ) -> Resolution<'tree, D> {
+        let reference = unparenthesized(&self.paren_kinds, node.clone());
+        if self.write_last {
+            return self.resolve_anchor(reference, env);
         }
-        let table = file_table(
+        if !self.reference_kinds.contains(&reference.kind_id()) {
+            return Resolution::No;
+        }
+        let Some(table) = file_table(
             &reference,
             self.language,
             table_reading(self.options.as_deref(), self.python.as_deref()),
-        )?;
-        let usage = file_usage(&reference, &table)?;
+        ) else {
+            return Resolution::No;
+        };
+        let Some(found) = table.reference(&reference.range()) else {
+            return Resolution::No;
+        };
+        let name = name_in(self.language, reference.text());
+        if undecided(&table, found) {
+            return Resolution::Unknown;
+        }
+        let Some((binding, value)) = table.binding_by(found, &name, self.lookup) else {
+            return Resolution::No;
+        };
+        let Some((scope, index)) = resolved_index(&table, found, &name, self.lookup) else {
+            return Resolution::No;
+        };
+        let id = crate::code_rule_dsl::scope::usage::BindingId {
+            scope,
+            name: &name,
+            index,
+        };
+        let usage = if self.filter.reads_usage() || self.occurrence.is_some() {
+            match file_usage(&reference, &table) {
+                Some(usage) => Some(usage),
+                None => return Resolution::No,
+            }
+        } else {
+            None
+        };
+        let region = |capture: &str| capture_range(env, capture);
+        match self.filter.verdict(&table, usage.as_deref(), id, &region) {
+            Some(true) => {}
+            Some(false) => return Resolution::No,
+            None => return Resolution::Unknown,
+        }
+        let occurrences = match (&self.occurrence, &usage) {
+            (Some(_), Some(usage)) => usage.occurrences(id).to_vec(),
+            _ => Vec::new(),
+        };
+        Resolution::Found {
+            site: binding.site.node,
+            value: self.value_of(binding.site.node, value),
+            annotation: binding.site.annotation,
+            occurrences,
+            anchor: reference,
+        }
+    }
+
+    /// `resolves.write: "last"`: `reference` (the node without parentheses) is its variable's
+    /// anchor, and the variable passes the filters.
+    fn resolve_anchor<'tree, D: Doc>(
+        &self,
+        reference: Node<'tree, D>,
+        env: &MetaVarEnv<'tree, D>,
+    ) -> Resolution<'tree, D> {
+        let kind = reference.kind_id();
+        if !self.reference_kinds.contains(&kind) && !self.name_kinds.contains(&kind) {
+            return Resolution::No;
+        }
+        let Some(table) = file_table(
+            &reference,
+            self.language,
+            table_reading(self.options.as_deref(), self.python.as_deref()),
+        ) else {
+            return Resolution::No;
+        };
+        let Some(usage) = file_usage(&reference, &table) else {
+            return Resolution::No;
+        };
         let range = reference.range();
         let name = reference.text();
         let id = match table.reference(&range) {
             Some(found) => {
-                let (scope, index) = table.resolve_lexical_index(found, &name)?;
+                let Some((scope, index)) = table.resolve_lexical_index(found, &name) else {
+                    return Resolution::No;
+                };
                 crate::code_rule_dsl::scope::usage::BindingId {
                     scope,
                     name: &name,
                     index,
                 }
             }
-            None => usage.named_at(range.start, range.end, kind).next()?,
+            None => match usage.named_at(range.start, range.end, kind).next() {
+                Some(id) => id,
+                None => return Resolution::No,
+            },
         };
         let anchor = (range.start as u32, range.end as u32);
         if usage.facts(id).anchor != Some(anchor)
             || (self.lookup.only && table.chain(id).len() != 1)
         {
-            return None;
+            return Resolution::No;
         }
         let region = |capture: &str| capture_range(env, capture);
         match self.filter.verdict(&table, Some(&usage), id, &region) {
             Some(true) => {}
-            Some(false) => return None,
-            None => {
-                UNKNOWN.set(true);
-                return None;
-            }
+            Some(false) => return Resolution::No,
+            None => return Resolution::Unknown,
         }
         let binding = table.binding_of(id);
         let definitions = table.chain(id).len();
@@ -180,20 +242,18 @@ impl BindingTest {
             .site
             .value
             .filter(|_| definitions == 1 && binding.writes == 0);
-        let targets = [
-            (&self.site, binding.site.node),
-            (&self.value, self.value_of(binding.site.node, value)),
-            (&self.annotation, binding.site.annotation),
-        ];
-        let mut trial = Cow::Borrowed(env.as_ref());
-        match_binding_nodes(&reference, targets, &mut trial)?;
-        if let Some(rule) = &self.occurrence {
-            match_occurrence(&reference, rule, usage.occurrences(id), &mut trial)?;
+        let occurrences = if self.occurrence.is_some() {
+            usage.occurrences(id).to_vec()
+        } else {
+            Vec::new()
+        };
+        Resolution::Found {
+            site: binding.site.node,
+            value: self.value_of(binding.site.node, value),
+            annotation: binding.site.annotation,
+            occurrences,
+            anchor: reference,
         }
-        if let Cow::Owned(bound) = trial {
-            *env = Cow::Owned(bound);
-        }
-        Some(node)
     }
 
     /// The binding's value, or none for a destructured name under `destructuredValue: false`. A

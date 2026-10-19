@@ -436,11 +436,15 @@ impl SqlFiles {
                     inputs.push((
                         doc,
                         Some(statement),
-                        // As the stateless evaluator installs a file's scopes: nothing cached.
+                        // As the stateless evaluator installs a file's scopes: nothing cached;
+                        // and its call-graph closure (`FileCallsSlot::for_path`).
                         crate::code_rule_dsl::sql::FileContext {
                             path: Some(file.path.clone()),
                             module: file.module.clone(),
                             scopes: Vec::new(),
+                            calls: crate::code_rule_dsl::calls::FileCallsSlot::evaluation_calls(
+                                &file.path,
+                            ),
                         },
                     ));
                     Ok((inputs.len() - 1, lines))

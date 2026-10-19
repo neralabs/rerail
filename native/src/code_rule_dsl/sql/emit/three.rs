@@ -3,7 +3,7 @@
 //! (`Op::Fact`), which two-valued clauses read too.
 
 use super::{Emitter, chain, holds, stage_table};
-use crate::code_rule_dsl::sql::plan::{AllTerm, OfRule, Op, SlotKind, Stop, Walk};
+use crate::code_rule_dsl::sql::plan::{AllTerm, OfRule, Op, Stop, Walk};
 use std::fmt::Write;
 
 /// The order key of an event after every candidate of a walk: an unknown stop that ends it.
@@ -319,6 +319,7 @@ impl Emitter<'_> {
                 chain(input, stage, "fn.parent", "parent", false),
                 format!("SELECT DISTINCT v.pk, {LAST} FROM v {}", unknown("v")),
             ),
+            Walk::Slot(_) | Walk::Related(_) => return None,
         };
         let name = self.name("o");
         self.create(&name, "pk, e");
@@ -499,11 +500,7 @@ impl Emitter<'_> {
         let node = if at_node { "f.node" } else { "0" };
         let mut key = format!("f.file || ',' || {node}");
         for &slot in reads {
-            let value = match self.slots[slot].kind {
-                SlotKind::List => format!("f.s{slot}a || ':' || f.s{slot}b"),
-                _ => format!("f.s{slot}"),
-            };
-            write!(key, " || ',' || COALESCE({value}, '')").expect("write to a string");
+            write!(key, " || ',' || {}", self.key_value("f", slot)).expect("write to a string");
         }
         let mut overrides = Vec::new();
         let mut values = String::new();

@@ -2,10 +2,11 @@
 //! the lowering joins on (`docs/sql-set-composition-design.md`, "`node` virtual table"). The facts
 //! behind the columns are computed once per file when the batch is built (`NodeFacts::of`).
 
-use super::exec::{Batch, BatchSlot};
+use super::exec::{Batch, BatchSlot, SubFile};
+use crate::code_rule_dsl::literal::SubDoc;
 use crate::code_rule_dsl::matcher::node_at;
 use crate::code_rule_dsl::tape::TapeDoc;
-use ast_grep_core::AstGrep;
+use ast_grep_core::{AstGrep, Doc};
 use rusqlite::fallible_iterator::FallibleIterator;
 use rusqlite::types::{Value, ValueRef};
 use rusqlite::vtab::{
@@ -22,6 +23,12 @@ use std::sync::Arc;
 
 /// No node (a NULL column).
 pub(super) const NONE: u32 = u32::MAX;
+
+/// A parsed tree's node index from its node id: `literal::SubTree`'s ids carry the tree's base
+/// above the index.
+pub(super) fn sub_index(node_id: usize) -> u32 {
+    (node_id & ((1 << 24) - 1)) as u32
+}
 
 /// The hasher of every unification key and list hash: fixed, so equal texts hash alike in every
 /// file and batch.
@@ -80,7 +87,35 @@ impl NodeFacts {
     /// bottom-up, from the last node back).
     pub(super) fn of(root: &AstGrep<TapeDoc>) -> Self {
         let tape = root.root().get_doc();
-        let len = tape.transducer_len() as u32;
+        Self::build(
+            tape.transducer_len() as u32,
+            |id| node_at(root, id),
+            |node| node.node_id() as u32,
+            |id| tape.transducer_descendants(id).end - 1,
+            |id| tape.transducer_field(id),
+        )
+    }
+
+    /// The facts of a parsed literal's tree (`parse`): its nodes are numbered in preorder from
+    /// its root, as a tape's are.
+    pub(super) fn of_tree(root: &AstGrep<SubDoc>) -> Self {
+        let tree = &root.root().get_doc().tree;
+        Self::build(
+            tree.len() as u32,
+            |id| root.adopt(root.root().get_doc().node(id)),
+            |node| sub_index(node.node_id()),
+            |id| tree.last(id),
+            |id| tree.field(id),
+        )
+    }
+
+    fn build<'r, D: Doc + 'r>(
+        len: u32,
+        node_at: impl Fn(u32) -> ast_grep_core::Node<'r, D>,
+        id_of_node: impl Fn(&ast_grep_core::Node<'r, D>) -> u32,
+        last_of: impl Fn(u32) -> u32,
+        field_of: impl Fn(u32) -> u16,
+    ) -> Self {
         let size = len as usize;
         let mut facts = Self {
             len,
@@ -104,16 +139,15 @@ impl NodeFacts {
             thash: vec![0; size],
             postings: HashMap::new(),
         };
-        let id_of = |node: Option<ast_grep_core::Node<'_, TapeDoc>>| {
-            node.map_or(NONE, |node| node.node_id() as u32)
-        };
+        let id_of =
+            |node: Option<ast_grep_core::Node<'r, D>>| node.map_or(NONE, |node| id_of_node(&node));
         for id in 0..len {
-            let node = node_at(root, id);
+            let node = node_at(id);
             let index = id as usize;
             let range = node.range();
-            facts.last[index] = tape.transducer_descendants(id).end - 1;
+            facts.last[index] = last_of(id);
             facts.kind[index] = node.kind_id();
-            facts.field[index] = tape.transducer_field(id);
+            facts.field[index] = field_of(id);
             facts.start[index] = range.start as u32;
             facts.end[index] = range.end as u32;
             let mut flags = 0;
@@ -132,14 +166,14 @@ impl NodeFacts {
             facts.next[index] = id_of(node.next());
             facts.anext[index] = id_of(node.next_all().next());
             facts.aprev[index] = id_of(node.prev_all().next());
-            facts.wpar[index] = node.parent().map_or(id, |parent| parent.node_id() as u32);
+            facts.wpar[index] = node.parent().map_or(id, |parent| id_of_node(&parent));
             facts.thash[index] = text_hash(&node.text());
             facts.postings.entry(node.kind_id()).or_default().push(id);
             let mut named = 0;
             let mut seen_fields = Vec::new();
             let mut previous = NONE;
             for child in node.children() {
-                let child_id = child.node_id() as u32;
+                let child_id = id_of_node(&child);
                 let slot = child_id as usize;
                 facts.parent[slot] = id;
                 facts.prev[slot] = previous;
@@ -153,7 +187,7 @@ impl NodeFacts {
                     named += 1;
                     facts.named_ix[slot] = named;
                 }
-                let field = tape.transducer_field(child_id);
+                let field = field_of(child_id);
                 if field != 0 && !seen_fields.contains(&field) {
                     seen_fields.push(field);
                     facts.flags[slot] |= FIELD_FIRST;
@@ -480,6 +514,7 @@ unsafe impl<'vtab> VTab<'vtab> for NodeTable {
             filter: Filter::default(),
             source: Source::Done,
             current: None,
+            sub: None,
             phantom: PhantomData,
         })
     }
@@ -515,6 +550,8 @@ pub(super) struct NodeCursor<'vtab> {
     filter: Filter,
     source: Source,
     current: Option<(u32, u32)>,
+    /// The parsed tree being scanned, where the file is one (`exec::SubFile`).
+    sub: Option<Arc<SubFile>>,
     phantom: PhantomData<&'vtab NodeTable>,
 }
 
@@ -527,14 +564,24 @@ pub(super) fn integer(value: ValueRef<'_>) -> Option<i64> {
     }
 }
 
+/// The facts of document `file` of `batch`: a file's, or `sub`'s where it is a parsed tree.
+fn facts_of<'a>(batch: &'a Batch, sub: &'a Option<Arc<SubFile>>, file: u32) -> &'a NodeFacts {
+    match (batch.files.get(file as usize), sub) {
+        (Some(entry), _) => &entry.facts,
+        (None, Some(sub)) => &sub.facts,
+        (None, None) => unreachable!("a document of the batch"),
+    }
+}
+
 impl NodeCursor<'_> {
     fn start_file(&mut self) {
         self.source = Source::Done;
-        let batch = self.batch.as_ref().expect("filtered");
         let Some(&file) = self.files.get(self.file_pos) else {
             return;
         };
-        let facts = &batch.files[file as usize].facts;
+        let batch = self.batch.as_ref().expect("filtered");
+        self.sub = batch.subfile(file as usize);
+        let facts = facts_of(batch, &self.sub, file);
         let filter = &self.filter;
         let len = facts.len();
         let lo = filter.id_lo.unwrap_or(0);
@@ -584,7 +631,7 @@ impl NodeCursor<'_> {
     fn next_id(&mut self) -> Option<u32> {
         let batch = self.batch.as_ref().expect("filtered");
         let file = self.files[self.file_pos];
-        let facts = &batch.files[file as usize].facts;
+        let facts = facts_of(batch, &self.sub, file);
         match &mut self.source {
             Source::Range { next, end } => (*next < *end).then(|| {
                 *next += 1;
@@ -610,7 +657,7 @@ impl NodeCursor<'_> {
     fn passes(&self, id: u32) -> bool {
         let batch = self.batch.as_ref().expect("filtered");
         let file = self.files[self.file_pos];
-        let facts = &batch.files[file as usize].facts;
+        let facts = facts_of(batch, &self.sub, file);
         let filter = &self.filter;
         let index = id as usize;
         id < facts.len()
@@ -653,7 +700,9 @@ unsafe impl VTabCursor for NodeCursor<'_> {
         let codes = idx_str.unwrap_or("");
         let mut filter = Filter::default();
         let mut files: Option<Vec<u32>> = None;
+        // Without a file constraint the batch's files; with one, its parsed trees too.
         let count = batch.files.len() as i64;
+        let documents = batch.documents() as i64;
         let clamp = |value: i64| u32::try_from(value.max(0)).unwrap_or(u32::MAX - 1);
         let narrow = |filter: &mut Filter, lo: Option<i64>, hi: Option<i64>| {
             if let Some(lo) = lo {
@@ -693,7 +742,7 @@ unsafe impl VTabCursor for NodeCursor<'_> {
                         value()?.into_iter().collect()
                     }
                     .into_iter()
-                    .filter(|file| (0..count).contains(file))
+                    .filter(|file| (0..documents).contains(file))
                     .map(|file| file as u32)
                     .collect();
                     wanted.sort_unstable();
@@ -770,7 +819,7 @@ unsafe impl VTabCursor for NodeCursor<'_> {
             return context.set_result(&i64::from(file));
         }
         let batch = self.batch.as_ref().expect("filtered");
-        context.set_result(&batch.files[file as usize].facts.column(id, column))
+        context.set_result(&facts_of(batch, &self.sub, file).column(id, column))
     }
 
     fn rowid(&self) -> Result<i64> {

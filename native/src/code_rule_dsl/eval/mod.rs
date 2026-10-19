@@ -114,7 +114,13 @@ pub(super) fn evaluate_clauses(
         },
         clauses: covered,
     };
-    let _calls = stateless_calls(code_rule, snapshot, clauses, &mut evaluation.metrics)?;
+    let _calls = stateless_calls(
+        code_rule,
+        snapshot,
+        clauses,
+        &mut evaluation.metrics,
+        engine,
+    )?;
     for clause in clauses {
         match &clause.kind {
             ClauseKind::Forbid(query) => {
@@ -329,6 +335,7 @@ fn stateless_calls(
     snapshot: &Snapshot,
     clauses: &[CompiledClause],
     metrics: &mut Metrics,
+    engine: Engine,
 ) -> Result<Option<calls::EvaluationSlot>> {
     let mut terms = Terms::default();
     for clause in clauses {
@@ -419,7 +426,7 @@ fn stateless_calls(
                 &mut partial,
                 None,
                 &mut util_limit,
-                Engine::Native,
+                engine,
             )?;
             metrics.visited_nodes = seed_metrics.visited_nodes;
             let starts = match witnesses {

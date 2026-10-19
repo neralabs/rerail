@@ -212,7 +212,10 @@ fn probe() {
     breakdown(&totals);
     // The whole clause set as one program on one session, every clause over every file of a
     // batch: what a workspace apply runs.
-    let grammars: Vec<&GrammarMatcher> = clauses.iter().map(|(_, grammar)| *grammar).collect();
+    let grammars: Vec<(&GrammarMatcher, Option<&str>)> = clauses
+        .iter()
+        .map(|(_, grammar)| (*grammar, None))
+        .collect();
     let started = Instant::now();
     STATEMENT_PROFILE.set(Some(Default::default()));
     let (compiled, outcomes) = crate::code_rule_dsl::sql::compile_each(&grammars);

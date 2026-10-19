@@ -46,6 +46,9 @@ pub(super) enum SlotKind {
     List,
     /// A count's `as`: an integer, rendered as text.
     Count,
+    /// A capture exported as text (`parse`'s and `formatArgs`' exports, `calls`' `chain`): its
+    /// text, and its source range as the matcher's reserved span variable holds it, `start:end`.
+    Text,
 }
 
 /// A capture of one scope: the clause's own (scope 0) or a parameterized call's frame.
@@ -61,6 +64,7 @@ impl Slot {
     pub(super) fn columns(&self, id: SlotId) -> Vec<String> {
         match self.kind {
             SlotKind::Node | SlotKind::Count => vec![format!("s{id}")],
+            SlotKind::Text => vec![format!("s{id}"), format!("s{id}r")],
             SlotKind::List => vec![
                 format!("s{id}a"),
                 format!("s{id}b"),
@@ -103,6 +107,11 @@ pub(super) enum Walk {
     FieldHas(u16, Stop),
     /// `inside` with a `field`: ancestors entered through their first child in the field.
     FieldInside(u16, Stop),
+    /// The node a slot holds (in the row's file), as its one candidate: a terminal's related
+    /// node (a binding's site, value or annotation) the frame carries.
+    Slot(SlotId),
+    /// A terminal's related nodes (`Statement::sources`), in the order it gives them.
+    Related(usize),
 }
 
 impl Walk {
@@ -139,6 +148,18 @@ pub(super) struct CallReturn {
     pub(super) kind: SlotKind,
     pub(super) caller: SlotId,
     pub(super) params: Vec<SlotId>,
+}
+
+/// The candidates of a `Walk::Related`: for each distinct key of the frame, `(file, node if
+/// at_node, bindings of reads)`, the fact terminal `term` returns rows `(file, node, ord, values…)`:
+/// a candidate in `file` (the row's own where NULL), at `node`, walked in ascending `ord`, with
+/// `values` written into `sets` on the candidate's row.
+#[derive(Debug)]
+pub(super) struct Source {
+    pub(super) term: usize,
+    pub(super) reads: Vec<SlotId>,
+    pub(super) at_node: bool,
+    pub(super) sets: Vec<SlotId>,
 }
 
 /// A withheld-capture mask: one word per `wh` column, 62 bits each.
@@ -302,6 +323,56 @@ pub(super) enum Op {
         nth: Box<Op>,
         commit: Box<Op>,
     },
+    /// Sub-rules matched one after another on one trial environment, as the matcher matches a
+    /// binding's site, value and annotation (`binding::match_binding_nodes`) and the steps of the
+    /// semantic predicates after them: the first that is not true decides, false or unknown.
+    Seq(Vec<Op>),
+    /// A terminal's verdict on a candidate before its sub-rules, which the slot holds
+    /// (`matcher::PASSES`, `OPEN`, `FAILS`): true, unknown or false (NULL is true).
+    Gate(SlotId),
+    /// `redefines.every`: true where the sub-rule is true at every candidate of the walk; else
+    /// the verdict of the first candidate in walk order where it is not, false or unknown.
+    Every {
+        walk: Walk,
+        sub: Box<Op>,
+    },
+    /// `parse`: the tree terminal `term` parses from the row's node is a document of the batch's
+    /// own (`exec::SubFile`), its number kept in `tree`; `body`, in the tree's own scope (its
+    /// slots `inner`, unbound on entry), runs at its root, the host file and node kept in `host`.
+    /// Where it matches, the exports copy inner captures' texts and host ranges into host text
+    /// slots.
+    Parse {
+        term: usize,
+        inner: Vec<SlotId>,
+        host: (SlotId, SlotId),
+        tree: SlotId,
+        body: Box<Op>,
+        exports: Vec<Export>,
+    },
+    /// `host` inside a parsed tree's rule: `rule` at the host node `host` holds, in the host's
+    /// environment with the tree's captures so far exported into it (`exports`, from the tree
+    /// `tree` holds); it binds nothing.
+    Host {
+        host: (SlotId, SlotId),
+        tree: SlotId,
+        rule: Box<Op>,
+        exports: Vec<Export>,
+    },
+    /// Copies parsed captures' texts and host ranges, from the tree `tree` holds, into host text
+    /// slots (`formatArgs.missing`'s exports).
+    Exports {
+        tree: SlotId,
+        exports: Vec<Export>,
+    },
+}
+
+/// A parsed tree's capture as its host reads it: the inner node slot `from`, whose text and host
+/// range the fact terminal `term` gives, into the host's text slot `to`.
+#[derive(Debug)]
+pub(super) struct Export {
+    pub(super) from: SlotId,
+    pub(super) to: SlotId,
+    pub(super) term: usize,
 }
 
 impl Op {
@@ -324,7 +395,10 @@ impl Op {
             Self::Count { bind, .. } => bind.is_some(),
             Self::Call { returns, .. } => !returns.is_empty(),
             Self::Constrained { .. } | Self::NthCommit { .. } | Self::Recur { .. } => true,
-            Self::EachRoot { .. } | Self::Excluded { .. } => false,
+            Self::EachRoot { .. } | Self::Excluded { .. } | Self::Gate(_) => false,
+            Self::Host { .. } | Self::Every { .. } => false,
+            Self::Seq(items) => items.iter().any(Self::binds),
+            Self::Parse { exports, .. } | Self::Exports { exports, .. } => !exports.is_empty(),
         }
     }
 }
@@ -337,4 +411,6 @@ pub(super) struct Statement {
     pub(super) op: Op,
     /// The recursive units the statement reads, by `Recur`'s index.
     pub(super) units: Vec<Unit>,
+    /// The terminals' related-node walks the statement reads, by `Walk::Related`'s index.
+    pub(super) sources: Vec<Source>,
 }

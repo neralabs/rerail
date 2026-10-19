@@ -145,10 +145,18 @@ unsafe impl VTabCursor for TextCursor<'_> {
         keys.dedup();
         keys.retain(|&key| {
             let (file, node) = ((key >> 32) as usize, (key & 0xffff_ffff) as u32);
-            batch.files.get(file).is_some_and(|file| {
-                node < file.facts.len()
-                    && regex.is_match(file.root.root().get_doc().transducer_text_str(node))
-            })
+            match batch.files.get(file) {
+                Some(file) => {
+                    node < file.facts.len()
+                        && regex.is_match(file.root.root().get_doc().transducer_text_str(node))
+                }
+                // A parsed tree's node: its text, as the matcher reads it.
+                None => batch.subfile(file).is_some_and(|sub| {
+                    node < sub.facts.len()
+                        && regex
+                            .is_match(&sub.root.adopt(sub.root.root().get_doc().node(node)).text())
+                }),
+            }
         });
         self.term = term_id;
         self.keys = keys;

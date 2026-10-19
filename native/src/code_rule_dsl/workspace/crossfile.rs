@@ -123,6 +123,18 @@ impl CrossFileScheduler {
         })
     }
 
+    /// The closure and summary `install` installs for a consumer's evaluation, which the SQL
+    /// engine installs where its terminals read `calls`.
+    #[allow(clippy::type_complexity)]
+    pub(super) fn calls(
+        consumer: Option<&CrossFileConsumer>,
+    ) -> Option<(
+        Arc<crate::code_rule_dsl::calls::CallsView>,
+        Arc<crate::code_rule_dsl::calls::summary::Summary>,
+    )> {
+        consumer.map(|consumer| (Arc::clone(&consumer.view), Arc::clone(&consumer.summary)))
+    }
+
     /// Whether `input` must run as a job rather than be restored from complete results: the
     /// `calls` adapter records each Python, PHP and Blade file's summary as its job restores or
     /// evaluates it.

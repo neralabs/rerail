@@ -129,7 +129,10 @@ impl Lowerer<'_> {
         scope: usize,
         bound: &Bound,
     ) -> Result<(Op, Bound), Unsupported> {
-        if capture_free(rule) && walks(rule) && !recursion::reaches(rule, &self.program.in_progress)
+        if self.tree.is_none()
+            && capture_free(rule)
+            && walks(rule)
+            && !recursion::reaches(rule, &self.program.in_progress)
         {
             return Ok((Op::Stage(self.stage(rule)?), bound.clone()));
         }
