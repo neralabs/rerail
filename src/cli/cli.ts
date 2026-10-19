@@ -442,8 +442,11 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
       ...(answer === undefined ? {} : { answer }),
       ...(setupCommand === undefined ? {} : { setupCommand }),
       repository,
-      // An update's health check reads no one's sessions (`isUpdateHealthCheck`), so it is not asked to allow it.
-      environment: isUpdateHealthCheck(args, io.lane, workspace) ? { ...environment, sessionsApproved: () => true } : environment,
+      // An update's health check reads no one's sessions: a scratch folder (`isUpdateHealthCheck`) on a computer, as its
+      // scratch home makes it, with no coding agent to connect. Only then is it not asked to allow it.
+      environment: isUpdateHealthCheck(args, io.lane, workspace) && environment.agentsFound().length === 0
+        ? { ...environment, sessionsApproved: () => true }
+        : environment,
     });
     // The set-up's own summary ends on the dashboard link; ending its questions early is a failure.
     if (report.setUpRan) return report.cancelled ? 1 : 0;

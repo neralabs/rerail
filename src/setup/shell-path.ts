@@ -19,11 +19,12 @@ const BLOCK_START = "# >>> rerail >>>";
 const BLOCK_END = "# <<< rerail <<<";
 /**
  * The block as whole lines, start marker to the first end marker after it, with no other start marker between: a start
- * marker left on its own never reaches into a later block. CRLF files match too.
+ * marker left on its own never reaches into a later block. CRLF files match too. A line starts at the start of the text
+ * or after an LF (`(?<![^\n])`), never after a lone CR, which `^` with the `m` flag would also accept.
  */
-const BLOCK = /^# >>> rerail >>>\r?\n(?:(?!# >>> rerail >>>).*\r?\n)*?# <<< rerail <<<(?:\r?\n|$)/mu;
+const BLOCK = /(?<![^\n])# >>> rerail >>>\r?\n(?:(?!# >>> rerail >>>).*\r?\n)*?# <<< rerail <<<(?:\r?\n|$)/u;
 /** The block with the blank line `addBlock` puts before it, when that line is still blank. */
-const BLOCK_AND_GAP = /(?:^\r?\n)?^# >>> rerail >>>\r?\n(?:(?!# >>> rerail >>>).*\r?\n)*?# <<< rerail <<<(?:\r?\n|$)/mu;
+const BLOCK_AND_GAP = /(?:(?<![^\n])\r?\n)?(?<![^\n])# >>> rerail >>>\r?\n(?:(?!# >>> rerail >>>).*\r?\n)*?# <<< rerail <<<(?:\r?\n|$)/u;
 /** Where `Path` lives on Windows, as reports name it. */
 export const WINDOWS_USER_PATH = String.raw`HKCU\Environment Path`;
 
@@ -120,7 +121,8 @@ export async function removeLauncherFromPath(options: LauncherPathOptions): Prom
 
 /** `text` with exactly one Rerail block, set to `block`, after a blank line. */
 function addBlock(text: string, block: string): string {
-  if (BLOCK.test(text)) return text.replace(BLOCK, `${block}\n`);
+  // A function, so a `$` in the launcher's path is never read as a replacement pattern.
+  if (BLOCK.test(text)) return text.replace(BLOCK, () => `${block}\n`);
   if (text === "") return `${block}\n`;
   return `${text}${text.endsWith("\n") ? "" : "\n"}\n${block}\n`;
 }

@@ -109,6 +109,25 @@ describe.skipIf(process.platform === "win32")("launcher on PATH", () => {
     expect(await readFile(zshrc, "utf8")).toBe("# >>> rerail >>>\nkeep me\n");
   });
 
+  it("takes the block out of a CRLF file without joining the line above it", async () => {
+    const { home, options } = await machine("/bin/zsh");
+    const zshrc = join(home, ".zshrc");
+    await addLauncherToPath(options);
+    const block = (await readFile(zshrc, "utf8")).trim().replaceAll("\n", "\r\n");
+    await writeFile(zshrc, `a\r\n${block}\r\nb\r\n`);
+    await removeLauncherFromPath(options);
+    expect(await readFile(zshrc, "utf8")).toBe("a\r\nb\r\n");
+  });
+
+  it("rewrites a block for a launcher whose path has a $ in it as written", async () => {
+    const { home, options } = await machine("/bin/zsh");
+    await addLauncherToPath({ ...options, binDir: join(home, "old", "bin") });
+    const binDir = join(home, "a$&b", "bin");
+    await addLauncherToPath({ ...options, binDir });
+    // Quoted for the shell, and the `$&` kept as it is rather than replaced by the matched text.
+    expect(await readFile(join(home, ".zshrc"), "utf8")).toContain(`*:'${binDir}':*) ;;`);
+  });
+
   it("finds its block in a CRLF file, so re-running adds no second one", async () => {
     const { home, options } = await machine("/bin/zsh");
     const zshrc = join(home, ".zshrc");
