@@ -231,6 +231,50 @@ fn a_recursive_parameterized_call_returns_through_its_frames() {
 }
 
 #[test]
+fn two_sites_of_one_recursion_run_its_loop_each_over_their_own_demand() {
+    // `same` reads `$A`, so it is a unit, not a stage. Its first site demands each call's
+    // arguments; its second, only behind the calls the first kept, the return statements of
+    // their blocks: other keys, demanded after the first site's answers are in.
+    let ast = json!({
+        "rule": { "pattern": "$A($$$)", "all": [
+            { "has": { "field": "arguments", "matches": "same" } },
+            { "inside": { "stopBy": "end", "kind": "statement_block",
+                          "has": { "stopBy": "end", "kind": "return_statement", "matches": "same" } } },
+        ] },
+        "utils": { "same": { "any": [
+            { "kind": "identifier", "pattern": "$A" },
+            { "has": { "matches": "same" } },
+        ] } },
+    });
+    let source = "function q() { f(g(f)); return [f]; }\nfunction r() { h(h); return x; }\n\
+                  function s() { k(1); return k; }\nf(g(f));\n";
+    assert_eq!(
+        agreed("typescript", ast.clone(), None, source),
+        ["f(g(f)) A=f"]
+    );
+    // The loop is emitted once and run again at the second site.
+    let compiled = compile("typescript", ast, None);
+    let crate::code_rule_dsl::model::ClauseKind::Forbid(crate::code_rule_dsl::model::Query::Ast {
+        matchers,
+        ..
+    }) = &compiled.inner.clauses[0].kind
+    else {
+        panic!("an AST clause")
+    };
+    let program = crate::code_rule_dsl::sql::compile(&[&matchers[0]]).expect("a program");
+    let statements: Vec<&String> = program.statements().collect();
+    let count = |marker: &str| {
+        statements
+            .iter()
+            .filter(|statement| statement.starts_with(marker))
+            .count()
+    };
+    assert_eq!(count("/*BLOCK*/"), 1);
+    assert_eq!(count("/*LOOP*/"), 1);
+    assert_eq!(count("/*RUN*/"), 1);
+}
+
+#[test]
 fn mutually_recursive_utilities_meet_at_the_same_node() {
     // The data-layer policies' raising-branch utilities, in small: an `if` raises where its
     // consequence and every `elif`/`else` raise.

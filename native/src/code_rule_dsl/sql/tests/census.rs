@@ -515,3 +515,173 @@ fn the_slow_case_rows() {
         }
     }
 }
+
+/// The resident set size of this process, in MiB (`mach` task info on macOS; else the peak).
+fn resident_mib() -> f64 {
+    // SAFETY: `getrusage` fills the struct it is given.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    unsafe { libc::getrusage(libc::RUSAGE_SELF, &raw mut usage) };
+    // macOS reports bytes, Linux KiB.
+    let peak = usage.ru_maxrss as f64;
+    if cfg!(target_os = "macos") {
+        peak / (1024.0 * 1024.0)
+    } else {
+        peak / 1024.0
+    }
+}
+
+/// What compiling the benchmark's policies for the SQL engine costs, as the workspace compiles
+/// them (`compile_each`, every AST clause of a policy in one program): per clause alone and per
+/// policy, the statements, SQL bytes, time and peak RSS. `RERAIL_FOOTPRINT_POLICY` keeps the
+/// policies whose name holds it. Run by hand:
+/// `cargo test --release --lib sql::tests::census::compile_footprint -- --ignored --nocapture`.
+#[test]
+#[ignore = "reads the data-layer benchmark's policies from outside the repository"]
+fn compile_footprint() {
+    std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(run_footprint)
+        .expect("a footprint thread")
+        .join()
+        .expect("the footprint");
+}
+
+fn run_footprint() {
+    use crate::code_rule_dsl::sql::compile_each;
+    let home = std::env::var("HOME").expect("HOME");
+    let root = std::env::var("RERAIL_BENCH_POLICIES")
+        .unwrap_or_else(|_| format!("{home}/rerail-bench/data-layer/policies"));
+    let only = std::env::var("RERAIL_FOOTPRINT_POLICY").ok();
+    let mut policies: Vec<_> = std::fs::read_dir(&root)
+        .expect("policies")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("policy.json"))
+        .filter(|path| path.exists())
+        .filter(|path| {
+            only.as_ref()
+                .is_none_or(|only| path.to_string_lossy().contains(only.as_str()))
+        })
+        .collect();
+    policies.sort();
+    let runtimes: Vec<_> = policies
+        .iter()
+        .map(|path| {
+            let name = path
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let compiled = CodeRuleDslRuntime::compile(
+                std::fs::read_to_string(path).expect("policy"),
+                "json".to_owned(),
+                CAPABILITIES.to_owned(),
+            )
+            .unwrap_or_else(|error| panic!("{}: {}", path.display(), error.reason));
+            (name, compiled)
+        })
+        .collect();
+    type Grammars<'c> = Vec<(
+        &'c crate::code_rule_dsl::matcher::GrammarMatcher,
+        Option<&'c str>,
+    )>;
+    fn grammars_of(
+        compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    ) -> (Grammars<'_>, Vec<String>) {
+        let mut grammars = Vec::new();
+        let mut names = Vec::new();
+        for clause in &compiled.inner.clauses {
+            if let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind {
+                for grammar in matchers {
+                    grammars.push((grammar, clause.violation.each.as_deref()));
+                    names.push(clause.id.clone());
+                }
+            }
+        }
+        (grammars, names)
+    }
+    // `RERAIL_FOOTPRINT_ALL`: only every policy's clauses in one program, as the whole-tree
+    // workspace compiles them (`SqlEngine::new`).
+    if std::env::var_os("RERAIL_FOOTPRINT_ALL").is_some() {
+        let grammars: Vec<_> = runtimes
+            .iter()
+            .flat_map(|(_, compiled)| grammars_of(compiled).0)
+            .collect();
+        let before = resident_mib();
+        let started = std::time::Instant::now();
+        let (program, outcomes) = compile_each(&grammars);
+        let elapsed = started.elapsed().as_secs_f64();
+        let (stages, clauses) = program.statement_count();
+        eprintln!(
+            "all {} policies: {} clauses ({} lower), {stages} stage + {clauses} clause statements, {:.1} MiB SQL, {elapsed:.2}s, peak RSS {before:.0} -> {:.0} MiB",
+            runtimes.len(),
+            grammars.len(),
+            outcomes.iter().filter(|outcome| outcome.is_ok()).count(),
+            program.statement_bytes() as f64 / 1048576.0,
+            resident_mib(),
+        );
+        return;
+    }
+    for (name, compiled) in &runtimes {
+        let (grammars, names) = grammars_of(compiled);
+        // Each clause alone: the costliest by SQL bytes.
+        let mut alone = Vec::new();
+        let clause_filter = std::env::var("RERAIL_FOOTPRINT_CLAUSE").ok();
+        for (grammar, name) in grammars.iter().zip(&names) {
+            if clause_filter
+                .as_ref()
+                .is_some_and(|only| !name.contains(only.as_str()))
+            {
+                continue;
+            }
+            let started = std::time::Instant::now();
+            let (program, outcomes) = compile_each(std::slice::from_ref(grammar));
+            if outcomes[0].is_ok() {
+                let (stages, clauses) = program.statement_count();
+                alone.push((
+                    program.statement_bytes(),
+                    stages + clauses,
+                    started.elapsed().as_secs_f64(),
+                    name.clone(),
+                ));
+                // `RERAIL_FOOTPRINT_DUMP=<dir>`: each clause's statements, one per line.
+                if let Ok(dir) = std::env::var("RERAIL_FOOTPRINT_DUMP") {
+                    let text: String = program
+                        .statements()
+                        .map(|statement| format!("{}\n", statement.replace('\n', " ")))
+                        .collect();
+                    std::fs::write(format!("{dir}/{}.sql", name.replace('/', "_")), text)
+                        .expect("a dump");
+                }
+            }
+        }
+        alone.sort_by(|a, b| b.0.cmp(&a.0));
+        if clause_filter.is_some() {
+            for (bytes, statements, seconds, clause) in &alone {
+                eprintln!(
+                    "{name}/{clause}: {:.2} MiB SQL, {statements} statements, {seconds:.2}s",
+                    *bytes as f64 / 1048576.0
+                );
+            }
+            continue;
+        }
+        let before = resident_mib();
+        let started = std::time::Instant::now();
+        let (program, outcomes) = compile_each(&grammars);
+        let elapsed = started.elapsed().as_secs_f64();
+        let (stages, clauses) = program.statement_count();
+        eprintln!(
+            "{name}: {} clauses ({} lower), whole program {stages} stage + {clauses} clause statements, {:.1} MiB SQL, {elapsed:.2}s, peak RSS {before:.0} -> {:.0} MiB; alone, Σ {:.1} MiB SQL",
+            grammars.len(),
+            outcomes.iter().filter(|outcome| outcome.is_ok()).count(),
+            program.statement_bytes() as f64 / 1048576.0,
+            resident_mib(),
+            alone.iter().map(|entry| entry.0).sum::<usize>() as f64 / 1048576.0,
+        );
+        for (bytes, statements, seconds, clause) in alone.iter().take(4) {
+            eprintln!(
+                "  {:>8.2} MiB {statements:>7} statements {seconds:>7.2}s  {clause}",
+                *bytes as f64 / 1048576.0
+            );
+        }
+    }
+}
