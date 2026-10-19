@@ -2,7 +2,7 @@
 //! (`Walk::Slot`, `Walk::Related`), the sequences and gates their sub-rules run in (`Op::Seq`,
 //! `Op::Gate`, `Op::Every`), and parsed trees (`Op::Parse`, `Op::Host`, `Op::Exports`).
 
-use super::Emitter;
+use super::{Emitter, Reads};
 use crate::code_rule_dsl::sql::plan::{Export, Op, SlotId, SlotKind, Walk};
 use std::fmt::Write;
 
@@ -90,8 +90,11 @@ impl Emitter<'_> {
             self.extra_list()
         );
         self.create(&name, &columns);
-        self.statements
-            .push(format!("{with}INSERT INTO {name} {select}"));
+        self.insert(
+            &name,
+            format!("{with}INSERT INTO {name} {select}"),
+            Reads::join(&[input]),
+        );
         Some(name)
     }
 
@@ -107,6 +110,7 @@ impl Emitter<'_> {
         }
         let mut current = input.to_owned();
         let mut unknown = Vec::new();
+        let mut outs = Vec::new();
         for (index, item) in items.iter().enumerate() {
             let out = self.op(item, &current);
             unknown.push(format!("SELECT k FROM {out} WHERE unk = 1"));
@@ -114,15 +118,22 @@ impl Emitter<'_> {
                 self.frame(
                     "y",
                     &format!("SELECT {} FROM {out} f WHERE f.unk = 0", self.cols("f")),
+                    Reads::join(&[&out]),
                 )
             } else {
-                out
+                out.clone()
             };
+            outs.push(out);
         }
         if unknown.len() == 1 {
             return current;
         }
         unknown.pop();
+        outs.pop();
+        // The last item's rows, and the input's rows an earlier item was unknown at.
+        let mut branches = vec![current.as_str()];
+        branches.extend(outs.iter().map(String::as_str));
+        let reads = Reads::union(&branches);
         self.frame(
             "x",
             &format!(
@@ -131,6 +142,7 @@ impl Emitter<'_> {
                 self.verdict("f", &[], "1"),
                 unknown.join(" UNION ALL ")
             ),
+            reads,
         )
     }
 
@@ -142,6 +154,7 @@ impl Emitter<'_> {
             return self.frame(
                 "x",
                 &format!("SELECT {} FROM {input} f WHERE {state} = 0", self.cols("f")),
+                Reads::join(&[input]),
             );
         }
         self.frame(
@@ -150,6 +163,7 @@ impl Emitter<'_> {
                 "SELECT {} FROM {input} f WHERE {state} IN (0, 1)",
                 self.verdict("f", &[], &state.to_string())
             ),
+            Reads::join(&[input]),
         )
     }
 
@@ -167,6 +181,7 @@ impl Emitter<'_> {
                  w AS (SELECT pk, MIN(ord) AS o FROM v WHERE st > 0 GROUP BY pk) \
                  SELECT v.pk, MIN(v.st) FROM v JOIN w ON w.pk = v.pk AND w.o = v.ord GROUP BY v.pk"
             ),
+            Reads::join(&[&candidates]),
         );
         let select = if self.three {
             format!(
@@ -179,7 +194,8 @@ impl Emitter<'_> {
                 self.cols("f")
             )
         };
-        self.frame("x", &select)
+        // The input's rows without a deciding candidate: every one where none decides.
+        self.frame("x", &select, Reads::anti(input, &[&first]))
     }
 
     /// The CTE and joins that read `exports` of `alias`'s rows (the tree `tree` holds) from the
@@ -242,7 +258,7 @@ impl Emitter<'_> {
             "SELECT {} FROM {input} f{joins}",
             self.verdict_or_select("f", &overrides, "f.unk")
         );
-        self.frame_with("x", &with, &select)
+        self.frame_with("x", &with, &select, Reads::join(&[input]))
     }
 
     /// A row of `alias` with `overrides`: its verdict `unk` kept where three-valued.
@@ -274,9 +290,13 @@ impl Emitter<'_> {
         );
         let parsed = self.name("p");
         self.create(&parsed, "k INTEGER PRIMARY KEY, unk, tree");
-        self.statements.push(format!(
-            "{with}INSERT INTO {parsed} SELECT e.k, t.unk, t.v0 FROM e JOIN t ON t.ek = e.ek"
-        ));
+        self.insert(
+            &parsed,
+            format!(
+                "{with}INSERT INTO {parsed} SELECT e.k, t.unk, t.v0 FROM e JOIN t ON t.ek = e.ek"
+            ),
+            Reads::join(&[input]),
+        );
         let mut overrides: Vec<(String, String)> = Vec::new();
         for &slot in inner {
             for column in self.columns(slot) {
@@ -300,6 +320,7 @@ impl Emitter<'_> {
             &format!(
                 "SELECT {entry} FROM {input} f JOIN {parsed} p ON p.k = f.k WHERE p.unk = 0 AND p.tree >= 0"
             ),
+            Reads::join(&[input, &parsed]),
         );
         let matched = self.op(body, &roots);
         let (with, joins, exported) = self.export_reads("b", "f", tree, exports);
@@ -310,20 +331,26 @@ impl Emitter<'_> {
         };
         // The host row, with the exports: the body binds the tree's own slots only, which no
         // host operator reads.
-        let select = if self.three {
-            format!(
-                "SELECT {} FROM {matched} b JOIN {input} f ON f.k = b.k{joins} UNION ALL \
-                 SELECT {} FROM {input} f JOIN {parsed} p ON p.k = f.k WHERE p.unk = 1",
-                self.verdict("f", &exported, "b.unk"),
-                self.verdict("f", &[], "1")
+        let (select, reads) = if self.three {
+            (
+                format!(
+                    "SELECT {} FROM {matched} b JOIN {input} f ON f.k = b.k{joins} UNION ALL \
+                     SELECT {} FROM {input} f JOIN {parsed} p ON p.k = f.k WHERE p.unk = 1",
+                    self.verdict("f", &exported, "b.unk"),
+                    self.verdict("f", &[], "1")
+                ),
+                Reads::union(&[&matched, &parsed]),
             )
         } else {
-            format!(
-                "SELECT {} FROM {matched} b JOIN {input} f ON f.k = b.k{joins}",
-                self.select("f", &exported)
+            (
+                format!(
+                    "SELECT {} FROM {matched} b JOIN {input} f ON f.k = b.k{joins}",
+                    self.select("f", &exported)
+                ),
+                Reads::join(&[&matched, input]),
             )
         };
-        self.frame_with("x", &with, &select)
+        self.frame_with("x", &with, &select, reads)
     }
 
     /// `Op::Host`: `rule` at the host node, in a frame of the row's own `k` holding the host's
@@ -356,6 +383,7 @@ impl Emitter<'_> {
             "h",
             &with,
             &format!("SELECT {select} FROM {input} f{joins}"),
+            Reads::join(&[input]),
         );
         let held = self.op(rule, &at_host);
         let unk = if self.three { "o.unk" } else { "0" };
@@ -365,6 +393,7 @@ impl Emitter<'_> {
                 "SELECT {} FROM {input} f JOIN {held} o ON o.k = f.k",
                 self.verdict_or_select("f", &[], unk)
             ),
+            Reads::join(&[input, &held]),
         )
     }
 }

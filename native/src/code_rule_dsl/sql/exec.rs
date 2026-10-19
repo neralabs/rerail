@@ -2,12 +2,13 @@
 //! stages, runs one statement per clause and returns each clause's `(file, root, bindings)` rows
 //! for the native witness rendering.
 
-use super::emit;
+use super::emit::{self, Effect, Emitted, Writes};
 use super::frames::{self, FrameStore};
 use super::lower::{ProgramBuilder, Stage};
 use super::nearest::NearestTable;
 use super::nodes::{NodeFacts, NodeTable};
 use super::plan::{SlotKind, Statement, Unsupported};
+use super::skip::{self, Counts, MODE, Mode, Outcome};
 use super::terminals::{
     BatchScopes, FactTable, PatternRow, PatternTable, PatternTerm, Terminal, TextTable, fresh_match,
 };
@@ -284,7 +285,7 @@ pub(in crate::code_rule_dsl) struct Compiled {
 
 /// One clause's statements, and where each clause-scope capture is in the rows of the last.
 struct ClauseSql {
-    statements: Vec<String>,
+    sql: Emitted,
     captures: Vec<(String, SlotKind, usize)>,
     /// Whether the clause enumerates `violation.each`: its statements run in rounds.
     each: bool,
@@ -304,7 +305,7 @@ impl ClauseSql {
                 (slot.name.clone(), slot.kind, at)
             })
             .collect();
-        let statements = match each {
+        let sql = match each {
             Some(name) => {
                 let slot = statement.slots.iter().position(|slot| {
                     slot.scope == 0 && slot.kind == SlotKind::Node && slot.name == name
@@ -314,7 +315,7 @@ impl ClauseSql {
             None => emit::clause(statement),
         };
         Self {
-            statements,
+            sql,
             captures,
             each: each.is_some(),
         }
@@ -476,8 +477,8 @@ impl Compiled {
         let lists = self
             .stages
             .iter()
-            .map(|stage| &stage.statements)
-            .chain(self.clauses.iter().map(|clause| &clause.statements));
+            .map(|stage| &stage.sql.statements)
+            .chain(self.clauses.iter().map(|clause| &clause.sql.statements));
         for statements in lists {
             // Per open loop: its statements so far.
             let mut open: Vec<usize> = Vec::new();
@@ -505,11 +506,11 @@ impl Compiled {
         (
             self.stages
                 .iter()
-                .map(|stage| stage.statements.len() + 1)
+                .map(|stage| stage.sql.statements.len() + 1)
                 .sum(),
             self.clauses
                 .iter()
-                .map(|clause| clause.statements.len())
+                .map(|clause| clause.sql.statements.len())
                 .sum(),
         )
     }
@@ -519,8 +520,12 @@ impl Compiled {
     pub(in crate::code_rule_dsl) fn statement_bytes(&self) -> usize {
         self.stages
             .iter()
-            .flat_map(|stage| &stage.statements)
-            .chain(self.clauses.iter().flat_map(|clause| &clause.statements))
+            .flat_map(|stage| &stage.sql.statements)
+            .chain(
+                self.clauses
+                    .iter()
+                    .flat_map(|clause| &clause.sql.statements),
+            )
             .map(String::len)
             .sum()
     }
@@ -530,8 +535,12 @@ impl Compiled {
     pub(in crate::code_rule_dsl) fn statements(&self) -> impl Iterator<Item = &String> {
         self.stages
             .iter()
-            .flat_map(|stage| &stage.statements)
-            .chain(self.clauses.iter().flat_map(|clause| &clause.statements))
+            .flat_map(|stage| &stage.sql.statements)
+            .chain(
+                self.clauses
+                    .iter()
+                    .flat_map(|clause| &clause.sql.statements),
+            )
     }
 
     /// A connection set up to run this program's batches.
@@ -578,6 +587,12 @@ impl Compiled {
 /// `stage_nanos` the stages' and `select_nanos` the clauses' last statements (the rest is frames).
 /// `input_nanos` is the batch's own rows (`runs`, `roots`) and emptying the tables; `facts_nanos`
 /// the node facts of the batch's files.
+///
+/// `skipped` counts the statements the emptiness rules passed over (`skip`): one at a time, in a
+/// stage or clause run whose root frame was empty (`skipped_runs` such runs: every statement
+/// after its root frame, a loop's once), or in a recursion block's run with no new demand
+/// (`skipped_blocks` such runs: each of the block's statements once). `skipped_clears`: the
+/// tables left as they were because they were empty already.
 #[derive(Clone, Copy, Debug, Default)]
 pub(in crate::code_rule_dsl) struct Stats {
     pub(in crate::code_rule_dsl) statements: usize,
@@ -587,52 +602,309 @@ pub(in crate::code_rule_dsl) struct Stats {
     pub(in crate::code_rule_dsl) select_nanos: u64,
     pub(in crate::code_rule_dsl) input_nanos: u64,
     pub(in crate::code_rule_dsl) facts_nanos: u64,
+    pub(in crate::code_rule_dsl) skipped: usize,
+    pub(in crate::code_rule_dsl) skipped_runs: usize,
+    pub(in crate::code_rule_dsl) skipped_blocks: usize,
+    pub(in crate::code_rule_dsl) skipped_clears: usize,
+}
+
+impl Stats {
+    /// Adds what a session did from `before` to `after`.
+    pub(in crate::code_rule_dsl) fn add_since(&mut self, after: &Self, before: &Self) {
+        self.statements += after.statements - before.statements;
+        self.rows += after.rows - before.rows;
+        self.nanos += after.nanos - before.nanos;
+        self.stage_nanos += after.stage_nanos - before.stage_nanos;
+        self.select_nanos += after.select_nanos - before.select_nanos;
+        self.input_nanos += after.input_nanos - before.input_nanos;
+        self.facts_nanos += after.facts_nanos - before.facts_nanos;
+        self.skipped += after.skipped - before.skipped;
+        self.skipped_runs += after.skipped_runs - before.skipped_runs;
+        self.skipped_blocks += after.skipped_blocks - before.skipped_blocks;
+        self.skipped_clears += after.skipped_clears - before.skipped_clears;
+    }
+}
+
+/// One statement as a session runs it, with its effect over the session's counted tables (a
+/// marker's, `emit::LOOP`, `emit::RUN`…, is `Rule::AlwaysRun` and writes nothing).
+struct Step {
+    sql: String,
+    effect: Effect<usize>,
+}
+
+impl Step {
+    /// Empties `table` (the counted table `id`), where it holds rows: a frame through its
+    /// buffers (`frames::CLEAR`), a B-tree by its `DELETE`.
+    fn clear(id: usize, table: &str, frame: bool) -> Self {
+        Self {
+            sql: if frame {
+                format!("{}{table}", frames::CLEAR)
+            } else {
+                format!("DELETE FROM {table}")
+            },
+            effect: Effect {
+                rule: emit::Rule::EmptyIfAnyInputEmpty,
+                inputs: vec![id],
+                writes: Writes::Clear(id),
+            },
+        }
+    }
+
+    /// Runs the block of this index (`emit::RUN`).
+    fn run(index: usize) -> Self {
+        Self {
+            sql: format!("{}{index}", emit::RUN),
+            effect: Effect::default(),
+        }
+    }
+}
+
+/// A recursion component's loop (`emit::BLOCK`): each `emit::RUN` of it runs its steps again.
+/// `demand`: its units' demand tables; `mark`: where the session keeps their rows as the block's
+/// last run left them (`skip`); `size`: its statements, each once.
+struct Block {
+    steps: Vec<Step>,
+    demand: Vec<usize>,
+    mark: usize,
+    size: usize,
+}
+
+/// A stage's or clause's root frame: the step that fills it, its counted table, and how many
+/// statements follow it, the last included (each loop's once).
+struct Root {
+    at: usize,
+    table: usize,
+    rest: usize,
+}
+
+/// A clause's `violation.each` enumeration, whose tables live across the rounds of a batch: its
+/// table prefix (`emit::EACH`), their clears, and the counted tables of the roots still
+/// enumerated (`a`) and of the round (`r`).
+struct Each {
+    prefix: String,
+    clear: Vec<Step>,
+    active: usize,
+    round: usize,
 }
 
 /// A stage's or clause's statements as a session runs them: their text is fixed when the session
 /// starts, so every batch runs the same cached statements.
 struct Prepared {
     /// The statements that fill its frames, in order.
-    steps: Vec<String>,
+    steps: Vec<Step>,
     /// The loops its steps run by index (`emit::RUN<index>`), each emitted once (`emit::BLOCK`).
-    blocks: Vec<Vec<String>>,
+    blocks: Vec<Block>,
     /// A clause's: selects its roots and bindings. A stage's: fills the stage table.
-    last: String,
-    /// Empties each of its frame tables.
-    clear: Vec<String>,
+    last: Step,
+    /// Empties each of its tables.
+    clear: Vec<Step>,
     /// The stages its statements read.
     stages: Vec<usize>,
-    /// A clause under `violation.each`: empties its enumeration's tables (`emit::EACH`), which
-    /// live across the rounds of a batch.
-    each: Option<Vec<String>>,
+    /// A clause under `violation.each`: its enumeration.
+    each: Option<Each>,
+    /// Its root frame, where it has one (a recursive stage's loop starts from seeds instead).
+    root: Option<Root>,
+}
+
+/// The counted tables of a session, by name: every table its statements create, each stage's
+/// and each enumeration's; `tables`, by id, each one's name and whether it is a frame.
+#[derive(Default)]
+struct Tables {
+    ids: HashMap<String, usize>,
+    tables: Vec<(String, bool)>,
+}
+
+impl Tables {
+    fn add(&mut self, name: &str, frame: bool) -> usize {
+        let next = self.ids.len();
+        let id = *self.ids.entry(name.to_owned()).or_insert(next);
+        if id == next {
+            self.tables.push((name.to_owned(), frame));
+        }
+        id
+    }
+
+    fn id(&self, name: &str) -> usize {
+        *self
+            .ids
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} is a counted table"))
+    }
+}
+
+/// How many statements `steps` hold, each block's run counting the block's: the markers and the
+/// loops' queries are not statements.
+fn size(steps: &[Step], blocks: &[Block]) -> usize {
+    steps
+        .iter()
+        .map(|step| match step.sql.strip_prefix(emit::RUN) {
+            Some(index) => blocks[index.parse::<usize>().expect("a block index")].size,
+            None => usize::from(!step.sql.starts_with("/*")),
+        })
+        .sum()
 }
 
 /// Moves each block of `steps` (`emit::BLOCK<id>` … `emit::END`, blocks nested in it too) into
 /// `blocks`, leaving `emit::RUN<index>` where it was; every later `emit::RUN<id>` runs the block
-/// `id` last named.
+/// `id` last named. Each block takes the next of `marks`.
 fn extract_blocks(
-    steps: &mut std::vec::IntoIter<String>,
-    blocks: &mut Vec<Vec<String>>,
+    steps: &mut std::vec::IntoIter<Step>,
+    blocks: &mut Vec<Block>,
     named: &mut HashMap<String, usize>,
-) -> Vec<String> {
+    marks: &mut usize,
+) -> Vec<Step> {
     let mut out = Vec::new();
     while let Some(step) = steps.next() {
-        if let Some(id) = step.strip_prefix(emit::BLOCK) {
+        if let Some(id) = step.sql.strip_prefix(emit::BLOCK) {
+            let id = id.to_owned();
             let index = blocks.len();
-            blocks.push(Vec::new());
-            blocks[index] = extract_blocks(steps, blocks, named);
-            named.insert(id.to_owned(), index);
-            out.push(format!("{}{index}", emit::RUN));
-        } else if let Some(id) = step.strip_prefix(emit::RUN) {
-            let index = named.get(id).expect("a block emitted before it runs");
-            out.push(format!("{}{index}", emit::RUN));
-        } else if step == emit::END {
+            blocks.push(Block {
+                steps: Vec::new(),
+                demand: step.effect.inputs,
+                mark: *marks,
+                size: 0,
+            });
+            *marks += 1;
+            let inner = extract_blocks(steps, blocks, named, marks);
+            blocks[index].size = size(&inner, blocks);
+            blocks[index].steps = inner;
+            named.insert(id, index);
+            out.push(Step::run(index));
+        } else if let Some(id) = step.sql.strip_prefix(emit::RUN) {
+            let index = *named.get(id).expect("a block emitted before it runs");
+            out.push(Step::run(index));
+        } else if step.sql == emit::END {
             return out;
         } else {
             out.push(step);
         }
     }
     out
+}
+
+/// Creates the tables (and a recursion unit's indexes) of `emitted` now, each a counted table of
+/// `tables`: a table its statements only append to and empty whole is a frame of `frames`
+/// (`frames::rewrite`), any other a B-tree, never both (`btrees`). Fixes the text of the rest,
+/// loops' markers included (`Runner::steps`), with their effects over `tables`. The statements
+/// read their root frame's files and roots under the run id `run`; their tables are named with
+/// `namespace`, an enumeration's with `each`.
+#[allow(clippy::too_many_arguments)]
+fn prepare(
+    connection: &Connection,
+    frames: &Arc<FrameStore>,
+    btrees: &mut HashSet<String>,
+    tables: &mut Tables,
+    marks: &mut usize,
+    emitted: &Emitted,
+    namespace: &str,
+    run: i64,
+    each: &str,
+) -> Result<Prepared, SqlError> {
+    let files = format!("SELECT file FROM runs WHERE run = {run}");
+    let roots = format!("SELECT file, node FROM roots WHERE run = {run}");
+    let named = |table: &str| {
+        table
+            .replace(emit::NAMESPACE, namespace)
+            .replace(emit::EACH, each)
+    };
+    let statements: Vec<String> = emitted
+        .statements
+        .iter()
+        .map(|statement| {
+            named(statement)
+                .replace(emit::FILES, &files)
+                .replace(emit::ROOTS, &roots)
+        })
+        .collect();
+    // `rewrite` keeps every statement but the schema's in order (a frame's clear for its
+    // `DELETE`): their effects, in that order.
+    let schema = |sql: &str| sql.starts_with("CREATE ");
+    let mut effects = statements
+        .iter()
+        .zip(&emitted.effects)
+        .filter(|(sql, _)| !schema(sql))
+        .map(|(_, effect)| effect)
+        .collect::<Vec<_>>()
+        .into_iter();
+    let mut steps = Vec::new();
+    let mut clear = Vec::new();
+    let mut cleared = HashSet::new();
+    let mut stages = Vec::new();
+    for sql in frames::rewrite(statements) {
+        stages_read(&sql, &mut stages);
+        if sql.starts_with("CREATE INDEX IF NOT EXISTS ") {
+            connection.execute_batch(&sql)?;
+            continue;
+        }
+        if let Some(declaration) = sql.strip_prefix(frames::FRAME) {
+            let name = frames.register(connection, declaration)?;
+            if btrees.contains(name) {
+                return Err(SqlError::Sql(format!(
+                    "{name} is both a frame and a B-tree"
+                )));
+            }
+            if cleared.insert(name.to_owned()) {
+                clear.push(Step::clear(tables.add(name, true), name, true));
+            }
+            continue;
+        }
+        match sql.strip_prefix("CREATE TEMP TABLE ") {
+            Some(table) => {
+                connection.execute_batch(&sql)?;
+                let table = table.strip_prefix("IF NOT EXISTS ").unwrap_or(table);
+                let name = table.split(['(', ' ']).next().unwrap_or_default();
+                if frames.contains(name) {
+                    return Err(SqlError::Sql(format!(
+                        "{name} is both a frame and a B-tree"
+                    )));
+                }
+                btrees.insert(name.to_owned());
+                if cleared.insert(name.to_owned()) {
+                    clear.push(Step::clear(tables.add(name, false), name, false));
+                }
+            }
+            None => steps.push((sql, effects.next().expect("an effect per statement"))),
+        }
+    }
+    assert!(effects.next().is_none(), "a statement per effect");
+    // Once every table is created: a block's marker names its units' demand tables, which the
+    // loop creates after it.
+    let steps: Vec<Step> = steps
+        .into_iter()
+        .map(|(sql, effect)| Step {
+            sql,
+            effect: effect.clone().map(|table| tables.id(&named(&table))),
+        })
+        .collect();
+    let mut blocks = Vec::new();
+    let mut steps = extract_blocks(
+        &mut steps.into_iter(),
+        &mut blocks,
+        &mut HashMap::new(),
+        marks,
+    );
+    let last = steps.pop().expect("a final select");
+    let root = emitted.root.as_ref().map(|root| {
+        let table = tables.id(&named(root));
+        let at = steps
+            .iter()
+            .position(|step| step.effect.writes == Writes::Insert(table))
+            .expect("the root frame's statement");
+        Root {
+            at,
+            table,
+            rest: size(&steps[at + 1..], &blocks) + 1,
+        }
+    });
+    Ok(Prepared {
+        steps,
+        blocks,
+        last,
+        clear,
+        stages,
+        each: None,
+        root,
+    })
 }
 
 /// The stages `sql` reads: each `stage_<index>` it names.
@@ -669,6 +941,7 @@ const INSERT_ROOT: &str = "INSERT OR IGNORE INTO roots(run, file, node) VALUES (
 /// every statement's text fixed when the session starts, so a batch only empties and refills
 /// tables through cached prepared statements, and never changes the schema. The files and roots a
 /// statement's root frame reads are rows of `runs` and `roots`, under the statement's run id.
+/// `frames`: the frame tables' buffers (`frames`); `counts`: every counted table's rows (`skip`).
 pub(in crate::code_rule_dsl) struct Session {
     connection: Connection,
     slot: Arc<BatchSlot>,
@@ -676,8 +949,8 @@ pub(in crate::code_rule_dsl) struct Session {
     stages: Vec<(GrammarDialect, Prepared)>,
     clauses: Vec<(Prepared, Vec<CaptureColumn>)>,
     stats: Stats,
-    /// The frame tables' buffers (`frames`).
     frames: Arc<FrameStore>,
+    counts: Counts,
 }
 
 impl Session {
@@ -692,90 +965,12 @@ impl Session {
              CREATE TEMP TABLE roots(run INTEGER NOT NULL, file INTEGER NOT NULL, \
              node INTEGER NOT NULL, PRIMARY KEY (run, file, node)) WITHOUT ROWID;",
         )?;
-        // Creates the frame tables (and a recursion unit's tables and indexes) of `statements`
-        // now, and fixes the text of the rest, loops' markers included (`run_steps`). A table
-        // statements only append to and empty whole is a frame (`frames::rewrite`); a name is
-        // never both.
-        let btrees = std::cell::RefCell::new(std::collections::HashSet::new());
-        let prepare = |statements: &[String],
-                       namespace: &str,
-                       run: i64,
-                       each: &str|
-         -> Result<Prepared, SqlError> {
-            let files = format!("SELECT file FROM runs WHERE run = {run}");
-            let roots = format!("SELECT file, node FROM roots WHERE run = {run}");
-            let mut steps = Vec::new();
-            let mut clear = Vec::new();
-            let mut cleared = HashSet::new();
-            let mut stages = Vec::new();
-            let statements = statements
-                .iter()
-                .map(|statement| {
-                    statement
-                        .replace(emit::NAMESPACE, namespace)
-                        .replace(emit::FILES, &files)
-                        .replace(emit::ROOTS, &roots)
-                        .replace(emit::EACH, each)
-                })
-                .collect();
-            for sql in frames::rewrite(statements) {
-                stages_read(&sql, &mut stages);
-                if sql.starts_with("CREATE INDEX IF NOT EXISTS ") {
-                    connection.execute_batch(&sql)?;
-                    continue;
-                }
-                if let Some(declaration) = sql.strip_prefix(frames::FRAME) {
-                    let name = frames.register(&connection, declaration)?;
-                    if btrees.borrow().contains(name) {
-                        return Err(SqlError::Sql(format!(
-                            "{name} is both a frame and a B-tree"
-                        )));
-                    }
-                    if cleared.insert(name.to_owned()) {
-                        clear.push(format!("{}{name}", frames::CLEAR));
-                    }
-                    continue;
-                }
-                match sql.strip_prefix("CREATE TEMP TABLE ") {
-                    Some(table) => {
-                        connection.execute_batch(&sql)?;
-                        let table = table.strip_prefix("IF NOT EXISTS ").unwrap_or(table);
-                        let name = table.split(['(', ' ']).next().unwrap_or_default();
-                        if frames.contains(name) {
-                            return Err(SqlError::Sql(format!(
-                                "{name} is both a frame and a B-tree"
-                            )));
-                        }
-                        btrees.borrow_mut().insert(name.to_owned());
-                        if cleared.insert(name.to_owned()) {
-                            clear.push(format!("DELETE FROM {name}"));
-                        }
-                    }
-                    None => steps.push(sql),
-                }
-            }
-            let mut blocks = Vec::new();
-            let mut steps =
-                extract_blocks(&mut steps.into_iter(), &mut blocks, &mut HashMap::new());
-            let last = steps.pop().expect("a final select");
-            Ok(Prepared {
-                steps,
-                blocks,
-                last,
-                clear,
-                stages,
-                each: None,
-            })
-        };
+        let mut tables = Tables::default();
+        let mut btrees = HashSet::new();
+        let mut marks = 0;
         let mut stages = Vec::with_capacity(compiled.stages.len());
         for (index, stage) in compiled.stages.iter().enumerate() {
             let table = emit::stage_table(index);
-            let mut prepared = prepare(
-                &stage.statements,
-                &emit::stage_namespace(index),
-                run_id(Some(index), 0),
-                "",
-            )?;
             // A three-valued stage keeps the nodes it is unknown at too, with `unk`; a two-valued
             // stage's are all 0.
             frames.register(
@@ -784,24 +979,31 @@ impl Session {
                     "{table}(file INTEGER, node INTEGER, unk INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (file, node))"
                 ),
             )?;
-            prepared.clear.push(format!("{}{table}", frames::CLEAR));
+            let id = tables.add(&table, true);
+            let mut prepared = prepare(
+                &connection,
+                &frames,
+                &mut btrees,
+                &mut tables,
+                &mut marks,
+                &stage.sql,
+                &emit::stage_namespace(index),
+                run_id(Some(index), 0),
+                "",
+            )?;
+            prepared.clear.push(Step::clear(id, &table, true));
             let columns = if stage.three {
                 "file, node, unk"
             } else {
                 "file, node"
             };
-            prepared.last = format!("INSERT INTO {table}({columns}) {}", prepared.last);
+            prepared.last.sql = format!("INSERT INTO {table}({columns}) {}", prepared.last.sql);
+            prepared.last.effect.writes = Writes::Insert(id);
             stages.push((stage.dialect, prepared));
         }
         let mut clauses = Vec::with_capacity(compiled.clauses.len());
         for (index, clause) in compiled.clauses.iter().enumerate() {
             let each = format!("e{index}_");
-            let mut prepared = prepare(
-                &clause.statements,
-                &format!("c{index}_"),
-                run_id(None, index),
-                &each,
-            )?;
             if clause.each {
                 connection.execute_batch(&format!(
                     "CREATE TEMP TABLE {each}x(file INTEGER, root INTEGER, start INTEGER, \"end\" INTEGER, \
@@ -809,12 +1011,32 @@ impl Session {
                      CREATE TEMP TABLE {each}a(file INTEGER, root INTEGER, PRIMARY KEY (file, root)) WITHOUT ROWID; \
                      CREATE TEMP TABLE {each}r(round INTEGER)"
                 ))?;
-                prepared.each = Some(
-                    ["x", "a", "r"]
-                        .map(|table| format!("DELETE FROM {each}{table}"))
-                        .to_vec(),
-                );
             }
+            let enumeration = clause.each.then(|| {
+                let ids = ["x", "a", "r"].map(|table| tables.add(&format!("{each}{table}"), false));
+                Each {
+                    clear: ["x", "a", "r"]
+                        .iter()
+                        .zip(ids)
+                        .map(|(table, id)| Step::clear(id, &format!("{each}{table}"), false))
+                        .collect(),
+                    active: ids[1],
+                    round: ids[2],
+                    prefix: each.clone(),
+                }
+            });
+            let mut prepared = prepare(
+                &connection,
+                &frames,
+                &mut btrees,
+                &mut tables,
+                &mut marks,
+                &clause.sql,
+                &format!("c{index}_"),
+                run_id(None, index),
+                &each,
+            )?;
+            prepared.each = enumeration;
             clauses.push((prepared, clause.captures.clone()));
         }
         // Every statement a batch can run stays prepared.
@@ -824,7 +1046,11 @@ impl Session {
             .chain(clauses.iter().map(|(prepared, _)| prepared))
             .map(|prepared| {
                 prepared.steps.len()
-                    + prepared.blocks.iter().map(Vec::len).sum::<usize>()
+                    + prepared
+                        .blocks
+                        .iter()
+                        .map(|block| block.steps.len())
+                        .sum::<usize>()
                     + prepared.clear.len()
                     + 8
             })
@@ -837,6 +1063,7 @@ impl Session {
             stages,
             clauses,
             stats: Stats::default(),
+            counts: Counts::new(Arc::clone(&frames), tables.tables, marks),
             frames,
         })
     }
@@ -868,8 +1095,9 @@ impl Session {
             .map(|(_, prepared)| prepared)
             .chain(self.clauses.iter().map(|(prepared, _)| prepared));
         for prepared in prepared {
-            let blocks = prepared.blocks.iter().flatten();
-            for sql in prepared.steps.iter().chain(blocks).chain([&prepared.last]) {
+            let blocks = prepared.blocks.iter().flat_map(|block| &block.steps);
+            for step in prepared.steps.iter().chain(blocks).chain([&prepared.last]) {
+                let sql = &step.sql;
                 if sql == emit::LOOP || sql.starts_with(emit::RUN) || sql.starts_with(frames::CLEAR)
                 {
                     continue;
@@ -915,131 +1143,26 @@ impl Session {
                 .iter()
                 .map(|(_, prepared)| prepared)
                 .chain(self.clauses.iter().map(|(prepared, _)| prepared))
-                .flat_map(|prepared| prepared.clear.iter().chain(prepared.each.iter().flatten()))
-                .map(String::as_str)
+                .flat_map(|prepared| {
+                    let each = prepared.each.iter().flat_map(|each| &each.clear);
+                    prepared.clear.iter().chain(each)
+                })
+                .map(|step| step.sql.as_str())
                 .chain([CLEAR_RUNS, CLEAR_ROOTS]);
             for clear in clears {
-                Self::empty(&self.connection, &self.frames, clear)?;
+                match clear.strip_prefix(frames::CLEAR) {
+                    Some(name) => {
+                        self.frames.clear(name);
+                    }
+                    None => {
+                        self.connection.execute(clear, [])?;
+                    }
+                }
             }
+            self.counts.reset();
         }
         self.frames.trim();
         result
-    }
-
-    /// Empties a table: a frame through its buffers (`frames::CLEAR`), another by its `DELETE`.
-    fn empty(connection: &Connection, frames: &FrameStore, sql: &str) -> Result<(), SqlError> {
-        match sql.strip_prefix(frames::CLEAR) {
-            Some(name) => {
-                frames.clear(name);
-            }
-            None => {
-                connection.prepare_cached(sql)?.execute([])?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Executes a stage's or clause's statements, each loop (`emit::LOOP` … `emit::UNTIL`) while
-    /// its last query counts a dirty key (none: not at all), and accepting a loop's last pass by its reads
-    /// (`emit::ACYCLIC`). A loop that still changes after `MAX_LEVELS` passes refuses the batch: a
-    /// recursion that deep is not evaluated. `emit::RUN<index>` runs the statements of
-    /// `blocks[index]` there, over the tables as they stand.
-    fn run_steps(
-        connection: &Connection,
-        frames: &FrameStore,
-        stats: &mut Stats,
-        steps: &[String],
-        blocks: &[Vec<String>],
-    ) -> Result<(), SqlError> {
-        let mut at = 0;
-        while at < steps.len() {
-            if let Some(reads) = steps[at].strip_prefix(emit::ACYCLIC) {
-                acyclic(connection, reads)?;
-                at += 1;
-                continue;
-            }
-            if let Some(name) = steps[at].strip_prefix(frames::CLEAR) {
-                frames.clear(name);
-                at += 1;
-                continue;
-            }
-            if let Some(index) = steps[at].strip_prefix(emit::RUN) {
-                let index: usize = index.parse().expect("a block index");
-                Self::run_steps(connection, frames, stats, &blocks[index], blocks)?;
-                at += 1;
-                continue;
-            }
-            if steps[at] != emit::LOOP {
-                Self::execute(connection, stats, &steps[at])?;
-                at += 1;
-                continue;
-            }
-            let mut depth = 0;
-            let end = (at..steps.len())
-                .find(|&index| {
-                    if steps[index] == emit::LOOP {
-                        depth += 1;
-                    } else if steps[index].starts_with(emit::UNTIL) {
-                        depth -= 1;
-                    }
-                    depth == 0
-                })
-                .expect("a loop's end");
-            let until = &steps[end][emit::UNTIL.len()..];
-            // A loop's pass evaluates the dirty keys of its units: with none (the site demanded
-            // no new key), it would change nothing, and the units it reaches would be run for
-            // nothing again, at every site of every pass above them.
-            let dirty = |connection: &Connection| -> Result<bool, SqlError> {
-                let changed: i64 = connection
-                    .prepare_cached(until)?
-                    .query_row([], |row| row.get(0))?;
-                Ok(changed != 0)
-            };
-            if !dirty(connection)? {
-                at = end + 1;
-                continue;
-            }
-            let mut passes = 0;
-            // Mutant 11: the loop's last pass is undone.
-            let drop_last = super::mutant(11);
-            loop {
-                if drop_last {
-                    connection.execute_batch("SAVEPOINT mutant_pass")?;
-                }
-                Self::run_steps(connection, frames, stats, &steps[at + 1..end], blocks)?;
-                passes += 1;
-                let changed = dirty(connection)?;
-                if drop_last {
-                    let undo = if changed {
-                        ""
-                    } else {
-                        "ROLLBACK TO mutant_pass; "
-                    };
-                    connection.execute_batch(&format!("{undo}RELEASE mutant_pass"))?;
-                }
-                if !changed {
-                    break;
-                }
-                if passes > MAX_LEVELS {
-                    return Err(SqlError::unsupported("recursion deeper than 256 levels"));
-                }
-            }
-            at = end + 1;
-        }
-        Ok(())
-    }
-
-    /// Executes one statement that writes rows.
-    fn execute(connection: &Connection, stats: &mut Stats, sql: &str) -> Result<(), SqlError> {
-        let started = std::time::Instant::now();
-        let rows = connection.prepare_cached(sql)?.execute([])?;
-        let nanos = started.elapsed().as_nanos() as u64;
-        stats.statements += 1;
-        stats.rows += rows;
-        stats.nanos += nanos;
-        #[cfg(any(test, feature = "unbounded-work"))]
-        record(sql, nanos, rows);
-        Ok(())
     }
 
     fn run_batch(
@@ -1053,8 +1176,17 @@ impl Session {
             clauses,
             stats,
             frames,
+            counts,
             ..
         } = self;
+        let connection = &*connection;
+        let mut runner = Runner {
+            connection,
+            frames,
+            stats,
+            counts,
+            at: ("", 0),
+        };
         let inputs = std::time::Instant::now();
         connection.prepare_cached(CLEAR_RUNS)?.execute([])?;
         connection.prepare_cached(CLEAR_ROOTS)?.execute([])?;
@@ -1103,17 +1235,20 @@ impl Session {
                 }
             }
         }
-        stats.input_nanos += inputs.elapsed().as_nanos() as u64;
+        runner.stats.input_nanos += inputs.elapsed().as_nanos() as u64;
         // Stages in index order: a stage only reads stages made before it.
         let started = std::time::Instant::now();
         for (stage, (_, prepared)) in stages.iter().enumerate() {
             if stage_files[stage].is_empty() {
                 continue;
             }
-            Self::run_steps(connection, frames, stats, &prepared.steps, &prepared.blocks)?;
-            Self::execute(connection, stats, &prepared.last)?;
+            runner.at = ("stage", stage);
+            let ran = runner.prepared(prepared)?;
+            if ran || *MODE == Mode::Check {
+                runner.statement(&prepared.last, !ran)?;
+            }
         }
-        stats.stage_nanos += started.elapsed().as_nanos() as u64;
+        runner.stats.stage_nanos += started.elapsed().as_nanos() as u64;
         let mut results = Vec::with_capacity(runs.len());
         let mut position: Vec<usize> = vec![usize::MAX; batch.files.len()];
         for run in runs {
@@ -1126,66 +1261,88 @@ impl Session {
                     position[*file] = at;
                 }
                 let (prepared, captures) = &clauses[run.statement];
-                let each = prepared
-                    .each
-                    .as_ref()
-                    .map(|_| format!("e{}_", run.statement));
-                if let Some(each) = &each {
-                    connection
-                        .prepare_cached(&format!("INSERT INTO {each}r VALUES (0)"))?
+                runner.at = ("clause", run.statement);
+                if let Some(each) = &prepared.each {
+                    let rows = connection
+                        .prepare_cached(&format!("INSERT INTO {}r VALUES (0)", each.prefix))?
                         .execute([])?;
+                    runner.counts.wrote(&Writes::Insert(each.round), rows);
                 }
                 // `violation.each`: rounds over the whole batch. A round re-runs the clause on the
                 // roots whose last match bound a fresh range of the capture, with every range
                 // reported for the root excluded; each reports what it found, after the earlier
                 // rounds' findings for the same root.
                 for round in 0.. {
-                    Self::run_steps(connection, frames, stats, &prepared.steps, &prepared.blocks)?;
-                    let started = std::time::Instant::now();
-                    let mut statement = connection.prepare_cached(&prepared.last)?;
-                    let mut rows = statement.query([])?;
-                    let mut count = 0;
-                    while let Some(row) = rows.next()? {
-                        count += 1;
-                        let file: i64 = row.get(0)?;
-                        let root: i64 = row.get(1)?;
-                        found[position[file as usize]].push((
-                            round,
-                            SqlMatch {
-                                root: root as u32,
-                                captures: bindings(row, captures)?,
-                            },
-                        ));
+                    // A clause whose root frame was empty selects nothing (`Runner::prepared`,
+                    // which counted its last as passed over).
+                    let ran = runner.prepared(prepared)?;
+                    let outcome = runner.outcome(&prepared.last, !ran);
+                    let skipped = *MODE == Mode::Skip && (!ran || outcome == Outcome::Empty);
+                    if skipped && ran {
+                        runner.stats.skipped += 1;
                     }
-                    drop(rows);
-                    drop(statement);
-                    let elapsed = started.elapsed().as_nanos() as u64;
-                    stats.statements += 1;
-                    stats.rows += count;
-                    stats.nanos += elapsed;
-                    stats.select_nanos += elapsed;
-                    #[cfg(any(test, feature = "unbounded-work"))]
-                    record(&prepared.last, elapsed, count);
-                    let started = std::time::Instant::now();
-                    for clear in &prepared.clear {
-                        Self::empty(connection, frames, clear)?;
+                    if !skipped {
+                        let started = std::time::Instant::now();
+                        let mut statement = connection.prepare_cached(&prepared.last.sql)?;
+                        let mut rows = statement.query([])?;
+                        let mut count = 0;
+                        while let Some(row) = rows.next()? {
+                            count += 1;
+                            let file: i64 = row.get(0)?;
+                            let root: i64 = row.get(1)?;
+                            found[position[file as usize]].push((
+                                round,
+                                SqlMatch {
+                                    root: root as u32,
+                                    captures: bindings(row, captures)?,
+                                },
+                            ));
+                        }
+                        drop(rows);
+                        drop(statement);
+                        let elapsed = started.elapsed().as_nanos() as u64;
+                        let stats = &mut *runner.stats;
+                        stats.statements += 1;
+                        stats.rows += count;
+                        stats.nanos += elapsed;
+                        stats.select_nanos += elapsed;
+                        #[cfg(any(test, feature = "unbounded-work"))]
+                        record(&prepared.last.sql, elapsed, count);
+                        if *MODE == Mode::Check {
+                            skip::check(&prepared.last.sql, outcome, count);
+                        }
                     }
-                    stats.input_nanos += started.elapsed().as_nanos() as u64;
-                    let Some(each) = &each else {
+                    let started = std::time::Instant::now();
+                    runner.clear(prepared)?;
+                    runner.stats.input_nanos += started.elapsed().as_nanos() as u64;
+                    let Some(each) = &prepared.each else {
                         break;
                     };
-                    let active: i64 = connection
-                        .prepare_cached(&format!("SELECT count(*) FROM {each}a"))?
-                        .query_row([], |row| row.get(0))?;
+                    // The roots still enumerated: none ends the rounds.
+                    let active = if *MODE == Mode::Skip {
+                        runner.counts.rows(each.active)
+                    } else {
+                        let active: i64 = connection
+                            .prepare_cached(&format!("SELECT count(*) FROM {}a", each.prefix))?
+                            .query_row([], |row| row.get(0))?;
+                        if *MODE == Mode::Check {
+                            skip::check(
+                                "the enumerated roots",
+                                Outcome::Exactly(runner.counts.rows(each.active)),
+                                active as usize,
+                            );
+                        }
+                        active
+                    };
                     if active == 0 {
                         break;
                     }
                     connection
-                        .prepare_cached(&format!("UPDATE {each}r SET round = round + 1"))?
+                        .prepare_cached(&format!("UPDATE {}r SET round = round + 1", each.prefix))?
                         .execute([])?;
                 }
-                for clear in prepared.each.iter().flatten() {
-                    connection.prepare_cached(clear)?.execute([])?;
+                if let Some(each) = &prepared.each {
+                    runner.clears(&each.clear)?;
                 }
                 #[cfg(feature = "unbounded-work")]
                 CLAUSE_PROFILE.with_borrow_mut(|profile| {
@@ -1208,13 +1365,256 @@ impl Session {
         let started = std::time::Instant::now();
         for (stage, (_, prepared)) in stages.iter().enumerate() {
             if !stage_files[stage].is_empty() {
-                for clear in &prepared.clear {
-                    Self::empty(connection, frames, clear)?;
-                }
+                runner.at = ("stage", stage);
+                runner.clear(prepared)?;
             }
         }
-        stats.input_nanos += started.elapsed().as_nanos() as u64;
+        runner.stats.input_nanos += started.elapsed().as_nanos() as u64;
         Ok(results)
+    }
+}
+
+/// A session's connection, frames, statistics and counts while a batch runs its statements;
+/// `at`, the stage or clause running (`verify`).
+struct Runner<'s> {
+    connection: &'s Connection,
+    frames: &'s FrameStore,
+    stats: &'s mut Stats,
+    counts: &'s mut Counts,
+    at: (&'static str, usize),
+}
+
+impl Runner<'_> {
+    /// `RERAIL_SQL_SKIP=check`: panics where a table of `tables` holds other than its count,
+    /// before `sql` decides anything by it.
+    fn verify(&self, tables: &[usize], sql: &str) -> Result<(), SqlError> {
+        if *MODE != Mode::Check {
+            return Ok(());
+        }
+        for &table in tables {
+            let name = self.counts.name(table);
+            let rows: i64 = self
+                .connection
+                .prepare_cached(&format!("SELECT count(*) FROM {name}"))?
+                .query_row([], |row| row.get(0))?;
+            let counted = self.counts.rows(table);
+            assert!(
+                rows == counted,
+                "RERAIL_SQL_SKIP=check: {} {}: {name} holds {rows} rows, counted {counted}, before {sql}",
+                self.at.0,
+                self.at.1
+            );
+        }
+        Ok(())
+    }
+
+    /// Runs a stage's or clause's steps, from its root frame on (`skip`): where the root frame is
+    /// empty for the batch, every statement after it reads nothing, and is passed over (checking,
+    /// run and found to change nothing); returns whether the root frame had rows.
+    fn prepared(&mut self, prepared: &Prepared) -> Result<bool, SqlError> {
+        let Some(root) = &prepared.root else {
+            self.steps(&prepared.steps, &prepared.blocks, false)?;
+            return Ok(true);
+        };
+        self.steps(&prepared.steps[..=root.at], &prepared.blocks, false)?;
+        let empty = *MODE != Mode::Run && self.counts.rows(root.table) == 0;
+        if empty && *MODE == Mode::Skip {
+            self.stats.skipped_runs += 1;
+            self.stats.skipped += root.rest;
+            return Ok(false);
+        }
+        self.steps(&prepared.steps[root.at + 1..], &prepared.blocks, empty)?;
+        Ok(!empty)
+    }
+
+    /// Executes a stage's or clause's statements, each loop (`emit::LOOP` … `emit::UNTIL`) while
+    /// its last query counts a dirty key (none: not at all), and accepting a loop's last pass by its reads
+    /// (`emit::ACYCLIC`). A loop that still changes after `MAX_LEVELS` passes refuses the batch: a
+    /// recursion that deep is not evaluated. `emit::RUN<index>` runs `blocks[index]` there, over
+    /// the tables as they stand. `known_empty`: checking a run the skip would pass over, whose
+    /// statements must change nothing (but a loop's clears of its frames from an earlier run).
+    fn steps(
+        &mut self,
+        steps: &[Step],
+        blocks: &[Block],
+        known_empty: bool,
+    ) -> Result<(), SqlError> {
+        let mut at = 0;
+        while at < steps.len() {
+            let sql = &steps[at].sql;
+            if let Some(reads) = sql.strip_prefix(emit::ACYCLIC) {
+                acyclic(self.connection, reads)?;
+                at += 1;
+                continue;
+            }
+            if sql.starts_with(frames::CLEAR) {
+                self.clear_step(&steps[at])?;
+                at += 1;
+                continue;
+            }
+            if let Some(index) = sql.strip_prefix(emit::RUN) {
+                let index: usize = index.parse().expect("a block index");
+                self.block(&blocks[index], blocks, known_empty)?;
+                at += 1;
+                continue;
+            }
+            if sql != emit::LOOP {
+                self.statement(&steps[at], known_empty)?;
+                at += 1;
+                continue;
+            }
+            let mut depth = 0;
+            let end = (at..steps.len())
+                .find(|&index| {
+                    if steps[index].sql == emit::LOOP {
+                        depth += 1;
+                    } else if steps[index].sql.starts_with(emit::UNTIL) {
+                        depth -= 1;
+                    }
+                    depth == 0
+                })
+                .expect("a loop's end");
+            let until = &steps[end].sql[emit::UNTIL.len()..];
+            // A loop's pass evaluates the dirty keys of its units: with none (the site demanded
+            // no new key), it would change nothing, and the units it reaches would be run for
+            // nothing again, at every site of every pass above them.
+            let dirty = |connection: &Connection| -> Result<bool, SqlError> {
+                let changed: i64 = connection
+                    .prepare_cached(until)?
+                    .query_row([], |row| row.get(0))?;
+                Ok(changed != 0)
+            };
+            if !dirty(self.connection)? {
+                at = end + 1;
+                continue;
+            }
+            let mut passes = 0;
+            // Mutant 11: the loop's last pass is undone.
+            let drop_last = super::mutant(11);
+            loop {
+                if drop_last {
+                    self.connection.execute_batch("SAVEPOINT mutant_pass")?;
+                }
+                self.steps(&steps[at + 1..end], blocks, known_empty)?;
+                passes += 1;
+                let changed = dirty(self.connection)?;
+                if drop_last {
+                    let undo = if changed {
+                        ""
+                    } else {
+                        "ROLLBACK TO mutant_pass; "
+                    };
+                    self.connection
+                        .execute_batch(&format!("{undo}RELEASE mutant_pass"))?;
+                }
+                if !changed {
+                    break;
+                }
+                if passes > MAX_LEVELS {
+                    return Err(SqlError::unsupported("recursion deeper than 256 levels"));
+                }
+            }
+            at = end + 1;
+        }
+        Ok(())
+    }
+
+    /// Runs a recursion block, unless its units hold no demand row its last run did not see: it
+    /// ended with no key dirty, and only a new demand row is dirty outside it (`skip`).
+    fn block(
+        &mut self,
+        block: &Block,
+        blocks: &[Block],
+        known_empty: bool,
+    ) -> Result<(), SqlError> {
+        self.verify(&block.demand, "a block's run")?;
+        let idle =
+            *MODE != Mode::Run && self.counts.sum(&block.demand) == self.counts.marks[block.mark];
+        if idle && *MODE == Mode::Skip {
+            self.stats.skipped_blocks += 1;
+            self.stats.skipped += block.size;
+            return Ok(());
+        }
+        self.steps(&block.steps, blocks, known_empty || idle)?;
+        self.counts.marks[block.mark] = self.counts.sum(&block.demand);
+        Ok(())
+    }
+
+    /// What `step`'s rule says it will change (`skip`); `known_empty`, nothing, but a clear.
+    fn outcome(&self, step: &Step, known_empty: bool) -> Outcome {
+        match *MODE {
+            Mode::Run => Outcome::Unknown,
+            _ if known_empty && !matches!(step.effect.writes, Writes::Clear(_)) => Outcome::Empty,
+            _ => skip::outcome(&step.effect, |table| self.counts.rows(table)),
+        }
+    }
+
+    /// Executes one statement that writes rows, unless its rule proves it empty; counts what it
+    /// changed.
+    fn statement(&mut self, step: &Step, known_empty: bool) -> Result<(), SqlError> {
+        self.verify(&step.effect.inputs, &step.sql)?;
+        if let Writes::Insert(table) | Writes::Delete(table) = step.effect.writes {
+            self.verify(&[table], &step.sql)?;
+        }
+        let outcome = self.outcome(step, known_empty);
+        if outcome == Outcome::Empty && *MODE == Mode::Skip {
+            self.stats.skipped += 1;
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        let rows = self.connection.prepare_cached(&step.sql)?.execute([])?;
+        let nanos = started.elapsed().as_nanos() as u64;
+        self.stats.statements += 1;
+        self.stats.rows += rows;
+        self.stats.nanos += nanos;
+        #[cfg(any(test, feature = "unbounded-work"))]
+        record(&step.sql, nanos, rows);
+        if *MODE == Mode::Check {
+            skip::check(&step.sql, outcome, rows);
+        }
+        self.counts.wrote(&step.effect.writes, rows);
+        Ok(())
+    }
+
+    /// Empties the tables of `prepared` (its blocks' demand among them, so none has run).
+    fn clear(&mut self, prepared: &Prepared) -> Result<(), SqlError> {
+        self.clears(&prepared.clear)?;
+        for block in &prepared.blocks {
+            self.counts.marks[block.mark] = 0;
+        }
+        Ok(())
+    }
+
+    /// Empties the tables of `clears`, passing over those already empty.
+    fn clears(&mut self, clears: &[Step]) -> Result<(), SqlError> {
+        for clear in clears {
+            self.clear_step(clear)?;
+        }
+        Ok(())
+    }
+
+    /// Empties one table, unless it is empty already: a frame through its buffers
+    /// (`frames::CLEAR`, which runs no statement), a B-tree by its `DELETE`.
+    fn clear_step(&mut self, clear: &Step) -> Result<(), SqlError> {
+        self.verify(&clear.effect.inputs, &clear.sql)?;
+        let outcome = self.outcome(clear, false);
+        if outcome == Outcome::Empty && *MODE == Mode::Skip {
+            self.stats.skipped_clears += 1;
+            return Ok(());
+        }
+        let rows = match clear.sql.strip_prefix(frames::CLEAR) {
+            Some(name) => {
+                let rows = self.frames.rows(name).expect("a registered frame");
+                self.frames.clear(name);
+                rows
+            }
+            None => self.connection.prepare_cached(&clear.sql)?.execute([])?,
+        };
+        if *MODE == Mode::Check {
+            skip::check(&clear.sql, outcome, rows);
+        }
+        self.counts.wrote(&clear.effect.writes, rows);
+        Ok(())
     }
 }
 

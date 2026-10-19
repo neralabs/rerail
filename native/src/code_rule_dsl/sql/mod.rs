@@ -14,6 +14,7 @@ mod nodes;
 mod plan;
 mod recursion;
 pub(super) mod select_when;
+mod skip;
 mod terminals;
 #[cfg(test)]
 mod tests;
@@ -47,7 +48,7 @@ pub(super) use exec::{StatementProfile, profiled};
 /// 13. distinct-key evaluation omits one read slot from the key (`emit/keyed`);
 /// 14. `constraints` run in reverse order (`lower`);
 /// 15. a `field` relation ignores the field (`emit`);
-/// 16. `not` takes an empty probe for an empty output, as an exec skip might (`emit`);
+/// 16. the skip takes an anti-join whose probes are empty for an empty output (`skip`);
 /// 17. the pattern terminals' tested nodes are keyed by node only, not (term, node) (`exec`);
 /// 18. a unit's key drops the caller's captures it reads (`lower`);
 /// 19. a stage `ofRule`'s `nthChild` ranks over the whole stage, not per parent (`emit`,

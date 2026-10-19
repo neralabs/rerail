@@ -38,7 +38,7 @@
 //! candidates are not. Where the input is unique on a subset of the key, it already holds one row
 //! per key and is evaluated directly.
 
-use super::Emitter;
+use super::{Effect, Emitter, Reads};
 use crate::code_rule_dsl::sql::plan::{Export, OfRule, Op, SlotId, Source, Unit, Walk};
 use std::collections::BTreeSet;
 use std::fmt::Write;
@@ -315,9 +315,10 @@ impl Emitter<'_> {
         );
         self.create(&keys, &frame);
         let indexed: String = columns.iter().map(|column| format!(", {column}")).collect();
-        self.statements.push(format!(
-            "CREATE INDEX IF NOT EXISTS {keys}_key ON {keys}(file, node{indexed})"
-        ));
+        self.push(
+            format!("CREATE INDEX IF NOT EXISTS {keys}_key ON {keys}(file, node{indexed})"),
+            Effect::default(),
+        );
         let mut values = String::new();
         for column in &self.physical {
             if columns.contains(column) {
@@ -331,11 +332,15 @@ impl Emitter<'_> {
             .iter()
             .map(|column| format!(", f.{column} AS {column}"))
             .collect();
-        self.statements.push(format!(
-            "INSERT INTO {keys} SELECT NULL, file, node{values}{} FROM \
-             (SELECT DISTINCT f.file AS file, f.node AS node{distinct} FROM {input} f)",
-            self.zeros()
-        ));
+        self.insert(
+            &keys,
+            format!(
+                "INSERT INTO {keys} SELECT NULL, file, node{values}{} FROM \
+                 (SELECT DISTINCT f.file AS file, f.node AS node{distinct} FROM {input} f)",
+                self.zeros()
+            ),
+            Reads::join(&[input]),
+        );
         self.keyed_by(&keys, vec![(*key).clone()]);
         let out = self.op(op, &keys);
         // Each input row takes its key's verdict: the key's slots as the operator left them.
@@ -359,6 +364,7 @@ impl Emitter<'_> {
                 "SELECT {select} FROM {input} f CROSS JOIN {keys} q ON q.file = f.file AND q.node = f.node{matched} \
                  CROSS JOIN {out} o ON o.k = q.k"
             ),
+            Reads::join(&[input, &keys, &out]),
         ))
     }
 }

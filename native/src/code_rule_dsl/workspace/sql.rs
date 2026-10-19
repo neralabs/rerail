@@ -248,13 +248,7 @@ impl SqlEngine {
         let after = session.stats();
         {
             let mut stats = self.stats.lock().unwrap_or_else(|error| error.into_inner());
-            stats.statements += after.statements - before.statements;
-            stats.rows += after.rows - before.rows;
-            stats.nanos += after.nanos - before.nanos;
-            stats.stage_nanos += after.stage_nanos - before.stage_nanos;
-            stats.select_nanos += after.select_nanos - before.select_nanos;
-            stats.input_nanos += after.input_nanos - before.input_nanos;
-            stats.facts_nanos += after.facts_nanos - before.facts_nanos;
+            stats.add_since(&after, &before);
         }
         #[cfg(feature = "unbounded-work")]
         {
@@ -320,6 +314,11 @@ impl SqlEngine {
                 "selectMilliseconds": milliseconds(stats.select_nanos),
                 "inputMilliseconds": milliseconds(stats.input_nanos),
                 "factsMilliseconds": milliseconds(stats.facts_nanos),
+                // What the emptiness rules passed over (`sql::skip`); `count` is what ran.
+                "skipped": stats.skipped,
+                "skippedRuns": stats.skipped_runs,
+                "skippedBlocks": stats.skipped_blocks,
+                "skippedClears": stats.skipped_clears,
             },
         });
         #[cfg(feature = "unbounded-work")]
@@ -393,5 +392,117 @@ impl SqlEngine {
             })).collect::<Vec<_>>(),
         });
         report
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask, WorkspaceOptions};
+    use crate::code_rule_dsl::CodeRuleDslRuntime;
+    use crate::code_rule_dsl::test_support::CAPABILITIES;
+    use napi::Task;
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+
+    /// This process's peak resident set size, in MiB.
+    fn peak_mib() -> f64 {
+        // SAFETY: `getrusage` fills the struct it is given.
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &raw mut usage) };
+        // macOS reports bytes, Linux KiB.
+        let peak = usage.ru_maxrss as f64;
+        if cfg!(target_os = "macos") {
+            peak / 1048576.0
+        } else {
+            peak / 1024.0
+        }
+    }
+
+    /// The workspace's SQL engine over a list of the data-layer corpus's files, every benchmark
+    /// policy in one workspace as the whole-tree benchmark runs them: `RERAIL_SQL_FILES`, one path
+    /// per line relative to `RERAIL_DATA_LAYER_CORPUS`; `RERAIL_SQL_BATCH`, files per batch
+    /// (default 64; the workspace caps it at the files per worker). Prints the apply's wall time,
+    /// the engine report and the peak RSS. Run by hand:
+    /// `cargo test --release --lib workspace::sql::tests -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "reads the data-layer benchmark's policies and corpus from outside the repository"]
+    fn the_sql_engine_over_a_file_list() {
+        let home = std::env::var("HOME").expect("HOME");
+        let corpus = std::env::var("RERAIL_DATA_LAYER_CORPUS")
+            .unwrap_or_else(|_| format!("{home}/rerail-bench/nera-data-layer-fce4dc72"));
+        let policies = std::env::var("RERAIL_BENCH_POLICIES")
+            .unwrap_or_else(|_| format!("{home}/rerail-bench/data-layer/policies"));
+        let list = std::env::var("RERAIL_SQL_FILES")
+            .unwrap_or_else(|_| format!("{home}/rerail-bench/distill/subset.txt"));
+        let batch = std::env::var("RERAIL_SQL_BATCH")
+            .ok()
+            .map(|size| size.parse().expect("RERAIL_SQL_BATCH is a number"));
+        let started = std::time::Instant::now();
+        let mut workspace = CodeRuleDslWorkspace::with_options(Some(WorkspaceOptions {
+            engine: Some("sql".to_owned()),
+            sql_batch_size: batch,
+        }))
+        .expect("a SQL workspace");
+        let mut paths: Vec<_> = std::fs::read_dir(&policies)
+            .expect("policies")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("policy.json"))
+            .filter(|path| path.exists())
+            .collect();
+        paths.sort();
+        for path in &paths {
+            let compiled = CodeRuleDslRuntime::compile(
+                std::fs::read_to_string(path).expect("policy"),
+                "json".to_owned(),
+                CAPABILITIES.to_owned(),
+            )
+            .unwrap_or_else(|error| panic!("{}: {}", path.display(), error.reason));
+            workspace
+                .add_code_rule(&compiled, None)
+                .expect("a code rule");
+        }
+        let root = std::path::Path::new(&corpus);
+        let files: Vec<Value> = std::fs::read_to_string(&list)
+            .expect("the file list")
+            .lines()
+            .filter(|path| !path.is_empty())
+            .filter(|path| workspace.accepts_path((*path).to_owned()))
+            .filter_map(|path| {
+                let absolute = root.join(path);
+                let source = String::from_utf8(std::fs::read(&absolute).ok()?).ok()?;
+                let mut file = json!({ "language": "python", "path": path, "source": source });
+                if let Some(module) =
+                    crate::code_rule_dsl::language::adapter::module_path("python", &absolute)
+                {
+                    file["module"] = module;
+                }
+                Some(file)
+            })
+            .collect();
+        let setup = started.elapsed().as_secs_f64();
+        let before = peak_mib();
+        let mut task = WorkspaceApplyTask {
+            state: Arc::clone(&workspace.state),
+            closed: Arc::clone(&workspace.closed),
+            request_json: json!({ "revision": 1, "files": files, "removed": [] }).to_string(),
+            request_buffer: None,
+            request_direct: None,
+        };
+        let started = std::time::Instant::now();
+        let response: Value =
+            serde_json::from_str(&task.compute().expect("the apply")).expect("a response");
+        let apply = started.elapsed().as_secs_f64();
+        let report: Value =
+            serde_json::from_str(&workspace.engine_report().expect("a report")).expect("JSON");
+        let statements = &report["statements"];
+        eprintln!(
+            "files {}, batch {}, setup {setup:.1}s, apply {apply:.2}s, violations {}, failures {}, peak RSS {before:.0} -> {:.0} MiB",
+            files.len(),
+            report["batchSize"],
+            response["violations"].as_array().map_or(0, Vec::len),
+            response["failures"].as_array().map_or(0, Vec::len),
+            peak_mib(),
+        );
+        eprintln!("statements {statements}");
     }
 }

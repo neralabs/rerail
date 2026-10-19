@@ -314,7 +314,12 @@ fn a_unit_reading_a_capture_it_does_not_hold_is_keyed_by_it() {
     let source = "function q() { f(g(f)); h(h); k(x); }\n";
     assert_eq!(
         agreed("typescript", ast.clone(), None, source),
-        ["f(g(f)) F=f X=g", "g(f) F=g X=f", "h(h) F=h X=h", "k(x) F=k X=x"]
+        [
+            "f(g(f)) F=f X=g",
+            "g(f) F=g X=f",
+            "h(h) F=h X=h",
+            "k(x) F=k X=x"
+        ]
     );
     assert_eq!(markers("typescript", ast), [1, 1, 1]);
 }
@@ -342,10 +347,7 @@ fn a_chain_of_units_runs_each_where_a_site_demands_new_keys() {
     });
     let source = "function q() { if (a) { f(b); } }\nlet c = 1;\n";
     crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE.set(Some(Default::default()));
-    assert_eq!(
-        agreed("typescript", ast, None, source),
-        ["a", "b", "f"]
-    );
+    assert_eq!(agreed("typescript", ast, None, source), ["a", "b", "f"]);
     let statements: usize = crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE
         .take()
         .unwrap_or_default()
@@ -877,7 +879,7 @@ fn three_valued_frames_and_unit_tables_have_distinct_names() {
         .clause_each(grammar, None)
         .expect("lowers");
     let mut tables = std::collections::HashMap::<String, String>::new();
-    for sql in crate::code_rule_dsl::sql::emit::clause(&statement) {
+    for sql in crate::code_rule_dsl::sql::emit::clause(&statement).statements {
         let Some(rest) = sql
             .strip_prefix("CREATE TEMP TABLE IF NOT EXISTS ")
             .or_else(|| sql.strip_prefix("CREATE TEMP TABLE "))
