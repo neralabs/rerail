@@ -86,6 +86,30 @@ describe("every leg", () => {
   });
 });
 
+// port-readiness-record.yml's publish job, read the way the runner reads it.
+describe("the record workflow", () => {
+  const publish = (): { name: string; if?: string; run?: string }[] => workflow("port-readiness-record.yml").jobs.publish.steps;
+
+  // A run with no pull request opens none: a person opens it, from the link in the run's summary.
+  it("opens no pull request: a run with none pushes its branch and links to open one by hand", () => {
+    assert.deepEqual(publish().filter((step) => /\bgh pr create\b/u.test(step.run ?? "")).map((step) => step.name), []);
+    const push = publish().find((step) => step.name === "Push the commit")!.run!;
+    assert.match(push, /\/compare\/\$BASE\.\.\.\$branch\?expand=1/u);
+    // And the job goes on: the arm for no pull request ends by saying there is none to comment on, and fails nothing.
+    const arm = /if \[ -z "\$PR" \]; then\n([\s\S]*?)\n\s*elif /u.exec(push)?.[1];
+    assert.ok(arm !== undefined, "Push the commit has no arm for a run with no pull request");
+    assert.doesNotMatch(arm, /\bexit [1-9]/u);
+    assert.match(arm, /echo "pr=" >> "\$GITHUB_OUTPUT"$/u);
+  });
+
+  it("puts what a run with no pull request recorded, and what moved per rule, in the run's summary", () => {
+    const summary = publish().find((step) => step.if === "steps.push.outputs.pr == ''");
+    assert.ok(summary?.run !== undefined, "no step writes the summary of a run with no pull request to comment on");
+    assert.match(summary.run, /cat "\$RUNNER_TEMP\/comment\.md" >> "\$GITHUB_STEP_SUMMARY"/u);
+    assert.match(summary.run, /\/changes\.md"/u);
+  });
+});
+
 describe("the legs a changed path selects", () => {
   const ruff = EVERY_LEG.filter((leg) => leg.tool === "ruff");
   const bandit = EVERY_LEG.filter((leg) => leg.tool === "bandit");

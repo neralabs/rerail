@@ -30,9 +30,11 @@ name: Port readiness (record)
 # Where that commit goes: a pull request from a branch here gets it on that branch, as a fast-forward. A fork's goes to
 # `port-readiness-recordings/pr-<n>` here, with a comment saying to merge it: the default token cannot write to a fork,
 # and a token that could would hand a fork pull request write access to its own base. A run with no pull request pushes
-# `port-readiness-recordings/run-<id>` and opens a pull request into main, so a recording never reaches a protected
-# branch without review. A push or pull request made with the workflow token starts no workflow, so CI runs on the new
-# commit once someone pushes to the branch or closes and reopens the pull request.
+# `port-readiness-recordings/run-<id>` and opens no pull request: a person opens it, from the link the run's summary
+# gives, so a recording never reaches a protected branch without review; the summary also holds what moved, per rule.
+# A push made with the workflow token starts no workflow, so CI runs on a recording commit pushed to a pull request's
+# branch once someone pushes to it again or closes and reopens the pull request; a pull request a person opens from
+# `run-<id>` runs CI as any other does.
 
 on:
   workflow_dispatch:
@@ -46,7 +48,7 @@ on:
         type: string
         default: ""
       pr:
-        description: The pull request into main to record for; empty records main, through a new pull request. Run it from main.
+        description: The pull request into main to record for; empty records main, on a branch to open a pull request from by hand. Run it from main.
         type: string
         default: ""
       sha:
@@ -594,16 +596,21 @@ jobs:
             exit 0
           fi
           if [ -z "$PR" ]; then
+            # This run opens no pull request: a person opens it, from the page the run's summary links to, with a title
+            # and a body pointing back at this run.
             branch="port-readiness-recordings/run-$RUN"
             git push origin "$COMMIT:refs/heads/$branch"
-            if ! url="$(gh pr create --repo "$REPO" --base "$BASE" --head "$branch" --title "Port readiness: record $LEGS_RECORDED" \
-              --body "Recorded $LEGS_RECORDED on \`$BASE\` at $BASE_SHA by port-readiness-record.yml. The recordings are assets of the \`$RELEASE\` release; this pull request commits the locks that name them, the case sources the recorder copied, and their UPSTREAM.md rows. A pull request opened with the workflow token starts no workflow: close and reopen it to run CI.")"; then
-              echo "::error::pushed $branch, but could not open a pull request from it into $BASE (Settings → Actions → General must let GitHub Actions create pull requests): open one by hand"
-              exit 1
-            fi
-            echo "opened $url"
-            echo "Recorded $LEGS_RECORDED on \`$BASE\` at $BASE_SHA." > "$body"
-            echo "pr=${url##*/}" >> "$GITHUB_OUTPUT"
+            compare="$GITHUB_SERVER_URL/$REPO/compare/$BASE...$branch?expand=1"
+            title="Port readiness: record $LEGS_RECORDED"
+            text="Recorded $LEGS_RECORDED on \`$BASE\` at $BASE_SHA by port-readiness-record.yml; what moved, per rule, is in the summary of $GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID. The recordings are assets of the \`$RELEASE\` release; this pull request commits the locks that name them, the case sources the recorder copied, and their UPSTREAM.md rows."
+            prefilled="$compare&title=$(jq -rn --arg v "$title" '$v|@uri')&body=$(jq -rn --arg v "$text" '$v|@uri')"
+            echo "::notice::pushed $branch and opened no pull request: open one into $BASE from $compare"
+            {
+              echo "Recorded $LEGS_RECORDED on \`$BASE\` at $BASE_SHA and pushed $COMMIT to \`$branch\`: the locks, the case sources the recorder copied, and their UPSTREAM.md rows. The recordings are assets of the \`$RELEASE\` release."
+              echo
+              echo "This run opens no pull request: [open one from \`$branch\` into \`$BASE\`]($prefilled)."
+            } > "$body"
+            echo "pr=" >> "$GITHUB_OUTPUT"
           elif [ "$FORK" = "false" ]; then
             if ! git push origin "$COMMIT:refs/heads/$BRANCH"; then
               now="$(git ls-remote origin "refs/heads/$BRANCH" | cut -f 1)"
@@ -621,6 +628,20 @@ jobs:
             echo "Recorded $LEGS_RECORDED at $HEAD_SHA. The commit, $COMMIT, is on \`port-readiness-recordings/pr-$PR\` in this repository, on top of that head: the default token cannot push to a fork, so merge it into your branch (\`git pull --ff-only https://github.com/$REPO port-readiness-recordings/pr-$PR\`), or ask a maintainer to push it. The recordings are assets of the \`$RELEASE\` release." > "$body"
             echo "pr=$PR" >> "$GITHUB_OUTPUT"
           fi
+
+      # A run with no pull request has none to comment on, and opens none: what it recorded, the link to open the pull
+      # request by hand, and what moved per rule go to the run's summary instead.
+      - name: Write the per-rule change summaries to the run's summary
+        if: steps.push.outputs.pr == ''
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cat "$RUNNER_TEMP/comment.md" >> "$GITHUB_STEP_SUMMARY"
+          while IFS=' ' read -r pack tool; do
+            changes="$RUNNER_TEMP/legs/port-readiness-recording-$pack-$tool/changes.md"
+            [ -s "$changes" ] && [ ! -L "$changes" ] || continue
+            { echo; cat "$changes"; } >> "$GITHUB_STEP_SUMMARY"
+          done < <(jq -r '.[] | "\(.pack) \(.tool)"' <<< "$LEGS")
 
       # What moved, per rule: a comment of its own per tool-pack, since one can run long, and in the run's summary.
       # Before a tool-pack's new summary is posted, its earlier ones are collapsed as outdated: they start with

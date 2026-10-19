@@ -302,11 +302,12 @@ leg's lock, case sources and `UPSTREAM.md` rows as one commit on the recorded he
 - a fork's goes to `port-readiness-recordings/pr-<n>` here, since the default token cannot write to a fork, and a
   comment says to merge it;
 - a run started by hand from `main` with no pull request records `main`, pushes `port-readiness-recordings/run-<id>`,
-  and opens a pull request into `main`: a recording never reaches a protected branch without review. (GitHub must let
-  Actions create pull requests, under Settings → Actions → General.)
+  and opens no pull request: a person opens it, from the link in the run's summary, so a recording never reaches a
+  protected branch without review.
 
-A push or pull request made with the workflow token starts no workflow, so CI runs on the recording commit once
-someone pushes to the branch or closes and reopens the pull request.
+A push made with the workflow token starts no workflow, so CI runs on a recording commit pushed to a pull request's
+branch once someone pushes to it again or closes and reopens the pull request. A pull request a person opens from a
+`run-<id>` branch runs CI as any other does.
 
 GitHub holds at most 1,000 assets in a release. `authorize` uses the newest of `port-readiness-recordings`,
 `port-readiness-recordings-2`, `-3` and so on, and starts the next once the newest holds 900; `publish` refuses an
@@ -320,7 +321,8 @@ committed recording no longer matches the pinned upstream and uploads nothing, t
 Because the recordings are no longer in the diff, `port-readiness:record` writes a per-rule summary of what moved instead —
 expected findings gained and lost on upstream's own tests, corpus files answered differently, facts changed
 (`--changes <file>`, `conformance/port-readiness/recording/diff.ts`) — and the publish job posts it on the pull request,
-one comment per tool-pack, collapsing that tool-pack's earlier ones.
+one comment per tool-pack, collapsing that tool-pack's earlier ones. A run with no pull request writes it to the run's
+summary instead, beside what was recorded and, when it made a commit, the link to open the pull request.
 When the committed lock names a recording that cannot be read (its fetch failed, or the lock or the cached recording
 fails its schema), the summary warns that it was not compared rather than calling it a first recording.
 

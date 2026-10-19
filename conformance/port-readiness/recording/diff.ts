@@ -164,9 +164,10 @@ export const RECORDING_COMMENT_MARKER = "<!-- rerail-port-readiness-recording --
 const ROW_LIMIT = 60;
 
 /**
- * The summary as Markdown, for the pull request the recording was made for. It leads with whether upstream's answers
- * moved at all, because that is the one thing a reviewer needs from a re-record: a new recording whose answers are
- * the same is a recording of the same upstream, and a rule whose expected findings moved is a rule to look at.
+ * The summary as Markdown, for the pull request the recording was made for, or the run's summary when there is none.
+ * It leads with whether upstream's answers moved at all, because that is the one thing a reviewer needs from a
+ * re-record: a new recording whose answers are the same is a recording of the same upstream, and a rule whose expected
+ * findings moved is a rule to look at.
  */
 export function renderRecordingChanges(changes: RecordingChanges[]): string {
   const moved = changes.filter((entry) => entry.rules.length > 0 || entry.pinsChanged.length > 0);
