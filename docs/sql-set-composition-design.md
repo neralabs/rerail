@@ -91,7 +91,7 @@ A clause's root frame is the set of candidate roots:
 |---|---|
 | `kind` | filter `node.kind IN (…)` |
 | `regex` | the `text_match(term)` terminal: input set = distinct (file, node) of F; returns the nodes whose text matches |
-| `pattern` | the `pattern(term)` terminal: candidates = nodes of the pattern's root kinds in the batch. It emits (file, node, bound captures) under a fresh env, then a join unifies them with F's bound captures. A pattern with an ellipsis directly before a metavariable that F may already bind gets the env-input variant instead: the terminal receives F's distinct (node, bound captures) rows, because greedy ellipsis alignment depends on the env. |
+| `pattern` | the `pattern(term)` terminal, an input-set terminal: input set = distinct (file, node) of F, so a clause's root frame passes its roots as already narrowed by anchors and `RequiredText`. It emits the nodes the pattern matches under a fresh env, with their bound captures, then a join unifies them with F's bound captures. Each (term, node) is matched once per batch, whichever frames reach it. A pattern with an ellipsis directly before a metavariable that F may already bind gets the env-input variant instead: the terminal receives F's distinct (node, bound captures) rows, because greedy ellipsis alignment depends on the env. |
 | `all` | sequential pipeline over terms in compiled order. Three-valued: a term's unknown rows set `unk` and OR the term's static may-bind mask into `wh`. Later terms whose static mention mask intersects `wh` pass those rows through untouched. A false term drops the row. At the end, `unk` rows are unknown. |
 | `any` | branch i runs on the F rows that no earlier branch matched (anti-join on `k`), from the incoming env; results are `UNION ALL`. Three-valued: rows where a may-bind branch is unknown stop as unknown; rows where a non-binding branch is unknown continue and carry the unknown. |
 | `not` | inner rule on F with the inner rule's bindings discarded; output = F rows whose `k` has no inner match (anti-join). Inner unknown makes the row unknown. Captures F has not bound match freely inside the probe, because the inner lowering only unifies against bound columns. |
@@ -133,7 +133,7 @@ That redefinition is a product decision, recorded as a D-record. It is not an em
 
 For each batch, the driver:
 1. restores tapes and builds the `node` table state;
-2. computes the shared stages: stop sets, capture-free `ofRule` sets and pattern terminals, keyed by digest;
+2. computes the shared stages: stop sets and capture-free `ofRule` sets, keyed by digest;
 3. runs one statement per clause, built from CTEs (`MATERIALIZED` where a stage is read twice);
 4. runs the host loops for `each` rounds and recursion levels;
 5. hands result rows to the native renderer.

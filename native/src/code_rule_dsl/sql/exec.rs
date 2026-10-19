@@ -9,7 +9,7 @@ use super::nearest::NearestTable;
 use super::nodes::{NodeFacts, NodeTable};
 use super::plan::{SlotKind, Statement, Unsupported};
 use super::terminals::{
-    BatchScopes, FactTable, PatternRow, PatternTable, PatternTerm, Terminal, TextTable, fresh_rows,
+    BatchScopes, FactTable, PatternRow, PatternTable, PatternTerm, Terminal, TextTable, fresh_match,
 };
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::GrammarMatcher;
@@ -23,7 +23,7 @@ use rusqlite::Connection;
 use rusqlite::types::Value;
 use rusqlite::vtab::Module;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 /// One file of a batch.
 pub(in crate::code_rule_dsl) struct BatchFile {
@@ -74,12 +74,16 @@ pub(super) struct Program {
     pub(super) terminals: Vec<Terminal>,
 }
 
+/// A pattern terminal's fresh-env matches tested so far in a batch, by key (`file << 32 | node`):
+/// the capture columns, `None` where the pattern does not match.
+type FreshMatches = HashMap<i64, Option<Arc<[Option<i64>]>>>;
+
 /// A batch: its files' tapes and node facts, its program, and the fresh-env matches of each
-/// pattern terminal, computed on first read.
+/// pattern terminal at the nodes tested so far.
 pub(super) struct Batch {
     pub(super) files: Vec<BatchFile>,
     pub(super) program: Arc<Program>,
-    fresh: Vec<OnceLock<Arc<Vec<PatternRow>>>>,
+    fresh: Vec<parking_lot::Mutex<FreshMatches>>,
     subfiles: parking_lot::Mutex<SubFiles>,
 }
 
@@ -110,7 +114,11 @@ impl Batch {
             .collect();
         Arc::new(Self {
             files,
-            fresh: program.terminals.iter().map(|_| OnceLock::new()).collect(),
+            fresh: program
+                .terminals
+                .iter()
+                .map(|_| Default::default())
+                .collect(),
             program,
             subfiles: parking_lot::Mutex::default(),
         })
@@ -155,9 +163,20 @@ impl Batch {
         file
     }
 
-    /// The fresh-env matches of pattern terminal `term`, computed once per batch.
-    pub(super) fn fresh(&self, index: usize, term: &PatternTerm) -> Arc<Vec<PatternRow>> {
-        Arc::clone(self.fresh[index].get_or_init(|| Arc::new(fresh_rows(self, term))))
+    /// The fresh-env matches of pattern terminal `index` at `keys` (`file << 32 | node`), each
+    /// (term, node) matched once per batch whichever statements ask for it.
+    pub(super) fn fresh(&self, index: usize, term: &PatternTerm, keys: &[i64]) -> Vec<PatternRow> {
+        let mut tested = self.fresh[index].lock();
+        keys.iter()
+            .filter_map(|&key| {
+                let (file, node) = ((key >> 32) as u32, key as u32);
+                let values = tested
+                    .entry(key)
+                    .or_insert_with(|| fresh_match(self, term, file as usize, node))
+                    .clone()?;
+                Some(PatternRow::fresh(file, node, values))
+            })
+            .collect()
     }
 }
 

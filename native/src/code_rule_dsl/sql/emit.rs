@@ -951,8 +951,10 @@ impl<'s> Emitter<'s> {
             .map(|value| format!(", {value}"))
             .collect::<String>();
         if !env {
+            // The frame's distinct nodes as the input set: only they are matched.
             let with = format!(
-                "WITH p AS MATERIALIZED (SELECT file, node{values} FROM pattern WHERE term = {term}) "
+                "WITH p AS MATERIALIZED (SELECT file, node{values} FROM pattern WHERE term = {term} \
+                 AND nk IN (SELECT file * 4294967296 + node FROM {input})) "
             );
             let select = format!(
                 "SELECT {} FROM {input} f JOIN p ON p.file = f.file AND p.node = f.node",

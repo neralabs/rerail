@@ -1,6 +1,5 @@
-//! Native terminals behind virtual tables, each evaluated once per batch (`pattern`) or once per
-//! statement over its whole input set (`pattern`'s env-input variant, `text_match`, `fact`). SQL
-//! never calls one per row.
+//! Native terminals behind virtual tables, each evaluated once per statement over its whole input
+//! set (`pattern`, `text_match`, `fact`). SQL never calls one per row.
 
 mod fact;
 mod leaves;
@@ -16,7 +15,7 @@ pub(super) use leaves::{
     BindingSites, BindsCandidates, BindsOthers, Exported, FormatPart, FormatSides, Occurrences,
     Parsed,
 };
-pub(super) use pattern::{PatternRow, PatternTable, fresh_rows};
+pub(super) use pattern::{PatternRow, PatternTable, fresh_match};
 use regex::Regex;
 pub(super) use text::TextTable;
 
@@ -99,8 +98,9 @@ fn collect_vars(node: &PatternNode, vars: &mut Vec<(String, SlotKind)>) {
     }
 }
 
-/// How often, on this thread, the terminals' tables were filtered and a pattern's fresh matches
-/// computed: what shows a terminal runs once per statement or batch, never per row.
+/// How often, on this thread, the terminals' tables were filtered and a node was matched against a
+/// pattern in a fresh environment: what shows a terminal runs once per statement, never per row,
+/// and matches each (term, node) once per batch.
 #[cfg(test)]
 pub(super) mod calls {
     use std::cell::Cell;
