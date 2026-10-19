@@ -434,6 +434,57 @@ fn each_stops_at_a_round_whose_match_is_unknown() {
     );
 }
 
+/// Inside a candidate that binds a reported range, every choice point passes over its true
+/// candidates, also in a capture-free rule (which reads the trial's binding): the walk up to the
+/// call finds only `u`'s unknown, so the round's candidate `a` is unknown and ends the search
+/// before `u` or `b`. The same capture-free rule as a relation's rule, as a shared utility and as
+/// a capture-free recursive utility, none of which may be read from a stage matched without
+/// exclusion. A kind-only `any` passes over its true branch too: false, it decides the candidate
+/// false though an earlier term was unknown, and the search walks on to `u`.
+#[test]
+fn a_capture_free_rule_inside_an_excluded_candidate_passes_over_its_true_candidates() {
+    let call = json!({ "kind": "call_expression", "has": { "stopBy": "end", "kind": "identifier", "testUnknown": "^u" } });
+    let mut up = call.clone();
+    up["stopBy"] = json!("end");
+    let candidate = |term: (&str, Value)| {
+        let mut rule = json!({ "kind": "identifier", "pattern": "$A" });
+        rule[term.0] = term.1;
+        json!({ "kind": "call_expression", "has": { "field": "arguments", "has": rule } })
+    };
+    let cases = [
+        json!({ "rule": candidate(("inside", up.clone())) }),
+        json!({
+            "rule": candidate(("matches", json!("up"))),
+            "utils": { "up": { "inside": { "stopBy": "end", "matches": "call" } }, "call": call.clone() },
+        }),
+        json!({
+            "rule": candidate(("matches", json!("up"))),
+            "utils": { "up": { "any": [call.clone(), { "inside": { "matches": "up" } }] } },
+        }),
+    ];
+    for ast in cases {
+        assert_eq!(
+            agreed(
+                "typescript",
+                ast.clone(),
+                Some("A"),
+                "f(a, u, b);\ng(a, b);\n"
+            ),
+            ["f(a, u, b) A=a", "g(a, b) A=a", "g(a, b) A=b"],
+            "{ast}"
+        );
+    }
+    let kinds = json!({ "rule": { "kind": "call_expression", "has": { "field": "arguments", "has": { "all": [
+        { "kind": "identifier", "pattern": "$A" },
+        { "inside": up },
+        { "any": [{ "kind": "identifier" }, { "kind": "number" }] },
+    ] } } } });
+    assert_eq!(
+        agreed("typescript", kinds, Some("A"), "f(a, u, b);\n"),
+        ["f(a, u, b) A=a", "f(a, u, b) A=b", "f(a, u, b) A=u"]
+    );
+}
+
 /// Under `each`, a three-valued `nthChild` whose binding `ofRule` may be unknown is refused by
 /// name: the matcher's excluding re-match of `ofRule` can leave `UNKNOWN` set on a true answer.
 #[test]
