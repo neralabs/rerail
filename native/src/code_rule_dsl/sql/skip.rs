@@ -51,19 +51,19 @@ pub(super) static MODE: LazyLock<Mode> =
 pub(super) struct Counts {
     /// A B-tree's rows, by counted table (a frame's entry is unused).
     rows: Vec<i64>,
-    /// The frame's name, by counted table, where it is a frame of `store`.
-    frames: Vec<Option<String>>,
+    /// Each counted table's name, and whether it is a frame of `store`.
+    tables: Vec<(String, bool)>,
     store: Arc<FrameStore>,
     pub(super) marks: Vec<i64>,
 }
 
 impl Counts {
-    /// The counts of the tables `frames` names (each a frame of `store`, or a B-tree), all empty,
-    /// and `marks` blocks, none run.
-    pub(super) fn new(store: Arc<FrameStore>, frames: Vec<Option<String>>, marks: usize) -> Self {
+    /// The counts of `tables` (each a name, and whether it is a frame of `store`), all empty, and
+    /// `marks` blocks, none run.
+    pub(super) fn new(store: Arc<FrameStore>, tables: Vec<(String, bool)>, marks: usize) -> Self {
         Self {
-            rows: vec![0; frames.len()],
-            frames,
+            rows: vec![0; tables.len()],
+            tables,
             store,
             marks: vec![0; marks],
         }
@@ -71,10 +71,15 @@ impl Counts {
 
     /// The rows `table` holds.
     pub(super) fn rows(&self, table: usize) -> i64 {
-        match &self.frames[table] {
-            Some(name) => self.store.rows(name).expect("a registered frame") as i64,
-            None => self.rows[table],
+        match &self.tables[table] {
+            (name, true) => self.store.rows(name).expect("a registered frame") as i64,
+            (_, false) => self.rows[table],
         }
+    }
+
+    /// The name of `table`.
+    pub(super) fn name(&self, table: usize) -> &str {
+        &self.tables[table].0
     }
 
     /// Accounts a statement that changed `changed` rows (a frame counts its own).
@@ -204,7 +209,8 @@ mod tests {
 
     #[test]
     fn counts_follow_what_statements_wrote() {
-        let mut counts = Counts::new(Arc::default(), vec![None, None], 1);
+        let tables = vec![("a".to_owned(), false), ("b".to_owned(), false)];
+        let mut counts = Counts::new(Arc::default(), tables, 1);
         counts.wrote(&Writes::Insert(0), 4);
         counts.wrote(&Writes::Delete(0), 1);
         counts.wrote(&Writes::Insert(1), 2);

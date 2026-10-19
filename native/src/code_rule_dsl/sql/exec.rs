@@ -10,7 +10,7 @@ use super::nodes::{NodeFacts, NodeTable};
 use super::plan::{SlotKind, Statement, Unsupported};
 use super::skip::{self, Counts, MODE, Mode, Outcome};
 use super::terminals::{
-    BatchScopes, FactTable, PatternRow, PatternTable, PatternTerm, Terminal, TextTable, fresh_rows,
+    BatchScopes, FactTable, PatternRow, PatternTable, PatternTerm, Terminal, TextTable, fresh_match,
 };
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::GrammarMatcher;
@@ -26,7 +26,7 @@ use rusqlite::types::Value;
 use rusqlite::vtab::Module;
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 /// One file of a batch.
 pub(in crate::code_rule_dsl) struct BatchFile {
@@ -77,12 +77,16 @@ pub(super) struct Program {
     pub(super) terminals: Vec<Terminal>,
 }
 
+/// A pattern terminal's fresh-env matches tested so far in a batch, by key (`file << 32 | node`):
+/// the capture columns, `None` where the pattern does not match.
+type FreshMatches = HashMap<i64, Option<Arc<[Option<i64>]>>>;
+
 /// A batch: its files' tapes and node facts, its program, and the fresh-env matches of each
-/// pattern terminal, computed on first read.
+/// pattern terminal at the nodes tested so far.
 pub(super) struct Batch {
     pub(super) files: Vec<BatchFile>,
     pub(super) program: Arc<Program>,
-    fresh: Vec<OnceLock<Arc<Vec<PatternRow>>>>,
+    fresh: Vec<parking_lot::Mutex<FreshMatches>>,
     subfiles: parking_lot::Mutex<SubFiles>,
 }
 
@@ -113,7 +117,11 @@ impl Batch {
             .collect();
         Arc::new(Self {
             files,
-            fresh: program.terminals.iter().map(|_| OnceLock::new()).collect(),
+            fresh: program
+                .terminals
+                .iter()
+                .map(|_| Default::default())
+                .collect(),
             program,
             subfiles: parking_lot::Mutex::default(),
         })
@@ -158,9 +166,20 @@ impl Batch {
         file
     }
 
-    /// The fresh-env matches of pattern terminal `term`, computed once per batch.
-    pub(super) fn fresh(&self, index: usize, term: &PatternTerm) -> Arc<Vec<PatternRow>> {
-        Arc::clone(self.fresh[index].get_or_init(|| Arc::new(fresh_rows(self, term))))
+    /// The fresh-env matches of pattern terminal `index` at `keys` (`file << 32 | node`), each
+    /// (term, node) matched once per batch whichever statements ask for it.
+    pub(super) fn fresh(&self, index: usize, term: &PatternTerm, keys: &[i64]) -> Vec<PatternRow> {
+        let mut tested = self.fresh[index].lock();
+        keys.iter()
+            .filter_map(|&key| {
+                let (file, node) = ((key >> 32) as u32, key as u32);
+                let values = tested
+                    .entry(key)
+                    .or_insert_with(|| fresh_match(self, term, file as usize, node))
+                    .clone()?;
+                Some(PatternRow::fresh(file, node, values))
+            })
+            .collect()
     }
 }
 
@@ -321,14 +340,17 @@ pub(in crate::code_rule_dsl) fn compile_enumerating(
     each: Option<&str>,
 ) -> Result<Compiled, SqlError> {
     let mut builder = ProgramBuilder::default();
+    let mut planner = Planner::default();
     let mut clauses = Vec::new();
     for grammar in grammars {
         let statement = builder
             .clause_each(grammar, each)
             .map_err(SqlError::Unsupported)?;
-        clauses.push(ClauseSql::of(&statement, each));
+        let mut clause = ClauseSql::of(&statement, each);
+        planner.clause(&mut clause, cfg!(test));
+        clauses.push(clause);
     }
-    Ok(Compiled::new(builder, clauses, true))
+    Ok(Compiled::new(builder, planner, Some(clauses)))
 }
 
 /// Compiles every one of `grammars` the engine lowers into one program, each with the capture its
@@ -340,17 +362,19 @@ pub(in crate::code_rule_dsl) fn compile_each(
     grammars: &[(&GrammarMatcher, Option<&str>)],
 ) -> (Compiled, Vec<Result<usize, Unsupported>>) {
     let mut builder = ProgramBuilder::default();
-    let mut clauses = Vec::new();
+    let mut planner = Planner::default();
+    let mut planned = 0;
     let outcomes = grammars
         .iter()
         .map(|&(grammar, each)| {
             ProgramBuilder::default().clause_each(grammar, each)?;
             let statement = builder.clause_each(grammar, each)?;
-            clauses.push(ClauseSql::of(&statement, each));
-            Ok(clauses.len() - 1)
+            planner.clause(&mut ClauseSql::of(&statement, each), false);
+            planned += 1;
+            Ok(planned - 1)
         })
         .collect();
-    (Compiled::new(builder, clauses, false), outcomes)
+    (Compiled::new(builder, planner, None), outcomes)
 }
 
 /// Every operator the engine would refuse in `grammar`'s clause (`each`: its `violation.each`),
@@ -442,20 +466,22 @@ pub(in crate::code_rule_dsl) struct ClauseRun {
 }
 
 impl Compiled {
-    /// The program of `builder`'s terminals and stages and of `clauses`. `retain`: the tests keep
-    /// the emitted statements for their censuses (`emitted`); a session runs the plan's.
-    fn new(builder: ProgramBuilder, mut clauses: Vec<ClauseSql>, retain: bool) -> Self {
+    /// The program of `builder`'s terminals and stages and of the clauses `planner` planned.
+    /// `clauses`: in the tests, a program `compile_enumerating` compiled keeps its emitted
+    /// statements for the tests' censuses (`emitted`); a session runs the plan's.
+    fn new(builder: ProgramBuilder, planner: Planner, clauses: Option<Vec<ClauseSql>>) -> Self {
         let ProgramBuilder {
             terminals,
             mut stages,
             ..
         } = builder;
-        let plan = Plan::new(&mut stages, &mut clauses, cfg!(test) && retain).map(Arc::new);
+        let keep = cfg!(test) && clauses.is_some();
+        let plan = planner.finish(&mut stages, keep).map(Arc::new);
         Self {
             program: Arc::new(Program { terminals }),
             plan,
             #[cfg(test)]
-            emitted: retain.then_some((stages, clauses)),
+            emitted: clauses.map(|clauses| (stages, clauses)),
         }
     }
 
@@ -826,6 +852,18 @@ impl Catalog {
         Ok(id)
     }
 
+    /// The table of stage `index`. A three-valued stage keeps the nodes it is unknown at too,
+    /// with `unk`; a two-valued stage's are all 0.
+    fn stage(&mut self, index: usize) -> Result<usize, String> {
+        let table = emit::stage_table(index);
+        self.add(
+            &table,
+            Make::Frame(format!(
+                "{table}(file INTEGER, node INTEGER, unk INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (file, node))"
+            )),
+        )
+    }
+
     /// Adds `sql`, a `CREATE INDEX`, to the making of the B-tree it indexes.
     fn index(&mut self, sql: &str) -> Result<(), String> {
         let name = sql
@@ -876,38 +914,117 @@ pub(in crate::code_rule_dsl) struct Census {
     pub(in crate::code_rule_dsl) bytes: usize,
 }
 
-impl Plan {
-    /// The plan of `stages` and `clauses`, whose emitted statements it frees as it plans them
+/// A plan being made: each clause is planned as it is compiled, so its emitted statements are
+/// freed before the next is emitted, and the stages, which clauses share, once every clause is.
+/// The first error spoils the plan.
+#[derive(Default)]
+struct Planner {
+    catalog: Catalog,
+    texts: Texts,
+    classes: HashMap<String, usize>,
+    marks: usize,
+    clauses: Vec<(Prepared, Vec<CaptureColumn>)>,
+    error: Option<String>,
+}
+
+impl Planner {
+    /// Plans the program's next clause, freeing its emitted statements unless it is to `keep`
+    /// them.
+    fn clause(&mut self, clause: &mut ClauseSql, keep: bool) {
+        let index = self.clauses.len();
+        match self.plan_clause(index, clause, keep) {
+            Ok(prepared) => self.clauses.push((prepared, clause.captures.clone())),
+            Err(error) => {
+                self.error.get_or_insert(error);
+            }
+        }
+    }
+
+    fn plan_clause(
+        &mut self,
+        index: usize,
+        clause: &mut ClauseSql,
+        keep: bool,
+    ) -> Result<Prepared, String> {
+        let emitted = taken(&mut clause.sql, keep);
+        if self.error.is_some() {
+            return Err(String::new());
+        }
+        let each = format!("e{index}_");
+        let enumeration = if clause.each {
+            let made = [
+                (
+                    "x",
+                    "file INTEGER, root INTEGER, start INTEGER, \"end\" INTEGER, PRIMARY KEY (file, root, start, \"end\")) WITHOUT ROWID",
+                ),
+                (
+                    "a",
+                    "file INTEGER, root INTEGER, PRIMARY KEY (file, root)) WITHOUT ROWID",
+                ),
+                ("r", "round INTEGER)"),
+            ];
+            let mut ids = [0; 3];
+            let mut clear = Vec::with_capacity(3);
+            for (at, (table, columns)) in made.into_iter().enumerate() {
+                let name = format!("{each}{table}");
+                ids[at] = self.catalog.add(
+                    &name,
+                    Make::BTree(format!("CREATE TEMP TABLE {name}({columns}")),
+                )?;
+                clear.push(self.texts.clear(ids[at], &name, false));
+            }
+            Some((
+                ids,
+                Each {
+                    clear,
+                    active: ids[1],
+                    round: ids[2],
+                    prefix: each.clone(),
+                },
+            ))
+        } else {
+            None
+        };
+        let mut prepared = plan(
+            &mut self.catalog,
+            &mut self.texts,
+            &mut self.classes,
+            &mut self.marks,
+            &emitted,
+            (&format!("c{index}_"), "", &each),
+            run_id(None, index),
+        )?;
+        if let Some((ids, enumeration)) = enumeration {
+            prepared.tables.extend(ids);
+            prepared.each = Some(enumeration);
+        }
+        prepared.collect_texts();
+        Ok(prepared)
+    }
+
+    /// The plan, once every clause is planned: with `stages`, whose emitted statements it frees
     /// unless it is to `keep` them.
-    fn new(stages: &mut [Stage], clauses: &mut [ClauseSql], keep: bool) -> Result<Self, String> {
-        let mut catalog = Catalog::default();
-        let mut texts = Texts::default();
-        let mut classes = HashMap::new();
-        let mut marks = 0;
+    fn finish(mut self, stages: &mut [Stage], keep: bool) -> Result<Plan, String> {
+        if let Some(error) = self.error {
+            return Err(error);
+        }
         let mut planned_stages = Vec::with_capacity(stages.len());
         for (index, stage) in stages.iter_mut().enumerate() {
             let table = emit::stage_table(index);
-            // A three-valued stage keeps the nodes it is unknown at too, with `unk`; a two-valued
-            // stage's are all 0.
-            let id = catalog.add(
-                &table,
-                Make::Frame(format!(
-                    "{table}(file INTEGER, node INTEGER, unk INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (file, node))"
-                )),
-            )?;
+            let id = self.catalog.stage(index)?;
             // A stage's frames live until the batch ends: its registers are its own.
             let namespace = emit::stage_namespace(index);
             let mut prepared = plan(
-                &mut catalog,
-                &mut texts,
-                &mut classes,
-                &mut marks,
+                &mut self.catalog,
+                &mut self.texts,
+                &mut self.classes,
+                &mut self.marks,
                 &taken(&mut stage.sql, keep),
                 (&namespace, &namespace, ""),
                 run_id(Some(index), 0),
             )?;
             prepared.tables.push(id);
-            prepared.clear.push(texts.clear(id, &table, true));
+            prepared.clear.push(self.texts.clear(id, &table, true));
             let columns = if stage.three {
                 "file, node, unk"
             } else {
@@ -915,87 +1032,36 @@ impl Plan {
             };
             let mut effect = prepared.last.effect.clone();
             effect.writes = Writes::Insert(id);
-            prepared.last = texts.step(
+            prepared.last = self.texts.step(
                 format!("INSERT INTO {table}({columns}) {}", prepared.last.sql),
                 effect,
             );
             prepared.collect_texts();
             planned_stages.push((stage.dialect, prepared));
         }
-        let mut planned_clauses = Vec::with_capacity(clauses.len());
-        for (index, clause) in clauses.iter_mut().enumerate() {
-            let each = format!("e{index}_");
-            let enumeration = if clause.each {
-                let made = [
-                    (
-                        "x",
-                        "file INTEGER, root INTEGER, start INTEGER, \"end\" INTEGER, PRIMARY KEY (file, root, start, \"end\")) WITHOUT ROWID",
-                    ),
-                    (
-                        "a",
-                        "file INTEGER, root INTEGER, PRIMARY KEY (file, root)) WITHOUT ROWID",
-                    ),
-                    ("r", "round INTEGER)"),
-                ];
-                let mut ids = [0; 3];
-                let mut clear = Vec::with_capacity(3);
-                for (at, (table, columns)) in made.into_iter().enumerate() {
-                    let name = format!("{each}{table}");
-                    ids[at] = catalog.add(
-                        &name,
-                        Make::BTree(format!("CREATE TEMP TABLE {name}({columns}")),
-                    )?;
-                    clear.push(texts.clear(ids[at], &name, false));
-                }
-                Some((
-                    ids,
-                    Each {
-                        clear,
-                        active: ids[1],
-                        round: ids[2],
-                        prefix: each.clone(),
-                    },
-                ))
-            } else {
-                None
-            };
-            let mut prepared = plan(
-                &mut catalog,
-                &mut texts,
-                &mut classes,
-                &mut marks,
-                &taken(&mut clause.sql, keep),
-                (&format!("c{index}_"), "", &each),
-                run_id(None, index),
-            )?;
-            if let Some((ids, enumeration)) = enumeration {
-                prepared.tables.extend(ids);
-                prepared.each = Some(enumeration);
-            }
-            prepared.collect_texts();
-            planned_clauses.push((prepared, clause.captures.clone()));
-        }
         let steps = planned_stages
             .iter()
             .map(|(_, prepared)| prepared)
-            .chain(planned_clauses.iter().map(|(prepared, _)| prepared))
+            .chain(self.clauses.iter().map(|(prepared, _)| prepared))
             .map(|prepared| {
                 let blocks: usize = prepared.blocks.iter().map(|block| block.steps.len()).sum();
                 let each = prepared.each.as_ref().map_or(0, |each| each.clear.len());
                 prepared.steps.len() + blocks + 1 + prepared.clear.len() + each
             })
             .sum();
-        Ok(Self {
-            tables: catalog.tables,
+        Ok(Plan {
+            tables: self.catalog.tables,
             stages: planned_stages,
-            clauses: planned_clauses,
-            marks,
-            texts: texts.0.len(),
-            bytes: texts.0.keys().map(|text| text.len()).sum(),
+            clauses: self.clauses,
+            marks: self.marks,
+            texts: self.texts.0.len(),
+            bytes: self.texts.0.keys().map(|text| text.len()).sum(),
             steps,
         })
     }
+}
 
+impl Plan {
     fn census(&self) -> Census {
         let frames = self
             .tables
@@ -1339,6 +1405,10 @@ fn plan(
         }
     }
     assert!(effects.next().is_none(), "a statement per effect");
+    // The stages' tables the statements read: a clause is planned before the stages.
+    for &stage in &stages {
+        catalog.stage(stage)?;
+    }
     // A table's name in an effect, as the statements name it.
     let resolve = |name: &str| -> String {
         match name.strip_prefix(emit::TEMP) {
@@ -1468,7 +1538,7 @@ impl Session {
         let names = plan
             .tables
             .iter()
-            .map(|table| matches!(table.make, Make::Frame(_)).then(|| table.name.clone()))
+            .map(|table| (table.name.clone(), matches!(table.make, Make::Frame(_))))
             .collect();
         Ok(Self {
             connection,
@@ -1673,6 +1743,7 @@ impl Session {
             frames,
             stats,
             counts,
+            at: ("", 0),
         };
         let inputs = std::time::Instant::now();
         connection.prepare_cached(CLEAR_RUNS)?.execute([])?;
@@ -1729,6 +1800,7 @@ impl Session {
             if stage_files[stage].is_empty() {
                 continue;
             }
+            runner.at = ("stage", stage);
             let ran = runner.prepared(prepared)?;
             if ran || *MODE == Mode::Check {
                 runner.statement(&prepared.last, !ran)?;
@@ -1747,6 +1819,7 @@ impl Session {
                     position[*file] = at;
                 }
                 let (prepared, captures) = &clauses[run.statement];
+                runner.at = ("clause", run.statement);
                 if let Some(each) = &prepared.each {
                     let rows = connection
                         .prepare_cached(&format!("INSERT INTO {}r VALUES (0)", each.prefix))?
@@ -1850,6 +1923,7 @@ impl Session {
         let started = std::time::Instant::now();
         for (stage, (_, prepared)) in stages.iter().enumerate() {
             if !stage_files[stage].is_empty() {
+                runner.at = ("stage", stage);
                 runner.clear(prepared)?;
             }
         }
@@ -1858,15 +1932,40 @@ impl Session {
     }
 }
 
-/// A session's connection, frames, statistics and counts while a batch runs its statements.
+/// A session's connection, frames, statistics and counts while a batch runs its statements;
+/// `at`, the stage or clause running (`verify`).
 struct Runner<'s> {
     connection: &'s Connection,
     frames: &'s FrameStore,
     stats: &'s mut Stats,
     counts: &'s mut Counts,
+    at: (&'static str, usize),
 }
 
 impl Runner<'_> {
+    /// `RERAIL_SQL_SKIP=check`: panics where a table of `tables` holds other than its count,
+    /// before `sql` decides anything by it.
+    fn verify(&self, tables: &[usize], sql: &str) -> Result<(), SqlError> {
+        if *MODE != Mode::Check {
+            return Ok(());
+        }
+        for &table in tables {
+            let name = self.counts.name(table);
+            let rows: i64 = self
+                .connection
+                .prepare_cached(&format!("SELECT count(*) FROM {name}"))?
+                .query_row([], |row| row.get(0))?;
+            let counted = self.counts.rows(table);
+            assert!(
+                rows == counted,
+                "RERAIL_SQL_SKIP=check: {} {}: {name} holds {rows} rows, counted {counted}, before {sql}",
+                self.at.0,
+                self.at.1
+            );
+        }
+        Ok(())
+    }
+
     /// Runs a stage's or clause's steps, from its root frame on (`skip`): where the root frame is
     /// empty for the batch, every statement after it reads nothing, and is passed over (checking,
     /// run and found to change nothing); returns whether the root frame had rows.
@@ -1886,8 +1985,8 @@ impl Runner<'_> {
         Ok(!empty)
     }
 
-    /// Executes a stage's or clause's statements, each loop (`emit::LOOP` … `emit::UNTIL`) again
-    /// while its last query counts a change, and accepting a loop's last pass by its reads
+    /// Executes a stage's or clause's statements, each loop (`emit::LOOP` … `emit::UNTIL`) while
+    /// its last query counts a dirty key (none: not at all), and accepting a loop's last pass by its reads
     /// (`emit::ACYCLIC`). A loop that still changes after `MAX_LEVELS` passes refuses the batch: a
     /// recursion that deep is not evaluated. `emit::RUN<index>` runs `blocks[index]` there, over
     /// the tables as they stand. `known_empty`: checking a run the skip would pass over, whose
@@ -1934,15 +2033,24 @@ impl Runner<'_> {
                 })
                 .expect("a loop's end");
             let until = &steps[end].sql[emit::UNTIL.len()..];
+            // A loop's pass evaluates the dirty keys of its units: with none (the site demanded
+            // no new key), it would change nothing, and the units it reaches would be run for
+            // nothing again, at every site of every pass above them.
+            let dirty = |connection: &Connection| -> Result<bool, SqlError> {
+                let changed: i64 = connection
+                    .prepare_cached(until)?
+                    .query_row([], |row| row.get(0))?;
+                Ok(changed != 0)
+            };
+            if !dirty(self.connection)? {
+                at = end + 1;
+                continue;
+            }
             let mut passes = 0;
             loop {
                 self.steps(&steps[at + 1..end], blocks, known_empty)?;
                 passes += 1;
-                let changed: i64 = self
-                    .connection
-                    .prepare_cached(until)?
-                    .query_row([], |row| row.get(0))?;
-                if changed == 0 {
+                if !dirty(self.connection)? {
                     break;
                 }
                 if passes > MAX_LEVELS {
@@ -1962,6 +2070,7 @@ impl Runner<'_> {
         blocks: &[Block],
         known_empty: bool,
     ) -> Result<(), SqlError> {
+        self.verify(&block.demand, "a block's run")?;
         let idle =
             *MODE != Mode::Run && self.counts.sum(&block.demand) == self.counts.marks[block.mark];
         if idle && *MODE == Mode::Skip {
@@ -1986,6 +2095,10 @@ impl Runner<'_> {
     /// Executes one statement that writes rows, unless its rule proves it empty; counts what it
     /// changed.
     fn statement(&mut self, step: &Step, known_empty: bool) -> Result<(), SqlError> {
+        self.verify(&step.effect.inputs, &step.sql)?;
+        if let Writes::Insert(table) | Writes::Delete(table) = step.effect.writes {
+            self.verify(&[table], &step.sql)?;
+        }
         let outcome = self.outcome(step, known_empty);
         if outcome == Outcome::Empty && *MODE == Mode::Skip {
             self.stats.skipped += 1;
@@ -2026,6 +2139,7 @@ impl Runner<'_> {
     /// Empties one table, unless it is empty already: a frame through its buffers
     /// (`frames::CLEAR`, which runs no statement), a B-tree by its `DELETE`.
     fn clear_step(&mut self, clear: &Step) -> Result<(), SqlError> {
+        self.verify(&clear.effect.inputs, &clear.sql)?;
         let outcome = self.outcome(clear, false);
         if outcome == Outcome::Empty && *MODE == Mode::Skip {
             self.stats.skipped_clears += 1;

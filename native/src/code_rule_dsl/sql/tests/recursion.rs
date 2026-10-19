@@ -300,6 +300,64 @@ fn a_utility_referenced_at_three_sites_is_one_unit_each_site_demands() {
 }
 
 #[test]
+fn a_unit_reading_a_capture_it_does_not_hold_is_keyed_by_it() {
+    // `other` compares its `$X` against the caller's `$F`, which it never binds: two references
+    // make it one unit, whose answer at a node differs with `$F`, so `$F` is in its key.
+    let ast = json!({
+        "rule": { "pattern": "$F($$$)", "all": [
+            { "has": { "field": "arguments", "has": { "stopBy": "end", "matches": "other" } } },
+            { "has": { "field": "arguments", "has": { "stopBy": "end", "kind": "identifier", "matches": "other" } } },
+        ] },
+        "utils": { "other": { "kind": "identifier", "pattern": "$X",
+                              "compare": { "left": "X", "op": "ne", "right": "F", "text": "node" } } },
+    });
+    let source = "function q() { f(g(f)); h(h); k(x); }\n";
+    assert_eq!(
+        agreed("typescript", ast.clone(), None, source),
+        [
+            "f(g(f)) F=f X=g",
+            "g(f) F=g X=f",
+            "h(h) F=h X=h",
+            "k(x) F=k X=x"
+        ]
+    );
+    assert_eq!(markers("typescript", ast), [1, 1, 1]);
+}
+
+#[test]
+fn a_chain_of_units_runs_each_where_a_site_demands_new_keys() {
+    // `d<k>` reads `d<k-1>` at two sites: run at every site of every pass above it, the chain's
+    // loops would run 2^k times. A site that demands no new key runs nothing.
+    let depth = 16;
+    let mut utils = serde_json::Map::new();
+    utils.insert("d0".to_owned(), json!({ "kind": "statement_block" }));
+    for level in 1..=depth {
+        let below = format!("d{}", level - 1);
+        utils.insert(
+            format!("d{level}"),
+            json!({ "any": [
+                { "kind": "statement_block", "matches": below },
+                { "inside": { "stopBy": "end", "matches": below } },
+            ] }),
+        );
+    }
+    let ast = json!({
+        "rule": { "kind": "identifier", "matches": format!("d{depth}") },
+        "utils": utils,
+    });
+    let source = "function q() { if (a) { f(b); } }\nlet c = 1;\n";
+    crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE.set(Some(Default::default()));
+    assert_eq!(agreed("typescript", ast, None, source), ["a", "b", "f"]);
+    let statements: usize = crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE
+        .take()
+        .unwrap_or_default()
+        .values()
+        .map(|(_, _, runs)| runs)
+        .sum();
+    assert!(statements < 5_000, "{statements} statements");
+}
+
+#[test]
 fn a_parameterized_utility_called_at_two_sites_maps_its_parameters_per_site() {
     // `holds` is called with `P` bound to the callee at one site, and with `P` unbound at the
     // other, where it returns what it binds as `$Y`: one unit, keyed by `P`'s value.
@@ -776,7 +834,9 @@ fn a_recursion_level_runs_a_bounded_number_of_statements_per_batch() {
         passes.extend(program.loop_statements());
     }
     eprintln!("statements per recursion level: {passes:?}");
-    assert_eq!(passes, [63, 43]);
+    // Each unit's tables include the dirty-key index (`emit::unit_tables`), one statement more
+    // per demanding site inside the loop.
+    assert_eq!(passes, [65, 44]);
 }
 
 /// Every table a statement creates has one column list: a three-valued `all`'s frames are not
