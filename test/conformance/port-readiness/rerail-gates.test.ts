@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,10 +8,14 @@ import { afterEach, describe, it } from "vitest";
 
 import { CACHE_FORMAT, readCached, resultPath, ruleKey, toolPackKey, writeCached, type SharedKeyInputs } from "../../../conformance/port-readiness/cache.js";
 import { engineReadsGoldensCheck } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
-import { sparseDirectoryPattern, staleMessage } from "../../../conformance/port-readiness/recorded-adapter.js";
+import { renderComment } from "../../../conformance/port-readiness/comment.js";
+import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
+import { RUNTIMES_DIRECTORY, sparseDirectoryPattern, staleMessage, staleRuntimesMessage, toolPackChecks, unansweredGoldenMessage } from "../../../conformance/port-readiness/recorded-adapter.js";
+import { gatesRecordingSchema, RECORDING_FORMAT, type GatesCorpusRecording } from "../../../conformance/port-readiness/recording/schema.js";
+import { assetName, type RecordingLock } from "../../../conformance/port-readiness/recording/store.js";
 import type { CommandOptions, CommandResult, CommandRunner } from "../../../conformance/port-readiness/process.js";
 import { renderMarkdown } from "../../../conformance/port-readiness/report.js";
-import { blockingFailures, isCachedPack, isCachedRule, packDocuments, type CachedRule, type GatesReport, type RuleReport } from "../../../conformance/port-readiness/run.js";
+import { blockingFailures, corpusPinsCheck, isCachedPack, isCachedRule, packDocuments, type CachedRule, type GatesReport, type RuleReport } from "../../../conformance/port-readiness/run.js";
 import { parsePlanned, renderSummary, summarize } from "../../../conformance/port-readiness/summary.js";
 import { ungatedChecks } from "../../../conformance/port-readiness/ungated.js";
 
@@ -87,6 +92,15 @@ const noUngated = { checks: [], notGated: [], pending: [] };
 
 /** How python/bandit gets recorded, as a message that asks for a recording says it. */
 const ROUTES = "in a pull request, a maintainer adds the record-port-readiness label (or runs port-readiness-record.yml by hand with the pull request's number and head sha); locally, npm run port-readiness:record -- --pack python --tool bandit";
+
+/**
+ * The comment's and the job summary's line for a tool-pack a recording of the pull request fixes, for one whose
+ * runtimes changed, which only a recording of main fixes, and what follows either: where a record run's result shows.
+ */
+const LABEL_LINE = "`python/bandit` needs recording again: in a pull request, a maintainer adds the `record-port-readiness` label (or runs `port-readiness-record.yml` by hand with the pull request's number and head sha); on `main`, a maintainer runs `port-readiness-record.yml` from `main` with `pr` and `sha` empty.";
+const MAIN_FIRST_LINE = "`python/bandit` needs recording on `main`: the record run takes the recorder's runtimes from `main`, so a change to them lands on `main` first, and a maintainer then runs `port-readiness-record.yml` from `main` with `pr` and `sha` empty.";
+const RESULT_LINE = "A record run that works comments on the pull request with what it recorded (one for `main` writes that, and a link to open a pull request, to its job summary); one that fails says why in its log.";
+const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
 describe("location-based blocking", () => {
   it("a failing shipped rule blocks; a failing candidate does not", () => {
@@ -184,22 +198,128 @@ describe("location-based blocking", () => {
     const knownGaps: GatesReport["knownGaps"] = [{ id: "unrecorded", proven: false, kind: "not-recorded", excused: 0 }];
     const summary = summarize([{ ...report([rule("a", "shipped")]), knownGaps }], noUngated, []);
     assert.deepEqual(summary.blocking.map((row) => [row.check, row.why]), [["known-gap", `known gap unrecorded does not hold: no independent parser verdict on its probe is recorded, so the tool-pack needs recording again: ${ROUTES}`]]);
-    assert.deepEqual(summary.toolPacks.map((entry) => entry.needsRecording), [true]);
+    assert.deepEqual(summary.toolPacks.map((entry) => entry.needsRecording), ["pull-request"]);
   });
 
   it("a tool-pack whose recording is stale needs recording again, and says how; one failing another tool-pack check does not", () => {
     const failing = (id: string, detail: string): GatesReport => ({ ...report([rule("a", "shipped")]), toolPackChecks: { pass: false, checks: [{ id, ok: false, detail }] } });
     const stale = summarize([failing("pins-agree", `gates.yaml upstream.version 1.9.5 but recording.lock pins.version 1.9.4: ${staleMessage("python", "bandit")}`)], noUngated, []);
-    assert.deepEqual(stale.toolPacks.map((entry) => entry.needsRecording), [true]);
+    assert.deepEqual(stale.toolPacks.map((entry) => entry.needsRecording), ["pull-request"]);
     // The job summary is all a fork pull request gets, so the line is there as well as in the comment.
     // The job summary of a push to main and of the nightly has it too, where there is no pull request to label.
-    assert.match(renderSummary(stale), /^`python\/bandit` needs recording again: in a pull request, a maintainer adds the `record-port-readiness` label \(or runs `port-readiness-record\.yml` by hand with the pull request's number and head sha\), and that run comments on the pull request with what comes next; on `main`, a maintainer runs `port-readiness-record\.yml` from `main` with `pr` and `sha` empty\.$/mu);
+    // Neither promises a comment: a record run that fails before it publishes posts none.
+    assert.match(renderSummary(stale), new RegExp(`^${escaped(`${LABEL_LINE} ${RESULT_LINE}`)}$`, "mu"));
+    assert.doesNotMatch(renderSummary(stale), /what comes next/u);
     const duplicate = summarize([failing("bundled-load", "Duplicate bundled rule id: x")], noUngated, []);
-    assert.deepEqual(duplicate.toolPacks.map((entry) => entry.needsRecording), [false]);
-    assert.doesNotMatch(renderSummary(duplicate), /needs recording again/u);
+    assert.deepEqual(duplicate.toolPacks.map((entry) => entry.needsRecording), [null]);
+    assert.doesNotMatch(renderSummary(duplicate), /needs recording/u);
     // An edited case source is restored, not recorded again: recording refuses one that differs from upstream's.
-    const edited = summarize([failing("case-sources", "1 case source(s) differ: fixtures/x.py is 0123456789ab, recorded ba9876543210: restore each edited one to upstream's bytes (git checkout origin/main -- packs/python/upstream/bandit/<file>), or delete it so recording copies it again")], noUngated, []);
-    assert.deepEqual(edited.toolPacks.map((entry) => entry.needsRecording), [false]);
+    const edited = summarize([failing("case-sources", "1 case source(s) differ: fixtures/x.py is 0123456789ab, recorded ba9876543210: restore each edited one to the bytes it was recorded with (git log -p -- packs/python/upstream/bandit/fixtures shows the edits), or delete it so recording copies upstream's again")], noUngated, []);
+    assert.deepEqual(edited.toolPacks.map((entry) => entry.needsRecording), [null]);
+  });
+
+  it("a corpus recorded on other corpus pins needs recording again, in the pull request", () => {
+    // corpus-pins is runToolPack's own check: its detail is what needsRecording reads.
+    const pinned = corpusPinsCheck("python", "bandit", { tasks: "0".repeat(64), corpora: [] }, "the tasks\n", []);
+    const summary = summarize([{ ...report([rule("a", "shipped")]), toolPackChecks: { pass: false, checks: [pinned] } }], noUngated, []);
+    assert.deepEqual(summary.toolPacks.map((entry) => entry.needsRecording), ["pull-request"]);
+  });
+
+  it("a tool-pack whose runtimes changed needs recording on main, since the record run takes the runtimes from there", () => {
+    // Labelling the pull request would record with main's runtimes, and runtime-pins would fail again.
+    const runtimes = (also: GatesReport["toolPackChecks"]["checks"] = []): GatesReport => ({
+      ...report([rule("a", "shipped")]),
+      toolPackChecks: { pass: false, checks: [{ id: "runtime-pins", ok: false, detail: `bandit-1.9.4/pyproject.toml is 0123456789ab, recorded ba9876543210: ${staleRuntimesMessage("python", "bandit")}` }, ...also] },
+    });
+    const summary = summarize([runtimes()], noUngated, []);
+    assert.deepEqual(summary.toolPacks.map((entry) => entry.needsRecording), ["main-first"]);
+    const text = renderSummary(summary);
+    assert.match(text, new RegExp(`^${escaped(`${MAIN_FIRST_LINE} ${RESULT_LINE}`)}$`, "mu"));
+    assert.doesNotMatch(text, /record-port-readiness/u);
+    // A recording of main fixes the rest as well, so a tool-pack stale both ways is sent to main alone.
+    const both = summarize([runtimes([{ id: "license-sha256", ok: false, detail: `LICENSE is missing: ${staleMessage("python", "bandit")}` }])], noUngated, []);
+    assert.deepEqual(both.toolPacks.map((entry) => entry.needsRecording), ["main-first"]);
+    // Each route names its own tool-packs.
+    const ruff = { ...report([rule("b", "shipped")]), pack: "python", tool: "ruff", toolPack: "python/ruff", toolPackChecks: { pass: false, checks: [{ id: "pins-agree", ok: false, detail: `x: ${staleMessage("python", "ruff")}` }] } };
+    const mixed = renderSummary(summarize([runtimes(), ruff], noUngated, []));
+    assert.match(mixed, new RegExp(`^${escaped(`${LABEL_LINE.replace("python/bandit", "python/ruff")} ${MAIN_FIRST_LINE} ${RESULT_LINE}`)}$`, "mu"));
+  });
+
+  it("a tool-pack whose gates.yaml moved to a runtime its lock does not pin needs recording on main, though runtime-pins passes", () => {
+    // A pull request moving python/bandit to bandit-1.9.5 adds that directory and keeps bandit-1.9.4 for any tool-pack
+    // still on it (as next, react and react-hooks share eslint-config-next's), so runtime-pins, which checks what the lock
+    // pins, passes. The record run installs the runtimes from main, which has no bandit-1.9.5, so labelling the pull
+    // request would fail its leg: only pins-agree says so, and needsRecording reads its suffix.
+    const root = tempRoot();
+    const pins = { repository: "https://github.com/PyCQA/bandit", commit: "a".repeat(40), version: "1.9.4", runtime: "bandit-1.9.4" };
+    write(root, "packs/python/upstream/bandit/gates.yaml", `adapter: bandit
+rerail:
+  pack: python
+  project: bandit
+upstream:
+  name: PyCQA/bandit
+  repository: ${pins.repository}
+  commit: ${pins.commit}
+  version: 1.9.4
+  license: Apache-2.0
+  recommended_configs:
+    - default
+  runtime: bandit-1.9.5
+popularity:
+  observed_on: 2026-10-06
+  evidence:
+    - a fake upstream
+known_gaps: []
+`);
+    const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
+    const pinFiles = { "bandit-1.9.4": "bandit==1.9.4\n", "bandit-1.9.5": "bandit==1.9.5\n", python: "python\n" };
+    for (const [runtime, text] of Object.entries(pinFiles)) write(root, join(RUNTIMES_DIRECTORY, runtime, "pyproject.toml"), text);
+    write(root, "packs/python/licenses/bandit/LICENSE", "the license\n");
+    const runtimes: RecordingLock["runtimes"] = { "bandit-1.9.4": { "pyproject.toml": digest(pinFiles["bandit-1.9.4"]) }, python: { "pyproject.toml": digest(pinFiles.python) } };
+    const recording = gatesRecordingSchema.parse({
+      format: RECORDING_FORMAT, tool: "bandit", adapter: "bandit", pins, runtimes, identity: { bandit: "1.9.4" }, packChecks: [], licenseSha256: digest("the license\n"),
+      inScopeSamples: ["src/example.py"], corpus: { extensions: [".py"], caseSensitive: true }, keywords: [], commentVocabulary: [], fixtureWords: [], nameSets: {}, rules: {}, absent: [],
+      parsers: [{ parser: "cpython 3.14.8", grammar: true }], parserVerdicts: [],
+    });
+    const lock = { tool: "bandit", pins, runtimes, files: { "recording.json": { sha256: "b".repeat(64), asset: assetName("python", "bandit", "recording.json", "b".repeat(64)) } } } as unknown as RecordingLock;
+    const checks = toolPackChecks({ root, manifest: readGatesManifest(root, "python", "bandit"), lock, recording, corpus: { rules: [] } as unknown as GatesCorpusRecording, tools: [{ name: "bandit", version: "1.9.4" }], names: [] }, new Map(), new Map());
+    assert.deepEqual(checks.filter((check) => !check.ok).map((check) => check.id), ["pins-agree"]);
+    const summary = summarize([{ ...report([rule("a", "shipped")]), toolPackChecks: { pass: false, checks } }], noUngated, []);
+    assert.deepEqual(summary.toolPacks.map((entry) => entry.needsRecording), ["main-first"]);
+    assert.match(renderSummary(summary), new RegExp(`^${escaped(`${MAIN_FIRST_LINE} ${RESULT_LINE}`)}$`, "mu"));
+  });
+
+  it("a golden corpus.json does not answer needs recording again, in the pull request", () => {
+    // A goldens.tsv the pull request extended, before the record run answered its new files.
+    const unanswered = rule("a", "shipped");
+    const reason = `it has no expected answer: ${unansweredGoldenMessage("python", "bandit")}`;
+    const golden = { task: "t1", path: "src/new.py", expected: 0, status: "mismatch" as const, reason, actual: 0, missing: [], extra: [], failures: [] };
+    const matches = { ...unanswered.gates["matches-upstream-tests"], pass: false, checks: [{ id: "identical-on-goldens", ok: false, detail: `1 of 1 golden(s) differ, e.g. t1/src/new.py: ${reason}` }], goldens: { count: 1, differing: { count: 1, first: [golden] }, engineGaps: { count: 0, first: [] } } };
+    const failing: RuleReport = { ...unanswered, pass: false, stoppedAt: "matches-upstream-tests", gates: { ...unanswered.gates, "matches-upstream-tests": matches } };
+    const summary = summarize([report([failing])], noUngated, []);
+    assert.deepEqual(summary.toolPacks.map((entry) => entry.needsRecording), ["pull-request"]);
+    // A candidate's unanswered golden holds it back the same way.
+    const candidate = summarize([report([{ ...failing, location: "candidate" }])], noUngated, []);
+    assert.deepEqual(candidate.toolPacks.map((entry) => entry.needsRecording), ["pull-request"]);
+  });
+
+  it("the comment shortens a why to a table cell, and points a route it would cut at the line that names it whole", () => {
+    // A shipped rule blocked by stale tool-pack checks: its why is the failing checks, each ending with a route.
+    const blockedBy = `pins-agree: 1.9.5, locked 1.9.4: ${staleMessage("python", "bandit")}; license-sha256: LICENSE is missing: ${staleMessage("python", "bandit")}`;
+    const stale = (why: string) => ({
+      ...report([{ ...rule("a", "shipped"), pass: false, blockedBy: why }]),
+      toolPackChecks: { pass: false, checks: [{ id: "license-sha256", ok: false, detail: `LICENSE is missing: ${staleMessage("python", "bandit")}` }] },
+    });
+    const comment = renderComment(summarize([stale(blockedBy)], noUngated, []));
+    assert.ok(comment.includes(`${LABEL_LINE} ${RESULT_LINE}`), comment);
+    const row = (text: string) => text.split("\n").find((line) => line.includes("| `a` |"))!;
+    assert.ok(row(comment).includes("| pins-agree: 1.9.5, locked 1.9.4: the recording is stale (how: see above); license-sha256: LICENSE is missing: the recording is stale (how: see above) |"), row(comment));
+    // A why still too long once its routes are swapped is cut, and no half route is left in it.
+    const long = renderComment(summarize([stale(`pins-agree: ${"x".repeat(200)}: ${staleMessage("python", "bandit")}`)], noUngated, []));
+    assert.match(row(long), /\| pins-agree: x+… \|$/u);
+    assert.doesNotMatch(row(long), /a maintainer|npm run/u);
+    // The job summary has room for the whole why, routes and all.
+    assert.ok(renderSummary(summarize([stale(blockedBy)], noUngated, [])).includes(blockedBy));
   });
 
   it("documents come from rules/ (shipped) and candidates/** without probes or conformance manifests (candidate)", () => {
@@ -213,6 +333,14 @@ describe("location-based blocking", () => {
 });
 
 describe("the report", () => {
+  it("says a failing tool-pack check fails every shipped rule, and leaves what is wrong to the check", () => {
+    // bundled-load, case-sources with an edited source and corpus-complete fail for reasons a recording does not fix.
+    const failing = { ...report([rule("a", "shipped")]), toolPackChecks: { pass: false, checks: [{ id: "bundled-load", ok: false, detail: "Duplicate bundled rule id: x" }] } };
+    const markdown = renderMarkdown(failing);
+    assert.ok(markdown.includes("A tool-pack check fails, so every shipped rule of this tool-pack fails and none of its candidates is ready to promote: the failing check's detail says what is wrong, and how to record the tool-pack again when a recording fixes it."), markdown);
+    assert.doesNotMatch(markdown, /recording is stale/u);
+  });
+
   it("lists every rule matches-upstream-tests compared without an end part, by the positions compared", () => {
     const compared = (id: string, location: RuleReport["location"], parts: { endLine: boolean; endCol: boolean } | undefined): RuleReport => {
       const base = rule(id, location);

@@ -73,9 +73,14 @@ test("candidates with no conformance entry are listed as not judged, apart from 
 
 test("a tool-pack that needs recording again gets a line naming the label, and none does without one", () => {
   const base = summary(10, 2);
-  const flagged = (toolPack: string) => ({ ...base.toolPacks[0]!, toolPack, needsRecording: true });
+  const flagged = (toolPack: string, route: "pull-request" | "main-first" = "pull-request") => ({ ...base.toolPacks[0]!, toolPack, needsRecording: route });
   const text = renderComment({ ...base, toolPacks: [flagged("python/ruff")] });
-  assert.match(text, /^`python\/ruff` needs recording again: in a pull request, a maintainer adds the `record-port-readiness` label \(or runs `port-readiness-record\.yml` by hand with the pull request's number and head sha\), and that run comments on the pull request with what comes next; on `main`, a maintainer runs `port-readiness-record\.yml` from `main` with `pr` and `sha` empty\.$/mu);
-  assert.doesNotMatch(renderComment(base), /needs recording again/u);
+  // What a maintainer does, and where the result shows when the run works; no promise of a comment, which a run that
+  // fails before it publishes never posts.
+  assert.match(text, /^`python\/ruff` needs recording again: in a pull request, a maintainer adds the `record-port-readiness` label \(or runs `port-readiness-record\.yml` by hand with the pull request's number and head sha\); on `main`, a maintainer runs `port-readiness-record\.yml` from `main` with `pr` and `sha` empty\. A record run that works comments on the pull request with what it recorded \(one for `main` writes that, and a link to open a pull request, to its job summary\); one that fails says why in its log\.$/mu);
+  assert.doesNotMatch(renderComment({ ...base, toolPacks: [{ ...base.toolPacks[0]!, needsRecording: null }] }), /needs recording/u);
   assert.match(renderComment({ ...base, toolPacks: [flagged("python/ruff"), flagged("python/bandit")] }), /^`python\/ruff` and `python\/bandit` need recording again: /mu);
+  // A change to the recorder's runtimes is recorded on main once it is there: the label would record main's runtimes.
+  const runtimes = renderComment({ ...base, toolPacks: [flagged("python/ruff", "main-first"), flagged("python/bandit")] });
+  assert.match(runtimes, /^`python\/bandit` needs recording again: in a pull request, [^\n]*empty\. `python\/ruff` needs recording on `main`: the record run takes the recorder's runtimes from `main`, so a change to them lands on `main` first, and a maintainer then runs `port-readiness-record\.yml` from `main` with `pr` and `sha` empty\. A record run that works /mu);
 });

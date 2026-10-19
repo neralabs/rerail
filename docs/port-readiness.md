@@ -35,11 +35,11 @@ report shows every failure, not only the first.
 
 Tool-pack checks come before any gate. When one fails, every rule of the tool-pack fails with it: a shipped rule blocks
 and a candidate is not ready to promote. They fail when the recording is stale (`corpus-pins` and the recording checks),
-when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`: restore upstream's
-bytes, or delete the file for a recording to copy again, since recording refuses a committed case source that differs
-from upstream's), when a task or
-corpus a golden names could not be fetched (`corpus-complete`, usually a failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
-loader (`bundled-load`, for example two documents with one id).
+when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`: restore the bytes it
+was recorded with, or delete the file for a recording to copy again, since recording refuses a committed case source
+that differs from upstream's), when a task or corpus a golden names could not be fetched (`corpus-complete`, usually a
+failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule loader
+(`bundled-load`, for example two documents with one id).
 
 A check that fails for want of a recording says how to get one: in a pull request, a maintainer adds the
 `record-port-readiness` label (or runs `port-readiness-record.yml` by hand with the pull request's number and head
@@ -50,7 +50,9 @@ the leg's log says why. A recording made in the pull request cannot fix a change
 (`conformance/recorders/port-readiness/runtimes/`), a fork's change to the upstream its `gates.yaml` pins, or a new
 tool-pack: the record run takes the runtimes and its list of tool-packs from `main`, and refuses a fork's new pins.
 Such a change (a new tool-pack with its entry in `port-readiness-record.yml`'s `TOOL_PACKS`) lands on `main` first,
-and then a maintainer records `main` (`port-readiness-record.yml` from `main` with `pr` and `sha` empty).
+and then a maintainer records `main` (`port-readiness-record.yml` from `main` with `pr` and `sha` empty): a failing
+`runtime-pins`, a `pins-agree` that names a runtime the lock does not pin, and a missing `recording.lock`, say so
+instead of naming the label.
 
 Known parser gaps (`known_gaps` in `gates.yaml`) excuse an upstream test file that differs where the engine reported a
 parse failure on it, and nothing else. A gap holds when its probe occurs in every file it names, the engine still fails
@@ -199,10 +201,13 @@ shortening long lists; the job summary and the uploaded reports have everything.
 tool-packs, the comment and the job summary say how many of them the counts cover, and a line names the rest: "Not
 judged on this change", with main's verdict standing for them. A pull request that judged none gets no new comment
 unless a not-gated check fails, but its earlier comments are still collapsed as outdated. When a tool-pack's recording
-is stale, or a listed known gap has no parser verdict on its probe recorded, the comment and the job summary name the
-tool-pack under the headline and say a maintainer adds the `record-port-readiness` label (on `main`, runs
-`port-readiness-record.yml` with `pr` and `sha` empty); the comment cuts a check's detail short, and a fork's pull
-request gets no comment at all. The job summary reads top to bottom:
+is stale, a golden has no answer in `corpus.json`, or a listed known gap has no parser verdict on its probe recorded,
+the comment and the job summary name the tool-pack under the headline and say what a maintainer does: add the
+`record-port-readiness` label (on `main`, run `port-readiness-record.yml` with `pr` and `sha` empty), or, for a change
+to the recorder's runtimes, record `main` once the change is there. They say where the record run's result shows (a
+comment on the pull request, or for `main` the run's summary) and that a run that fails says why in its log. The
+comment cuts a check's detail short and points the route it would cut at that line; a fork's pull request gets no
+comment at all, so the job summary has the line too. The job summary reads top to bottom:
 
 1. The headline: shipped rules passing, blocking failures, candidates passing every gate.
 2. **Blocking failures:** each shipped rule that fails, the gate it stopped at, the check and why, and each listed
@@ -302,8 +307,9 @@ leg's lock, case sources and `UPSTREAM.md` rows as one commit on the recorded he
 - a fork's goes to `port-readiness-recordings/pr-<n>` here, since the default token cannot write to a fork, and a
   comment says to merge it;
 - a run started by hand from `main` with no pull request records `main`, pushes `port-readiness-recordings/run-<id>`,
-  and opens no pull request: a person opens it, from the link in the run's summary, so a recording never reaches a
-  protected branch without review.
+  and opens no pull request from it; a person does, from the link in the run's summary (built before the push, and
+  pointing back at the run attempt that pushed the branch), so a recording never reaches a protected branch without
+  review.
 
 A push made with the workflow token starts no workflow, so CI runs on a recording commit pushed to a pull request's
 branch once someone pushes to it again or closes and reopens the pull request. A pull request a person opens from a
@@ -322,14 +328,17 @@ Because the recordings are no longer in the diff, `port-readiness:record` writes
 expected findings gained and lost on upstream's own tests, corpus files answered differently, facts changed
 (`--changes <file>`, `conformance/port-readiness/recording/diff.ts`) — and the publish job posts it on the pull request,
 one comment per tool-pack, collapsing that tool-pack's earlier ones. A run with no pull request writes it to the run's
-summary instead, beside what was recorded and, when it made a commit, the link to open the pull request.
+summary instead, beside what was recorded and, when it made a commit, the link to open a pull request from its branch.
 When the committed lock names a recording that cannot be read (its fetch failed, or the lock or the cached recording
 fails its schema), the summary warns that it was not compared rather than calling it a first recording.
 
 The lock pins every runtime the recorder installs for the tool-pack: upstream's own (`upstream.runtime`), the adapter's
 (`parsers` for ESLint, `python` for Ruff and Bandit) and the environment the pack is linted in (`eslint.environment.runtime`).
 `pins-agree` fails when the lock's runtimes are not exactly those (`recordedRuntimes` in `manifest.ts`), so a
-`gates.yaml` that names a new runtime, or moves to another runtime directory, needs the tool-pack recorded again.
+`gates.yaml` that names a new runtime, or moves to another runtime directory, needs the tool-pack recorded again. The
+record run installs the runtimes from `main`, which may not have that directory yet (one tool-pack moving off a
+runtime directory others share adds a directory and keeps the old one, so `runtime-pins` passes), so it is recorded
+once the change is on `main`, as `pins-agree` then says.
 
 Each runtime is pinned by its `package.json` or `pyproject.toml` alone: every direct dependency at an exact version
 and in `overrides` (the recorder refuses a range), and no lockfile is committed (they are git-ignored). Only those direct

@@ -149,7 +149,8 @@ export function renderMarkdown(report: GatesReport): string {
     "",
     "## Tool-pack checks",
     "",
-    report.toolPackChecks.pass ? "Every tool-pack check passes." : "A tool-pack check fails, so every shipped rule of this tool-pack fails: the recording is stale.",
+    // A stale recording is one cause; an edited case source, an incomplete corpus and a bundled-load conflict are others.
+    report.toolPackChecks.pass ? "Every tool-pack check passes." : "A tool-pack check fails, so every shipped rule of this tool-pack fails and none of its candidates is ready to promote: the failing check's detail says what is wrong, and how to record the tool-pack again when a recording fixes it.",
     "",
     "| Check | Result | Detail |",
     "| --- | --- | --- |",

@@ -106,7 +106,10 @@ recording is stale when pins disagree between `gates.yaml`, `recording.lock`, `r
 runtime's pins (`package.json`, `pyproject.toml`, `.python-version`) differ from the ones the lock records, the kept
 LICENSE is not the recorded one, or a rule is not recorded (`corpus-pins` and the recording checks); each of them says how
 to record it again (recording/routes.ts): in a pull request a maintainer adds the `record-port-readiness` label, since CI
-takes only what `port-readiness-record.yml` records. `corpus-complete` fails when a file `corpus.json` answers for was not fetched with its
+takes only what `port-readiness-record.yml` records. That run takes the recorder's runtimes and its tool-packs from
+main, so `runtime-pins`, `pins-agree` on a runtime the lock does not pin (`gates.yaml` moved to another runtime
+directory, or names a new one) and a missing lock (a new tool-pack) say the change lands on main first, and main is then
+recorded. `corpus-complete` fails when a file `corpus.json` answers for was not fetched with its
 recorded sha256 (a download or git fetch failed); those results are not cached. `bundled-load` loads every document in
 the pack's `rules/` together through rerail's bundled-rule loader, on every run, so a conflict between rules (a
 duplicate id) fails it.

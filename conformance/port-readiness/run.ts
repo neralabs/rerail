@@ -10,13 +10,13 @@ import { packConformance, passesConformanceChecks } from "./checks/passes-confor
 import { notOverfitGate, type ClassifiedLiteral } from "./checks/not-overfit.js";
 import { canonicalJson, compactGate, NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, type SizeMetrics } from "./checks/compact.js";
 import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, provenGaps, realCodeGapCheck, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
-import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, wantedPlaces, type CorpusFile, type CorpusTask } from "./corpus.js";
+import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, wantedPlaces, type CorpusFile, type CorpusTask, type RerailCorpus } from "./corpus.js";
 import { engineKey, loadEngine, policyFamilies, type Engine, type EngineIdentity } from "./engine.js";
 import { byText, readGoldens, SYSTEMATIC_FILES, type Goldens } from "./goldens.js";
 import { GATES_MANIFEST, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { createRecordedAdapter, readRecordedInputs, staleMessage } from "./recorded-adapter.js";
-import { CORPUS_FILE, RECORDING_FILE } from "./recording/schema.js";
+import { CORPUS_FILE, RECORDING_FILE, type GatesCorpusRecording } from "./recording/schema.js";
 import { shardOf, type Shard } from "./shard.js";
 import { BLOCKING_GATES, GATES, verdict, type BlockingGateId, type Check, type GateId, type PackAdapter, type PackManifest, type PackRule, type ParserVerdict, type RealCodeGap, type UpstreamCase, type UpstreamFile } from "./types.js";
 
@@ -124,7 +124,7 @@ export interface GatesReport {
   engine: Pick<EngineIdentity, "sha256">;
   gates: { id: GateId; title: string; blocking: boolean }[];
   method: Record<"tool-pack" | GateId, Record<string, string>>;
-  /** Tool-pack checks: a failing one fails every shipped rule (the recording is stale). */
+  /** Tool-pack checks: a failing one fails every shipped rule (a stale recording, an edited case source, an incomplete corpus, a bundled-load conflict). */
   toolPackChecks: GateReport;
   integrity: string[];
   knownGaps: { id: string; proven: boolean; kind: GapCandidateReport["verdict"] | null; excused: number }[];
@@ -280,7 +280,7 @@ function method(manifest: PackManifest): GatesReport["method"] {
     "tool-pack": {
       pins: "gates.yaml upstream.version, recording.json pins and conformance.json tools[].version agree, and every runtime pin file the recording names (package.json, pyproject.toml, .python-version) has the committed file's sha256",
       license: "the kept licenses/<project>/LICENSE has the sha256 of upstream's LICENSE at the pinned commit, as recorded (rerail's pack checks 5 and 6 cover the rest of the licence contract)",
-      effect: "a failing tool-pack check fails every shipped rule of the tool-pack: the recording is stale",
+      effect: "a failing tool-pack check (a stale recording, an edited case source, an incomplete corpus, shipped rules that do not load together) fails every shipped rule of the tool-pack, and none of its candidates is ready to promote",
     },
     "upstream-status": {
       rule: `the rule exists upstream with an implementation and tests, its upstream metadata carries no deprecation (stable), and one of the approved configurations (${manifest.upstream.recommended_configs.join(", ")}) turns it on (recommended)`,
@@ -447,6 +447,16 @@ export function goldenListLines(goldens: Goldens, realCodeGaps: RealCodeGap[], r
 }
 
 /**
+ * corpus-pins: corpus.json (its `recorded` pins, null without one) was recorded on this branch's corpus tasks (the
+ * bytes of `tasksText`) and the corpora the pack pins. Its detail ends with staleMessage, which summary.ts reads to
+ * name the tool-pack as needing recording again.
+ */
+export function corpusPinsCheck(pack: string, tool: string, recorded: GatesCorpusRecording["pins"] | null, tasksText: string, corpora: readonly RerailCorpus[]): Check {
+  const ok = recorded !== null && recorded.tasks === sha256(tasksText) && canonicalJson(recorded.corpora) === canonicalJson(corpora);
+  return { id: "corpus-pins", ok, detail: ok ? "corpus.json was recorded on this branch's pinned tasks and corpora" : `corpus.json was recorded on other corpus pins: ${staleMessage(pack, tool)}` };
+}
+
+/**
  * Run every gate on every document of one gated tool-pack, from its recordings. With the cache, a rule whose inputs are
  * unchanged takes its cached result; when every rule does, nothing is fetched or evaluated.
  */
@@ -474,9 +484,7 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
   const corpora = await readRerailCorpora(root, pack);
   const corpusTasksText = readFileSync(CORPUS_TASKS, "utf8");
   const pinChecks: Check[] = [...adapter.packChecks];
-  const recordedPins = adapter.recordedCorpusPins;
-  const corpusPinsOk = recordedPins !== null && recordedPins.tasks === sha256(corpusTasksText) && canonicalJson(recordedPins.corpora) === canonicalJson(corpora);
-  pinChecks.push({ id: "corpus-pins", ok: corpusPinsOk, detail: corpusPinsOk ? "corpus.json was recorded on this branch's pinned tasks and corpora" : `corpus.json was recorded on other corpus pins: ${staleMessage(pack, tool)}` });
+  pinChecks.push(corpusPinsCheck(pack, tool, adapter.recordedCorpusPins, corpusTasksText, corpora));
 
   // bundled-load: rerail loads every document in the pack's rules/ together, whatever its upstream tool, so a conflict
   // between them (a duplicate id) fails here, where each rule's own loads check reads one document. It runs on every

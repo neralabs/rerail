@@ -30,8 +30,8 @@ name: Port readiness (record)
 # Where that commit goes: a pull request from a branch here gets it on that branch, as a fast-forward. A fork's goes to
 # `port-readiness-recordings/pr-<n>` here, with a comment saying to merge it: the default token cannot write to a fork,
 # and a token that could would hand a fork pull request write access to its own base. A run with no pull request pushes
-# `port-readiness-recordings/run-<id>` and opens no pull request: a person opens it, from the link the run's summary
-# gives, so a recording never reaches a protected branch without review; the summary also holds what moved, per rule.
+# `port-readiness-recordings/run-<id>` and opens no pull request from it; a person does, from the link the run's summary
+# gives, so a recording never reaches a protected branch without review. The summary also holds what moved, per rule.
 # A push made with the workflow token starts no workflow, so CI runs on a recording commit pushed to a pull request's
 # branch once someone pushes to it again or closes and reopens the pull request; a pull request a person opens from
 # `run-<id>` runs CI as any other does.
@@ -591,25 +591,28 @@ jobs:
           set -euo pipefail
           body="$RUNNER_TEMP/comment.md"
           if [ -z "$COMMIT" ]; then
-            echo "Recorded $LEGS_RECORDED. Every lock already names what was recorded, so there is nothing to commit." > "$body"
+            echo "Recorded $LEGS_RECORDED. Every lock already names what was recorded, so there is nothing to commit. If port readiness still fails on this commit, recording it again changes nothing: the failing check says what to do instead." > "$body"
             echo "pr=$PR" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ -z "$PR" ]; then
-            # This run opens no pull request: a person opens it, from the page the run's summary links to, with a title
-            # and a body pointing back at this run.
+            # A run with no pull request opens none from the branch it pushes; a person does, from the page the run's
+            # summary links to, which fills in a title and a body pointing back at this run attempt, the one that pushed
+            # the branch (its name carries the attempt too). The summary is written before the push, so a failure here
+            # leaves no branch pushed without it.
             branch="port-readiness-recordings/run-$RUN"
-            git push origin "$COMMIT:refs/heads/$branch"
             compare="$GITHUB_SERVER_URL/$REPO/compare/$BASE...$branch?expand=1"
+            attempt="$GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
             title="Port readiness: record $LEGS_RECORDED"
-            text="Recorded $LEGS_RECORDED on \`$BASE\` at $BASE_SHA by port-readiness-record.yml; what moved, per rule, is in the summary of $GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID. The recordings are assets of the \`$RELEASE\` release; this pull request commits the locks that name them, the case sources the recorder copied, and their UPSTREAM.md rows."
+            text="Recorded $LEGS_RECORDED on \`$BASE\` at $BASE_SHA by port-readiness-record.yml; what moved, per rule, is in the summary of $attempt. The recordings are assets of the \`$RELEASE\` release; this pull request commits the locks that name them, the case sources the recorder copied, and their UPSTREAM.md rows."
             prefilled="$compare&title=$(jq -rn --arg v "$title" '$v|@uri')&body=$(jq -rn --arg v "$text" '$v|@uri')"
-            echo "::notice::pushed $branch and opened no pull request: open one into $BASE from $compare"
             {
               echo "Recorded $LEGS_RECORDED on \`$BASE\` at $BASE_SHA and pushed $COMMIT to \`$branch\`: the locks, the case sources the recorder copied, and their UPSTREAM.md rows. The recordings are assets of the \`$RELEASE\` release."
               echo
               echo "This run opens no pull request: [open one from \`$branch\` into \`$BASE\`]($prefilled)."
             } > "$body"
+            git push origin "$COMMIT:refs/heads/$branch"
+            echo "::notice::pushed $branch and opened no pull request: open one into $BASE from $compare"
             echo "pr=" >> "$GITHUB_OUTPUT"
           elif [ "$FORK" = "false" ]; then
             if ! git push origin "$COMMIT:refs/heads/$BRANCH"; then

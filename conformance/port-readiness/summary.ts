@@ -4,10 +4,10 @@ import { join } from "node:path";
 
 import { notJudgedNote, recordingNeededLine, renderComment, unmappedCandidatesLine } from "./comment.js";
 import type { CommandRunner } from "./process.js";
-import { staleMessage } from "./recorded-adapter.js";
+import { staleMessage, staleRuntimesMessage, unansweredGoldenMessage } from "./recorded-adapter.js";
 import { recordingRoutes } from "./recording/routes.js";
 import { cell, firstFailure, gateTitle } from "./report.js";
-import { blockingFailures, gatedToolPacks, REPORT_FORMAT, unusedGapLine, type GatesReport } from "./run.js";
+import { blockingFailures, gatedToolPacks, REPORT_FORMAT, unusedGapLine, type GatesReport, type RuleReport } from "./run.js";
 import { BLOCKING_GATES } from "./types.js";
 import { ungatedChecks, type UngatedResult } from "./ungated.js";
 
@@ -27,6 +27,13 @@ export interface BlockingRow {
   why: string;
 }
 
+/**
+ * How a tool-pack that needs recording again gets it: `pull-request`, by recording the pull request (the label) or, on
+ * main, main; `main-first`, by recording main once the change is there, since the record run takes the recorder's
+ * runtimes from main.
+ */
+export type RecordingRoute = "pull-request" | "main-first";
+
 export interface Summary {
   format: typeof SUMMARY_FORMAT;
   shipped: { rules: number; pass: number };
@@ -44,20 +51,35 @@ export interface Summary {
   /** Candidates that pass every gate: the signal to promote them into rules/ (a reviewer still decides). */
   promotable: { toolPack: string; rule: string; upstreamRule: string; startsOn: boolean; startReason: string }[];
   onOff: { pack: string; rule: string; packJson: boolean; upstreamStatus: boolean; reason: string }[];
-  /** `needsRecording`: the report says the tool-pack must be recorded again (needsRecording below). */
-  toolPacks: { toolPack: string; shipped: string; candidates: string; failedGate: Record<string, number>; integrity: string[]; gapCandidates: number; toolPackChecks: boolean; needsRecording: boolean }[];
+  /** `needsRecording`: how the tool-pack is recorded again, when its report says it must be (needsRecording below). */
+  toolPacks: { toolPack: string; shipped: string; candidates: string; failedGate: Record<string, number>; integrity: string[]; gapCandidates: number; toolPackChecks: boolean; needsRecording: RecordingRoute | null }[];
   pass: boolean;
 }
 
+/** Whether a rule's matches-upstream-tests failed on a golden corpus.json has no answer for (`unanswered`). */
+function hasUnansweredGolden(rule: RuleReport, unanswered: string): boolean {
+  const gate = rule.gates["matches-upstream-tests"];
+  return gate.checks.some((check) => !check.ok && check.detail.includes(unanswered)) || gate.goldens.differing.first.some((golden) => golden.reason.includes(unanswered));
+}
+
 /**
- * Whether a report says its tool-pack must be recorded again: a check failed whose detail ends with staleMessage (the
- * recording checks and corpus-pins do; case-sources with an edited case source ends with how to restore it instead,
- * since recording refuses one), or a listed known gap has no parser verdict on its probe recorded.
+ * How a report says its tool-pack must be recorded again, or null: `main-first` when runtime-pins failed, or pins-agree
+ * on a runtime the lock does not pin (their details end with staleRuntimesMessage), since recording main once the
+ * change is there fixes everything else too;
+ * `pull-request` when another check failed whose detail ends with staleMessage (the recording checks and corpus-pins;
+ * case-sources with an edited case source ends with how to restore it instead, since recording refuses one), a golden
+ * has no answer in corpus.json, or a listed known gap has no parser verdict on its probe recorded.
  */
-function needsRecording(report: GatesReport): boolean {
+function needsRecording(report: GatesReport): RecordingRoute | null {
+  const failing = report.toolPackChecks.checks.filter((check) => !check.ok);
+  if (failing.some((check) => check.detail.endsWith(staleRuntimesMessage(report.pack, report.tool)))) return "main-first";
   const stale = staleMessage(report.pack, report.tool);
-  return report.toolPackChecks.checks.some((check) => !check.ok && check.detail.endsWith(stale))
-    || report.knownGaps.some((gap) => !gap.proven && gap.kind === "not-recorded");
+  const unanswered = unansweredGoldenMessage(report.pack, report.tool);
+  return failing.some((check) => check.detail.endsWith(stale))
+    || report.rules.some((rule) => hasUnansweredGolden(rule, unanswered))
+    || report.knownGaps.some((gap) => !gap.proven && gap.kind === "not-recorded")
+    ? "pull-request"
+    : null;
 }
 
 /** Why a listed known gap that is not proven blocks: what to record when no verdict on its probe is, else the report. */

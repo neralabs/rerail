@@ -88,18 +88,40 @@ describe("every leg", () => {
 
 // port-readiness-record.yml's publish job, read the way the runner reads it.
 describe("the record workflow", () => {
-  const publish = (): { name: string; if?: string; run?: string }[] => workflow("port-readiness-record.yml").jobs.publish.steps;
+  const publish = (): { name: string; if?: string; run?: string; env?: Record<string, string> }[] => workflow("port-readiness-record.yml").jobs.publish.steps;
+  const push = () => publish().find((step) => step.name === "Push the commit")!;
 
-  // A run with no pull request opens none: a person opens it, from the link in the run's summary.
+  // A run with no pull request opens none from the branch it pushes; a person does, from the link in the run's summary.
   it("opens no pull request: a run with none pushes its branch and links to open one by hand", () => {
     assert.deepEqual(publish().filter((step) => /\bgh pr create\b/u.test(step.run ?? "")).map((step) => step.name), []);
-    const push = publish().find((step) => step.name === "Push the commit")!.run!;
-    assert.match(push, /\/compare\/\$BASE\.\.\.\$branch\?expand=1/u);
+    assert.match(push().run!, /\/compare\/\$BASE\.\.\.\$branch\?expand=1/u);
     // And the job goes on: the arm for no pull request ends by saying there is none to comment on, and fails nothing.
-    const arm = /if \[ -z "\$PR" \]; then\n([\s\S]*?)\n\s*elif /u.exec(push)?.[1];
+    const arm = /if \[ -z "\$PR" \]; then\n([\s\S]*?)\n\s*elif /u.exec(push().run!)?.[1];
     assert.ok(arm !== undefined, "Push the commit has no arm for a run with no pull request");
     assert.doesNotMatch(arm, /\bexit [1-9]/u);
     assert.match(arm, /echo "pr=" >> "\$GITHUB_OUTPUT"$/u);
+    // What the run's summary says is built before the push, so a step that fails after it cannot leave a branch
+    // pushed with no notice and no summary saying where it is.
+    const pushed = arm.indexOf("git push origin");
+    assert.ok(pushed > 0, "the arm pushes nothing");
+    for (const built of ["compare=", "prefilled=", '} > "$body"']) assert.ok(arm.indexOf(built) >= 0 && arm.indexOf(built) < pushed, `${built} comes after the push`);
+    assert.ok(arm.indexOf("::notice::") > pushed, "the notice says the branch was pushed before it was");
+  });
+
+  it("links the pull request it leaves to open to the run attempt that pushed its branch", () => {
+    // The branch is named for the attempt, and a re-run's page would show another attempt's summary.
+    assert.equal(push().env!.RUN, "${{ github.run_id }}-${{ github.run_attempt }}");
+    const arm = /if \[ -z "\$PR" \]; then\n([\s\S]*?)\n\s*elif /u.exec(push().run!)![1]!;
+    assert.match(arm, /branch="port-readiness-recordings\/run-\$RUN"/u);
+    assert.match(arm, /\/actions\/runs\/\$GITHUB_RUN_ID\/attempts\/\$GITHUB_RUN_ATTEMPT\b/u);
+    assert.doesNotMatch(arm, /\/actions\/runs\/\$GITHUB_RUN_ID(?!\/attempts)/u);
+  });
+
+  it("says what to do when there is nothing to commit and port readiness still fails", () => {
+    // The lock it would write is the one committed, so a recording of this commit changes nothing the gates read.
+    const none = /if \[ -z "\$COMMIT" \]; then\n([\s\S]*?)\n\s*fi\n/u.exec(push().run!)?.[1];
+    assert.ok(none !== undefined, "Push the commit has no arm for a run with nothing to commit");
+    assert.match(none, /If port readiness still fails on this commit, recording it again changes nothing: the failing check says what to do instead\./u);
   });
 
   it("puts what a run with no pull request recorded, and what moved per rule, in the run's summary", () => {

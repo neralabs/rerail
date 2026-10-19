@@ -6,7 +6,7 @@ import { checkoutPinned, type CorpusFile } from "./corpus.js";
 import { readGatesManifest, recordedRuntimes, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { cleanVerdicts, CORPUS_FILE, RECORDING_FILE, gatesCorpusSchema, gatesRecordingSchema, spanOf, type GatesCorpusRecording, type GatesRecording } from "./recording/schema.js";
-import { recordingRoutes } from "./recording/routes.js";
+import { recordingRoutes, runtimesRecordingRoutes } from "./recording/routes.js";
 import { caseSourcesDigest, LIFTED_CASE_SOURCES, LIFTED_RUNTIMES, readCachedRecording, readRecordingLock, RECORDING_LOCK, type RecordingLock } from "./recording/store.js";
 import { banditSpan } from "./span-units/bandit.js";
 import { eslintSpan } from "./span-units/eslint.js";
@@ -24,6 +24,20 @@ export const RUNTIMES_DIRECTORY = "conformance/recorders/port-readiness/runtimes
 /** What a failing tool-pack check tells the reader to do: record the tool-pack again, by either route. */
 export function staleMessage(pack: string, tool: string): string {
   return `the recording is stale: ${recordingRoutes(pack, tool)}`;
+}
+
+/**
+ * What runtime-pins, and pins-agree on a runtime the lock does not pin, tell the reader to do: the record run takes the
+ * recorder's runtimes from main, so the tool-pack is recorded once the change to them is there, never by recording the
+ * pull request that makes it.
+ */
+export function staleRuntimesMessage(pack: string, tool: string): string {
+  return `the recording is stale: ${runtimesRecordingRoutes(pack, tool)}`;
+}
+
+/** Why a corpus file corpus.json has no answer for is excluded: a golden on it has no ground truth until it is recorded. */
+export function unansweredGoldenMessage(pack: string, tool: string): string {
+  return `${CORPUS_FILE} has no answer for it with this sha256, so the tool-pack needs recording again: ${recordingRoutes(pack, tool)}`;
 }
 
 const SPAN_UNITS: Record<GatesRecording["adapter"], (source: string, startByte: number, endByte: number, parts: SpanParts) => Span> = {
@@ -77,16 +91,19 @@ export function upstreamCheckoutDirectory(cacheRoot: string, pins: { repository:
 /**
  * fixtureTexts rebuilt from a checkout of upstream at the pinned commit: each recorded file read (UTF-8, as the live
  * adapters read it), its transform applied and its sha256 checked, then the inline texts. A missing file or another
- * digest throws: the recording is stale, and a silent narrowing would let not-overfit pass what it should not.
+ * digest throws, since the recording does not hold upstream's tests and a silent narrowing would let not-overfit pass
+ * what it should not; the gates name their tool-pack (`toolPack`), whose recording again fixes it. The recorder names
+ * none: it rebuilds what it has just recorded, so a difference there is its own.
  */
-export function rebuildFixtureTexts(checkout: string, recorded: RecordedFixtureTexts): string[] {
+export function rebuildFixtureTexts(checkout: string, recorded: RecordedFixtureTexts, toolPack?: { pack: string; tool: string }): string[] {
+  const fix = toolPack === undefined ? "" : `, so the tool-pack needs recording again: ${recordingRoutes(toolPack.pack, toolPack.tool)}`;
   const texts = recorded.files.map(({ path, sha256: digest, transform }) => {
     const file = join(checkout, path);
-    if (!existsSync(file)) throw new Error(`upstream's ${path} is missing from the checkout at ${checkout}`);
+    if (!existsSync(file)) throw new Error(`upstream's ${path} is not in its checkout at the pinned commit (${checkout}), though ${RECORDING_FILE} names it${fix}`);
     const raw = readFileSync(file, "utf8");
     const text = transform === "notebook-code-cells" ? notebookCodeCells(raw) : raw;
     const actual = sha256(text);
-    if (actual !== digest) throw new Error(`upstream's ${path}${transform === undefined ? "" : ` (${transform})`} has sha256 ${actual.slice(0, 12)}, recorded ${digest.slice(0, 12)}: the recording is stale`);
+    if (actual !== digest) throw new Error(`upstream's ${path}${transform === undefined ? "" : ` (${transform})`} has sha256 ${actual.slice(0, 12)} at the pinned commit, but ${RECORDING_FILE} recorded ${digest.slice(0, 12)}${fix}`);
     return text;
   });
   return [...texts, ...recorded.inline.map(({ text }) => text)];
@@ -100,12 +117,15 @@ export function sparseDirectoryPattern(path: string): string {
   return `/${posix.dirname(path)}/`.replace(/^\/\.\/$/u, "/").replace(/[\\*?[\]]/gu, "\\$&");
 }
 
-/** A sparse, shallow, blobless checkout of the directories of every recorded upstream file, at the pinned commit. */
-export async function fetchFixtureTexts(cacheRoot: string, pins: { repository: string; commit: string }, recorded: RecordedFixtureTexts, runner: CommandRunner): Promise<string[]> {
-  if (recorded.files.length === 0) return rebuildFixtureTexts(cacheRoot, recorded);
+/**
+ * A sparse, shallow, blobless checkout of the directories of every recorded upstream file, at the pinned commit, and
+ * the texts rebuilt from it; `toolPack` is the one whose recording names them, for the message when they differ.
+ */
+export async function fetchFixtureTexts(cacheRoot: string, pins: { repository: string; commit: string }, recorded: RecordedFixtureTexts, runner: CommandRunner, toolPack?: { pack: string; tool: string }): Promise<string[]> {
+  if (recorded.files.length === 0) return rebuildFixtureTexts(cacheRoot, recorded, toolPack);
   const directories = [...new Set(recorded.files.map(({ path }) => sparseDirectoryPattern(path)))].sort();
   const checkout = await checkoutPinned(pins.repository, pins.commit, upstreamCheckoutDirectory(cacheRoot, pins), directories, runner, { blobless: true });
-  return rebuildFixtureTexts(checkout, recorded);
+  return rebuildFixtureTexts(checkout, recorded, toolPack);
 }
 
 /** Everything a recorded adapter is read from, so tests can build one without a checkout. */
@@ -160,7 +180,10 @@ export function readRecordedInputs(root: string, cacheRoot: string, pack: string
  * `liftedRuntimes` for a recording uploaded by hand before the recorder pinned them all), the runtimes' pins
  * (package.json, pyproject.toml, .python-version) are the committed ones, the kept LICENSE is the recorded one, every committed case source has its recorded sha256 (or, in a recording uploaded by
  * hand before cases carried one, the digest `liftedCaseSources` pins them all by), and the recording covers every
- * upstream rule the pack names. Any failure means the recording is stale.
+ * upstream rule the pack names. A failure means the recording is stale, except a committed case source edited away
+ * from the bytes it was recorded with, which is restored instead, since recording refuses one. A stale recording is
+ * recorded in its pull request, except when the runtimes changed (runtime-pins, or pins-agree on a runtime the lock
+ * does not pin): the record run takes them from main, so then it is recorded once the change is on main.
  *
  * The pins and the runtime digests are read from `recording.lock`, which is committed, and the downloaded recording
  * must agree with it: a pull request whose pins moved is stale on its own commit, before any byte is fetched, and a
@@ -205,7 +228,12 @@ export function toolPackChecks(
     ...(canonical(lock?.runtimes ?? recording.runtimes) === canonical(recording.runtimes) ? [] : [`${RECORDING_LOCK} and recording.json disagree about the recorder's runtimes`]),
     ...(canonical(pinnedRuntimes) === canonical(wantedRuntimes) ? [] : [`gates.yaml's adapter and environment install the runtimes ${wantedRuntimes.join(", ")} but ${RECORDING_LOCK}${lifted === undefined ? "" : " with recording/store.ts's LIFTED_RUNTIMES"} pins ${pinnedRuntimes.join(", ") || "none"}`]),
   ];
-  checks.push({ id: "pins-agree", ok: pinMismatches.length === 0, detail: pinMismatches.length === 0 ? `${tool} ${pins.version} at ${pins.commit} in gates.yaml, ${RECORDING_LOCK}, recording.json and conformance.json` : `${pinMismatches.join("; ")}: ${stale}` });
+  // A runtime gates.yaml installs that the lock does not pin (upstream.runtime or the environment's moved, or one was
+  // added) is one this change points it at, and maybe a directory it adds: the record run installs the runtimes from
+  // main, so it is recorded as a change to them is, once it is on main. The gates cannot see whether main has it.
+  const unpinnedRuntimes = wantedRuntimes.filter((runtime) => !pinnedRuntimes.includes(runtime));
+  const pinsFix = unpinnedRuntimes.length === 0 ? stale : staleRuntimesMessage(pack, tool);
+  checks.push({ id: "pins-agree", ok: pinMismatches.length === 0, detail: pinMismatches.length === 0 ? `${tool} ${pins.version} at ${pins.commit} in gates.yaml, ${RECORDING_LOCK}, recording.json and conformance.json` : `${pinMismatches.join("; ")}: ${pinsFix}` });
 
   const pinFileMismatches: string[] = [];
   for (const [runtime, files] of Object.entries(runtimes).sort(([a], [b]) => (a < b ? -1 : 1))) {
@@ -216,7 +244,8 @@ export function toolPackChecks(
     }
   }
   const liftedRuntimesNote = lifted === undefined ? "" : ` (${Object.keys(lifted).sort().join(", ")} pinned in recording/store.ts's LIFTED_RUNTIMES: ${RECORDING_FILE} was uploaded by hand before its lock named every runtime)`;
-  checks.push({ id: "runtime-pins", ok: pinFileMismatches.length === 0, detail: pinFileMismatches.length === 0 ? `${pinnedRuntimes.length} runtime(s) match their committed pins${liftedRuntimesNote}` : `${pinFileMismatches.slice(0, 3).join("; ")}: ${stale}` });
+  // The record run takes the runtimes from main, so a change to them is recorded there, once it has landed.
+  checks.push({ id: "runtime-pins", ok: pinFileMismatches.length === 0, detail: pinFileMismatches.length === 0 ? `${pinnedRuntimes.length} runtime(s) match their committed pins${liftedRuntimesNote}` : `${pinFileMismatches.slice(0, 3).join("; ")}: ${staleRuntimesMessage(pack, tool)}` });
 
   const licensePath = join(root, "packs", pack, "licenses", manifest.rerail.project, "LICENSE");
   const licenseSha = existsSync(licensePath) ? sha256(readFileSync(licensePath)) : null;
@@ -257,9 +286,10 @@ export function toolPackChecks(
   } else if (undigested.length > 0 && caseSourcesDigest(undigested) !== pinned) {
     editedSources.push(`the ${undigested.length} case source(s) ${liftedAsset} records no sha256 for are ${caseSourcesDigest(undigested).slice(0, 12)} together, pinned ${pinned!.slice(0, 12)} in recording/store.ts's LIFTED_CASE_SOURCES (git log -p -- packs/${pack}/upstream/${tool}/fixtures shows what changed)`);
   }
-  // The edited ones lead, since recording again waits on them.
+  // The edited ones lead, since recording again waits on them. What to do names no branch to restore from: a fork's
+  // main is its own, and after an upstream bump no branch has the bytes the recording will be made on.
   const differing = [...editedSources, ...sourceMismatches];
-  const restore = `restore each edited one to upstream's bytes (git checkout origin/main -- packs/${pack}/upstream/${tool}/<file>), or delete it so recording copies it again`;
+  const restore = `restore each edited one to the bytes it was recorded with (git log -p -- packs/${pack}/upstream/${tool}/fixtures shows the edits), or delete it so recording copies upstream's again`;
   const liftedNote = undigested.length === 0 ? "" : ` (${undigested.length} of them pinned together: ${RECORDING_FILE} was uploaded by hand before cases carried a sha256)`;
   checks.push({ id: "case-sources", ok: differing.length === 0, detail: differing.length === 0 ? `${recordedDigests.size} committed case source(s) are the bytes upstream's answers were recorded on${liftedNote}` : `${differing.length} case source(s) differ: ${differing.slice(0, 3).join("; ")}: ${editedSources.length === 0 ? stale : restore}` });
 
@@ -323,7 +353,7 @@ export function createRecordedAdapter(
   const corpusVerdicts = new Map<string, ParserVerdict[]>((corpus?.files ?? []).map((file) => [`${file.path}\0${file.sha256}`, file.verdicts ?? corpusSilent]));
   const corpusByPlace = new Map((corpus?.files ?? []).map((file) => [`${file.task}\0${file.path}`, file]));
   // One string for every corpus file corpus.json does not answer: the corpus has many, and a golden among them fails on it.
-  const unanswered = `${CORPUS_FILE} has no answer for it with this sha256, so the tool-pack needs recording again: ${recordingRoutes(manifest.rerail.pack, recording.tool)}`;
+  const unanswered = unansweredGoldenMessage(manifest.rerail.pack, recording.tool);
 
   return {
     identity: recording.identity,
@@ -355,7 +385,7 @@ export function createRecordedAdapter(
     async loadFixtureTexts() {
       if (recording.fixtureTexts === undefined || fetchedTexts !== undefined) return;
       if (upstream === undefined) throw new Error(`${RECORDING_FILE} records upstream's fixture texts by origin, and this recorded adapter has no cache to fetch them into`);
-      fetchedTexts = await fetchFixtureTexts(upstream.cacheRoot, recording.pins, recording.fixtureTexts, upstream.runner);
+      fetchedTexts = await fetchFixtureTexts(upstream.cacheRoot, recording.pins, recording.fixtureTexts, upstream.runner, { pack: manifest.rerail.pack, tool: recording.tool });
     },
     fixtureTexts() {
       if (recording.fixtureTexts !== undefined) {

@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { test } from "vitest";
 
 import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
-import { RUNTIMES_DIRECTORY, staleMessage, toolPackChecks } from "../../../conformance/port-readiness/recorded-adapter.js";
+import { RUNTIMES_DIRECTORY, staleMessage, staleRuntimesMessage, toolPackChecks } from "../../../conformance/port-readiness/recorded-adapter.js";
 import { gatesRecordingSchema, RECORDING_FORMAT } from "../../../conformance/port-readiness/recording/schema.js";
 import { assetName, type RecordingLock } from "../../../conformance/port-readiness/recording/store.js";
 
@@ -113,18 +113,32 @@ test("a lock that pins every runtime the tool-pack installs, at its committed pi
 });
 
 test("a lock missing a runtime gates.yaml installs, or pinning one it doesn't, fails pins-agree as a stale recording", () => {
+  // A runtime gates.yaml installs that the lock does not pin is one this change points it at: a lock older than the
+  // recorder's pinning of them all names the rest in LIFTED_RUNTIMES. The record run installs the runtimes from main,
+  // which may not have that directory yet, so the tool-pack is recorded once the change is on main, as for runtime-pins.
   // The case that let eslint-config-next's package.json change unchecked: runtime-pins passes on what the lock names.
   const missing = runtimeChecks(BANDIT_PIN);
   assert.equal(missing.runtimePins.ok, true, missing.runtimePins.detail);
   assert.equal(missing.pinsAgree.ok, false);
   assert.match(missing.pinsAgree.detail, /gates\.yaml's adapter and environment install the runtimes bandit-1\.9\.4, python but recording\.lock pins bandit-1\.9\.4/u);
-  assert.ok(missing.pinsAgree.detail.endsWith(staleMessage("demo", "bandit")), missing.pinsAgree.detail);
+  assert.ok(missing.pinsAgree.detail.endsWith(staleRuntimesMessage("demo", "bandit")), missing.pinsAgree.detail);
 
-  // gates.yaml moved to another runtime directory while the lock still names the old one, whose pins are unchanged.
-  const moved = runtimeChecks({ ...BANDIT_PIN, "python-old": PYTHON_PIN.python! }, new Map(), { "bandit-1.9.4": BANDIT, "python-old": PYTHON });
+  // gates.yaml moved to another runtime directory while the lock still names the old one, whose pins are unchanged: a
+  // pull request that adds the directory and keeps the old one for the tool-packs still on it (as next, react and
+  // react-hooks share eslint-config-next's). runtime-pins checks only what the lock pins, so it passes.
+  const moved = runtimeChecks({ ...BANDIT_PIN, "python-old": PYTHON_PIN.python! }, new Map(), { "bandit-1.9.4": BANDIT, "python-old": PYTHON, python: PYTHON });
   assert.equal(moved.runtimePins.ok, true, moved.runtimePins.detail);
   assert.equal(moved.pinsAgree.ok, false);
   assert.match(moved.pinsAgree.detail, /install the runtimes bandit-1\.9\.4, python but recording\.lock pins bandit-1\.9\.4, python-old/u);
+  assert.ok(moved.pinsAgree.detail.endsWith(staleRuntimesMessage("demo", "bandit")), moved.pinsAgree.detail);
+
+  // A lock pinning a runtime gates.yaml no longer installs, and every one it does: main has them all, so recording the
+  // pull request fixes it.
+  const extra = runtimeChecks({ ...BANDIT_PIN, ...PYTHON_PIN, "python-old": PYTHON_PIN.python! }, new Map(), { "bandit-1.9.4": BANDIT, "python-old": PYTHON, python: PYTHON });
+  assert.equal(extra.runtimePins.ok, true, extra.runtimePins.detail);
+  assert.equal(extra.pinsAgree.ok, false);
+  assert.match(extra.pinsAgree.detail, /install the runtimes bandit-1\.9\.4, python but recording\.lock pins bandit-1\.9\.4, python, python-old/u);
+  assert.ok(extra.pinsAgree.detail.endsWith(staleMessage("demo", "bandit")), extra.pinsAgree.detail);
 });
 
 test("a hand-uploaded recording's LIFTED_RUNTIMES entry counts as part of its lock, and its pins are checked", () => {
@@ -140,7 +154,8 @@ test("a hand-uploaded recording's LIFTED_RUNTIMES entry counts as part of its lo
   assert.equal(edited.pinsAgree.ok, true, edited.pinsAgree.detail);
   assert.equal(edited.runtimePins.ok, false);
   assert.match(edited.runtimePins.detail, /^python\/pyproject\.toml is [0-9a-f]{12}, recorded [0-9a-f]{12}/u);
-  assert.ok(edited.runtimePins.detail.endsWith(staleMessage("demo", "bandit")), edited.runtimePins.detail);
+  // The record run takes the runtimes from main, so the change is recorded there once it has landed.
+  assert.ok(edited.runtimePins.detail.endsWith(staleRuntimesMessage("demo", "bandit")), edited.runtimePins.detail);
 
   // Only the recording an entry names: another hand-uploaded recording's entry does not excuse this one.
   const other = runtimeChecks(BANDIT_PIN, new Map([[assetName("demo", "bandit", "recording.json", "c".repeat(64)), PYTHON_PIN]]));

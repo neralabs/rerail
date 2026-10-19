@@ -116,8 +116,9 @@ async function verifyAttestation(text: string, asset: LockedFile, pack: string, 
       "--signer-workflow", `${repository}/${RECORD_WORKFLOW}`, "--source-ref", RECORD_REF, "--deny-self-hosted-runners",
     ], { env });
   } catch (error) {
+    // The route ends the message, so its command copies whole.
     throw new Error(`the release's ${asset.asset} is not verified as recorded by ${RECORD_WORKFLOW} on ${RECORD_REF}, and no other asset is taken (not one uploaded by hand or by another workflow; verifying needs the GitHub CLI, signed in or given GITHUB_TOKEN).`
-      + ` If that workflow did not record it, the tool-pack needs recording again: ${recordingRoutes(pack, tool)}. The check said: ${error instanceof Error ? error.message : String(error)}`);
+      + ` The check said: ${error instanceof Error ? error.message : String(error)}. If that workflow did not record it, the tool-pack needs recording again: ${recordingRoutes(pack, tool)}`);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

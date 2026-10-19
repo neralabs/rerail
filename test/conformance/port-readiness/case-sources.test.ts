@@ -37,8 +37,12 @@ known_gaps: []
 `;
 
 const SOURCE = "import pickle\npickle.loads(b'')\n";
-/** What an edited case source says to do, written out here so a change to its wording is a change to this test. */
-const RESTORE = "restore each edited one to upstream's bytes (git checkout origin/main -- packs/demo/upstream/bandit/<file>), or delete it so recording copies it again";
+/**
+ * What an edited case source says to do, written out here so a change to its wording is a change to this test. It is
+ * rendered as Markdown too, so it names no placeholder in angle brackets, and it names no branch to restore from: a
+ * fork's main is its own, and after an upstream bump no branch has the bytes the recording will be made on.
+ */
+const RESTORE = "restore each edited one to the bytes it was recorded with (git log -p -- packs/demo/upstream/bandit/fixtures shows the edits), or delete it so recording copies upstream's again";
 const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 function recording(caseDigest: string | undefined) {

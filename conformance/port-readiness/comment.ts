@@ -7,9 +7,9 @@
  * counts, keeps every list collapsed, groups candidates by the gate they stop at, and drops detail (longest lists
  * first) until it fits. The job summary and the uploaded reports always have everything.
  */
-import { RECORD_LABEL } from "./recording/routes.js";
+import { RECORD_LABEL, recordingRoutes, runtimesRecordingRoutes } from "./recording/routes.js";
 import { cell } from "./report.js";
-import type { BlockingRow, Summary } from "./summary.js";
+import type { BlockingRow, RecordingRoute, Summary } from "./summary.js";
 
 /** Starts every port readiness gates comment, so CI finds the earlier ones to minimize. */
 export const COMMENT_MARKER = "<!-- rerail-port-readiness -->";
@@ -21,6 +21,25 @@ export const COMMENT_LIMIT = 60_000;
 const WHY_LENGTH = 160;
 
 const trim = (text: string, length = WHY_LENGTH): string => (text.length <= length ? text : `${text.slice(0, length - 1)}…`);
+
+/** What a why's recording route becomes in a table cell: the recording line above names it whole. */
+const SEE_ABOVE = " (how: see above)";
+
+/**
+ * A why as a table cell: each recording route in it (`routes`, those of the tool-packs the recording line names) is
+ * swapped for SEE_ABOVE, so cutting the cell to WHY_LENGTH never leaves half a route, then it is cut.
+ */
+function whyCell(why: string, routes: readonly string[]): string {
+  return trim(routes.reduce((text, route) => text.replaceAll(`: ${route}`, SEE_ABOVE), why));
+}
+
+/** The routes a why can end its sentences with, for each tool-pack the recording line names (whyCell swaps them). */
+function lineRoutes(summary: Summary): string[] {
+  return summary.toolPacks.filter((entry) => entry.needsRecording !== null).flatMap((entry) => {
+    const [pack, tool] = entry.toolPack.split("/") as [string, string];
+    return [recordingRoutes(pack, tool), runtimesRecordingRoutes(pack, tool)];
+  });
+}
 
 function table(header: string[], rows: string[][]): string[] {
   return [`| ${header.join(" | ")} |`, `| ${header.map(() => "---").join(" | ")} |`, ...rows.map((row) => `| ${row.map(cell).join(" | ")} |`)];
@@ -57,27 +76,36 @@ export function notJudgedNote(summary: Summary): { scope: string; line: string }
 }
 
 /**
- * The line naming the tool-packs whose report says they must be recorded again (Summary.toolPacks' needsRecording), and
- * how a pull request gets that, or main, whose job summary has the line too; undefined when none does. The recording
- * run's own comment says what to do after it.
+ * The line naming the tool-packs whose report says they must be recorded again (Summary.toolPacks' needsRecording),
+ * what a maintainer does for each route, and where a record run's result shows; undefined when none does. It is in the
+ * job summary too, where a push to main and a fork's pull request read it. A tool-pack whose runtimes changed is sent to
+ * main alone: the record run takes the runtimes from there, so the label would record main's runtimes again. The line
+ * promises no comment, since a record run that fails before it publishes (refused, the head moved, a leg failed)
+ * posts none.
  */
 export function recordingNeededLine(summary: Summary): string | undefined {
-  const names = summary.toolPacks.filter((entry) => entry.needsRecording).map((entry) => `\`${entry.toolPack}\``);
-  if (names.length === 0) return undefined;
-  const listed = names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names.at(-1)!}`;
-  return `${listed} ${names.length === 1 ? "needs" : "need"} recording again: in a pull request, a maintainer adds the \`${RECORD_LABEL}\` label`
-    + " (or runs `port-readiness-record.yml` by hand with the pull request's number and head sha), and that run comments on the pull request with what comes next;"
-    + " on `main`, a maintainer runs `port-readiness-record.yml` from `main` with `pr` and `sha` empty.";
+  const named = (route: RecordingRoute) => summary.toolPacks.filter((entry) => entry.needsRecording === route).map((entry) => `\`${entry.toolPack}\``);
+  const listed = (names: string[]) => `${names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names.at(-1)!}`} ${names.length === 1 ? "needs" : "need"}`;
+  const inPullRequest = named("pull-request");
+  const mainFirst = named("main-first");
+  const sentences = [
+    ...(inPullRequest.length === 0 ? [] : [`${listed(inPullRequest)} recording again: in a pull request, a maintainer adds the \`${RECORD_LABEL}\` label`
+      + " (or runs `port-readiness-record.yml` by hand with the pull request's number and head sha); on `main`, a maintainer runs `port-readiness-record.yml` from `main` with `pr` and `sha` empty."]),
+    ...(mainFirst.length === 0 ? [] : [`${listed(mainFirst)} recording on \`main\`: the record run takes the recorder's runtimes from \`main\`, so a change to them lands on \`main\` first,`
+      + " and a maintainer then runs `port-readiness-record.yml` from `main` with `pr` and `sha` empty."]),
+  ];
+  if (sentences.length === 0) return undefined;
+  return [...sentences, "A record run that works comments on the pull request with what it recorded (one for `main` writes that, and a link to open a pull request, to its job summary); one that fails says why in its log."].join(" ");
 }
 
-/** Rows of `rows` grouped by first failing gate, in the order the gates run, each group a table. */
-function byGate(rows: (BlockingRow & { toolPack: string })[], limit: number): string[] {
+/** Rows of `rows` grouped by first failing gate, in the order the gates run, each group a table (`routes`: whyCell's). */
+function byGate(rows: (BlockingRow & { toolPack: string })[], limit: number, routes: readonly string[]): string[] {
   const groups = new Map<string, (BlockingRow & { toolPack: string })[]>();
   for (const row of rows) groups.set(row.stoppedAt, [...(groups.get(row.stoppedAt) ?? []), row]);
   return [...groups.entries()].flatMap(([gate, members]) => [
     `**${gate}** (${members.length})`,
     "",
-    ...table(["Rule", "Check", "Why"], members.slice(0, limit).map((row) => [`\`${row.rule}\``, row.check, trim(row.why)])),
+    ...table(["Rule", "Check", "Why"], members.slice(0, limit).map((row) => [`\`${row.rule}\``, row.check, whyCell(row.why, routes)])),
     ...(members.length > limit ? ["", `${members.length - limit} more: see the job summary.`] : []),
     "",
   ]);
@@ -92,6 +120,7 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
   const ready = summary.promotable.length;
   const notJudged = notJudgedNote(summary);
   const recording = recordingNeededLine(summary);
+  const routes = lineRoutes(summary);
   const verdict = `${summary.pass ? "✅ every shipped rule passes" : `❌ ${blocking} blocking failure${blocking === 1 ? "" : "s"}`}${ready === 0 ? "" : ` · 🟢 ${ready} candidate${ready === 1 ? "" : "s"} ready to promote`}${notJudged === undefined ? "" : ` · in ${notJudged.scope}`}`;
   const commit = context.commit === undefined || context.commit === "" ? "" : ` at \`${context.commit.slice(0, 10)}\``;
   const run = context.runUrl === undefined || context.runUrl === "" ? "" : ` · [job summary and reports](${context.runUrl})`;
@@ -122,7 +151,7 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
       : [
           `${blocking} blocking failure${blocking === 1 ? "" : "s"}: fix the rule, or move it to \`candidates/\`.`,
           "",
-          ...table(["Pack", "Rule", "Stopped at", "Check", "Why"], summary.blocking.slice(0, blockerLimit).map((row) => [row.pack, `\`${row.rule}\``, row.stoppedAt, row.check, trim(row.why)])),
+          ...table(["Pack", "Rule", "Stopped at", "Check", "Why"], summary.blocking.slice(0, blockerLimit).map((row) => [row.pack, `\`${row.rule}\``, row.stoppedAt, row.check, whyCell(row.why, routes)])),
           ...(blocking > blockerLimit ? ["", `${blocking - blockerLimit} more: see the job summary.`] : []),
           "",
         ]),
@@ -159,7 +188,7 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
       : details(unmappedCandidatesLine(summary), summary.unmappedCandidates.slice(0, blockerLimit).map((entry) => `- ${entry.pack}: \`${entry.file}\``)
         .concat(summary.unmappedCandidates.length > blockerLimit ? [`- ${summary.unmappedCandidates.length - blockerLimit} more: see the job summary.`] : []))),
     ...[...candidatesByPack.entries()].flatMap(([toolPack, rows]) =>
-      details(`${toolPack}: ${rows.length} candidate${rows.length === 1 ? " stops" : "s stop"} at a gate`, rowLimit === 0 ? ["Too many to list here: see the job summary."] : byGate(rows, rowLimit)),
+      details(`${toolPack}: ${rows.length} candidate${rows.length === 1 ? " stops" : "s stop"} at a gate`, rowLimit === 0 ? ["Too many to list here: see the job summary."] : byGate(rows, rowLimit, routes)),
     ),
     ...(summary.ungated.notGated.length === 0 && summary.ungated.pending.length === 0
       ? []

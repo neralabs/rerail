@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "vitest";
+import { test, vi } from "vitest";
 
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 import { fetchToolPackRecordings, LIFTED_ASSETS } from "../../../conformance/port-readiness/recording/fetch.js";
@@ -146,14 +146,17 @@ test("a hand-edited manifest naming a hash the release does not hold fails, and 
     // What a fork pull request would commit: a lock pointing at a recording nobody uploaded.
     const forged = { ...lock, files: { ...lock.files, "recording.json": { ...lock.files["recording.json"], sha256: "f".repeat(64), asset: assetName("demo", "bandit", "recording.json", "f".repeat(64)) } } };
     writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(forged));
-    const release = new Set([lock.files["recording.json"].asset, lock.files["corpus.json"].asset]);
-    const download = async (asset: { asset: string }) => {
-      // fetch.ts's message begins so, and goes on to say how to get one recorded (recording-requests.test.ts).
-      if (!release.has(asset.asset)) throw new Error(`the release port-readiness-recordings of neralabs/rerail has no asset ${asset.asset}: the recording this commit names was never uploaded`);
-      return gzipRecording(TEXTS["recording.json"]);
-    };
-    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download }), /has no asset demo-bandit-recording-f{64}\.json\.gz: the recording this commit names was never uploaded/u);
+    // The release as GitHub's API lists it, holding the two assets the real lock names and not the forged one, so the
+    // message is fetch.ts's own.
+    const release = [lock.files["recording.json"].asset, lock.files["corpus.json"].asset].map((name) => ({ name, url: `https://api.github.test/assets/${name}`, size: 1 }));
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ assets: release }), { status: 200, headers: { "content-type": "application/json" } }));
+    await assert.rejects(
+      fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { repository: "neralabs/rerail" }),
+      /^Error: the release port-readiness-recordings of neralabs\/rerail has no asset demo-bandit-recording-f{64}\.json\.gz: the recording this commit names was never uploaded \(CI takes only a recording port-readiness-record\.yml uploaded and attested, never a local one\): in a pull request, /u,
+    );
+    assert.equal(existsSync(join(cacheRoot, "recordings")), false);
   } finally {
+    vi.unstubAllGlobals();
     cleanup();
   }
 });
