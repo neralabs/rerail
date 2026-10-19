@@ -731,6 +731,50 @@ fn production_contract_phase_four_semantic_facts_lower_completely() {
 }
 
 #[test]
+fn production_contract_phase_four_authored_sql_results_equal_semantic_oracles() {
+    let statements = authored_sql_goldens();
+    for case in cases().into_iter().filter(|case| {
+        PHASE_FOUR_CASES.contains(&case.name.as_str())
+            && case.name != "semantic-fact-producer-failure"
+    }) {
+        assert_eq!(case.workspace.files.len(), 1, "{}", case.name);
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let file = &case.workspace.files[0];
+        let dialect = match file.language.as_str() {
+            "python" => crate::code_rule_dsl::language::GrammarDialect::Python,
+            "typescript" => crate::code_rule_dsl::language::GrammarDialect::TypeScript,
+            other => panic!("{} has unsupported phase-four dialect `{other}`", case.name),
+        };
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().unwrap() as usize,
+                    violation["span"]["endByte"].as_u64().unwrap() as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &file.source,
+            dialect,
+            &statements[&case.name],
+        );
+        assert_eq!(outcome.ranges, expected, "{}", case.name);
+        assert!(outcome.errors.is_empty(), "{}", case.name);
+    }
+}
+
+#[test]
 fn production_contract_phase_four_sql_results_equal_semantic_oracles() {
     for case in cases().into_iter().filter(|case| {
         PHASE_FOUR_CASES.contains(&case.name.as_str())

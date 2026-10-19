@@ -1093,7 +1093,16 @@ pub(super) fn sql_outcome_for_dialect(
     source: &str,
     dialect: GrammarDialect,
 ) -> SqlOutcome {
-    sql_outcome_with_failure(compiled, source, dialect, None)
+    sql_outcome_with_failure(compiled, source, dialect, None, None)
+}
+
+pub(super) fn sql_outcome_for_statement(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    source: &str,
+    dialect: GrammarDialect,
+    sql: &str,
+) -> SqlOutcome {
+    sql_outcome_with_failure(compiled, source, dialect, None, Some(sql))
 }
 
 pub(super) fn sql_outcome_with_fact_failure(
@@ -1108,6 +1117,7 @@ pub(super) fn sql_outcome_with_fact_failure(
         source,
         dialect,
         Some((fact_producer, code.to_owned())),
+        None,
     )
 }
 
@@ -1116,6 +1126,7 @@ fn sql_outcome_with_failure(
     source: &str,
     dialect: GrammarDialect,
     failure: Option<(usize, String)>,
+    statement: Option<&str>,
 ) -> SqlOutcome {
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect("policy has complete structural SQL lowering");
@@ -1197,7 +1208,7 @@ fn sql_outcome_with_failure(
     register_module(&connection, Arc::clone(&registry)).expect("packed virtual table");
     let token = registry.register(demand);
     let rows = connection
-        .prepare(plan.sql())
+        .prepare(statement.unwrap_or_else(|| plan.sql()))
         .expect("executable SQL plan")
         .query_map([token], |row| {
             Ok((
