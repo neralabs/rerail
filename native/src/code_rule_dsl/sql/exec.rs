@@ -20,7 +20,7 @@ use parking_lot::RwLock;
 use rusqlite::Connection;
 use rusqlite::types::Value;
 use rusqlite::vtab::Module;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 /// One file of a batch.
@@ -461,6 +461,11 @@ impl Compiled {
                     open.push(0);
                 } else if statement.starts_with(emit::UNTIL) {
                     passes.push(open.pop().expect("an open loop") + 1);
+                } else if statement.starts_with(emit::BLOCK)
+                    || statement == emit::END
+                    || statement.starts_with(emit::RUN)
+                {
+                    // A block's loop counts in its own entry, once, however many sites run it.
                 } else if let Some(count) = open.last_mut() {
                     *count += 1;
                 }
@@ -482,6 +487,26 @@ impl Compiled {
                 .map(|clause| clause.statements.len())
                 .sum(),
         )
+    }
+
+    /// How many bytes of SQL text the program's stages and clauses hold.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn statement_bytes(&self) -> usize {
+        self.stages
+            .iter()
+            .flat_map(|stage| &stage.statements)
+            .chain(self.clauses.iter().flat_map(|clause| &clause.statements))
+            .map(String::len)
+            .sum()
+    }
+
+    /// Every statement of the program's stages, then of its clauses.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn statements(&self) -> impl Iterator<Item = &String> {
+        self.stages
+            .iter()
+            .flat_map(|stage| &stage.statements)
+            .chain(self.clauses.iter().flat_map(|clause| &clause.statements))
     }
 
     /// A connection set up to run this program's batches.
@@ -543,6 +568,8 @@ pub(in crate::code_rule_dsl) struct Stats {
 struct Prepared {
     /// The statements that fill its frames, in order.
     steps: Vec<String>,
+    /// The loops its steps run by index (`emit::RUN<index>`), each emitted once (`emit::BLOCK`).
+    blocks: Vec<Vec<String>>,
     /// A clause's: selects its roots and bindings. A stage's: fills the stage table.
     last: String,
     /// Empties each of its frame tables.
@@ -552,6 +579,34 @@ struct Prepared {
     /// A clause under `violation.each`: empties its enumeration's tables (`emit::EACH`), which
     /// live across the rounds of a batch.
     each: Option<Vec<String>>,
+}
+
+/// Moves each block of `steps` (`emit::BLOCK<id>` … `emit::END`, blocks nested in it too) into
+/// `blocks`, leaving `emit::RUN<index>` where it was; every later `emit::RUN<id>` runs the block
+/// `id` last named.
+fn extract_blocks(
+    steps: &mut std::vec::IntoIter<String>,
+    blocks: &mut Vec<Vec<String>>,
+    named: &mut HashMap<String, usize>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    while let Some(step) = steps.next() {
+        if let Some(id) = step.strip_prefix(emit::BLOCK) {
+            let index = blocks.len();
+            blocks.push(Vec::new());
+            blocks[index] = extract_blocks(steps, blocks, named);
+            named.insert(id.to_owned(), index);
+            out.push(format!("{}{index}", emit::RUN));
+        } else if let Some(id) = step.strip_prefix(emit::RUN) {
+            let index = named.get(id).expect("a block emitted before it runs");
+            out.push(format!("{}{index}", emit::RUN));
+        } else if step == emit::END {
+            return out;
+        } else {
+            out.push(step);
+        }
+    }
+    out
 }
 
 /// The stages `sql` reads: each `stage_<index>` it names.
@@ -619,6 +674,7 @@ impl Session {
             let roots = format!("SELECT file, node FROM roots WHERE run = {run}");
             let mut steps = Vec::new();
             let mut clear = Vec::new();
+            let mut cleared = HashSet::new();
             let mut stages = Vec::new();
             for statement in statements {
                 let sql = statement
@@ -636,17 +692,20 @@ impl Session {
                         connection.execute_batch(&sql)?;
                         let table = table.strip_prefix("IF NOT EXISTS ").unwrap_or(table);
                         let name = table.split(['(', ' ']).next().unwrap_or_default();
-                        let empty = format!("DELETE FROM {name}");
-                        if !clear.contains(&empty) {
-                            clear.push(empty);
+                        if cleared.insert(name.to_owned()) {
+                            clear.push(format!("DELETE FROM {name}"));
                         }
                     }
                     None => steps.push(sql),
                 }
             }
+            let mut blocks = Vec::new();
+            let mut steps =
+                extract_blocks(&mut steps.into_iter(), &mut blocks, &mut HashMap::new());
             let last = steps.pop().expect("a final select");
             Ok(Prepared {
                 steps,
+                blocks,
                 last,
                 clear,
                 stages,
@@ -705,7 +764,12 @@ impl Session {
             .iter()
             .map(|(_, prepared)| prepared)
             .chain(clauses.iter().map(|(prepared, _)| prepared))
-            .map(|prepared| prepared.steps.len() + prepared.clear.len() + 8)
+            .map(|prepared| {
+                prepared.steps.len()
+                    + prepared.blocks.iter().map(Vec::len).sum::<usize>()
+                    + prepared.clear.len()
+                    + 8
+            })
             .sum();
         connection.set_prepared_statement_cache_capacity(statements + 4);
         Ok(Self {
@@ -734,8 +798,9 @@ impl Session {
             .map(|(_, prepared)| prepared)
             .chain(self.clauses.iter().map(|(prepared, _)| prepared));
         for prepared in prepared {
-            for sql in prepared.steps.iter().chain([&prepared.last]) {
-                if sql == emit::LOOP {
+            let blocks = prepared.blocks.iter().flatten();
+            for sql in prepared.steps.iter().chain(blocks).chain([&prepared.last]) {
+                if sql == emit::LOOP || sql.starts_with(emit::RUN) {
                     continue;
                 }
                 let sql = sql
@@ -792,16 +857,24 @@ impl Session {
     /// Executes a stage's or clause's statements, each loop (`emit::LOOP` … `emit::UNTIL`) again
     /// while its last query counts a change, and accepting a loop's last pass by its reads
     /// (`emit::ACYCLIC`). A loop that still changes after `MAX_LEVELS` passes refuses the batch: a
-    /// recursion that deep is not evaluated.
+    /// recursion that deep is not evaluated. `emit::RUN<index>` runs the statements of
+    /// `blocks[index]` there, over the tables as they stand.
     fn run_steps(
         connection: &Connection,
         stats: &mut Stats,
         steps: &[String],
+        blocks: &[Vec<String>],
     ) -> Result<(), SqlError> {
         let mut at = 0;
         while at < steps.len() {
             if let Some(reads) = steps[at].strip_prefix(emit::ACYCLIC) {
                 acyclic(connection, reads)?;
+                at += 1;
+                continue;
+            }
+            if let Some(index) = steps[at].strip_prefix(emit::RUN) {
+                let index: usize = index.parse().expect("a block index");
+                Self::run_steps(connection, stats, &blocks[index], blocks)?;
                 at += 1;
                 continue;
             }
@@ -824,7 +897,7 @@ impl Session {
             let until = &steps[end][emit::UNTIL.len()..];
             let mut passes = 0;
             loop {
-                Self::run_steps(connection, stats, &steps[at + 1..end])?;
+                Self::run_steps(connection, stats, &steps[at + 1..end], blocks)?;
                 passes += 1;
                 let changed: i64 = connection
                     .prepare_cached(until)?
@@ -921,7 +994,7 @@ impl Session {
             if stage_files[stage].is_empty() {
                 continue;
             }
-            Self::run_steps(connection, stats, &prepared.steps)?;
+            Self::run_steps(connection, stats, &prepared.steps, &prepared.blocks)?;
             Self::execute(connection, stats, &prepared.last)?;
         }
         stats.stage_nanos += started.elapsed().as_nanos() as u64;
@@ -951,7 +1024,7 @@ impl Session {
                 // reported for the root excluded; each reports what it found, after the earlier
                 // rounds' findings for the same root.
                 for round in 0.. {
-                    Self::run_steps(connection, stats, &prepared.steps)?;
+                    Self::run_steps(connection, stats, &prepared.steps, &prepared.blocks)?;
                     let started = std::time::Instant::now();
                     let mut statement = connection.prepare_cached(&prepared.last)?;
                     let mut rows = statement.query([])?;
