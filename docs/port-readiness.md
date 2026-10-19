@@ -80,7 +80,11 @@ failure, or its work budget ran out), the difference is an engine gap, not the r
 (NER-1764), not the rule.
 
 **Upstream's answers cover the goldens' files only.** The recorder fetches the files `goldens.tsv` names and asks
-upstream about those alone, and the gates fetch the same files; nothing in rerail reads the rest of the corpus. So an
+upstream about those alone, and the gates fetch the same files; nothing in rerail reads the rest of the corpus. Where
+upstream's answer on a file depends on files around it, the recorder hands upstream those too and records nothing for
+them: Ruff takes a file's package, and so its module name (N999), from the `__init__.py` files above it
+(`CONTEXT_FILES` in the recorder), and without them it flags 19 of django's locale packages it does not flag in the
+whole corpus. So an
 imported golden whose file `corpus.json` does not answer fails its rule ("corpus.json has no answer for it") until the
 tool-pack is recorded again, as a new port needs a recording before its upstream tests can be judged.
 `port-readiness:record --check`, which the nightly runs, accepts a locked `corpus.json` recorded over more files (the

@@ -9,7 +9,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 
-import { buildCorpus, buildRerailCorpora, conformancePaths, CORPUS_TASKS, failedTasksMessage, readRerailCorpora, wantedPlaces, type CorpusFile, type RerailCorpus } from "../../port-readiness/corpus.js";
+import { buildCorpus, buildRerailCorpora, conformancePaths, CORPUS_TASKS, failedTasksMessage, readRerailCorpora, wantedKey, wantedPlaces, type CorpusFile, type RerailCorpus, type Wanted } from "../../port-readiness/corpus.js";
 import { readGoldens } from "../../port-readiness/goldens.js";
 import { readGatesManifest, toolPackDirectory, type GatesManifest } from "../../port-readiness/manifest.js";
 import type { CommandRunner } from "../../port-readiness/process.js";
@@ -164,6 +164,24 @@ export function committedSources(directory: string): CommittedSources {
 /** The runtimes each adapter runs besides upstream's own (gates.yaml `upstream.runtime`). */
 const EXTRA_RUNTIMES: Record<GatesManifest["adapter"], string[]> = { bandit: ["python"], ruff: ["python"], eslint: ["parsers"] };
 
+/** A path's directories, innermost first: `a/b/c.py` gives `a/b` and `a`. */
+function directoriesOf(path: string): string[] {
+  const parts = path.split("/").slice(0, -1);
+  return parts.map((_, index) => parts.slice(0, parts.length - index).join("/"));
+}
+
+/**
+ * The corpus files whose presence changes upstream's answer on a file, by adapter. Ruff resolves a file's package, and
+ * so its module name (N999), from the `__init__.py` files in the directories above it; the whole corpus held them, so
+ * the recorder fetches them and hands them to upstream beside the goldens' files, and records answers for the goldens'
+ * files alone. Bandit and ESLint read each file on its own.
+ */
+export const CONTEXT_FILES: Record<GatesManifest["adapter"], (path: string) => string[]> = {
+  ruff: (path) => directoriesOf(path).flatMap((directory) => [`${directory}/__init__.py`, `${directory}/__init__.pyi`]),
+  bandit: () => [],
+  eslint: () => [],
+};
+
 /** Extensions a corpus could hold, probed against the adapter's inCorpus. */
 const PROBED_EXTENSIONS = [".cjs", ".cts", ".ipynb", ".js", ".jsx", ".mjs", ".mts", ".py", ".pyi", ".ts", ".tsx", ".vue"];
 
@@ -242,16 +260,19 @@ const spans = (found: Span[]): RecordedSpan[] => found.map(spanTuple).sort(compa
 const setId = (kind: string, value: unknown): string => `${kind}:${sha256(JSON.stringify(value)).slice(0, 16)}`;
 
 /**
- * The corpus files the tool-pack's goldens name, and no others: the gates read upstream's answers on goldens alone, so
- * upstream never runs over the rest of the corpus (that is NRV's real-code gate). A task that could not be fetched
+ * The corpus files the tool-pack's goldens name, and the context files upstream's answer on them depends on
+ * (CONTEXT_FILES), and no others: the gates read upstream's answers on goldens alone, so upstream never runs over the
+ * rest of the corpus (that is NRV's real-code gate). `golden` is the places to record. A task that could not be fetched
  * throws: the recording would lack its answers.
  */
-async function goldenCorpus(directory: string, cacheRoot: string, inCorpus: (path: string) => boolean, runner: CommandRunner, corpora: RerailCorpus[]): Promise<CorpusFile[]> {
-  const wanted = wantedPlaces([...(await readGoldens(directory)).values()].flat());
+async function goldenCorpus(directory: string, cacheRoot: string, inCorpus: (path: string) => boolean, runner: CommandRunner, corpora: RerailCorpus[], context: (path: string) => string[]): Promise<{ files: CorpusFile[]; golden: Wanted }> {
+  const named = [...(await readGoldens(directory)).values()].flat();
+  const golden = wantedPlaces(named);
+  const wanted = wantedPlaces([...named, ...named.flatMap((entry) => context(entry.path).map((path) => ({ task: entry.task, path })))]);
   const catalog = await buildCorpus(cacheRoot, inCorpus, runner, wanted);
   const failed = catalog.tasks.filter((task) => task.status === "failed");
   if (failed.length > 0) throw new Error(`${failedTasksMessage(failed)}: the recording would lack their answers; record again`);
-  return [...catalog.files, ...(await buildRerailCorpora(corpora, cacheRoot, inCorpus, runner, wanted)).files];
+  return { files: [...catalog.files, ...(await buildRerailCorpora(corpora, cacheRoot, inCorpus, runner, wanted)).files], golden };
 }
 
 /** Run the live adapter and build the recording; writes nothing. */
@@ -393,13 +414,18 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   // Upstream's answers on the files the goldens name, from the pinned tasks' solutions and the corpora the pack pins.
   const inCorpus = (path: string) => adapter.inCorpus(path);
   const corpora = await readRerailCorpora(root, packId);
-  const fetched = options.corpusFiles !== undefined ? await options.corpusFiles(inCorpus) : await goldenCorpus(toolPackDirectory(root, packId, tool), cacheRoot, inCorpus, runner, corpora);
+  const fetched = options.corpusFiles !== undefined
+    ? { files: await options.corpusFiles(inCorpus), golden: null }
+    : await goldenCorpus(toolPackDirectory(root, packId, tool), cacheRoot, inCorpus, runner, corpora, CONTEXT_FILES[manifest.adapter]);
   const unique = new Map<string, CorpusFile>();
-  for (const file of fetched) if (!unique.has(`${file.task}\0${file.path}`)) unique.set(`${file.task}\0${file.path}`, file);
-  const corpusFiles = [...unique.keys()].sort(byText).map((key) => unique.get(key)!);
+  for (const file of fetched.files) if (!unique.has(`${file.task}\0${file.path}`)) unique.set(`${file.task}\0${file.path}`, file);
+  const linted = [...unique.keys()].sort(byText).map((key) => unique.get(key)!);
   const recorded = Object.keys(rules).sort(byText);
-  const answers = await adapter.lintCorpus(corpusFiles, recorded);
+  // Upstream reads the context files beside the goldens' files, as it read them in the whole corpus; only the goldens'
+  // files are recorded.
+  const answers = await adapter.lintCorpus(linted, recorded);
   const answerOf = new Map(answers.map((answer) => [`${answer.file.task}\0${answer.file.path}`, answer]));
+  const corpusFiles = fetched.golden === null ? linted : linted.filter((file) => fetched.golden.has(wantedKey(file.task, file.path)));
   const corpusVerdicts = await adapter.parserVerdicts(corpusFiles.map((file) => ({ path: file.path, source: file.source, script: false })));
   const corpus = gatesCorpusSchema.parse({
     format: CORPUS_FORMAT,

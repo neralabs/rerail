@@ -9,7 +9,7 @@ import type { CorpusFile } from "../../../conformance/port-readiness/corpus.js";
 import { gatesCorpusSchema, gatesRecordingSchema, recordingText, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
 import { readCachedRecording, recordingLockSchema, recordingLockText, writeCachedRecording } from "../../../conformance/port-readiness/recording/store.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
-import { CASE_LAYOUTS, committedSources, diffRecording, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
+import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
 import { RUNTIMES_DIRECTORY, unpinnedNpmDependencies, unpinnedPythonDependencies } from "../../../conformance/recorders/port-readiness/runtimes.js";
 
 const MANIFEST = `adapter: bandit
@@ -144,6 +144,19 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("Ruff is handed the __init__ files above a golden's file, which decide its package and module name; the others read a file alone", () => {
+  // django/conf/locale/ar_DZ/__init__.py is N999 only when Ruff cannot see the packages above it.
+  assert.deepEqual(CONTEXT_FILES.ruff("django/conf/locale/ar_DZ/__init__.py"), [
+    "django/conf/locale/ar_DZ/__init__.py", "django/conf/locale/ar_DZ/__init__.pyi",
+    "django/conf/locale/__init__.py", "django/conf/locale/__init__.pyi",
+    "django/conf/__init__.py", "django/conf/__init__.pyi",
+    "django/__init__.py", "django/__init__.pyi",
+  ]);
+  assert.deepEqual(CONTEXT_FILES.ruff("setup.py"), []);
+  assert.deepEqual(CONTEXT_FILES.bandit("django/conf/__init__.py"), []);
+  assert.deepEqual(CONTEXT_FILES.eslint("src/vs/base/common/strings.ts"), []);
 });
 
 test("an ESLint case reuses a committed source with its bytes, its own directory and file type first, or gets one of its own", () => {
