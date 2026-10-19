@@ -26,11 +26,13 @@ import type { PackAdapter, PackManifest, Span, UpstreamCase } from "../../port-r
 import { createBanditAdapter } from "./adapters/bandit.js";
 import { createBladeParserAdapter } from "./adapters/blade-parser.js";
 import { createBladestanAdapter } from "./adapters/bladestan.js";
+import { createClippyAdapter } from "./adapters/clippy.js";
 import { createEslintAdapter } from "./adapters/eslint.js";
 import { createPhpcsAdapter } from "./adapters/phpcs.js";
 import { createPhpstanAdapter } from "./adapters/phpstan.js";
 import { createPsalmAdapter } from "./adapters/psalm.js";
 import { createRuffAdapter } from "./adapters/ruff.js";
+import { createSqlfluffAdapter } from "./adapters/sqlfluff.js";
 import { createTlintAdapter } from "./adapters/tlint.js";
 import { resolvedComposerRuntimes, runtimePinDigests } from "./runtimes.js";
 
@@ -46,6 +48,8 @@ export const LIVE_ADAPTERS: Record<GatesManifest["adapter"], AdapterFactory> = {
   phpstan: createPhpstanAdapter,
   psalm: createPsalmAdapter,
   bladestan: createBladestanAdapter,
+  sqlfluff: createSqlfluffAdapter,
+  clippy: createClippyAdapter,
 };
 
 const sha256 = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
@@ -216,6 +220,18 @@ export const CASE_LAYOUTS: Record<GatesManifest["adapter"], CaseLayout> = {
   bladestan: {
     file: ({ fixture }) => (fixture.startsWith(BLADESTAN_TEMPLATES) ? `fixtures/${fixture.slice("tests/".length)}` : null),
   },
+  // A SQLFluff case is one case of a rule's YAML test file (`test/fixtures/rules/std_rule_cases/AL04.yml#<case>`), read
+  // at `<dialect>/<CODE>/<case>.sql`; its `fail_str` or `pass_str` is committed byte for byte at fixtures/<that path>,
+  // where packs/sql/upstream/sqlfluff/generate.py writes the conformance fixtures it records.
+  sqlfluff: {
+    file: ({ path }) => `fixtures/${path}`,
+    row: (fixture) => ({ upstream: fixture.replace(/#.*$/u, ""), copy: "verbatim" }),
+  },
+  // Clippy's UI tests keep their upstream paths under fixtures/ (tests/ui/…, tests/ui-toml/<dir>/…), where
+  // packs/rust/upstream/clippy/generate.py copies them.
+  clippy: {
+    file: ({ fixture }) => (fixture.startsWith("tests/") ? `fixtures/${fixture}` : null),
+  },
 };
 
 /** Every file under the tool-pack directory's fixtures/, by the sha256 of its bytes. */
@@ -248,7 +264,8 @@ function directoriesOf(path: string): string[] {
  * The corpus files whose presence changes upstream's answer on a file, by adapter. Ruff resolves a file's package, and
  * so its module name (N999), from the `__init__.py` files in the directories above it; the whole corpus held them, so
  * the recorder fetches them and hands them to upstream beside the goldens' files, and records answers for the goldens'
- * files alone. Bandit and ESLint read each file on its own.
+ * files alone. Bandit, ESLint and SQLFluff read each file on its own. Clippy lints whole crates, so its adapter checks
+ * out each pinned corpus whole for cargo, and needs no context file here.
  */
 export const CONTEXT_FILES: Record<GatesManifest["adapter"], (path: string) => string[]> = {
   ruff: (path) => directoriesOf(path).flatMap((directory) => [`${directory}/__init__.py`, `${directory}/__init__.pyi`]),
@@ -260,13 +277,15 @@ export const CONTEXT_FILES: Record<GatesManifest["adapter"], (path: string) => s
   phpstan: () => [],
   psalm: () => [],
   bladestan: () => [],
+  sqlfluff: () => [],
+  clippy: () => [],
 };
 
 /**
  * Extensions a corpus could hold, probed against the adapter's inCorpus. `.blade.php` is a type of its own (a Blade
  * template), which a tool-pack that lints `.php` leaves out.
  */
-const PROBED_EXTENSIONS = [".blade.php", ".cjs", ".cts", ".inc", ".ipynb", ".js", ".jsx", ".mjs", ".mts", ".php", ".py", ".pyi", ".ts", ".tsx", ".vue"];
+const PROBED_EXTENSIONS = [".blade.php", ".cjs", ".cts", ".inc", ".ipynb", ".js", ".jsx", ".mjs", ".mts", ".php", ".py", ".pyi", ".rs", ".sql", ".ts", ".tsx", ".vue"];
 
 /** A case source the recording needs committed: upstream's bytes, and where they go. */
 export interface CaseCopy {
@@ -660,6 +679,7 @@ export function inlineTextsSource(manifest: GatesManifest): string {
   if (manifest.adapter === "ruff") return "`crates/ruff_linter/src/rules/*/mod.rs`, `crates/ruff_linter/src/linter.rs`: their test modules' string literals";
   if (manifest.eslint !== undefined) return `${manifest.eslint.tests.map((glob) => `\`${glob}\``).join(", ")}: the \`code\` of each RuleTester case`;
   if (manifest.adapter === "psalm") return "`tests/**/*.php`: the `code` of each providerValidCodeParse() and providerInvalidCodeParse() case";
+  if (manifest.adapter === "sqlfluff") return "`test/fixtures/rules/std_rule_cases/*.yml`: the `fail_str` and `pass_str` of each case";
   return "upstream's test files";
 }
 

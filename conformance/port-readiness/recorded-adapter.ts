@@ -11,11 +11,13 @@ import { caseSourcesDigest, LIFTED_CASE_SOURCES, LIFTED_RUNTIMES, readCachedReco
 import { banditSpan } from "./span-units/bandit.js";
 import { bladeParserSpan } from "./span-units/blade-parser.js";
 import { bladestanSpan } from "./span-units/bladestan.js";
+import { clippySpan } from "./span-units/clippy.js";
 import { eslintSpan } from "./span-units/eslint.js";
 import { phpcsSpan } from "./span-units/phpcs.js";
 import { phpstanSpan } from "./span-units/phpstan.js";
 import { psalmSpan } from "./span-units/psalm.js";
 import { ruffSpan } from "./span-units/ruff.js";
+import { sqlfluffSpan } from "./span-units/sqlfluff.js";
 import { tlintSpan } from "./span-units/tlint.js";
 import type { Check, PackAdapter, PackManifest, ParserVerdict, Span, SpanParts, UpstreamCase, UpstreamFile } from "./types.js";
 
@@ -42,6 +44,8 @@ const SPAN_UNITS: Record<GatesRecording["adapter"], (source: string, startByte: 
   phpstan: phpstanSpan,
   psalm: psalmSpan,
   bladestan: bladestanSpan,
+  sqlfluff: sqlfluffSpan,
+  clippy: clippySpan,
 };
 
 /**

@@ -1,0 +1,37 @@
+{
+  "format": "rerail.port-readiness-recording-lock/v1",
+  "tool": "eslint-plugin-vue",
+  "release": "port-readiness-recordings",
+  "recorder": "0.1.0-next.2",
+  "pins": {
+    "repository": "https://github.com/vuejs/eslint-plugin-vue",
+    "commit": "ec9c53a6fbed637d7b0fbcd6893b0206ae32839f",
+    "version": "10.11.1",
+    "runtime": "eslint-plugin-vue-10.11.1"
+  },
+  "runtimes": {
+    "eslint-plugin-vue-10.11.1": {
+      "package.json": "3a0e0e9094096f82ac7a14e01c20d75dc3eedaa7e37451067cfcadd2c7f255d8"
+    },
+    "parsers": {
+      "package.json": "7e2c4e80a014d18963a273819f6213adfb2da9d594e334c6696bec1f3a3a5fb3"
+    },
+    "vue-parsers": {
+      "package.json": "de6cd996aa4e04359cb1051b9b4af20d9524e94052ed5aa41f83ecd99eb3a013"
+    }
+  },
+  "files": {
+    "recording.json": {
+      "sha256": "b277463726615007292784689473229c14eddde6118a24fbd46900437af46229",
+      "size": 2430140,
+      "format": "rerail.port-readiness-recording/v2",
+      "asset": "vue-eslint-plugin-vue-recording-b277463726615007292784689473229c14eddde6118a24fbd46900437af46229.json.gz"
+    },
+    "corpus.json": {
+      "sha256": "60cfd047b7410c370165ce2959953e97a7ebef248712f721e7e23fe7159e361a",
+      "size": 587897,
+      "format": "rerail.port-readiness-corpus/v2",
+      "asset": "vue-eslint-plugin-vue-corpus-60cfd047b7410c370165ce2959953e97a7ebef248712f721e7e23fe7159e361a.json.gz"
+    }
+  }
+}

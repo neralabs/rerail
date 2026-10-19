@@ -145,11 +145,13 @@ export const COMPOSER_PINS = ["composer.json", ".php-version"] as const;
  * every PHP recording's lock.
  */
 export const PHP_EXTENSIONS = "extensions.txt";
+/** A Rust toolchain is pinned by its rustup toolchain file: an exact release channel and its components. */
+export const RUSTUP_PINS = ["rust-toolchain.toml"] as const;
 
 /** The sha256 of each pin file of `runtimes/<runtime>/` that the directory has, by file name: what a recording pins. */
 export function runtimePinDigests(runtime: string, directory: string = RUNTIMES_DIRECTORY): Record<string, string> {
   const source = join(directory, runtime);
-  return Object.fromEntries([...NPM_PINS, ...UV_PINS, ...COMPOSER_PINS, PHP_EXTENSIONS].filter((file) => existsSync(join(source, file))).sort()
+  return Object.fromEntries([...NPM_PINS, ...UV_PINS, ...COMPOSER_PINS, PHP_EXTENSIONS, ...RUSTUP_PINS].filter((file) => existsSync(join(source, file))).sort()
     .map((file) => [file, sha256(readFileSync(join(source, file)))]));
 }
 
@@ -425,4 +427,90 @@ async function composerPath(runner: CommandRunner): Promise<string> {
   const path = (await runChecked(runner, ["sh", "-c", "command -v composer"])).trim();
   if (path === "") throw new Error("Composer is not on PATH");
   return path;
+}
+
+/** A `rust-toolchain.toml` as rustup reads it, restricted to what a pin may say. */
+export interface RustToolchainPin {
+  /** An exact release, e.g. `1.99.0`. */
+  channel: string;
+  components: string[];
+  profile: string;
+}
+
+/**
+ * Parse a pinned `rust-toolchain.toml`: one `[toolchain]` table with `channel` (an exact release: a stable channel
+ * name like `stable` or `1.99` moves), `components` and `profile`, and nothing else.
+ */
+export function parseRustToolchainPin(text: string, label: string): RustToolchainPin {
+  const lines = text.split("\n").map((line) => line.replace(/#.*$/u, "").trim()).filter((line) => line !== "");
+  if (lines[0] !== "[toolchain]") throw new Error(`${label} must hold one [toolchain] table`);
+  const values: Record<string, string> = {};
+  for (const line of lines.slice(1)) {
+    const match = /^([a-z]+)\s*=\s*(.+)$/u.exec(line);
+    if (match === null || match[1]! in values) throw new Error(`${label}: cannot read \`${line}\``);
+    values[match[1]!] = match[2]!;
+  }
+  const extra = Object.keys(values).filter((key) => !["channel", "components", "profile"].includes(key));
+  if (extra.length > 0) throw new Error(`${label} may set channel, components and profile only, not ${extra.join(", ")}`);
+  const channel = /^"(\d+\.\d+\.\d+)"$/u.exec(values.channel ?? "")?.[1];
+  const profile = /^"([a-z]+)"$/u.exec(values.profile ?? "")?.[1];
+  const list = /^\[\s*((?:"[^"\\]*"\s*,\s*)*(?:"[^"\\]*")?)\s*,?\s*\]$/u.exec(values.components ?? "")?.[1];
+  if (channel === undefined) throw new Error(`${label} must pin channel to an exact release, found ${values.channel ?? "none"}`);
+  if (profile === undefined || list === undefined) throw new Error(`${label} must set components and profile`);
+  return { channel, components: [...list.matchAll(/"([^"\\]*)"/gu)].map((match) => match[1]!), profile };
+}
+
+export interface RustupRuntime {
+  pin: RustToolchainPin;
+  /** `rustc +<channel> --version`, e.g. `rustc 1.99.0 (b940084d7 2026-09-28)`. */
+  rustc: string;
+  /** `clippy-driver --version` of the toolchain, e.g. `clippy 0.1.99 (b940084d7e 2026-09-28)`. */
+  clippy: string;
+  /** The version Clippy reports, e.g. `0.1.99`. */
+  clippyVersion: string;
+  /** The toolchain's clippy-driver. */
+  driver: string;
+  /** rustc's host target triple. */
+  host: string;
+  /** The process environment the toolchain runs in: no RUSTUP_TOOLCHAIN, RUSTFLAGS or RUSTC_WRAPPER of the caller's. */
+  env: NodeJS.ProcessEnv;
+}
+
+/**
+ * A Rust toolchain installed by rustup from `runtimes/<runtime>/rust-toolchain.toml` (an exact release and its
+ * components), installed when missing and then checked: rustc must report that release, and the toolchain's
+ * clippy-driver and `cargo clippy` the same build (rustc's commit and date). Anything else is refused, as
+ * packs/rust/upstream/common.py's check_toolchain() refuses it. Every command names the toolchain (`+<channel>`).
+ */
+export async function rustupRuntime(runtime: string, runner: CommandRunner): Promise<RustupRuntime> {
+  const source = join(RUNTIMES_DIRECTORY, runtime);
+  const label = `runtimes/${runtime}/rust-toolchain.toml`;
+  const pin = parseRustToolchainPin(await readFile(join(source, "rust-toolchain.toml"), "utf8"), label);
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of ["RUSTUP_TOOLCHAIN", "RUSTFLAGS", "RUSTC_WRAPPER", "RUSTC", "CARGO_BUILD_RUSTFLAGS"]) delete env[key];
+  const toolchain = `+${pin.channel}`;
+  const sysroot = async () => (await runner.run(["rustc", toolchain, "--print", "sysroot"], { env })).stdout.trim();
+  const installedRoot = await sysroot().catch(() => "");
+  if (installedRoot === "" || (pin.components.includes("clippy") && !existsSync(join(installedRoot, "bin", "clippy-driver")))) {
+    await runChecked(runner, ["rustup", "toolchain", "install", pin.channel, "--profile", pin.profile, "--no-self-update", ...pin.components.flatMap((component) => ["--component", component])], { env });
+  }
+  const verbose = await runChecked(runner, ["rustc", toolchain, "-vV"], { env });
+  const field = (name: string) => new RegExp(`^${name}: (.+)$`, "mu").exec(verbose)?.[1]?.trim() ?? "";
+  const release = field("release");
+  const commit = field("commit-hash");
+  const date = field("commit-date");
+  const host = field("host");
+  const rustc = (await runChecked(runner, ["rustc", toolchain, "--version"], { env })).trim();
+  if (release !== pin.channel || rustc !== `rustc ${pin.channel} (${commit.slice(0, 9)} ${date})`) {
+    throw new Error(`${label} pins Rust ${pin.channel}; rustc ${toolchain} is \`${rustc}\` (release ${release})`);
+  }
+  const driver = join(await sysroot(), "bin", "clippy-driver");
+  const clippy = (await runChecked(runner, [driver, "--version"], { env })).trim();
+  const built = /^clippy (\d+\.\d+\.\d+) \(([0-9a-f]+) (\d{4}-\d{2}-\d{2})\)$/u.exec(clippy);
+  if (built === null || !commit.startsWith(built[2]!) || built[3] !== date) {
+    throw new Error(`${driver} is \`${clippy}\`, not the clippy of \`${rustc}\` (${commit} ${date})`);
+  }
+  const cargoClippy = (await runChecked(runner, ["cargo", toolchain, "clippy", "--version"], { env })).trim();
+  if (cargoClippy !== clippy) throw new Error(`cargo ${toolchain} clippy is \`${cargoClippy}\`, its clippy-driver \`${clippy}\``);
+  return { pin, rustc, clippy, clippyVersion: built[1]!, driver, host, env };
 }

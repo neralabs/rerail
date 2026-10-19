@@ -3,7 +3,7 @@
   "id": "vue",
   "name": "Vue",
   "category": "framework",
-  "covers": "No rules yet: its 24 eslint-plugin-vue 10.11.1 ports are candidates until they pass the V1 rule validation gates.",
+  "covers": "1 eslint-plugin-vue 10.11.1 rule ported to Rerail, off until turned on, scored against eslint-plugin-vue's own recorded findings on its rule tests; 23 more ports are candidates until they pass the port readiness gates.",
   "reason": "matches Vue single-file components",
   "match": {
     "any": [
@@ -16,5 +16,13 @@
     ]
   },
   "honourSuppressionComments": true,
-  "rules": []
+  "rules": [
+    {
+      "id": "eslint-plugin-vue-no-setup-props-reactivity-loss",
+      "document": "rules/eslint-plugin-vue-no-setup-props-reactivity-loss.json",
+      "title": "eslint-plugin-vue no-setup-props-reactivity-loss: Disallow usages that lose the reactivity of `props` passed to `setup`",
+      "group": "eslint-plugin-vue",
+      "on": false
+    }
+  ]
 }

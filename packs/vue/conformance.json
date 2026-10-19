@@ -392,7 +392,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-setup-props-reactivity-loss"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-setup-props-reactivity-loss.json",
+      "policy": "rules/eslint-plugin-vue-no-setup-props-reactivity-loss.json",
       "capabilities": [
         "syntax",
         "scope",

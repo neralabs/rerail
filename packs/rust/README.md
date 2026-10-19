@@ -1,21 +1,22 @@
 # Rerail rule pack: Rust
 
-Ports of 34 Clippy 0.1.99 lints, all candidates: they live in `candidates/rules/` and move to `rules/` and `pack.json` once they pass the V1 rule validation gates ([nera-rule-validation](https://github.com/neralabs/nera-rule-validation)). While `pack.json` lists no rules, the pack ships none and is never recommended. Each port is scored against Clippy's recorded findings on its UI tests and on pinned ripgrep and tokio checkouts, through the engine's production workspace path, with every disagreement declared in `divergences.json` (218 entries, each with its evidence).
+Ports of 34 Clippy 0.1.99 lints. Seven pass the [port readiness gates](../../docs/port-readiness.md) and ship in `rules/` and `pack.json`: `clippy-many-single-char-names`, `clippy-needless-arbitrary-self-type`, `clippy-needless-else`, `clippy-needless-raw-string-hashes`, `clippy-octal-escapes`, `clippy-redundant-at-rest-pattern` and `clippy-single-component-path-imports`. Clippy's default lint levels leave `many_single_char_names` and `needless_raw_string_hashes` (pedantic) off, so they ship off (`"on": false`). The other 27 are candidates in `candidates/rules/`, judged by the same gates without blocking. Each port is scored against Clippy's recorded findings on its UI tests and on pinned ripgrep and tokio checkouts, through the engine's production workspace path, with every disagreement declared in `divergences.json` (218 entries, each with its evidence).
 
 This pack follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition, and no rules until a port passes |
-| `candidates/rules/` | The code-rule documents (`rerail.policy/v1`) of the ports, scored but never shipped |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition, and each shipped rule's document, title, group and whether it is on |
+| `rules/` | The code-rule documents (`rerail.policy/v1`) of the ports that pass the port readiness gates |
+| `candidates/rules/` | The code-rule documents of the other ports, scored and judged but never shipped |
 | `conformance.json` | Each ported lint's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned Clippy tool and corpora |
 | `divergences.json` | Declared disagreements with Clippy |
-| `upstream/clippy/` | Clippy's copied UI tests, the probes Rerail wrote (`fixtures/rerail/`, listed in `UPSTREAM.md`), recordings and recorder (`generate.py`, sharing `upstream/common.py`) |
+| `upstream/clippy/` | Clippy's copied UI tests, the probes Rerail wrote (`fixtures/rerail/`, listed in `UPSTREAM.md`), recordings and recorder (`generate.py`, sharing `upstream/common.py`); the port readiness gates' `gates.yaml`, `recording.lock` and `goldens.tsv` |
 | `licenses/clippy/` | Clippy's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Scores
 
-Every port is a candidate: scored and reported, never gating a check. Scored with `node --import tsx conformance/languages/cli.ts --pack rust` (Clippy 0.1.99, Rust 1.99.0; fixtures and both
+Every port, shipped or candidate, is scored here. Scored with `node --import tsx conformance/languages/cli.ts --pack rust` (Clippy 0.1.99, Rust 1.99.0; fixtures and both
 corpora). FP and FN count unexplained points only; an explained point is one a divergence names, and recall counts
 an explained FN against the pack.
 
@@ -85,6 +86,15 @@ Scoring one rule with every false positive and false negative printed:
 
 ```sh
 node --import tsx conformance/languages/cli.ts --pack rust --rule clippy-precedence --fixtures
+```
+
+The port readiness gates judge every port against their own recording of Clippy (`upstream/clippy/recording.lock`;
+the recorder runs the rustup toolchain `conformance/recorders/port-readiness/runtimes/clippy-1.99.0/` pins, on the
+same UI tests and corpora, as `generate.py` does):
+
+```sh
+npm run port-readiness:record -- --pack rust --tool clippy   # needs rustup, git and the network
+npm run port-readiness -- --pack rust --tool clippy
 ```
 
 ## Rule details

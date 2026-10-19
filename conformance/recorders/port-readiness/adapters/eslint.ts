@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { appendFile, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, extname, join, matchesGlob, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, matchesGlob, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
@@ -15,6 +15,7 @@ import {
   commentVocabulary, keywords, literalNames, literalRegexes, parserVerdicts, sourceWords, words,
   type BabelParser, type DocumentationNode, type TypeScript,
 } from "../languages/ecmascript.js";
+import { componentParserVerdicts, type SfcCompiler } from "../languages/vue.js";
 import { checkoutUpstream, filesUnder, npmRuntime, treeDigest } from "../runtimes.js";
 import type { MessagePosition } from "./eslint-upstream.js";
 
@@ -461,7 +462,7 @@ export function declaredVersion(source: string, packageName: string): string | u
 }
 
 /** Test fixture files are read as source code when they have one of these extensions, and as plain words otherwise. */
-const SOURCE_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"]);
+const SOURCE_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx", ".vue"]);
 
 /** The literal directories a glob starts with, so only those are walked. */
 function globRoot(glob: string): string {
@@ -502,7 +503,8 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
   const upstream = await checkoutUpstream(cacheRoot, pack.upstream, setup.release.tag, setup.release.path, setup.checkout, runner);
   const runtime = await npmRuntime(pack.upstream.runtime, cacheRoot, runner);
   await linkRuntime(upstream.directory, runtime);
-  // Independent parsers for a second opinion on source the engine cannot parse, from runtimes/parsers/package.json.
+  // Independent parsers for a second opinion on source the engine cannot parse, from runtimes/parsers/package.json, and
+  // for Vue single-file components the component parser gates.yaml's `eslint.vue.runtime` pins.
   const parsers = createRequire(join(await npmRuntime("parsers", cacheRoot, runner), "package.json"));
   const environmentRuntime = setup.environment === undefined ? null : await npmRuntime(setup.environment.runtime, cacheRoot, runner);
   const require = createRequire(join(runtime, "package.json"));
@@ -513,6 +515,7 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
     babel: parsers("@babel/parser") as BabelParser,
     babelVersion: (parsers("@babel/parser/package.json") as { version: string }).version,
   };
+  const sfc = setup.vue === undefined ? null : createRequire(join(await npmRuntime(setup.vue.runtime, cacheRoot, runner), "package.json"))("@vue/compiler-sfc") as SfcCompiler;
 
   const bare = (name: string) => bareRuleName(setup.plugin, name);
   const ruleId = (name: string) => (setup.plugin === null ? name : `${setup.plugin.namespace}/${name}`);
@@ -523,9 +526,10 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
   const eslintPackage = setup.eslint_package ?? "eslint";
   const context = {
     runtime, checkout: upstream.directory, cache: cacheRoot, plugin: setup.plugin, configs: pack.upstream.recommended_configs,
-    release: { path: setup.release.path, installed: setup.release.installed, defaultExport: setup.release.default_export === true },
-    fixtureParsers: setup.fixture_parsers ?? {}, namedParsers: setup.parsers ?? {}, eslintPackage,
+    release: { path: setup.release.path, installed: setup.release.installed, defaultExport: setup.release.default_export === true, sources: setup.release.sources === true },
+    fixtureParsers: setup.fixture_parsers ?? {}, namedParsers: setup.parsers ?? {}, eslintPackage, esmTests: setup.esm_tests === true,
     environment: environmentRuntime === null ? null : { runtime: environmentRuntime, package: setup.environment!.package },
+    vue: setup.vue === undefined ? null : { scriptParsers: setup.vue.script_parsers, directiveRules: setup.vue.directive_rules },
   };
   // Upstream's tests run where its own test runner runs them, when what they load reads the working directory.
   const cwd = setup.test_cwd === undefined ? runtime : join(upstream.directory, setup.test_cwd);
@@ -542,17 +546,26 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
   };
   const facts = await ask<Facts>({ op: "facts", names: ruleNames });
   const tests = await ask<Tests>({ op: "tests", tests: setup.tests, names: ruleNames, caseTesters: setup.case_testers ?? [] });
-  // A case whose code names its own file (Unicorn's filename-case writes `/* Filename: <absolute path> */`) would carry
-  // the recording machine's cache path into the recording, and `port-readiness:record --check` would differ on every other
-  // machine: the cache root reads the same everywhere instead. Such a comment is no finding's position.
+  // A case whose code names its own file (Unicorn's filename-case writes `/* Filename: <absolute path> */`), or whose
+  // options name one (eslint-plugin-vue's no-restricted-call-after-await takes `path.join(process.cwd(), './foo')`),
+  // would carry the recording machine's cache path into the recording, and `port-readiness:record --check` would differ
+  // on every other machine: the cache root reads the same everywhere instead. Such a path is no finding's position.
   const machineRoot = resolve(cacheRoot);
   const stable = (code: string) => code.replaceAll(machineRoot, CACHE_ROOT_IN_RECORDINGS);
   for (const text of tests.texts) text.code = stable(text.code);
-  for (const cases of Object.values(tests.cases)) for (const testCase of cases) testCase.code = stable(testCase.code);
+  tests.configurations = tests.configurations.map(stable);
+  for (const cases of Object.values(tests.cases)) {
+    for (const testCase of cases) {
+      testCase.code = stable(testCase.code);
+      testCase.variant = stable(testCase.variant);
+    }
+  }
 
   const upstreamPath = (absolute: string) => relative(upstream.directory, absolute).replaceAll("\\", "/");
+  // An implementation pattern without an extension resolves as a module path does (eslint-plugin-vue's .ts and .js rules).
   const implementationFile = (name: string) => {
     const path = join(upstream.directory, implementationPath(setup.implementation, name));
+    if (extname(setup.implementation) === "") return resolveModule(dirname(path), `./${basename(path)}`);
     return existsSync(path) ? path : undefined;
   };
   const packageRoot = dirname(setup.release.path);
@@ -759,7 +772,9 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
     },
 
     async parserVerdicts(files) {
-      return files.map(({ path, source, script }) => parserVerdicts(independent, path, source, script === true));
+      return files.map(({ path, source, script }) => (sfc === null
+        ? parserVerdicts(independent, path, source, script === true)
+        : componentParserVerdicts(independent, sfc, path, source, script === true)));
     },
   };
 }

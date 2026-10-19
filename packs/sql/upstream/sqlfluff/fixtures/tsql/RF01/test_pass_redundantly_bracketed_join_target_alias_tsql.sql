@@ -1,0 +1,3 @@
+SELECT b.x
+FROM a
+LEFT JOIN ((b INNER JOIN c ON 1 = 1) LEFT JOIN d ON 1 = 1) ON 1 = 1;

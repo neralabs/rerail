@@ -64,23 +64,59 @@ export function deprecationText(meta: { deprecated?: boolean | DeprecatedInfo } 
 }
 
 /** The languages a parser's trees are of, as the engine has file types for them. */
-export type ParserLanguage = "javascript" | "typescript";
+export type ParserLanguage = "javascript" | "typescript" | "vue";
 
 /**
  * The language a case's parser reads: by the name the parser declares (`meta.name`: espree, typescript-eslint's
- * parser), or else by the npm package it was loaded from, as the manifest's `parsers` maps it (older parsers declare
- * no name). Undefined for any other parser.
+ * parser, vue-eslint-parser), or else by the npm package it was loaded from, as the manifest's `parsers` maps it (older
+ * parsers declare no name). Undefined for any other parser.
  */
 export function parserLanguage(name: string | undefined, packageName: string | undefined, parsers: Record<string, ParserLanguage>): ParserLanguage | undefined {
   if (name === "typescript-eslint/parser") return "typescript";
   if (name === "espree") return "javascript";
+  if (name === "vue-eslint-parser") return "vue";
   return packageName === undefined ? undefined : parsers[packageName];
 }
 
-/** The file type a case's code is in: TypeScript (TSX with JSX), or JSX, CommonJS or JavaScript. */
+/** The file type a case's code is in: a Vue single-file component, TypeScript (TSX with JSX), or JSX, CommonJS or JavaScript. */
 export function fileType(language: { language: ParserLanguage; jsx: boolean; sourceType: string | undefined }): string {
+  if (language.language === "vue") return ".vue";
   if (language.language === "typescript") return language.jsx ? ".tsx" : ".ts";
   return language.jsx ? ".jsx" : language.sourceType === "commonjs" ? ".cjs" : ".js";
+}
+
+/**
+ * Whether vue-eslint-parser reads a case as a single-file component (its isVueFile): a `.vue` file, or code that
+ * starts with `<` after white space whatever its name (`<input>`, Linter's name for a case that names none, included).
+ * Any other code it reads as one script.
+ */
+export function vueReadsAsComponent(filename: string | undefined, code: string): boolean {
+  return /\.vue$/u.test(filename ?? "") || /^\s*</u.test(code);
+}
+
+/**
+ * The `<script lang>` vue-eslint-parser picks a `parserOptions.parser` entry by when it reads a case as one script: its
+ * file's extension, `tsx` falling back to `ts` and `jsx` to `js`.
+ */
+export function vueScriptLangs(filename: string | undefined): string[] {
+  const extension = (/\.([^./\\]*)$/u.exec(filename ?? "unknown.js")?.[1] ?? "").toLowerCase();
+  return /^[jt]sx$/u.test(extension) ? [extension, extension.slice(0, -1)] : [extension];
+}
+
+/**
+ * The script parser vue-eslint-parser's `parserOptions.parser` picks for one of `langs` (its getScriptParser): a parser
+ * object, a module name, or undefined for espree. A map without an entry for any lang falls back to its `js`.
+ */
+export function vueScriptParser(parser: unknown, langs: string[]): unknown {
+  const isParser = (value: unknown): boolean => typeof value === "object" && value !== null
+    && (("parse" in value && typeof value.parse === "function") || ("parseForESLint" in value && typeof value.parseForESLint === "function"));
+  if (isParser(parser)) return parser;
+  if (typeof parser === "object" && parser !== null) {
+    const entries = new Map(Object.entries(parser));
+    const picked = langs.map((lang) => entries.get(lang)).find((value) => typeof value === "string" || isParser(value));
+    return picked ?? entries.get("js");
+  }
+  return typeof parser === "string" ? parser : undefined;
 }
 
 /** The npm package a module file belongs to: the path segment(s) after its last `node_modules` (`@scope/name` or `name`). */
@@ -177,9 +213,13 @@ export function casePath(rule: string, testFile: string, run: number, kind: "val
  * whatever its file name, and hands the name to the rule only as `context.filename`. A TypeScript name (`.ts`, `.mts`,
  * `.cts`, `.tsx`) for a case a JavaScript parser read, such as @next/eslint-plugin-next's JSX at `pages/index.ts`,
  * would make the engine read TypeScript upstream never parsed, so the case is read in the parser's file type
- * (`extension`) at its own path; undefined when the path's file type is the language upstream read.
+ * (`extension`) at its own path; undefined when the path's file type is the language upstream read. Where upstream
+ * lints `.vue` files as single-file components (`components`), a `.vue` name for a case a script parser read
+ * (eslint-plugin-vue's script cases at `test.vue`, which its rules take for a component's script by that name) is
+ * read the same way: the engine reads a `.vue` path as a component, and the case's code is a script.
  */
-export function parsedAs(path: string, extension: string): string | undefined {
+export function parsedAs(path: string, extension: string, components = false): string | undefined {
+  if (components && extension !== ".vue" && /\.vue$/u.test(path)) return extension;
   return !/^\.tsx?$/u.test(extension) && /\.[cm]?tsx?$/u.test(path) ? extension : undefined;
 }
 
