@@ -37,11 +37,15 @@ known_gaps: []
 const SOURCE = "import pickle\npickle.loads(b'')\n";
 const span = { startLine: 1, startCol: 0, endLine: null, endCol: 17 };
 
+// Options in the order Bandit's shell_injection gen_config builds them, not sorted: a re-record that reads the locked
+// recording back from its key-sorted text must still find nothing moved.
+const OPTIONS = [{ subprocess: ["subprocess.Popen"], shell: ["os.system"], no_shell: ["os.execl"] }];
+
 const fakeAdapter: AdapterFactory = async () => ({
   identity: { bandit: "1.9.4" },
   packChecks: [{ id: "upstream-commit", ok: true, detail: "fake" }],
   licenseText: "LICENSE TEXT\n",
-  rule: (name) => (name === "B301" ? { name, implementation: ["bandit/blacklists/calls.py"], tests: ["examples/pickle_deserialize.py"], deprecation: null, recommended: { config: "default", options: [] }, notOnRealCode: null } : undefined),
+  rule: (name) => (name === "B301" ? { name, implementation: ["bandit/blacklists/calls.py"], tests: ["examples/pickle_deserialize.py"], deprecation: null, recommended: { config: "default", options: OPTIONS }, notOnRealCode: null } : undefined),
   implementationNames: () => new Set(["loads", "pickle"]),
   sharedImplementationNames: () => new Set(["qualname"]),
   implementationRegexes: () => [/pick\w+/iu],
