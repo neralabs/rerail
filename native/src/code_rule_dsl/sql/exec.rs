@@ -10,7 +10,7 @@ use super::nodes::{NodeFacts, NodeTable};
 use super::plan::{SlotKind, Statement, Unsupported};
 use super::skip::{self, Counts, MODE, Mode, Outcome};
 use super::terminals::{
-    BatchScopes, FactTable, PatternRow, PatternTable, PatternTerm, Terminal, TextTable, fresh_rows,
+    BatchScopes, FactTable, PatternRow, PatternTable, PatternTerm, Terminal, TextTable, fresh_match,
 };
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::GrammarMatcher;
@@ -24,7 +24,7 @@ use rusqlite::Connection;
 use rusqlite::types::Value;
 use rusqlite::vtab::Module;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 /// One file of a batch.
 pub(in crate::code_rule_dsl) struct BatchFile {
@@ -75,12 +75,16 @@ pub(super) struct Program {
     pub(super) terminals: Vec<Terminal>,
 }
 
+/// A pattern terminal's fresh-env matches tested so far in a batch, by key (`file << 32 | node`):
+/// the capture columns, `None` where the pattern does not match.
+type FreshMatches = HashMap<i64, Option<Arc<[Option<i64>]>>>;
+
 /// A batch: its files' tapes and node facts, its program, and the fresh-env matches of each
-/// pattern terminal, computed on first read.
+/// pattern terminal at the nodes tested so far.
 pub(super) struct Batch {
     pub(super) files: Vec<BatchFile>,
     pub(super) program: Arc<Program>,
-    fresh: Vec<OnceLock<Arc<Vec<PatternRow>>>>,
+    fresh: Vec<parking_lot::Mutex<FreshMatches>>,
     subfiles: parking_lot::Mutex<SubFiles>,
 }
 
@@ -111,7 +115,11 @@ impl Batch {
             .collect();
         Arc::new(Self {
             files,
-            fresh: program.terminals.iter().map(|_| OnceLock::new()).collect(),
+            fresh: program
+                .terminals
+                .iter()
+                .map(|_| Default::default())
+                .collect(),
             program,
             subfiles: parking_lot::Mutex::default(),
         })
@@ -156,9 +164,20 @@ impl Batch {
         file
     }
 
-    /// The fresh-env matches of pattern terminal `term`, computed once per batch.
-    pub(super) fn fresh(&self, index: usize, term: &PatternTerm) -> Arc<Vec<PatternRow>> {
-        Arc::clone(self.fresh[index].get_or_init(|| Arc::new(fresh_rows(self, term))))
+    /// The fresh-env matches of pattern terminal `index` at `keys` (`file << 32 | node`), each
+    /// (term, node) matched once per batch whichever statements ask for it.
+    pub(super) fn fresh(&self, index: usize, term: &PatternTerm, keys: &[i64]) -> Vec<PatternRow> {
+        let mut tested = self.fresh[index].lock();
+        keys.iter()
+            .filter_map(|&key| {
+                let (file, node) = ((key >> 32) as u32, key as u32);
+                let values = tested
+                    .entry(key)
+                    .or_insert_with(|| fresh_match(self, term, file as usize, node))
+                    .clone()?;
+                Some(PatternRow::fresh(file, node, values))
+            })
+            .collect()
     }
 }
 
@@ -1406,8 +1425,8 @@ impl Runner<'_> {
         Ok(!empty)
     }
 
-    /// Executes a stage's or clause's statements, each loop (`emit::LOOP` … `emit::UNTIL`) again
-    /// while its last query counts a change, and accepting a loop's last pass by its reads
+    /// Executes a stage's or clause's statements, each loop (`emit::LOOP` … `emit::UNTIL`) while
+    /// its last query counts a dirty key (none: not at all), and accepting a loop's last pass by its reads
     /// (`emit::ACYCLIC`). A loop that still changes after `MAX_LEVELS` passes refuses the batch: a
     /// recursion that deep is not evaluated. `emit::RUN<index>` runs `blocks[index]` there, over
     /// the tables as they stand. `known_empty`: checking a run the skip would pass over, whose
@@ -1454,15 +1473,24 @@ impl Runner<'_> {
                 })
                 .expect("a loop's end");
             let until = &steps[end].sql[emit::UNTIL.len()..];
+            // A loop's pass evaluates the dirty keys of its units: with none (the site demanded
+            // no new key), it would change nothing, and the units it reaches would be run for
+            // nothing again, at every site of every pass above them.
+            let dirty = |connection: &Connection| -> Result<bool, SqlError> {
+                let changed: i64 = connection
+                    .prepare_cached(until)?
+                    .query_row([], |row| row.get(0))?;
+                Ok(changed != 0)
+            };
+            if !dirty(self.connection)? {
+                at = end + 1;
+                continue;
+            }
             let mut passes = 0;
             loop {
                 self.steps(&steps[at + 1..end], blocks, known_empty)?;
                 passes += 1;
-                let changed: i64 = self
-                    .connection
-                    .prepare_cached(until)?
-                    .query_row([], |row| row.get(0))?;
-                if changed == 0 {
+                if !dirty(self.connection)? {
                     break;
                 }
                 if passes > MAX_LEVELS {
