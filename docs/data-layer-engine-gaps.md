@@ -102,7 +102,8 @@ Signed aggregate reporter integration remains a separate contract, as in the exi
 ## Fourth-batch implementation
 
 The [fourth-batch report](data-layer-batch-four.md) records ten further completed source-detection candidates.
-The combined original and supplemental gate compares 514 calls with positive and clean coverage for all ten checks.
+The original source-only completion compared 514 calls with positive and clean coverage for all ten checks.
+The reporter completion below extends that gate to 573 comparisons.
 The [failure analysis](data-layer-batch-four-root-causes.md) gives the root causes, source links, and TDD ladders.
 No Linear issue was created or amended.
 
@@ -118,6 +119,22 @@ The repository ladder also exposed excessive work-budget polling; the fix retain
 Burndown probes still expose asynchronous duplicate-owner attribution in the original reporter.
 The rejected ordering experiment remains in its named stash.
 That ambiguity justifies no new feature or ticket.
-Signed aggregate enforcement remains an integration contract.
+The subsequent reporter completion implements the escape-hatch aggregate gate and host signature verification.
 Performance ablation measures added graph-query cost without proposing a feature ticket.
 Any future Linear issue still requires Jeremy's explicit approval.
+
+## Aggregate reporter completion
+
+The [escape-hatch reporter](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_sql_grammar_escape_hatches.py#L1186) reports all findings only when their total exceeds 16.
+The earlier source-detection gate did not test that execution shape.
+Existing budgets report one finding per group; existing selection gates cannot count the combined outputs of several clauses.
+
+The native engine now supports one authored `define.report_when.count.gt` gate per document.
+It counts combined reported findings, preserves failures, and applies consistently to decisions, snapshots, workspace results, and pages.
+Edits across the ceiling replace complete results, including findings from unchanged and evicted files.
+Catalog persistence retains the declaration.
+The host adapter verifies the original signed allowlist before evaluating the rule.
+
+All escape-hatch reporter observations now enter comparison, including counts at 16 and 17 and invalid signatures.
+The [batch report](data-layer-batch-four.md#aggregate-reporter-completion) records the full contract.
+This feature is implemented on the branch. No new Linear issue is needed or created.

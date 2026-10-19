@@ -160,6 +160,7 @@ Repeated identical oracle runs can choose different files.
 A deterministic path-order feature would invent a contract that the original does not provide.
 Those observations remain explicit upstream ambiguities.
 
-Signed allowlist verification and the aggregate escape-hatch ceiling remain upstream integration contracts.
-They do not explain the source-detection failures above.
-The pack remains inactive while those migration contracts remain separate.
+The earlier completion stopped at source detections and retained signed aggregate reporter observations.
+The reporter completion now implements the count gate and host signature verification.
+The [batch report](data-layer-batch-four.md#aggregate-reporter-completion) records those requirements and their tests.
+The private migration pack remains inactive.

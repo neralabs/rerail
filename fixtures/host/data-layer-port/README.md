@@ -24,8 +24,10 @@ The native gate compares 167 calls and retains nine signed aggregate reporter ca
 See [the third-batch report](../../../docs/data-layer-batch-three.md).
 
 `batch-04-recording.json` contains the fourth batch’s original analyzer calls and mechanically translated classifier inputs.
-`batch-04-probes.json` contains 118 supplemental cases, including positive and clean Rust cases.
-The strict replay currently fails on explicit gaps; these files are not a passing parity certificate.
-`batch-04-evidence.json` records exact failures and repository measurements.
+`batch-04-probes.json` contains 171 supplemental cases, including positive and clean Rust cases and aggregate escape-hatch reporters.
+The combined native gate compares 573 calls with positive and clean coverage for all ten checks.
+Only two upstream duplicate-owner ambiguities and three original I/O observations remain separate.
+`batch-04-evidence.json` records parity counts and repository measurements.
+`escape-hatch-allowlist-signature.json` contains the pinned public verification material for the host adapter.
 Use `data_layer_record.py --batch 4` and `data_layer_probe_four.py` to regenerate their oracle results.
 See [the fourth-batch report](../../../docs/data-layer-batch-four.md).

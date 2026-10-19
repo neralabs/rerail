@@ -3,8 +3,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { parseArgs } from "node:util";
 import { z } from "zod";
-import { encodeCodeRuleWorkspaceRequest, loadNativeBinding, resolveNativeBindingPath, RESULT_PAGE_BYTES } from "../../src/engine/index.js";
+import { codeRuleSchema, encodeCodeRuleWorkspaceRequest, loadNativeBinding, resolveNativeBindingPath, RESULT_PAGE_BYTES } from "../../src/engine/index.js";
 import { capabilitiesJson } from "../engine.js";
+import { escapeHatchSignatureFailure } from "./signed-allowlist.js";
 
 const recordingSchema = z.object({
   commit: z.string(), workers: z.number(), oracle_ms: z.number(), source_mismatches: z.array(z.string()),
@@ -34,7 +35,11 @@ try {
   for (const event of recording.events) {
     const id = `data-layer-${event.check.replaceAll("_", "-")}`;
     const policyStarted = performance.now();
-    const compiled = native.CodeRuleDslRuntime.compile(readFileSync(`${values.policies}/${id}.json`, "utf8"), "json", capabilitiesJson());
+    const source = readFileSync(`${values.policies}/${id}.json`, "utf8");
+    if (event.check === "sql_grammar_escape_hatches" && escapeHatchSignatureFailure(codeRuleSchema.parse(JSON.parse(source))) !== undefined) {
+      throw new Error("Escape-hatch allowlist signature verification failed");
+    }
+    const compiled = native.CodeRuleDslRuntime.compile(source, "json", capabilitiesJson());
     policyCompilationMs[id] = performance.now() - policyStarted;
     policyDigests[id] = compiled.digest();
     workspace.addCodeRule(compiled);

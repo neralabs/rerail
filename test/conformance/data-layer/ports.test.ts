@@ -180,7 +180,7 @@ it("matches fourth-batch upstream detections without claiming missing positive c
 it("ports the fourth batch across the expanded positive and clean oracle corpus", async () => {
   const { passed, summary } = await run(undefined, fixturesPath("host", "data-layer-port", "batch-04-probes.json"));
   expect(passed).toBe(true);
-  expect(summary).toEqual({ replayedCalls: 308, positiveCalls: 191, cleanCalls: 117,
+  expect(summary).toEqual({ replayedCalls: 367, positiveCalls: 218, cleanCalls: 149,
     falsePositives: 0, falseNegatives: 0, engineFailures: 0, executionPathDifferences: 0, missingCoverage: [] });
 }, 60_000);
 
@@ -192,7 +192,7 @@ it("certifies fourth-batch coverage from the original tests and supplemental cor
   ], output);
   expect(passed).toBe(true);
   expect(summarySchema.parse(JSON.parse(readFileSync(output, "utf8")))).toEqual({
-    replayedCalls: 514, positiveCalls: 321, cleanCalls: 193, falsePositives: 0, falseNegatives: 0,
+    replayedCalls: 573, positiveCalls: 348, cleanCalls: 225, falsePositives: 0, falseNegatives: 0,
     engineFailures: 0, executionPathDifferences: 0, missingCoverage: [],
   });
 }, 60_000);

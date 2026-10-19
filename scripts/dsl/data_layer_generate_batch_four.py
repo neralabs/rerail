@@ -14,6 +14,7 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--source', type=Path, required=True)
 p.add_argument('--repo', type=Path, required=True)
 p.add_argument('--output', type=Path, default=Path('packs/data-layer/candidates/rules'))
+p.add_argument('--signature-output', type=Path, help='Write the pinned public verification material for the host adapter')
 args = p.parse_args()
 sys.path.insert(0, str(args.source.resolve()))
 from data_layer_batch_four import BATCH_FOUR
@@ -68,6 +69,10 @@ def W(name,clauses,utils=None,options=None,roots=None,exclude=None,mode='block')
     'scope':{'include':roots or ['impl/common/l2100_sql_grammar/**/*.py'],
              'exclude': ['**/.git/**','**/.venv/**','**/venv/**','**/__pycache__/**','**/tmp/**'] if exclude is None else exclude},
     'clauses':[{'id':'shared','define':definition},*clauses]}
+ if name=='sql_grammar_escape_hatches':
+  if not modules[name]._verify_allowlist_integrity():
+   raise ValueError('Escape-hatch allowlist signature verification failed')
+  definition['report_when']={'count':{'gt':modules[name].MAX_ESCAPE_HATCH_VIOLATIONS}}
 
 
  if name in ('grammar_render_methods','sql_grammar_escape_hatches'):
@@ -214,7 +219,7 @@ for i,(code,test) in enumerate(ordered+[('SQL_REWRITE',sql),('SQL_STRUCTURE_PARS
  clauses.append(C('category-'+str(i),rule,code))
  if i<len(ordered):previous.append(test)
 W('regex_sql_parsing',clauses,utils,roots=['data_layer/**/*.py','impl/**/*.py','_internal/**/*.py','l[0-9][0-9][0-9][0-9]_*/**/*.py'])
-# Escape-hatch local detector. The signed aggregate reporter remains separately recorded.
+# Escape-hatch detector clauses share a rule-wide aggregate reporting ceiling.
 m=modules['sql_grammar_escape_hatches'];utils={}
 options=arrays(m,'ALLOWLISTED_CLASSES','DATA_VALUE_PARAMS','OPERATOR_PARAMS','SCHEMA_METADATA_CLASSES','CALLSITE_PROTECTED_CLASSES')
 options.update(grammar_class_names={'type':'array','default':['SqlRenderable','SqlClause','SqlFragment','SqlParam']},safe_param_types={'type':'array','default':sorted(m._SAFE_PARAM_TYPES_STATIC)})
@@ -257,7 +262,10 @@ clauses=[C('forbidden-class',A(K('class_definition'),F('name',forbidden)),'escap
   groups=['row.path','row.position','row.owner'],anchor='capture.PARAMETER')]
 for i,name in enumerate(sorted(m.FORBIDDEN_ESCAPE_HATCHES)):
  c=R('usage-'+str(i),re.escape(name)+r'\(|import '+re.escape(name)+r'|, '+re.escape(name),'escape_hatch');c['forbid']['regex']['lines'].update(terminators='lf',exclude=[r'^\s*#']);clauses.append(c)
-W('sql_grammar_escape_hatches',clauses,utils,options,roots=['api/**/*.py','impl/**/*.py'],mode='steer')
+W('sql_grammar_escape_hatches',clauses,utils,options,roots=['api/**/*.py','impl/**/*.py'],mode='block')
+if args.signature_output is not None:
+ args.signature_output.write_text(json.dumps({'source_commit':PIN,'source':'scripts/lint_sql_grammar_escape_hatches.py',
+  'public_key_hex':m.ALLOWLIST_PUBLIC_KEY_HEX,'signature':m.ALLOWLIST_SIGNATURE},indent=2)+'\n')
 # Callable hooks and constructor fields are matched by name, as the original visitor does.
 utils={}
 utils['constructor-name']=O(A(K('identifier'),P('CTOR')),A(K('attribute'),F('attribute',M('constructor-name'))),A(K('subscript'),F('value',M('constructor-name'))),A(K('call'),F('function',M('constructor-name'))))

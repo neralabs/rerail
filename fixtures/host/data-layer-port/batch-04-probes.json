@@ -1665,6 +1665,133 @@
           "source": "class SqlX:\n    SQL = 'SELECT'\n    def render(self): return SqlFragment(self.SQL)\n    def render(self): return SqlFragment.param(1)\n"
         }
       ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-empty",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "# empty\n"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-15",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-cross-file-17",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-same-line-parameters-16",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(self, raw0: str, raw1: str, raw2: str, raw3: str, raw4: str, raw5: str, raw6: str, raw7: str, raw8: str, raw9: str, raw10: str, raw11: str, raw12: str, raw13: str, raw14: str, raw15: str): pass\n"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-multiline-parameters-16",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(\n        self,\n        raw0: str,\n        raw1: str,\n        raw2: str,\n        raw3: str,\n        raw4: str,\n        raw5: str,\n        raw6: str,\n        raw7: str,\n        raw8: str,\n        raw9: str,\n        raw10: str,\n        raw11: str,\n        raw12: str,\n        raw13: str,\n        raw14: str,\n        raw15: str,\n    ): pass\n"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-same-line-parameters-17",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(self, raw0: str, raw1: str, raw2: str, raw3: str, raw4: str, raw5: str, raw6: str, raw7: str, raw8: str, raw9: str, raw10: str, raw11: str, raw12: str, raw13: str, raw14: str, raw15: str, raw16: str): pass\n"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-multiline-parameters-17",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(\n        self,\n        raw0: str,\n        raw1: str,\n        raw2: str,\n        raw3: str,\n        raw4: str,\n        raw5: str,\n        raw6: str,\n        raw7: str,\n        raw8: str,\n        raw9: str,\n        raw10: str,\n        raw11: str,\n        raw12: str,\n        raw13: str,\n        raw14: str,\n        raw15: str,\n        raw16: str,\n    ): pass\n"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-mixed-clauses-17",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\nx0 = SqlAdminQuery()\nx1 = SqlAdminQuery()\nx2 = SqlAdminQuery()\nx3 = SqlAdminQuery()\nx4 = SqlAdminQuery()\nx5 = SqlAdminQuery()\nx6 = SqlAdminQuery()\nx7 = SqlAdminQuery()\nx8 = SqlAdminQuery()\n"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:invalid-signature-16",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad15(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "oracle_config": {
+        "allowlist_signature": "NEEDS_SIGNING"
+      }
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:invalid-signature-17",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad15(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad16(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "oracle_config": {
+        "allowlist_signature": "NEEDS_SIGNING"
+      }
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:tampered-signed-allowlist",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad15(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad16(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "ALLOWLISTED_CLASSES": [
+            "Bad0"
+          ]
+        }
+      }
     }
   ],
   "loaded_source_files_checked": 127,
@@ -4974,8 +5101,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:str:production-detector",
@@ -5061,8 +5187,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:object:production-detector",
@@ -5148,8 +5273,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:any:production-detector",
@@ -5226,8 +5350,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:safe:production-detector",
@@ -5304,8 +5427,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:transparent:production-detector",
@@ -5391,8 +5513,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:string:production-detector",
@@ -5469,8 +5590,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:safe-string:production-detector",
@@ -5538,8 +5658,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:none:production-detector",
@@ -5624,8 +5743,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:forbidden:production-detector",
@@ -5710,8 +5828,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:comment:production-detector",
@@ -5788,8 +5905,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:local-inheritance:production-detector",
@@ -5883,8 +5999,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:cross-file-inheritance:production-detector",
@@ -7239,7 +7354,7 @@
       "oracle_config": {},
       "findings": [
         {
-          "path": "scripts/a.py",
+          "path": "scripts/z.py",
           "line": 1,
           "column": null,
           "code": "allowlist_grew",
@@ -8004,7 +8119,7 @@
       "oracle_config": {},
       "findings": [
         {
-          "path": "scripts/a/entry.py",
+          "path": "scripts/a.py",
           "line": 1,
           "column": null,
           "code": "allowlist_grew",
@@ -8192,8 +8307,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "check": "sql_grammar_escape_hatches",
@@ -8647,8 +8761,7 @@
           "code": "escape_hatch",
           "message": "Bad16: Parameter 'sql' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
         }
-      ],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      ]
     },
     {
       "check": "sql_grammar_escape_hatches",
@@ -8983,8 +9096,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "check": "sql_grammar_escape_hatches",
@@ -9052,8 +9164,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "check": "sql_grammar_escape_hatches",
@@ -9121,8 +9232,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "check": "sql_grammar_escape_hatches",
@@ -11256,8 +11366,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:safe-derived:production-detector",
@@ -11346,8 +11455,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:unsafe-after-safe:production-detector",
@@ -11445,8 +11553,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:multiple-bases:production-detector",
@@ -11544,8 +11651,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:allowed-value:production-detector",
@@ -11643,8 +11749,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:allowed-but-other-unsafe:production-detector",
@@ -11742,8 +11847,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:quoted-words:production-detector",
@@ -11832,8 +11936,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:quoted-global:production-detector",
@@ -11914,8 +12017,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:alias-cycle:production-detector",
@@ -11992,8 +12094,7 @@
       "compare_clause": false,
       "entry": "plugin.reporter",
       "oracle_config": {},
-      "findings": [],
-      "retained_reason": "Signed allowlist verification and aggregate ceiling reporter retained upstream"
+      "findings": []
     },
     {
       "test": "probe:sql_grammar_escape_hatches:alias-does-not-feed-class-closure:production-detector",
@@ -12229,6 +12330,3327 @@
           "column": null,
           "code": "sqlfragment_usage",
           "message": "SqlX: render() returns SQL built from a captured SQL string"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-empty:analyzer",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "# empty\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": false,
+      "compare_clause": false,
+      "entry": "source-probe",
+      "findings": []
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-empty:plugin",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "# empty\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "plugin.reporter",
+      "oracle_config": {},
+      "findings": []
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-empty:production-detector",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "# empty\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "production source detections",
+      "oracle_config": {},
+      "findings": []
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-15:analyzer",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": false,
+      "compare_clause": false,
+      "entry": "source-probe",
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 29,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 32,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 35,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 38,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 41,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 44,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-15:plugin",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "plugin.reporter",
+      "oracle_config": {},
+      "findings": []
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-15:production-detector",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "production source detections",
+      "oracle_config": {},
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 29,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 32,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 35,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 38,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 41,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 44,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-cross-file-17:analyzer",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": false,
+      "compare_clause": false,
+      "entry": "source-probe",
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-cross-file-17:plugin",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "plugin.reporter",
+      "oracle_config": {},
+      "findings": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad0: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad1: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad2: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad3: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad4: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad5: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad6: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad7: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad0: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad1: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad2: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad3: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad4: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad5: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad6: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad7: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad8: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-cross-file-17:production-detector",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "production source detections",
+      "oracle_config": {},
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/second.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-same-line-parameters-16:analyzer",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(self, raw0: str, raw1: str, raw2: str, raw3: str, raw4: str, raw5: str, raw6: str, raw7: str, raw8: str, raw9: str, raw10: str, raw11: str, raw12: str, raw13: str, raw14: str, raw15: str): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": false,
+      "compare_clause": false,
+      "entry": "source-probe",
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw0' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-same-line-parameters-16:plugin",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(self, raw0: str, raw1: str, raw2: str, raw3: str, raw4: str, raw5: str, raw6: str, raw7: str, raw8: str, raw9: str, raw10: str, raw11: str, raw12: str, raw13: str, raw14: str, raw15: str): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "plugin.reporter",
+      "oracle_config": {},
+      "findings": []
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-same-line-parameters-16:production-detector",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(self, raw0: str, raw1: str, raw2: str, raw3: str, raw4: str, raw5: str, raw6: str, raw7: str, raw8: str, raw9: str, raw10: str, raw11: str, raw12: str, raw13: str, raw14: str, raw15: str): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "production source detections",
+      "oracle_config": {},
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw0' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-multiline-parameters-16:analyzer",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(\n        self,\n        raw0: str,\n        raw1: str,\n        raw2: str,\n        raw3: str,\n        raw4: str,\n        raw5: str,\n        raw6: str,\n        raw7: str,\n        raw8: str,\n        raw9: str,\n        raw10: str,\n        raw11: str,\n        raw12: str,\n        raw13: str,\n        raw14: str,\n        raw15: str,\n    ): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": false,
+      "compare_clause": false,
+      "entry": "source-probe",
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw0' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw1' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 6,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw2' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 7,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw3' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw4' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 9,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw5' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 10,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw6' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw7' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 12,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw8' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 13,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw9' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw10' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 15,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw11' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 16,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw12' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw13' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 18,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw14' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 19,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw15' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-multiline-parameters-16:plugin",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(\n        self,\n        raw0: str,\n        raw1: str,\n        raw2: str,\n        raw3: str,\n        raw4: str,\n        raw5: str,\n        raw6: str,\n        raw7: str,\n        raw8: str,\n        raw9: str,\n        raw10: str,\n        raw11: str,\n        raw12: str,\n        raw13: str,\n        raw14: str,\n        raw15: str,\n    ): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "plugin.reporter",
+      "oracle_config": {},
+      "findings": []
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-multiline-parameters-16:production-detector",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(\n        self,\n        raw0: str,\n        raw1: str,\n        raw2: str,\n        raw3: str,\n        raw4: str,\n        raw5: str,\n        raw6: str,\n        raw7: str,\n        raw8: str,\n        raw9: str,\n        raw10: str,\n        raw11: str,\n        raw12: str,\n        raw13: str,\n        raw14: str,\n        raw15: str,\n    ): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "production source detections",
+      "oracle_config": {},
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw0' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw1' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 6,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw2' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 7,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw3' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw4' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 9,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw5' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 10,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw6' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw7' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 12,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw8' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 13,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw9' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw10' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 15,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw11' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 16,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw12' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw13' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 18,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw14' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 19,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw15' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-same-line-parameters-17:analyzer",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(self, raw0: str, raw1: str, raw2: str, raw3: str, raw4: str, raw5: str, raw6: str, raw7: str, raw8: str, raw9: str, raw10: str, raw11: str, raw12: str, raw13: str, raw14: str, raw15: str, raw16: str): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": false,
+      "compare_clause": false,
+      "entry": "source-probe",
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw0' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-same-line-parameters-17:plugin",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(self, raw0: str, raw1: str, raw2: str, raw3: str, raw4: str, raw5: str, raw6: str, raw7: str, raw8: str, raw9: str, raw10: str, raw11: str, raw12: str, raw13: str, raw14: str, raw15: str, raw16: str): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "plugin.reporter",
+      "oracle_config": {},
+      "findings": []
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-same-line-parameters-17:production-detector",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(self, raw0: str, raw1: str, raw2: str, raw3: str, raw4: str, raw5: str, raw6: str, raw7: str, raw8: str, raw9: str, raw10: str, raw11: str, raw12: str, raw13: str, raw14: str, raw15: str, raw16: str): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "production source detections",
+      "oracle_config": {},
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw0' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-multiline-parameters-17:analyzer",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(\n        self,\n        raw0: str,\n        raw1: str,\n        raw2: str,\n        raw3: str,\n        raw4: str,\n        raw5: str,\n        raw6: str,\n        raw7: str,\n        raw8: str,\n        raw9: str,\n        raw10: str,\n        raw11: str,\n        raw12: str,\n        raw13: str,\n        raw14: str,\n        raw15: str,\n        raw16: str,\n    ): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": false,
+      "compare_clause": false,
+      "entry": "source-probe",
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw0' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw1' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 6,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw2' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 7,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw3' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw4' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 9,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw5' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 10,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw6' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw7' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 12,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw8' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 13,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw9' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw10' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 15,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw11' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 16,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw12' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw13' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 18,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw14' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 19,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw15' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw16' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-multiline-parameters-17:plugin",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(\n        self,\n        raw0: str,\n        raw1: str,\n        raw2: str,\n        raw3: str,\n        raw4: str,\n        raw5: str,\n        raw6: str,\n        raw7: str,\n        raw8: str,\n        raw9: str,\n        raw10: str,\n        raw11: str,\n        raw12: str,\n        raw13: str,\n        raw14: str,\n        raw15: str,\n        raw16: str,\n    ): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "plugin.reporter",
+      "oracle_config": {},
+      "findings": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw0' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw1' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 6,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw2' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 7,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw3' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw4' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 9,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw5' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 10,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw6' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw7' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 12,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw8' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 13,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw9' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw10' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 15,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw11' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 16,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw12' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw13' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 18,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw14' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 19,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw15' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad: Parameter 'raw16' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-multiline-parameters-17:production-detector",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad(SqlRenderable):\n    def __init__(\n        self,\n        raw0: str,\n        raw1: str,\n        raw2: str,\n        raw3: str,\n        raw4: str,\n        raw5: str,\n        raw6: str,\n        raw7: str,\n        raw8: str,\n        raw9: str,\n        raw10: str,\n        raw11: str,\n        raw12: str,\n        raw13: str,\n        raw14: str,\n        raw15: str,\n        raw16: str,\n    ): pass\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "production source detections",
+      "oracle_config": {},
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 4,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw0' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw1' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 6,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw2' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 7,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw3' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw4' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 9,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw5' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 10,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw6' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw7' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 12,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw8' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 13,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw9' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw10' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 15,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw11' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 16,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw12' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw13' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 18,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw14' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 19,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw15' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw16' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-mixed-clauses-17:analyzer",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\nx0 = SqlAdminQuery()\nx1 = SqlAdminQuery()\nx2 = SqlAdminQuery()\nx3 = SqlAdminQuery()\nx4 = SqlAdminQuery()\nx5 = SqlAdminQuery()\nx6 = SqlAdminQuery()\nx7 = SqlAdminQuery()\nx8 = SqlAdminQuery()\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": false,
+      "compare_clause": false,
+      "entry": "source-probe",
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 24,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 25,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 27,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 28,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 29,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 30,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 31,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 32,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-mixed-clauses-17:plugin",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\nx0 = SqlAdminQuery()\nx1 = SqlAdminQuery()\nx2 = SqlAdminQuery()\nx3 = SqlAdminQuery()\nx4 = SqlAdminQuery()\nx5 = SqlAdminQuery()\nx6 = SqlAdminQuery()\nx7 = SqlAdminQuery()\nx8 = SqlAdminQuery()\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "plugin.reporter",
+      "oracle_config": {},
+      "findings": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad0: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad1: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad2: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad3: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad4: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad5: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad6: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Bad7: Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead. (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 24,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "SqlAdminQuery: Usage of forbidden escape hatch class 'SqlAdminQuery' (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 25,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "SqlAdminQuery: Usage of forbidden escape hatch class 'SqlAdminQuery' (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "SqlAdminQuery: Usage of forbidden escape hatch class 'SqlAdminQuery' (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 27,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "SqlAdminQuery: Usage of forbidden escape hatch class 'SqlAdminQuery' (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 28,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "SqlAdminQuery: Usage of forbidden escape hatch class 'SqlAdminQuery' (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 29,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "SqlAdminQuery: Usage of forbidden escape hatch class 'SqlAdminQuery' (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 30,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "SqlAdminQuery: Usage of forbidden escape hatch class 'SqlAdminQuery' (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 31,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "SqlAdminQuery: Usage of forbidden escape hatch class 'SqlAdminQuery' (count 17 > ceiling 16)"
+        },
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 32,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "SqlAdminQuery: Usage of forbidden escape hatch class 'SqlAdminQuery' (count 17 > ceiling 16)"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:ceiling-mixed-clauses-17:production-detector",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\nx0 = SqlAdminQuery()\nx1 = SqlAdminQuery()\nx2 = SqlAdminQuery()\nx3 = SqlAdminQuery()\nx4 = SqlAdminQuery()\nx5 = SqlAdminQuery()\nx6 = SqlAdminQuery()\nx7 = SqlAdminQuery()\nx8 = SqlAdminQuery()\n"
+        }
+      ],
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "production source detections",
+      "oracle_config": {},
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 24,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 25,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 27,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 28,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 29,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 30,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 31,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 32,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Usage of forbidden escape hatch class 'SqlAdminQuery'"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:invalid-signature-16:analyzer",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad15(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "oracle_config": {
+        "allowlist_signature": "NEEDS_SIGNING"
+      },
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": false,
+      "compare_clause": false,
+      "entry": "source-probe",
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 29,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 32,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 35,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 38,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 41,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 44,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 47,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:invalid-signature-16:plugin",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad15(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "oracle_config": {
+        "allowlist_signature": "NEEDS_SIGNING"
+      },
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "plugin.reporter",
+      "findings": [
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "line": 1,
+          "column": null,
+          "code": "invalid_allowlist_signature",
+          "message": "SQL grammar escape hatch allowlist signature verification failed"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:invalid-signature-16:production-detector",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad15(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "oracle_config": {},
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "production source detections",
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 29,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 32,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 35,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 38,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 41,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 44,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 47,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:invalid-signature-17:analyzer",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad15(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad16(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "oracle_config": {
+        "allowlist_signature": "NEEDS_SIGNING"
+      },
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": false,
+      "compare_clause": false,
+      "entry": "source-probe",
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 29,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 32,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 35,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 38,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 41,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 44,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 47,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 50,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:invalid-signature-17:plugin",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad15(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad16(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "oracle_config": {
+        "allowlist_signature": "NEEDS_SIGNING"
+      },
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "plugin.reporter",
+      "findings": [
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "line": 1,
+          "column": null,
+          "code": "invalid_allowlist_signature",
+          "message": "SQL grammar escape hatch allowlist signature verification failed"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:invalid-signature-17:production-detector",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad15(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad16(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "oracle_config": {},
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "production source detections",
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 2,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 29,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 32,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 35,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 38,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 41,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 44,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 47,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 50,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:tampered-signed-allowlist:analyzer",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad15(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad16(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "ALLOWLISTED_CLASSES": [
+            "Bad0"
+          ]
+        }
+      },
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": false,
+      "compare_clause": false,
+      "entry": "source-probe",
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 29,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 32,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 35,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 38,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 41,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 44,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 47,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 50,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:tampered-signed-allowlist:plugin",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad15(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad16(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "ALLOWLISTED_CLASSES": [
+            "Bad0"
+          ]
+        }
+      },
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "plugin.reporter",
+      "findings": [
+        {
+          "path": "scripts/lint_sql_grammar_escape_hatches.py",
+          "line": 1,
+          "column": null,
+          "code": "invalid_allowlist_signature",
+          "message": "SQL grammar escape hatch allowlist signature verification failed"
+        }
+      ]
+    },
+    {
+      "test": "probe:sql_grammar_escape_hatches:tampered-signed-allowlist:production-detector",
+      "check": "sql_grammar_escape_hatches",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "source": "class Bad0(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad1(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad2(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad3(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad4(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad5(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad6(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad7(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad8(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad9(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad10(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad11(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad12(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad13(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad14(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad15(SqlRenderable):\n    def __init__(self, raw: str): pass\n\nclass Bad16(SqlRenderable):\n    def __init__(self, raw: str): pass\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "ALLOWLISTED_CLASSES": [
+            "Bad0"
+          ]
+        }
+      },
+      "scope": {
+        "include": [
+          "**/*"
+        ],
+        "exclude": []
+      },
+      "upstream_passed": true,
+      "call": 1,
+      "production_scope": true,
+      "compare_clause": false,
+      "entry": "production source detections",
+      "findings": [
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 5,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 8,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 11,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 14,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 17,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 20,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 23,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 26,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 29,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 32,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 35,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 38,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 41,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 44,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 47,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
+        },
+        {
+          "tag": null,
+          "path": "impl/common/l2100_sql_grammar/probe.py",
+          "line": 50,
+          "column": null,
+          "code": "escape_hatch",
+          "message": "Parameter 'raw' uses unsafe type(s): str. Use branded types, enums, or grammar classes instead."
         }
       ]
     }

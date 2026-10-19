@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 import { z } from "zod";
 import { codeRuleSchema, loadNativeBinding, resolveNativeBindingPath, RESULT_PAGE_BYTES, type NativeCompiledCodeRuleDsl } from "../../src/engine/index.js";
 import { capabilitiesJson } from "../engine.js";
+import { escapeHatchSignatureFailure } from "./signed-allowlist.js";
 
 const findingSchema = z.object({ path: z.string(), line: z.number(), column: z.number().nullable(), code: z.string(), message: z.string(), tag: z.string().nullable().optional() });
 const eventSchema = z.object({
@@ -13,7 +14,7 @@ const eventSchema = z.object({
   retained_reason: z.string().optional(), oracle_ms: z.number().optional(),
   production_scope: z.boolean().optional(), path_skip_override: z.boolean().optional(),
   compare_clause: z.boolean().optional(),
-  oracle_config: z.object({ categories: z.record(z.string(), z.array(z.string())).optional(), source_gate: z.boolean().optional(), options: z.record(z.string(), z.unknown()).optional() }).optional(),
+  oracle_config: z.object({ categories: z.record(z.string(), z.array(z.string())).optional(), source_gate: z.boolean().optional(), options: z.record(z.string(), z.unknown()).optional(), allowlist_signature: z.string().optional() }).optional(),
   scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()) }).optional(),
   files: z.array(z.object({ path: z.string(), source: z.string() })).optional(),
   findings: z.array(findingSchema).optional(),
@@ -38,6 +39,7 @@ const configurableSchema = z.object({ clauses: z.array(z.object({
 type Event = z.infer<typeof eventSchema>;
 type Result = z.infer<typeof resultSchema>;
 interface ReplayRow {
+  execution: "native" | "host-signature-guard";
   test: string; call: number; check: string; expected: number; actual: number; positive: boolean;
   falsePositives: string[]; falseNegatives: string[]; executionPathDifferences: string[];
   engineFailures: Result["failures"]; statelessFailures: Result["failures"];
@@ -129,6 +131,10 @@ export async function replay(recordingPath: string | string[], outputPath: strin
       validated.set(authoredKey, validatedPolicy);
     }
     const policy = structuredClone(validatedPolicy);
+    // Analyzer calls expose source detections; the production reporter applies its ceiling.
+    if (event.check === "sql_grammar_escape_hatches" && event.entry !== "plugin.reporter") {
+      for (const clause of policy.clauses) if (clause.define !== undefined) delete clause.define.report_when;
+    }
     // Explicit-file tests bypass the CLI's default roots, exactly as their original entry points do.
     if (!event.production_scope) policy.scope = event.scope.include.length === 0 ? { include: ["**/*"], exclude: ["**/*"] } : event.scope;
     if (event.check === "no_blanket_grammar_bypass" && !event.production_scope) {
@@ -158,10 +164,12 @@ export async function replay(recordingPath: string | string[], outputPath: strin
     }
     const input = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: event.files.map(file => ({ ...file, language: file.path.endsWith(".rs") ? "rust" : "python" })) });
     const before = performance.now();
-    const stateless = resultSchema.parse(JSON.parse(rule.evaluate(input, "report")));
+    const signatureFailure = event.check === "sql_grammar_escape_hatches" && event.entry === "plugin.reporter"
+      ? escapeHatchSignatureFailure(policy, event.oracle_config?.allowlist_signature) : undefined;
+    const stateless = signatureFailure ?? resultSchema.parse(JSON.parse(rule.evaluate(input, "report")));
     const statelessMs = performance.now() - before;
     const workspaceStarted = performance.now();
-    const result = await workspaceEvaluation(rule, event);
+    const result = signatureFailure ?? await workspaceEvaluation(rule, event);
     const workspaceMs = performance.now() - workspaceStarted;
     const columns = event.check === "backend_type_strings";
     const expected = event.findings.map(finding => {
@@ -170,13 +178,13 @@ export async function replay(recordingPath: string | string[], outputPath: strin
     });
     const actual = (result: Result): string[] => result.violations.map(finding => {
       const file = event.files!.find(file => file.path === finding.path)!;
-      const bytes = Buffer.from(file.source);
+      const bytes = Buffer.from(file?.source ?? "");
       const prefix = bytes.subarray(finding.span.startByte - finding.span.startColumn, finding.span.startByte).toString("utf8");
       const category = event.check === "connection_caches" ? finding.clauseId.replace(/-file-\d+$/, "") : finding.clauseId;
       return JSON.stringify([finding.path, finding.span.startLine + 1, finding.code, ...(columns ? [[...prefix].length + 1] : []), ...(event.compare_clause ? [category] : [])]);
     });
     const observed = actual(result);
-    rows.push({ test: event.test, call: event.call, check: event.check,
+    rows.push({ execution: signatureFailure === undefined ? "native" : "host-signature-guard", test: event.test, call: event.call, check: event.check,
       expected: expected.length, actual: observed.length, positive: expected.length > 0,
       falsePositives: subtract(observed, expected), falseNegatives: subtract(expected, observed),
       engineFailures: result.failures, statelessFailures: stateless.failures,
@@ -189,7 +197,14 @@ export async function replay(recordingPath: string | string[], outputPath: strin
     clean: rows.filter(row => row.check === check && !row.positive).length,
   }));
   const missingCoverage = coverage.filter(row => row.positive === 0 || row.clean === 0);
-  const report = { coverage, missingCoverage, nativeSha256: createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex"), dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded"],
+  const report = { coverage, missingCoverage,
+    nativeCalls: rows.filter(row => row.execution === "native").length,
+    hostGuardCalls: rows.filter(row => row.execution === "host-signature-guard").length,
+    nativeCoverage: recording.checks.map(check => ({ check,
+      positive: rows.filter(row => row.check === check && row.execution === "native" && row.positive).length,
+      clean: rows.filter(row => row.check === check && row.execution === "native" && !row.positive).length,
+    })),
+    nativeSha256: createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex"), dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded"],
     format: "rerail.data-layer-parity/v1", commit: recording.commit, recordings: paths,
     collectedTests: recording.collected_tests, replayedCalls: rows.length,
     positiveCalls: rows.filter(row => row.positive).length, cleanCalls: rows.filter(row => !row.positive).length,

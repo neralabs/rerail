@@ -1,4 +1,7 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, it } from "vitest";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
 
@@ -12,6 +15,84 @@ const compile = (clause: object, limits: Record<string, number> = {}) => native.
 const evaluate = (rule: ReturnType<typeof compile>, source: string) => JSON.parse(rule.evaluate(JSON.stringify({
   format: "rerail.repository-snapshot/v1", revision: 0, files: [{ path: "a.py", source, language: "python" }], facts: [],
 }), "report"));
+
+it.each([false, true])("gates all clauses together in snapshots, decisions, pages, and edits (storage=%s)", async stored => {
+  const rule = native.CodeRuleDslRuntime.compile(JSON.stringify({
+    format: "rerail.policy/v1", id: "aggregate", revision: 1, mode: "block",
+    clauses: [{ id: "gate", define: { report_when: { count: { gt: 16 } } } }, ...["bad", "other"].map(word => ({ id: word,
+      forbid: { regex: { source: "file.content", pattern: word } },
+      violation: { code: "CHECK", anchor: "witness.span", message: word } }))],
+  }), "json", capabilities);
+  const files = (count: number) => [
+    { path: "a.py", language: "python", source: "bad\n".repeat(8) },
+    { path: "b.py", language: "python", source: "other\n".repeat(count - 8) },
+  ];
+  for (const count of [16, 17]) for (const mode of ["report", "decision"] as const) {
+    const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: files(count), facts: [] }), mode));
+    expect(result.failures).toEqual([]);
+    expect(result.violations).toHaveLength(count === 16 ? 0 : 17);
+  }
+  const workspace = new native.CodeRuleDslWorkspace();
+  try {
+    if (stored) {
+      const root = mkdtempSync(join(tmpdir(), "rerail-aggregate-storage-"));
+      for (const file of files(16)) writeFileSync(join(root, file.path), file.source);
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+      execFileSync("git", ["add", "a.py", "b.py"], { cwd: root });
+      execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "aggregate fixture"], { cwd: root });
+      await workspace.enableStorageAsync(root, join(root, "results.sqlite"));
+      workspace.setDocumentResidencyLimit(0);
+    }
+    workspace.addCodeRule(rule);
+    for (const [revision, count] of [[1, 16], [2, 17], [3, 16], [4, 17]] as const) {
+      const result = JSON.parse(await workspace.applyAsync(JSON.stringify({ revision, files: files(count), removed: [] })));
+      expect(result.evaluation.failures).toEqual([]);
+      expect(result.evaluation.violations).toHaveLength(count === 16 ? 0 : 17);
+      expect(result.replacedPaths).toBeNull();
+      if (stored) {
+        await workspace.completeStorageRevisionAsync();
+        expect(workspace.evictInactive()).toBe(true);
+      }
+      const page = JSON.parse(await workspace.resultPageAsync(0, 1024 * 1024));
+      expect(page.violations).toEqual(result.evaluation.violations);
+    }
+    const result = JSON.parse(await workspace.applyAsync(JSON.stringify({ revision: 5, files: [], removed: ["b.py"] })));
+    expect(result.evaluation.violations).toEqual([]);
+  } finally { workspace.close(); }
+}, 60_000);
+
+it("rejects invalid aggregate gates instead of ignoring them", () => {
+  for (const count of [{ gt: -1 }, { gt: 1.5 }, { gt: "16" }, { lte: 16 }, { gt: 16, typo: 1 }]) {
+    expect(() => native.CodeRuleDslRuntime.compile(JSON.stringify({
+      format: "rerail.policy/v1", id: "aggregate", revision: 1, mode: "block",
+      clauses: [{ id: "gate", define: { report_when: { count } } }, { id: "check", forbid: { regex: { source: "file.content", pattern: "bad" } },
+        violation: { code: "CHECK", anchor: "witness.span", message: "bad" } }],
+    }), "json", capabilities)).toThrow();
+  }
+});
+
+it("keeps aggregate gates separate by rule and never hides execution failures", async () => {
+  const compileRule = (id: string, maximum?: number, limited = false) => native.CodeRuleDslRuntime.compile(JSON.stringify({
+    format: "rerail.policy/v1", id, revision: 1, mode: "block", clauses: [
+      ...(maximum === undefined ? [] : [{ id: "gate", define: { report_when: { count: { gt: maximum } } } }]),
+      { id: "check", forbid: { ast: { language: "python", syntax: "valid", rule: { kind: "call" } } },
+        violation: { code: "CHECK", anchor: "witness.span", message: "call" } },
+    ],
+  }), "json", limited ? JSON.stringify({ ...JSON.parse(capabilities), limits: { ...JSON.parse(capabilities).limits, maxWitnesses: 1 } }) : capabilities);
+  const gated = compileRule("gated", 16), plain = compileRule("plain");
+  const result = evaluate(compileRule("limited", 16, true), "call()\ncall()\n");
+  expect(result.violations).toEqual([]);
+  expect(result.failures.some((failure: { code: string }) => failure.code === "witness-limit")).toBe(true);
+  const workspace = new native.CodeRuleDslWorkspace();
+  try {
+    workspace.addCodeRule(gated); workspace.addCodeRule(plain);
+    const input = { revision: 1, files: [{ path: "a.py", language: "python", source: "call()\n" }], removed: [] };
+    const applied = JSON.parse(await workspace.applyAsync(JSON.stringify(input)));
+    expect(applied.evaluation.violations.map((item: { ruleId: string }) => item.ruleId)).toEqual(["plain"]);
+    const page = JSON.parse(await workspace.resultPageAsync(0, 1024 * 1024));
+    expect(page.violations).toEqual(applied.evaluation.violations);
+  } finally { workspace.close(); }
+});
 
 it("joins every decoded identifier word to the host, including later container arguments", () => {
   const rule = compile({ forbid: { ast: { language: "python", rule: { kind: "string", parse: {
