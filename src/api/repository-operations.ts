@@ -47,6 +47,7 @@ import { ApiError, defineOperation, type Operation, type RerailApiStores } from 
 import {
   attachmentRecordSchema,
   attachmentsSetBodySchema,
+  followGitignoreBodySchema,
   inactiveOf,
   libraryRuleRecordSchema,
   libraryUpsertBodySchema,
@@ -192,6 +193,7 @@ export function repositorySummary(repository: RepositoryListing): z.infer<typeof
     configuredAt: repository.configuredAt,
     started: repository.started,
     state: stateOf({ started: repository.started, setUp: repository.configuredAt !== null, startedBy: "repository" }),
+    followGitignore: repository.followGitignore,
     checkoutCount: repository.checkouts.length,
   };
 }
@@ -518,6 +520,23 @@ export const repositoryOperations: readonly Operation[] = [
     body: startBodySchema,
     output: startResultSchema,
     handler: (stores, input, caller) => startOrStop(stores, input, caller, false),
+  }),
+  defineOperation({
+    id: "repository_follow_gitignore_set",
+    method: "PUT",
+    path: "/api/repository/follow-gitignore",
+    summary: "Choose whether a repository's audits leave out files Git ignores (.gitignore, .git/info/exclude, global excludes; tracked files are always audited). On by default. It applies to every checkout of the repository, from the next session started there. A coding agent may change it only before the repository is set up.",
+    body: followGitignoreBodySchema,
+    output: z.object({ repository: repositorySummarySchema }),
+    handler: (stores, input, caller) => {
+      const target = resolveTarget(stores, input, caller, true);
+      guardAgent(stores, caller, target);
+      const db = stores.database();
+      const repositoryKey = target.repository.repositoryKey;
+      db.update(repositories).set({ followGitignore: input.followGitignore, updatedAt: Date.now() })
+        .where(eq(repositories.repositoryKey, repositoryKey)).run();
+      return { repository: repositorySummary(requireRepository(db, repositoryKey)) };
+    },
   }),
   defineOperation({
     id: "repository_link",

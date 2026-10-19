@@ -123,6 +123,7 @@ describe("shared host engine", () => {
       runtime = new RerailRuntime({ storageRoot: join(root, ".rerail", "sessions"), workspaceRoot: root, modelPath: resolve("model") });
       const session = { host: "claude-code" as const, sessionId: "correlation", cwd: root };
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.codeRulesOpened(session.sessionId);
       for (const [toolCallId, path] of [
         ["first", "api/first.py"],
         ["second", "api/second.py"],
@@ -173,6 +174,7 @@ describe("shared host engine", () => {
       runtime = new RerailRuntime({ storageRoot: join(root, ".rerail/sessions"), workspaceRoot: root, modelPath: resolve("model") });
       const session = { host: "codex" as const, sessionId: "shell", cwd: root };
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.codeRulesOpened(session.sessionId);
       await runtime.ingest({
         kind: "call",
         eventId: "call:shell",
@@ -238,6 +240,7 @@ describe("shared host engine", () => {
       runtime = new RerailRuntime({ storageRoot: join(root, ".rerail/sessions"), workspaceRoot: root, modelPath: resolve("model") });
       const session = { host: "pi" as const, sessionId: "abort", cwd: root };
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.codeRulesOpened(session.sessionId);
       await runtime.ingest({
         kind: "assistant-delta",
         eventId: "delta",
@@ -284,6 +287,7 @@ describe("shared host engine", () => {
       runtime = new RerailRuntime({ storageRoot: join(root, ".rerail/sessions"), workspaceRoot: root, modelPath: resolve("model") });
       const session = { host: "omp" as const, sessionId: "concurrent", cwd: root };
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.codeRulesOpened(session.sessionId);
       for (const name of ["first", "second"]) {
         await runtime.ingest({
           kind: "call",

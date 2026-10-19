@@ -89,6 +89,14 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       for (const statement of AUDIT_HISTORY_BACKFILL) database.run(sql.raw(statement));
     },
   },
+  {
+    // A repository's `follow_gitignore`, on by default, so files Git ignores leave its audits. No floor: an older
+    // build never reads the column, and its inserts take the default.
+    id: "repositories-follow-gitignore",
+    up(database) {
+      addColumn(database, "repositories", "follow_gitignore", "integer DEFAULT true NOT NULL");
+    },
+  },
 ];
 
 /** The derived audit history tables as `audit-history-derived-tables` introduced them. */

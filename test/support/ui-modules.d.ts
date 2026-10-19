@@ -67,6 +67,7 @@ declare module "*/ui/poll.js" {
   /** `body` may be a promise of the body; `null` sends nothing. */
   export function queueInScope(scope: Scope, method: string, path: string, body: object | Promise<object | null> | null): Promise<boolean>;
   export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
+  export function saveFollowGitignore(follow: boolean, page: { toast(message: string): void; invalidate(): void }): Promise<void>;
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
   export function showMoreActivity(): Promise<void>;
   export function refresh(): Promise<void>;
@@ -130,6 +131,7 @@ declare module "*/ui/state.js" {
     repository: { setUp: boolean; repositoryKey?: string } | null;
     checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
+    followGitignore: boolean | null;
     sessionDetail: Map<string, SessionDetail>;
     missing: boolean;
     disconnected: boolean;

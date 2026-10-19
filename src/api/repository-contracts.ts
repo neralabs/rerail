@@ -39,6 +39,8 @@ export const repositorySummarySchema = z.object({
   configuredAt: z.number().int().nullable(),
   started: z.boolean().describe("The repository's own on/off, which every checkout without its own value follows."),
   state: startStateSchema.describe("The repository's own state, before any checkout's own value."),
+  followGitignore: z.boolean()
+    .describe("Whether audits leave out files Git ignores (.gitignore, .git/info/exclude, global excludes); sessions started after a change use the new value."),
   checkoutCount: z.number().int().nonnegative(),
 }).strict();
 
@@ -245,4 +247,10 @@ export const startResultSchema = z.object({
 export const linkBodySchema = z.object({
   ...targetShape,
   address: z.string().min(1).describe("A remote address (https, ssh or scp form) that should resolve to this repository."),
+}).strict();
+
+export const followGitignoreBodySchema = z.object({
+  ...targetShape,
+  followGitignore: z.boolean()
+    .describe("true: files Git ignores (.gitignore, .git/info/exclude, global excludes) are not audited; tracked files always are. false: only Rerail's own ignores apply."),
 }).strict();

@@ -1,15 +1,17 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AdapterDelivery,
+  type CodeRuleViolation,
   type RuleSteerDelivery,
   CodeRuleBridge,
   openRerailDatabase,
   SqliteAuditControlStore,
   setRuleSetting,
+  steerBlock,
 } from "../../src/engine/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
@@ -17,6 +19,7 @@ import { setUpTestRepository } from "../support/repository-rules.js";
 
 const directories: string[] = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -243,7 +246,8 @@ describe("Rerail session startup", () => {
     const session = { host: "omp" as const, sessionId: "revised-source", cwd: root };
     try {
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
-      // A turn boundary waits for the evaluator to have opened, so queued steers can be collected.
+      // Queued steers can be collected once the evaluator has opened.
+      await runtime.codeRulesOpened(session.sessionId);
       expect(await runtime.ingest({ kind: "turn-end", eventId: "opened", sessionId: session.sessionId, text: "" })).toEqual([]);
       const steer = { revision: 1, scope: ["lib/a.js", "lib/z.js"] };
       expect(await delivery!.requestSteer(session.sessionId, "steer", "CommonJS require", steer)).toBe("queued");
@@ -357,15 +361,29 @@ describe("A scan requested while the session's evaluator is still opening", () =
   });
 });
 
-describe("Rerail tool results from a one-shot hook", () => {
-  /** A Claude Code session whose edit check finishes, and steers, only once the test opens `check`. */
-  async function hookSession() {
-    const root = await mkdtemp(join(tmpdir(), "rerail-hook-check-"));
+describe("Rerail tool results waiting for their edit's check", () => {
+  /** What `a.ts` holds once an edit writes `bad`: the finding sits on its second line, seventh column. */
+  const BAD = "export const a = 1;\nconst bad = 2;\n";
+  function finding(path: string): CodeRuleViolation {
+    return {
+      id: `no-bad:${path}`, ruleId: "test:no-bad", clauseId: "clause", code: "NO_BAD", mode: "steer", message: "Do not write bad.",
+      path, span: { startByte: 26, endByte: 29, startLine: 1, startColumn: 6, endLine: 1, endColumn: 9 }, captures: {}, variables: {},
+    };
+  }
+
+  /**
+   * A session whose edit checks finish only once the test opens `check`, each steering its file's finding when the
+   * edit wrote `bad`: Claude Code's unless `host` says otherwise.
+   */
+  async function hookSession(host: "claude-code" | "omp" = "claude-code") {
+    // The real path: macOS's temporary folder is reached through a symlink, which would name the file twice.
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-hook-check-")));
     directories.push(root);
     await writeFile(join(root, "a.ts"), "export const a = 1;\n");
     const check = Promise.withResolvers<void>();
     const checking = Promise.withResolvers<void>();
     const steered = Promise.withResolvers<void>();
+    const checks: Promise<void>[] = [];
     const runtime = new RerailRuntime({
       autostart: false,
       workspaceRoot: root,
@@ -375,49 +393,87 @@ describe("Rerail tool results from a one-shot hook", () => {
         fingerprint: () => ({ modelId: "test", revision: "1", dimensions: 2, weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1 }),
         embed: async texts => texts.map(() => new Float32Array([1, 0])),
       },
-      createAuditor: ({ steerDelivery }) => {
-        let revision = 0;
-        return {
-          openWorkspace: async () => undefined,
-          acceptsPath: () => true,
-          auditGeneratedEdits: async (_sessionId, batch) => {
-            revision = batch.revision;
-            return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
-          },
-          settleGeneratedEdits: async () => {
-            checking.resolve();
+      createAuditor: ({ steerDelivery }) => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => true,
+        auditGeneratedEdits: async (sessionId, batch) => {
+          const violations = batch.edits.filter(edit => edit.generatedText?.includes("bad")).map(edit => finding(edit.path));
+          checks.push((async () => {
             await check.promise;
-            await steerDelivery.requestSteer("hook-check", "steer", "Checked the edit.", { revision, scope: [], background: true });
+            if (violations.length === 0) return;
+            const steer = steerBlock("test:no-bad", violations.map(violation => `${violation.message} (${violation.path}:2:7)`).join("\n"), { mode: "steer" });
+            await steerDelivery.requestSteer(sessionId, "steer", steer, {
+              revision: batch.revision, scope: batch.edits.map(edit => edit.path), ruleIds: ["test:no-bad"], background: true,
+              generatedEdit: { violations, sourceOf: () => undefined },
+            });
             steered.resolve();
-          },
-          close: async () => undefined,
-        };
-      },
+          })());
+          return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
+        },
+        settleGeneratedEdits: async () => {
+          checking.resolve();
+          await Promise.all(checks);
+        },
+        close: async () => undefined,
+      }),
     });
-    const session = { host: "claude-code" as const, sessionId: "hook-check", cwd: root };
+    const session = { host, sessionId: "hook-check", cwd: root };
     await runtime.ingest({ kind: "session-start", eventId: "start", session });
-    await runtime.ingest({ kind: "call", eventId: "call", sessionId: session.sessionId, toolCallId: "t1", toolName: "Write", input: { file_path: join(root, "a.ts"), content: "x" } });
-    const result = () => runtime.ingest({ kind: "result", eventId: "result", sessionId: session.sessionId, toolCallId: "t1", toolName: "Write", output: "ok" });
-    return { runtime, check, checking, steered, result };
+    await runtime.codeRulesOpened(session.sessionId);
+    /** Writes `text` into `a.ts` with the Write tool; `answering` is the tool result's answer. */
+    const edit = async (id: string, text: string) => {
+      await runtime.ingest({ kind: "call", eventId: `call-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: "Write", input: { file_path: join(root, "a.ts"), content: text } });
+      await writeFile(join(root, "a.ts"), text);
+      return { answering: runtime.ingest({ kind: "result", eventId: `result-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: "Write", output: "ok" }) };
+    };
+    const turnEnd = (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, text: "" });
+    return { runtime, check, checking, steered, edit, turnEnd };
   }
 
+  /** `a.ts`'s finding as a steer renders it, and the digest that lists it at the end of the agent's run. */
+  const STEER = steerBlock("test:no-bad", "Do not write bad. (a.ts:2:7)", { mode: "steer" });
+  const DIGEST = `Rerail finished checking these edits only after the steps that made them had moved on:\n\n${STEER}`;
+
   it("waits for the edit's check, so its steer goes back with the tool result", async () => {
-    const { runtime, check, result } = await hookSession();
+    const { runtime, check, edit } = await hookSession();
     try {
-      const answering = result();
+      const { answering } = await edit("t1", BAD);
       check.resolve();
-      expect((await answering).map(delivery => delivery.content)).toEqual(["Checked the edit."]);
+      expect((await answering).map(delivery => delivery.content)).toEqual([STEER]);
     } finally {
       await runtime.dispose();
     }
   });
 
-  it("answers after a second when the check is still running, and delivers its steer at the next event", async () => {
-    const { runtime, check, checking, steered, result } = await hookSession();
+  it("with the experimental digest off, answers after a second when the check is still running, and delivers its steer at the next event", async () => {
+    const { runtime, check, checking, steered, edit } = await hookSession();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { answering } = await edit("t1", BAD);
+      await checking.promise;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await answering).toEqual([]);
+      vi.useRealTimers();
+
+      check.resolve();
+      await steered.promise;
+      expect((await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId: "hook-check", text: "next" })).map(delivery => delivery.content))
+        .toEqual([STEER]);
+    } finally {
+      vi.useRealTimers();
+      check.resolve();
+      await runtime.dispose();
+    }
+  });
+
+  it("with the experimental digest on, answers after a second when the check is still running, and lists its steer in the digest at the turn's end, not at the next event", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const { runtime, check, checking, steered, edit, turnEnd } = await hookSession();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       let answered = false;
-      const answering = result().finally(() => { answered = true; });
+      const { answering } = await edit("t1", BAD);
+      void answering.finally(() => { answered = true; });
       // The hook's one-second wait starts as the check does.
       await checking.promise;
       await vi.advanceTimersByTimeAsync(999);
@@ -428,8 +484,69 @@ describe("Rerail tool results from a one-shot hook", () => {
 
       check.resolve();
       await steered.promise;
-      const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId: "hook-check", text: "next" });
-      expect(next.map(delivery => delivery.content)).toEqual(["Checked the edit."]);
+      // The step that made the edit is over: the steer would land on an unrelated one.
+      expect(await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId: "hook-check", text: "next" })).toEqual([]);
+      const stop = await turnEnd("turn");
+      expect(stop).toEqual([expect.objectContaining({ requested: "steer", ruleIds: ["test:no-bad"], content: DIGEST })]);
+      expect(stop[0]!.content).toContain("Do not write bad. (a.ts:2:7)");
+      // Listed once.
+      expect(await turnEnd("turn-2")).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+      check.resolve();
+      await runtime.dispose();
+    }
+  });
+
+  it("with the experimental digest on, answers an OMP tool result after ten seconds of a check still running, and holds its steer for the digest at the end of the run", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const { runtime, check, checking, steered, edit, turnEnd } = await hookSession("omp");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let answered = false;
+      const { answering } = await edit("t1", BAD);
+      void answering.finally(() => { answered = true; });
+      await checking.promise;
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(answered).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await answering).toEqual([]);
+      // Checks run in order, so the turn end's would wait behind the same one: it answers without spending ten seconds again.
+      await expect(turnEnd("turn")).resolves.toEqual([]);
+      vi.useRealTimers();
+
+      check.resolve();
+      await steered.promise;
+      // Neither the host's poll nor a later step carries it, and an OMP turn end is not the end of the run.
+      expect(await runtime.collectDeliveries("hook-check")).toEqual([]);
+      expect(await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId: "hook-check", text: "next" })).toEqual([]);
+      expect(await turnEnd("turn-2")).toEqual([]);
+      const yielded = await runtime.yieldDeliveries("hook-check");
+      expect(yielded).toEqual([expect.objectContaining({ requested: "steer", mechanism: "native-queue", ruleIds: ["test:no-bad"], content: DIGEST })]);
+      expect(await runtime.yieldDeliveries("hook-check")).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+      check.resolve();
+      await runtime.dispose();
+    }
+  });
+
+  it("with the experimental digest on, drops a held finding once its file is edited again before the run ends", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const { runtime, check, checking, steered, edit } = await hookSession("omp");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { answering } = await edit("t1", BAD);
+      await checking.promise;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await answering).toEqual([]);
+      vi.useRealTimers();
+      check.resolve();
+      await steered.promise;
+
+      const fixed = await edit("t2", "export const a = 2;\n");
+      expect(await fixed.answering).toEqual([]);
+      expect(await runtime.yieldDeliveries("hook-check")).toEqual([]);
     } finally {
       vi.useRealTimers();
       check.resolve();

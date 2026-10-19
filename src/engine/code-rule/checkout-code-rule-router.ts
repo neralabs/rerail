@@ -37,6 +37,8 @@ export interface CheckoutCodeRuleRouterOptions {
   readonly mode?: AuditMode;
   /** Where each lane's enforcer writes its timing lines; none are written without it. */
   readonly timingLog?: (line: string) => void;
+  /** Every lane leaves out what Git ignores in its checkout (`NativeCodeRuleEnforcer`'s option); off by default. */
+  readonly followGitignore?: boolean;
 }
 
 interface Lane {
@@ -109,6 +111,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     if (languageFor(path) === undefined) return false;
     const routed = this.#route(path);
     return routed !== undefined && routed.lane.enforcer.acceptsPath(routed.path);
+  }
+
+  /** Whether the checkout that owns `path` ignores it; a path no lane owns is never ignored here, only not accepted. */
+  ignoresPath(path: string, directory: boolean): boolean {
+    const routed = this.#route(path);
+    return routed !== undefined && routed.lane.enforcer.ignoresPath(routed.path, directory);
   }
 
   sourceRoot(path: string): string | undefined {
@@ -286,6 +294,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
         audits: this.#options.audits,
         ...this.#settings,
         ...(this.#options.timingLog === undefined ? {} : { timingLog: this.#options.timingLog }),
+        followGitignore: this.#options.followGitignore ?? false,
         presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
         nestedCheckouts: () => this.#nestedCheckoutsOf(root),
       });

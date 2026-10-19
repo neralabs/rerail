@@ -420,8 +420,8 @@ describe("Rerail API over HTTP", () => {
     addCheckout("/code/acme-web-feature", WEB, "a", false);
 
     expect((await getJson<{ repositories: unknown[] }>("/api/repositories")).repositories).toEqual([
-      { repositoryKey: WEB, name: "acme-web", aliases: [], setUp: true, configuredAt: 5, started: true, state: "started", checkoutCount: 2 },
-      { repositoryKey: "clone:landing", name: "landing-page", aliases: [], setUp: false, configuredAt: null, started: true, state: "not-set-up", checkoutCount: 0 },
+      { repositoryKey: WEB, name: "acme-web", aliases: [], setUp: true, configuredAt: 5, started: true, state: "started", followGitignore: true, checkoutCount: 2 },
+      { repositoryKey: "clone:landing", name: "landing-page", aliases: [], setUp: false, configuredAt: null, started: true, state: "not-set-up", followGitignore: true, checkoutCount: 0 },
     ]);
 
     // Stopping and starting act on the repository as a whole: a checkout's own value follows it again.

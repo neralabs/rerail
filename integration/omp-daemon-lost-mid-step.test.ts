@@ -10,14 +10,16 @@ import { EVENTS_DROPPED_ENTRY_TYPE, type OmpSessionEntryLike } from "../src/runt
 import { OmpHost } from "./support/omp-host.js";
 
 /**
- * NER-1955: a live daemon is taken for a lost one, and the session's later tool events are dropped.
+ * NER-1955: a live daemon was taken for a lost one, and the session's later tool events were dropped.
  *
  * One shell command that writes many source files in the rules' scope (a test run writing its outputs, as the NER-1910
  * study's svelte runs did) makes the daemon hold the session's request lane past the omp extension's 30 s request
  * timeout: the turn end (and, on a native host, the command's tool result) waits in `RerailRuntime.#ingest` for the
- * audits of every file the command wrote, with no bound. `NativeSessionClient` takes the timed-out request for an
- * outage (`#fail`), shuts the event stream, and drops the events queued behind it: the next turns' tool calls and
- * results, which Rerail's records then lack. The daemon stays up throughout and records the slow request itself.
+ * audits of every file the command wrote, with no bound. `NativeSessionClient` took the timed-out request for an
+ * outage (`#fail`), shut the event stream, and dropped the events queued behind it: the next turns' tool calls and
+ * results, which Rerail's records then lacked, while the daemon stayed up and recorded the slow request itself. Now
+ * the daemon waits at most 10 s for those audits, which carry on in the background, and answers a request it is still
+ * working on with a ticket the client collects its reply with, so the run neither stalls on the audits nor drops events.
  */
 const EMITTED_FILES = 8_000;
 // What a compiler test run leaves per sample: an `_output` module with unsorted imports and branching render code.
