@@ -4,7 +4,12 @@ import {
   NO_REPO_ANSWERS,
   READ_REPO_ANSWERS,
   renderCannotInstall,
+  renderBanner,
   renderInstalled,
+  renderOnPath,
+  renderQuestion,
+  renderSessionsDeclined,
+  sessionsQuestion,
   renderNoRepoQuestion,
   renderNodeTooOld,
   renderPackReview,
@@ -66,6 +71,9 @@ const LANES: readonly SetupLane[] = ["terminal", "agent"];
 function everyScreen(lane: SetupLane): Record<string, string> {
   return {
     T2: renderInstalled({ version: "0.3.0" }, lane),
+    T2p: renderOnPath({ binDir: "/Users/me/.rerail/bin", locations: ["/Users/me/.zshrc"], home: "/Users/me" }, lane),
+    T2b: renderQuestion(sessionsQuestion({ carriedArgs: [] }), lane),
+    T2x: renderSessionsDeclined(lane),
     T3: renderReadRepoQuestion({ repoName: "acme-web", repoPath: "/Users/me/code/acme-web" }, lane),
     T4: renderRecommendedPacks(PACKS, lane),
     WR: renderPackReview({ ...PACKS, review: { url: "http://127.0.0.1:7777/#review", browserOpened: true } }, lane),
@@ -104,6 +112,40 @@ describe("T2 installed", () => {
   it("says the version is installed and nothing is on yet", () => {
     expect(stripAnsi(renderInstalled({ version: "0.3.0" }, "terminal"))).toContain(">^ᴥ^<   rerail 0.3.0 installed  nothing is on yet");
     expect(renderInstalled({ version: "0.3.0" }, "agent")).toContain("Rerail is installed. Nothing is on yet.");
+  });
+});
+
+describe("T2 on PATH", () => {
+  it("names the launcher and the startup file from ~, and only a whole home folder becomes ~", () => {
+    const input = { binDir: "/Users/me/.rerail/bin", locations: ["/Users/me/.bashrc", "/Users/meg/.profile"], home: "/Users/me/" };
+    expect(stripAnsi(renderOnPath(input, "terminal"))).toBe("● rerail is on your PATH  added to ~/.bashrc and /Users/meg/.profile · open a new terminal to use it\n");
+    expect(renderOnPath(input, "agent")).toBe("Added ~/.rerail/bin to PATH in ~/.bashrc and /Users/meg/.profile. Open a new terminal to run rerail.\n");
+    expect(renderOnPath({ binDir: String.raw`C:\Users\me\.rerail\bin`, locations: [String.raw`HKCU\Environment Path`], home: String.raw`C:\Users\me` }, "agent"))
+      .toContain(String.raw`Added ~\.rerail\bin to PATH in HKCU\Environment Path.`);
+  });
+
+  it("says what to do when it could not", () => {
+    const text = stripAnsi(renderOnPath({ binDir: "/Users/me/.rerail/bin", locations: [], failure: "EACCES: permission denied", home: "/Users/me" }, "terminal"));
+    expect(text).toBe("△ Couldn’t add ~/.rerail/bin to PATH (EACCES: permission denied). Add it yourself to run rerail from a terminal.\n");
+  });
+});
+
+describe("T1 banner", () => {
+  it("draws the footer's mark in a terminal, plain under NO_COLOR, and nothing for a coding agent", () => {
+    expect(stripAnsi(renderBanner({ version: "0.3.0", depth: "truecolor" }, "terminal"))).toBe("\n  R E R A I L   set-up · 0.3.0\n\n");
+    expect(renderBanner({ version: "0.3.0", depth: "none" }, "terminal")).not.toMatch(ANSI);
+    expect(renderBanner({ version: "0.3.0", depth: "truecolor" }, "agent")).toBe("");
+  });
+});
+
+describe("T2b may Rerail read sessions", () => {
+  it("says what it reads and why, and its yes carries the folder the run was named", () => {
+    const form = sessionsQuestion({ carriedArgs: ["--repo", "/Users/me/code/acme-web"] });
+    const text = renderQuestion(form, "agent");
+    expect(text).toContain("Can Rerail read your coding agent sessions?");
+    expect(text).toContain("shows each session’s events in the dashboard");
+    expect(text).toContain("1. rerail setup --answer allow --repo /Users/me/code/acme-web");
+    expect(text).toContain("2. rerail setup --answer decline");
   });
 });
 
@@ -264,7 +306,7 @@ describe("T6 / C6 summary", () => {
     expect(text).toContain("● Rerail is on in acme-web. 2 rule packs are on, with 166 rules.");
     expect(text).toContain("Rule packs     TypeScript · acme-api");
     expect(text).toContain("Your own       /rerail-create  create a rule in your own words, in a session");
-    expect(text).toContain("Other repos    Rerail has not been started there  type /rerail-start there to set one up");
+    expect(text).toContain("Other repos    none yet  type /rerail-start in another repo to turn it on there");
     expect(text).toContain("Connected      Claude Code and Cursor");
     expect(text).toContain("Next           Open a new session and type /rerail-show-me.  see Rerail catch and fix a broken rule");
     expect(text).toContain("Manage rules   http://127.0.0.1:7777/#rules  opening in your browser");
@@ -297,7 +339,7 @@ describe("T6 / C6 summary", () => {
   it("names other repos where Rerail is already on, instead of saying it is on nowhere else", () => {
     const text = renderSummary({ ...SUMMARY, otherStartedRepos: ["landing-page"] }, "agent");
     expect(text).toContain("Rerail is also on in landing-page");
-    expect(text).not.toContain("has not been started there");
+    expect(text).not.toContain("none yet");
   });
 
   it("speaks of one rule pack and one rule in the singular", () => {

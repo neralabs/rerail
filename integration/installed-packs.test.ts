@@ -37,6 +37,8 @@ beforeEach(() => {
   mkdirSync(userHome);
   // This build is the active Rerail, as after `npx @neralabs/rerail setup` installed it: set-up installs no core.
   symlinkSync(PACKAGE_ROOT, join(home, "current"));
+  // Past set-up's one approval that Rerail may read sessions; `setup-json.test.ts` asks it.
+  writeFileSync(join(home, "consent.json"), JSON.stringify({ sessions: { approvedAt: "2026-10-16T00:00:00.000Z" } }));
   environment = {
     ...process.env,
     RERAIL_HOME: home,

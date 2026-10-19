@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -217,15 +217,41 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(step.step).toBe("read-repo");
     expect(step.question!.options[0]!.next.args).toEqual(["setup", "--database", setup.databasePath, "--json", "--answer", "yes", "--repo", setup.repo]);
   });
+
+  it("asks first whether Rerail may read sessions, and its yes still asks before reading the folder start ran for", async () => {
+    const setup = await fixture();
+    const plain = join(setup.root, "notes");
+    mkdirSync(plain);
+    const environment = fakeSetupEnvironment({ sessionsApproved: false });
+    const first = await startRerailStep(plain, { databasePath: setup.databasePath, environment });
+    expect(first.step).toBe("sessions");
+    const allow = first.question!.options.find(option => option.answer === "allow")!;
+    expect(allow.next.args).toEqual(["setup", "--json", "--answer", "allow", "--repo", plain]);
+
+    // Outside Git the folder is still the one asked about, and naming it in the allow answer reads nothing yet.
+    const next = await runSetupStep(request(setup, environment, { cwd: setup.root, answer: "allow", repo: plain }));
+    expect(next.step).toBe("read-repo");
+    expect(next.question!.options[0]!.next.args).toEqual(["setup", "--json", "--answer", "yes", "--repo", plain]);
+    expect(environment.connections).toEqual([]);
+
+    // No takes the yes back, so the next set-up asks again.
+    expect((await runSetupStep(request(setup, environment, { answer: "decline" }))).step).toBe("done");
+    expect((await startRerailStep(plain, { databasePath: setup.databasePath, environment })).step).toBe("sessions");
+  });
 });
 
 describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
-  async function commandFixture(): Promise<{ setup: Fixture; context: { home: string; packageRoot: string; updater: ManagedUpdater; packs: PackStore }; said: string[]; io: SetupIo }> {
+  async function commandFixture(approved = true): Promise<{ setup: Fixture; context: { home: string; packageRoot: string; updater: ManagedUpdater; packs: PackStore }; said: string[]; io: SetupIo }> {
     const setup = await fixture();
     const home = join(setup.root, "home");
     const packageRoot = join(setup.root, "package");
     mkdirSync(join(packageRoot, "dist"), { recursive: true });
     writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.9" }));
+    // The one approval set-up asks for first; the tests of the later questions start past it.
+    if (approved) {
+      mkdirSync(home, { recursive: true });
+      writeFileSync(join(home, "consent.json"), JSON.stringify({ sessions: { approvedAt: "2026-10-16T00:00:00.000Z" } }));
+    }
     vi.stubEnv("RERAIL_HOME", home);
     vi.stubEnv("HOME", join(setup.root, "user"));
     vi.spyOn(process, "cwd").mockReturnValue(setup.repo);
@@ -233,6 +259,33 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     const io: SetupIo = { lane: "agent", say: text => { said.push(text); }, close: () => {} };
     return { setup, context: { home, packageRoot, updater: new ManagedUpdater({ home, packageRoot, packageVersion: "0.1.9" }), packs: directoryPackStore(undefined, ["typescript"]) }, said, io };
   }
+
+  it("asks once whether Rerail may read sessions, connects nothing on no, and remembers yes", async () => {
+    const { setup, context, said, io } = await commandFixture(false);
+    await context.updater.activateRoot(context.packageRoot);
+
+    expect(await runSetupCommand(["--json", "--repo", setup.repo], context, io)).toBe(0);
+    const asked = JSON.parse(said[0]!) as SetupStep;
+    expect(asked.step).toBe("sessions");
+    expect(asked.question!.options.map(option => option.next.args)).toEqual([
+      ["setup", "--json", "--answer", "allow", "--repo", setup.repo],
+      ["setup", "--json", "--answer", "decline"],
+    ]);
+
+    said.length = 0;
+    expect(await runSetupCommand(["--json", "--answer", "decline"], context, io)).toBe(0);
+    expect(JSON.parse(said[0]!)).toMatchObject({ step: "done", screen: expect.stringContaining("Set-up stopped."), question: null });
+    expect(existsSync(join(context.home, "consent.json"))).toBe(false);
+    expect(workspaceStartState(setup.repo, join(context.home, "rerail.sqlite"))).toBe("stopped");
+
+    // Yes carries on to the folder it was named, still asking before reading it, and set-up never asks again.
+    said.length = 0;
+    expect(await runSetupCommand(["--json", "--answer", "allow", "--repo", setup.repo], context, io)).toBe(0);
+    expect((JSON.parse(said[0]!) as SetupStep).step).toBe("read-repo");
+    said.length = 0;
+    expect(await runSetupCommand(["--json"], context, io)).toBe(0);
+    expect((JSON.parse(said[0]!) as SetupStep).step).toBe("read-repo");
+  });
 
   it("says Rerail is installed only on the run that installed it", async () => {
     const installing = await commandFixture();

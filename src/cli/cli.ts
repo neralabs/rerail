@@ -26,7 +26,7 @@ import {
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { repositoryName } from "../engine/catalog/repository-identity.js";
 import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
-import { isPreSetupHealthCheck, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
+import { isPreSetupHealthCheck, skipsSessionsApproval, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
@@ -451,6 +451,7 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
       ...(io.lane === "agent" ? { relay: true } : {}),
       ...(agents === undefined ? {} : { agents }),
     });
+    const environment = setupEnvironment(context);
     const report = await startRerail(workspace, io, {
       ...(databasePath === undefined ? {} : { databasePath }),
       ...(agents === undefined ? {} : { agents }),
@@ -459,7 +460,10 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
       ...(answer === undefined ? {} : { answer }),
       ...(setupCommand === undefined ? {} : { setupCommand }),
       repository,
-      environment: setupEnvironment(context),
+      // An update's health check reads no one's sessions, so it is not asked to allow it (`skipsSessionsApproval`).
+      environment: skipsSessionsApproval(args, io.lane, workspace, () => environment.agentsFound())
+        ? { ...environment, sessionsApproved: () => true }
+        : environment,
     });
     // The set-up's own summary ends on the dashboard link; ending its questions early is a failure.
     if (report.setUpRan) return report.cancelled ? 1 : 0;

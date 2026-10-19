@@ -20,11 +20,14 @@ export interface FakeSetupEnvironment extends SetupEnvironment {
 export function fakeSetupEnvironment(options: {
   found?: readonly Harness[];
   browser?: boolean;
+  /** Whether the person has let Rerail read their sessions already; true unless a test asks the question. */
+  sessionsApproved?: boolean;
   /** Runs when a page is asked for, as the person's clicks in the dashboard would. */
   onPage?: (scope: RulesDashboardScope, page: DashboardPage) => void | Promise<void>;
   /** Where rule packs come from: this repository's TypeScript pack alone by default, as if no other were published. */
   packs?: PackStore;
 } = {}): FakeSetupEnvironment {
+  let approved = options.sessionsApproved ?? true;
   const connections: FakeSetupEnvironment["connections"] = [];
   const pages: FakeSetupEnvironment["pages"] = [];
   return {
@@ -37,6 +40,10 @@ export function fakeSetupEnvironment(options: {
     },
     async connectedAgents() {
       return connections.at(-1)?.agents ?? [];
+    },
+    sessionsApproved: () => approved,
+    async setSessionsApproved(answer) {
+      approved = answer;
     },
     async dashboard(scope, page, open): Promise<DashboardLink> {
       pages.push({ repoRoot: scope.checkoutPath, repositoryKey: scope.repositoryKey, page, open });

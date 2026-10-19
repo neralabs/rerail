@@ -47,6 +47,9 @@ import {
   packReviewQuestion,
   READ_REPO_ANSWERS,
   readRepoQuestion,
+  SESSIONS_ANSWERS,
+  sessionsQuestion,
+  SETUP_FLAGS,
   recommendedPacksQuestion,
   renderAgentsPrompt,
   renderPacksPrompt,
@@ -57,6 +60,7 @@ import {
   renderQuestion,
   renderSkipped,
   renderStarted,
+  renderSessionsDeclined,
   renderStoppedRepo,
   renderSummary,
   setupQuestion,
@@ -129,6 +133,10 @@ export interface SetupEnvironment {
   connect(agents: readonly Harness[], repoRoot: string | undefined): Promise<void>;
   /** Coding agents Rerail is connected to now, for a re-run that connects nothing. */
   connectedAgents(): Promise<readonly Harness[]>;
+  /** Whether the person has let Rerail read their coding agent sessions on this computer (T2b, asked once). */
+  sessionsApproved(): boolean;
+  /** Record their answer: yes is kept, no takes back an earlier yes. */
+  setSessionsApproved(approved: boolean): Promise<void>;
   /**
    * A dashboard page scoped to `scope`'s repository and checkout; the link is always returned. `open`: try a
    * browser (E6 says why none opened). False when an earlier run already opened it, so a re-run shows the link alone.
@@ -171,9 +179,12 @@ export interface SetupRequest extends RepositorySetupOptions {
   repo?: string;
 }
 
-/** How a set-up run ended. `waiting`: the agent lane stopped at a question; `cancelled`: terminal input ended. */
+/**
+ * How a set-up run ended. `waiting`: the agent lane stopped at a question; `cancelled`: terminal input ended;
+ * `declined`: the person did not let Rerail read their sessions, so nothing was set up.
+ */
 export type SetupOutcome =
-  | { status: "waiting" | "cancelled" | "skipped" }
+  | { status: "waiting" | "cancelled" | "skipped" | "declined" }
   | { status: "started" | "stopped"; repositoryName: string; ruleCount: number };
 
 export interface RepositoryStartReport {
@@ -192,7 +203,7 @@ export interface RepositoryStartReport {
 
 const DEFAULT_NEXT_ARGS: readonly string[] = ["setup", "--json"];
 
-const ANSWERS: readonly string[] = [...new Set<string>([...READ_REPO_ANSWERS, ...CONFIRM_PACKS_ANSWERS, ...NO_REPO_ANSWERS])];
+const ANSWERS: readonly string[] = [...new Set<string>([...SESSIONS_ANSWERS, ...READ_REPO_ANSWERS, ...CONFIRM_PACKS_ANSWERS, ...NO_REPO_ANSWERS])];
 
 interface Repository {
   root: string;
@@ -215,6 +226,33 @@ function codingAgents(ids: readonly Harness[]): CodingAgent[] {
 
 function halted(io: RepositorySetupIo): SetupOutcome {
   return { status: io.ask === undefined ? "waiting" : "cancelled" };
+}
+
+/**
+ * T2b, before set-up reads or connects anything: may Rerail read the person's coding agent sessions? Asked until they
+ * allow it, then never again on this computer; declining takes back an earlier yes. The answer is used up here; `repo`
+ * is the folder the run is for, which the allow answer carries on (set-up then still asks before reading it). Returns
+ * the answer the rest of set-up goes on with, or how the run ended.
+ */
+async function approveSessions(run: Run, answer: string | undefined, repo: string | undefined): Promise<{ answer: string | undefined } | SetupOutcome> {
+  const { environment } = run.request;
+  if (answer === "decline") {
+    await environment.setSessionsApproved(false);
+    say(run.io, renderSessionsDeclined(run.io.lane));
+    return { status: "declined" };
+  }
+  if (answer === "allow") {
+    await environment.setSessionsApproved(true);
+    return { answer: undefined };
+  }
+  if (environment.sessionsApproved()) return { answer };
+  const form = sessionsQuestion({
+    carriedArgs: repo === undefined ? [] : [SETUP_FLAGS.repo, repo],
+    ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
+  });
+  const picked = await choose(run, form, SESSIONS_ANSWERS);
+  if (picked === undefined) return halted(run.io);
+  return approveSessions(run, picked, repo);
 }
 
 /** `""` takes the first answer (the cursor is on it); `2` the second; an answer key itself also works. */
@@ -819,14 +857,18 @@ export function checkSetupAnswer(answer: string | undefined): string | undefined
   throw new Error(`Unknown answer: ${answer} (expected one of ${ANSWERS.join(", ")})`);
 }
 
-/** `rerail setup` after the install: steps 3 to 6 for the repository named or found, or E3 and E5 without one. */
+/** `rerail setup` after the install: T2b once, then steps 3 to 6 for the repository named or found, or E3 and E5 without one. */
 export async function runSetup(io: RepositorySetupIo, request: SetupRequest): Promise<SetupOutcome> {
   const run: Run = { io, request, databasePath: request.databasePath ?? defaultRerailDatabasePath() };
-  const answer = checkSetupAnswer(request.answer);
+  const approval = await approveSessions(run, checkSetupAnswer(request.answer), request.repo);
+  if ("status" in approval) return approval;
+  const { answer } = approval;
   if (answer === "skip") return skip(run);
   if (request.repo !== undefined) {
     const named = repositoryAt(request.repo);
-    if (named !== undefined) return setUpOneRepository(run, named, true, answer);
+    // The allow answer's `--repo` is the folder the run was for, which `rerail start` may have found itself: set-up
+    // still asks before reading it. Only a folder the person named in this run is the go-ahead.
+    if (named !== undefined) return setUpOneRepository(run, named, request.answer !== "allow", answer);
     say(io, renderFolderNotFound({ folder: request.repo }, io.lane));
     return noRepository(run);
   }
@@ -841,13 +883,15 @@ export async function runSetup(io: RepositorySetupIo, request: SetupRequest): Pr
  */
 export async function runRepositorySetup(workspace: string, io: RepositorySetupIo, options: RepositorySetupOptions): Promise<RepositoryStartReport> {
   const run: Run = { io, request: { ...options, cwd: workspace }, databasePath: options.databasePath ?? defaultRerailDatabasePath() };
-  const answer = checkSetupAnswer(options.answer);
+  const checked = checkSetupAnswer(options.answer);
   const repository = repositoryAt(workspace);
   if (repository === undefined) throw new Error(`There is no folder at ${workspace}. Nothing was read.`);
   if (isHomeFolder(repository.root)) throw new Error(HOME_FOLDER_REFUSED);
   // Read before set-up writes anything: stopped, or started but not set up.
   const previous = workspaceStartState(repository.root, run.databasePath);
-  const outcome = await setUpOneRepository(run, repository, false, answer);
+  // The allow answer carries the folder on, as one set-up still asks before reading (`runSetup`).
+  const approval = await approveSessions(run, checked, repository.root);
+  const outcome = "status" in approval ? approval : await setUpOneRepository(run, repository, false, approval.answer);
   return {
     previous,
     setUpRan: true,

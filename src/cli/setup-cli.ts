@@ -1,7 +1,7 @@
-import { existsSync } from "node:fs";
-import { mkdir, realpath, rename } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 import { rulesDashboardUrl, type RulesDashboardScope } from "../api/session-contracts.js";
@@ -24,10 +24,12 @@ import {
   type RegistrationReport,
 } from "../setup/harness-registration.js";
 import { checkNodeVersion } from "../setup/node-version.js";
+import { addLauncherToPath, describeLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
-import { renderInstalled, SETUP_FLAGS, shellQuote, type DashboardLink, type SetupLane } from "../harness/setup-screens.js";
+import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, shellQuote, type DashboardLink, type SetupLane } from "../harness/setup-screens.js";
+import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import type { ManagedUpdater } from "../setup/updater.js";
 
@@ -78,12 +80,17 @@ function registrationRoot(context: SetupContext): string {
   return packageRegistrationRoot(context.home, context.packageRoot);
 }
 
-/** Steps `install --root` earns, since it writes the launcher and touches coding agent config. */
-function nextSteps(home: string): string[] {
-  return [
-    `  add ${join(home, "bin")} to PATH to run \`rerail\` directly`,
-    "  restart Cursor, Claude Code, Codex, OMP, or Pi so they load the new hooks",
-  ];
+/** Put the launcher's directory on PATH (`shell-path.ts`); set-up's line for it, or undefined when nothing changed. */
+async function launcherOnPath(context: SetupContext, lane: SetupLane): Promise<string | undefined> {
+  const { launcherPath } = context.updater;
+  // A run that wrote no launcher (an install that failed) has nothing to put on PATH yet.
+  if (!existsSync(launcherPath)) return undefined;
+  const binDir = dirname(launcherPath);
+  const home = codingAgentHome();
+  const change = await addLauncherToPath({ binDir, home });
+  if (change.status === "failed") return renderOnPath({ binDir, locations: [], failure: change.reason, home }, lane).replace(/\n$/u, "");
+  if (change.status !== "changed") return undefined;
+  return renderOnPath({ binDir, locations: change.locations, home }, lane).replace(/\n$/u, "");
 }
 
 /** True when `<home>/current` already resolves to `root`, so hooks written against it name this checkout. */
@@ -222,9 +229,17 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
   // Removing every coding agent from the managed install is the uninstall. Removing one coding agent, or a
   // checkout registered with `--root`, leaves the shared rules and history in place.
   const uninstall = remove && parsed.hosts === undefined && (explicitRoot === undefined || root === context.updater.currentLink);
-  if (uninstall) await backUpRulesAndHistory(context.home, parsed.dryRun);
+  if (uninstall) {
+    await backUpRulesAndHistory(context.home, parsed.dryRun);
+    const binDir = dirname(context.updater.launcherPath);
+    const removed = describeLauncherPath(await removeLauncherFromPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun }), binDir, "remove", parsed.dryRun);
+    if (removed !== undefined) process.stdout.write(`${removed}\n`);
+  }
   if (explicitRoot !== undefined && !remove) {
-    process.stdout.write(["", "Next:", ...nextSteps(context.home), ""].join("\n"));
+    const binDir = dirname(context.updater.launcherPath);
+    const change = await addLauncherToPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun });
+    const pathLine = describeLauncherPath(change, binDir, "add", parsed.dryRun);
+    process.stdout.write(["", ...(pathLine === undefined ? [] : [pathLine]), "Next:", "  restart Cursor, Claude Code, Codex, OMP, or Pi so they load the new hooks", ""].join("\n"));
   }
   return 0;
 }
@@ -298,6 +313,9 @@ function pageUrl(origin: string, scope: RulesDashboardScope, page: DashboardPage
   return url.href;
 }
 
+/** In the Rerail home: the person's one approval that Rerail may read their coding agent sessions (T2b). */
+const CONSENT_FILE = "consent.json";
+
 /** What set-up needs from this machine: the coding agents, their registration, the dashboard, and npm for rule packs. */
 export function setupEnvironment(context: SetupContext, port?: number): SetupEnvironment {
   return {
@@ -315,6 +333,24 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
     async connectedAgents() {
       // A dry run plans every write; an agent with nothing to write is connected already.
       return connectedCodingAgents(registrationRoot(context), codingAgentHome());
+    },
+    sessionsApproved() {
+      try {
+        const consent = JSON.parse(readFileSync(join(context.home, CONSENT_FILE), "utf8")) as { sessions?: { approvedAt?: unknown } };
+        return typeof consent.sessions?.approvedAt === "string";
+      } catch {
+        return false;
+      }
+    },
+    async setSessionsApproved(approved) {
+      const path = join(context.home, CONSENT_FILE);
+      if (!approved) {
+        await rm(path, { force: true });
+        return;
+      }
+      await mkdir(context.home, { recursive: true, mode: 0o700 });
+      const consent = { sessions: { approvedAt: new Date().toISOString() } };
+      await writeFile(path, `${JSON.stringify(consent, null, 2)}\n`, { mode: 0o600 });
     },
     async dashboard(scope, page, open): Promise<DashboardLink> {
       let origin: string;
@@ -511,9 +547,13 @@ async function setupText(args: readonly string[], context: SetupContext, io: Set
     return 1;
   }
   const parsed = setupArguments(args);
+  const banner = renderBanner({ version: context.updater.packageVersionLabel, depth: colourDepth() }, io.lane);
+  if (banner !== "") io.say(banner.replace(/\n$/u, ""));
   const place = machinePlace(context);
   const installedLine = await install(context, parsed, place.cwd, io.lane, "setup");
   if (installedLine !== undefined) io.say(installedLine);
+  const pathLine = await launcherOnPath(context, io.lane);
+  if (pathLine !== undefined) io.say(pathLine);
   const outcome = await runSetup(io, setupRequest(context, parsed, place, io.lane));
   return outcome.status === "cancelled" ? 1 : 0;
 }
@@ -529,8 +569,10 @@ async function jsonSetupStep(args: readonly string[], context: SetupContext, pla
     if (!node.ok) return errorStep(node.message.replace(/\n$/u, ""));
     const parsed = setupArguments(args);
     const installedLine = await install(context, parsed, place.cwd, "json", origin);
+    const pathLine = await launcherOnPath(context, "json");
     const step = await runSetupStep({ ...setupRequest(context, parsed, place, "json"), nextArgs: jsonNextArgs(carryOf(parsed, place)) });
-    return installedLine === undefined ? step : { ...step, screen: `${installedLine}\n${step.screen}` };
+    const opening = [installedLine, pathLine].filter(line => line !== undefined);
+    return opening.length === 0 ? step : { ...step, screen: [...opening, step.screen].join("\n") };
   } catch (error) {
     return errorStep(messageOf(error));
   }
