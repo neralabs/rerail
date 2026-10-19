@@ -332,6 +332,59 @@ impl FormatArgs {
     }
 }
 
+/// What the SQL engine's terminals read of `formatArgs` (`FormatArgs::sides`): its verdict before
+/// its sub-rules, and the candidates each sub-rule searches, each with whether it is known to be
+/// unused (or missing), and whether others may be.
+pub(crate) enum Sides<'t, D: Doc> {
+    NoMatch,
+    Unknown,
+    Sides {
+        tree: std::sync::Arc<crate::code_rule_dsl::literal::SubTree>,
+        unused: Vec<(Node<'t, D>, bool)>,
+        unused_incomplete: bool,
+        /// The template's fields by their preorder index in `tree`, in the order `missing`
+        /// searches them (`match_node`'s `dfs`).
+        missing: Vec<(u32, bool)>,
+        missing_incomplete: bool,
+    },
+}
+
+impl FormatArgs {
+    /// `match_node`'s steps before its sub-rules, for the SQL engine.
+    pub(crate) fn sides<'t, D: Doc>(&self, env: &MetaVarEnv<'t, D>) -> Sides<'t, D> {
+        match self.prepare(env) {
+            Prepared::NoMatch => Sides::NoMatch,
+            Prepared::Unknown => Sides::Unknown,
+            Prepared::Sides {
+                tree,
+                unused,
+                missing,
+            } => {
+                let root = AstGrep::doc(SubDoc { tree: tree.clone() });
+                let fields = root
+                    .root()
+                    .dfs()
+                    .enumerate()
+                    .filter_map(|(index, part)| {
+                        missing
+                            .candidates
+                            .iter()
+                            .find(|(id, _)| *id == part.node_id())
+                            .map(|(_, known)| (index as u32, *known))
+                    })
+                    .collect();
+                Sides::Sides {
+                    tree,
+                    unused: unused.candidates,
+                    unused_incomplete: unused.incomplete,
+                    missing: fields,
+                    missing_incomplete: missing.incomplete,
+                }
+            }
+        }
+    }
+}
+
 /// A search's verdict when more candidates may exist than it saw: a miss is then unknown.
 fn open(found: Option<bool>, incomplete: bool) -> Option<bool> {
     match found {

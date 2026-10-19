@@ -323,11 +323,42 @@ fn holds(rule: &AstMatcher, scopes: &[Held], names: &mut Held) {
                 }
             }
         }
-        AstMatcher::Kind(_)
-        | AstMatcher::Regex(_)
-        | AstMatcher::Compare(_)
-        | AstMatcher::Semantic(_)
-        | AstMatcher::Never => {}
+        AstMatcher::Semantic(semantic) => match semantic {
+            Semantic::Binding(test) => test.sub_rules().for_each(|rule| holds(rule, scopes, names)),
+            Semantic::Binds(test) => test.sub_rules().for_each(|rule| holds(rule, scopes, names)),
+            Semantic::Arguments(arguments) => names.extend(
+                arguments
+                    .bind
+                    .iter()
+                    .map(|(name, _)| (name.clone(), SlotKind::Node)),
+            ),
+            Semantic::Capture(name) => {
+                names.insert((name.clone(), SlotKind::Node));
+            }
+            Semantic::Calls(test) => names.extend(
+                test.chain
+                    .iter()
+                    .map(|chain| (chain.clone(), SlotKind::Text)),
+            ),
+            Semantic::FormatArgs(test) => {
+                if let Some(rule) = &test.unused {
+                    holds(rule, scopes, names);
+                }
+                names.extend(
+                    test.exports
+                        .iter()
+                        .map(|name| (name.clone(), SlotKind::Text)),
+                );
+            }
+            Semantic::Parse(test) => names.extend(
+                test.exports
+                    .iter()
+                    .map(|name| (name.clone(), SlotKind::Text)),
+            ),
+            Semantic::Resolves(_) | Semantic::Value(_) | Semantic::Layout(_) | Semantic::Host(_) => {
+            }
+        },
+        AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Compare(_) | AstMatcher::Never => {}
         #[cfg(test)]
         AstMatcher::TestUnknown(_) => {}
     }

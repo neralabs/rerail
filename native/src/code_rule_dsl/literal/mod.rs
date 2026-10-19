@@ -454,6 +454,30 @@ impl SubTree {
     pub(crate) fn value(&self, node_id: usize) -> Option<&Value> {
         self.values.get(self.index_of(node_id)?)?.as_ref()
     }
+
+    /// The last node (preorder index) of the subtree of node `index`.
+    pub(crate) fn last(&self, index: u32) -> u32 {
+        let mut last = index;
+        while let Some(rec) = self.nodes.get(last as usize) {
+            // The last child's subtree ends the node's.
+            let mut child = rec.first;
+            let mut final_child = NONE;
+            while child != NONE {
+                final_child = child;
+                child = self.nodes[child as usize].next;
+            }
+            if final_child == NONE {
+                break;
+            }
+            last = final_child;
+        }
+        last
+    }
+
+    /// The field id of node `index` in its parent (0 for none).
+    pub(crate) fn field(&self, index: u32) -> u16 {
+        self.nodes.get(index as usize).map_or(0, |rec| rec.field)
+    }
 }
 
 /// A sub-tree's text. Node ranges are offsets into it plus `offset`, which an annotation's tree
@@ -534,6 +558,16 @@ impl Doc for SubDoc {
     fn get_node_text<'a>(&'a self, node: &SubNode<'a>) -> Cow<'a, str> {
         let rec = node.rec();
         Cow::Borrowed(&self.tree.source.text[rec.start as usize..rec.end as usize])
+    }
+}
+
+impl SubDoc {
+    /// The node at preorder `index` of the tree.
+    pub(crate) fn node(&self, index: u32) -> SubNode<'_> {
+        SubNode {
+            tree: &self.tree,
+            index,
+        }
     }
 }
 

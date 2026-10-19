@@ -386,13 +386,14 @@ fn sql_batch(
     let mut run_of = HashMap::new();
     // Per clause run of a file: its job, slot, run and position in the run.
     let mut wanted = Vec::new();
-    for (job, (_, file, .., start)) in started.iter().enumerate() {
+    for (job, (_, file, _, crossfile, start)) in started.iter().enumerate() {
         let Ok(Started { ast: Some(ast), .. }) = start else {
             continue;
         };
         let index = docs.len();
         // The file's scopes as the native dispatch installs them (`evaluate_ast_file`): its
-        // cached tables of this revision, module and host path.
+        // cached tables of this revision, module and host path; and the call-graph closure a
+        // consumer's evaluation installs (`CrossFileScheduler::install`).
         let context = FileContext {
             path: Some(file.input.path.clone()),
             module: file.input.module.clone(),
@@ -402,6 +403,7 @@ fn sql_batch(
                 .filter(|(revision, _)| *revision == file.source_revision)
                 .map(|(_, tables)| tables.clone())
                 .unwrap_or_default(),
+            calls: CrossFileScheduler::calls(crossfile.as_ref()),
         };
         docs.push((ast.doc.restored.clone(), context));
         for (slot, planned) in ast.runs.iter().enumerate() {

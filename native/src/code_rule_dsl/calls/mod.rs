@@ -868,6 +868,18 @@ impl FileCallsSlot {
         })?;
         Some(Self::install(view, summary))
     }
+
+    /// The closure and summary `for_path` installs for `path`, for the SQL engine to install
+    /// where its terminals read `calls`.
+    pub(crate) fn evaluation_calls(path: &str) -> Option<(Arc<CallsView>, Arc<Summary>)> {
+        EVALUATION.with_borrow(|evaluation| {
+            let evaluation = evaluation.as_ref()?;
+            Some((
+                Arc::clone(&evaluation.view),
+                Arc::clone(evaluation.summaries.get(path)?),
+            ))
+        })
+    }
 }
 
 impl Drop for FileCallsSlot {

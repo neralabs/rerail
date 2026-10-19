@@ -13,11 +13,12 @@
 //! appends: a `ROW_NUMBER() OVER ()` would buffer every row in an ephemeral table first and
 //! insert them by seeking.
 
+mod leaves;
 mod three;
 
 use super::lower::{INTERNAL, ORIGIN};
 use super::plan::{
-    CallReturn, CallSlot, OfRule, Op, Slot, SlotId, SlotKind, Statement, Stop, Unit, Walk,
+    CallReturn, CallSlot, OfRule, Op, Slot, SlotId, SlotKind, Source, Statement, Stop, Unit, Walk,
 };
 use std::collections::BTreeSet;
 use std::fmt::Write;
@@ -207,6 +208,8 @@ pub(super) fn stage(statement: &Statement) -> Vec<String> {
 struct Emitter<'s> {
     slots: &'s [Slot],
     units: &'s [Unit],
+    /// The terminals' related-node walks (`Walk::Related`).
+    sources: &'s [Source],
     /// Every slot's physical columns, in order.
     physical: Vec<String>,
     statements: Vec<String>,
@@ -257,6 +260,7 @@ impl<'s> Emitter<'s> {
         Self {
             slots,
             units: &statement.units,
+            sources: &statement.sources,
             physical,
             statements: Vec::new(),
             next: 0,
@@ -614,6 +618,24 @@ impl<'s> Emitter<'s> {
                 at_node,
                 binds,
             } => self.fact(*term, reads, *at_node, binds, input),
+            Op::Seq(items) => self.seq(items, input),
+            Op::Gate(slot) => self.gate(*slot, input),
+            Op::Every { walk, sub } => self.every(*walk, sub, input),
+            Op::Parse {
+                term,
+                inner,
+                host,
+                tree,
+                body,
+                exports,
+            } => self.parse(*term, inner, *host, *tree, body, exports, input),
+            Op::Host {
+                host,
+                tree,
+                rule,
+                exports,
+            } => self.host(*host, *tree, rule, exports, input),
+            Op::Exports { tree, exports } => self.exports(*tree, exports, input),
             Op::Unknowable { .. } | Op::AllOpen(_) | Op::AnyOpen(_) | Op::Search { .. } => {
                 unreachable!("three-valued operators lower under `Unknowable`, at the root only")
             }
@@ -921,6 +943,9 @@ impl<'s> Emitter<'s> {
     /// candidate and the row's bindings, plus `pk` (the row's `k`) and `ord` (the walk order:
     /// ids, negated for descending walks).
     fn candidates(&mut self, walk: Walk, input: &str) -> String {
+        if let Some(candidates) = self.leaf_candidates(walk, input) {
+            return candidates;
+        }
         let at = "JOIN node fn ON fn.file = f.file AND fn.id = f.node";
         let simple = |from: &str| {
             format!("SELECT f.k AS pk, c.file AS file, c.id AS node FROM {input} f {from}")
@@ -1007,6 +1032,7 @@ impl<'s> Emitter<'s> {
                      JOIN node w ON w.file = v.file AND w.id = v.src WHERE w.field = {field} AND w.ffirst = 1"
                 )
             }
+            Walk::Slot(_) | Walk::Related(_) => unreachable!("a terminal's walk (`leaf_candidates`)"),
         };
         let order = if walk.descending() {
             "-c.node"
@@ -1128,7 +1154,11 @@ impl<'s> Emitter<'s> {
                         ));
                     }
                 }
-                _ => overrides.push((callee[0].clone(), format!("f.{}", caller[0]))),
+                _ => {
+                    for (to, from) in callee.iter().zip(&caller) {
+                        overrides.push((to.clone(), format!("f.{from}")));
+                    }
+                }
             }
         }
         let framed = self.frame(
@@ -1277,6 +1307,28 @@ impl<'s> Emitter<'s> {
                         ok.push(format!("(b.s{param} IS NULL OR b.s{param} = {reference})"));
                     }
                     overrides.push((format!("s{caller}"), reference));
+                }
+                // An exported text: its text and range unify as `unify_capture`'s transformed
+                // variables do, each with the caller's or the first parameter's.
+                SlotKind::Text => {
+                    for &param in &ret.params {
+                        returned.push(format!("(b.s{param} IS NOT NULL AND b.s{caller} IS NULL)"));
+                    }
+                    for suffix in ["", "r"] {
+                        let reference = format!(
+                            "COALESCE(b.s{caller}{suffix}{})",
+                            ret.params
+                                .iter()
+                                .map(|param| format!(", b.s{param}{suffix}"))
+                                .collect::<String>()
+                        );
+                        for &param in &ret.params {
+                            ok.push(format!(
+                                "(b.s{param}{suffix} IS NULL OR b.s{param}{suffix} = {reference})"
+                            ));
+                        }
+                        overrides.push((format!("s{caller}{suffix}"), reference));
+                    }
                 }
             }
         }

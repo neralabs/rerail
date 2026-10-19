@@ -3,12 +3,13 @@
 //! compiled. An operator the SQL engine does not cover yet fails with `Unsupported`; the engine
 //! never answers for a clause it cannot lower.
 
+mod leaves;
 mod three;
 
 use super::emit;
 use super::plan::{
-    CallReturn, CallSlot, MASK_BITS, Mask, OfRule, Op, Slot, SlotId, SlotKind, Statement, Stop,
-    Unit, Unsupported, Walk, mask,
+    CallReturn, CallSlot, MASK_BITS, Mask, OfRule, Op, Slot, SlotId, SlotKind, Source, Statement,
+    Stop, Unit, Unsupported, Walk, mask,
 };
 use super::recursion::{self, Cycle, Recursion, UtilKey, util_key};
 use super::terminals::{
@@ -141,6 +142,11 @@ struct Lowerer<'p> {
     root: Option<SlotId>,
     /// While lowering a capture-free cycle's stage: its members' units.
     stage_members: HashMap<UtilKey, usize>,
+    /// The terminals' related-node walks lowered so far (`Walk::Related`).
+    sources: Vec<Source>,
+    /// While lowering a parsed tree's rule (`parse`): where its host is. Its nodes are no
+    /// file's, so no per-batch stage (computed over the batch's files) may stand for a rule.
+    tree: Option<leaves::TreeContext>,
 }
 
 fn unsupported<T>(operator: &str) -> Result<T, Unsupported> {
@@ -210,7 +216,12 @@ fn kind_id(kind: &ast_grep_core::matcher::KindMatcher) -> u16 {
 fn referred(op: &Op, out: &mut Vec<usize>) {
     match op {
         Op::Recur { unit, .. } => out.push(*unit),
-        Op::All(items) | Op::Any(items) => items.iter().for_each(|item| referred(item, out)),
+        Op::All(items) | Op::Any(items) | Op::Seq(items) => {
+            items.iter().for_each(|item| referred(item, out));
+        }
+        Op::Every { sub, .. } | Op::Parse { body: sub, .. } | Op::Host { rule: sub, .. } => {
+            referred(sub, out);
+        }
         Op::AllOpen(terms) => terms.iter().for_each(|term| referred(&term.op, out)),
         Op::AnyOpen(branches) => branches
             .iter()
@@ -242,7 +253,9 @@ fn referred(op: &Op, out: &mut Vec<usize>) {
         | Op::Stage(_)
         | Op::EachRoot { .. }
         | Op::Excluded { .. }
-        | Op::Fact { .. } => {}
+        | Op::Fact { .. }
+        | Op::Gate(_)
+        | Op::Exports { .. } => {}
     }
 }
 
@@ -335,6 +348,8 @@ impl<'p> Lowerer<'p> {
             exclude: None,
             root: None,
             stage_members: HashMap::new(),
+            sources: Vec::new(),
+            tree: None,
         }
     }
 
@@ -347,6 +362,7 @@ impl<'p> Lowerer<'p> {
             kinds,
             op,
             units,
+            sources: self.sources,
         }
     }
 
@@ -634,27 +650,35 @@ impl<'p> Lowerer<'p> {
         binds: &[(String, SlotKind)],
         bound: &Bound,
     ) -> Result<(Op, Bound), Unsupported> {
-        let mut slots = Vec::new();
-        let mut vars = Vec::new();
-        for name in reads {
-            for kind in [SlotKind::Node, SlotKind::List, SlotKind::Count] {
-                if let Some(slot) = self.existing(scope, name, kind) {
-                    slots.push(slot);
-                    vars.push((name.clone(), kind));
-                }
-            }
-        }
-        let mut out = bound.clone();
         let mut bound_slots = Vec::new();
-        let mut width = 0;
         for (name, kind) in binds {
-            let slot = self.slot(scope, name, *kind);
+            bound_slots.push(self.slot(scope, name, *kind));
+        }
+        self.fact_slots(verdicts, identity, scope, reads, at_node, &bound_slots, bound)
+    }
+
+    /// `fact`, binding the slots `binds` (in the terminal's column order) whatever their scope:
+    /// a leaf's internal slots (a binding's nodes, a parsed tree's number).
+    #[allow(clippy::too_many_arguments)]
+    fn fact_slots(
+        &mut self,
+        verdicts: impl FnOnce() -> Box<dyn Verdicts>,
+        identity: Option<usize>,
+        scope: usize,
+        reads: &BTreeSet<String>,
+        at_node: bool,
+        binds: &[SlotId],
+        bound: &Bound,
+    ) -> Result<(Op, Bound), Unsupported> {
+        let (slots, vars) = self.read_slots(scope, reads);
+        let mut out = bound.clone();
+        let mut width = 0;
+        for &slot in binds {
             width += self.slots[slot].columns(slot).len();
             out.insert(slot);
-            bound_slots.push(slot);
         }
         if width > FACT_COLUMNS {
-            return unsupported("terminal binding more than 8 columns");
+            return unsupported("terminal binding more than 16 columns");
         }
         let key = identity
             .filter(|_| binds.is_empty())
@@ -678,10 +702,30 @@ impl<'p> Lowerer<'p> {
                 term,
                 reads: slots,
                 at_node,
-                binds: bound_slots,
+                binds: binds.to_vec(),
             },
             out,
         ))
+    }
+
+    /// The slots of `names` in `scope` (every kind each has), with their names and kinds in
+    /// the same order: what a terminal's key carries of them.
+    fn read_slots(
+        &self,
+        scope: usize,
+        names: &BTreeSet<String>,
+    ) -> (Vec<SlotId>, Vec<(String, SlotKind)>) {
+        let mut slots = Vec::new();
+        let mut vars = Vec::new();
+        for name in names {
+            for kind in [SlotKind::Node, SlotKind::List, SlotKind::Count, SlotKind::Text] {
+                if let Some(slot) = self.existing(scope, name, kind) {
+                    slots.push(slot);
+                    vars.push((name.clone(), kind));
+                }
+            }
+        }
+        (slots, vars)
     }
 
     /// A leaf the matcher evaluates itself (`value`, `compare`, `layout`, `testUnknown`) as a
@@ -745,6 +789,10 @@ impl<'p> Lowerer<'p> {
             StopBy::Neighbor => Stop::Neighbor,
             StopBy::End => Stop::End,
             StopBy::Rule(rule) => {
+                // A stage holds the batch's files' nodes, not a parsed tree's.
+                if self.tree.is_some() {
+                    return unsupported("stopBy rule inside parse");
+                }
                 let stage = self.stage(rule)?;
                 // A stop rule unknown at a node ends the walk there and leaves it open.
                 if self.three
@@ -798,6 +846,7 @@ impl<'p> Lowerer<'p> {
         bound: &Bound,
     ) -> Result<(Op, Bound), Unsupported> {
         match matcher {
+            AstMatcher::Pattern(_) if self.tree.is_some() => unsupported("pattern inside parse"),
             AstMatcher::Pattern(pattern) => {
                 let mut term = PatternTerm::new(pattern.clone(), self.dialect);
                 if term.width() > PATTERN_COLUMNS {
@@ -945,6 +994,7 @@ impl<'p> Lowerer<'p> {
                     None => (None, bound.clone()),
                     Some(rule)
                         if capture_free(rule)
+                            && self.tree.is_none()
                             && !recursion::reaches(rule, &self.program.in_progress) =>
                     {
                         (Some(OfRule::Stage(self.stage(rule)?)), bound.clone())
@@ -1017,6 +1067,9 @@ impl<'p> Lowerer<'p> {
                 }
                 if let Some(cycle) = self.program.recursion.cycle(util) {
                     recursion::refusal(&cycle)?;
+                    if self.tree.is_some() {
+                        return unsupported("recursive utility inside parse");
+                    }
                     if let Some(&unit) = self.stage_members.get(&util_key(util)) {
                         return Ok((Op::Recur { unit, slots: None }, bound.clone()));
                     }
@@ -1031,7 +1084,7 @@ impl<'p> Lowerer<'p> {
                     return Ok((Op::Recur { unit, slots: None }, out));
                 }
                 util.with_target(|rule| {
-                    if capture_free(rule) {
+                    if capture_free(rule) && self.tree.is_none() {
                         self.stage(rule)
                             .map(|stage| (Op::Stage(stage), bound.clone()))
                     } else {
@@ -1054,7 +1107,12 @@ impl<'p> Lowerer<'p> {
                 });
                 self.scopes += 1;
                 let callee = self.scopes;
-                let kinds = [SlotKind::Node, SlotKind::List, SlotKind::Count];
+                let kinds = [
+                    SlotKind::Node,
+                    SlotKind::List,
+                    SlotKind::Count,
+                    SlotKind::Text,
+                ];
                 let (body, returned): (Op, Option<Bound>) =
                     match self.program.recursion.cycle(&call.util) {
                         Some(cycle) => {
@@ -1192,20 +1250,10 @@ impl<'p> Lowerer<'p> {
                 let reads = layout.reads().map(str::to_owned).collect();
                 self.leaf(matcher, scope, &reads, true, bound)
             }
-            AstMatcher::Semantic(semantic) => unsupported(match semantic {
-                Semantic::Resolves(_) => "resolves",
-                Semantic::Binding(_) => "resolves.binding",
-                Semantic::Binds(_) => "binds",
-                Semantic::Arguments(_) => "arguments",
-                Semantic::Parse(_) => "parse",
-                Semantic::Host(_) => "host",
-                Semantic::Capture(_) => "capture",
-                Semantic::FormatArgs(_) => "formatArgs",
-                Semantic::Calls(_) => "calls",
-                Semantic::Value(_) | Semantic::Layout(_) => {
-                    unreachable!("`value` and `layout` lower as fact terminals")
-                }
-            }),
+            AstMatcher::Semantic(Semantic::Resolves(_)) => {
+                self.leaf(matcher, scope, &BTreeSet::new(), true, bound)
+            }
+            AstMatcher::Semantic(semantic) => self.semantic(matcher, semantic, scope, bound),
             #[cfg(test)]
             AstMatcher::TestUnknown(_) => self.leaf(matcher, scope, &BTreeSet::new(), true, bound),
         }

@@ -4,15 +4,20 @@
 //! bindings, and evaluates it natively (`Verdicts`) with the file's scopes installed: built on the
 //! file's first key and parked between statements, so a batch builds each file's scope tables,
 //! values and line tables once (`FileScopeSlot::park`). It returns the keys whose verdict is true
-//! or unknown, with `unk` and the values the term binds; `Op::Fact` reads them into a frame.
+//! or unknown, with `unk` and the values the term binds; `Op::Fact` reads them into a frame. A
+//! related-node terminal returns several rows per key, one per related node (`Walk::Related`).
+//! A key's file may be a parsed tree of the batch (`exec::SubFile`), evaluated with its host
+//! file's scopes.
 
 use super::Terminal;
+use crate::code_rule_dsl::literal::{ID_FLAG, SubDoc};
 use crate::code_rule_dsl::matcher::{
-    AstMatcher, FileScopeSlot, ParkedScopes, leaf_verdict, node_at,
+    AstMatcher, FileScopeSlot, ParkedScopes, export_text, exported_span, exported_text, leaf_env,
+    leaf_verdict, node_at,
 };
 use crate::code_rule_dsl::soundness::SyntaxErrors;
-use crate::code_rule_dsl::sql::exec::{BatchFile, BatchSlot};
-use crate::code_rule_dsl::sql::nodes::integer;
+use crate::code_rule_dsl::sql::exec::{Batch, BatchFile, BatchSlot};
+use crate::code_rule_dsl::sql::nodes::{NodeFacts, integer, sub_index};
 use crate::code_rule_dsl::sql::plan::SlotKind;
 use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::Doc;
@@ -32,49 +37,174 @@ use std::ffi::{CStr, c_int};
 use std::marker::PhantomData;
 use std::sync::{Arc, LazyLock};
 
-/// The most binding columns a fact terminal returns (`v0`…).
-pub(in crate::code_rule_dsl::sql) const FACT_COLUMNS: usize = 8;
+/// The most value columns a fact terminal returns (`v0`…).
+pub(in crate::code_rule_dsl::sql) const FACT_COLUMNS: usize = 16;
 
-/// A verdict that is not false: unknown or true, with the values of the term's binding columns.
+/// A verdict that is not false: unknown or true, with the values of the term's columns.
 pub(in crate::code_rule_dsl::sql) struct Verdict {
     pub(in crate::code_rule_dsl::sql) unknown: bool,
-    pub(in crate::code_rule_dsl::sql) values: Vec<Option<i64>>,
+    pub(in crate::code_rule_dsl::sql) values: Vec<Value>,
 }
 
-/// What an input-set terminal evaluates per key: the verdict at `node` with `env`, which holds
-/// the bindings of the term's reads. `Ok(None)` is false; `Err` a limit the evaluation hit.
-pub(in crate::code_rule_dsl::sql) trait Verdicts:
-    Send + Sync
-{
-    fn verdict<'t>(
-        &self,
-        node: Node<'t, TapeDoc>,
-        env: &MetaVarEnv<'t, TapeDoc>,
-    ) -> std::result::Result<Option<Verdict>, String>;
-}
+impl Verdict {
+    pub(in crate::code_rule_dsl::sql) fn unknown() -> Self {
+        Self {
+            unknown: true,
+            values: Vec::new(),
+        }
+    }
 
-/// A leaf the native matcher evaluates (`value`, `compare`, `layout`, `testUnknown`), read
-/// through `matcher::leaf_verdict`: it binds nothing.
-pub(in crate::code_rule_dsl::sql) struct Leaf(pub(in crate::code_rule_dsl::sql) AstMatcher);
-
-impl Verdicts for Leaf {
-    fn verdict<'t>(
-        &self,
-        node: Node<'t, TapeDoc>,
-        env: &MetaVarEnv<'t, TapeDoc>,
-    ) -> std::result::Result<Option<Verdict>, String> {
-        match leaf_verdict(&self.0, node, env) {
-            Ok(Some(false)) => Ok(None),
-            Ok(verdict) => Ok(Some(Verdict {
-                unknown: verdict.is_none(),
-                values: Vec::new(),
-            })),
-            Err(limit) => Err(format!("{limit:?}")),
+    pub(in crate::code_rule_dsl::sql) fn holds(values: Vec<Value>) -> Self {
+        Self {
+            unknown: false,
+            values,
         }
     }
 }
 
-/// A fact term: what it evaluates and the captures its keys carry, in key order. Its binding
+/// What an input-set terminal evaluates per key: its rows at `node` with `env`, which holds the
+/// bindings of the term's reads. No row is false; a verdict's terminal returns at most one, a
+/// related-node terminal one per related node. `Err` is a limit the evaluation hit.
+pub(in crate::code_rule_dsl::sql) trait Verdicts:
+    Send + Sync
+{
+    fn rows<'t>(
+        &self,
+        node: Node<'t, TapeDoc>,
+        env: &MetaVarEnv<'t, TapeDoc>,
+    ) -> std::result::Result<Vec<Verdict>, String>;
+
+    /// The rows at a node of a parsed literal's tree (`parse`); only the terms a tree's rule may
+    /// hold read one.
+    fn tree_rows<'t>(
+        &self,
+        _node: Node<'t, SubDoc>,
+        _env: &MetaVarEnv<'t, SubDoc>,
+    ) -> std::result::Result<Vec<Verdict>, String> {
+        Err("this term reads no parsed tree".to_owned())
+    }
+}
+
+/// A leaf the native matcher evaluates (`value`, `compare`, `layout`, `resolves`, `testUnknown`),
+/// read through `matcher::leaf_verdict`: it binds nothing.
+pub(in crate::code_rule_dsl::sql) struct Leaf(pub(in crate::code_rule_dsl::sql) AstMatcher);
+
+fn leaf_rows<'t, D: Doc>(
+    leaf: &AstMatcher,
+    node: Node<'t, D>,
+    env: &MetaVarEnv<'t, D>,
+) -> std::result::Result<Vec<Verdict>, String> {
+    match leaf_verdict(leaf, node, env) {
+        Ok(Some(false)) => Ok(Vec::new()),
+        Ok(Some(true)) => Ok(vec![Verdict::holds(Vec::new())]),
+        Ok(None) => Ok(vec![Verdict::unknown()]),
+        Err(limit) => Err(format!("{limit:?}")),
+    }
+}
+
+impl Verdicts for Leaf {
+    fn rows<'t>(
+        &self,
+        node: Node<'t, TapeDoc>,
+        env: &MetaVarEnv<'t, TapeDoc>,
+    ) -> std::result::Result<Vec<Verdict>, String> {
+        leaf_rows(&self.0, node, env)
+    }
+
+    fn tree_rows<'t>(
+        &self,
+        node: Node<'t, SubDoc>,
+        env: &MetaVarEnv<'t, SubDoc>,
+    ) -> std::result::Result<Vec<Verdict>, String> {
+        leaf_rows(&self.0, node, env)
+    }
+}
+
+/// A leaf that binds (`arguments`' `bind`, `capture`) or exports (`calls`' `chain`): where it is
+/// true, the values of `binds` in the environment it leaves.
+pub(in crate::code_rule_dsl::sql) struct Binder {
+    pub(in crate::code_rule_dsl::sql) leaf: AstMatcher,
+    pub(in crate::code_rule_dsl::sql) binds: Vec<(String, SlotKind)>,
+}
+
+fn binder_rows<'t, D: Doc>(
+    binder: &Binder,
+    node: Node<'t, D>,
+    env: &MetaVarEnv<'t, D>,
+) -> std::result::Result<Vec<Verdict>, String> {
+    match leaf_env(&binder.leaf, node, env) {
+        Ok((Some(true), Some(bound))) => Ok(vec![Verdict::holds(values_of(&binder.binds, &bound))]),
+        Ok((None, _)) => Ok(vec![Verdict::unknown()]),
+        Ok(_) => Ok(Vec::new()),
+        Err(limit) => Err(format!("{limit:?}")),
+    }
+}
+
+impl Verdicts for Binder {
+    fn rows<'t>(
+        &self,
+        node: Node<'t, TapeDoc>,
+        env: &MetaVarEnv<'t, TapeDoc>,
+    ) -> std::result::Result<Vec<Verdict>, String> {
+        binder_rows(self, node, env)
+    }
+
+    fn tree_rows<'t>(
+        &self,
+        node: Node<'t, SubDoc>,
+        env: &MetaVarEnv<'t, SubDoc>,
+    ) -> std::result::Result<Vec<Verdict>, String> {
+        binder_rows(self, node, env)
+    }
+}
+
+/// A node's number in its document: a tape's id, or a parsed tree's preorder index.
+pub(in crate::code_rule_dsl::sql) fn local_id(node_id: usize) -> i64 {
+    if node_id & ID_FLAG != 0 {
+        i64::from(sub_index(node_id))
+    } else {
+        node_id as i64
+    }
+}
+
+/// The column values of `binds` in `env`, in order: a node's number, a count, an exported text
+/// and its range; NULL where unbound. A list is not bound by a terminal.
+pub(in crate::code_rule_dsl::sql) fn values_of<D: Doc>(
+    binds: &[(String, SlotKind)],
+    env: &MetaVarEnv<'_, D>,
+) -> Vec<Value> {
+    let mut values = Vec::new();
+    for (name, kind) in binds {
+        match kind {
+            SlotKind::Node => values.push(
+                env.get_match(name)
+                    .map_or(Value::Null, |node| Value::Integer(local_id(node.node_id()))),
+            ),
+            SlotKind::Count => values.push(
+                env.get_transformed(name)
+                    .and_then(|bytes| {
+                        <D::Source as Content>::encode_bytes(bytes)
+                            .parse::<i64>()
+                            .ok()
+                    })
+                    .map_or(Value::Null, Value::Integer),
+            ),
+            SlotKind::Text => {
+                match (exported_text(env, name), exported_span(env, name)) {
+                    (Some(text), Some(span)) => {
+                        values.push(Value::Text(text));
+                        values.push(Value::Text(format!("{}:{}", span.start, span.end)));
+                    }
+                    _ => values.extend([Value::Null, Value::Null]),
+                }
+            }
+            SlotKind::List => values.extend([Value::Null, Value::Null, Value::Null, Value::Null]),
+        }
+    }
+    values
+}
+
+/// A fact term: what it evaluates and the captures its keys carry, in key order. Its value
 /// columns (`v0`…, at most `FACT_COLUMNS`) are what its verdicts return.
 pub(in crate::code_rule_dsl::sql) struct FactTerm {
     pub(in crate::code_rule_dsl::sql) verdicts: Box<dyn Verdicts>,
@@ -104,8 +234,13 @@ impl Drop for BatchScopes {
 
 /// Runs `body` with file `index`'s scopes installed: those parked by an earlier statement of the
 /// batch, else fresh ones as the native evaluator installs them per file (its cached scope
-/// tables, module, path and whether its syntax errors hide bindings).
-fn with_scopes<T>(index: usize, file: &BatchFile, body: impl FnOnce() -> T) -> T {
+/// tables, module, path and whether its syntax errors hide bindings), and its call-graph closure
+/// where it has one, as the evaluator installs it for `calls`.
+pub(in crate::code_rule_dsl::sql) fn with_scopes<T>(
+    index: usize,
+    file: &BatchFile,
+    body: impl FnOnce() -> T,
+) -> T {
     let parked = SCOPES.with_borrow_mut(|scopes| scopes.get_mut(index).and_then(Option::take));
     let slot = match parked {
         Some(parked) => FileScopeSlot::resume(parked),
@@ -122,7 +257,11 @@ fn with_scopes<T>(index: usize, file: &BatchFile, body: impl FnOnce() -> T) -> T
             }
         }
     };
+    let calls = file.context.calls.as_ref().map(|(view, summary)| {
+        crate::code_rule_dsl::calls::FileCallsSlot::install(Arc::clone(view), Arc::clone(summary))
+    });
     let out = body();
+    drop(calls);
     if let Some(parked) = slot.park() {
         SCOPES.with_borrow_mut(|scopes| {
             if scopes.len() <= index {
@@ -134,13 +273,23 @@ fn with_scopes<T>(index: usize, file: &BatchFile, body: impl FnOnce() -> T) -> T
     out
 }
 
-/// The environment a key's capture values stand for, over `file`'s tree; `None` for a value
-/// that names no node of it.
-fn environment<'t>(
-    file: &'t BatchFile,
+/// Decodes the hexadecimal of a text a key carries (`hex()` of a text slot).
+fn unhex(hex: &str) -> Option<String> {
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok())
+        .collect::<Option<Vec<u8>>>()?;
+    String::from_utf8(bytes).ok()
+}
+
+/// The environment a key's capture values stand for, over a document whose node `id` is
+/// `node(id)` and whose facts are `facts`; `None` for a value that names no node of it.
+fn environment<'t, D: Doc>(
+    facts: &NodeFacts,
+    node: impl Fn(u32) -> Node<'t, D>,
     reads: &[(String, SlotKind)],
     values: &[&str],
-) -> Option<MetaVarEnv<'t, TapeDoc>> {
+) -> Option<MetaVarEnv<'t, D>> {
     let mut env = MetaVarEnv::new();
     for ((name, kind), value) in reads.iter().zip(values) {
         if value.is_empty() {
@@ -149,42 +298,80 @@ fn environment<'t>(
         match kind {
             SlotKind::Node => {
                 let id: u32 = value.parse().ok()?;
-                if id >= file.facts.len() {
+                if id >= facts.len() {
                     return None;
                 }
-                env.insert(name, node_at(&file.root, id))?;
+                env.insert(name, node(id))?;
             }
             SlotKind::List => {
                 let (lo, hi) = value.split_once(':')?;
-                let nodes =
-                    super::pattern::list_nodes(&file.facts, lo.parse().ok()?, hi.parse().ok()?)
-                        .into_iter()
-                        .map(|id| node_at(&file.root, id))
-                        .collect();
+                let nodes = super::pattern::list_nodes(facts, lo.parse().ok()?, hi.parse().ok()?)
+                    .into_iter()
+                    .map(&node)
+                    .collect();
                 env.insert_multi(name, nodes)?;
             }
             SlotKind::Count => {
-                let bytes = <<TapeDoc as Doc>::Source as Content>::decode_str(value).into_owned();
+                let bytes = <D::Source as Content>::decode_str(value).into_owned();
                 env.insert_transformation(&MetaVariable::Multiple, name, bytes);
+            }
+            SlotKind::Text => {
+                let (text, range) = value.split_once(':')?;
+                let (start, end) = range.split_once(':')?;
+                let range = start.parse().ok()?..end.parse().ok()?;
+                export_text(&mut env, name, &unhex(text)?, range);
             }
         }
     }
     Some(env)
 }
 
-/// One answered key.
+/// One answered key: each of its rows.
 struct FactRow {
     ek: String,
     unknown: bool,
-    values: Vec<Option<i64>>,
+    values: Vec<Value>,
+}
+
+/// The values of a key after its `file,node`, one per read.
+fn key_values<'k>(term: &FactTerm, ek: &'k str) -> Result<Vec<&'k str>> {
+    let values: Vec<&str> = ek.split(',').skip(2).collect();
+    if values.len() != term.reads.len() {
+        return Err(Error::ModuleError(format!("fact: malformed key {ek}")));
+    }
+    Ok(values)
+}
+
+fn answered(rows: &mut Vec<FactRow>, ek: &str, verdicts: Vec<Verdict>) {
+    for verdict in verdicts {
+        rows.push(FactRow {
+            ek: ek.to_owned(),
+            unknown: verdict.unknown,
+            values: verdict.values,
+        });
+    }
+}
+
+thread_local! {
+    /// The batch and file whose keys are being evaluated: a tree a terminal parses there
+    /// becomes a document of the batch (`tree_file`).
+    static EVALUATING: RefCell<Option<(Arc<Batch>, usize)>> = const { RefCell::new(None) };
+}
+
+/// The batch's number of `tree`, parsed from a node of the file whose keys are being evaluated
+/// (`exec::Batch::add_subfile`).
+pub(in crate::code_rule_dsl::sql) fn tree_file(
+    tree: &Arc<crate::code_rule_dsl::literal::SubTree>,
+) -> Option<i64> {
+    EVALUATING.with_borrow(|evaluating| {
+        evaluating
+            .as_ref()
+            .map(|(batch, host)| i64::from(batch.add_subfile(*host, tree)))
+    })
 }
 
 /// Evaluates `keys` of `term`, file by file.
-fn evaluate(
-    batch: &crate::code_rule_dsl::sql::exec::Batch,
-    term: &FactTerm,
-    keys: BTreeSet<String>,
-) -> Result<Vec<FactRow>> {
+fn evaluate(batch: &Arc<Batch>, term: &FactTerm, keys: BTreeSet<String>) -> Result<Vec<FactRow>> {
     let mut by_file: BTreeMap<usize, Vec<(String, u32)>> = BTreeMap::new();
     for ek in keys {
         let mut parts = ek.splitn(3, ',');
@@ -196,38 +383,57 @@ fn evaluate(
         };
         by_file.entry(file).or_default().push((ek, node));
     }
+    let limit = |limit: String| Error::ModuleError(format!("fact: limit {limit}"));
     let mut rows = Vec::new();
     for (index, keys) in by_file {
-        let Some(file) = batch.files.get(index) else {
-            continue;
-        };
-        let answered = with_scopes(index, file, || -> Result<()> {
-            for (ek, node) in keys {
-                if node >= file.facts.len() {
-                    continue;
+        if let Some(file) = batch.files.get(index) {
+            EVALUATING.set(Some((Arc::clone(batch), index)));
+            let answered_all = with_scopes(index, file, || -> Result<()> {
+                for (ek, node) in keys {
+                    if node >= file.facts.len() {
+                        continue;
+                    }
+                    let values = key_values(term, &ek)?;
+                    let Some(env) = environment(
+                        &file.facts,
+                        |id| node_at(&file.root, id),
+                        &term.reads,
+                        &values,
+                    ) else {
+                        continue;
+                    };
+                    let verdicts = term
+                        .verdicts
+                        .rows(node_at(&file.root, node), &env)
+                        .map_err(limit)?;
+                    answered(&mut rows, &ek, verdicts);
                 }
-                let values: Vec<&str> = ek.split(',').skip(2).collect();
-                if values.len() != term.reads.len() {
-                    return Err(Error::ModuleError(format!("fact: malformed key {ek}")));
+                Ok(())
+            });
+            EVALUATING.set(None);
+            answered_all?;
+        } else if let Some(sub) = batch.subfile(index) {
+            // A parsed tree's node: read with its host file's scopes, as the matcher reads it
+            // while matching the host.
+            let host = &batch.files[sub.host];
+            let root = &sub.root;
+            let at = |id: u32| root.adopt(root.root().get_doc().node(id));
+            let answered_all = with_scopes(sub.host, host, || -> Result<()> {
+                for (ek, node) in keys {
+                    if node >= sub.facts.len() {
+                        continue;
+                    }
+                    let values = key_values(term, &ek)?;
+                    let Some(env) = environment(&sub.facts, at, &term.reads, &values) else {
+                        continue;
+                    };
+                    let verdicts = term.verdicts.tree_rows(at(node), &env).map_err(limit)?;
+                    answered(&mut rows, &ek, verdicts);
                 }
-                let Some(env) = environment(file, &term.reads, &values) else {
-                    continue;
-                };
-                let verdict = term
-                    .verdicts
-                    .verdict(node_at(&file.root, node), &env)
-                    .map_err(|limit| Error::ModuleError(format!("fact: limit {limit}")))?;
-                if let Some(verdict) = verdict {
-                    rows.push(FactRow {
-                        ek,
-                        unknown: verdict.unknown,
-                        values: verdict.values,
-                    });
-                }
-            }
-            Ok(())
-        });
-        answered?;
+                Ok(())
+            });
+            answered_all?;
+        }
     }
     Ok(rows)
 }
@@ -391,7 +597,7 @@ unsafe impl VTabCursor for FactCursor<'_> {
             COL_UNK => context.set_result(&i64::from(row.unknown)),
             other => {
                 let index = (other - 3) as usize;
-                context.set_result(&row.values.get(index).copied().flatten())
+                context.set_result(row.values.get(index).unwrap_or(&Value::Null))
             }
         }
     }

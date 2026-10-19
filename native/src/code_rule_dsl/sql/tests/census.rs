@@ -37,8 +37,9 @@ fn query(
                 found.extend(refusals);
             }
         }
+        // `select_when` combines its leaves in SQL (`sql::select_when`, which the stateless and
+        // workspace evaluators route to on the SQL engine): only its leaves can refuse.
         Query::SelectWhen { select, exists } => {
-            found.push("select_when".to_owned());
             self::query(select, each, found, lowered, matchers);
             self::query(exists, None, found, lowered, matchers);
         }
@@ -101,8 +102,26 @@ fn run_census() {
                     &mut lowered,
                     &mut matchers,
                 ),
-                ClauseKind::RequireEach { .. } => found.push("require_each".to_owned()),
-                ClauseKind::Budget { .. } => found.push("budget".to_owned()),
+                // `require_each` and `budget` join their producers' rows in SQL
+                // (`sql::crossfile`): only the producers' queries can refuse.
+                ClauseKind::RequireEach { subject, evidence } => {
+                    for producer in [subject, evidence] {
+                        query(
+                            &producer.ast.query,
+                            None,
+                            &mut found,
+                            &mut lowered,
+                            &mut matchers,
+                        );
+                    }
+                }
+                ClauseKind::Budget { query: producer, .. } => query(
+                    &producer.ast.query,
+                    None,
+                    &mut found,
+                    &mut lowered,
+                    &mut matchers,
+                ),
                 ClauseKind::Llm => found.push("llm".to_owned()),
             }
             for operator in found {

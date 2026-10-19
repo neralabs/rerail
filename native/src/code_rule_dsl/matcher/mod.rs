@@ -39,13 +39,17 @@ use ast_grep_core::matcher::{MatcherExt, NodeMatch};
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::{Doc, Node};
 pub(super) use binding::BindingTest;
+pub(crate) use binding::Resolution;
 pub(super) use binds::{BindingCount, BindingFilter, Binds, Redefines, ScopeName};
+pub(crate) use binds::{OPEN, PASSES};
 pub(super) use captures::{Capture, CaptureAnalysis, collect_variables, parse_exported};
 pub(super) use compare::{Collation, CompareOp, CompareText, Comparison, EqClass, SemanticText};
 pub(super) use count::{Count, CountBinding};
 pub(crate) use each::binding_range;
-pub(crate) use exported::{WITNESS_NODE, export_text, exported_span, is_span_variable};
-pub(crate) use format_args::{FormatArgs, Style};
+pub(crate) use exported::{
+    WITNESS_NODE, export_text, exported_span, exported_text, is_span_variable,
+};
+pub(crate) use format_args::{FormatArgs, Sides, Style};
 pub(crate) use layout::{Gap, Layout, LineCount, Neighbour};
 pub(super) use memo::with_file as with_file_memo;
 pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
@@ -447,6 +451,35 @@ pub(super) fn leaf_verdict<'tree, D: Doc>(
     UNKNOWN.set(unknown);
     THREE_VALUED.set(three);
     limit.map_or(Ok(verdict), Err)
+}
+
+/// `leaf_verdict`, with the environment a true verdict leaves: the leaf's bindings (a binding
+/// leaf's, `arguments` or `capture`, unified with `env`'s) and its exports (`calls`' chain).
+#[allow(clippy::type_complexity)]
+pub(super) fn leaf_env<'tree, D: Doc>(
+    leaf: &AstMatcher,
+    node: Node<'tree, D>,
+    env: &MetaVarEnv<'tree, D>,
+) -> std::result::Result<(Option<bool>, Option<MetaVarEnv<'tree, D>>), UtilLimit> {
+    let three = THREE_VALUED.replace(true);
+    let unknown = UNKNOWN.replace(false);
+    let steps = UTIL_STEPS_LEFT.replace(usize::MAX);
+    let exceeded = UTIL_EXCEEDED.replace(None);
+    let mut trial = Cow::Borrowed(env);
+    let matched = leaf.match_node_with_env(node, &mut trial).is_some();
+    let verdict = if matched {
+        Some(true)
+    } else if UNKNOWN.get() {
+        None
+    } else {
+        Some(false)
+    };
+    let limit = UTIL_EXCEEDED.replace(exceeded);
+    UTIL_STEPS_LEFT.set(steps);
+    UNKNOWN.set(unknown);
+    THREE_VALUED.set(three);
+    let bound = matched.then(|| trial.into_owned());
+    limit.map_or(Ok((verdict, bound)), Err)
 }
 
 impl AstMatcher {

@@ -179,6 +179,15 @@ impl ParseTest {
         self.match_tree(node, env, tree)
     }
 
+    /// `match_node`'s step before its tree's rule, for the SQL engine: the tree of a text
+    /// grammar's literal at `node`; `None` where the node holds none (or the budget ran out).
+    pub(crate) fn text_tree<D: Doc>(&self, node: &Node<'_, D>) -> Option<Parsed> {
+        if !self.host_kinds.contains(&node.kind_id()) || self.grammar == Grammar::Annotation {
+            return None;
+        }
+        parsed_tree(node, self.grammar)
+    }
+
     /// Matches the rule on the tree's root, exporting its captures.
     fn match_tree<'t, D: Doc>(
         &self,

@@ -7,6 +7,7 @@ use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::usage::{BindingId, PrivateMember, Usage};
 use crate::code_rule_dsl::scope::{Form, ScopeKind, ScopeTable, TYPE, VALUE};
+use crate::code_rule_dsl::value::NodeRef;
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
@@ -724,6 +725,305 @@ impl Binds {
             UNKNOWN.set(true);
         }
         None
+    }
+}
+
+/// A step's verdict before its sub-rules, as the SQL engine's terminals return it: it passes, it
+/// is unknown (its sub-rules are not read), or it fails.
+pub(crate) const PASSES: u8 = 0;
+pub(crate) const OPEN: u8 = 1;
+pub(crate) const FAILS: u8 = 2;
+
+/// One binding a `binds` node names, before its sub-rules (`Binds::candidates`).
+pub(crate) struct Candidate {
+    /// Its position among the node's bindings (`Usage::named_at`), or `PRIVATE`.
+    pub(crate) ordinal: i64,
+    /// `OPEN` where its filters (or the binding it shadows) are unknown, else `PASSES`.
+    pub(crate) pre: u8,
+    /// Its site, value and annotation, where the sub-rule of each is listed.
+    pub(crate) nodes: [Option<NodeRef>; 3],
+    /// `FAILS` where a node a listed `redefines` sub-rule reads of the shadowed binding is
+    /// missing (Python): checked after the binding's own sub-rules.
+    pub(crate) shadow: u8,
+    /// The shadowed binding's site, value and annotation (Python's `redefines`).
+    pub(crate) previous: [Option<NodeRef>; 3],
+}
+
+/// A private member's declaration, which `binds` reads alone (`Binds::match_private`).
+pub(crate) const PRIVATE: i64 = -1;
+
+/// One binding `redefines` reads beside a candidate (`Binds::others`), before its sub-rules.
+pub(crate) struct Other {
+    pub(crate) pre: u8,
+    pub(crate) nodes: [Option<NodeRef>; 3],
+}
+
+/// What the SQL engine's terminals read of `binds`: the matcher's steps before each sub-rule
+/// (`Binds::match_node`), the sub-rules being relations over the nodes they return there.
+impl Binds {
+    /// Whether `redefines` is read through the shadowed binding (Python), not the others.
+    pub(crate) fn redefines_shadowed(&self) -> bool {
+        with_adapter!(Family::of(self.language), A => <<A as Adapter>::Scope as ScopeRules>::REDEFINES_SHADOWED)
+    }
+
+    /// The table and usage at a name node, as `match_node` reads them.
+    fn tables<D: Doc>(&self, node: &Node<'_, D>) -> Option<(Arc<ScopeTable>, Arc<Usage>)> {
+        if !self.name_kinds.contains(&node.kind_id()) {
+            return None;
+        }
+        let table = file_table(
+            node,
+            self.language,
+            table_reading(self.options.as_deref(), self.python.as_deref()),
+        )?;
+        let usage = file_usage(node, &table)?;
+        Some((table, usage))
+    }
+
+    /// The bindings `node` names, in the matcher's order, each with its verdict before its
+    /// sub-rules; one that fails is left out.
+    pub(crate) fn candidates<'tree, D: Doc>(
+        &self,
+        node: &Node<'tree, D>,
+        env: &MetaVarEnv<'tree, D>,
+    ) -> Vec<Candidate> {
+        let Some((table, usage)) = self.tables(node) else {
+            return Vec::new();
+        };
+        let range = node.range();
+        let private = usage.private_at(range.start, range.end);
+        let region = |capture: &str| capture_range(env, capture);
+        let listed = |rules: [&Option<AstMatcher>; 3], nodes: &[Option<NodeRef>; 3]| {
+            rules
+                .iter()
+                .zip(nodes)
+                .all(|(rule, node)| rule.is_none() || node.is_some())
+        };
+        let own = [&self.site, &self.value, &self.annotation];
+        if let Some((member, index)) = private {
+            let declaration = &member.declarations[index];
+            let nodes = [
+                Some(declaration.site),
+                declaration.value,
+                declaration.annotation,
+            ];
+            let pre = match self.filter.private_verdict(&member, index, &region) {
+                Some(true) if listed(own, &nodes) => PASSES,
+                None => OPEN,
+                _ => return Vec::new(),
+            };
+            return vec![Candidate {
+                ordinal: PRIVATE,
+                pre,
+                nodes,
+                shadow: PASSES,
+                previous: [None; 3],
+            }];
+        }
+        let shadowed_only = self.redefines_shadowed();
+        let mut candidates = Vec::new();
+        for (ordinal, id) in usage
+            .named_at(range.start, range.end, node.kind_id())
+            .enumerate()
+        {
+            let ordinal = ordinal as i64;
+            let open = Candidate {
+                ordinal,
+                pre: OPEN,
+                nodes: [None; 3],
+                shadow: PASSES,
+                previous: [None; 3],
+            };
+            match self.filter.verdict(&table, Some(&usage), id, &region) {
+                Some(true) => {}
+                Some(false) => continue,
+                None => {
+                    candidates.push(open);
+                    continue;
+                }
+            }
+            let shadowed = match self.redefines.as_deref().filter(|_| shadowed_only) {
+                None => None,
+                Some(redefines) => match Self::shadowed(redefines, &table, &usage, id, &region) {
+                    Some(Some(shadowed)) => Some((redefines, shadowed)),
+                    Some(None) => continue,
+                    None => {
+                        candidates.push(open);
+                        continue;
+                    }
+                },
+            };
+            let binding = table.binding_of(id);
+            let nodes = [
+                binding.site.node,
+                binding.site.value,
+                binding.site.annotation,
+            ];
+            if !listed(own, &nodes) {
+                continue;
+            }
+            let (shadow, previous) = match shadowed {
+                None => (PASSES, [None; 3]),
+                Some((redefines, shadowed)) => {
+                    let previous = table.binding_of(shadowed);
+                    let previous = [
+                        previous.site.node,
+                        previous.site.value,
+                        previous.site.annotation,
+                    ];
+                    let rules = [&redefines.site, &redefines.value, &redefines.annotation];
+                    let shadow = if listed(rules, &previous) {
+                        PASSES
+                    } else {
+                        FAILS
+                    };
+                    (shadow, previous)
+                }
+            };
+            candidates.push(Candidate {
+                ordinal,
+                pre: PASSES,
+                nodes,
+                shadow,
+                previous,
+            });
+        }
+        candidates
+    }
+
+    /// The occurrences of candidate `ordinal`'s variable (`Binds::candidates`).
+    pub(crate) fn occurrences<D: Doc>(&self, node: &Node<'_, D>, ordinal: i64) -> Vec<NodeRef> {
+        let Some((_, usage)) = self.tables(node) else {
+            return Vec::new();
+        };
+        let range = node.range();
+        if let Some((member, _)) = usage.private_at(range.start, range.end) {
+            return if ordinal == PRIVATE {
+                member.occurrences.clone()
+            } else {
+                Vec::new()
+            };
+        }
+        usage
+            .named_at(range.start, range.end, node.kind_id())
+            .nth(usize::try_from(ordinal).unwrap_or(usize::MAX))
+            .map(|id| usage.occurrences(id).to_vec())
+            .unwrap_or_default()
+    }
+
+    /// The bindings `redefines` reads beside candidate `ordinal`, in the matcher's order, each
+    /// with its verdict before its sub-rules (`redefines_others`, or `match_private`'s loop): a
+    /// failing one is left out unless `every` reads it, an open one ends a private member's
+    /// search, and an `OPEN` one ends the list where others may exist the table does not know.
+    pub(crate) fn others_of<'tree, D: Doc>(
+        &self,
+        node: &Node<'tree, D>,
+        env: &MetaVarEnv<'tree, D>,
+        ordinal: i64,
+    ) -> Vec<Other> {
+        let (Some(redefines), Some((table, usage))) =
+            (self.redefines.as_deref(), self.tables(node))
+        else {
+            return Vec::new();
+        };
+        let range = node.range();
+        let private = usage.private_at(range.start, range.end);
+        let region = |capture: &str| capture_range(env, capture);
+        let rules = [&redefines.site, &redefines.value, &redefines.annotation];
+        let complete = |nodes: &[Option<NodeRef>; 3]| {
+            rules
+                .iter()
+                .zip(nodes)
+                .all(|(rule, node)| rule.is_none() || node.is_some())
+        };
+        let failing = || {
+            if redefines.every {
+                vec![Other {
+                    pre: FAILS,
+                    nodes: [None; 3],
+                }]
+            } else {
+                Vec::new()
+            }
+        };
+        let mut others = Vec::new();
+        // A passing one, or for `every` a failing one, in order.
+        let push = |pre: u8, nodes: [Option<NodeRef>; 3], others: &mut Vec<Other>| {
+            let pre = if pre == PASSES && !complete(&nodes) {
+                FAILS
+            } else {
+                pre
+            };
+            if pre != FAILS || redefines.every {
+                others.push(Other { pre, nodes });
+            }
+        };
+        if let Some((member, index)) = private {
+            if ordinal != PRIVATE || redefines.same_scope == Some(false) {
+                return failing();
+            }
+            for other in 0..member.declarations.len() {
+                if (redefines.every && other == index) || (!redefines.every && other >= index) {
+                    continue;
+                }
+                let declaration = &member.declarations[other];
+                let nodes = [
+                    Some(declaration.site),
+                    declaration.value,
+                    declaration.annotation,
+                ];
+                match redefines.filter.private_verdict(&member, other, &region) {
+                    Some(true) => push(PASSES, nodes, &mut others),
+                    Some(false) => push(FAILS, nodes, &mut others),
+                    // The matcher's answer is unknown from here on.
+                    None => {
+                        others.push(Other {
+                            pre: OPEN,
+                            nodes: [None; 3],
+                        });
+                        break;
+                    }
+                }
+            }
+            return others;
+        }
+        if self.redefines_shadowed() {
+            return Vec::new();
+        }
+        let Some(id) = usage
+            .named_at(range.start, range.end, node.kind_id())
+            .nth(usize::try_from(ordinal).unwrap_or(usize::MAX))
+        else {
+            return Vec::new();
+        };
+        let Some((list, incomplete)) = Self::others(redefines, &table, id) else {
+            return failing();
+        };
+        for (other, admitted) in list {
+            let previous = table.binding_of(other);
+            let nodes = [
+                previous.site.node,
+                previous.site.value,
+                previous.site.annotation,
+            ];
+            let pre = if admitted {
+                match redefines.filter.verdict(&table, Some(&usage), other, &region) {
+                    Some(true) => PASSES,
+                    Some(false) => FAILS,
+                    None => OPEN,
+                }
+            } else {
+                FAILS
+            };
+            push(pre, nodes, &mut others);
+        }
+        if incomplete {
+            others.push(Other {
+                pre: OPEN,
+                nodes: [None; 3],
+            });
+        }
+        others
     }
 }
 
