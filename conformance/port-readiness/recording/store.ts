@@ -128,6 +128,22 @@ export const LIFTED_ASSETS: ReadonlySet<string> = new Set([
 export const LIFTED_CASE_SOURCES: ReadonlyMap<string, string> = new Map();
 
 /**
+ * The runtimes each hand-uploaded `recording.json` (LIFTED_ASSETS) was made with but its lock doesn't pin, with the
+ * digests of their pins (runtimePinDigests) in the tree the recording was made from. The recorder pinned only upstream's
+ * runtime and the adapter's until 8c7e29a8, so next/eslint-plugin-next, react/eslint-plugin-react and
+ * react/eslint-plugin-react-hooks were recorded in eslint-config-next's environment without the lock naming it. The
+ * gates read an entry as part of its lock: pins-agree counts its runtimes, and runtime-pins checks their committed pins.
+ * Keyed by asset name, like LIFTED_CASE_SOURCES, so an entry covers that one recording and no other. The list only
+ * shrinks: an entry goes with the asset's entry in LIFTED_ASSETS, when the tool-pack gets an attested recording.
+ */
+const ESLINT_CONFIG_NEXT = { "eslint-config-next-16.3.8": { "package.json": "fa48caee62a30874dd792a0b9a48721a2c2e3fed58c128918c7c8f0f4e6542d4" } };
+export const LIFTED_RUNTIMES: ReadonlyMap<string, RecordingLock["runtimes"]> = new Map([
+  ["next-eslint-plugin-next-recording-824360574a54f5a3e9b42c76b507ee87522169e9502d88ebdaadb5802483fced.json.gz", ESLINT_CONFIG_NEXT],
+  ["react-eslint-plugin-react-hooks-recording-11e50fbaf44ab74565931616b6c90fa69db7b8303d11f6a87b251dcc3b88710e.json.gz", ESLINT_CONFIG_NEXT],
+  ["react-eslint-plugin-react-recording-e171b74355708619ec757af1570fb5db03db8bf8675d34f3fb9b7c5e83d25d6e.json.gz", ESLINT_CONFIG_NEXT],
+]);
+
+/**
  * One digest over a set of case sources: sha256 of `<sha256 of the file's bytes>  <file>\n` per file (sha256sum's
  * lines), the files in code-unit order. Any file added, dropped, renamed or edited changes it.
  */

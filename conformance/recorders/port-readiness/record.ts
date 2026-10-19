@@ -11,7 +11,7 @@ import { dirname, extname, join, resolve } from "node:path";
 
 import { buildCorpus, buildRerailCorpora, conformancePaths, CORPUS_TASKS, failedTasksMessage, readRerailCorpora, wantedKey, wantedPlaces, type CorpusFile, type RerailCorpus, type Wanted } from "../../port-readiness/corpus.js";
 import { readGoldens } from "../../port-readiness/goldens.js";
-import { readGatesManifest, toolPackDirectory, type GatesManifest } from "../../port-readiness/manifest.js";
+import { readGatesManifest, recordedRuntimes, toolPackDirectory, type GatesManifest } from "../../port-readiness/manifest.js";
 import type { CommandRunner } from "../../port-readiness/process.js";
 import {
   CORPUS_FILE, CORPUS_FORMAT, RECORDING_FILE, RECORDING_FORMAT, gatesCorpusSchema, gatesRecordingSchema, isCleanVerdict, recordedParsers, recordingText, spanTuple,
@@ -170,19 +170,6 @@ export function committedSources(directory: string): CommittedSources {
   walk("fixtures");
   for (const files of byDigest.values()) files.sort(byText);
   return (bytes) => byDigest.get(sha256(bytes)) ?? [];
-}
-
-/** The runtimes each adapter runs besides upstream's own (gates.yaml `upstream.runtime`). */
-const EXTRA_RUNTIMES: Record<GatesManifest["adapter"], string[]> = { bandit: ["python"], ruff: ["python"], eslint: ["parsers"] };
-
-/**
- * Every runtime the adapter installs to record a tool-pack, which the lock pins: upstream's own, the adapter's, and the
- * environment the pack is linted in when gates.yaml names one (eslint-config-next's parsers and globals shape upstream's
- * answers as much as the plugin does).
- */
-export function recordedRuntimes(manifest: GatesManifest): string[] {
-  const environment = manifest.eslint?.environment?.runtime;
-  return sortedUnique([manifest.upstream.runtime, ...EXTRA_RUNTIMES[manifest.adapter], ...(environment === undefined ? [] : [environment])]);
 }
 
 /** A path's directories, innermost first: `a/b/c.py` gives `a/b` and `a`. */

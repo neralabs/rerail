@@ -15,9 +15,10 @@ import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 import { fetchToolPackRecordings, LIFTED_ASSETS } from "../../../conformance/port-readiness/recording/fetch.js";
 import { diffRecordings, renderRecordingChanges, type RecordedPair } from "../../../conformance/port-readiness/recording/diff.js";
 import {
-  assetName, buildRecordingLock, gzipRecording, LIFTED_CASE_SOURCES, readCachedRecording, readRecordingLock, recordingFromAsset, recordingLockSchema,
-  recordingLockText, writeCachedRecording, RECORDING_LOCK,
+  assetName, buildRecordingLock, gzipRecording, LIFTED_CASE_SOURCES, LIFTED_RUNTIMES, readCachedRecording, readRecordingLock, recordingFromAsset,
+  recordingLockSchema, recordingLockText, writeCachedRecording, RECORDING_LOCK, type RecordingLock,
 } from "../../../conformance/port-readiness/recording/store.js";
+import { readGatesManifest, recordedRuntimes } from "../../../conformance/port-readiness/manifest.js";
 import { gatesCorpusSchema, gatesRecordingSchema, CORPUS_FORMAT, RECORDING_FORMAT, recordingText } from "../../../conformance/port-readiness/recording/schema.js";
 
 const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
@@ -228,6 +229,41 @@ test("every asset taken without an attestation is one a committed lock still nam
 
 test("every hand-uploaded recording whose case sources are pinned together is a hand-uploaded asset, so its pin goes with it", () => {
   assert.deepEqual([...LIFTED_CASE_SOURCES.keys()].filter((asset) => !LIFTED_ASSETS.has(asset) || /-corpus-[0-9a-f]{64}\.json\.gz$/u.test(asset)), []);
+});
+
+/** Every committed lock, with the runtimes the gates.yaml beside it installs. */
+function committedLocks(): { label: string; lock: RecordingLock; runtimes: string[] }[] {
+  const locks: { label: string; lock: RecordingLock; runtimes: string[] }[] = [];
+  for (const pack of readdirSync(join(PACKAGE_ROOT, "packs"))) {
+    const upstream = join(PACKAGE_ROOT, "packs", pack, "upstream");
+    if (!existsSync(upstream)) continue;
+    for (const tool of readdirSync(upstream)) {
+      if (!existsSync(join(upstream, tool, RECORDING_LOCK))) continue;
+      locks.push({ label: `${pack}/${tool}`, lock: readRecordingLock(PACKAGE_ROOT, pack, tool), runtimes: recordedRuntimes(readGatesManifest(PACKAGE_ROOT, pack, tool)) });
+    }
+  }
+  return locks;
+}
+
+test("every committed lock pins exactly the runtimes its gates.yaml installs, a hand-uploaded recording's LIFTED_RUNTIMES included", () => {
+  // What pins-agree checks on every run, here without fetching a recording: a gates.yaml that names a runtime its lock
+  // doesn't (a new environment, or one moved to another runtime directory) needs the tool-pack recorded again.
+  const mismatched = committedLocks().flatMap(({ label, lock, runtimes }) => {
+    const pinned = Object.keys({ ...LIFTED_RUNTIMES.get(lock.files["recording.json"].asset), ...lock.runtimes }).sort();
+    return pinned.join(", ") === runtimes.join(", ") ? [] : [`${label}: gates.yaml installs ${runtimes.join(", ")}, the lock pins ${pinned.join(", ")}`];
+  });
+  assert.deepEqual(mismatched, []);
+});
+
+test("every LIFTED_RUNTIMES entry is a hand-uploaded recording a committed lock names, and pins only runtimes that lock doesn't", () => {
+  const byAsset = new Map(committedLocks().map(({ lock }) => [lock.files["recording.json"].asset, lock]));
+  const wrong = [...LIFTED_RUNTIMES].flatMap(([asset, runtimes]) => {
+    if (!LIFTED_ASSETS.has(asset) || !/-recording-[0-9a-f]{64}\.json\.gz$/u.test(asset)) return [`${asset} is not a hand-uploaded recording.json`];
+    const lock = byAsset.get(asset);
+    if (lock === undefined) return [`${asset} is named by no committed lock: its tool-pack was recorded again, so the entry goes`];
+    return Object.keys(runtimes).filter((runtime) => runtime in lock.runtimes).map((runtime) => `${asset}: its lock already pins ${runtime}`);
+  });
+  assert.deepEqual(wrong, []);
 });
 
 test("a recording whose cached bytes were tampered with reads as absent, not as a recording", async () => {

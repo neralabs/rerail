@@ -215,6 +215,21 @@ export const gatesManifestSchema = z.strictObject({
 
 export type GatesManifest = z.infer<typeof gatesManifestSchema>;
 
+/** The runtimes each adapter runs besides upstream's own (gates.yaml `upstream.runtime`). */
+const EXTRA_RUNTIMES: Record<GatesManifest["adapter"], string[]> = { bandit: ["python"], ruff: ["python"], eslint: ["parsers"] };
+
+/**
+ * Every runtime the adapter installs to record a tool-pack, sorted: upstream's own, the adapter's, and the environment
+ * the pack is linted in when gates.yaml names one (eslint-config-next's parsers and globals shape upstream's answers as
+ * much as the plugin does). The recorder pins each of them in the lock, and the gates' pins-agree check holds a lock to
+ * exactly these, so a runtime gates.yaml names and the lock doesn't makes the recording stale, not unchecked.
+ */
+export function recordedRuntimes(manifest: GatesManifest): string[] {
+  const environment = manifest.eslint?.environment?.runtime;
+  const runtimes = [manifest.upstream.runtime, ...EXTRA_RUNTIMES[manifest.adapter], ...(environment === undefined ? [] : [environment])];
+  return [...new Set(runtimes)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
 /** Strict YAML: unique keys, no anchors or aliases, and a mapping at the top level. */
 export function parseYamlMapping(text: string, label: string): Record<string, unknown> {
   const document = parseDocument(text, { uniqueKeys: true });

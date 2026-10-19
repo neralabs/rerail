@@ -3,10 +3,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { extname, join, posix, resolve } from "node:path";
 
 import { checkoutPinned, type CorpusFile } from "./corpus.js";
-import { readGatesManifest, toolPackDirectory } from "./manifest.js";
+import { readGatesManifest, recordedRuntimes, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { cleanVerdicts, CORPUS_FILE, RECORDING_FILE, gatesCorpusSchema, gatesRecordingSchema, spanOf, type GatesCorpusRecording, type GatesRecording } from "./recording/schema.js";
-import { caseSourcesDigest, LIFTED_CASE_SOURCES, readCachedRecording, readRecordingLock, RECORDING_LOCK, type RecordingLock } from "./recording/store.js";
+import { caseSourcesDigest, LIFTED_CASE_SOURCES, LIFTED_RUNTIMES, readCachedRecording, readRecordingLock, RECORDING_LOCK, type RecordingLock } from "./recording/store.js";
 import { banditSpan } from "./span-units/bandit.js";
 import { eslintSpan } from "./span-units/eslint.js";
 import { ruffSpan } from "./span-units/ruff.js";
@@ -155,8 +155,9 @@ export function readRecordedInputs(root: string, cacheRoot: string, pack: string
 
 /**
  * The tool-pack checks the gates make on a recording: pins agree (gates.yaml, recording.lock, recording.json,
- * conformance.json), the runtimes' pins (package.json, pyproject.toml, .python-version) are the committed ones, the
- * kept LICENSE is the recorded one, every committed case source has its recorded sha256 (or, in a recording uploaded by
+ * conformance.json), the lock pins every runtime gates.yaml installs and no other (recordedRuntimes, or with
+ * `liftedRuntimes` for a recording uploaded by hand before the recorder pinned them all), the runtimes' pins
+ * (package.json, pyproject.toml, .python-version) are the committed ones, the kept LICENSE is the recorded one, every committed case source has its recorded sha256 (or, in a recording uploaded by
  * hand before cases carried one, the digest `liftedCaseSources` pins them all by), and the recording covers every
  * upstream rule the pack names. Any failure means the recording is stale.
  *
@@ -172,14 +173,24 @@ export function inScopeSamples(samples: readonly string[], inScope: readonly str
   return inScope === undefined ? [...samples] : samples.filter((sample) => inScope.includes(extname(sample)));
 }
 
-export function toolPackChecks(inputs: RecordedInputs, liftedCaseSources: ReadonlyMap<string, string> = LIFTED_CASE_SOURCES): Check[] {
+export function toolPackChecks(
+  inputs: RecordedInputs,
+  liftedCaseSources: ReadonlyMap<string, string> = LIFTED_CASE_SOURCES,
+  liftedRuntimes: ReadonlyMap<string, RecordingLock["runtimes"]> = LIFTED_RUNTIMES,
+): Check[] {
   const { root, manifest, lock, recording, corpus, tools, names } = inputs;
   const pack = manifest.rerail.pack;
   const tool = recording.tool;
   const stale = staleMessage(pack, tool);
   const checks: Check[] = [];
   const pins = lock?.pins ?? recording.pins;
-  const runtimes = lock?.runtimes ?? recording.runtimes;
+  const liftedAsset = lock?.files[RECORDING_FILE].asset;
+  // A recording uploaded by hand before the recorder pinned every runtime it installs: the ones its lock doesn't name
+  // are pinned in recording/store.ts (liftedRuntimes, by the lock's asset name) and checked as if the lock named them.
+  const lifted = liftedAsset === undefined ? undefined : liftedRuntimes.get(liftedAsset);
+  const runtimes = { ...lifted, ...(lock?.runtimes ?? recording.runtimes) };
+  const wantedRuntimes = recordedRuntimes(manifest);
+  const pinnedRuntimes = Object.keys(runtimes).sort((a, b) => (a < b ? -1 : 1));
   const conformanceVersion = tools.find((entry) => entry.name === tool)?.version ?? null;
   const pinMismatches = [
     ...(manifest.upstream.version === pins.version ? [] : [`gates.yaml upstream.version ${manifest.upstream.version} but ${RECORDING_LOCK} pins.version ${pins.version}`]),
@@ -190,7 +201,8 @@ export function toolPackChecks(inputs: RecordedInputs, liftedCaseSources: Readon
     ...(manifest.adapter === recording.adapter ? [] : [`gates.yaml adapter ${manifest.adapter} but recording.json adapter ${recording.adapter}`]),
     ...(lock === null || lock.tool === tool ? [] : [`${RECORDING_LOCK} tool ${lock.tool} but recording.json tool ${tool}`]),
     ...(canonical(pins) === canonical(recording.pins) ? [] : [`${RECORDING_LOCK} and recording.json were written by different runs: pins ${canonical(pins)} and ${canonical(recording.pins)}`]),
-    ...(canonical(runtimes) === canonical(recording.runtimes) ? [] : [`${RECORDING_LOCK} and recording.json disagree about the recorder's runtimes`]),
+    ...(canonical(lock?.runtimes ?? recording.runtimes) === canonical(recording.runtimes) ? [] : [`${RECORDING_LOCK} and recording.json disagree about the recorder's runtimes`]),
+    ...(canonical(pinnedRuntimes) === canonical(wantedRuntimes) ? [] : [`gates.yaml's adapter and environment install the runtimes ${wantedRuntimes.join(", ")} but ${RECORDING_LOCK}${lifted === undefined ? "" : " with recording/store.ts's LIFTED_RUNTIMES"} pins ${pinnedRuntimes.join(", ") || "none"}`]),
   ];
   checks.push({ id: "pins-agree", ok: pinMismatches.length === 0, detail: pinMismatches.length === 0 ? `${tool} ${pins.version} at ${pins.commit} in gates.yaml, ${RECORDING_LOCK}, recording.json and conformance.json` : `${pinMismatches.join("; ")}: ${stale}` });
 
@@ -202,7 +214,8 @@ export function toolPackChecks(inputs: RecordedInputs, liftedCaseSources: Readon
       if (actual !== digest) pinFileMismatches.push(`${runtime}/${file} ${actual === null ? "is not committed" : `is ${actual.slice(0, 12)}, recorded ${digest.slice(0, 12)}`}`);
     }
   }
-  checks.push({ id: "runtime-pins", ok: pinFileMismatches.length === 0, detail: pinFileMismatches.length === 0 ? `${Object.keys(runtimes).length} runtime(s) match their committed pins` : `${pinFileMismatches.slice(0, 3).join("; ")}: ${stale}` });
+  const liftedRuntimesNote = lifted === undefined ? "" : ` (${Object.keys(lifted).sort().join(", ")} pinned in recording/store.ts's LIFTED_RUNTIMES: ${RECORDING_FILE} was uploaded by hand before its lock named every runtime)`;
+  checks.push({ id: "runtime-pins", ok: pinFileMismatches.length === 0, detail: pinFileMismatches.length === 0 ? `${pinnedRuntimes.length} runtime(s) match their committed pins${liftedRuntimesNote}` : `${pinFileMismatches.slice(0, 3).join("; ")}: ${stale}` });
 
   const licensePath = join(root, "packs", pack, "licenses", manifest.rerail.project, "LICENSE");
   const licenseSha = existsSync(licensePath) ? sha256(readFileSync(licensePath)) : null;
@@ -234,7 +247,6 @@ export function toolPackChecks(inputs: RecordedInputs, liftedCaseSources: Readon
     else if (recorded === undefined) undigested.push([file, actual]);
     else if (actual !== recorded) sourceMismatches.push(`${file} is ${actual.slice(0, 12)}, recorded ${recorded.slice(0, 12)}`);
   }
-  const liftedAsset = lock?.files[RECORDING_FILE].asset;
   const pinned = liftedAsset === undefined ? undefined : liftedCaseSources.get(liftedAsset);
   if (undigested.length > 0 && pinned === undefined) {
     sourceMismatches.push(...undigested.map(([file]) => `${file} has no recorded sha256`));

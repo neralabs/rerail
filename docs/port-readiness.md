@@ -247,7 +247,9 @@ one are those recorded on a maintainer's machine and uploaded by hand before tha
 entry goes when its tool-pack gets an attested recording. A hand-uploaded recording made before each recorded case
 carried the sha256 of its committed source has its case sources held by `case-sources` to one digest over all of them
 instead, the one they had when it was recorded (`LIFTED_CASE_SOURCES`), and an edited or missing case source fails it
-the same way.
+the same way. Likewise, a hand-uploaded recording made before the lock pinned the environment the pack is linted in
+(`eslint-config-next-16.3.8` for next/eslint-plugin-next, react/eslint-plugin-react and react/eslint-plugin-react-hooks)
+names that runtime and the digest of its pin in `LIFTED_RUNTIMES`; the gates read the entry as part of the lock.
 
 ### Recording
 
@@ -305,6 +307,11 @@ expected findings gained and lost on upstream's own tests, corpus files answered
 one comment per tool-pack, collapsing that tool-pack's earlier ones.
 When the committed lock names a recording that cannot be read (its fetch failed, or the lock or the cached recording
 fails its schema), the summary warns that it was not compared rather than calling it a first recording.
+
+The lock pins every runtime the recorder installs for the tool-pack: upstream's own (`upstream.runtime`), the adapter's
+(`parsers` for ESLint, `python` for Ruff and Bandit) and the environment the pack is linted in (`eslint.environment.runtime`).
+`pins-agree` fails when the lock's runtimes are not exactly those (`recordedRuntimes` in `manifest.ts`), so a
+`gates.yaml` that names a new runtime, or moves to another runtime directory, needs the tool-pack recorded again.
 
 Each runtime is pinned by its `package.json` or `pyproject.toml` alone: every direct dependency at an exact version
 and in `overrides` (the recorder refuses a range), and no lockfile is committed (they are git-ignored). Only those direct
