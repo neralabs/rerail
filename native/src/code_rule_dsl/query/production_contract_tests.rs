@@ -256,6 +256,55 @@ fn production_contract_phase_one_oracles_match_committed_results() {
     );
 }
 
+const PHASE_TWO_CASES: &[&str] = &[
+    "node-value-positive",
+    "node-value-unknown",
+    "all-two-positive",
+    "all-capture-threading",
+    "all-three-valued-false-after-unknown",
+    "all-three-valued-withheld-capture",
+    "any-first-branch",
+    "any-unknown-binding-blocks-later",
+    "any-unknown-without-binding",
+    "not-complete-positive",
+    "not-unknown",
+    "nested-all-any-not",
+    "disabled-when",
+];
+
+#[test]
+fn production_contract_phase_two_comparison_value_and_truth_lower_completely() {
+    let mut failures = Vec::new();
+    for case in cases()
+        .into_iter()
+        .filter(|case| PHASE_TWO_CASES.contains(&case.name.as_str()))
+    {
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        match SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]) {
+            Ok(plan) => {
+                assert_eq!(plan.sql().matches("rerail_matches").count(), 1, "{}", case.name);
+                assert!(!plan.sql().contains("GrammarMatcher"), "{}", case.name);
+                assert!(!plan.sql().contains("tq_"), "{}", case.name);
+                if case.name == "disabled-when" {
+                    assert!(plan.terminals().is_empty(), "disabled queries demand no terminals");
+                }
+            }
+            Err(error) => failures.push(format!(
+                "{} (`{}`): {}",
+                case.name,
+                case.form,
+                error.unsupported().join("; ")
+            )),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 #[test]
 fn all_108_contracts_are_real_production_inputs_and_lower_to_sql() {
     let cases = cases();

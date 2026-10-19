@@ -839,6 +839,69 @@ fn packed_repeated_capture_pattern_and_sql_equality_execute_together() {
     assert_eq!(registry.query_execution_counters(token), Some((1, 1)));
 }
 
+#[test]
+fn phase_two_comparison_value_and_truth_sql_equal_the_oracle() {
+    let cases = [
+        (
+            json!({
+                "all": [
+                    { "pattern": "$A + $B" },
+                    { "compare": { "left": "A", "op": "eq", "right": "B", "text": "source" } }
+                ]
+            }),
+            "x + x\nx + y\n",
+        ),
+        (
+            json!({ "kind": "integer", "value": { "eq": 1 } }),
+            "1\n2\n",
+        ),
+        (
+            json!({ "kind": "identifier", "value": { "follow": true, "eq": 1 } }),
+            "known = 1\nknown\nunknown\n",
+        ),
+        (
+            json!({
+                "all": [
+                    { "kind": "identifier", "value": { "follow": true, "eq": 1 } },
+                    { "kind": "comment" }
+                ]
+            }),
+            "unknown\n",
+        ),
+        (
+            json!({
+                "any": [
+                    { "kind": "identifier", "value": { "follow": true, "eq": 1 } },
+                    { "kind": "identifier" }
+                ]
+            }),
+            "known = 1\nknown\nunknown\n",
+        ),
+        (
+            json!({ "not": { "kind": "identifier", "value": { "follow": true, "eq": 1 } } }),
+            "known = 1\nknown\nunknown\n",
+        ),
+    ];
+    for (rule, source) in cases {
+        let compiled = code_rule(rule);
+        assert_eq!(sql_ranges(&compiled, source), oracle_ranges(&compiled, source));
+    }
+}
+
+#[test]
+fn disabled_when_is_an_executable_empty_relation_without_terminal_work() {
+    let compiled = code_rule_ast(json!({
+        "language": "python",
+        "languageOptions": { "pythonVersion": "3.15" },
+        "when": { "pythonVersion": { "max": "3.7" } },
+        "rule": { "kind": "identifier" }
+    }));
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("disabled when lowers to an executable empty relation");
+    assert!(plan.terminals().is_empty());
+    assert_eq!(sql_ranges(&compiled, "x\n"), Vec::<(usize, usize)>::new());
+}
+
 fn sql_ranges(
     compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
     source: &str,
