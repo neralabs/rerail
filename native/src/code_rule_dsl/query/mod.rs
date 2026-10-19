@@ -264,4 +264,6 @@ pub(in crate::code_rule_dsl) fn regex_matches(
 #[cfg(test)]
 mod policy_lowering_tests;
 #[cfg(test)]
+mod production_contract_tests;
+#[cfg(test)]
 mod tests;

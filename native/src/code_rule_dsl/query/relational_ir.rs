@@ -486,31 +486,6 @@ impl RelationNode {
             Self::Seed | Self::Producer(_) | Self::Rendered(_) => {}
         }
     }
-
-    #[cfg(test)]
-    fn insert_before(&mut self, target: SqlOperation, inserted: &[SqlOperation]) -> bool {
-        let Self::Apply { operation, inputs } = self else {
-            return false;
-        };
-        if *operation == target {
-            let original = std::mem::take(inputs);
-            let mut replacement = RelationNode::Apply {
-                operation: inserted[0],
-                inputs: original,
-            };
-            for operation in &inserted[1..] {
-                replacement = RelationNode::Apply {
-                    operation: *operation,
-                    inputs: vec![replacement],
-                };
-            }
-            *inputs = vec![replacement];
-            return true;
-        }
-        inputs
-            .iter_mut()
-            .any(|input| input.insert_before(target, inserted))
-    }
 }
 
 const ROW_COLUMNS: &str = "batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence";
@@ -1177,11 +1152,6 @@ impl RelationalIr {
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn terminal(&mut self, terminal: TerminalKind) {
-        self.terminal_spec(terminal, format!("{terminal:?}"));
-    }
-
     pub(super) fn terminal_spec(
         &mut self,
         terminal: TerminalKind,
@@ -1331,31 +1301,6 @@ impl RelationalIr {
         };
         self.roots.push(RelationNode::Apply { operation, inputs });
         self.refresh_explanation();
-    }
-
-    #[cfg(test)]
-    pub(super) fn insert_operations_before(
-        &mut self,
-        target: SqlOperation,
-        inserted: &[SqlOperation],
-    ) -> Result<(), String> {
-        if inserted.is_empty() {
-            return Ok(());
-        }
-        if !self
-            .roots
-            .iter_mut()
-            .any(|root| root.insert_before(target, inserted))
-        {
-            return Err(format!("relational IR has no {target:?} operation"));
-        }
-        self.refresh_explanation();
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(super) fn terminals(&self) -> &[TerminalKind] {
-        &self.terminal_kinds
     }
 
     pub(super) fn contains_terminal_spec(&self, kind: TerminalKind, semantic_key: &str) -> bool {
