@@ -1,0 +1,913 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-render-raw-strings",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer render_raw_strings at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/common/l2100_sql_grammar/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "literal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "not": {
+                                  "regex": "(?i)^[rub]*f"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "kind": "concatenated_string"
+                              },
+                              {
+                                "not": {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "string"
+                                      },
+                                      {
+                                        "regex": "(?i)^[rub]*f"
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "kind": "concatenated_string",
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      },
+                      {
+                        "value": {
+                          "type": "str"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "value": {
+                      "regex": "(?s)^.{2}"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "has": {
+                            "regex": "^render(?:_|$)",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  },
+                  {
+                    "not": {
+                      "all": [
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "expression_statement"
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 1,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "block"
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "function_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "regex": "^render(?:_|$)",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "all": [
+                                                  {
+                                                    "kind": "function_definition"
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "regex": "^render(?:_|$)",
+                                                      "stopBy": "neighbor",
+                                                      "field": "name"
+                                                    }
+                                                  }
+                                                ],
+                                                "stopBy": "end"
+                                              }
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor"
+                                }
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "any": [
+                          {
+                            "kind": "raise_statement"
+                          },
+                          {
+                            "kind": "assert_statement"
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "argument_list"
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "call"
+                                    },
+                                    {
+                                      "has": {
+                                        "any": [
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:SqlAliasName|SqlColumnName|SqlIndexName|SqlIntegerLiteral|SqlQualifiedIdentifier|SqlQuotedIdentifier|SqlTableName|append|endswith|format|join|replace|repr|startswith|str)$"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "attribute"
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:SqlAliasName|SqlColumnName|SqlIndexName|SqlIntegerLiteral|SqlQualifiedIdentifier|SqlQuotedIdentifier|SqlTableName|append|endswith|format|join|replace|repr|startswith|str)$"
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor",
+                                                  "field": "attribute"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "function"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor"
+                                }
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "regex": "\\b\\B"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "all": [
+                        {
+                          "pattern": "$CURRENT"
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "argument_list"
+                              },
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "call"
+                                        },
+                                        {
+                                          "has": {
+                                            "any": [
+                                              {
+                                                "all": [
+                                                  {
+                                                    "kind": "identifier"
+                                                  },
+                                                  {
+                                                    "regex": "^(?:Template)$"
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "all": [
+                                                  {
+                                                    "kind": "attribute"
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "all": [
+                                                        {
+                                                          "kind": "identifier"
+                                                        },
+                                                        {
+                                                          "regex": "^(?:SqlFragment)$"
+                                                        }
+                                                      ],
+                                                      "stopBy": "neighbor",
+                                                      "field": "object"
+                                                    }
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "all": [
+                                                        {
+                                                          "kind": "identifier"
+                                                        },
+                                                        {
+                                                          "regex": "^(?:static)$"
+                                                        }
+                                                      ],
+                                                      "stopBy": "neighbor",
+                                                      "field": "attribute"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "function"
+                                          }
+                                        },
+                                        {
+                                          "arguments": {
+                                            "signature": [
+                                              "arg",
+                                              "/"
+                                            ],
+                                            "bind": {
+                                              "ARG": "arg"
+                                            },
+                                            "mode": "syntactic"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "all": [
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "all": [
+                                                          {
+                                                            "kind": "string"
+                                                          },
+                                                          {
+                                                            "not": {
+                                                              "regex": "(?i)^[rub]*f"
+                                                            }
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "all": [
+                                                          {
+                                                            "kind": "concatenated_string"
+                                                          },
+                                                          {
+                                                            "not": {
+                                                              "has": {
+                                                                "all": [
+                                                                  {
+                                                                    "kind": "string"
+                                                                  },
+                                                                  {
+                                                                    "regex": "(?i)^[rub]*f"
+                                                                  }
+                                                                ],
+                                                                "stopBy": "neighbor"
+                                                              }
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "not": {
+                                                      "inside": {
+                                                        "kind": "concatenated_string",
+                                                        "stopBy": "neighbor"
+                                                      }
+                                                    }
+                                                  },
+                                                  {
+                                                    "value": {
+                                                      "type": "str"
+                                                    }
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "pattern": "$ARG"
+                                              }
+                                            ],
+                                            "stopBy": "end",
+                                            "field": "arguments"
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "arguments": {
+                                        "signature": [
+                                          "arg",
+                                          "/"
+                                        ],
+                                        "bind": {
+                                          "FIRST": "arg"
+                                        },
+                                        "mode": "syntactic"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor"
+                                }
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        },
+                        {
+                          "compare": {
+                            "left": "CURRENT",
+                            "right": "FIRST",
+                            "op": "eq",
+                            "text": "node"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "render|'|\"|Template\\(|SqlFragment\\.static\\(",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "string_literal",
+        "anchor": "witness.span",
+        "message": "string_literal: literal"
+      }
+    },
+    {
+      "id": "template",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "call"
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:Template)$"
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "regex": "^(?:SqlFragment)$"
+                                      }
+                                    ],
+                                    "stopBy": "neighbor",
+                                    "field": "object"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "regex": "^(?:static)$"
+                                      }
+                                    ],
+                                    "stopBy": "neighbor",
+                                    "field": "attribute"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      },
+                      {
+                        "arguments": {
+                          "signature": [
+                            "arg",
+                            "/"
+                          ],
+                          "bind": {
+                            "ARG": "arg"
+                          },
+                          "mode": "syntactic"
+                        }
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "string"
+                                        },
+                                        {
+                                          "not": {
+                                            "regex": "(?i)^[rub]*f"
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "concatenated_string"
+                                        },
+                                        {
+                                          "not": {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "kind": "string"
+                                                },
+                                                {
+                                                  "regex": "(?i)^[rub]*f"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor"
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "not": {
+                                    "inside": {
+                                      "kind": "concatenated_string",
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                },
+                                {
+                                  "value": {
+                                    "type": "str"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "pattern": "$ARG"
+                            }
+                          ],
+                          "stopBy": "end",
+                          "field": "arguments"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:Template)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "has": {
+                            "regex": "^render(?:_|$)",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "render|'|\"|Template\\(|SqlFragment\\.static\\(",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "template_call",
+        "anchor": "witness.span",
+        "message": "template_call: template"
+      }
+    },
+    {
+      "id": "static",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "call"
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:Template)$"
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "regex": "^(?:SqlFragment)$"
+                                      }
+                                    ],
+                                    "stopBy": "neighbor",
+                                    "field": "object"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "regex": "^(?:static)$"
+                                      }
+                                    ],
+                                    "stopBy": "neighbor",
+                                    "field": "attribute"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      },
+                      {
+                        "arguments": {
+                          "signature": [
+                            "arg",
+                            "/"
+                          ],
+                          "bind": {
+                            "ARG": "arg"
+                          },
+                          "mode": "syntactic"
+                        }
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "string"
+                                        },
+                                        {
+                                          "not": {
+                                            "regex": "(?i)^[rub]*f"
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "concatenated_string"
+                                        },
+                                        {
+                                          "not": {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "kind": "string"
+                                                },
+                                                {
+                                                  "regex": "(?i)^[rub]*f"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor"
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "not": {
+                                    "inside": {
+                                      "kind": "concatenated_string",
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                },
+                                {
+                                  "value": {
+                                    "type": "str"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "pattern": "$ARG"
+                            }
+                          ],
+                          "stopBy": "end",
+                          "field": "arguments"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "kind": "attribute",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "has": {
+                            "regex": "^render(?:_|$)",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "render|'|\"|Template\\(|SqlFragment\\.static\\(",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "static_call",
+        "anchor": "witness.span",
+        "message": "static_call: static"
+      }
+    }
+  ]
+}

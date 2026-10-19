@@ -98,3 +98,31 @@ No additional native engine feature was required, and no new Linear issue was cr
 The [third-batch report](data-layer-batch-three.md) records the concrete port and performance evidence.
 An attribute-store mismatch and excessive recursive descendant scans were candidate defects; both were corrected in the policies.
 Signed aggregate reporter integration remains a separate contract, as in the existing migration scope.
+
+## Fourth-batch evidence and proposals
+
+The [fourth-batch report](data-layer-batch-four.md) records ten additional authored candidates.
+The batch remains incomplete; original-test replay alone does not establish parity.
+No Linear issue was created.
+
+Burndown probes exposed asynchronous duplicate-owner attribution in the original reporter.
+An ordered-evidence experiment assumed a contract that repeated oracle runs disproved.
+The experiment is preserved in a named stash and is absent from the batch.
+The candidate uses existing budget queries; ambiguous owner cases remain explicit retained contracts.
+No new engine feature or ticket is justified by that ambiguity.
+
+Two feature proposals have concrete source and branch evidence:
+
+1. **Authored workspace symbol relations and cycle-safe closure.**
+   Constructor-name discovery, inherited safe-type membership, and helper reachability require related graph operations.
+   The report links each original linter, its reproducer, witness requirements, incremental behavior, and failure semantics.
+   One general feature can serve these requirements; separate per-linter tickets are unnecessary.
+2. **Formatted-string projections.**
+   Raw-string detection needs decoded constant parts; SQL regex classification needs a template with an authored interpolation marker.
+   The report links both original implementations and includes positive and clean counterexamples.
+   Existing constant decoding does not provide these dynamic-template projections.
+
+Both proposals remain uncreated and require Jeremy’s explicit approval.
+Quoted aliases inside container annotations remain an unresolved candidate defect.
+The failed annotation-host experiment does not yet justify another feature ticket.
+Signed ceiling integration and speed measurements remain separate migration work.

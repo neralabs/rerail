@@ -22,7 +22,8 @@ if (recording.source_mismatches.length !== 0) throw new Error("Pinned source ver
 const native = loadNativeBinding();
 const workspace = new native.CodeRuleDslWorkspace();
 const policyDigests: Record<string, string> = {};
-const files = recording.files.map(file => ({ ...file, language: "python" }));
+const policyCompilationMs: Record<string, number> = {};
+const files = recording.files.map(file => ({ ...file, language: file.path.endsWith(".rs") ? "rust" : "python" }));
 let revision = 0;
 const send = async (batchFiles: typeof files, deferGlobal: boolean): Promise<void> => {
   await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: ++revision, files: batchFiles, removed: [], quiet: true, deferGlobal }));
@@ -31,7 +32,9 @@ try {
   const compileStarted = performance.now();
   for (const event of recording.events) {
     const id = `data-layer-${event.check.replaceAll("_", "-")}`;
+    const policyStarted = performance.now();
     const compiled = native.CodeRuleDslRuntime.compile(readFileSync(`packs/data-layer/candidates/rules/${id}.json`, "utf8"), "json", capabilitiesJson());
+    policyCompilationMs[id] = performance.now() - policyStarted;
     policyDigests[id] = compiled.digest();
     workspace.addCodeRule(compiled);
   }
@@ -65,7 +68,7 @@ try {
   const actual = violations.map(f => JSON.stringify([f.ruleId, f.path, f.span.startLine + 1, f.code])).sort();
   const difference = (a: string[], b: string[]) => { const rest = [...b]; return a.filter(key => { const at = rest.indexOf(key); if (at < 0) return true; rest.splice(at, 1); return false; }); };
   const report = { commit: recording.commit, files: files.length, bytes: files.reduce((sum, file) => sum + Buffer.byteLength(file.source), 0),
-    oracleMs: recording.oracle_ms, oracleWorkers: recording.workers, policyDigests, compilationMs, coldMs, unchangedFileMs, editedFileMs, editedPath: file.path,
+    oracleMs: recording.oracle_ms, oracleWorkers: recording.workers, policyDigests, policyCompilationMs, compilationMs, coldMs, unchangedFileMs, editedFileMs, editedPath: file.path,
     expected: expected.length, actual: actual.length, falsePositives: difference(actual, expected), falseNegatives: difference(expected, actual), failures,
     allocator: values.allocator, nativeSha256: createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex"), nativeWorkers: 4 };
   writeFileSync(values.output, JSON.stringify(report, null, 2) + "\n");

@@ -31,6 +31,7 @@
   native replay requirements, and the complete batch plan
 - [data-layer-batch-two.md](data-layer-batch-two.md): the next ten candidate ports, upstream and supplemental parity, and cumulative measurements
 - [data-layer-batch-three.md](data-layer-batch-three.md): the third ten ports, direct AST visitor recording, configuration parity, and cumulative measurements
+- [data-layer-batch-four.md](data-layer-batch-four.md): SQL grammar candidates, Rust coverage, upstream ambiguities, and unresolved execution gaps
 - [data-layer-engine-gaps.md](data-layer-engine-gaps.md): demonstrated engine features, withdrawn issues, and required approval before new Linear issues
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md) and
   [content-store-bulk-publication-design.md](content-store-bulk-publication-design.md): the machine-wide source store

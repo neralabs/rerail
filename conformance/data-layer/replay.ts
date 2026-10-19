@@ -13,7 +13,7 @@ const eventSchema = z.object({
   retained_reason: z.string().optional(), oracle_ms: z.number().optional(),
   production_scope: z.boolean().optional(), path_skip_override: z.boolean().optional(),
   compare_clause: z.boolean().optional(),
-  oracle_config: z.object({ categories: z.record(z.string(), z.array(z.string())).optional(), source_gate: z.boolean().optional() }).optional(),
+  oracle_config: z.object({ categories: z.record(z.string(), z.array(z.string())).optional(), source_gate: z.boolean().optional(), options: z.record(z.string(), z.unknown()).optional() }).optional(),
   scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()) }).optional(),
   files: z.array(z.object({ path: z.string(), source: z.string() })).optional(),
   findings: z.array(findingSchema).optional(),
@@ -59,7 +59,7 @@ async function workspaceEvaluation(compiled: NativeCompiledCodeRuleDsl, event: E
   const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
   try {
     workspace.addCodeRule(compiled);
-    await workspace.applyAsync(JSON.stringify({ revision: 1, files: event.files!.map(file => ({ ...file, language: "python" })), removed: [], quiet: true }));
+    await workspace.applyAsync(JSON.stringify({ revision: 1, files: event.files!.map(file => ({ ...file, language: file.path.endsWith(".rs") ? "rust" : "python" })), removed: [], quiet: true }));
     const result: Result = { violations: [], failures: [] };
     for (let cursor = 0; ;) {
       const page = pageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
@@ -105,6 +105,11 @@ export async function replay(recordingPath: string, outputPath: string, policies
         }
       }
     }
+    for (const clause of authored.clauses) {
+      if (clause.define?.options !== undefined && event.oracle_config?.options !== undefined) {
+        clause.define.config = { ...clause.define.config, ...event.oracle_config.options };
+      }
+    }
     const authoredKey = JSON.stringify(authored);
     let validatedPolicy = validated.get(authoredKey);
     if (validatedPolicy === undefined) {
@@ -125,6 +130,9 @@ export async function replay(recordingPath: string, outputPath: string, policies
       const prefix = event.entry === "TransactionClosureLinter.visit" ? "inline-" : "named-";
       policy.clauses = policy.clauses.filter(clause => clause.define !== undefined || clause.id.startsWith(prefix));
     }
+    if (event.check === "sql_grammar_escape_hatches" && event.entry.startsWith("scan_usages")) {
+      policy.clauses = policy.clauses.filter(clause => clause.define !== undefined || clause.id.startsWith("usage-"));
+    }
     if (event.path_skip_override) {
       for (const clause of policy.clauses) if (clause.forbid !== undefined && "regex" in clause.forbid) delete clause.forbid.regex.paths;
     }
@@ -136,7 +144,7 @@ export async function replay(recordingPath: string, outputPath: string, policies
       compilationMs += performance.now() - before;
       compiled.set(key, rule);
     }
-    const input = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: event.files.map(file => ({ ...file, language: "python" })) });
+    const input = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: event.files.map(file => ({ ...file, language: file.path.endsWith(".rs") ? "rust" : "python" })) });
     const before = performance.now();
     const stateless = resultSchema.parse(JSON.parse(rule.evaluate(input, "report")));
     const statelessMs = performance.now() - before;

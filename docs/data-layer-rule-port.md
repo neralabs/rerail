@@ -1,3 +1,6 @@
+Latest continuation: [batch four](data-layer-batch-four.md) contains ten more authored candidates and concrete execution gaps.
+This brings the candidate inventory to forty; it does not certify forty completed ports.
+
 # Data layer rule migration assessment
 
 Implementation update: the first thirty checks now have candidate policies and a native parity gate.

@@ -24,6 +24,7 @@ import time
 import pytest
 import data_layer_batch_two as batch_two
 import data_layer_batch_three as batch_three
+import data_layer_batch_four as batch_four
 
 
 BATCH_ONE = (
@@ -207,6 +208,8 @@ class Recorder:
             setattr(module, entry, wrap(original, check, entry, kind, module))
         if self.batch == 3:
             batch_three.install(self)
+        if self.batch == 4:
+            batch_four.install(self)
 
     def pytest_collection_finish(self, session) -> None:
         self.collected = [item.nodeid for item in session.items]
@@ -230,12 +233,13 @@ def main() -> None:
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--revision", default="2b1504adc4291daaf080b2e932962b134da1a69a")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--batch", type=int, choices=(1, 2, 3), default=1)
+    parser.add_argument("--batch", type=int, choices=(1, 2, 3, 4), default=1)
     parser.add_argument("tests", nargs="*", help="Defaults to the selected batch's unchanged test modules.")
     args = parser.parse_args()
     if not args.tests:
-        batches = {1: BATCH_ONE, 2: batch_two.BATCH_TWO, 3: batch_three.BATCH_THREE}
-        args.tests = [f"scripts/tests/test_lint_{check}.py" for check in batches[args.batch]]
+        batches = {1: BATCH_ONE, 2: batch_two.BATCH_TWO, 3: batch_three.BATCH_THREE, 4: batch_four.BATCH_FOUR}
+        args.tests = [f"scripts/tests/test_lint_{check}.py" for check in batches[args.batch]
+                      if (args.source / f"scripts/tests/test_lint_{check}.py").exists()]
     root = args.source.resolve()
     commit = subprocess.check_output(["git", "-C", str(args.repo), "rev-parse", f"{args.revision}^{{commit}}"], text=True).strip()
     tree = subprocess.check_output(["git", "-C", str(args.repo), "ls-tree", "-rz", commit])
@@ -264,7 +268,8 @@ def main() -> None:
     output = {
         "format": "rerail.data-layer-recording/v1",
         "commit": commit,
-        "checks": sorted({check for check in (*BATCH_ONE, *batch_two.BATCH_TWO, *batch_three.BATCH_THREE) if any(f"test_lint_{check}.py" in test for test in args.tests)}),
+        "missing_test_modules": [f"scripts/tests/test_lint_{check}.py" for check in batch_four.BATCH_FOUR if not (root / f"scripts/tests/test_lint_{check}.py").exists()] if args.batch == 4 else [],
+        "checks": list(batch_four.BATCH_FOUR) if args.batch == 4 else sorted({check for check in (*BATCH_ONE, *batch_two.BATCH_TWO, *batch_three.BATCH_THREE, *batch_four.BATCH_FOUR) if any(f"test_lint_{check}.py" in test for test in args.tests)}),
         "python": sys.version,
         "pytest": pytest.__version__,
         "root_conftest_present": (root / "conftest.py").exists(),
