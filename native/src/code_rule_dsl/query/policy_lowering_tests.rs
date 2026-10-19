@@ -33,6 +33,14 @@ fn compile_code_rule(
     ast: serde_json::Value,
     message: &str,
 ) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
+    compile_code_rule_with_capabilities(ast, message, CAPABILITIES.to_owned())
+}
+
+fn compile_code_rule_with_capabilities(
+    ast: serde_json::Value,
+    message: &str,
+    capabilities: String,
+) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     CodeRuleDslRuntime::compile(
         json!({
             "format": "rerail.policy/v1",
@@ -47,7 +55,7 @@ fn compile_code_rule(
         })
         .to_string(),
         "json".to_owned(),
-        CAPABILITIES.to_owned(),
+        capabilities,
     )
     .expect("valid test policy")
 }
@@ -978,6 +986,46 @@ fn phase_two_comparison_value_and_truth_sql_equal_the_oracle() {
 }
 
 #[test]
+fn utility_limits_cover_acyclic_components_without_partial_rows() {
+    let mut limited: serde_json::Value =
+        serde_json::from_str(CAPABILITIES).expect("test capabilities are JSON");
+    limited["limits"]["maxVisitedNodes"] = 1.into();
+    let work_limited = compile_code_rule_with_capabilities(
+        json!({
+            "language": "python",
+            "utils": { "u": { "kind": "identifier" } },
+            "rule": { "matches": "u" }
+        }),
+        "x",
+        limited.to_string(),
+    );
+    let oracle = evaluate_file(&work_limited, "python", "a.py", "x\n");
+    assert_eq!(oracle["violations"], json!([]));
+    assert_eq!(oracle["failures"][0]["code"], "budget-exceeded");
+    let outcome = sql_outcome(&work_limited, "x\n");
+    assert!(outcome.ranges.is_empty());
+    assert_eq!(outcome.errors, ["utility-work-limit"]);
+
+    let mut utils = serde_json::Map::new();
+    utils.insert("u0".to_owned(), json!({ "kind": "identifier" }));
+    for depth in 1..=256 {
+        utils.insert(
+            format!("u{depth}"),
+            json!({ "matches": format!("u{}", depth - 1) }),
+        );
+    }
+    let depth_limited = code_rule_ast(
+        json!({ "language": "python", "utils": utils, "rule": { "matches": "u256" } }),
+    );
+    let oracle = evaluate_file(&depth_limited, "python", "a.py", "x\n");
+    assert_eq!(oracle["violations"], json!([]));
+    assert_eq!(oracle["failures"][0]["code"], "budget-exceeded");
+    let outcome = sql_outcome(&depth_limited, "x\n");
+    assert!(outcome.ranges.is_empty());
+    assert_eq!(outcome.errors, ["utility-depth-limit"]);
+}
+
+#[test]
 fn disabled_when_is_an_executable_empty_relation_without_terminal_work() {
     let compiled = code_rule_ast(json!({
         "language": "python",
@@ -1064,7 +1112,7 @@ pub(super) fn sql_outcome(
             Ok((
                 row.get::<_, i64>(1)?,
                 row.get::<_, Option<i64>>(10)?,
-                row.get::<_, Option<String>>(27)?,
+                row.get::<_, Option<String>>(26)?,
                 row.get::<_, String>(35)?,
             ))
         })
@@ -1083,14 +1131,14 @@ pub(super) fn sql_outcome(
     let anchor = &compiled.inner.clauses[0].violation.anchor;
     let mut errors = rows
         .iter()
-        .filter(|(row_kind, _, _, _)| *row_kind == 2)
+        .filter(|(row_kind, _, _, _)| *row_kind == 8)
         .map(|(_, _, error, _)| error.clone().expect("a failure row has an error code"))
         .collect::<Vec<_>>();
     errors.sort();
     errors.dedup();
     let mut ranges = rows
         .into_iter()
-        .filter(|(row_kind, _, _, _)| *row_kind == 3)
+        .filter(|(row_kind, _, _, _)| *row_kind != 8)
         .map(|(_, node, _, bindings)| {
             let node = node.expect("a violation row has a node");
             let node = match anchor {

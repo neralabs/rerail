@@ -203,6 +203,39 @@ pub(super) struct ValuePredicateSpec {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct UtilitySpec {
+    pub(super) component: String,
+    pub(super) universe_producer: usize,
+    pub(super) depth: u32,
+    pub(super) max_depth: u32,
+    pub(super) max_work: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct UtilityFrameSpec {
+    pub(super) utility: UtilitySpec,
+    pub(super) arguments: Vec<(String, String)>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct RecursiveUtilityTransition {
+    pub(super) caller: usize,
+    pub(super) target: usize,
+    pub(super) neighbor: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct RecursiveUtilitySpec {
+    pub(super) component: String,
+    pub(super) root: usize,
+    pub(super) universe_producer: usize,
+    pub(super) navigation_producer: usize,
+    pub(super) max_depth: u32,
+    pub(super) max_work: usize,
+    pub(super) transitions: Vec<RecursiveUtilityTransition>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum RelationNode {
     Seed,
     Empty,
@@ -239,6 +272,21 @@ enum RelationNode {
     Value {
         spec: ValuePredicateSpec,
         source: Box<RelationNode>,
+    },
+    Utility {
+        spec: UtilitySpec,
+        source: Box<RelationNode>,
+        body: Box<RelationNode>,
+    },
+    UtilityFrame {
+        spec: UtilityFrameSpec,
+        source: Box<RelationNode>,
+        body: Box<RelationNode>,
+    },
+    RecursiveUtility {
+        spec: RecursiveUtilitySpec,
+        source: Box<RelationNode>,
+        bases: Vec<(usize, RelationNode)>,
     },
     PrefixChoice {
         source: Box<RelationNode>,
@@ -278,6 +326,28 @@ impl RelationNode {
                     Self::Seed => input,
                     nested => nested.apply_after(input),
                 }),
+            },
+            Self::Utility { spec, source, body } => Self::Utility {
+                spec,
+                source: Box::new(join(input, *source)),
+                body,
+            },
+            Self::UtilityFrame { spec, source, body } => Self::UtilityFrame {
+                spec,
+                source: Box::new(join(input, *source)),
+                body,
+            },
+            Self::RecursiveUtility {
+                spec,
+                source,
+                bases,
+            } => Self::RecursiveUtility {
+                spec,
+                source: Box::new(match *source {
+                    Self::Seed => input,
+                    nested => nested.apply_after(input),
+                }),
+                bases,
             },
             Self::Count {
                 spec,
@@ -376,6 +446,11 @@ impl RelationNode {
             } => source.can_bind() || of_rule.as_deref().is_some_and(Self::can_bind),
             Self::Constrain { .. } | Self::Count { .. } => true,
             Self::Compare { source, .. } | Self::Value { source, .. } => source.can_bind(),
+            Self::Utility { source, body, .. } => source.can_bind() || body.can_bind(),
+            Self::UtilityFrame { source, body, .. } => source.can_bind() || body.can_bind(),
+            Self::RecursiveUtility { source, bases, .. } => {
+                source.can_bind() || bases.iter().any(|(_, base)| base.can_bind())
+            }
             Self::PrefixChoice { source, .. } => source.can_bind(),
             Self::MergeChoices(inputs) => inputs.iter().any(Self::can_bind),
             Self::Seed | Self::Empty | Self::Rendered(_) => false,
@@ -396,6 +471,25 @@ impl RelationNode {
                 }
             }
             Self::PrefixChoice { source, .. } => source.collect_terminals(terminals),
+            Self::Utility { source, body, .. } => {
+                source.collect_terminals(terminals);
+                body.collect_terminals(terminals);
+            }
+            Self::UtilityFrame { source, body, .. } => {
+                source.collect_terminals(terminals);
+                body.collect_terminals(terminals);
+            }
+            Self::RecursiveUtility { source, bases, .. } => {
+                source.collect_terminals(terminals);
+                for (_, base) in bases {
+                    base.collect_terminals(terminals);
+                }
+                for kind in [TerminalKind::Universe, TerminalKind::Navigation] {
+                    if !terminals.contains(&kind) {
+                        terminals.push(kind);
+                    }
+                }
+            }
             Self::Navigate {
                 spec,
                 source,
@@ -536,6 +630,36 @@ impl RelationNode {
                     }
                 }
             }
+            Self::Utility { source, body, .. } => {
+                source.collect_operations(operations);
+                body.collect_operations(operations);
+                if !operations.contains(&SqlOperation::Bindings) {
+                    operations.push(SqlOperation::Bindings);
+                }
+            }
+            Self::UtilityFrame { source, body, .. } => {
+                source.collect_operations(operations);
+                body.collect_operations(operations);
+                if !operations.contains(&SqlOperation::Bindings) {
+                    operations.push(SqlOperation::Bindings);
+                }
+            }
+            Self::RecursiveUtility { source, bases, .. } => {
+                source.collect_operations(operations);
+                for (_, base) in bases {
+                    base.collect_operations(operations);
+                }
+                for operation in [
+                    SqlOperation::ScanTerminal,
+                    SqlOperation::ScanNavigation,
+                    SqlOperation::RecursiveCte,
+                    SqlOperation::Bindings,
+                ] {
+                    if !operations.contains(&operation) {
+                        operations.push(operation);
+                    }
+                }
+            }
             Self::Count {
                 source,
                 related,
@@ -564,10 +688,19 @@ impl RelationNode {
 
 const ROW_COLUMNS: &str = "batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence";
 
+struct UtilityAttempt {
+    relation: String,
+    max_depth: u32,
+    max_work: usize,
+    universe_producer: usize,
+}
+
 struct SqlRenderer {
     clause: usize,
     next_relation: usize,
     ctes: Vec<String>,
+    errors: Vec<String>,
+    utility_attempts: Vec<UtilityAttempt>,
 }
 
 impl SqlRenderer {
@@ -576,6 +709,8 @@ impl SqlRenderer {
             clause,
             next_relation: 0,
             ctes: Vec::new(),
+            errors: Vec::new(),
+            utility_attempts: Vec::new(),
         }
     }
 
@@ -605,6 +740,17 @@ impl SqlRenderer {
                 } => self.render_count(spec, source, related, stop.as_deref()),
                 RelationNode::Compare { spec, source } => self.render_comparison(spec, source),
                 RelationNode::Value { spec, source } => self.render_value(spec, source),
+                RelationNode::Utility { spec, source, body } => {
+                    self.render_utility(spec, source, body)
+                }
+                RelationNode::UtilityFrame { spec, source, body } => {
+                    self.render_utility_frame(spec, source, body)
+                }
+                RelationNode::RecursiveUtility {
+                    spec,
+                    source,
+                    bases,
+                } => self.render_recursive_utility(spec, source, bases),
                 RelationNode::Empty => {
                     let name = self.next_name("empty");
                     self.ctes.push(format!(
@@ -1011,6 +1157,242 @@ impl SqlRenderer {
         Ok(name)
     }
 
+    fn record_utility_attempts(&mut self, spec: &UtilitySpec, source: &str) {
+        let attempts = self.next_name(&format!("utility_{}_attempts", spec.component));
+        self.ctes.push(format!(
+            "{attempts} AS (\n  SELECT source.file_index, source.node, {} AS depth FROM {source} source\n)",
+            spec.depth
+        ));
+        self.utility_attempts.push(UtilityAttempt {
+            relation: attempts,
+            max_depth: spec.max_depth,
+            max_work: spec.max_work,
+            universe_producer: spec.universe_producer,
+        });
+    }
+
+    fn render_utility(
+        &mut self,
+        spec: &UtilitySpec,
+        source: &RelationNode,
+        body: &RelationNode,
+    ) -> Result<String, String> {
+        let source = self.render(source)?;
+        self.record_utility_attempts(spec, &source);
+        let body = body.clone().apply_after(RelationNode::Rendered(source));
+        let body = self.render(&body)?;
+        let name = self.next_name(&format!("utility_{}", spec.component));
+        self.ctes
+            .push(format!("{name} AS (\n  SELECT * FROM {body}\n)"));
+        Ok(name)
+    }
+
+    fn render_utility_frame(
+        &mut self,
+        spec: &UtilityFrameSpec,
+        source: &RelationNode,
+        body: &RelationNode,
+    ) -> Result<String, String> {
+        let source = self.render(source)?;
+        self.record_utility_attempts(&spec.utility, &source);
+        let input = self.next_name(&format!("utility_{}_frame", spec.utility.component));
+        let mut input_values = vec![
+            "SELECT json_set(value, '$.label', '@caller:' || json_extract(value, '$.label')) AS value FROM json_each(source.bindings)".to_owned(),
+        ];
+        for (parameter, caller) in &spec.arguments {
+            input_values.push(format!(
+                "SELECT json_set(value, '$.label', {}) AS value FROM json_each(source.bindings) WHERE json_extract(value, '$.label') = {}",
+                Self::sql_text(parameter),
+                Self::sql_text(caller)
+            ));
+        }
+        let columns = qualified_row_columns("source");
+        self.ctes.push(format!(
+            "{input} AS (\n  SELECT {columns}, COALESCE((SELECT json_group_array(json(value)) FROM ({})), json('[]')) AS bindings, source.choice_order FROM {source} source\n)",
+            input_values.join(" UNION ALL ")
+        ));
+        let body = body
+            .clone()
+            .apply_after(RelationNode::Rendered(input.clone()));
+        let body = self.render(&body)?;
+        let output = self.next_name(&format!("utility_{}", spec.utility.component));
+        let mut output_values = vec![
+            "SELECT json_set(value, '$.label', substr(json_extract(value, '$.label'), 9)) AS value FROM json_each(result.bindings) WHERE json_extract(value, '$.label') LIKE '@caller:%'".to_owned(),
+        ];
+        for (parameter, caller) in &spec.arguments {
+            output_values.push(format!(
+                "SELECT json_set(value, '$.label', {}) AS value FROM json_each(result.bindings) WHERE json_extract(value, '$.label') = {}",
+                Self::sql_text(caller),
+                Self::sql_text(parameter)
+            ));
+        }
+        let columns = qualified_row_columns("result");
+        self.ctes.push(format!(
+            "{output} AS (\n  SELECT {columns}, COALESCE((SELECT json_group_array(json(value)) FROM (SELECT value FROM ({}) GROUP BY value)), json('[]')) AS bindings, result.choice_order FROM {body} result\n)",
+            output_values.join(" UNION ALL ")
+        ));
+        Ok(output)
+    }
+
+    fn finish_utility_limits(&mut self) -> Result<(), String> {
+        let Some(first) = self.utility_attempts.first() else {
+            return Ok(());
+        };
+        let (max_depth, max_work, universe_producer) =
+            (first.max_depth, first.max_work, first.universe_producer);
+        if self.utility_attempts.iter().any(|attempt| {
+            attempt.max_depth != max_depth
+                || attempt.max_work != max_work
+                || attempt.universe_producer != universe_producer
+        }) {
+            return Err("one clause has inconsistent utility limits or universes".to_owned());
+        }
+        let attempts = self.next_name("utility_attempts");
+        let union = self
+            .utility_attempts
+            .iter()
+            .map(|attempt| format!("SELECT * FROM {}", attempt.relation))
+            .collect::<Vec<_>>()
+            .join("\n  UNION ALL\n  ");
+        self.ctes.push(format!("{attempts} AS (\n  {union}\n)"));
+        let summary = self.next_name("utility_limits");
+        self.ctes.push(format!(
+            "{summary} AS (\n  SELECT file_index, CASE WHEN max(depth) > {} THEN 'utility-depth-limit' WHEN count(*) > {} THEN 'utility-work-limit' END AS error_code, count(*) AS work_used FROM {attempts} GROUP BY file_index HAVING max(depth) > {} OR count(*) > {}\n)",
+            max_depth, max_work, max_depth, max_work
+        ));
+        let errors = self.next_name("utility_errors");
+        let error_columns = qualified_row_columns_with_overrides(
+            "root",
+            &[
+                ("row_kind", "8"),
+                ("verdict", "NULL"),
+                ("complete", "0"),
+                ("work_used", "limited.work_used"),
+                ("error_code", "limited.error_code"),
+            ],
+        );
+        self.ctes.push(format!(
+            "{errors} AS (\n  SELECT {error_columns}, json('[]') AS bindings, '' AS choice_order FROM {summary} limited JOIN terminal_match root ON root.producer_id = {} AND root.file_index = limited.file_index AND root.node = (SELECT min(candidate.node) FROM terminal_match candidate WHERE candidate.producer_id = {} AND candidate.file_index = limited.file_index)\n)",
+            universe_producer, universe_producer
+        ));
+        self.errors.push(errors);
+        Ok(())
+    }
+
+    fn render_recursive_utility(
+        &mut self,
+        spec: &RecursiveUtilitySpec,
+        source: &RelationNode,
+        bases: &[(usize, RelationNode)],
+    ) -> Result<String, String> {
+        let rendered_bases = bases
+            .iter()
+            .map(|(component, base)| Ok((*component, self.render(base)?)))
+            .collect::<Result<Vec<_>, String>>()?;
+        let family = format!("utility_{}", spec.component);
+        let ancestors = self.next_name(&format!("{family}_ancestors"));
+        self.ctes.push(format!(
+            "{ancestors}(file_index, ancestor, descendant) AS (\n  SELECT edge.file_index, edge.node, edge.related_node FROM navigation edge WHERE edge.producer_id = {}\n  UNION\n  SELECT edge.file_index, edge.node, path.descendant FROM {ancestors} path JOIN navigation edge ON edge.producer_id = {} AND edge.file_index = path.file_index AND edge.related_node = path.ancestor\n)",
+            spec.navigation_producer, spec.navigation_producer
+        ));
+        let relation = self.next_name(&format!("{family}_fix"));
+        let empty_columns = qualified_row_columns_with_verdict("seed", "1");
+        let mut terms = vec![format!(
+            "SELECT 0 AS utility_component, {empty_columns}, json('[]') AS bindings, '' AS choice_order FROM terminal_match seed WHERE 0"
+        )];
+        for (component, base) in rendered_bases {
+            terms.push(format!(
+                "SELECT {component} AS utility_component, base.* FROM {base} base"
+            ));
+        }
+        for transition in &spec.transitions {
+            let parent_relation = if transition.neighbor {
+                format!(
+                    "navigation edge ON edge.producer_id = {} AND edge.file_index = child.file_index AND edge.related_node = child.node",
+                    spec.navigation_producer
+                )
+            } else {
+                format!(
+                    "{ancestors} edge ON edge.file_index = child.file_index AND edge.descendant = child.node"
+                )
+            };
+            let parent_node = if transition.neighbor {
+                "edge.node"
+            } else {
+                "edge.ancestor"
+            };
+            let columns = qualified_row_columns_with_verdict("parent", "1");
+            terms.push(format!(
+                "SELECT {} AS utility_component, {columns}, child.bindings, child.choice_order FROM {relation} child JOIN {parent_relation} JOIN terminal_match parent ON parent.producer_id = {} AND parent.file_index = child.file_index AND parent.node = {parent_node} JOIN producer_status parent_status ON parent_status.producer_id = parent.producer_id AND parent_status.file_index = parent.file_index AND parent_status.complete = 1 WHERE child.utility_component = {}",
+                transition.caller,
+                spec.universe_producer,
+                transition.target
+            ));
+        }
+        self.ctes.push(format!(
+            "{relation} AS (\n  {}\n)",
+            terms.join("\n  UNION\n  ")
+        ));
+
+        let walk = self.next_name(&format!("{family}_walk"));
+        let mut walk_terms = vec![format!(
+            "SELECT {} AS utility_component, root.file_index, root.node, 1 AS depth FROM terminal_match root JOIN producer_status status ON status.producer_id = root.producer_id AND status.file_index = root.file_index AND status.complete = 1 WHERE root.producer_id = {}",
+            spec.root, spec.universe_producer
+        )];
+        for transition in &spec.transitions {
+            walk_terms.push(format!(
+                "SELECT {} AS utility_component, caller.file_index, edge.related_node AS node, caller.depth + 1 AS depth FROM {walk} caller JOIN navigation edge ON edge.producer_id = {} AND edge.file_index = caller.file_index AND edge.node = caller.node WHERE caller.utility_component = {} AND caller.depth <= {}",
+                transition.target,
+                spec.navigation_producer,
+                transition.caller,
+                spec.max_depth
+            ));
+        }
+        self.ctes.push(format!(
+            "{walk}(utility_component, file_index, node, depth) AS (\n  {}\n)",
+            walk_terms.join("\n  UNION ALL\n  ")
+        ));
+        let summary = self.next_name(&format!("{family}_limits"));
+        self.ctes.push(format!(
+            "{summary} AS (\n  SELECT file_index, CASE WHEN max(depth) > {} THEN 'utility-depth-limit' WHEN count(*) > {} THEN 'utility-work-limit' END AS error_code, count(*) AS work_used FROM {walk} GROUP BY file_index HAVING max(depth) > {} OR count(*) > {}\n)",
+            spec.max_depth, spec.max_work, spec.max_depth, spec.max_work
+        ));
+        let errors = self.next_name(&format!("{family}_errors"));
+        let error_columns = qualified_row_columns_with_overrides(
+            "root",
+            &[
+                ("row_kind", "8"),
+                ("verdict", "NULL"),
+                ("complete", "0"),
+                ("work_used", "limited.work_used"),
+                ("error_code", "limited.error_code"),
+            ],
+        );
+        self.ctes.push(format!(
+            "{errors} AS (\n  SELECT {error_columns}, json('[]') AS bindings, '' AS choice_order FROM {summary} limited JOIN terminal_match root ON root.producer_id = {} AND root.file_index = limited.file_index AND root.node = (SELECT min(candidate.node) FROM terminal_match candidate WHERE candidate.producer_id = {} AND candidate.file_index = limited.file_index)\n)",
+            spec.universe_producer, spec.universe_producer
+        ));
+        self.errors.push(errors.clone());
+        let result = self.next_name(&family);
+        let root_columns = qualified_row_columns("matched");
+        self.ctes.push(format!(
+            "{result} AS (\n  SELECT {root_columns}, matched.bindings, matched.choice_order FROM {relation} matched WHERE matched.utility_component = {} AND NOT EXISTS (SELECT 1 FROM {errors} failed WHERE failed.file_index = matched.file_index)\n)",
+            spec.root
+        ));
+        if matches!(source, RelationNode::Seed) {
+            return Ok(result);
+        }
+        let source = self.render(source)?;
+        let applied = self.next_name(&family);
+        let columns = qualified_row_columns("source");
+        let merged = Self::merged_bindings(&["source".to_owned(), "matched".to_owned()]);
+        let compatible = Self::binding_compatibility("source", "matched");
+        self.ctes.push(format!(
+            "{applied} AS (\n  SELECT {columns}, {merged} AS bindings, source.choice_order || matched.choice_order AS choice_order FROM {source} source JOIN {result} matched ON matched.file_index = source.file_index AND matched.node = source.node AND {compatible}\n)"
+        ));
+        Ok(applied)
+    }
+
     fn render_navigation(
         &mut self,
         spec: NavigationSpec,
@@ -1386,9 +1768,21 @@ fn qualified_row_columns_with_node(alias: &str, node: &str) -> String {
 }
 
 pub(super) fn qualified_row_columns(alias: &str) -> String {
+    qualified_row_columns_with_overrides(alias, &[])
+}
+
+fn qualified_row_columns_with_overrides(alias: &str, overrides: &[(&str, &str)]) -> String {
     ROW_COLUMNS
         .split(", ")
-        .map(|column| format!("{alias}.{column}"))
+        .map(|column| {
+            overrides
+                .iter()
+                .find(|(name, _)| *name == column)
+                .map_or_else(
+                    || format!("{alias}.{column}"),
+                    |(_, value)| format!("{value} AS {column}"),
+                )
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -1449,6 +1843,72 @@ impl RelationalIr {
         };
         relation.refresh_explanation();
         relation
+    }
+
+    pub(super) fn utility(spec: UtilitySpec, body: Self) -> Result<Self, String> {
+        let source = RelationNode::Apply {
+            operation: SqlOperation::ScanTerminal,
+            inputs: vec![RelationNode::Producer(TerminalSpec::new(
+                TerminalKind::Universe,
+                format!("terminal:{}", spec.universe_producer),
+            ))],
+        };
+        let node = RelationNode::Utility {
+            spec,
+            source: Box::new(source),
+            body: Box::new(body.one_root()?),
+        };
+        let mut relation = Self {
+            roots: vec![node],
+            terminal_kinds: Vec::new(),
+            operations: Vec::new(),
+        };
+        relation.refresh_explanation();
+        Ok(relation)
+    }
+
+    pub(super) fn utility_frame(spec: UtilityFrameSpec, body: Self) -> Result<Self, String> {
+        let source = RelationNode::Apply {
+            operation: SqlOperation::ScanTerminal,
+            inputs: vec![RelationNode::Producer(TerminalSpec::new(
+                TerminalKind::Universe,
+                format!("terminal:{}", spec.utility.universe_producer),
+            ))],
+        };
+        let node = RelationNode::UtilityFrame {
+            spec,
+            source: Box::new(source),
+            body: Box::new(body.one_root()?),
+        };
+        let mut relation = Self {
+            roots: vec![node],
+            terminal_kinds: Vec::new(),
+            operations: Vec::new(),
+        };
+        relation.refresh_explanation();
+        Ok(relation)
+    }
+
+    pub(super) fn recursive_utility(
+        spec: RecursiveUtilitySpec,
+        bases: Vec<(usize, Self)>,
+    ) -> Result<Self, String> {
+        let bases = bases
+            .into_iter()
+            .map(|(component, base)| Ok((component, base.one_root()?)))
+            .collect::<Result<Vec<_>, String>>()?;
+        let node = RelationNode::RecursiveUtility {
+            spec,
+            source: Box::new(RelationNode::Seed),
+            bases,
+        };
+        let mut relation = Self {
+            roots: vec![node],
+            terminal_kinds: Vec::new(),
+            operations: Vec::new(),
+        };
+        relation.refresh_explanation();
+        Ok(relation)
     }
 
     pub(super) fn terminal_spec(
@@ -1619,6 +2079,26 @@ impl RelationalIr {
                         && semantic_key == format!("terminal:{}", spec.producer))
                         || contains(source, kind, semantic_key)
                 }
+                RelationNode::Utility { source, body, .. } => {
+                    contains(source, kind, semantic_key) || contains(body, kind, semantic_key)
+                }
+                RelationNode::UtilityFrame { source, body, .. } => {
+                    contains(source, kind, semantic_key) || contains(body, kind, semantic_key)
+                }
+                RelationNode::RecursiveUtility {
+                    spec,
+                    source,
+                    bases,
+                } => {
+                    (kind == TerminalKind::Universe
+                        && semantic_key == format!("terminal:{}", spec.universe_producer))
+                        || (kind == TerminalKind::Navigation
+                            && semantic_key == format!("terminal:{}", spec.navigation_producer))
+                        || contains(source, kind, semantic_key)
+                        || bases
+                            .iter()
+                            .any(|(_, base)| contains(base, kind, semantic_key))
+                }
                 RelationNode::Navigate {
                     spec,
                     source,
@@ -1690,9 +2170,34 @@ impl RelationalIr {
         }
         let mut renderer = SqlRenderer::new(clause_ordinal);
         let result = renderer.render(&self.roots[0])?;
+        renderer.finish_utility_limits()?;
         let selected = renderer.next_name("selected");
+        let errors = renderer
+            .errors
+            .iter()
+            .map(|error| format!("SELECT * FROM {error}"))
+            .collect::<Vec<_>>();
+        let no_error = renderer
+            .errors
+            .iter()
+            .map(|error| {
+                format!(
+                    "NOT EXISTS (SELECT 1 FROM {error} failed WHERE failed.file_index = candidate.file_index)"
+                )
+            })
+            .collect::<Vec<_>>();
+        let no_error = if no_error.is_empty() {
+            String::new()
+        } else {
+            format!(" AND {}", no_error.join(" AND "))
+        };
+        let errors = if errors.is_empty() {
+            String::new()
+        } else {
+            format!("\n  UNION ALL\n  {}", errors.join("\n  UNION ALL\n  "))
+        };
         renderer.ctes.push(format!(
-            "{selected} AS (\n  SELECT candidate.* FROM {result} candidate\n  WHERE candidate.verdict = 1 AND NOT EXISTS (\n    SELECT 1 FROM {result} earlier\n    WHERE earlier.file_index = candidate.file_index AND earlier.node = candidate.node\n      AND (earlier.choice_order < candidate.choice_order\n        OR (earlier.choice_order = candidate.choice_order AND earlier.producer_id < candidate.producer_id)\n        OR (earlier.choice_order = candidate.choice_order AND earlier.producer_id = candidate.producer_id AND earlier.match_index < candidate.match_index))\n  )\n)"
+            "{selected} AS (\n  SELECT candidate.* FROM {result} candidate\n  WHERE candidate.verdict = 1{no_error} AND NOT EXISTS (\n    SELECT 1 FROM {result} earlier\n    WHERE earlier.file_index = candidate.file_index AND earlier.node = candidate.node\n      AND (earlier.choice_order < candidate.choice_order\n        OR (earlier.choice_order = candidate.choice_order AND earlier.producer_id < candidate.producer_id)\n        OR (earlier.choice_order = candidate.choice_order AND earlier.producer_id = candidate.producer_id AND earlier.match_index < candidate.match_index))\n  ){errors}\n)"
         ));
         Ok((renderer.ctes.join(",\n"), selected))
     }

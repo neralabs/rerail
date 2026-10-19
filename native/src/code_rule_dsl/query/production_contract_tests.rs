@@ -370,15 +370,24 @@ fn production_contract_phase_three_utilities_lower_to_named_sql_components() {
     let expected_catalogs = [
         (
             "utility-simple",
-            vec![super::relational::TerminalKind::Kind],
+            vec![
+                super::relational::TerminalKind::Kind,
+                super::relational::TerminalKind::Universe,
+            ],
         ),
         (
             "utility-nested",
-            vec![super::relational::TerminalKind::Regex],
+            vec![
+                super::relational::TerminalKind::Regex,
+                super::relational::TerminalKind::Universe,
+            ],
         ),
         (
             "utility-shared-component",
-            vec![super::relational::TerminalKind::Pattern],
+            vec![
+                super::relational::TerminalKind::Pattern,
+                super::relational::TerminalKind::Universe,
+            ],
         ),
         (
             "utility-self-recursive",
@@ -398,18 +407,25 @@ fn production_contract_phase_three_utilities_lower_to_named_sql_components() {
         ),
         (
             "utility-parameterized-call",
-            vec![super::relational::TerminalKind::Pattern],
+            vec![
+                super::relational::TerminalKind::Pattern,
+                super::relational::TerminalKind::Universe,
+            ],
         ),
         (
             "utility-argument-frame-isolation",
             vec![
                 super::relational::TerminalKind::Pattern,
                 super::relational::TerminalKind::Pattern,
+                super::relational::TerminalKind::Universe,
             ],
         ),
         (
             "utility-capture-return",
-            vec![super::relational::TerminalKind::Pattern],
+            vec![
+                super::relational::TerminalKind::Pattern,
+                super::relational::TerminalKind::Universe,
+            ],
         ),
         (
             "utility-depth-limit",
@@ -448,9 +464,109 @@ fn production_contract_phase_three_utilities_lower_to_named_sql_components() {
             "{}",
             case.name
         );
-        assert!(plan.sql().contains("utility_"), "{}", case.name);
+        let expected_shape = match case.name.as_str() {
+            "utility-simple" | "utility-nested" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            "utility-shared-component" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::ScanCapture,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::InnerJoin,
+                super::relational::SqlShape::CaseTruth,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            "utility-self-recursive" | "utility-mutual-recursion" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::ScanNavigation,
+                super::relational::SqlShape::RecursiveCte,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            "utility-parameterized-call" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::ScanCapture,
+                super::relational::SqlShape::InnerJoin,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::WhereFilter,
+                super::relational::SqlShape::CaseTruth,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            "utility-argument-frame-isolation" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::ScanCapture,
+                super::relational::SqlShape::InnerJoin,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::OrderedUnion,
+                super::relational::SqlShape::WindowRank,
+                super::relational::SqlShape::CaseTruth,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            "utility-capture-return" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::ScanCapture,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            "utility-depth-limit" | "utility-work-limit" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::ScanNavigation,
+                super::relational::SqlShape::RecursiveCte,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            _ => unreachable!("the phase-three inventory is fixed"),
+        };
+        assert_eq!(plan.shape(), expected_shape, "{}", case.name);
+        let component = match case.name.as_str() {
+            "utility-simple" => "clause_0_utility_u_776126ed0590d228_4 AS (",
+            "utility-nested" => "clause_0_utility_outer_e93d3b174bd2a154_8 AS (",
+            "utility-shared-component" => "clause_0_utility_shared_45f1e04ddfc4c72e_10 AS (",
+            "utility-self-recursive" => {
+                "clause_0_utility_u_31e94234aa4823f0_walk_3(utility_component, file_index, node, depth) AS ("
+            }
+            "utility-mutual-recursion" => {
+                "clause_0_utility_a_1701be0b9db9c09f_walk_3(utility_component, file_index, node, depth) AS ("
+            }
+            "utility-parameterized-call" => "clause_0_utility_u_38e92a029ccae1cc_frame_4 AS (",
+            "utility-argument-frame-isolation" => {
+                "clause_0_utility_u_3326359d57bb62bc_frame_14 AS ("
+            }
+            "utility-capture-return" => "clause_0_utility_u_0a98397d679dc163_4 AS (",
+            "utility-depth-limit" => {
+                "clause_0_utility_u_acc07b8c7f459914_limits_3 AS (\n  SELECT file_index, CASE WHEN max(depth) > 256 THEN 'utility-depth-limit' WHEN count(*) > 2000000 THEN 'utility-work-limit' END AS error_code, count(*) AS work_used FROM clause_0_utility_u_acc07b8c7f459914_walk_2 GROUP BY file_index HAVING max(depth) > 256 OR count(*) > 2000000\n)"
+            }
+            "utility-work-limit" => {
+                "clause_0_utility_u_20cb5618907d780c_limits_3 AS (\n  SELECT file_index, CASE WHEN max(depth) > 256 THEN 'utility-depth-limit' WHEN count(*) > 1 THEN 'utility-work-limit' END AS error_code, count(*) AS work_used FROM clause_0_utility_u_20cb5618907d780c_walk_2 GROUP BY file_index HAVING max(depth) > 256 OR count(*) > 1\n)"
+            }
+            _ => unreachable!("the phase-three inventory is fixed"),
+        };
+        assert!(plan.sql().contains(component), "{}", case.name);
         if case.name.contains("recursive") || case.name.ends_with("-limit") {
-            assert!(plan.sql().contains("utility_walk"), "{}", case.name);
+            assert!(plan.sql().contains("_walk_"), "{}", case.name);
             assert!(plan.sql().contains("UNION ALL"), "{}", case.name);
         }
     }

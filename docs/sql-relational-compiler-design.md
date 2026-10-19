@@ -20,9 +20,9 @@ compiled clause
 The semantic matcher remains a test-only oracle.
 Production has no matcher fallback and no second execution shape.
 
-The current implementation supports kind, Smart-pattern, regex, comparison, value, Boolean, navigation, constraint, and count operations.
+The current implementation supports structural terminals, comparisons, values, navigation, counts, utilities, and bounded utility recursion.
 Each lowered clause owns an operand-bearing expression graph with semantic producer identities.
-SQL renders three-valued Boolean operations, comparisons, navigation, field relations, stop rules, and `nthChild` positions.
+SQL renders three-valued Boolean operations, comparisons, navigation, utility frames, and recursive utility components.
 A bounded value producer emits typed true, false, or unknown facts from an immutable reading descriptor.
 The production compiler reads complete policies. The deleted compact-contract frontend is not an execution path.
 The workspace tape-preparation and result-publication stages remain incomplete.
@@ -262,6 +262,8 @@ navigation
 fact
 document_map
 ```
+
+SQL can add a typed `clause_failure` row after relational evaluation. This row does not claim to be a packed producer status.
 
 Each row includes stable batch, producer, file, task, and local ordinals where applicable.
 Each producer status identifies completion, verdict, work use, and failure.

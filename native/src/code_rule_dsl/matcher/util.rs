@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock, Weak};
 
 /// `matches` recursion deeper than this fails the clause for the file instead of risking the stack.
 /// Utilities recurse only through relations, so real rules recurse as deep as the syntax they walk.
-pub(super) const MAX_UTIL_DEPTH: u32 = 256;
+pub(crate) const MAX_UTIL_DEPTH: u32 = 256;
 
 /// Stack a root's `matches` recursion may use, measured from `begin_clause`. A level's frames grow
 /// with how much rule it nests and with the build (a small recursive rule takes about 2 KiB per
@@ -519,6 +519,27 @@ impl UtilRef {
     /// query table position.
     pub(crate) fn key(&self) -> usize {
         self.node.as_ptr() as usize
+    }
+
+    /// A deterministic SQL component name from the compiled utility closure.
+    pub(crate) fn component_name(&self) -> Option<String> {
+        let node = self.node.upgrade()?;
+        let digest = node.origin?.digest;
+        Some(format!(
+            "{}_{}",
+            node.name
+                .chars()
+                .map(|character| if character.is_ascii_alphanumeric() {
+                    character
+                } else {
+                    '_'
+                })
+                .collect::<String>(),
+            digest[..8]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        ))
     }
 
     #[cfg_attr(not(feature = "code-rule-profile"), allow(dead_code))]

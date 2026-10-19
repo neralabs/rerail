@@ -1,15 +1,18 @@
 use super::relational_ir::{
     ComparisonSpec, CountSpec, NavigationAxis, NavigationSpec, NavigationStop, NthChildSpec,
-    RelationalIr, SqlOperation, ValueLiteral, ValuePredicateSpec, qualified_row_columns,
+    RecursiveUtilitySpec, RecursiveUtilityTransition, RelationalIr, SqlOperation, UtilityFrameSpec,
+    UtilitySpec, ValueLiteral, ValuePredicateSpec, qualified_row_columns,
 };
 use crate::code_rule_dsl::language::{GrammarDialect, label};
-use crate::code_rule_dsl::matcher::{AstMatcher, Semantic, StopBy};
+use crate::code_rule_dsl::matcher::{
+    AstMatcher, MAX_UTIL_DEPTH, Semantic, StopBy, UtilCall, UtilRef,
+};
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Query};
 use crate::code_rule_dsl::packed::Program;
 use crate::code_rule_dsl::transducer::sql_backend::{ProducerKind, ValueFactDescriptor};
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::matcher::Matcher;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -111,6 +114,7 @@ impl SqlCatalogPlan {
                     builder.current_result_limit =
                         u32::try_from(code_rule.capabilities.limits.max_witnesses)
                             .unwrap_or(u32::MAX);
+                    builder.current_max_work = code_rule.capabilities.limits.max_visited_nodes;
                     let mut ir = RelationalIr::empty();
                     if matcher.applies {
                         builder.lower_matcher(
@@ -224,6 +228,8 @@ enum TerminalIdentity {
     Value(GrammarDialect, bool, Vec<u16>, String),
 }
 
+type UtilityGraph = BTreeMap<usize, (UtilRef, AstMatcher, Vec<usize>)>;
+
 #[derive(Default)]
 struct Builder {
     terminals: Vec<TerminalPlan>,
@@ -233,6 +239,57 @@ struct Builder {
     unsupported: Vec<String>,
     current_clause: (usize, usize),
     current_result_limit: u32,
+    current_max_work: usize,
+    utility_stack: Vec<usize>,
+}
+
+fn utility_references(matcher: &AstMatcher, references: &mut Vec<UtilRef>) {
+    let stop = |stop: &StopBy, references: &mut Vec<UtilRef>| {
+        if let StopBy::Rule(rule) = stop {
+            utility_references(rule, references);
+        }
+    };
+    match matcher {
+        AstMatcher::All(items) | AstMatcher::Any(items) => {
+            for item in items {
+                utility_references(item, references);
+            }
+        }
+        AstMatcher::Not(item) => utility_references(item, references),
+        AstMatcher::Inside(item, by)
+        | AstMatcher::Has(item, by)
+        | AstMatcher::Precedes(item, by)
+        | AstMatcher::Follows(item, by) => {
+            utility_references(item.rule(), references);
+            stop(by, references);
+        }
+        AstMatcher::Field(relation) => {
+            utility_references(&relation.rule, references);
+            stop(&relation.stop, references);
+        }
+        AstMatcher::NthChild(nth) => {
+            if let Some(rule) = &nth.of_rule {
+                utility_references(rule, references);
+            }
+        }
+        AstMatcher::Constrained(core) => {
+            utility_references(&core.rule, references);
+            for (_, constraint) in &core.constraints {
+                utility_references(constraint, references);
+            }
+        }
+        AstMatcher::Count(count) => utility_references(&count.relation, references),
+        AstMatcher::Util(util) => references.push(util.clone()),
+        AstMatcher::Call(call) => references.push(call.util.clone()),
+        AstMatcher::Pattern(_)
+        | AstMatcher::Kind(_)
+        | AstMatcher::Regex(_)
+        | AstMatcher::Compare(_)
+        | AstMatcher::Semantic(_)
+        | AstMatcher::Never => {}
+        #[cfg(test)]
+        AstMatcher::TestUnknown(_) => {}
+    }
 }
 
 impl Builder {
@@ -568,13 +625,325 @@ impl Builder {
                 });
             }
             AstMatcher::Never => *ir = RelationalIr::empty_relation(),
-            AstMatcher::Util(_) | AstMatcher::Call(_) | AstMatcher::Semantic(_) => self
+            AstMatcher::Util(util) => {
+                self.lower_utility(util.clone(), None, language, at, terminals, ir);
+            }
+            AstMatcher::Call(call) => {
+                self.lower_utility(call.util.clone(), Some(call), language, at, terminals, ir);
+            }
+            AstMatcher::Semantic(_) => self
                 .unsupported
                 .push(format!("{at}: matcher operation is not lowered")),
             #[cfg(test)]
             AstMatcher::TestUnknown(_) => self
                 .unsupported
                 .push(format!("{at}: test-only unknown operation")),
+        }
+    }
+
+    fn lower_utility(
+        &mut self,
+        util: UtilRef,
+        call: Option<&UtilCall>,
+        language: GrammarDialect,
+        at: &str,
+        terminals: &mut Vec<usize>,
+        ir: &mut RelationalIr,
+    ) {
+        let key = util.key();
+        let Some(component) = util.component_name() else {
+            self.unsupported
+                .push(format!("{at}: utility component has no stable identity"));
+            return;
+        };
+        if self.utility_stack.is_empty()
+            && let Some(graph) = Self::recursive_component(&util)
+        {
+            self.lower_recursive_utility(
+                &util, call, &component, graph, language, at, terminals, ir,
+            );
+            return;
+        }
+        if self.utility_stack.is_empty()
+            && Self::utility_depth(&util).is_some_and(|depth| depth > MAX_UTIL_DEPTH)
+        {
+            let universe = self.universe_terminal(language);
+            if !terminals.contains(&universe) {
+                terminals.push(universe);
+            }
+            let spec = UtilitySpec {
+                component,
+                universe_producer: universe,
+                depth: MAX_UTIL_DEPTH + 1,
+                max_depth: MAX_UTIL_DEPTH,
+                max_work: self.current_max_work,
+            };
+            *ir = RelationalIr::utility(spec, RelationalIr::empty_relation())
+                .expect("a static utility-limit relation has one empty body");
+            return;
+        }
+        if self.utility_stack.contains(&key) {
+            self.unsupported.push(format!(
+                "{at}: recursive utility component `{component}` has an unsupported recursive form"
+            ));
+            return;
+        }
+        let Some(rule) = util.with_target(Clone::clone) else {
+            self.unsupported.push(format!(
+                "{at}: utility component `{component}` is unavailable"
+            ));
+            return;
+        };
+        let depth = u32::try_from(self.utility_stack.len() + 1).unwrap_or(u32::MAX);
+        self.utility_stack.push(key);
+        let mut body = RelationalIr::empty();
+        self.lower_matcher(
+            &rule,
+            language,
+            &format!("{at}/utility/{component}"),
+            terminals,
+            &mut body,
+        );
+        let popped = self.utility_stack.pop();
+        debug_assert_eq!(popped, Some(key));
+        let universe = self.universe_terminal(language);
+        if !terminals.contains(&universe) {
+            terminals.push(universe);
+        }
+        let utility = UtilitySpec {
+            component,
+            universe_producer: universe,
+            depth,
+            max_depth: MAX_UTIL_DEPTH,
+            max_work: self.current_max_work,
+        };
+        let lowered = match call {
+            Some(call) => RelationalIr::utility_frame(
+                UtilityFrameSpec {
+                    utility,
+                    arguments: call.args.clone(),
+                },
+                body,
+            ),
+            None => RelationalIr::utility(utility, body),
+        };
+        match lowered {
+            Ok(lowered) => *ir = lowered,
+            Err(error) => self.unsupported.push(format!("{at}: {error}")),
+        }
+    }
+
+    fn utility_depth(root: &UtilRef) -> Option<u32> {
+        fn visit(
+            util: &UtilRef,
+            active: &mut BTreeSet<usize>,
+            completed: &mut BTreeMap<usize, u32>,
+        ) -> Option<u32> {
+            let key = util.key();
+            if let Some(depth) = completed.get(&key) {
+                return Some(*depth);
+            }
+            if !active.insert(key) {
+                return None;
+            }
+            let rule = util.with_target(Clone::clone)?;
+            let mut references = Vec::new();
+            utility_references(&rule, &mut references);
+            let dependency_depth = references
+                .iter()
+                .map(|reference| visit(reference, active, completed))
+                .collect::<Option<Vec<_>>>()?
+                .into_iter()
+                .max()
+                .unwrap_or(0);
+            active.remove(&key);
+            let depth = dependency_depth.saturating_add(1);
+            completed.insert(key, depth);
+            Some(depth)
+        }
+        visit(root, &mut BTreeSet::new(), &mut BTreeMap::new())
+    }
+
+    fn recursive_component(root: &UtilRef) -> Option<UtilityGraph> {
+        fn collect(util: UtilRef, graph: &mut UtilityGraph) {
+            let key = util.key();
+            if graph.contains_key(&key) {
+                return;
+            }
+            let Some(rule) = util.with_target(Clone::clone) else {
+                return;
+            };
+            let mut references = Vec::new();
+            utility_references(&rule, &mut references);
+            let dependencies = references.iter().map(UtilRef::key).collect::<Vec<_>>();
+            graph.insert(key, (util, rule, dependencies));
+            for reference in references {
+                collect(reference, graph);
+            }
+        }
+        fn reaches(
+            graph: &UtilityGraph,
+            from: usize,
+            target: usize,
+            seen: &mut BTreeSet<usize>,
+        ) -> bool {
+            from == target
+                || (seen.insert(from)
+                    && graph.get(&from).is_some_and(|(_, _, dependencies)| {
+                        dependencies
+                            .iter()
+                            .any(|dependency| reaches(graph, *dependency, target, seen))
+                    }))
+        }
+        let mut graph = BTreeMap::new();
+        collect(root.clone(), &mut graph);
+        let root_key = root.key();
+        let component = graph
+            .iter()
+            .filter(|(key, _)| reaches(&graph, **key, root_key, &mut BTreeSet::new()))
+            .map(|(key, value)| (*key, value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        (component.len() > 1
+            || component
+                .get(&root_key)
+                .is_some_and(|(_, _, dependencies)| dependencies.contains(&root_key)))
+        .then_some(component)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_recursive_utility(
+        &mut self,
+        root: &UtilRef,
+        call: Option<&UtilCall>,
+        component: &str,
+        graph: UtilityGraph,
+        language: GrammarDialect,
+        at: &str,
+        terminals: &mut Vec<usize>,
+        ir: &mut RelationalIr,
+    ) {
+        if call.is_some() {
+            self.unsupported.push(format!(
+                "{at}: parameterized recursive utility component `{component}` is not lowered"
+            ));
+            return;
+        }
+        let mut ordered = graph
+            .iter()
+            .map(|(key, (reference, _, _))| {
+                reference
+                    .component_name()
+                    .map(|name| (name, *key))
+                    .ok_or_else(|| format!("{at}: recursive utility has no stable identity"))
+            })
+            .collect::<Result<Vec<_>, _>>();
+        let Ok(ref mut ordered) = ordered else {
+            self.unsupported.push(ordered.unwrap_err());
+            return;
+        };
+        ordered.sort();
+        let ids = ordered
+            .iter()
+            .enumerate()
+            .map(|(id, (_, key))| (*key, id))
+            .collect::<BTreeMap<_, _>>();
+        let keys = ids.keys().copied().collect::<BTreeSet<_>>();
+        self.utility_stack.extend(keys.iter().copied());
+        let errors_before = self.unsupported.len();
+        let mut bases = Vec::new();
+        let mut transitions = Vec::new();
+        for (_, key) in ordered.iter() {
+            let (_, rule, _) = &graph[key];
+            let alternatives = match rule {
+                AstMatcher::Any(items) => items.iter().collect::<Vec<_>>(),
+                other => vec![other],
+            };
+            let mut component_bases = Vec::new();
+            for alternative in alternatives {
+                let recursive = match alternative {
+                    AstMatcher::Has(related, stop) => match related.rule() {
+                        AstMatcher::Util(target) if keys.contains(&target.key()) => Some((
+                            target.key(),
+                            matches!(stop, StopBy::Neighbor),
+                            matches!(stop, StopBy::Neighbor | StopBy::End),
+                        )),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some((target, neighbor, supported)) = recursive {
+                    if !supported {
+                        self.unsupported.push(format!(
+                            "{at}: recursive utility stop rule is not a bounded SQL transition"
+                        ));
+                    } else {
+                        transitions.push(RecursiveUtilityTransition {
+                            caller: ids[key],
+                            target: ids[&target],
+                            neighbor,
+                        });
+                    }
+                    continue;
+                }
+                let mut references = Vec::new();
+                utility_references(alternative, &mut references);
+                if references
+                    .iter()
+                    .any(|reference| keys.contains(&reference.key()))
+                {
+                    self.unsupported.push(format!(
+                        "{at}: recursive utility reference must cross a `has` relation"
+                    ));
+                    continue;
+                }
+                let mut base = RelationalIr::empty();
+                self.lower_matcher(
+                    alternative,
+                    language,
+                    &format!("{at}/utility/{component}/base"),
+                    terminals,
+                    &mut base,
+                );
+                component_bases.push(base);
+            }
+            if !component_bases.is_empty() {
+                let base = if component_bases.len() == 1 {
+                    component_bases.pop().expect("one recursive utility base")
+                } else {
+                    match RelationalIr::combine(SqlOperation::OrderedUnion, component_bases) {
+                        Ok(base) => base,
+                        Err(error) => {
+                            self.unsupported.push(format!("{at}: {error}"));
+                            continue;
+                        }
+                    }
+                };
+                bases.push((ids[key], base));
+            }
+        }
+        self.utility_stack.clear();
+        if self.unsupported.len() != errors_before {
+            return;
+        }
+        let universe = self.universe_terminal(language);
+        let navigation = self.navigation_terminal(language);
+        for id in [universe, navigation] {
+            if !terminals.contains(&id) {
+                terminals.push(id);
+            }
+        }
+        let spec = RecursiveUtilitySpec {
+            component: component.to_owned(),
+            root: ids[&root.key()],
+            universe_producer: universe,
+            navigation_producer: navigation,
+            max_depth: MAX_UTIL_DEPTH,
+            max_work: self.current_max_work,
+            transitions,
+        };
+        match RelationalIr::recursive_utility(spec, bases) {
+            Ok(lowered) => *ir = lowered,
+            Err(error) => self.unsupported.push(format!("{at}: {error}")),
         }
     }
 
