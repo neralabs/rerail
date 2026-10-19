@@ -469,10 +469,10 @@ impl Binds {
 }
 
 /// The sub-rules of a binding's site, value and annotation, each beside its node.
-fn targets<'a>(
-    rules: [&'a Option<AstMatcher>; 3],
+fn targets(
+    rules: [&Option<AstMatcher>; 3],
     nodes: [Option<NodeRef>; 3],
-) -> [(&'a Option<AstMatcher>, Option<NodeRef>); 3] {
+) -> [(&Option<AstMatcher>, Option<NodeRef>); 3] {
     let [site, value, annotation] = rules;
     let [site_node, value_node, annotation_node] = nodes;
     [

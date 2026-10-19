@@ -148,7 +148,7 @@ impl Emitter<'_> {
             "x",
             &format!(
                 "SELECT {} FROM {input} f WHERE {state} IN (0, 1)",
-                self.verdict("f", &[], &format!("{state}"))
+                self.verdict("f", &[], &state.to_string())
             ),
         )
     }
@@ -283,7 +283,7 @@ impl Emitter<'_> {
         overrides.push((format!("s{}", host.0), "f.file".to_owned()));
         overrides.push((format!("s{}", host.1), "f.node".to_owned()));
         overrides.push((format!("s{tree}"), "p.tree".to_owned()));
-        let mut entry = format!("p.k, p.tree, 0");
+        let mut entry = "p.k, p.tree, 0".to_owned();
         for column in &self.physical {
             match overrides.iter().find(|(name, _)| name == column) {
                 Some((_, value)) => write!(entry, ", {value}"),
