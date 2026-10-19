@@ -29,6 +29,12 @@
               "kind": "property_identifier",
               "regex": "^(?:children)$"
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -214,6 +220,12 @@
                 ]
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },

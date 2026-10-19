@@ -2,8 +2,8 @@ import { h, setAttr, setText, setClass, chevron, searchIcon, syncChildren } from
 import { fmt, plural, ago, duration, stamp, dayLabel, daysAgo, shortSessionId } from "../format.js";
 import { data, ui } from "../state.js";
 import { ensureTitle } from "../poll.js";
-import { sessionTurns, sessionCorrections, placeCorrections, resumeCommand, openState, lastEventAt, isOpen } from "../sessions-model.js";
-import { renderTimeline, findingsCover } from "./timeline.js";
+import { sessionTurns, sessionCorrections, sessionViolationTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen } from "../sessions-model.js";
+import { renderTimeline } from "./timeline.js";
 
 let v = null;
 /** Session whose day group was last revealed; a new selection opens its day once, then the user owns the fold. */
@@ -27,6 +27,7 @@ function build() {
     h("button.chip", { "data-act": "sfilter", "data-i": "open" }, "In progress"));
   el.list = h("div.list.slist");
   el.listEmpty = h("div.empty", { hidden: true }, h("p", null, "No sessions match."));
+  el.more = h("div.smore", { hidden: true }, h("button.btn.sm", { "data-act": "sessmore" }));
   el.title = h("h2");
   el.state = h("span", { hidden: true });
   el.started = h("span"); el.dur = h("span"); el.events = h("span"); el.sid = h("span.mono");
@@ -52,7 +53,7 @@ function build() {
       h("div.spick", null, h("label", { for: "spick" }, "Session"), el.pick),
       h("div.ghead", null, h("h2", null, "Sessions"), el.lead),
       h("div.ssearch", null, searchIcon(13), el.search),
-      el.chips, el.list, el.listEmpty),
+      el.chips, el.list, el.listEmpty, el.more),
     h("section", null, h("div.list", null,
       h("div.shead", null,
         h("div.l1", null, el.title, el.state),
@@ -68,7 +69,6 @@ function createListItem(item) {
   if (item.group) {
     return h("button.daygrp", { "data-act": "daytoggle", "data-i": item.dayKey, "aria-expanded": "false" }, chevron(), h("span.name"), h("span.cnt"));
   }
-  if (item.more !== undefined) return h("div.smore", null, h("button.btn.sm", { "data-act": "daymore", "data-i": item.dayKey }));
   const s = item.s;
   return h("button.srow", { "data-act": "ssel", "data-i": s.sessionId, "aria-current": "false" },
     h("span.l", null, h("span.t"), h("span.m", null, h("span.state"), h("span.ev"), h("span.sid"))),
@@ -83,7 +83,6 @@ function updateListItem(node, item) {
     setText(node.querySelector(".cnt"), `${fmt(item.count)} ${plural(item.count, "session")}${withC}`);
     return;
   }
-  if (item.more !== undefined) { setText(node.firstChild, `Show 50 more of ${fmt(item.more)}`); return; }
   const s = item.s;
   ensureTitle(s);
   const title = titleOf(s.sessionId);
@@ -96,11 +95,10 @@ function updateListItem(node, item) {
   setAttr(state, "title", st ? "Last event" : "Ended");
   setText(node.querySelector(".ev"), `${fmt(s.eventCount)} events`);
   setText(node.querySelector(".sid"), shortSessionId(s.sessionId, s.host));
-  const c = node.querySelector(".c");
-  setAttr(c, "hidden", item.n === null);
-  setClass(c, "zero", item.n === 0);
-  setText(c.firstChild, fmt(item.n ?? 0));
-  setText(c.lastChild, plural(item.n ?? 0, "violation"));
+  const c = node.querySelector(".c"), n = s.violationCount;
+  setClass(c, "zero", n === 0);
+  setText(c.firstChild, fmt(n));
+  setText(c.lastChild, plural(n, "violation"));
 }
 
 function rowState(st, s) {
@@ -109,33 +107,30 @@ function rowState(st, s) {
   return ago(s.endedAt ?? s.startedAt);
 }
 
-/** The session the right column shows: the selected one, else the newest. `app.js` selects (and loads) the fallback. */
+/**
+ * The session the right column shows: the selected one (from the loaded list, else its own head, so a deep-linked
+ * session past the loaded pages still shows), else the newest. `app.js` selects (and loads) the fallback.
+ */
 export function currentSession() {
-  return data.sessions.find(s => s.sessionId === ui.selectedSession) ?? data.sessions[0] ?? null;
+  const rows = data.sessions.rows, id = ui.selectedSession;
+  return rows.find(s => s.sessionId === id) ?? (id === null ? null : data.sessionDetail.get(id)?.head) ?? rows[0] ?? null;
 }
 
 export function renderSessions(root) {
   if (v === null) build();
   if (v.root.parentNode !== root) root.replaceChildren(v.root);
-  const all = data.sessions;
-  setAttr(v.empty, "hidden", all.length > 0);
-  setAttr(v.sess, "hidden", all.length === 0);
-  if (all.length === 0) return;
+  const all = data.sessions.rows;
   const sess = currentSession();
+  setAttr(v.empty, "hidden", sess !== null);
+  setAttr(v.sess, "hidden", sess === null);
+  if (sess === null) return;
   renderList(all, sess);
   renderHeader(sess);
   renderTranscript(sess);
 }
 
-/** Trigger counts per session from the fetched findings (the range applies). */
-function triggerCounts() {
-  const counts = new Map();
-  for (const f of data.findings) counts.set(f.sessionId, (counts.get(f.sessionId) ?? 0) + 1);
-  return counts;
-}
-
-function passesFilter(s, counts) {
-  if (ui.sessFilter === "corr") return Boolean(counts.get(s.sessionId));
+function passesFilter(s) {
+  if (ui.sessFilter === "corr") return s.violationCount > 0;
   if (ui.sessFilter === "open") return isOpen(s);
   return ui.sessFilter === "all";
 }
@@ -154,29 +149,30 @@ function groupByDay(sessions) {
   return groups;
 }
 
-/** The list items one day group contributes: its header, then (when open) up to the shown cap of rows and a "more" row. `n` is `null` when the fetched findings cannot say. */
-function groupItems(g, counts, forceOpen) {
+/** The list items one day group contributes: its header, then (when open) its loaded rows. */
+function groupItems(g, forceOpen) {
   const open = forceOpen || ui.openDays.has(g.key);
-  const cap = ui.dayShown[g.key] ?? 50;
-  const items = [{ key: `g:${g.key}`, dayKey: g.key, group: true, open, name: g.name, count: g.rows.length, withC: g.rows.filter(s => counts.get(s.sessionId)).length }];
-  if (!open) return items;
-  for (const s of g.rows.slice(0, cap)) items.push({ key: s.sessionId, s, n: counts.get(s.sessionId) ?? (findingsCover(s) ? 0 : null) });
-  if (g.rows.length > cap) items.push({ key: `m:${g.key}`, more: g.rows.length - cap, dayKey: g.key });
+  const items = [{ key: `g:${g.key}`, dayKey: g.key, group: true, open, name: g.name, count: g.rows.length, withC: g.rows.filter(s => s.violationCount > 0).length }];
+  if (open) for (const s of g.rows) items.push({ key: s.sessionId, s });
   return items;
 }
 
 function renderList(all, sess) {
-  const counts = triggerCounts();
   const q = ui.sessQuery.trim().toLowerCase();
-  const visible = all.filter(s => passesFilter(s, counts) && matchesQuery(s, q));
-  setText(v.lead, `${fmt(visible.length)} of ${fmt(all.length)} · newest first`);
+  const visible = all.filter(s => passesFilter(s) && matchesQuery(s, q));
+  const total = Math.max(data.sessions.total, all.length);
+  // Filters and search run over the loaded pages; the total says how many more Load more can bring.
+  setText(v.lead, `${fmt(visible.length)} of ${fmt(total)} · newest first`);
   if (v.search.value !== ui.sessQuery && document.activeElement !== v.search) v.search.value = ui.sessQuery;
   for (const c of v.chips.children) setAttr(c, "aria-pressed", String(c.dataset.i === ui.sessFilter));
 
   if (sess.sessionId !== revealed) { revealed = sess.sessionId; ui.openDays.add(dayKey(daysAgo(sess.startedAt))); }
-  const items = groupByDay(visible).flatMap(g => groupItems(g, counts, q !== ""));
+  const items = groupByDay(visible).flatMap(g => groupItems(g, q !== ""));
   syncChildren(v.list, items, i => i.key, createListItem, updateListItem);
   setAttr(v.listEmpty, "hidden", items.length > 0);
+  const more = data.sessions.next !== null;
+  setAttr(v.more, "hidden", !more);
+  if (more) setText(v.more.firstChild, `Load more · ${fmt(all.length)} of ${fmt(total)} loaded`);
   syncChildren(v.pick, visible.slice(0, 200), s => s.sessionId, s => h("option", { value: s.sessionId }),
     (o, s) => { setText(o, `${titleOf(s.sessionId)} · ${shortSessionId(s.sessionId, s.host)}`); });
   if (v.pick.value !== sess.sessionId) v.pick.value = sess.sessionId;
@@ -231,16 +227,29 @@ function updateEventChip(c, count) {
 
 function renderTranscript(sess) {
   const detail = data.sessionDetail.get(sess.sessionId);
-  const events = detail?.events ?? [];
+  const from = loadedFrom(sess.sessionId);
+  // Only as far back as the violations are loaded too, so no turn reads as clean for want of a page.
+  const events = (detail?.events ?? []).filter(e => e.observedAt >= from);
   const cs = sessionCorrections(sess.sessionId);
+  const total = sessionViolationTotal(sess.sessionId);
+  const logged = total ?? cs.length;
   const turns = placeCorrections(sessionTurns(events), cs);
   const tools = turns.flatMap(t => t.tools);
   const n = lvl => tools.filter(e => e.level === lvl).length;
   setText(v.tsum, "");
-  v.tsum.replaceChildren(h("b", null, fmt(ui.showAll ? sess.eventCount : cs.length)), ui.showAll ? " events" : ` ${plural(cs.length, "violation")} logged`);
+  v.tsum.replaceChildren(h("b", null, fmt(ui.showAll ? sess.eventCount : logged)), ui.showAll ? " events" : ` ${plural(logged, "violation")} logged`);
   setAttr(v.tchips, "hidden", !ui.showAll);
   const chipCounts = { changes: n("change"), commands: n("execute"), outside: n("outside") + n("ask") + n("delegate"), failures: tools.filter(e => e.failed).length };
   for (const c of v.tchips.children) updateEventChip(c, chipCounts[c.dataset.i]);
   if (v.showAll.checked !== ui.showAll) v.showAll.checked = ui.showAll;
-  renderTimeline(v.tl, v.rail, sess, turns, cs, detail?.loaded === true);
+  const slot = data.sessionFindings;
+  const loaded = detail?.loaded === true;
+  const violations = slot.owner === sess.sessionId ? slot.rows.length : 0;
+  renderTimeline(v.tl, v.rail, sess, turns, cs, {
+    loaded,
+    total,
+    earlier: loaded && from > -Infinity && {
+      events: detail.events.length, eventCount: Math.max(sess.eventCount, detail.events.length), violations, total: total ?? violations,
+    },
+  });
 }

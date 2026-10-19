@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { join, matchesGlob, relative, sep } from "node:path";
+import { basename, join, matchesGlob, posix, relative, sep } from "node:path";
 import { z } from "zod";
 import type { CodeRuleSourceLanguage } from "../../src/engine/index.js";
 import {
@@ -327,8 +327,15 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
       const unitRules = rules.filter(entry => paths.some(path => coversFixture(entry.rule, path)));
       if (unitRules.length === 0) continue;
       const files: SourceFile[] = [];
+      // A unit's package.json and module configurations are no sources: they ride along so the engine reads the
+      // sources' manifest facts and import aliases.
+      const manifests: SourceFile[] = [];
       for (const path of paths) {
         const language = languageFor(path);
+        if (language !== undefined && ridesAlong(path)) {
+          manifests.push({ path, language, source: readFileSync(join(fixturesDirectory(loaded, tool), path), "utf8") });
+          continue;
+        }
         if (language === undefined || !languages.has(language)) {
           errors.push(`fixtures ${tool}: ${path} is not a ${loaded.pack.family} source by the host's routing`);
           continue;
@@ -337,7 +344,7 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
       }
       if (files.length === 0) continue;
       const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
-      for (const [group, evaluation] of await evaluateApart(unitRules, files)) {
+      for (const [group, evaluation] of await evaluateApart(unitRules, [...manifests, ...files])) {
         collectActual(group, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
         summary.evaluationMs += evaluation.ms;
       }
@@ -412,9 +419,10 @@ async function runCorpus(loaded: LoadedPack, compiled: readonly CompiledRule[], 
     files.push({ path, language, source: await readFile(join(directory, path), "utf8") });
   }
   const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
+  const manifests = await corpusManifests(directory, files);
   const actual: SourceRun["actual"] = new Map();
   let evaluationMs = 0;
-  for (const [group, evaluation] of await evaluateApart(compiled, files)) {
+  for (const [group, evaluation] of await evaluateApart(compiled, [...manifests, ...files])) {
     collectActual(group, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
     evaluationMs += evaluation.ms;
   }
@@ -437,6 +445,47 @@ async function runCorpus(loaded: LoadedPack, compiled: readonly CompiledRule[], 
       evaluationMs: Math.round(evaluationMs),
     },
   };
+}
+
+/**
+ * The package.json files at or above the corpus's sources, up to the checkout, which a host reads for their manifest
+ * facts, and each package's project configuration chain (`moduleConfigFiles`: its tsconfig.json or jsconfig.json and
+ * the bases it extends), whose jsxImportSource and import aliases the engine reads: they ride along as fixture units'
+ * do, no sources, whether or not the corpus's paths walk them. A package.json that is no regular file has no fields,
+ * as a host reads it.
+ */
+async function corpusManifests(directory: string, files: readonly SourceFile[]): Promise<SourceFile[]> {
+  const folders = new Set<string>();
+  for (const file of files) {
+    let folder = file.path;
+    do {
+      folder = posix.dirname(folder);
+      if (folders.has(folder)) break;
+      folders.add(folder);
+    } while (folder !== ".");
+  }
+  const manifests: SourceFile[] = [];
+  const configurations = new Set<string>();
+  for (const folder of [...folders].sort(compareDeterministicStrings)) {
+    const path = folder === "." ? "package.json" : `${folder}/package.json`;
+    const absolute = join(directory, path);
+    const entry = lstatSync(absolute, { throwIfNoEntry: false });
+    if (entry === undefined) continue;
+    manifests.push({ path, language: languageFor(path)!, source: entry.isFile() ? await readFile(absolute, "utf8") : "" });
+    for (const configuration of loadNativeBinding().moduleConfigFiles(directory, folder === "." ? "" : folder))
+      configurations.add(configuration);
+  }
+  for (const path of [...configurations].sort(compareDeterministicStrings))
+    manifests.push({ path, language: languageFor(path)!, source: await readFile(join(directory, path), "utf8") });
+  return manifests;
+}
+
+/**
+ * Whether a unit's file rides along with its sources rather than being one: a package.json, or a project configuration
+ * (a `.json` file named `tsconfig…` or `jsconfig…`, as the engine's `is_module_config` names them).
+ */
+function ridesAlong(path: string): boolean {
+  return /^(?:package\.json|(?:ts|js)config[^/]*\.json)$/.test(basename(path));
 }
 
 export interface RunOptions {

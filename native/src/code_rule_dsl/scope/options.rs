@@ -123,7 +123,11 @@ pub(crate) enum GlobalSetting {
 pub(crate) struct LanguageOptions {
     /// The year-based `ecmaVersion` (3 and 5 stay as they are).
     pub(crate) ecma_version: u16,
-    pub(crate) source_type: SourceType,
+    /// The query's `sourceType`; `None` leaves it to each file (`SourceType::of_file`), which the
+    /// readers below take as `file`.
+    pub(crate) source_type: Option<SourceType>,
+    /// The ecmaVersion builtins and the configured `globals`; CommonJS's are added by
+    /// `declares` for a CommonJS file (no builtin shares a name with them).
     pub(crate) globals: HashMap<String, GlobalSetting>,
     /// `parserOptions.ecmaFeatures.globalReturn`: the top level is a function scope (eslint-scope's
     /// `nodejsScope`), so it is no global scope, and ESLint's no-eval reads its `this` by
@@ -146,17 +150,12 @@ pub(crate) const DEFAULT_JSX_PRAGMA: &str = "React";
 impl LanguageOptions {
     pub(crate) fn new(
         ecma_version: u16,
-        source_type: SourceType,
+        source_type: Option<SourceType>,
         configured: impl IntoIterator<Item = (String, GlobalSetting)>,
     ) -> Self {
         let table = EsGlobals::get();
         let mut globals = HashMap::new();
-        let builtins = table.version(ecma_version).into_iter().flatten();
-        let commonjs = (source_type == SourceType::CommonJs)
-            .then_some(&table.commonjs)
-            .into_iter()
-            .flatten();
-        for (name, setting) in builtins.chain(commonjs) {
+        for (name, setting) in table.version(ecma_version).into_iter().flatten() {
             globals.insert(name.clone(), *setting);
         }
         globals.extend(configured);
@@ -172,10 +171,15 @@ impl LanguageOptions {
         }
     }
 
+    /// The source type in a file whose own is `file`: the query's, else the file's.
+    pub(crate) fn source_type(&self, file: SourceType) -> SourceType {
+        self.source_type.unwrap_or(file)
+    }
+
     /// Whether the top level is eslint-scope's global scope: a script's, unless `globalReturn`
     /// makes it a function.
-    pub(crate) fn global_top_level(&self) -> bool {
-        self.source_type == SourceType::Script && !self.global_return
+    pub(crate) fn global_top_level(&self, file: SourceType) -> bool {
+        self.source_type(file) == SourceType::Script && !self.global_return
     }
 
     /// Whether strict mode exists (eslint-scope's `isStrictModeSupported`: from ES5).
@@ -184,8 +188,8 @@ impl LanguageOptions {
     }
 
     /// Whether all code is strict: a module, or `impliedStrict` (from ES5).
-    pub(crate) fn all_strict(&self) -> bool {
-        self.strict_mode() && (self.source_type == SourceType::Module || self.implied_strict)
+    pub(crate) fn all_strict(&self, file: SourceType) -> bool {
+        self.strict_mode() && (self.source_type(file) == SourceType::Module || self.implied_strict)
     }
 
     /// Whether blocks and switch bodies are scopes: eslint-scope nests them from ecmaVersion 6.
@@ -201,13 +205,20 @@ impl LanguageOptions {
         name: &str,
         spaces: u8,
         directives: Option<&Directives>,
+        file: SourceType,
     ) -> bool {
-        self.lib.get(name).is_some_and(|lib| lib & spaces != 0) || self.declares(name, directives)
+        self.lib.get(name).is_some_and(|lib| lib & spaces != 0)
+            || self.declares(name, directives, file)
     }
 
     /// Whether `name` is a declared global: `/* global */` comments (when honored) decide the
     /// names they mention, configuration the rest (ESLint's `addDeclaredGlobals`).
-    pub(crate) fn declares(&self, name: &str, directives: Option<&Directives>) -> bool {
+    pub(crate) fn declares(
+        &self,
+        name: &str,
+        directives: Option<&Directives>,
+        file: SourceType,
+    ) -> bool {
         if let Some(directives) = directives {
             if directives.off.contains(name) {
                 return false;
@@ -216,8 +227,14 @@ impl LanguageOptions {
                 return true;
             }
         }
+        let commonjs = || {
+            (self.source_type(file) == SourceType::CommonJs)
+                .then(|| EsGlobals::get().commonjs.get(name))
+                .flatten()
+        };
         self.globals
             .get(name)
+            .or_else(commonjs)
             .is_some_and(|setting| *setting != GlobalSetting::Off)
     }
 }
@@ -425,27 +442,37 @@ mod tests {
 
     #[test]
     fn configuration_and_directives_merge_like_eslint() {
+        let module = SourceType::Module;
         let options = LanguageOptions::new(
             5,
-            SourceType::Module,
+            Some(module),
             [
                 ("String".to_owned(), GlobalSetting::Off),
                 ("jQuery".to_owned(), GlobalSetting::Readonly),
             ],
         );
-        assert!(options.declares("Array", None));
-        assert!(!options.declares("Reflect", None));
-        assert!(!options.declares("String", None));
-        assert!(options.declares("jQuery", None));
-        assert!(!options.declares("require", None));
+        assert!(options.declares("Array", None, module));
+        assert!(!options.declares("Reflect", None, module));
+        assert!(!options.declares("String", None, module));
+        assert!(options.declares("jQuery", None, module));
+        assert!(!options.declares("require", None, module));
         let mut directives = Directives::default();
         directives.declared.insert("Reflect".to_owned());
         directives.declared.insert("String".to_owned());
         directives.off.insert("jQuery".to_owned());
-        assert!(options.declares("Reflect", Some(&directives)));
-        assert!(options.declares("String", Some(&directives)));
-        assert!(!options.declares("jQuery", Some(&directives)));
-        let commonjs = LanguageOptions::new(2026, SourceType::CommonJs, []);
-        assert!(commonjs.declares("require", None) && commonjs.declares("Temporal", None));
+        assert!(options.declares("Reflect", Some(&directives), module));
+        assert!(options.declares("String", Some(&directives), module));
+        assert!(!options.declares("jQuery", Some(&directives), module));
+        let commonjs = LanguageOptions::new(2026, Some(SourceType::CommonJs), []);
+        assert!(
+            commonjs.declares("require", None, module)
+                && commonjs.declares("Temporal", None, module)
+        );
+        // Without a `sourceType` the file's decides; configured globals still win.
+        let unpinned =
+            LanguageOptions::new(2026, None, [("module".to_owned(), GlobalSetting::Off)]);
+        assert!(!unpinned.declares("require", None, module));
+        assert!(unpinned.declares("require", None, SourceType::CommonJs));
+        assert!(!unpinned.declares("module", None, SourceType::CommonJs));
     }
 }

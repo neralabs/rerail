@@ -24,8 +24,13 @@
         "ast": {
           "language": "typescript",
           "file": {
-            "path": {
-              "regex": "^(?:src/)?app/(?:.*/)?route\\.(?:js|ts)$"
+            "package": {
+              "dependsOn": [
+                "next"
+              ],
+              "path": {
+                "regex": "^(?:src/)?app/(?:.*/)?route\\.(?:js|ts)$"
+              }
             }
           },
           "rule": {

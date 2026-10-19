@@ -70,6 +70,12 @@
                 }
               }
             ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },

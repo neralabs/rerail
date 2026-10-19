@@ -6,12 +6,13 @@
 //! Suppressions are ESLint's: its directive comments in the `<script>` blocks, and
 //! eslint-plugin-vue's template comment directives (`suppress::vue`).
 
+use super::QueryWhen;
 use super::syntax::QueryOptions;
 use super::{
     Adapter, Ecma, Refusal, Refused, SyntaxFeature, SyntaxRules, ValueFeature, ValueRules,
 };
 use crate::code_rule_dsl::compile::config::Options;
-use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::language::{Family, GrammarDialect, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{file_eslint_directives, file_vue_directives};
 use crate::code_rule_dsl::model::ViolationSpec;
@@ -35,6 +36,10 @@ impl Adapter for Vue {
     const LABEL: &'static str = "vue";
     const TERMINATORS: Terminators = <Ecma as Adapter>::TERMINATORS;
     const PACKAGES: bool = <Ecma as Adapter>::PACKAGES;
+    // A component's script is a module, whatever its package's `type` (vue-eslint-parser's
+    // default), and its JSX runtime is Vue's.
+    const PACKAGE_MANIFESTS: bool = false;
+    const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = <Ecma as Adapter>::DECLARATION_FILES;
     type Scope = Ecma;
     type Value = Self;
@@ -209,8 +214,14 @@ impl SyntaxRules for Vue {
         options: Option<&LanguageOptions>,
         python: Option<&PythonOptions>,
         document: &Options,
-    ) -> napi::Result<bool> {
-        <Ecma as SyntaxRules>::compile_when(value, path, options, python, document)
+    ) -> napi::Result<QueryWhen> {
+        // A component's script is a module: a `when.sourceType` reads that.
+        let (applies, types) =
+            <Ecma as SyntaxRules>::compile_when(value, path, options, python, document)?;
+        Ok((
+            applies && types.is_none_or(|types| types.contains(&SourceType::Module)),
+            None,
+        ))
     }
 
     fn embedded_pattern(text: &str) -> Option<GrammarDialect> {

@@ -211,6 +211,62 @@ describe("Rerail session startup", () => {
       begun.mockRestore();
     }
   });
+
+  it("treats a steer for a source the auditor revised without an edit of its own as stale", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-session-revised-"));
+    directories.push(root);
+    let delivery: RuleSteerDelivery | undefined;
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      embedder: {
+        fingerprint: () => ({
+          modelId: "test", revision: "1", dimensions: 2,
+          weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1,
+        }),
+        embed: async texts => texts.map(() => new Float32Array([1, 0])),
+      },
+      createAuditor: ({ steerDelivery }) => {
+        delivery = steerDelivery;
+        return {
+          openWorkspace: async () => undefined,
+          acceptsPath: () => true,
+          auditGeneratedEdits: async (_sessionId, batch) => ({
+            revision: batch.revision, disposition: "continue", violations: [], failures: [],
+          }),
+          close: async () => undefined,
+        };
+      },
+    });
+    const session = { host: "omp" as const, sessionId: "revised-source", cwd: root };
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      // A turn boundary waits for the evaluator to have opened, so queued steers can be collected.
+      expect(await runtime.ingest({ kind: "turn-end", eventId: "opened", sessionId: session.sessionId, text: "" })).toEqual([]);
+      const steer = { revision: 1, scope: ["lib/a.js", "lib/z.js"] };
+      expect(await delivery!.requestSteer(session.sessionId, "steer", "CommonJS require", steer)).toBe("queued");
+      // A package.json edit at revision 2 gave lib/a.js new facts: the queued steer leaves the queue, and lib/z.js,
+      // which it also spoke for, is handed back.
+      expect(delivery!.revised!(session.sessionId, 2, ["lib/a.js"])).toEqual(["lib/z.js"]);
+      // Gone from the queue: a later revision finds nothing of it to drop or hand back.
+      expect(delivery!.revised!(session.sessionId, 2, ["lib/x.js"])).toEqual([]);
+      expect(await delivery!.requestSteer(session.sessionId, "steer", "CommonJS require", steer)).toBe("discarded");
+      expect(await delivery!.requestSteer(session.sessionId, "steer", "Refreshed", { revision: 2, scope: ["lib/a.js"] })).toBe("queued");
+      // A steer for several sources is dropped whole when one is revised; the others, not revised since, are handed
+      // back for the auditor to steer again, and sources revised with it are not.
+      expect(await delivery!.requestSteer(session.sessionId, "steer", "Both", { revision: 3, scope: ["lib/b.js", "lib/c.js"] })).toBe("queued");
+      expect(await delivery!.requestSteer(session.sessionId, "steer", "Other", { revision: 3, scope: ["lib/d.js"] })).toBe("queued");
+      expect(delivery!.revised!(session.sessionId, 4, ["lib/c.js"])).toEqual(["lib/b.js"]);
+      expect(await delivery!.requestSteer(session.sessionId, "steer", "Wide", { revision: 4, scope: ["lib/b.js", "lib/e.js"] })).toBe("queued");
+      expect(delivery!.revised!(session.sessionId, 5, ["lib/b.js", "lib/e.js"])).toEqual([]);
+      // Only the steers no revision made stale are delivered.
+      expect((await runtime.collectDeliveries(session.sessionId)).map(delivered => delivered.content)).toEqual(["Refreshed", "Other"]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
 });
 
 describe("A scan requested while the session's evaluator is still opening", () => {
