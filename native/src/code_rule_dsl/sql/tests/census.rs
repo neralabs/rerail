@@ -203,7 +203,8 @@ fn run_census() {
 }
 
 /// The corpus files the benchmark evaluates: the tracked Python files of a nera-data-layer
-/// checkout (`RERAIL_DATA_LAYER_CORPUS`), as a snapshot's files.
+/// checkout (`RERAIL_DATA_LAYER_CORPUS`), as a snapshot's files; only those `RERAIL_CORPUS_FILES`
+/// lists (comma-separated paths in the checkout) where it is set.
 fn corpus_files(root: &std::path::Path) -> Vec<serde_json::Value> {
     let listed = std::process::Command::new("git")
         .arg("-C")
@@ -215,6 +216,10 @@ fn corpus_files(root: &std::path::Path) -> Vec<serde_json::Value> {
         .expect("paths")
         .split('\0')
         .filter(|path| path.ends_with(".py"))
+        .filter(|path| {
+            std::env::var("RERAIL_CORPUS_FILES")
+                .map_or(true, |only| only.split(',').any(|listed| listed == *path))
+        })
         .map(str::to_owned)
         .collect();
     paths.sort();
@@ -327,15 +332,16 @@ fn run_corpus() {
             let profile = crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE
                 .take()
                 .unwrap_or_default();
-            if sql
-                .as_ref()
-                .is_err_and(|reason| reason.contains("Unsupported("))
+            if let Err(reason) = &sql
+                && reason.contains("Unsupported(")
             {
+                eprintln!("{name}: refused, {reason}");
                 refused += 1;
                 continue;
             }
             let sql_time = clause_started.elapsed();
             let native = evaluate("native");
+            let native_time = clause_started.elapsed() - sql_time;
             let text = clause.to_string();
             let enumerates = clause["violation"].get("each").is_some();
             let recurses = compiled.inner.clauses.iter().any(|compiled| {
@@ -353,7 +359,7 @@ fn run_corpus() {
                 .unwrap_or(0);
             findings += count;
             eprintln!(
-                "{} {}: {count} findings{}{}, sql {:.2}s, both {:.2}s{}",
+                "{} {}: {count} findings{}{}, sql {:.2}s, native {:.2}s{}",
                 path.parent()
                     .and_then(|parent| parent.file_name())
                     .map(|name| name.to_string_lossy())
@@ -362,17 +368,42 @@ fn run_corpus() {
                 if enumerates { ", each" } else { "" },
                 if recurses { ", recursive" } else { "" },
                 sql_time.as_secs_f64(),
-                clause_started.elapsed().as_secs_f64(),
+                native_time.as_secs_f64(),
                 if native == sql { "" } else { " DIFFERS" },
             );
             if native != sql {
                 differ.push((text, native, sql));
             }
-            // Where a slow clause's time went: its costliest statements.
-            if sql_time.as_secs() >= 10 {
+            // Where a slow clause's time went: its costliest statements, for clauses slower than
+            // `RERAIL_CORPUS_PROFILE` seconds (default 10).
+            let threshold = std::env::var("RERAIL_CORPUS_PROFILE")
+                .ok()
+                .and_then(|seconds| seconds.parse::<f64>().ok())
+                .unwrap_or(10.0);
+            if sql_time.as_secs_f64() >= threshold {
+                let total: u64 = profile.values().map(|(nanos, _, _)| nanos).sum();
+                eprintln!(
+                    "  {:>8.3}s in {} statements (the rest: compiling, session setup, terminals' setup)",
+                    total as f64 / 1e9,
+                    profile.len()
+                );
                 let mut costly: Vec<_> = profile.iter().collect();
                 costly.sort_by_key(|(_, (nanos, _, _))| std::cmp::Reverse(*nanos));
-                for (statement, (nanos, rows, runs)) in costly.into_iter().take(4) {
+                // `RERAIL_CORPUS_PROFILE_DIR`: every statement's numbers, one JSON file a clause.
+                if let Ok(dir) = std::env::var("RERAIL_CORPUS_PROFILE_DIR") {
+                    let rows: Vec<Value> = costly
+                        .iter()
+                        .map(|(statement, (nanos, rows, runs))| {
+                            json!({ "sql": statement, "nanos": nanos, "rows": rows, "runs": runs })
+                        })
+                        .collect();
+                    std::fs::write(
+                        format!("{dir}/{}.json", name.replace('/', "__")),
+                        Value::from(rows).to_string(),
+                    )
+                    .expect("a profile file");
+                }
+                for (statement, (nanos, rows, runs)) in costly.into_iter().take(6) {
                     eprintln!(
                         "  {:>8.3}s {rows:>10} rows {runs:>6} runs  {}",
                         *nanos as f64 / 1e9,
@@ -673,6 +704,45 @@ fn run_footprint() {
                 "  {:>8.2} MiB {statements:>7} statements {seconds:>7.2}s  {clause}",
                 *bytes as f64 / 1048576.0
             );
+        }
+    }
+}
+
+#[test]
+#[ignore = "temporary diagnosis"]
+fn tmp_plans_of_clause() {
+    use serde_json::{Value, json};
+    let home = std::env::var("HOME").expect("HOME");
+    let only = std::env::var("RERAIL_CORPUS_CLAUSES").expect("clause");
+    let root = format!("{home}/rerail-bench/data-layer/policies");
+    for entry in std::fs::read_dir(&root).expect("policies").filter_map(Result::ok) {
+        let path = entry.path().join("policy.json");
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let policy: Value = serde_json::from_str(&text).expect("JSON");
+        let clauses = policy["clauses"].as_array().expect("clauses");
+        let defines: Vec<&Value> = clauses.iter().filter(|c| c.get("define").is_some()).collect();
+        for clause in clauses.iter().filter(|c| c.get("define").is_none()) {
+            if !clause["id"].as_str().unwrap_or_default().contains(&only) {
+                continue;
+            }
+            let mut document = policy.clone();
+            document["clauses"] = json!(defines.iter().chain([&clause]).collect::<Vec<_>>());
+            let compiled = CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned())
+                .unwrap_or_else(|e| panic!("{}", e.reason));
+            for c in &compiled.inner.clauses {
+                if let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &c.kind {
+                    for grammar in matchers {
+                        let Ok(program) = crate::code_rule_dsl::sql::compile(&[grammar]) else { continue };
+                        let session = program.session().expect("a session");
+                        for (sql, plan) in session.plans().expect("plans") {
+                            eprintln!("SQL: {sql}");
+                            for (_, _, detail) in plan {
+                                eprintln!("    {detail}");
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

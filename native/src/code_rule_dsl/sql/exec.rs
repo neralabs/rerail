@@ -1052,7 +1052,7 @@ impl Session {
                     stats.rows += count;
                     stats.nanos += elapsed;
                     stats.select_nanos += elapsed;
-                    #[cfg(feature = "unbounded-work")]
+                    #[cfg(any(test, feature = "unbounded-work"))]
                     record(&prepared.last, elapsed, count);
                     let started = std::time::Instant::now();
                     for clear in &prepared.clear {
