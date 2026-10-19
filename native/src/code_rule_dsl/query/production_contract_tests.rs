@@ -84,142 +84,16 @@ fn authored_cases(source: &str) -> Vec<ContractCase> {
 
 fn cases() -> Vec<ContractCase> {
     let pattern = |source: &str| json!({ "pattern": source });
-    let count = |axis: &str, min: usize, max: Option<usize>| {
-        let mut spec = json!({ axis: { "kind": "identifier", "stopBy": "end" }, "min": min });
-        if let Some(max) = max {
-            spec["max"] = json!(max);
-        }
-        json!({ "kind": "call", "count": spec })
-    };
     let util = |rule: Value, utils: Value| ast_query(json!({ "rule": rule, "utils": utils }));
     let semantic = |term: Value| ast(json!({ "kind": "identifier", "all": [term] }));
     let mut cases = authored_cases(include_str!("fixtures/production_contracts_001_020.json"));
     cases.extend(authored_cases(include_str!(
         "fixtures/production_contracts_021_040.json"
     )));
+    cases.extend(authored_cases(include_str!(
+        "fixtures/production_contracts_041_060.json"
+    )));
     cases.extend([
-        case(
-            "nth-child-fixed",
-            "nthChild(2)",
-            ast(json!({ "nthChild": 2 })),
-        ),
-        case(
-            "nth-child-formula",
-            "nthChild(2n+1)",
-            ast(json!({ "nthChild": "2n+1" })),
-        ),
-        case(
-            "nth-child-of-rule",
-            "nthChild(2, ofRule=not(comment))",
-            ast(
-                json!({ "nthChild": { "position": 2, "ofRule": { "not": { "kind": "comment" } } } }),
-            ),
-        ),
-        case(
-            "count-descendants-range",
-            "count(has(kind), 2..4)",
-            ast(count("has", 2, Some(4))),
-        ),
-        case(
-            "count-ancestors-min",
-            "count(inside(kind), min=1)",
-            ast(count("inside", 1, None)),
-        ),
-        case(
-            "count-following-max",
-            "count(precedes(kind), max=3)",
-            ast(count("precedes", 0, Some(3))),
-        ),
-        case(
-            "count-preceding-exact",
-            "count(follows(kind), exact=2)",
-            ast(count("follows", 2, Some(2))),
-        ),
-        case(
-            "count-distinct-capture",
-            "count(has(pattern($A)), distinct=$A)",
-            ast(
-                json!({ "kind": "call", "count": { "has": { "pattern": "$A", "stopBy": "end" }, "min": 1 } }),
-            ),
-        ),
-        case(
-            "capture-single-binding",
-            "pattern($A) then bind($A)",
-            ast(pattern("$A")),
-        ),
-        case(
-            "capture-multi-binding",
-            "pattern($$$A) then bind-many($A)",
-            ast(pattern("f($$$A)")),
-        ),
-        case(
-            "capture-repeated-structural-equality",
-            "compare($A, $A, structural)",
-            ast(json!({ "pattern": "$A + $A" })),
-        ),
-        case(
-            "capture-cross-term-equality",
-            "all(pattern($A), pattern($B), eq($A,$B))",
-            ast(
-                json!({ "pattern": "$A", "has": { "pattern": "$B" }, "compare": { "left": "A", "op": "eq", "right": "B" } }),
-            ),
-        ),
-        case(
-            "capture-cross-term-inequality",
-            "all(pattern($A), pattern($B), ne($A,$B))",
-            ast(
-                json!({ "pattern": "$A", "has": { "pattern": "$B" }, "compare": { "left": "A", "op": "ne", "right": "B" } }),
-            ),
-        ),
-        case(
-            "capture-alternative-rollback",
-            "any(all(pattern($A),false), pattern($A))",
-            ast(json!({ "any": [{ "pattern": "$A", "kind": "comment" }, { "pattern": "$A" }] })),
-        ),
-        case(
-            "capture-negation-isolation",
-            "all(pattern($A), not(pattern($B)))",
-            ast(json!({ "pattern": "$A", "not": { "pattern": "$B" } })),
-        ),
-        case(
-            "capture-each-distinct",
-            "violation.each($A)",
-            ast_violation(
-                json!({ "kind": "call", "has": { "pattern": "$A", "stopBy": "end" } }),
-                json!({ "anchor": "capture.A", "code": "SQL", "message": "$A", "each": "A" }),
-            ),
-        ),
-        case(
-            "capture-anchor",
-            "anchor(capture=$A)",
-            ast_violation(
-                pattern("f($A)"),
-                json!({ "anchor": "capture.A", "code": "SQL", "message": "$A" }),
-            ),
-        ),
-        case(
-            "capture-anchor-fallback",
-            "anchor(capture=$MISSING, fallback=span)",
-            ast_violation(
-                json!({ "any": [{ "pattern": "f($A)" }, { "pattern": "g()" }] }),
-                json!({ "anchor": "capture.A", "code": "SQL", "message": "optional" }),
-            ),
-        ),
-        case(
-            "capture-transform",
-            "transform($A, downcase)",
-            ast_query(
-                json!({ "rule": pattern("$A"), "transform": { "L": { "convert": { "source": "$A", "toCase": "lowerCase" } } } }),
-            ),
-        ),
-        case(
-            "capture-message-template",
-            "message(template($A))",
-            ast_violation(
-                pattern("f($A)"),
-                json!({ "anchor": "witness.span", "code": "SQL", "message": "found $A" }),
-            ),
-        ),
         case(
             "capture-fix-range",
             "fix(range=$A, template=$B)",
