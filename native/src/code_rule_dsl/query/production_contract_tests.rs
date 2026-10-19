@@ -113,6 +113,27 @@ struct ExpectedTerminal {
     completion_required: bool,
 }
 
+fn authored_sql_goldens() -> std::collections::BTreeMap<String, String> {
+    let source = include_str!(
+        "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.sql"
+    );
+    source
+        .split("-- fixture: ")
+        .skip(1)
+        .map(|section| {
+            let (name, body) = section
+                .split_once('\n')
+                .expect("an authored SQL contract has a fixture name");
+            let start = body
+                .find("WITH ")
+                .expect("an authored SQL contract has one statement");
+            let sql = body[start..].trim().trim_end_matches(';');
+            assert_eq!(sql.matches(';').count(), 0, "{name} has one statement");
+            (name.trim().to_owned(), normalized_sql(sql))
+        })
+        .collect()
+}
+
 fn implementation_goldens() -> ImplementationGoldenFile {
     serde_json::from_str(include_str!(
         "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.json"
@@ -472,6 +493,33 @@ fn production_contract_phase_two_sql_rows_equal_committed_oracle_rows() {
             super::policy_lowering_tests::sql_ranges(&compiled, &case.workspace.files[0].source),
             expected,
             "{}",
+            case.name
+        );
+    }
+}
+
+#[test]
+fn production_contract_phases_two_to_four_match_authored_sql_statements() {
+    let expected = authored_sql_goldens();
+    let expected_names = PHASE_TWO_CASES
+        .iter()
+        .copied()
+        .chain(PHASE_THREE_CASES.iter().copied())
+        .chain(PHASE_FOUR_CASES.iter().copied())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        expected.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+        expected_names,
+        "the authored SQL inventory is exact"
+    );
+    for case in cases()
+        .into_iter()
+        .filter(|case| expected_names.contains(case.name.as_str()))
+    {
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            actual.normalized_sql, expected[&case.name],
+            "{} exact authored SQL",
             case.name
         );
     }
