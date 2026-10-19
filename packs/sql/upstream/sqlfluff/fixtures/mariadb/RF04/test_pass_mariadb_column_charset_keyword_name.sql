@@ -1,0 +1,1 @@
+CREATE TABLE t (col1 TEXT CHARACTER SET ascii COLLATE ascii_bin)

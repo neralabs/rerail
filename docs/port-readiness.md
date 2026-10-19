@@ -99,11 +99,12 @@ A **tool-pack** is one upstream tool in one pack, such as `python/ruff`. It is g
 - **Gated:** `python/ruff`, `python/bandit`, `javascript/eslint`, `javascript/eslint-plugin-unicorn`,
   `react/eslint-plugin-react`, `react/eslint-plugin-react-hooks`, `typescript/typescript-eslint`,
   `typescript/eslint-plugin-vitest`, `next/eslint-plugin-next`, `php/phpcs`, `php/phpstan`, `php/psalm`,
-  `blade/bladestan`, `blade/tlint`, `blade/blade-parser`. The slowest run in shards: `SHARDS` in
-  `conformance/port-readiness/plan.mjs` says which and how many (see "Sharding" below).
+  `blade/bladestan`, `blade/tlint`, `blade/blade-parser`, `sql/sqlfluff`, `rust/clippy` and `vue/eslint-plugin-vue`.
+  The slowest run in shards: `SHARDS` in `conformance/port-readiness/plan.mjs` says which and how many (see
+  "Sharding" below).
 - **Pending:** none. A tool-pack listed in `conformance/port-readiness/pending.json` is still validated in
   nera-rule-validation until its recording lands, and the gates report it as pending without blocking.
-- **Not gated:** packs with no upstream adapter (complexity ships rules; node, sql and vue ship only
+- **Not gated:** packs with no upstream adapter (complexity ships rules; node ships only
   candidates, which run nowhere yet). Their current shipped rules are frozen in
   `conformance/port-readiness/ungated-rules.json`. A new shipped rule in such a pack fails: keep it in `candidates/` until the
   pack has an adapter. This is decided per tool, not per pack: in a gated pack, a shipped rule whose upstream tool has no
@@ -149,16 +150,16 @@ scripts, and `build:native`. Any other script, field or locked package is out, s
 
 That part of the engine is its shared code plus the files of the rule's own **language family** (`languages/*.json`'s
 `family`: `ecma` for JavaScript and TypeScript, `python` for Python, `rust` for Rust, `php` for PHP, `blade` for
-Blade). `conformance/port-readiness/engine.ts`
-lists each family's files explicitly: its vendored grammars and registry entries, the scope and value modules named for
-it, its builtin tables, and the suppression readers only it honours. Rust is listed though no Rust tool-pack is gated,
-so that its files leave the key of every ecma and python rule. A family whose files embed another language's program
-keys on that family too (the registry's `embeds`): a Blade template's semantics are the PHP of its compiled view, so a
-Blade rule keys on Blade's files and PHP's, while a PHP rule never reaches Blade's parser and keys on PHP's alone.
-Everything else is shared and so part of every rule's
-key: `matcher/`, `compile/`, `workspace/` and `language/adapter/` (apart from three Rust files: the adapter
-`language/adapter/rust.rs`, and `matcher/arguments/rust.rs` and `matcher/format_args/rust.rs`, which only that adapter
-and style `rust` call), the lockfile, the host's TypeScript engine, and any engine file nobody listed. That last one is the direction the list fails in: a
+Blade, `sql` for SQL). `conformance/port-readiness/engine.ts` lists each gated family's files explicitly: its vendored
+grammars and registry entries, the scope and value modules named for it, its builtin tables, and the suppression
+readers only it honours. A family whose files embed another language's program keys on that family too (the
+registry's `embeds`): a Blade template's semantics are the PHP of its compiled view, so a Blade rule keys on Blade's
+files and PHP's, while a PHP rule never reaches Blade's parser and keys on PHP's alone. Vue has no list, so a Vue rule
+keys on the whole engine. Everything else is shared and so part of every rule's key: `matcher/`, `compile/`,
+`workspace/` and `language/adapter/` (apart from five files: Rust's adapter `language/adapter/rust.rs`, and
+`matcher/arguments/rust.rs` and `matcher/format_args/rust.rs`, which only that adapter and style `rust` call; SQL's
+adapter `language/adapter/sql.rs` and `matcher/arguments_sql.rs`, the call binding only it reads), the lockfile, the
+host's TypeScript engine, and any engine file nobody listed. That last one is the direction the list fails in: a
 missing entry costs one cold re-judge of everything, never a stale verdict. A rule whose document names no language, or
 one the language registry does not know, keys on the whole engine for the same reason.
 

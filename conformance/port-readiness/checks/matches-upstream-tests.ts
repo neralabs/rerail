@@ -125,6 +125,8 @@ const ROOT_KIND: Record<string, { language: string; kind: string }> = {
   php: { language: "php", kind: "program" },
   // Blade's tree is Rerail's port of Forte, whose root is the template's document.
   blade: { language: "blade", kind: "document" },
+  sql: { language: "sql", kind: "program" },
+  rust: { language: "rust", kind: "source_file" },
 };
 
 /** Whether the engine fails to fully parse a probe, using a policy that matches the root of every file. */

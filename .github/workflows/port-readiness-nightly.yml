@@ -146,6 +146,12 @@ jobs:
             tool: blade-parser
           - pack: blade
             tool: bladestan
+          - pack: sql
+            tool: sqlfluff
+          - pack: rust
+            tool: clippy
+          - pack: vue
+            tool: eslint-plugin-vue
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -167,6 +173,26 @@ jobs:
       - name: Set up the pinned PHP and Composer
         if: matrix.pack == 'php' || matrix.pack == 'blade'
         uses: ./.github/actions/php
+
+      # Clippy's recorder runs the rustup toolchain its runtime pins (runtimes/<runtime>/rust-toolchain.toml: an exact
+      # release with clippy), and refuses any other build; no other leg needs Rust.
+      - id: clippy-toolchain
+        name: Read the Rust toolchain Clippy's runtime pins
+        if: matrix.tool == 'clippy'
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          runtime="$(sed -n 's/^  runtime: *\([a-z0-9._-]*\) *$/\1/p' "packs/$PACK/upstream/$TOOL/gates.yaml")"
+          echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "conformance/recorders/port-readiness/runtimes/$runtime/rust-toolchain.toml")" >> "$GITHUB_OUTPUT"
+
+      - name: Install the pinned Rust toolchain with clippy
+        if: matrix.tool == 'clippy'
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        with:
+          toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
+          components: clippy
 
       # The recorder's own cache, restored so a night reuses what port-readiness-record.yml saved. The paths are
       # port-readiness-record.yml's exactly, which GitHub requires for one to restore what the other saved. `recordings/*`

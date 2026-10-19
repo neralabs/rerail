@@ -1,0 +1,1 @@
+SELECT @@IDENTITY AS 'Identity'

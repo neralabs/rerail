@@ -1,0 +1,1 @@
+SELECT CASE WHEN genres[0] IS NULL THEN genres END

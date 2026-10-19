@@ -1,11 +1,11 @@
 # Rerail rule pack: SQL
 
 22 code rules for SQL, ported from SQLFluff 4.4.0. Every one is a candidate: it lives in `candidates/rules/` and moves
-to `rules/` and `pack.json` once it passes the V1 rule validation gates
-([nera-rule-validation](https://github.com/neralabs/nera-rule-validation)). While `pack.json` lists no rules, the pack
-ships none and is never recommended. Each port is scored against SQLFluff's own findings on SQLFluff's tests and on
-pinned public corpora (postgres, mattermost, anki, application-services), with every disagreement declared in
-`divergences.json`. The conformance check (`--check`, run in CI) reports the candidates without gating them.
+to `rules/` and `pack.json` once it passes every blocking [port readiness](../../docs/port-readiness.md) gate (see
+"Port readiness" below). While `pack.json` lists no rules, the pack ships none and is never recommended. Each port is
+scored against SQLFluff's own findings on SQLFluff's tests and on pinned public corpora (postgres, mattermost, anki,
+application-services), with every disagreement declared in `divergences.json`. The conformance check (`--check`, run in
+CI) reports the candidates without gating them.
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md): it is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack sql"` and by
@@ -18,7 +18,7 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `candidates/rules/` | The 22 candidate code-rule documents (`rerail.policy/v1`), one per port, named for its id |
 | `conformance.json` | Every port (all candidates): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tool and the pinned corpora |
 | `divergences.json` | Declared disagreements with SQLFluff |
-| `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`) |
+| `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`); the port readiness gates' `gates.yaml`, `recording.lock` and `goldens.tsv` |
 | `licenses/sqlfluff/` | SQLFluff's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Rules that would start off
@@ -94,6 +94,29 @@ The corpus false negatives are mostly these files: of the 356 the report lists (
 are in a file with a syntax error. `--rule <id>` prints each syntax-error file at its first error (`SYNTAX
 path:line:column`).
 
+## Port readiness
+
+`sql/sqlfluff` is gated (`upstream/sqlfluff/gates.yaml`). Upstream runs as `dialect: postgres`, `templater: raw` with
+the port's rule configuration on every SQLFluff YAML case and corpus file, because the engine reads every `.sql` file
+as PostgreSQL; a case SQLFluff's postgres dialect cannot read whole, a Jinja case and a case configured otherwise are
+skipped. From `npm run port-readiness -- --pack sql --tool sqlfluff`, no candidate passes every blocking gate yet:
+
+| Port | Stops at | Why |
+|---|---|---|
+| `sqlfluff-al04-aliasing-unique-table` | compact | 57.1% of its clauses is structure written out over and over (limit 33.3%) |
+| `sqlfluff-rf06-references-quoting` | not-overfit | the gate cannot run its class-subtraction regex (`[\p{L}_--\p{Lu}--\p{Lt}]`); one golden also differs (`contrib/amcheck/sql/check_gin.sql`, 2 missing) |
+| `sqlfluff-am02-ambiguous-union` | matches-upstream-tests | SQLFluff skips AM02 for PostgreSQL, so it reports nothing on its tests and the port's 7 findings are extra |
+| `sqlfluff-al05-aliasing-unused` | matches-upstream-tests | 9 of its cases differ: 8 the engine cannot read whole (BigQuery, Snowflake and T-SQL syntax), 1 finding missed and 1 extra |
+| `sqlfluff-rf01-references-from` | matches-upstream-tests | 21 of its cases differ (50 of 70 findings reproduced): bracketed joins and dialect syntax the engine cannot read; `CREATE POLICY` and `ALTER POLICY` are listed known gaps |
+| `sqlfluff-st02-structure-simple-case` | matches-upstream-tests | misses `test_fail_multiple_indexed_expression_when_not_null_no_else` (1:18) |
+| the other 16 | matches-upstream-tests | `engine-reads-goldens` alone |
+
+Every candidate also fails `engine-reads-goldens`: between 73 and 277 corpus files SQLFluff reads whole are files the
+engine's grammar cannot (postgres 202, mattermost 71, anki 4). libpg_query reads 121 of them as valid PostgreSQL
+(`DO $$ … $$` blocks, among others); the other 156 hold what only SQLFluff accepts (`:name` parameters, psql
+meta-commands). Those are engine gaps (NER-1764), recorded in `goldens.tsv`. PG01 and PG02 are off in SQLFluff's
+default configuration (`force_enable = False`), so they would ship off.
+
 ## Re-recording and scoring
 
 Re-recording runs offline against the pinned SQLFluff 4.4.0, in the venv that `fixtures/sql/common.py` documents:
@@ -107,6 +130,14 @@ Scoring one rule with every false positive and false negative printed:
 
 ```sh
 node --import tsx conformance/languages/cli.ts --pack sql --rule sqlfluff-al04-aliasing-unique-table --fixtures
+```
+
+The port readiness recording (`upstream/sqlfluff/recording.lock`) comes from the recorder's own runtime
+(`conformance/recorders/port-readiness/runtimes/sqlfluff-4.4.0`):
+
+```sh
+npm run port-readiness:record -- --pack sql --tool sqlfluff
+npm run port-readiness -- --pack sql --tool sqlfluff
 ```
 
 ## Rule details

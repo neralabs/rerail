@@ -1,0 +1,15 @@
+
+      export default {
+        data () {
+          return {
+            get foo() {
+              return foo
+            },
+            bar,
+            set foo(v) {
+              foo = v
+            }
+          }
+        }
+      }
+      

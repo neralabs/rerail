@@ -1,0 +1,1 @@
+SELECT d.col1 FROM table1 d

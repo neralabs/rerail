@@ -27,11 +27,11 @@ import { format, isDeepStrictEqual } from "node:util";
 
 import {
   caseFixture, casePath, caseWords, configNamed, declaresEnvironment, deprecationText, fileType, firstApproved as firstApprovedIn, frozenFileType,
-  modulePackage, parsedAs, parserLanguage, withoutEnvironment, withSetting, writtenExpectation,
+  modulePackage, parsedAs, parserLanguage, vueReadsAsComponent, vueScriptLangs, vueScriptParser, withoutEnvironment, withSetting, writtenExpectation,
 } from "./eslint-upstream.ts";
 
 const request = JSON.parse(readFileSync(0, "utf8"));
-const { plugin, configs: approvedNames, release, fixtureParsers, namedParsers, eslintPackage, environment: environmentSetup } = request;
+const { plugin, configs: approvedNames, release, fixtureParsers, namedParsers, eslintPackage, environment: environmentSetup, vue: vueSetup } = request;
 // Node identifies modules by real path, and the cache may be reached through a symlink.
 const runtime = realpathSync(request.runtime);
 const checkout = realpathSync(request.checkout);
@@ -92,8 +92,8 @@ const firstApproved = (name) => firstApprovedIn(approved, ruleId(name));
 /** The setting a rule is checked with: its first approved configuration's options, default options otherwise. */
 const settingFor = (name) => ["error", ...(firstApproved(name)?.options ?? [])];
 
-/** Of the ECMAScript file types, by extension, those ESLint lints under any approved configuration. */
-const CANDIDATE_EXTENSIONS = [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"];
+/** Of the file types ESLint plugins lint, by extension, those ESLint lints under any approved configuration. */
+const CANDIDATE_EXTENSIONS = [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx", ".vue"];
 function lintedExtensions() {
   const linted = new Set();
   for (const { configs } of approved) {
@@ -104,6 +104,8 @@ function lintedExtensions() {
   }
   return CANDIDATE_EXTENSIONS.filter((extension) => linted.has(extension));
 }
+/** Whether upstream lints `.vue` files, as single-file components: a `.vue` name then means a component (parsedAs). */
+const lintsComponents = lintedExtensions().includes(".vue");
 
 /**
  * The module files of the parsers the approved configurations lint each file type with: those whose exports are the
@@ -172,21 +174,63 @@ globalThis.validationPlugin = pluginModule;
 
 // Test files load the rules from the installed package (the code the runtime runs) rather than the checkout's
 // sources the package is published from, file for file where the package installs each source's build; a package that
-// ships one bundle has none, and testedRule() runs its rules in place of the sources' copies. The test frameworks are
+// ships one bundle has none, and one whose build cannot stand in for its sources file for file (`release.sources`)
+// keeps them, and testedRule() runs its installed rules in place of the sources' copies. The test frameworks are
 // the globals below. A plugin whose tests load it by name as an ES module (its sources' default export) gets the
-// installed build as that module.
+// installed build as that module. A test that names a path of the package in the checkout that only its build holds
+// (eslint-plugin-vue's `../../../dist`, or `require.resolve('../../..')`, whose main is dist/index.js), which the
+// checkout lacks until upstream builds it, gets the same path in the installed package.
+const packageFrom = join(checkout, dirname(release.path));
+const packageTo = join(runtime, "node_modules", ...release.installed.split("/").slice(0, release.installed.startsWith("@") ? 2 : 1));
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (Object.hasOwn(shims, specifier)) return { url: shims[specifier], shortCircuit: true };
     if (release.defaultExport && specifier === plugin?.package && context.parentURL?.startsWith(checkoutURL)) return { url: PLUGIN_MODULE, shortCircuit: true };
-    const resolved = nextResolve(specifier, context);
+    let resolved;
+    try {
+      resolved = nextResolve(specifier, context);
+    } catch (error) {
+      const parent = context.parentURL?.startsWith("file:") ? fileURLToPath(context.parentURL) : null;
+      const target = parent !== null && /^\.\.?(?:\/|$)/u.test(specifier) ? join(dirname(parent), specifier) : null;
+      if (target === null || (target !== packageFrom && !target.startsWith(packageFrom + sep))) throw error;
+      return nextResolve(packageTo + target.slice(packageFrom.length), context);
+    }
     if (!resolved.url.startsWith("file:")) return resolved;
     const path = fileURLToPath(resolved.url);
-    if (!path.startsWith(releaseFrom)) return resolved;
+    if (request.esmTests && context.conditions?.includes("require") && context.parentURL?.startsWith(checkoutURL) && !/^(?:\.\.?(?:\/|$)|\/|node:)/u.test(specifier)) {
+      const shim = esmDefault(path);
+      if (shim !== null) return { url: shim, shortCircuit: true };
+    }
+    if (release.sources || !path.startsWith(releaseFrom)) return resolved;
     const installed = releaseTo + path.slice(releaseFrom.length).replace(/\.[cm]?ts$/u, ".js");
     return existsSync(installed) ? { url: pathToFileURL(installed).href, shortCircuit: true } : resolved;
   },
 });
+
+/**
+ * A module that reads as a CommonJS package does to Node's ES module loader, for a checkout file importing it
+ * (`esm_tests`): the package's exports, with those exports as its default when it is marked `__esModule` without one.
+ * null for a package that needs no stand-in.
+ */
+const esmDefaults = new Map();
+function esmDefault(path) {
+  if (!esmDefaults.has(path)) {
+    let exports;
+    try {
+      exports = runtimeRequire(path);
+    } catch {
+      exports = null;
+    }
+    if (exports === null || typeof exports !== "object" || exports.__esModule !== true || "default" in exports) {
+      esmDefaults.set(path, null);
+    } else {
+      const shim = join(dirname(request.out), `esm-default-${esmDefaults.size}.cjs`);
+      writeFileSync(shim, `const target = require(${JSON.stringify(path)});\nmodule.exports = Object.defineProperties({}, { ...Object.getOwnPropertyDescriptors(target), default: { value: target, enumerable: true } });\n`);
+      esmDefaults.set(path, pathToFileURL(shim).href);
+    }
+  }
+  return esmDefaults.get(path);
+}
 
 /** The it() callbacks a typescript-eslint RuleTester run registers while it is collected. */
 let collecting = null;
@@ -308,7 +352,7 @@ Linter.prototype.verify = function firstVerify(code, config, filenameOrOptions) 
   const messages = verify.call(this, code, linted, filenameOrOptions);
   if (substitute.captured === null) {
     const filename = typeof filenameOrOptions === "string" ? filenameOrOptions : filenameOrOptions?.filename;
-    substitute.captured = { messages, filename, ownEnvironment: declaresEnvironment(config), config: linted };
+    substitute.captured = { messages, filename, code, ownEnvironment: declaresEnvironment(config), config: linted };
   }
   return messages;
 };
@@ -349,9 +393,11 @@ function parserFile(parser) {
  * The file type of a case linted with these language options, or why it has none. A parser upstream's tests load from
  * the checkout returns a fixed tree: the tree another parser built for the case's own code, in a directory the
  * manifest's `fixture_parsers` names with that code's file type, or otherwise a tree whatever the code. Any other
- * parser reads the language its name declares, or the manifest's `parsers` gives for its package.
+ * parser reads the language its name declares, or the manifest's `parsers` gives for its package. vue-eslint-parser
+ * reads a case (its file name, Linter's `<input>` when it names none, and its code) as a single-file component, or
+ * else as one script in the language of the script parser its `parserOptions.parser` picks.
  */
-function languageOf(languageOptions) {
+function languageOf(languageOptions, filename, code) {
   const parser = languageOptions?.parser;
   const file = parser === undefined ? null : parserFile(parser);
   if (file !== null && file.startsWith(checkout + sep)) {
@@ -364,15 +410,22 @@ function languageOf(languageOptions) {
   const packageName = file === null ? undefined : modulePackage(file);
   const language = parserLanguage(name, packageName, namedParsers);
   if (language === undefined) return { skipped: `upstream lints it with the parser ${name ?? packageName ?? "(unnamed)"}, a language the engine has no file type for` };
+  if (language === "vue" && !vueReadsAsComponent(filename, code ?? "")) {
+    // vue-eslint-parser loads a script parser named by module from its own location, and espree when none is picked.
+    const picked = vueScriptParser(languageOptions?.parserOptions?.parser, vueScriptLangs(filename));
+    const vueRequire = createRequire(file ?? join(runtime, "package.json"));
+    const scriptParser = typeof picked === "string" || picked === undefined ? vueRequire(picked ?? "espree") : picked;
+    return languageOf({ ...languageOptions, parser: interop(scriptParser) }, filename, code);
+  }
   const sourceType = languageOptions?.sourceType;
   return { extension: fileType({ language, jsx: languageOptions?.parserOptions?.ecmaFeatures?.jsx === true, sourceType }), script: language === "javascript" && sourceType === "script" };
 }
 
 /** The file type of a case a case tester linted with this configuration (Linter.verify's), or why it has none. */
-function configuredLanguage(config, filename) {
+function configuredLanguage(config, filename, code) {
   const configs = new FlatConfigArray(config, filename ? { basePath: parsePath(filename).root || undefined } : {});
   configs.normalizeSync();
-  return languageOf(configs.getConfig(filename || "__placeholder__.js")?.languageOptions);
+  return languageOf(configs.getConfig(filename || "__placeholder__.js")?.languageOptions, filename, code);
 }
 
 /**
@@ -418,12 +471,12 @@ function lintESLintCase(entry, item, setting, nameless) {
   // Linter matches configurations against this name when a case has none.
   let filename = named;
   let configs = assemble(filename, false);
-  let language = languageOf(configs.getConfig(filename || "__placeholder__.js")?.languageOptions);
+  let language = languageOf(configs.getConfig(filename || "__placeholder__.js")?.languageOptions, filename, item.code);
   if (language.skipped !== undefined) return { language, filename, ownEnvironment };
   if (environment.length > 0) {
     filename = named ?? nameless(language.extension);
     configs = assemble(filename, true);
-    language = languageOf(configs.getConfig(filename)?.languageOptions);
+    language = languageOf(configs.getConfig(filename)?.languageOptions, filename, item.code);
     if (language.skipped !== undefined) return { language, filename, ownEnvironment };
   }
   if (typeof item.before === "function") item.before();
@@ -488,7 +541,7 @@ async function tests(globs, names, caseTesters) {
         const base = { fixture: caseFixture(testFile, run, kind, index), variant: ownOptions === undefined ? "." : `options ${JSON.stringify(ownOptions)}`, code: item.code, findings: [], markup: null };
         const at = (filename, extension, skipped) => {
           const path = casePath(name, testFile, run, kind, index, filename, checkout, cache, extension);
-          const type = parsedAs(path, extension);
+          const type = parsedAs(path, extension, lintsComponents);
           return { ...base, path, ...(type === undefined ? {} : { parsedAs: type }), skipped };
         };
         let outcome;
@@ -521,7 +574,7 @@ async function tests(globs, names, caseTesters) {
           substitute = null;
           if (captured === null) return void cases[name].push(at(fallback, fallbackExtension, `upstream's RuleTester did not lint it: ${thrown ?? "no verify call"}`));
           if (caseTester) {
-            const language = configuredLanguage(captured.config, captured.filename);
+            const language = configuredLanguage(captured.config, captured.filename, captured.code);
             const extension = language.extension ?? ".js";
             if (language.skipped !== undefined) return void cases[name].push(at(captured.filename, extension, language.skipped));
             outcome = { messages: captured.messages, ruleId: ruleKey, filename: captured.filename, extension, script: language.script === true, ownEnvironment: captured.ownEnvironment };
@@ -558,8 +611,20 @@ function lint(files, names) {
   // A rule that needs type information reports nothing on files that are not a buildable project.
   const typeChecked = new Set(names.filter((name) => upstreamRules.get(name)?.meta?.docs?.requiresTypeChecking === true));
   const rules = Object.fromEntries(names.filter((name) => upstreamRules.has(name) && !typeChecked.has(name)).map((name) => [ruleId(name), settingFor(name)]));
+  // Vue components: the rules upstream reads a file with (comment-directive) at their approved setting, and the parser
+  // of each `<script lang>` the manifest names, for every .vue file, as eslint-plugin-vue's user guide sets it.
+  const vueEntries = [];
+  if (vueSetup !== null) {
+    for (const id of vueSetup.directiveRules) {
+      const approvedSetting = firstApprovedIn(approved, id);
+      if (approvedSetting === null) throw new Error(`no approved configuration turns on the directive rule ${id}`);
+      rules[id] = ["error", ...approvedSetting.options];
+    }
+    const parser = Object.fromEntries(Object.entries(vueSetup.scriptParsers).map(([lang, name]) => [lang, interop(runtimeRequire(name))]));
+    vueEntries.push({ files: ["*.vue", "**/*.vue"], languageOptions: { parserOptions: { parser } } });
+  }
   // The first approved configuration's languages, parsers and file patterns, with only the named rules on.
-  const config = [...environment, ...approved[0].configs.map(({ rules: _rules, ...rest }) => rest), { rules }];
+  const config = [...environment, ...approved[0].configs.map(({ rules: _rules, ...rest }) => rest), ...vueEntries, { rules }];
   const linter = new Linter({ configType: "flat", cwd: "/corpus" });
   return files.map(({ path, source }) => {
     const messages = linter.verify(source, config, `/corpus/${path}`);

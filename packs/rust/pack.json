@@ -3,7 +3,7 @@
   "id": "rust",
   "name": "Rust",
   "category": "language",
-  "covers": "No rules yet: its 34 Clippy 0.1.99 ports are candidates until they pass the V1 rule validation gates.",
+  "covers": "7 Clippy 0.1.99 lints ported to Rerail, 5 of them on and 2 off until turned on, each scored against Clippy's own recorded findings on its UI tests; 27 more ports are candidates until they pass the port readiness gates.",
   "reason": "matches Rust",
   "match": {
     "any": [
@@ -15,5 +15,50 @@
       }
     ]
   },
-  "rules": []
+  "rules": [
+    {
+      "id": "clippy-needless-arbitrary-self-type",
+      "document": "rules/clippy-needless-arbitrary-self-type.json",
+      "title": "Clippy needless_arbitrary_self_type: Type of `self` parameter is already by default `Self`",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-redundant-at-rest-pattern",
+      "document": "rules/clippy-redundant-at-rest-pattern.json",
+      "title": "Clippy redundant_at_rest_pattern: Checks for `[all @ ..]` where `all` would suffice",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-needless-else",
+      "document": "rules/clippy-needless-else.json",
+      "title": "Clippy needless_else: Empty else branch",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-octal-escapes",
+      "document": "rules/clippy-octal-escapes.json",
+      "title": "Clippy octal_escapes: String escape sequences looking like octal characters",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-needless-raw-string-hashes",
+      "document": "rules/clippy-needless-raw-string-hashes.json",
+      "title": "Clippy needless_raw_string_hashes: Suggests reducing the number of hashes around a raw string literal",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-single-component-path-imports",
+      "document": "rules/clippy-single-component-path-imports.json",
+      "title": "Clippy single_component_path_imports: Imports with single component path are redundant",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-many-single-char-names",
+      "document": "rules/clippy-many-single-char-names.json",
+      "title": "Clippy many_single_char_names: Too many single character bindings",
+      "group": "Clippy",
+      "on": false
+    }
+  ]
 }
