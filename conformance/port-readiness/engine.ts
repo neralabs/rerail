@@ -309,9 +309,8 @@ export function engineSources(root: string = PACKAGE_ROOT): { shared: string[]; 
  * imported as TypeScript, so its edits take effect without a build.
  *
  * The binary is no part of a rule's key, so one left over from before a source edit would judge rules under the edited
- * sources' key and its verdicts would be read back as theirs; a run on one saves no result and commits no goldens,
- * nor does a merge --write of shard reports (cli.ts). Shards run on a stale binary and merged after a rebuild are not
- * caught: a shard report does not say which binary made it. `npm run build:native` writes the binary after cargo
+ * sources' key and its verdicts would be read back as theirs; a run on one saves no result (cli.ts). Shards run on a
+ * stale binary and merged after a rebuild are not caught: a shard report does not say which binary made it. `npm run build:native` writes the binary after cargo
  * rebuilds what a newer source changed, and CI unpacks it from the build job's artifact after the checkout, so a
  * binary built from these sources is newer than all of them.
  * A binary misjudged stale costs a run its cache writes and `--write`, never a verdict.

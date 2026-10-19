@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "vitest";
 
 import { resultPath } from "../../../conformance/port-readiness/cache.js";
-import { serializeGoldens } from "../../../conformance/port-readiness/goldens.js";
 import { mergeDirectory, mergeShards } from "../../../conformance/port-readiness/merge.js";
 import { summarizeRules, unusedGapLine, type GatesReport, type RuleReport } from "../../../conformance/port-readiness/run.js";
 import { parseShard, shardName, shardOf, type Shard } from "../../../conformance/port-readiness/shard.js";
@@ -25,7 +24,6 @@ function passingGates(): RuleReport["gates"] {
     "not-overfit": { ...ok, flagged: [], words: {}, uncheckedRegexes: [] },
     compact: { ...ok, metrics: null },
     "matches-upstream-tests": { ...ok, totals: null, cases: {}, differences: [], goldens: { count: 1, differing: { count: 0, first: [] }, engineGaps: { count: 0, first: [] } } },
-    "matches-real-code": { checks: [], eligible: 0, positives: 0, cases: [], disagreementsElsewhere: { count: 0, first: [] } },
     "passes-conformance": ok,
   };
 }
@@ -47,9 +45,9 @@ function shardReport(shard: Shard, ids: string[], options: { total?: number; exc
     upstream: { name: "", repository: "", commit: "", version: "", license: "", recommended_configs: [], runtime: "", identity: {} },
     engine: { sha256: "e" }, gates: [], method: {} as GatesReport["method"], toolPackChecks: { pass: true, checks: [] },
     integrity: options.integrity ?? [], knownGaps: [{ id: "gap", proven: true, kind: "valid-source", excused: options.excused ?? 0 }],
-    gapCandidates: [{ gate: "matches-real-code", file: "t/a.ts", engine: "parse", verdict: "valid-source", parsers: [] }],
+    gapCandidates: [{ gate: "matches-upstream-tests", file: "t/a.ts", engine: "parse", verdict: "valid-source", parsers: [] }],
     corpus: { tasks: [], files: 3, excluded: 0 }, unmapped: [], listedWithoutDocument: 0,
-    cache: { rules: rules.length, hits: 1 }, uncommittedPromotions: rules.length > 0 ? 1 : 0,
+    cache: { rules: rules.length, hits: 1 },
     shard: { ...shard, rules: options.total ?? ids.length },
     summary: summarizeRules(rules),
     rules,
@@ -88,7 +86,7 @@ describe("merge", () => {
 
   it("joins the shards into the report a whole run gives: every rule once, sorted, counts summed and recomputed", () => {
     const parts = shards(3, { failing: ["b"] });
-    const { report, goldens } = mergeShards(parts.map((part) => ({ report: part, goldens: null })));
+    const report = mergeShards(parts);
     assert.equal(report.shard, undefined);
     assert.deepEqual(new Set(report.rules.map((entry) => entry.id)), new Set(IDS));
     assert.deepEqual(report.rules.map((entry) => entry.file), report.rules.map((entry) => entry.file).sort());
@@ -96,60 +94,44 @@ describe("merge", () => {
     assert.deepEqual(report.summary.shipped, { rules: 8, pass: 7 });
     assert.deepEqual(report.summary.candidates, { rules: 3, pass: 3 });
     assert.deepEqual(report.cache, { rules: 11, hits: 3 });
-    assert.equal(report.uncommittedPromotions, parts.filter((part) => part.rules.length > 0).length);
     assert.equal(report.gapCandidates.length, 1);
-    assert.equal(goldens, null);
   });
 
   it("a known gap counts as used when any shard used it", () => {
     const unused = unusedGapLine("gap");
     const parts = shards(2, { integrity: [unused, "other"] });
     parts[1] = { ...parts[1]!, knownGaps: [{ id: "gap", proven: true, kind: "valid-source", excused: 2 }], integrity: ["other"] };
-    const { report } = mergeShards(parts.map((part) => ({ report: part, goldens: null })));
+    const report = mergeShards(parts);
     assert.deepEqual(report.knownGaps, [{ id: "gap", proven: true, kind: "valid-source", excused: 2 }]);
     assert.deepEqual(report.integrity, ["other"]);
-    const unusedEverywhere = mergeShards(shards(2, { integrity: [unused] }).map((part) => ({ report: part, goldens: null })));
-    assert.deepEqual(unusedEverywhere.report.integrity, [unused]);
-  });
-
-  it("the goldens are every shard's promotions together", () => {
-    const committed = { task: "t", path: "x.ts", sha256: "1".repeat(64) };
-    const one = serializeGoldens(new Map([["a", [committed, { task: "t", path: "y.ts", sha256: "2".repeat(64) }]]]));
-    const two = serializeGoldens(new Map([["a", [committed]], ["b", [{ task: "t", path: "z.ts", sha256: "3".repeat(64) }]]]));
-    const parts = shards(2);
-    const { goldens } = mergeShards([{ report: parts[0]!, goldens: one }, { report: parts[1]!, goldens: two }]);
-    assert.equal(goldens, serializeGoldens(new Map([
-      ["a", [committed, { task: "t", path: "y.ts", sha256: "2".repeat(64) }]],
-      ["b", [{ task: "t", path: "z.ts", sha256: "3".repeat(64) }]],
-    ])));
+    const unusedEverywhere = mergeShards(shards(2, { integrity: [unused] }));
+    assert.deepEqual(unusedEverywhere.integrity, [unused]);
   });
 
   it("refuses shards that are missing, of another count, misplaced, short of the tool-pack's rules or disagreeing", () => {
     const parts = shards(3);
-    const merge = (reports: GatesReport[]) => mergeShards(reports.map((report) => ({ report, goldens: null })));
-    assert.throws(() => merge([parts[0]!, parts[2]!]), /are not 1\/3 to 3\/3/u);
-    assert.throws(() => merge([...parts, shardReport({ index: 2, count: 4 }, IDS)]), /are not 1\/3 to 3\/3/u);
-    assert.throws(() => merge(parts.map((part) => ({ ...part, shard: { ...part.shard!, rules: 12 } }))), /judged 11 of the tool-pack's 12 rules/u);
+    assert.throws(() => mergeShards([parts[0]!, parts[2]!]), /are not 1\/3 to 3\/3/u);
+    assert.throws(() => mergeShards([...parts, shardReport({ index: 2, count: 4 }, IDS)]), /are not 1\/3 to 3\/3/u);
+    assert.throws(() => mergeShards(parts.map((part) => ({ ...part, shard: { ...part.shard!, rules: 12 } }))), /judged 11 of the tool-pack's 12 rules/u);
     const moved = parts.map((part) => ({ ...part, rules: [...part.rules] }));
     const from = moved.findIndex((part) => part.rules.length > 0);
     const to = (from + 1) % moved.length;
     moved[to]!.rules.push(moved[from]!.rules.pop()!);
-    assert.throws(() => merge(moved), /is in shard-\d+of3, not in shard \d+/u);
-    assert.throws(() => merge([parts[0]!, { ...parts[1]!, engine: { sha256: "other" } }, parts[2]!]), /disagree on engine: shard-2of3 differ from shard-1of3/u);
-    assert.throws(() => merge([parts[0]!, parts[1]!, { ...parts[2]!, corpus: { tasks: [], files: 2, excluded: 0 } }]), /disagree on corpus: shard-3of3 differ.*failed to fetch or apply/u);
+    assert.throws(() => mergeShards(moved), /is in shard-\d+of3, not in shard \d+/u);
+    assert.throws(() => mergeShards([parts[0]!, { ...parts[1]!, engine: { sha256: "other" } }, parts[2]!]), /disagree on engine: shard-2of3 differ from shard-1of3/u);
+    assert.throws(() => mergeShards([parts[0]!, parts[1]!, { ...parts[2]!, corpus: { tasks: [], files: 2, excluded: 0 } }]), /disagree on corpus: shard-3of3 differ.*failed to fetch or apply/u);
     const { shard: _shard, ...whole } = parts[0]!;
-    assert.throws(() => merge([whole as GatesReport, parts[1]!, parts[2]!]), /not a shard's/u);
+    assert.throws(() => mergeShards([whole as GatesReport, parts[1]!, parts[2]!]), /not a shard's/u);
   });
 
   it("a shard that took every result from the cache merges with one that judged: both carry the same corpus-complete", () => {
     const complete = { id: "corpus-complete", ok: true, detail: "all 3 recorded corpus file(s) were fetched with their recorded sha256" };
     const withCheck = (part: GatesReport, check: typeof complete) => ({ ...part, toolPackChecks: { pass: true, checks: [check] } });
     const [judged, cached] = shards(2);
-    const merge = (reports: GatesReport[]) => mergeShards(reports.map((report) => ({ report, goldens: null })));
-    assert.deepEqual(merge([withCheck(judged!, complete), withCheck({ ...cached!, cache: { rules: cached!.rules.length, hits: cached!.rules.length } }, complete)]).report.toolPackChecks.checks, [complete]);
+    assert.deepEqual(mergeShards([withCheck(judged!, complete), withCheck({ ...cached!, cache: { rules: cached!.rules.length, hits: cached!.rules.length } }, complete)]).toolPackChecks.checks, [complete]);
     // Before the cached check was replayed, a fully cached shard wrote its own detail and no merge took place.
     const notFetched = { ...complete, detail: "not fetched on this run: every result is cached from a run that fetched every recorded corpus file" };
-    assert.throws(() => merge([withCheck(judged!, complete), withCheck(cached!, notFetched)]), /disagree on toolPackChecks: shard-2of2 differ from shard-1of2/u);
+    assert.throws(() => mergeShards([withCheck(judged!, complete), withCheck(cached!, notFetched)]), /disagree on toolPackChecks: shard-2of2 differ from shard-1of2/u);
   });
 
   it("merge writes the tool-pack report the summary reads, and the summary never reads a shard's", async () => {
@@ -160,16 +142,15 @@ describe("merge", () => {
       writeFileSync(join(directory, shardName(part.shard!), "demo--tool.json"), JSON.stringify(part));
     }
     assert.deepEqual(readReports(directory), []);
-    const result = await mergeDirectory(directory, directory, false);
+    const result = await mergeDirectory(directory);
     assert.deepEqual(result.problems, []);
     assert.deepEqual(readReports(directory).map((report) => [report.toolPack, report.rules.length]), [["demo/tool", 11]]);
     assert.ok(existsSync(join(directory, "demo--tool.md")));
-    assert.equal(existsSync(join(directory, "demo--tool.goldens.tsv")), false);
 
     // A missing shard leaves no tool-pack report, and says why.
     rmSync(join(directory, "demo--tool.json"));
     rmSync(join(directory, "shard-2of2"), { recursive: true });
-    const short = await mergeDirectory(directory, directory, false);
+    const short = await mergeDirectory(directory);
     assert.equal(short.merged.length, 0);
     assert.match(short.problems[0]!, /demo\/tool: shards 1\/2 are not 1\/2 to 2\/2/u);
     assert.equal(existsSync(join(directory, "demo--tool.json")), false);

@@ -2,15 +2,12 @@
  * `npm run port-readiness`: the port readiness gates over every gated tool-pack, from its recordings, and the summary CI posts.
  * Exit 1 when a shipped rule fails a blocking check (or the summary has a blocking failure), 2 on an exception.
  */
-import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { PACKAGE_ROOT } from "../../src/engine/index.js";
 import { DEFAULT_CACHE_ROOT } from "./corpus.js";
 import { staleNativeBinary } from "./engine.js";
-import { goldensPath } from "./goldens.js";
-import { toolPackDirectory } from "./manifest.js";
 import { mergeDirectory } from "./merge.js";
 import { ProcessCommandRunner } from "./process.js";
 import { fetchToolPackRecordings } from "./recording/fetch.js";
@@ -20,9 +17,9 @@ import { parseShard, shardName } from "./shard.js";
 import { parsePlanned, writeSummary } from "./summary.js";
 
 const USAGE = `usage:
-  npm run port-readiness -- [--pack <id>] [--tool <tool>] [--shard <i>/<n>] [--cache dir] [--no-cache | --refresh-cache] [--write] [--out dir]
+  npm run port-readiness -- [--pack <id>] [--tool <tool>] [--shard <i>/<n>] [--cache dir] [--no-cache | --refresh-cache] [--out dir]
   npm run port-readiness -- fetch [--pack <id>] [--tool <tool>] [--cache dir]
-  npm run port-readiness -- merge <dir> [--write]
+  npm run port-readiness -- merge <dir>
   npm run port-readiness -- summary <dir> [--base <sha>] [--planned <JSON array of "<pack>/<tool>">]
 `;
 
@@ -48,22 +45,17 @@ function parse(args: string[], valued: string[], flags: string[]): Record<string
 }
 
 async function gates(args: string[]): Promise<number> {
-  const flags = parse(args, ["--pack", "--tool", "--shard", "--cache", "--out"], ["--no-cache", "--refresh-cache", "--write"]);
+  const flags = parse(args, ["--pack", "--tool", "--shard", "--cache", "--out"], ["--no-cache", "--refresh-cache"]);
   const root = PACKAGE_ROOT;
   const shard = typeof flags["--shard"] === "string" ? parseShard(flags["--shard"]) : undefined;
-  // Shards run side by side; each writes its promotions to its own report directory, and merge --write commits them.
-  if (shard !== undefined && flags["--write"] === true) throw new Error(`--write does not take --shard: merge the shards' reports with gates merge <dir> --write\n${USAGE}`);
   const selected = gatedToolPacks(root).filter(({ pack, tool }) => (flags["--pack"] === undefined || flags["--pack"] === pack) && (flags["--tool"] === undefined || flags["--tool"] === tool));
   if (selected.length === 0) throw new Error(`no gated tool-pack matches${flags["--pack"] === undefined ? "" : ` --pack ${String(flags["--pack"])}`}${flags["--tool"] === undefined ? "" : ` --tool ${String(flags["--tool"])}`}`);
   const out = join(resolve(typeof flags["--out"] === "string" ? flags["--out"] : DEFAULT_OUT), shard === undefined ? "" : shardName(shard));
   if (flags["--no-cache"] === true && flags["--refresh-cache"] === true) throw new Error(`--no-cache and --refresh-cache exclude each other\n${USAGE}`);
   // A native binary older than the engine sources may be another engine's build, judging under these sources' keys
-  // (engine.ts): its verdicts are reported, never saved for later runs or written to the committed goldens here. A
-  // shard's report directory still gets its goldens, and merge --write checks the binary again before committing them.
+  // (engine.ts): its verdicts are reported, never saved for later runs.
   const stale = staleNativeBinary(root);
-  const rebuild = `the native engine is older than ${stale}: rebuild it with npm run build:native`;
-  if (stale !== undefined && flags["--write"] === true) throw new Error(`--write needs this checkout's engine; ${rebuild}`);
-  if (stale !== undefined) console.warn(`${rebuild}. This run's results are not cached.`);
+  if (stale !== undefined) console.warn(`the native engine is older than ${stale}: rebuild it with npm run build:native. This run's results are not cached.`);
   // --no-cache neither reads nor saves results; --refresh-cache judges every rule again and saves the fresh results.
   const readCache = flags["--no-cache"] !== true && flags["--refresh-cache"] !== true;
   const writeCache = flags["--no-cache"] !== true && stale === undefined;
@@ -72,16 +64,10 @@ async function gates(args: string[]): Promise<number> {
   const runner = new ProcessCommandRunner();
   let failing = 0;
   for (const { pack, tool } of selected) {
-    const { report, goldens, goldensChanged } = await runToolPack({ root, pack, tool, cacheRoot, readCache, writeCache, runner, ...(shard === undefined ? {} : { shard }) });
+    const report = await runToolPack({ root, pack, tool, cacheRoot, readCache, writeCache, runner, ...(shard === undefined ? {} : { shard }) });
     const name = `${pack}--${tool}`;
     await writeFile(join(out, `${name}.json`), `${JSON.stringify(report, null, 2)}\n`);
     await writeFile(join(out, `${name}.md`), renderMarkdown(report));
-    if (goldensChanged) {
-      // The artifact always holds the updated goldens; only --write changes the committed file.
-      await writeFile(join(out, `${name}.goldens.tsv`), goldens);
-      const committed = goldensPath(toolPackDirectory(root, pack, tool));
-      if (flags["--write"] === true && (existsSync(committed) || report.uncommittedPromotions > 0)) await writeFile(committed, goldens);
-    }
     const blocking = blockingFailures(report);
     failing += blocking;
     console.log(`${report.toolPack}${shard === undefined ? "" : ` (${shardName(shard)}, ${report.rules.length} of ${report.shard!.rules} rules)`}: ${report.summary.shipped.pass}/${report.summary.shipped.rules} shipped pass, ${report.summary.candidates.pass}/${report.summary.candidates.rules} candidates pass; ${blocking} blocking failure(s); cache ${report.cache.hits}/${report.cache.rules}; tool-pack checks ${report.toolPackChecks.pass ? "pass" : "FAIL"}`);
@@ -119,11 +105,8 @@ async function fetch(args: string[]): Promise<number> {
 async function merge(args: string[]): Promise<number> {
   const [directory, ...rest] = args;
   if (directory === undefined || directory.startsWith("--")) throw new Error(USAGE);
-  const flags = parse(rest, [], ["--write"]);
-  // The shards' goldens come from this checkout's binary, so a stale one commits none (gates() above).
-  const stale = flags["--write"] === true ? staleNativeBinary(PACKAGE_ROOT) : undefined;
-  if (stale !== undefined) throw new Error(`merge --write needs this checkout's engine; the native engine is older than ${stale}: rebuild it with npm run build:native and run the shards again`);
-  const { merged, problems } = await mergeDirectory(PACKAGE_ROOT, resolve(directory), flags["--write"] === true);
+  parse(rest, [], []);
+  const { merged, problems } = await mergeDirectory(resolve(directory));
   for (const report of merged) console.log(`${report.toolPack}: merged ${report.rules.length} rules; ${report.summary.shipped.pass}/${report.summary.shipped.rules} shipped pass, ${report.summary.candidates.pass}/${report.summary.candidates.rules} candidates pass; ${blockingFailures(report)} blocking failure(s)`);
   for (const problem of problems) process.stderr.write(`not merged: ${problem}\n`);
   console.log(`merged ${merged.length} sharded tool-pack(s) in ${resolve(directory)}`);

@@ -1,7 +1,6 @@
 import { comparedPositions } from "./checks/matches-upstream-tests.js";
 import type { GatesReport, RuleReport } from "./run.js";
-import { formatSpan } from "./spans.js";
-import { BLOCKING_GATES, GATES, type BlockingGateId, type Check, type GateId, type ParserVerdict, type Span } from "./types.js";
+import { BLOCKING_GATES, GATES, type BlockingGateId, type Check, type GateId, type ParserVerdict } from "./types.js";
 
 export function cell(text: string): string {
   return text.replaceAll("|", "\\|").replaceAll("\n", " ");
@@ -109,36 +108,13 @@ function gapCandidateTable(report: GatesReport): string[] {
   ];
 }
 
-function where(label: string, spans: Span[]): string[] {
-  return spans.length === 0 ? [] : [`${label} ${spans.slice(0, 3).map(formatSpan).join(", ")}${spans.length > 3 ? ", …" : ""}`];
-}
-
-function realCodeSection(report: GatesReport): string[] {
-  const { endToEnd } = report.summary;
-  const lines = [
-    `matches-real-code never stops a rule. Every eligible file where a rule and upstream differ becomes a golden of matches-upstream-tests. ${endToEnd.mismatches} of ${endToEnd.cases} case(s) differ. The rules have ${endToEnd.goldens} golden(s), differ on ${endToEnd.goldensDiffering} the engine read fully, and ${endToEnd.goldensEngineGaps} are engine gaps.`,
+function goldensSection(report: GatesReport): string[] {
+  const { goldens } = report.summary;
+  return [
+    `matches-upstream-tests judges each rule on its goldens: real-code files imported from NRV into goldens.tsv, whose expected answer is upstream's on the pinned corpus. Rerail does not run the rules over the corpus; NRV's real-code gate does. The rules have ${goldens.count} golden(s), differ on ${goldens.differing} the engine read fully, and ${goldens.engineGaps} are engine gaps.`,
     "",
     report.corpus === null ? "The corpus was not read on this run." : `The corpus is ${report.corpus.files} file(s) from ${report.corpus.tasks.filter((task) => task.status === "applied").length} applied task(s) and corpora; ${report.corpus.files - report.corpus.excluded} have upstream's answer.`,
-    "",
   ];
-  // A rule judged on no file (no eligible file, or the gate could not run) is not one that agrees with upstream.
-  const unjudged = report.rules.filter((rule) => rule.gates["matches-real-code"].eligible === 0);
-  if (unjudged.length > 0) {
-    const named = unjudged.slice(0, 5).map((rule) => `\`${rule.id}\``).join(", ");
-    lines.push(`${unjudged.length} of ${report.rules.length} rule(s) were judged on no file (matches-real-code is not-run for them and says nothing about them; its detail gives the reason): ${named}${unjudged.length > 5 ? ", …" : ""}.`, "");
-  }
-  const differing = report.rules.filter((rule) => rule.gates["matches-real-code"].cases.some((testCase) => testCase.status === "mismatch") || rule.gates["matches-real-code"].disagreementsElsewhere.count > 0);
-  if (differing.length === 0) lines.push(unjudged.length === report.rules.length ? "No rule was judged on any file." : "No rule differs from upstream on any eligible file.");
-  for (const rule of differing) {
-    const real = rule.gates["matches-real-code"];
-    const mismatches = real.cases.filter((testCase) => testCase.status === "mismatch");
-    lines.push(`- \`${rule.id}\`: ${mismatches.length} of ${real.cases.length} case(s) differ, and ${real.disagreementsElsewhere.count} other eligible file(s)`);
-    for (const testCase of mismatches) {
-      const detail = [...where("missing", testCase.missing), ...where("extra", testCase.extra), ...testCase.failures.slice(0, 1)];
-      lines.push(`  - ${testCase.kind} \`${testCase.task}/${testCase.path}\`: upstream ${testCase.expected}, rule ${testCase.actual}${detail.length > 0 ? ` (${cell(detail.join("; "))})` : ""}`);
-    }
-  }
-  return lines;
 }
 
 function ruleTable(report: GatesReport): string[] {
@@ -170,7 +146,6 @@ export function renderMarkdown(report: GatesReport): string {
     `- Cache: ${report.cache.hits} of ${report.cache.rules} rule result(s) from the cache`,
     `- Documents not mapped to an upstream rule: ${report.unmapped.length === 0 ? "none" : report.unmapped.map((entry) => `\`${entry.file}\` (${entry.location})`).join(", ")}`,
     `- conformance.json entries of ${report.tool} listed, no document yet: ${report.listedWithoutDocument}`,
-    ...(report.uncommittedPromotions === 0 ? [] : [`- ${report.uncommittedPromotions} golden promotion(s) are not in the committed goldens.tsv; run \`npm run port-readiness -- --pack ${report.pack} --tool ${report.tool} --write\``]),
     "",
     "## Tool-pack checks",
     "",
@@ -201,9 +176,9 @@ export function renderMarkdown(report: GatesReport): string {
     "",
     ...list(report.rules.filter((rule) => !rule.defaultOn).map((rule) => `\`${rule.id}\` (${rule.location}): ${cell(rule.defaultOnReason)}`), "Every rule exists upstream, is stable and is recommended."),
     "",
-    `## ${gateTitle("matches-real-code")}`,
+    "## Goldens",
     "",
-    ...realCodeSection(report),
+    ...goldensSection(report),
     "",
     "## Run integrity",
     "",

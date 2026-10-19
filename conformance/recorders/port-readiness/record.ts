@@ -9,7 +9,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 
-import { buildCorpus, buildRerailCorpora, conformancePaths, CORPUS_TASKS, failedTasksMessage, readRerailCorpora, type CorpusFile, type RerailCorpus } from "../../port-readiness/corpus.js";
+import { buildCorpus, buildRerailCorpora, conformancePaths, CORPUS_TASKS, failedTasksMessage, readRerailCorpora, wantedKey, wantedPlaces, type CorpusFile, type RerailCorpus, type Wanted } from "../../port-readiness/corpus.js";
+import { readGoldens } from "../../port-readiness/goldens.js";
 import { readGatesManifest, toolPackDirectory, type GatesManifest } from "../../port-readiness/manifest.js";
 import type { CommandRunner } from "../../port-readiness/process.js";
 import {
@@ -163,6 +164,24 @@ export function committedSources(directory: string): CommittedSources {
 /** The runtimes each adapter runs besides upstream's own (gates.yaml `upstream.runtime`). */
 const EXTRA_RUNTIMES: Record<GatesManifest["adapter"], string[]> = { bandit: ["python"], ruff: ["python"], eslint: ["parsers"] };
 
+/** A path's directories, innermost first: `a/b/c.py` gives `a/b` and `a`. */
+function directoriesOf(path: string): string[] {
+  const parts = path.split("/").slice(0, -1);
+  return parts.map((_, index) => parts.slice(0, parts.length - index).join("/"));
+}
+
+/**
+ * The corpus files whose presence changes upstream's answer on a file, by adapter. Ruff resolves a file's package, and
+ * so its module name (N999), from the `__init__.py` files in the directories above it; the whole corpus held them, so
+ * the recorder fetches them and hands them to upstream beside the goldens' files, and records answers for the goldens'
+ * files alone. Bandit and ESLint read each file on its own.
+ */
+export const CONTEXT_FILES: Record<GatesManifest["adapter"], (path: string) => string[]> = {
+  ruff: (path) => directoriesOf(path).flatMap((directory) => [`${directory}/__init__.py`, `${directory}/__init__.pyi`]),
+  bandit: () => [],
+  eslint: () => [],
+};
+
 /** Extensions a corpus could hold, probed against the adapter's inCorpus. */
 const PROBED_EXTENSIONS = [".cjs", ".cts", ".ipynb", ".js", ".jsx", ".mjs", ".mts", ".py", ".pyi", ".ts", ".tsx", ".vue"];
 
@@ -191,7 +210,7 @@ export interface RecordOptions {
   adapters?: Partial<Record<GatesManifest["adapter"], AdapterFactory>>;
   /** Upstream's bytes of a test file, when the adapter's checkout has it; defaults to the checkout under the cache root. */
   upstreamBytes?: (fixture: string) => Buffer | undefined;
-  /** The corpus files to ask upstream about; defaults to the pinned tasks and the pack's corpora, fetched into the cache. */
+  /** The corpus files to ask upstream about; defaults to the files the tool-pack's goldens name, fetched into the cache. */
   corpusFiles?: (inCorpus: (path: string) => boolean) => Promise<CorpusFile[]>;
   /** sha256 of corpus-tasks.json; defaults to the committed file's. */
   tasksSha256?: string;
@@ -241,14 +260,19 @@ const spans = (found: Span[]): RecordedSpan[] => found.map(spanTuple).sort(compa
 const setId = (kind: string, value: unknown): string => `${kind}:${sha256(JSON.stringify(value)).slice(0, 16)}`;
 
 /**
- * Every corpus file the linter reads. A task that could not be fetched throws: the recording would lack its answers, and
- * the gates would then never ask for them.
+ * The corpus files the tool-pack's goldens name, and the context files upstream's answer on them depends on
+ * (CONTEXT_FILES), and no others: the gates read upstream's answers on goldens alone, so upstream never runs over the
+ * rest of the corpus (that is NRV's real-code gate). `golden` is the places to record. A task that could not be fetched
+ * throws: the recording would lack its answers.
  */
-async function wholeCorpus(cacheRoot: string, inCorpus: (path: string) => boolean, runner: CommandRunner, corpora: RerailCorpus[]): Promise<CorpusFile[]> {
-  const catalog = await buildCorpus(cacheRoot, inCorpus, runner);
+async function goldenCorpus(directory: string, cacheRoot: string, inCorpus: (path: string) => boolean, runner: CommandRunner, corpora: RerailCorpus[], context: (path: string) => string[]): Promise<{ files: CorpusFile[]; golden: Wanted }> {
+  const named = [...(await readGoldens(directory)).values()].flat();
+  const golden = wantedPlaces(named);
+  const wanted = wantedPlaces([...named, ...named.flatMap((entry) => context(entry.path).map((path) => ({ task: entry.task, path })))]);
+  const catalog = await buildCorpus(cacheRoot, inCorpus, runner, wanted);
   const failed = catalog.tasks.filter((task) => task.status === "failed");
   if (failed.length > 0) throw new Error(`${failedTasksMessage(failed)}: the recording would lack their answers; record again`);
-  return [...catalog.files, ...(await buildRerailCorpora(corpora, cacheRoot, inCorpus, runner)).files];
+  return { files: [...catalog.files, ...(await buildRerailCorpora(corpora, cacheRoot, inCorpus, runner, wanted)).files], golden };
 }
 
 /** Run the live adapter and build the recording; writes nothing. */
@@ -387,16 +411,21 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     })),
   });
 
-  // Upstream's answers on the corpus: the pinned tasks' solutions and the corpora the pack pins.
+  // Upstream's answers on the files the goldens name, from the pinned tasks' solutions and the corpora the pack pins.
   const inCorpus = (path: string) => adapter.inCorpus(path);
   const corpora = await readRerailCorpora(root, packId);
-  const fetched = options.corpusFiles !== undefined ? await options.corpusFiles(inCorpus) : await wholeCorpus(cacheRoot, inCorpus, runner, corpora);
+  const fetched = options.corpusFiles !== undefined
+    ? { files: await options.corpusFiles(inCorpus), golden: null }
+    : await goldenCorpus(toolPackDirectory(root, packId, tool), cacheRoot, inCorpus, runner, corpora, CONTEXT_FILES[manifest.adapter]);
   const unique = new Map<string, CorpusFile>();
-  for (const file of fetched) if (!unique.has(`${file.task}\0${file.path}`)) unique.set(`${file.task}\0${file.path}`, file);
-  const corpusFiles = [...unique.keys()].sort(byText).map((key) => unique.get(key)!);
+  for (const file of fetched.files) if (!unique.has(`${file.task}\0${file.path}`)) unique.set(`${file.task}\0${file.path}`, file);
+  const linted = [...unique.keys()].sort(byText).map((key) => unique.get(key)!);
   const recorded = Object.keys(rules).sort(byText);
-  const answers = await adapter.lintCorpus(corpusFiles, recorded);
+  // Upstream reads the context files beside the goldens' files, as it read them in the whole corpus; only the goldens'
+  // files are recorded.
+  const answers = await adapter.lintCorpus(linted, recorded);
   const answerOf = new Map(answers.map((answer) => [`${answer.file.task}\0${answer.file.path}`, answer]));
+  const corpusFiles = fetched.golden === null ? linted : linted.filter((file) => fetched.golden.has(wantedKey(file.task, file.path)));
   const corpusVerdicts = await adapter.parserVerdicts(corpusFiles.map((file) => ({ path: file.path, source: file.source, script: false })));
   const corpus = gatesCorpusSchema.parse({
     format: CORPUS_FORMAT,
@@ -434,6 +463,11 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
 export interface RecordingDiff {
   /** recording.json or corpus.json when the lock names other bytes for it, or no lock is committed. */
   changed: string[];
+  /**
+   * How corpus.json was judged when the lock names other bytes for it: null when the digests agree; otherwise why the
+   * locked corpus.json still holds (it answers every file the fresh one does, identically, and more) or why it does not.
+   */
+  corpusNote: string | null;
   /** Case sources the directory lacks. */
   missing: CaseCopy[];
   /** Case sources the directory has with other bytes than upstream's. */
@@ -441,17 +475,51 @@ export interface RecordingDiff {
 }
 
 /**
- * A fresh recording against the committed lock. The comparison is of digests, not of files: the recordings are not in
- * the tree, and the lock is what the commit pins, so a lock naming other bytes is exactly what a stale recording is.
+ * Whether a locked corpus.json still answers for a fresh one: the same tool, pins, rules and parsers, and every file of
+ * the fresh recording answered identically. A locked corpus.json recorded over more files (the whole corpus, before
+ * the recorder narrowed to the goldens' files) holds while it agrees on these; null when it holds, else why not.
  */
-export function diffRecording(root: string, pack: string, tool: string, recorded: Recorded): RecordingDiff {
+export function corpusSupersetProblem(locked: GatesCorpusRecording, fresh: GatesCorpusRecording): string | null {
+  for (const key of ["format", "tool", "pins", "rules", "parsers"] as const) {
+    if (JSON.stringify(locked[key]) !== JSON.stringify(fresh[key])) return `its ${key} differ from a fresh recording's`;
+  }
+  const lockedFiles = new Map(locked.files.map((file) => [`${file.task}\0${file.path}`, JSON.stringify(file)]));
+  const differing = fresh.files.filter((file) => lockedFiles.get(`${file.task}\0${file.path}`) !== JSON.stringify(file));
+  if (differing.length === 0) return null;
+  return `${differing.length} of the ${fresh.files.length} file(s) the goldens name are answered differently or not at all, e.g. ${differing[0]!.task}/${differing[0]!.path}`;
+}
+
+/**
+ * A fresh recording against the committed lock. recording.json is compared by digest: the recordings are not in the
+ * tree, and the lock is what the commit pins, so a lock naming other bytes is exactly what a stale recording is.
+ * corpus.json is too, except that a locked corpus.json recorded over more files than the goldens name still holds
+ * while it answers theirs identically (corpusSupersetProblem); reading it needs the locked recording in `cacheRoot`.
+ */
+export function diffRecording(root: string, pack: string, tool: string, recorded: Recorded, cacheRoot: string): RecordingDiff {
   const directory = toolPackDirectory(root, pack, tool);
   const lockPath = join(directory, RECORDING_LOCK);
   const lock = existsSync(lockPath) ? recordingLockSchema.safeParse(JSON.parse(readFileSync(lockPath, "utf8"))) : null;
   const changed: string[] = [];
+  let corpusNote: string | null = null;
   for (const [file, value] of [[RECORDING_FILE, recorded.recording], [CORPUS_FILE, recorded.corpus]] as const) {
     const digest = sha256(Buffer.from(recordingText(value), "utf8"));
-    if (lock === null || !lock.success || lock.data.files[file].sha256 !== digest) changed.push(file);
+    if (lock !== null && lock.success && lock.data.files[file].sha256 === digest) continue;
+    if (file === CORPUS_FILE && lock !== null && lock.success) {
+      const locked = readLockedPair(root, cacheRoot, pack, tool);
+      if (locked === null || "unavailable" in locked) {
+        corpusNote = `the locked ${CORPUS_FILE} could not be compared: ${locked === null ? "no lock" : locked.unavailable} (run npm run port-readiness -- fetch first)`;
+      } else if (locked.corpus === null) {
+        corpusNote = `the lock names no ${CORPUS_FILE}`;
+      } else {
+        const problem = corpusSupersetProblem(locked.corpus, recorded.corpus);
+        if (problem === null) {
+          corpusNote = `the locked ${CORPUS_FILE} answers all ${recorded.corpus.files.length} file(s) the goldens name, as a fresh recording does, and ${locked.corpus.files.length - recorded.corpus.files.length} more; the next re-record drops those`;
+          continue;
+        }
+        corpusNote = `the locked ${CORPUS_FILE} no longer holds: ${problem}`;
+      }
+    }
+    changed.push(file);
   }
   const missing: CaseCopy[] = [];
   const conflicting: string[] = [];
@@ -460,7 +528,7 @@ export function diffRecording(root: string, pack: string, tool: string, recorded
     if (!existsSync(path)) missing.push(source);
     else if (!readFileSync(path).equals(source.bytes)) conflicting.push(source.file);
   }
-  return { changed, missing, conflicting };
+  return { changed, corpusNote, missing, conflicting };
 }
 
 /**
@@ -576,7 +644,7 @@ export interface WrittenRecording extends RecordingDiff {
  */
 export async function writeRecording(root: string, pack: string, tool: string, recorded: Recorded, options: { cacheRoot: string; release?: string }): Promise<WrittenRecording> {
   const directory = toolPackDirectory(root, pack, tool);
-  const diff = diffRecording(root, pack, tool, recorded);
+  const diff = diffRecording(root, pack, tool, recorded, options.cacheRoot);
   if (diff.conflicting.length > 0) throw new Error(`packs/${pack}/upstream/${tool}: committed case sources differ from upstream's: ${diff.conflicting.slice(0, 5).join(", ")}`);
 
   // The summary compares against the recording the committed lock named, where it is still in the cache. Without a

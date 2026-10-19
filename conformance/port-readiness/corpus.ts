@@ -12,7 +12,7 @@ import { runChecked, type CommandRunner } from "./process.js";
 import type { Check } from "./types.js";
 
 /**
- * The corpus `matches-real-code` reads: the code a SWE Atlas/Evo task ends with. For every pinned task
+ * The corpus goldens are read from: the code a SWE Atlas/Evo task ends with. For every pinned task
  * (corpus-tasks.json), its reference solution (the vetted code diff at the end of the task, pinned by sha256, read
  * from a pinned GitHub file or a pinned Hugging Face dataset cell) is applied to the files it touches at the task's
  * base commit, and each resulting file of a type the pack lints is one corpus file. The corpora a rerail pack pins in
@@ -240,7 +240,7 @@ async function patchedFiles(cacheRoot: string, task: string, repository: string,
   await git("sparse-checkout", "set", "--no-cone", ...touched.map((path) => `/${path}`));
   await git("fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", baseSha);
   await git("checkout", "-q", "--force", "FETCH_HEAD");
-  // Only the kept files' hunks are applied, so a hunk matches-real-code never reads (a CRLF batch file, a binary)
+  // Only the kept files' hunks are applied, so a hunk no golden can name (a CRLF batch file, a binary)
   // cannot drop the task.
   const kept = patchedPaths(patch.text).filter(({ after }) => after !== null && wanted.includes(after))
     .flatMap(({ before, after }) => [before, after]).filter((path): path is string => path !== null);
@@ -256,20 +256,16 @@ async function patchedFiles(cacheRoot: string, task: string, repository: string,
 }
 
 /**
- * corpus-complete: every file `corpus.json` holds upstream's answers for was fetched on this run with the bytes it
- * was recorded on. A task that failed to fetch (a download, a git fetch) or a file whose bytes differ would otherwise
- * drop out of matches-real-code without a word, and the rules judged on the rest would pass.
+ * corpus-complete: every task and corpus a golden names was fetched. A task that failed to fetch (a download, a git
+ * fetch) would otherwise fail each golden that names one of its files as though the rule differed there; this says why,
+ * and keeps the run's results out of the cache. A golden whose file the fetched corpus lacks, or has with other bytes,
+ * is the golden's own failure: the rule's identical-on-goldens names it.
  */
-export function corpusCompleteCheck(recorded: readonly { task: string; path: string; sha256: string }[], fetched: readonly CorpusFile[], tasks: readonly CorpusTask[]): Check {
-  const have = new Set(fetched.map((file) => `${file.task}\0${file.path}\0${file.sha256}`));
-  const missing = recorded.filter((file) => !have.has(`${file.task}\0${file.path}\0${file.sha256}`));
-  if (missing.length === 0) return { id: "corpus-complete", ok: true, detail: `all ${recorded.length} recorded corpus file(s) were fetched with their recorded sha256` };
-  const failed = tasks.filter((task) => task.status === "failed");
-  return {
-    id: "corpus-complete",
-    ok: false,
-    detail: `${missing.length} of ${recorded.length} recorded corpus file(s) were not fetched with their recorded sha256 (e.g. ${missing[0]!.task}: ${missing[0]!.path})${failed.length === 0 ? "" : `; ${failedTasksMessage(failed)}`}: run the gates again`,
-  };
+export function corpusCompleteCheck(goldens: readonly { task: string }[], tasks: readonly CorpusTask[]): Check {
+  const named = new Set(goldens.map((golden) => golden.task));
+  const failed = tasks.filter((task) => named.has(task.task) && task.status === "failed");
+  if (failed.length === 0) return { id: "corpus-complete", ok: true, detail: `every task and corpus the ${goldens.length} golden(s) name was fetched` };
+  return { id: "corpus-complete", ok: false, detail: `${failedTasksMessage(failed)}: run the gates again` };
 }
 
 /** The tasks a run failed to fetch, for an error or a check's detail. */
@@ -277,12 +273,32 @@ export function failedTasksMessage(failed: readonly CorpusTask[]): string {
   return `${failed.length} corpus task(s) could not be fetched (${failed.slice(0, 3).map((task) => `${task.task}: ${task.reason}`).join("; ")})`;
 }
 
-/** Build the corpus of files the pack's linter reads (`inCorpus`) from every pinned task's reference solution. */
-export async function buildCorpus(cacheRoot: string, inCorpus: (path: string) => boolean, runner: CommandRunner, pinned: PinnedTask[] = readCorpusTasks()): Promise<Corpus> {
+/**
+ * The places (`task`, `path`) a corpus is built for: the files goldens name. A task or corpus no golden names is not
+ * fetched at all, and of the rest only the named files are read.
+ */
+export type Wanted = ReadonlySet<string>;
+
+export const wantedKey = (task: string, path: string): string => `${task}\0${path}`;
+
+/** The places the goldens name. */
+export function wantedPlaces(goldens: Iterable<{ task: string; path: string }>): Wanted {
+  return new Set([...goldens].map((golden) => wantedKey(golden.task, golden.path)));
+}
+
+/**
+ * Build the corpus of files the pack's linter reads (`inCorpus`) from the pinned tasks' reference solutions: the files
+ * of `wanted`, and only the tasks that name one.
+ */
+export async function buildCorpus(cacheRoot: string, inCorpus: (path: string) => boolean, runner: CommandRunner, wanted: Wanted, pinned: PinnedTask[] = readCorpusTasks()): Promise<Corpus> {
   const tasks: CorpusTask[] = [];
   const files: CorpusFile[] = [];
   for (const { task, substrate, repository, baseSha, reference } of pinned) {
     const entry = { task, substrate, repository, baseSha };
+    if (![...wanted].some((place) => place.startsWith(`${task}\0`))) {
+      tasks.push({ ...entry, patchSha256: reference?.sha256 ?? null, status: "skipped", reason: "no golden names a file of it", files: 0 });
+      continue;
+    }
     if (reference === null) {
       tasks.push({ ...entry, patchSha256: null, status: "skipped", reason: "it has no reference solution", files: 0 });
       continue;
@@ -292,16 +308,16 @@ export async function buildCorpus(cacheRoot: string, inCorpus: (path: string) =>
       tasks.push({ ...entry, patchSha256: reference.sha256, ...patch, files: 0 });
       continue;
     }
-    const wanted = patchedPaths(patch.text)
+    const named = patchedPaths(patch.text)
       .map(({ after }) => after)
-      .filter((path): path is string => path !== null && inCorpus(path))
+      .filter((path): path is string => path !== null && inCorpus(path) && wanted.has(wantedKey(task, path)))
       .sort();
-    if (wanted.length === 0) {
-      tasks.push({ ...entry, patchSha256: patch.sha256, status: "skipped", reason: "its solution changes no file of a type the linter reads", files: 0 });
+    if (named.length === 0) {
+      tasks.push({ ...entry, patchSha256: patch.sha256, status: "skipped", reason: "its solution changes no file a golden names", files: 0 });
       continue;
     }
     try {
-      const patched = await patchedFiles(cacheRoot, task, repository, baseSha, patch, wanted, runner);
+      const patched = await patchedFiles(cacheRoot, task, repository, baseSha, patch, named, runner);
       for (const [path, source] of patched) files.push({ task, repository, path, source, sha256: sha256(source) });
       tasks.push({ ...entry, patchSha256: patch.sha256, status: "applied", reason: "its solution applies to the base commit", files: patched.size });
     } catch (error) {
@@ -374,17 +390,25 @@ export function rerailCorpusId(corpus: RerailCorpus): string {
 
 /**
  * The corpus from the corpora a pack pins (its conformance manifests' `corpora`): each repository at its pinned
- * commit, a sparse checkout of the pinned paths, and every file under them of a type the pack's linter reads that no
- * `exclude` glob matches. Each file's task is the corpus id (`rerail:<name>`), so goldens name it like a task's file.
+ * commit, and of the files under the pinned paths of a type the pack's linter reads that no `exclude` glob matches,
+ * those `wanted` names, read from a sparse checkout of just them. Each file's task is the corpus id (`rerail:<name>`),
+ * so goldens name it like a task's file. A corpus no golden names is not fetched.
  */
-export async function buildRerailCorpora(corpora: RerailCorpus[], cacheRoot: string, inCorpus: (path: string) => boolean, runner: CommandRunner): Promise<Corpus> {
+export async function buildRerailCorpora(corpora: RerailCorpus[], cacheRoot: string, inCorpus: (path: string) => boolean, runner: CommandRunner, wanted: Wanted): Promise<Corpus> {
   const tasks: CorpusTask[] = [];
   const files: CorpusFile[] = [];
   for (const corpus of corpora) {
     const task = rerailCorpusId(corpus);
     const repository = corpus.repository.replace(/^https:\/\/github\.com\//u, "");
-    const checkout = await checkoutPinned(corpus.repository, corpus.commit, resolve(cacheRoot, "corpus", "rerail", corpus.name, corpus.commit), corpus.paths.map((path) => `/${path}`), runner);
-    const paths = (await Promise.all(corpus.paths.map((path) => filesUnder(checkout, path))))
+    const named = [...wanted].filter((place) => place.startsWith(`${task}\0`)).map((place) => place.slice(task.length + 1))
+      .filter((path) => corpus.paths.some((root) => path === root || path.startsWith(`${root}/`)))
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    if (named.length === 0) {
+      tasks.push({ task, substrate: "rerail", repository, baseSha: corpus.commit, patchSha256: null, status: "skipped", reason: "no golden names a file of it", files: 0 });
+      continue;
+    }
+    const checkout = await checkoutPinned(corpus.repository, corpus.commit, resolve(cacheRoot, "corpus", "rerail", corpus.name, corpus.commit), named.map((path) => `/${path}`), runner);
+    const paths = (await Promise.all(named.map((path) => filesUnder(checkout, path))))
       .flat()
       .filter((path) => inCorpus(path) && !corpus.exclude.some((glob) => matchesGlob(path, glob)))
       .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
@@ -395,7 +419,7 @@ export async function buildRerailCorpora(corpora: RerailCorpus[], cacheRoot: str
     tasks.push({
       task, substrate: "rerail", repository, baseSha: corpus.commit, patchSha256: null,
       status: paths.length > 0 ? "applied" : "skipped",
-      reason: paths.length > 0 ? `the rerail pack pins it (${corpus.paths.join(", ")})` : "the rerail pack pins it, but it has no file of a type the linter reads",
+      reason: paths.length > 0 ? `the rerail pack pins it (${corpus.paths.join(", ")}), and goldens name ${new Set(paths).size} of its files` : "goldens name files of it, but none is a file of a type the linter reads",
       files: new Set(paths).size,
     });
   }

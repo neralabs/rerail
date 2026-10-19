@@ -13,8 +13,8 @@
 //   test configuration and expected reports (for not-overfit), and each case of each named rule linted by the pinned
 //   ESLint with the rule as its first approved configuration sets it and without the globals and settings the case or
 //   its RuleTester declares (for matches-upstream-tests).
-// - {op: "lint", files}: each corpus file linted as upstream recommends, with every named rule on (for
-//   matches-real-code).
+// - {op: "lint", files}: each corpus file linted as upstream recommends, with every named rule on (corpus.json, the
+//   expected answer on a golden).
 //
 // A pack whose manifest names an environment (`eslint.environment`, a shareable configuration such as
 // eslint-config-next) is linted in it: the configuration's file globs, parsers and globals come before the approved

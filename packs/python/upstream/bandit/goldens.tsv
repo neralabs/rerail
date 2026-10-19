@@ -1,4 +1,4 @@
-# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run port-readiness -- --write, sorted; a golden is never removed.
+# matches-upstream-tests goldens, imported from NRV and reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.
 bandit-b105-hardcoded-password-string
 	iterative-dvc-0.91.2-0.91.3
 		dvc/remote/gdrive.py	d93c04ca269c2b23afe07d79bfee2e3db45fed293bea5ffe347023e0dfc30c70
@@ -62,6 +62,9 @@ bandit-b324-hashlib-insecure-functions
 		django/core/cache/utils.py	12134dfe5ec3b677bac5d9943ac22f09ea5bbea346ae3ac9d85773459c92bc3f
 		django/db/backends/utils.py	c05c9055f56cd40c51e3cc9021543e965d6c0bd194782c5d3fe69abd82f496bb
 		django/utils/cache.py	cef63ee1b300683e517241a7232d111dd627a61ab86abc3b6c273cb8ee81da4e
+bandit-b406-import-xml-sax
+	rerail:django
+		django/utils/xmlutils.py	f5a408b61d7adef6d821533bc8ed7e77583d9cee1e37104fdf2167f1547cc9b7
 bandit-b504-ssl-with-no-version
 	psf-requests-v2.9.0-v2.9.1
 		requests/packages/urllib3/connection.py	5d1128aaa661e782e06a0e422dd5650b6edbc02a4eab4698acc98d10cb522569

@@ -258,6 +258,11 @@ test("the per-rule summary names what moved, and says so plainly when nothing di
   assert.match(rendered, /1 tool-pack moved/u);
   assert.match(rendered, /\| `B301` \| changed \| \+1 \/ −0 \| 1 \| `tests` \|/u);
   assert.match(rendered, /\| `B302` \| removed \| — \| — \| — \|/u);
+  // A re-record that answers fewer files (the recorder answers only the files goldens name) is not a change in
+  // upstream's answers: only files both recordings answer are compared.
+  const whole = corpusOf({ B301: [[3, 0, 3, 9]] });
+  const wider: RecordedPair = { ...before, corpus: { ...whole, files: [...whole.files, { ...whole.files[0]!, task: "dropped", findings: { B301: [[1, 0, 1, 9]] } }] } };
+  assert.deepEqual(diffRecordings("demo", "bandit", wider, before).rules, []);
   // A first recording has nothing to compare with, and says that rather than listing every rule as a change.
   assert.match(renderRecordingChanges([diffRecordings("demo", "bandit", null, after)]), /first recording/u);
   // A lock whose recording could not be read is neither: the summary warns that what moved is unknown.

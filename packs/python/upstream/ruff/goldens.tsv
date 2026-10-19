@@ -1,4 +1,91 @@
-# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run port-readiness -- --write, sorted; a golden is never removed.
+# matches-upstream-tests goldens, imported from NRV and reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.
+ruff-async100-cancel-scope-no-checkpoint
+	dask-dask-2022.9.2-2022.10.0
+		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361
+ruff-async105-trio-sync-call
+	dask-dask-2022.9.2-2022.10.0
+		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361
+ruff-async115-async-zero-sleep
+	conan-io-conan-2.0.14-2.0.15
+		conans/client/downloaders/file_downloader.py	cb020e1a0738cac6703321c8afc27efc7d16608cef7446c989fe368814c1c620
+ruff-async116-long-sleep-not-forever
+	conan-io-conan-2.0.14-2.0.15
+		conans/client/downloaders/file_downloader.py	cb020e1a0738cac6703321c8afc27efc7d16608cef7446c989fe368814c1c620
+ruff-async210-blocking-http-call-in-async-function
+	rerail:django
+		django/test/client.py	ab020c3890100cf4cba91107d62b5a7a070bfa61d0490837b13ac5b97743b5d2
+ruff-async221-run-process-in-async-function
+	dask-dask-2022.9.2-2022.10.0
+		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361
+ruff-async222-wait-for-process-in-async-function
+	dask-dask-2022.9.2-2022.10.0
+		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361
+ruff-async230-blocking-open-call-in-async-function
+	dask-dask-2022.9.2-2022.10.0
+		dask/dataframe/io/parquet/core.py	0c3d1d381617b749848a752bb0997cbb2a5c9e7a88a92e5497ad24cf6855d39f
+ruff-async250-blocking-input-in-async-function
+	dask-dask-2022.9.2-2022.10.0
+		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361
+ruff-async251-blocking-sleep-in-async-function
+	dask-dask-2022.9.2-2022.10.0
+		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361
+ruff-b002-unary-prefix-increment-decrement
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-b003-assignment-to-os-environ
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/subapi/profiles.py	db4399b51bc887d3c6970ac95348900622cc3313fd43343d173991d9a152fe29
+ruff-b004-unreliable-callable-check
+	dask-dask-2022.9.2-2022.10.0
+		dask/utils.py	346d9f475f8816f5b660b8a268c31ead3beddf3536c24920edd1881af645e61c
+ruff-b005-strip-with-multi-characters
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/output.py	19bd6a904b24e738e5999b478a549c4ad801bc5d7e71f7d478dd8dde03b16a55
+ruff-b007-unused-loop-control-variable
+	dask-dask-2022.9.2-2022.10.0
+		dask/utils.py	346d9f475f8816f5b660b8a268c31ead3beddf3536c24920edd1881af645e61c
+ruff-b009-get-attr-with-constant
+	dask-dask-2023.6.0-2023.6.1
+		dask/base.py	cc4aacceed035cfd8d201e31b494d5d960fc9d3bfc0d5fbab4948712d7eb29fa
+ruff-b010-set-attr-with-constant
+	dask-dask-2023.6.0-2023.6.1
+		dask/base.py	cc4aacceed035cfd8d201e31b494d5d960fc9d3bfc0d5fbab4948712d7eb29fa
+ruff-b011-assert-false
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/subapi/cache.py	2325eec36ee6aa3472300fe972f7eceeb17ac37964d6b6a2154517681e52b1c1
+ruff-b013-redundant-tuple-in-exception-handler
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/output.py	19bd6a904b24e738e5999b478a549c4ad801bc5d7e71f7d478dd8dde03b16a55
+ruff-b014-duplicate-handler-exception
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/output.py	19bd6a904b24e738e5999b478a549c4ad801bc5d7e71f7d478dd8dde03b16a55
+ruff-b016-raise-literal
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-b020-loop-variable-overrides-iterator
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/subapi/profiles.py	db4399b51bc887d3c6970ac95348900622cc3313fd43343d173991d9a152fe29
+ruff-b021-f-string-docstring
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-b022-useless-contextlib-suppress
+	dask-dask-2022.9.2-2022.10.0
+		dask/array/core.py	07fb92d4b4d52cced73b376ab6fbbf652e6cf4955a505e1fe2165e5daae8c1f4
+ruff-b023-function-uses-loop-variable
+	dask-dask-2022.9.2-2022.10.0
+		dask/dataframe/core.py	abf5f400851cfe1611a4ffcc04a50a7df732b7046410b8c4e7896d8a0bd3ba67
+ruff-b025-duplicate-try-block-exception
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/output.py	19bd6a904b24e738e5999b478a549c4ad801bc5d7e71f7d478dd8dde03b16a55
+ruff-b026-star-arg-unpacking-after-keyword-arg
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-b028-no-explicit-stacklevel
+	rerail:django
+		django/http/response.py	178a3723c058ab091d4a29ee4daeaa33b4573fc07505d236539599ca436f7648
+ruff-b029-except-with-empty-tuple
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/output.py	19bd6a904b24e738e5999b478a549c4ad801bc5d7e71f7d478dd8dde03b16a55
 ruff-b030-except-with-non-exception-classes
 	conan-io-conan-2.0.14-2.0.15
 		conan/api/subapi/config.py	f6a3eb5663b46afc4450057277846876ca7bf13f4de0af6c54b485c371d3f513
@@ -507,9 +594,120 @@ ruff-b031-reuse-of-groupby-generator
 		scapy/packet.py	dd1a27c65bcf3efa3724e8747bdfae36e9d3afbf93dbca7484d3d6b2ada8b99d
 	task-696719205599a51110d4b473
 		scapy/packet.py	2379f7a17ad059172d8aa4b1fc0d20c6ff9bd0361ac7246c9ca0b087780571de
+ruff-b032-unintentional-type-annotation
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/subapi/config.py	f6a3eb5663b46afc4450057277846876ca7bf13f4de0af6c54b485c371d3f513
+ruff-b033-duplicate-value
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-b034-re-sub-positional-args
+	dask-dask-2022.9.2-2022.10.0
+		dask/array/core.py	07fb92d4b4d52cced73b376ab6fbbf652e6cf4955a505e1fe2165e5daae8c1f4
+ruff-b039-mutable-contextvar-default
+	rerail:django
+		django/db/models/fields/__init__.py	9ed3436cd4b17f2c8ece368acfc4f7e099bde8a9fd5eeaeaab7d9c3cd4bceb27
+ruff-b904-raise-without-from-inside-except
+	conan-io-conan-2.0.14-2.0.15
+		conans/model/conf.py	a9155562451f54f2425016a48a3fb98b7ecb7c70b35c984ffb99b081869124ac
+ruff-b905-zip-without-explicit-strict
+	scikit-learn-scikit-learn-0.20.1-0.20.2
+		sklearn/preprocessing/data.py	17c3b83be54cab8c73d4740e74efb2e56be11b77a5a6acc7e848d09c2d70eb9a
 ruff-ble001-blind-except
 	iterative-dvc-3.43.1-3.44.0
 		dvc/repo/experiments/executor/base.py	cc384ded264a74ea822f0b44940963a62fb7c52dafcbd7994ff470e7c8ecd5ef
+ruff-e711-none-comparison
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-e721-type-comparison
+	dask-dask-2024.1.0-2024.1.1
+		dask/utils.py	853daea0da7ad0eea489f6b55f0d751e3e47fb2eb81297a7708e2e04af5daa62
+ruff-e722-bare-except
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-e742-ambiguous-class-name
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-e743-ambiguous-function-name
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f403-undefined-local-with-import-star
+	dask-dask-2022.9.2-2022.10.0
+		dask/array/core.py	07fb92d4b4d52cced73b376ab6fbbf652e6cf4955a505e1fe2165e5daae8c1f4
+ruff-f405-undefined-local-with-import-star-usage
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f406-undefined-local-with-nested-import-star-usage
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f407-future-feature-not-defined
+	dask-dask-2022.9.2-2022.10.0
+		dask/dataframe/core.py	abf5f400851cfe1611a4ffcc04a50a7df732b7046410b8c4e7896d8a0bd3ba67
+ruff-f501-percent-format-invalid-format
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f502-percent-format-expected-mapping
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f503-percent-format-expected-sequence
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f504-percent-format-extra-named-arguments
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f506-percent-format-mixed-positional-and-named
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f507-percent-format-positional-count-mismatch
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f508-percent-format-star-requires-sequence
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f509-percent-format-unsupported-format-character
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f521-string-dot-format-invalid-format
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f522-string-dot-format-extra-named-arguments
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f523-string-dot-format-extra-positional-arguments
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f524-string-dot-format-missing-arguments
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f525-string-dot-format-mixing-automatic
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f601-multi-value-repeated-key-literal
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f602-multi-value-repeated-key-variable
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f622-multiple-starred-expressions
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/output.py	19bd6a904b24e738e5999b478a549c4ad801bc5d7e71f7d478dd8dde03b16a55
+ruff-f632-is-literal
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f633-invalid-print-syntax
+	dask-dask-2022.9.2-2022.10.0
+		dask/delayed.py	1fb63c814b06ab52a0e3bfb2a11b6836939b7caad2d719949d299dd4377c62bf
+ruff-f701-break-outside-loop
+	conan-io-conan-2.0.14-2.0.15
+		conans/client/graph/graph_binaries.py	02965690291ab9e2f1e293dab83c5219d208aec8a10137215300ab34a7a29f2c
+ruff-f702-continue-outside-loop
+	conan-io-conan-2.0.14-2.0.15
+		conans/client/graph/graph.py	1d051d70abe5b67b1e76027d46869a14bf9c73d53998ee72af8375c667ddbf35
+ruff-f706-return-outside-function
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f707-default-except-not-last
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
 ruff-f821-undefined-name
 	pydantic-pydantic-v2.6.0b1-v2.6.0
 		pydantic/_internal/_generate_schema.py	4aefcd26a9f16d1441913fc01f5dccdfa3ad41f5898caecfe366d5bd8273c68b
@@ -520,6 +718,15 @@ ruff-f821-undefined-name
 		pydantic/types.py	dd2d33f923c761ab6031029d061e755ef1271f4edabf2bf49ac4774eb806cd38
 	pydantic-pydantic-v2.7.1-v2.7.2
 		pydantic/_internal/_generate_schema.py	d83f4cd7a5b496e5a58d4d274878cfc9f00cc065f5ea27ad25ba146248c67cfb
+ruff-f823-undefined-local
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f842-unused-annotation
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-f901-raise-not-implemented
+	dask-dask-2022.9.2-2022.10.0
+		dask/array/core.py	07fb92d4b4d52cced73b376ab6fbbf652e6cf4955a505e1fe2165e5daae8c1f4
 ruff-n999-invalid-module-name
 	rerail:django
 		django/conf/locale/ar_DZ/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
@@ -541,6 +748,42 @@ ruff-n999-invalid-module-name
 		django/conf/locale/sr_Latn/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 		django/conf/locale/zh_Hans/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 		django/conf/locale/zh_Hant/__init__.py	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ruff-pie794-duplicate-class-field-definition
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-pie800-unnecessary-spread
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-pie804-unnecessary-dict-kwargs
+	dask-dask-2023.6.0-2023.6.1
+		dask/base.py	cc4aacceed035cfd8d201e31b494d5d960fc9d3bfc0d5fbab4948712d7eb29fa
+ruff-pie807-reimplemented-container-builtin
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/subapi/profiles.py	db4399b51bc887d3c6970ac95348900622cc3313fd43343d173991d9a152fe29
+ruff-pie810-multiple-starts-ends-with
+	dask-dask-2022.9.2-2022.10.0
+		dask/utils.py	346d9f475f8816f5b660b8a268c31ead3beddf3536c24920edd1881af645e61c
+ruff-ret501-unnecessary-return-none
+	dask-dask-2023.6.0-2023.6.1
+		dask/utils.py	3732667943b9b707777370eae035195087ad05c8281473a1f189be208fc786dc
+ruff-ret502-implicit-return-value
+	conan-io-conan-2.0.14-2.0.15
+		conan/tools/env/environment.py	e4fbb0d74d1f75fa3ed173d7f36cf39a7304c509380ae27e1c5673fd5f2a9b42
+ruff-ret505-superfluous-else-return
+	iterative-dvc-2.8.1-2.8.2
+		dvc/ignore.py	94d579c9b33e05e8692bf241d8fa7142829466d09c61259b6eb2828cb3ef9efb
+ruff-ret506-superfluous-else-raise
+	conan-io-conan-2.0.14-2.0.15
+		conan/tools/env/environment.py	e4fbb0d74d1f75fa3ed173d7f36cf39a7304c509380ae27e1c5673fd5f2a9b42
+ruff-ret507-superfluous-else-continue
+	conan-io-conan-2.0.14-2.0.15
+		conan/tools/env/environment.py	e4fbb0d74d1f75fa3ed173d7f36cf39a7304c509380ae27e1c5673fd5f2a9b42
+ruff-ret508-superfluous-else-break
+	conan-io-conan-2.0.14-2.0.15
+		conan/tools/env/environment.py	e4fbb0d74d1f75fa3ed173d7f36cf39a7304c509380ae27e1c5673fd5f2a9b42
+ruff-sim101-duplicate-isinstance-call
+	dask-dask-2022.9.2-2022.10.0
+		dask/utils.py	346d9f475f8816f5b660b8a268c31ead3beddf3536c24920edd1881af645e61c
 ruff-sim102-collapsible-if
 	conan-io-conan-2.0.14-2.0.15
 		conan/cli/commands/graph.py	ddfa723cd6de6b87a9989f709e312135938e1e20c1a06b882be0fe8cb51cf8b0
@@ -788,6 +1031,9 @@ ruff-sim105-suppressible-exception
 		django/contrib/contenttypes/fields.py	4cd6da462046217d23ebfa54c010a3071b7acc404a978595589fb22b0edcb83c
 		django/contrib/gis/ptr.py	35e20107ea65c0eeb5c0638ec4683b7c5c955c8e1ae6f6c019475a27f1668eaa
 		django/db/models/fields/related_descriptors.py	4d45a9ef5adf0aade02fe3d5fafc41acdfdcd293399117cc1622d0a7682348a7
+ruff-sim107-return-in-try-except-finally
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/subapi/profiles.py	db4399b51bc887d3c6970ac95348900622cc3313fd43343d173991d9a152fe29
 ruff-sim108-if-else-block-instead-of-if-exp
 	conan-io-conan-2.0.14-2.0.15
 		conan/api/output.py	19bd6a904b24e738e5999b478a549c4ad801bc5d7e71f7d478dd8dde03b16a55
@@ -1170,6 +1416,9 @@ ruff-sim108-if-else-block-instead-of-if-exp
 		scapy/fields.py	812994d493ab290ea39f930269f7a9551e25e90d424e910c445d40771bcbdee5
 	task-69d196f015a150488265afb8
 		scapy/layers/dot11.py	3ef99e8fa614188c1865c3a87f69301d8500b009a97a452bd2220e4e9976c4d9
+ruff-sim109-compare-with-tuple
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
 ruff-sim110-reimplemented-builtin
 	conan-io-conan-2.0.14-2.0.15
 		conans/client/graph/build_mode.py	1f343de1e65322578b9a23543bad7306bf58499b736037ad6a7e5e95cdf91651
@@ -1200,6 +1449,12 @@ ruff-sim110-reimplemented-builtin
 		app/custom_domain_utils.py	4036ab3a39206ce9e6f1dd781b84cc109e83623f196346a674c6b5308259c263
 	task-697e7458be1623d850a8883b
 		scapy/contrib/automotive/ecu.py	63cd3922cd230ad6c3ba1053aae6b40f1a98dc4493aaa72da45fd768459c8473
+ruff-sim112-uncapitalized-environment-variables
+	conan-io-conan-2.0.2-2.0.3
+		conans/client/rest/conan_requester.py	599f802c56f2f59ad3a4cd10f3afc49e287ff85c24078a03ee9fc283b0cf0fc7
+ruff-sim113-enumerate-for-loop
+	rerail:django
+		django/db/models/query.py	af89f1454778a7b3e49652b28bd97dee7756bf28a1bb4e83ba5d751fec7d9149
 ruff-sim114-if-with-same-arms
 	conan-io-conan-2.0.14-2.0.15
 		conan/cli/commands/list.py	a9223d544c4494cf7ef9bab3e9c9112159dfac613a9084f5c2683be7d5a11e48
@@ -1355,6 +1610,18 @@ ruff-sim118-in-dict-keys
 		scapy/contrib/automotive/scanner/enumerator.py	5d66e6b86aada26611679e8a5278e835a0950217ea0ec4440e6356460aecb27c
 	task-697e7458be1623d850a8883b
 		scapy/contrib/automotive/ecu.py	63cd3922cd230ad6c3ba1053aae6b40f1a98dc4493aaa72da45fd768459c8473
+ruff-sim208-double-negation
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-sim210-if-expr-with-true-false
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-sim211-if-expr-with-false-true
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
+ruff-sim212-if-expr-with-twisted-arms
+	conan-io-conan-2.0.14-2.0.15
+		conan/api/model.py	ab16aa6746fe9f1d23ffd544e13cfc23ba75ec4dfaa8aea886db0ca679c35ea7
 ruff-sim222-expr-or-true
 	dask-dask-2022.9.2-2022.10.0
 		dask/dataframe/core.py	abf5f400851cfe1611a4ffcc04a50a7df732b7046410b8c4e7896d8a0bd3ba67
@@ -1387,6 +1654,15 @@ ruff-sim223-expr-and-false
 		dask/dataframe/core.py	10f7c583949f8f7e162ec569a8d2f0a524eebebe85736078db31ba0f1fd1df62
 	dask-dask-2024.1.0-2024.1.1
 		dask/dataframe/core.py	b741fe8e9a345cca00f484cb988ed8d40d0ac93f9070ead67c2af7a15458a742
+ruff-sim905-split-static-string
+	conan-io-conan-2.0.14-2.0.15
+		conan/tools/scm/git.py	2ffbf86146a97584e9d92eb9e19208a41260da2d6a33377fe6157f6bf90a3335
+ruff-sim910-dict-get-with-none-default
+	dask-dask-2023.3.2-2023.4.0
+		dask/config.py	43b5e995322dd0a8fa2d7a1a86b8d8a68ef451079992e37245c4d8889869099b
+ruff-t100-debugger
+	rerail:django
+		django/core/management/commands/shell.py	4f94ac80c84c21943e8f969c3534fda605e0e203a9e6f05aa68d79fad6fcfcf9
 ruff-w605-invalid-escape-sequence
 	psf-requests-v2.12.2-v2.12.3
 		requests/models.py	6e3d4269cdf1af4f52e7574d1e8ccd297ca9877ce3476348c0b96182eafddd42

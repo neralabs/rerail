@@ -374,7 +374,7 @@ export function createRecordedAdapter(
         const recorded = corpusByPlace.get(`${file.task}\0${file.path}`);
         if (recorded === undefined || recorded.sha256 !== file.sha256) {
           // Without upstream's recorded answer the file has no ground truth; treating it as silent would invent agreement.
-          return { file, excluded: `not in ${CORPUS_FILE} with this sha256 (the corpus recording is stale)`, findings: new Map() };
+          return { file, excluded: `${CORPUS_FILE} has no answer for it with this sha256: re-record the tool-pack (docs/port-readiness.md, "Goldens")`, findings: new Map() };
         }
         const findings = new Map<string, Span[]>(Object.entries(recorded.findings).filter(([rule]) => asked.has(rule)).map(([rule, spans]) => [rule, spans.map(spanOf)]));
         return { file, excluded: recorded.excluded, findings };

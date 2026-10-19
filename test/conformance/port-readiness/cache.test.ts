@@ -43,7 +43,7 @@ describe("the gate code a rule's key covers", () => {
   const excluded = tracked(["conformance/port-readiness"]).filter((path) => !keyed.has(path));
 
   test("run.ts's import graph is read whole", () => {
-    for (const path of ["conformance/port-readiness/checks/matches-real-code.ts", "conformance/port-readiness/corpus.ts", "conformance/port-readiness/cache.ts"]) {
+    for (const path of ["conformance/port-readiness/checks/matches-upstream-tests.ts", "conformance/port-readiness/corpus.ts", "conformance/port-readiness/cache.ts"]) {
       assert.ok(graph.has(path), `run.ts's import graph misses ${path}`);
     }
   });

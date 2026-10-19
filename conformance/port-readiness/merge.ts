@@ -1,14 +1,13 @@
 /**
- * `gates merge <dir>`: join each sharded tool-pack's shard reports (`<dir>/shard-<i>of<n>/<pack>--<tool>.json`) and
- * golden promotions into the one tool-pack report the summary reads (`<dir>/<pack>--<tool>.json`). A tool-pack whose
- * shards are missing or disagree gets no merged report, so the summary fails it as a tool-pack without a report.
+ * `gates merge <dir>`: join each sharded tool-pack's shard reports (`<dir>/shard-<i>of<n>/<pack>--<tool>.json`) into
+ * the one tool-pack report the summary reads (`<dir>/<pack>--<tool>.json`). A tool-pack whose shards are missing or
+ * disagree gets no merged report, so the summary fails it as a tool-pack without a report.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { byText, goldensPath, parseGoldens, promote, readGoldens, serializeGoldens, type Goldens } from "./goldens.js";
-import { toolPackDirectory } from "./manifest.js";
+import { byText } from "./goldens.js";
 import { renderMarkdown } from "./report.js";
 import { REPORT_FORMAT, summarizeRules, unusedGapLine, type GatesReport } from "./run.js";
 import { SHARD_DIRECTORY, shardName, shardOf } from "./shard.js";
@@ -16,22 +15,15 @@ import { SHARD_DIRECTORY, shardName, shardOf } from "./shard.js";
 /** A tool-pack report's file name, as the summary reads it. */
 const REPORT_FILE = /^(?<name>[a-z0-9-]+--[A-Za-z0-9._-]+)\.json$/u;
 
-/** One shard's output for a tool-pack: its report, and its goldens when the shard promoted any. */
-export interface ShardOutput {
-  report: GatesReport;
-  goldens: string | null;
-}
-
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /**
- * The tool-pack report of every shard together, and the goldens with every shard's promotions (null when no shard
- * promoted one). Throws when the shards are not exactly 1..n of one count, disagree on what they share (engine,
- * upstream, tool-pack checks, corpus, unmapped documents), or do not add up to the tool-pack's rules.
+ * The tool-pack report of every shard together. Throws when the shards are not exactly 1..n of one count, disagree on
+ * what they share (engine, upstream, tool-pack checks, corpus, unmapped documents), or do not add up to the tool-pack's
+ * rules.
  */
-export function mergeShards(outputs: ShardOutput[]): { report: GatesReport; goldens: string | null } {
-  if (outputs.length === 0) throw new Error("no shard reports to merge");
-  const reports = outputs.map((output) => output.report);
+export function mergeShards(reports: GatesReport[]): GatesReport {
+  if (reports.length === 0) throw new Error("no shard reports to merge");
   const first = reports[0]!;
   const label = first.toolPack;
   const count = first.shard?.count;
@@ -62,30 +54,20 @@ export function mergeShards(outputs: ShardOutput[]): { report: GatesReport; gold
   const gapCandidates = new Map(reports.flatMap((report) => report.gapCandidates).map((candidate) => [`${candidate.gate}\0${candidate.file}`, candidate]));
 
   const { shard: _shard, ...shared } = first;
-  const report: GatesReport = {
+  return {
     ...shared,
     integrity: [...integrity].sort(byText),
     knownGaps,
     gapCandidates: [...gapCandidates.values()].sort((a, b) => byText(a.gate, b.gate) || byText(a.file, b.file)),
     cache: { rules: reports.reduce((sum, entry) => sum + entry.cache.rules, 0), hits: reports.reduce((sum, entry) => sum + entry.cache.hits, 0) },
-    uncommittedPromotions: reports.reduce((sum, entry) => sum + entry.uncommittedPromotions, 0),
     summary: summarizeRules(rules),
     rules,
   };
-
-  // Each shard's goldens are the committed goldens with its own rules' promotions: their union has every promotion.
-  const promoted = outputs.filter((output) => output.goldens !== null);
-  if (promoted.length === 0) return { report, goldens: null };
-  const goldens: Goldens = new Map();
-  for (const output of promoted) {
-    for (const [id, entries] of parseGoldens(output.goldens!, `${label} ${shardName(output.report.shard!)} goldens`)) promote(goldens, id, entries);
-  }
-  return { report, goldens: serializeGoldens(goldens) };
 }
 
-/** Each sharded tool-pack under `directory`: its report name and every shard's output, by shard directory. */
-export function readShards(directory: string): Map<string, ShardOutput[]> {
-  const found = new Map<string, ShardOutput[]>();
+/** Each sharded tool-pack under `directory`: its report name and every shard's report, by shard directory. */
+export function readShards(directory: string): Map<string, GatesReport[]> {
+  const found = new Map<string, GatesReport[]>();
   const shards = readdirSync(directory).filter((entry) => SHARD_DIRECTORY.test(entry) && statSync(join(directory, entry)).isDirectory()).sort(byText);
   for (const shard of shards) {
     for (const file of readdirSync(join(directory, shard)).sort(byText)) {
@@ -93,8 +75,7 @@ export function readShards(directory: string): Map<string, ShardOutput[]> {
       if (name === undefined) continue;
       const report = JSON.parse(readFileSync(join(directory, shard, file), "utf8")) as GatesReport;
       if (report.format !== REPORT_FORMAT) continue;
-      const goldensFile = join(directory, shard, `${name}.goldens.tsv`);
-      found.set(name, [...(found.get(name) ?? []), { report, goldens: existsSync(goldensFile) ? readFileSync(goldensFile, "utf8") : null }]);
+      found.set(name, [...(found.get(name) ?? []), report]);
     }
   }
   return found;
@@ -107,29 +88,19 @@ export interface MergeResult {
   problems: string[];
 }
 
-/**
- * Merge every sharded tool-pack under `directory` into `<name>.json` and `<name>.md` there, with `<name>.goldens.tsv`
- * when a shard promoted a golden. With `write`, the goldens also go to the committed goldens.tsv under `root`.
- */
-export async function mergeDirectory(root: string, directory: string, write: boolean): Promise<MergeResult> {
+/** Merge every sharded tool-pack under `directory` into `<name>.json` and `<name>.md` there. */
+export async function mergeDirectory(directory: string): Promise<MergeResult> {
   const result: MergeResult = { merged: [], problems: [] };
-  for (const [name, outputs] of readShards(directory)) {
-    let merged: ReturnType<typeof mergeShards>;
+  for (const [name, reports] of readShards(directory)) {
+    let report: GatesReport;
     try {
-      merged = mergeShards(outputs);
+      report = mergeShards(reports);
     } catch (error) {
       result.problems.push(error instanceof Error ? error.message : String(error));
       continue;
     }
-    const { report, goldens } = merged;
     await writeFile(join(directory, `${name}.json`), `${JSON.stringify(report, null, 2)}\n`);
     await writeFile(join(directory, `${name}.md`), renderMarkdown(report));
-    if (goldens !== null) {
-      await writeFile(join(directory, `${name}.goldens.tsv`), goldens);
-      const committedDirectory = toolPackDirectory(root, report.pack, report.tool);
-      const committed = serializeGoldens(await readGoldens(committedDirectory));
-      if (write && goldens !== committed) await writeFile(goldensPath(committedDirectory), goldens);
-    }
     result.merged.push(report);
   }
   return result;

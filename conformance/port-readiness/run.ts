@@ -9,17 +9,16 @@ import { loadAsBundled, loadsGate } from "./checks/loads.js";
 import { packConformance, passesConformanceChecks } from "./checks/passes-conformance.js";
 import { notOverfitGate, type ClassifiedLiteral } from "./checks/not-overfit.js";
 import { canonicalJson, compactGate, NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, type SizeMetrics } from "./checks/compact.js";
-import { CASES_PER_KIND, differingFiles, MATCHES_REAL_CODE_METHOD, matchesRealCodeGate, type MatchesRealCodeResult, type RealCodeCase } from "./checks/matches-real-code.js";
-import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, provenGaps, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
-import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, type CorpusFile, type CorpusTask } from "./corpus.js";
+import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, provenGaps, realCodeGapCheck, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
+import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, wantedPlaces, type CorpusFile, type CorpusTask } from "./corpus.js";
 import { engineKey, loadEngine, policyFamilies, type Engine, type EngineIdentity } from "./engine.js";
-import { byText, promote, readGoldens, serializeGoldens, type Golden, type Goldens } from "./goldens.js";
+import { byText, readGoldens, SYSTEMATIC_FILES, type Goldens } from "./goldens.js";
 import { GATES_MANIFEST, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { createRecordedAdapter, readRecordedInputs, staleMessage } from "./recorded-adapter.js";
 import { CORPUS_FILE, RECORDING_FILE } from "./recording/schema.js";
 import { shardOf, type Shard } from "./shard.js";
-import { BLOCKING_GATES, GATES, verdict, type BlockingGateId, type Check, type GateId, type PackAdapter, type PackManifest, type PackRule, type ParserVerdict, type UpstreamCase, type UpstreamFile } from "./types.js";
+import { BLOCKING_GATES, GATES, verdict, type BlockingGateId, type Check, type GateId, type PackAdapter, type PackManifest, type PackRule, type ParserVerdict, type RealCodeGap, type UpstreamCase, type UpstreamFile } from "./types.js";
 
 export const REPORT_FORMAT = "rerail.port-readiness/v1" as const;
 
@@ -79,7 +78,6 @@ export interface RuleReport {
     "not-overfit": GateReport & { flagged: Pick<ClassifiedLiteral, "token" | "pointer" | "text">[]; words: Record<string, number>; uncheckedRegexes: string[] };
     compact: GateReport & { metrics: SizeMetrics | null };
     "matches-upstream-tests": GateReport & { totals: MatchesUpstreamTestsResult["totals"] | null; compared?: MatchesUpstreamTestsResult["compared"]; cases: Record<string, number>; differences: CaseResult[]; goldens: { count: number; differing: Sample<GoldenResult>; engineGaps: Sample<GoldenResult> } };
-    "matches-real-code": { checks: Check[]; eligible: number; positives: number; cases: RealCodeCase[]; disagreementsElsewhere: Sample<MatchesRealCodeResult["disagreementsElsewhere"][number]> };
     /** Judged when the tool-pack's report is assembled, from the pack's conformance check; never cached. */
     "passes-conformance": GateReport;
   };
@@ -88,7 +86,6 @@ export interface RuleReport {
 /** What a rule's cached result holds: its report and everything the tool-pack report gathers from it. */
 export interface CachedRule {
   report: RuleReport;
-  promoted: Golden[];
   gapUses: Record<string, number>;
   integrity: string[];
   gapCandidates: GapCandidateReport[];
@@ -106,7 +103,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> => value !==
 
 /** Whether a cached value has the shape of one rule's result. */
 export function isCachedRule(value: unknown): value is CachedRule {
-  if (!isRecord(value) || !isRecord(value.report) || !Array.isArray(value.promoted) || !isRecord(value.gapUses) || !Array.isArray(value.integrity) || !Array.isArray(value.gapCandidates)) return false;
+  if (!isRecord(value) || !isRecord(value.report) || !isRecord(value.gapUses) || !Array.isArray(value.integrity) || !Array.isArray(value.gapCandidates)) return false;
   const report = value.report;
   return typeof report.id === "string" && typeof report.file === "string" && (report.location === "shipped" || report.location === "candidate")
     && typeof report.pass === "boolean" && isRecord(report.gates);
@@ -138,8 +135,6 @@ export interface GatesReport {
   /** conformance.json entries of this tool whose document does not exist yet. */
   listedWithoutDocument: number;
   cache: { rules: number; hits: number };
-  /** Goldens this run promoted, not yet in the committed goldens.tsv (`--write` adds them). */
-  uncommittedPromotions: number;
   /** The shard this report judged, and how many rules the whole tool-pack has; absent on a whole or merged report. */
   shard?: Shard & { rules: number };
   summary: {
@@ -147,7 +142,8 @@ export interface GatesReport {
     candidates: { rules: number; pass: number };
     stoppedAt: Record<"shipped" | "candidate", Record<BlockingGateId, number>>;
     failedGate: Record<BlockingGateId, number>;
-    endToEnd: { cases: number; mismatches: number; goldens: number; goldensDiffering: number; goldensEngineGaps: number };
+    /** The rules' goldens, those they differ on where the engine read the file fully, and the engine gaps. */
+    goldens: { count: number; differing: number; engineGaps: number };
   };
   rules: RuleReport[];
 }
@@ -185,18 +181,15 @@ export function summarizeRules(reports: RuleReport[]): GatesReport["summary"] {
   const candidates = reports.filter((report) => report.location === "candidate");
   const stopped = (list: RuleReport[]) => Object.fromEntries(BLOCKING_GATES.map((entry) => [entry.id, list.filter((report) => report.stoppedAt === entry.id).length])) as Record<BlockingGateId, number>;
   const goldenCounts = reports.map((report) => report.gates["matches-upstream-tests"].goldens);
-  const realCodeCases = reports.flatMap((report) => report.gates["matches-real-code"].cases);
   return {
     shipped: { rules: shipped.length, pass: shipped.filter((entry) => entry.pass).length },
     candidates: { rules: candidates.length, pass: candidates.filter((entry) => entry.pass).length },
     stoppedAt: { shipped: stopped(shipped), candidate: stopped(candidates) },
     failedGate: Object.fromEntries(BLOCKING_GATES.map((entry) => [entry.id, reports.filter((rule) => !rule.gates[entry.id].pass).length])) as Record<BlockingGateId, number>,
-    endToEnd: {
-      cases: realCodeCases.length,
-      mismatches: realCodeCases.filter((testCase) => testCase.status === "mismatch").length,
-      goldens: goldenCounts.reduce((sum, entry) => sum + entry.count, 0),
-      goldensDiffering: goldenCounts.reduce((sum, entry) => sum + entry.differing.count, 0),
-      goldensEngineGaps: goldenCounts.reduce((sum, entry) => sum + entry.engineGaps.count, 0),
+    goldens: {
+      count: goldenCounts.reduce((sum, entry) => sum + entry.count, 0),
+      differing: goldenCounts.reduce((sum, entry) => sum + entry.differing.count, 0),
+      engineGaps: goldenCounts.reduce((sum, entry) => sum + entry.engineGaps.count, 0),
     },
   };
 }
@@ -308,12 +301,11 @@ function method(manifest: PackManifest): GatesReport["method"] {
       flag: `more than ${SIZE_FLAG_BYTES} bytes as shipped`,
       rewrite: `a flagged rule goes back when ${(REPEATED_SHARE_LIMIT * 100).toFixed(1)}% or more of its clauses is structure written out over and over, or one node kind definitely occurs ${NESTING_RUN_LIMIT} or more times along a single nesting path`,
     },
-    "matches-upstream-tests": { ...MATCHES_UPSTREAM_TESTS_METHOD, recorded: "upstream's output on its own test files is read from the tool-pack's recording.json, recorded by the gates recorder at the pinned upstream" },
+    "matches-upstream-tests": { ...MATCHES_UPSTREAM_TESTS_METHOD, recorded: "upstream's output on its own test files is read from the tool-pack's recording.json, and on each golden from corpus.json (joined to the fetched file by task, path and sha256), both recorded by the gates recorder at the pinned upstream" },
     "passes-conformance": {
       check: "the pack contract's own check (test:conformance, conformance/languages/): the pack's fixtures tier over every rule, shipped or candidate, each in its own workspace as the check runs them",
       fails: "an unexplained FP or FN on the fixtures (upstream's cases and Rerail's probes, after the pack's divergences.json), no true positive without pack.json examples, an engine failure, a stale divergence, or a pinned corpus whose recording does not cover the rule: what the check fails a shipped rule on",
     },
-    "matches-real-code": { ...MATCHES_REAL_CODE_METHOD, cases: MATCHES_REAL_CODE_METHOD.cases.replaceAll("5", String(CASES_PER_KIND)), recorded: "upstream's findings on the corpus are read from corpus.json, joined to each fetched file by task, path and sha256; a fetched file the recording lacks has no ground truth" },
   };
 }
 
@@ -328,18 +320,17 @@ async function gapReports(adapter: PackAdapter, files: UnparsedFile[]): Promise<
 
 /** Evaluate one rule through every gate. */
 async function evaluateRule(
-  context: { engine: Engine; adapter: PackAdapter; pack: string; scratch: string; goldens: Goldens; upstreamFiles: UpstreamFile[]; corpusFiles: Map<string, UpstreamFile>; cases: Map<string, UpstreamCase[]>; gaps: Awaited<ReturnType<typeof provenGaps>> },
+  context: { engine: Engine; adapter: PackAdapter; pack: string; scratch: string; goldens: Goldens; realCodeGaps: Map<string, RealCodeGap>; corpusFiles: Map<string, UpstreamFile>; cases: Map<string, UpstreamCase[]>; gaps: Awaited<ReturnType<typeof provenGaps>> },
   rule: PackRule,
   location: Location,
   on: boolean | null,
 ): Promise<CachedRule> {
-  const { engine, adapter, goldens, corpusFiles, cases, gaps } = context;
+  const { engine, adapter, goldens, realCodeGaps, corpusFiles, cases, gaps } = context;
   const name = rule.rule;
   const id = rule.id ?? rule.file;
   const integrity: string[] = [];
   const gapUses: Record<string, number> = {};
   const unparsed = new Map<string, UnparsedFile>();
-  let promoted: Golden[] = [];
   const notUpstream = adapter.rule(name) === undefined ? `${name} is not a rule of the pinned upstream` : null;
   const status = upstreamStatusChecks(name, adapter);
   const compiled = loadsGate(engine, rule, context.pack, context.scratch, adapter.inScopeSamples);
@@ -373,19 +364,6 @@ async function evaluateRule(
         return { ...gate(result.checks), metrics: result.metrics };
       })();
 
-  // matches-real-code runs first: each file where the rule and upstream differ becomes a golden this run judges.
-  let realCode: RuleReport["gates"]["matches-real-code"];
-  if (compiled.compiled === undefined || document === undefined) {
-    realCode = { checks: notRun("the document does not compile on this engine").checks, eligible: 0, positives: 0, cases: [], disagreementsElsewhere: sample([]) };
-  } else if (notUpstream !== null || adapter.rule(name)!.notOnRealCode !== null) {
-    realCode = { checks: notRun(notUpstream ?? adapter.rule(name)!.notOnRealCode!).checks, eligible: 0, positives: 0, cases: [], disagreementsElsewhere: sample([]) };
-  } else {
-    const result = matchesRealCodeGate(engine, adapter, compiled.compiled, name, document, context.upstreamFiles);
-    for (const file of result.unparsed) unparsed.set(`${file.gate}:${file.file}`, file);
-    promoted = promote(goldens, id, differingFiles(result).map(({ task, path }) => ({ task, path, sha256: corpusFiles.get(`${task}\0${path}`)!.file.sha256 })));
-    realCode = { checks: result.checks, eligible: result.eligible, positives: result.positives, cases: result.cases, disagreementsElsewhere: sample(result.disagreementsElsewhere) };
-  }
-
   let upstreamTests: RuleReport["gates"]["matches-upstream-tests"];
   const emptyGoldens = { count: goldens.get(id)?.length ?? 0, differing: sample<GoldenResult>([]), engineGaps: sample<GoldenResult>([]) };
   if (compiled.compiled === undefined) {
@@ -401,12 +379,12 @@ async function evaluateRule(
       const entry = corpusFiles.get(`${golden.task}\0${golden.path}`);
       const file: CorpusFile | undefined = entry?.file.sha256 === golden.sha256 ? entry.file : undefined;
       if (file === undefined) integrity.push(`golden ${id} ${golden.task}/${golden.path}: the pinned corpus has no such file with sha256 ${golden.sha256}`);
-      return { golden, file, expected: entry === undefined || entry.excluded !== null ? null : entry.findings.get(name) ?? [] };
+      return { golden, file, expected: entry === undefined || entry.excluded !== null ? null : entry.findings.get(name) ?? [], excluded: entry?.excluded ?? null };
     });
     const onGoldens = goldensGate(engine, adapter, name, compiled.compiled, ruleGoldens);
-    for (const file of onGoldens.unparsed) if (!unparsed.has(`matches-real-code:${file.file}`)) unparsed.set(`${file.gate}:${file.file}`, file);
+    for (const file of onGoldens.unparsed) unparsed.set(`${file.gate}:${file.file}`, file);
     upstreamTests = {
-      ...gate([...result.checks, onGoldens.check, onGoldens.engineCheck, staysSilentCheck(result.cases, onGoldens.results, realCode.cases)]),
+      ...gate([...result.checks, onGoldens.check, onGoldens.engineCheck, staysSilentCheck(result.cases, onGoldens.results), realCodeGapCheck(realCodeGaps.get(id))]),
       totals: result.totals,
       compared: result.compared,
       cases: countBy(result.cases, (testCase) => testCase.status),
@@ -421,7 +399,7 @@ async function evaluateRule(
 
   const start = defaultOn(status);
   // passes-conformance reads the whole pack, so runToolPack judges it on every run; this placeholder never decides.
-  const gates = { "upstream-status": { checks: status }, loads, "not-overfit": notOverfit, compact, "matches-upstream-tests": upstreamTests, "matches-real-code": realCode, "passes-conformance": gate([]) };
+  const gates = { "upstream-status": { checks: status }, loads, "not-overfit": notOverfit, compact, "matches-upstream-tests": upstreamTests, "passes-conformance": gate([]) };
   const unparsedFiles = [...unparsed.values()].sort((a, b) => byText(a.gate, b.gate) || byText(a.file, b.file));
   return {
     report: {
@@ -439,7 +417,6 @@ async function evaluateRule(
       on,
       gates,
     },
-    promoted,
     gapUses,
     integrity,
     gapCandidates: await gapReports(adapter, unparsedFiles),
@@ -447,11 +424,33 @@ async function evaluateRule(
 }
 
 /**
- * Run every gate on every document of one gated tool-pack, from its recordings. Returns the report and the tool-pack's
- * goldens with this run's promotions. With the cache, a rule whose inputs are unchanged takes its cached result; when
- * every rule does, nothing is fetched or evaluated.
+ * The integrity lines for the tool-pack's goldens.tsv and real_code_gaps: an entry that names no rule of the
+ * tool-pack, a rule with both goldens and a real-code gap, and a candidate that differs on more than SYSTEMATIC_FILES
+ * of its goldens, which should take a real-code gap in their place. `differing` counts a rule's goldens that differ,
+ * engine gaps included.
  */
-export async function runToolPack(options: RunOptions): Promise<{ report: GatesReport; goldens: string; goldensChanged: boolean }> {
+export function goldenListLines(goldens: Goldens, realCodeGaps: RealCodeGap[], rules: { id: string; location: Location; differing: number }[]): string[] {
+  const byId = new Map(rules.map((rule) => [rule.id, rule]));
+  const gapped = new Set(realCodeGaps.map((gap) => gap.rule));
+  const lines: string[] = [];
+  for (const [id, entries] of goldens) {
+    if (!byId.has(id)) lines.push(`goldens.tsv lists ${entries.length} golden(s) of ${id}, which is no rule of this tool-pack`);
+    else if (gapped.has(id)) lines.push(`${id} has ${entries.length} golden(s) and a real_code_gaps entry: keep one, the goldens unless it differs on more than ${SYSTEMATIC_FILES} of them`);
+  }
+  for (const gap of realCodeGaps) if (!byId.has(gap.rule)) lines.push(`gates.yaml lists a real-code gap for ${gap.rule}, which is no rule of this tool-pack`);
+  for (const rule of rules) {
+    if (rule.location === "candidate" && rule.differing > SYSTEMATIC_FILES) {
+      lines.push(`the candidate ${rule.id} differs on ${rule.differing} of its goldens, more than ${SYSTEMATIC_FILES}: list it under real_code_gaps in their place`);
+    }
+  }
+  return lines;
+}
+
+/**
+ * Run every gate on every document of one gated tool-pack, from its recordings. With the cache, a rule whose inputs are
+ * unchanged takes its cached result; when every rule does, nothing is fetched or evaluated.
+ */
+export async function runToolPack(options: RunOptions): Promise<GatesReport> {
   const { root, pack, tool } = options;
   const cacheRoot = resolve(options.cacheRoot);
   const directory = toolPackDirectory(root, pack, tool);
@@ -494,7 +493,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
   }
 
   const goldens = await readGoldens(directory);
-  const committedGoldens = serializeGoldens(goldens);
+  const realCodeGaps = new Map(manifest.real_code_gaps.map((gap) => [gap.rule, gap]));
   const readOr = (file: string) => (existsSync(join(directory, file)) ? readFileSync(join(directory, file)) : "");
   const shared: SharedKeyInputs = {
     gateCode: trackedDigest(root, GATE_CODE),
@@ -542,22 +541,20 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
 
   if (misses.length === 0 && packCached !== undefined) {
     packResult = packCached;
-    // Promotions are part of a cached result: replay them so --write gives the same goldens.tsv.
-    for (const entry of judged) {
-      const result = cached.get(entry.key)!;
-      promote(goldens, result.report.id, result.promoted);
-    }
     // The caching run's check word for word: a shard that judges writes the same one, and merge compares them.
     pinChecks.push(packCached.corpusComplete);
   } else {
     // not-overfit reads every upstream test text: fetched at the pinned commit only when a rule is evaluated.
     await adapter.loadFixtureTexts();
-    const catalog = await buildCorpus(cacheRoot, (path) => adapter.inCorpus(path), options.runner);
-    const rerailCorpus = await buildRerailCorpora(corpora, cacheRoot, (path) => adapter.inCorpus(path), options.runner);
+    // Only the files the goldens name are fetched and read: no rule runs over the rest of the corpus.
+    const named = [...goldens.values()].flat();
+    const wanted = wantedPlaces(named);
+    const catalog = await buildCorpus(cacheRoot, (path) => adapter.inCorpus(path), options.runner, wanted);
+    const rerailCorpus = await buildRerailCorpora(corpora, cacheRoot, (path) => adapter.inCorpus(path), options.runner, wanted);
     const corpusFiles = [...catalog.files, ...rerailCorpus.files];
-    const complete = corpusCompleteCheck(inputs.corpus?.files ?? [], corpusFiles, [...catalog.tasks, ...rerailCorpus.tasks]);
+    const complete = corpusCompleteCheck(named, [...catalog.tasks, ...rerailCorpus.tasks]);
     pinChecks.push(complete);
-    // Results judged on part of the corpus are reported (and fail through corpus-complete) but never cached.
+    // Results judged with a golden's task unfetched are reported (and fail through corpus-complete) but never cached.
     const save = options.writeCache && complete.ok;
     const upstreamFiles = await adapter.lintCorpus(corpusFiles, names);
     const byPlace = new Map<string, UpstreamFile>(upstreamFiles.map((entry) => [`${entry.file.task}\0${entry.file.path}`, entry]));
@@ -567,12 +564,7 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     const scratch = mkdtempSync(join(cacheRoot, "tmp", "gates-"));
     const integrity = [...gaps.problems];
     try {
-      // Replay cached promotions first, so evaluated rules see the same goldens a full run would.
-      for (const entry of judged) {
-        const hit = cached.get(entry.key);
-        if (hit !== undefined) promote(goldens, hit.report.id, hit.promoted);
-      }
-      const context = { engine, adapter, pack, scratch, goldens, upstreamFiles, corpusFiles: byPlace, cases, gaps };
+      const context = { engine, adapter, pack, scratch, goldens, realCodeGaps, corpusFiles: byPlace, cases, gaps };
       for (const entry of misses) {
         const result = await evaluateRule(context, entry.rule, entry.location, entry.location === "shipped" ? (on.get(entry.path) ?? true) : null);
         results.set(entry.key, result);
@@ -616,7 +608,8 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
   const all = judged.map((entry) => results.get(entry.key)!);
   const gapCandidates = new Map<string, GapCandidateReport>();
   for (const result of all) for (const candidate of result.gapCandidates) gapCandidates.set(`${candidate.gate}\0${candidate.file}`, candidate);
-  const serialized = serializeGoldens(goldens);
+  const differing = new Map(reports.map((rule) => [rule.id, rule.gates["matches-upstream-tests"].goldens.differing.count + rule.gates["matches-upstream-tests"].goldens.engineGaps.count]));
+  const listed = goldenListLines(goldens, manifest.real_code_gaps, keyed.map((entry) => ({ id: entry.id, location: entry.location, differing: differing.get(entry.id) ?? 0 })));
 
   const report: GatesReport = {
     format: REPORT_FORMAT,
@@ -629,19 +622,18 @@ export async function runToolPack(options: RunOptions): Promise<{ report: GatesR
     gates: GATES.map((entry) => ({ ...entry })),
     method: method(manifest),
     toolPackChecks: toolPack,
-    integrity: [...new Set([...packResult.integrity, ...all.flatMap((result) => result.integrity)])].sort(byText),
+    integrity: [...new Set([...packResult.integrity, ...all.flatMap((result) => result.integrity), ...listed])].sort(byText),
     knownGaps: packResult.knownGaps,
     gapCandidates: [...gapCandidates.values()].sort((a, b) => byText(a.gate, b.gate) || byText(a.file, b.file)),
     corpus: packResult.corpus,
     unmapped,
     listedWithoutDocument,
     cache: { rules: judged.length, hits: cached.size },
-    uncommittedPromotions: all.reduce((sum, result) => sum + result.promoted.length, 0),
     ...(shard === undefined ? {} : { shard: { ...shard, rules: keyed.length } }),
     summary: summarizeRules(reports),
     rules: reports,
   };
-  return { report, goldens: serialized, goldensChanged: serialized !== committedGoldens };
+  return report;
 }
 
 /** Whether a tool-pack report fails CI: a shipped rule fails, or a shipped document is not mapped to an upstream rule. */

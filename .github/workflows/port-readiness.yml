@@ -5,8 +5,8 @@ name: Port readiness
 # or a push to main touches a gate input, and by port-readiness-nightly.yml, which judges every rule again and refreshes
 # the result cache. The gates read each tool-pack's recordings (recording.json and corpus.json, which
 # packs/<id>/upstream/<tool>/recording.lock names and the fetch step downloads from the release), so no upstream linter
-# runs here; only the pinned real-code corpora and upstream's pinned test files are fetched, and they are cached by
-# their pins.
+# runs here, and no rule runs over the real-code corpus (that is NRV's real-code gate): only the pinned corpus files
+# the goldens name and upstream's pinned test files are fetched, and they are cached by their pins.
 #
 # The plan job builds the legs (conformance/port-readiness/plan.mjs, which also holds the shard counts). A pull request
 # (`select`) judges only the tool-packs of the packs it touches, and every one when it touches the engine, the gate
@@ -126,9 +126,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: npm run port-readiness -- fetch --pack "$PACK" --tool "$TOOL"
 
-      # The real-code corpus and upstream's pinned test files are keyed by their pins; a partial match is reused, since
-      # every checkout in them is keyed by commit.
-      - name: Restore the real-code corpus and upstream's test files
+      # The corpus files the goldens name and upstream's pinned test files are keyed by their pins; a partial
+      # match is reused, since every checkout in them is keyed by commit.
+      - name: Restore the goldens' corpus files and upstream's test files
         uses: actions/cache/restore@v6
         with:
           path: |
