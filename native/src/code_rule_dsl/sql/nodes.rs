@@ -265,12 +265,6 @@ impl NodeFacts {
         self.postings_built().ids[at]
     }
 
-    /// The nodes of `kind`, ascending.
-    pub(super) fn of_kind(&self, kind: u16) -> &[u32] {
-        let range = self.kind_range(kind);
-        &self.postings_built().ids[range]
-    }
-
     /// Every node keyed by its kind, sorted: the postings.
     fn postings(&self) -> Postings {
         let mut keyed: Vec<u64> = (0..self.len)

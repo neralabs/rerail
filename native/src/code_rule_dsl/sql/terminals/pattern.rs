@@ -1,8 +1,11 @@
-//! The `pattern(term)` terminal. Without input it lists, once per batch, every node of the
-//! pattern's root kinds the pattern matches in a fresh environment, with what it bound. With an
-//! `ek IN (…)` input (the env-input variant) it matches each input row's node with the row's
-//! bindings of the pattern's captures already in the environment: an ellipsis's greedy alignment
-//! and every unification then happen natively, exactly as the matcher does them.
+//! The `pattern(term)` terminal, an input-set terminal in both its variants. With an `nk IN (…)`
+//! input (the fresh-env variant) it receives the distinct `(file, node)` keys of a frame
+//! (`file << 32 | node`) in one `xFilter` call and returns those whose node the pattern matches in
+//! a fresh environment, with what it bound; each (term, node) is matched once per batch
+//! (`Batch::fresh`), whichever frames reach it. With an `ek IN (…)` input (the env-input variant)
+//! it matches each input row's node with the row's bindings of the pattern's captures already in
+//! the environment: an ellipsis's greedy alignment and every unification then happen natively,
+//! exactly as the matcher does them.
 
 use super::{PATTERN_COLUMNS, PatternTerm, Terminal};
 use crate::code_rule_dsl::matcher::node_at;
@@ -31,7 +34,23 @@ pub(in crate::code_rule_dsl::sql) struct PatternRow {
     file: u32,
     node: u32,
     ek: Option<String>,
-    values: Vec<Option<i64>>,
+    values: Arc<[Option<i64>]>,
+}
+
+impl PatternRow {
+    /// A fresh-env match at `node` of `file`, binding `values`.
+    pub(in crate::code_rule_dsl::sql) fn fresh(
+        file: u32,
+        node: u32,
+        values: Arc<[Option<i64>]>,
+    ) -> Self {
+        Self {
+            file,
+            node,
+            ek: None,
+            values,
+        }
+    }
 }
 
 /// The four columns of a list capture: its first and last node (`-1` when empty), the hash of
@@ -98,43 +117,29 @@ fn values<'t>(
     values
 }
 
-/// The fresh-env matches of `term` over every file of its dialect in the batch.
-pub(in crate::code_rule_dsl::sql) fn fresh_rows(
+/// The capture columns of `term`'s fresh-env match at `node` of batch file `file`, where it
+/// matches. Only a node of a batch file of the term's dialect, of one of its root kinds, can match.
+pub(in crate::code_rule_dsl::sql) fn fresh_match(
     batch: &Batch,
     term: &PatternTerm,
-) -> Vec<PatternRow> {
+    file: usize,
+    node: u32,
+) -> Option<Arc<[Option<i64>]>> {
     #[cfg(test)]
     super::calls::note(&super::calls::FRESH_MATCHES);
-    let mut rows = Vec::new();
-    for (index, file) in batch.files.iter().enumerate() {
-        if file.dialect != term.dialect {
-            continue;
-        }
-        let mut test = |id: u32| {
-            let node = node_at(&file.root, id);
-            let mut env = Cow::Owned(MetaVarEnv::new());
-            if term.pattern.match_node_with_env(node, &mut env).is_some() {
-                rows.push(PatternRow {
-                    file: index as u32,
-                    node: id,
-                    ek: None,
-                    values: values(term, &file.facts, &env),
-                });
-            }
-        };
-        match &term.kinds {
-            Some(kinds) => {
-                let mut ids: Vec<u32> = kinds
-                    .iter()
-                    .flat_map(|&kind| file.facts.of_kind(kind).iter().copied())
-                    .collect();
-                ids.sort_unstable();
-                ids.into_iter().for_each(&mut test);
-            }
-            None => (0..file.facts.len()).for_each(&mut test),
-        }
+    let entry = batch.files.get(file)?;
+    if entry.dialect != term.dialect || node >= entry.facts.len() {
+        return None;
     }
-    rows
+    if let Some(kinds) = &term.kinds
+        && !kinds.contains(&entry.facts.kind(node))
+    {
+        return None;
+    }
+    let mut env = Cow::Owned(MetaVarEnv::new());
+    term.pattern
+        .match_node_with_env(node_at(&entry.root, node), &mut env)?;
+    Some(values(term, &entry.facts, &env).into())
 }
 
 /// Decodes an env-input key (`file,node,<value>…`, one value per read capture: a node id, or a
@@ -175,21 +180,32 @@ fn env_row(batch: &Batch, term: &PatternTerm, ek: &str) -> Option<PatternRow> {
         file,
         node,
         ek: Some(ek.to_owned()),
-        values: values(term, &entry.facts, &env),
+        values: values(term, &entry.facts, &env).into(),
     })
 }
 
 const COL_TERM: c_int = 0;
 const COL_EK: c_int = 1;
-const COL_FILE: c_int = 2;
-const COL_NODE: c_int = 3;
+const COL_NK: c_int = 2;
+const COL_FILE: c_int = 3;
+const COL_NODE: c_int = 4;
+/// The first value column (`v0`).
+const COL_VALUES: c_int = 5;
+
+/// `idx_num` bits: a term, then the input set, one key (`EQ`) or a list (`IN`), of `ek` (env-input)
+/// or `nk` (fresh-env).
+const IDX_TERM: c_int = 1;
+const IDX_EK: c_int = 2;
+const IDX_EK_LIST: c_int = 4;
+const IDX_NK: c_int = 8;
+const IDX_NK_LIST: c_int = 16;
 
 static SCHEMA: LazyLock<std::ffi::CString> = LazyLock::new(|| {
     let values = (0..PATTERN_COLUMNS)
         .map(|index| format!(", v{index}"))
         .collect::<String>();
     std::ffi::CString::new(format!(
-        "CREATE TABLE x(term HIDDEN, ek HIDDEN, file, node{values})"
+        "CREATE TABLE x(term HIDDEN, ek HIDDEN, nk HIDDEN, file, node{values})"
     ))
     .expect("no NUL")
 });
@@ -227,6 +243,7 @@ unsafe impl<'vtab> VTab<'vtab> for PatternTable {
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
         let mut term = None;
         let mut ek = None;
+        let mut nk = None;
         for (index, constraint) in info.constraints().enumerate() {
             if !constraint.is_usable()
                 || constraint.operator() != IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
@@ -240,29 +257,30 @@ unsafe impl<'vtab> VTab<'vtab> for PatternTable {
                 COL_EK => {
                     ek.get_or_insert(index);
                 }
+                COL_NK => {
+                    nk.get_or_insert(index);
+                }
                 _ => {}
             }
         }
-        let Some(term) = term else {
+        let input = ek
+            .map(|ek| (ek, IDX_EK, IDX_EK_LIST))
+            .or(nk.map(|nk| (nk, IDX_NK, IDX_NK_LIST)));
+        let (Some(term), Some((input, one, list))) = (term, input) else {
             info.set_estimated_cost(f64::MAX);
             info.set_estimated_rows(i64::MAX);
             info.set_idx_num(0);
             return Ok(true);
         };
-        let mut usage = info.constraint_usage(term);
-        usage.set_argv_index(1);
-        usage.set_omit(true);
-        let mut idx_num = 1;
-        if let Some(ek) = ek {
-            let list = info.is_in_constraint(ek)? && info.set_in_constraint(ek, true)?;
-            let mut usage = info.constraint_usage(ek);
-            usage.set_argv_index(2);
+        let is_list = info.is_in_constraint(input)? && info.set_in_constraint(input, true)?;
+        for (argv, index) in [term, input].into_iter().enumerate() {
+            let mut usage = info.constraint_usage(index);
+            usage.set_argv_index(argv as c_int + 1);
             usage.set_omit(true);
-            idx_num |= if list { 4 } else { 2 };
         }
-        info.set_idx_num(idx_num);
-        info.set_estimated_cost(if ek.is_some() { 100.0 } else { 10_000.0 });
-        info.set_estimated_rows(if ek.is_some() { 100 } else { 10_000 });
+        info.set_idx_num(IDX_TERM | if is_list { list } else { one });
+        info.set_estimated_cost(100.0);
+        info.set_estimated_rows(100);
         Ok(true)
     }
 
@@ -271,24 +289,10 @@ unsafe impl<'vtab> VTab<'vtab> for PatternTable {
             base: sqlite3_vtab_cursor::default(),
             slot: Arc::clone(&self.slot),
             term: 0,
-            rows: Rows::Owned(Vec::new()),
+            rows: Vec::new(),
             pos: 0,
             phantom: PhantomData,
         })
-    }
-}
-
-enum Rows {
-    Shared(Arc<Vec<PatternRow>>),
-    Owned(Vec<PatternRow>),
-}
-
-impl Rows {
-    fn get(&self, pos: usize) -> Option<&PatternRow> {
-        match self {
-            Self::Shared(rows) => rows.get(pos),
-            Self::Owned(rows) => rows.get(pos),
-        }
     }
 }
 
@@ -297,7 +301,7 @@ pub(in crate::code_rule_dsl::sql) struct PatternCursor<'vtab> {
     base: sqlite3_vtab_cursor,
     slot: Arc<BatchSlot>,
     term: i64,
-    rows: Rows,
+    rows: Vec<PatternRow>,
     pos: usize,
     phantom: PhantomData<&'vtab PatternTable>,
 }
@@ -306,8 +310,10 @@ unsafe impl VTabCursor for PatternCursor<'_> {
     fn filter(&mut self, idx_num: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
         #[cfg(test)]
         super::calls::note(&super::calls::PATTERN_FILTERS);
-        if idx_num & 1 == 0 {
-            return Err(Error::ModuleError("pattern requires a term".into()));
+        if idx_num & IDX_TERM == 0 {
+            return Err(Error::ModuleError(
+                "pattern requires a term and an input set".into(),
+            ));
         }
         let batch = self
             .slot
@@ -325,11 +331,22 @@ unsafe impl VTabCursor for PatternCursor<'_> {
         };
         self.term = term_id;
         self.pos = 0;
-        self.rows = if idx_num & 6 == 0 {
-            Rows::Shared(batch.fresh(term_id as usize, term))
+        self.rows = if idx_num & (IDX_NK | IDX_NK_LIST) != 0 {
+            let mut keys = Vec::new();
+            if idx_num & IDX_NK_LIST != 0 {
+                let mut items = args.in_values(1)?;
+                while let Some(item) = items.next()? {
+                    keys.extend(integer(item));
+                }
+            } else {
+                keys.extend(integer(ValueRef::from(&args.get::<Value>(1)?)));
+            }
+            keys.sort_unstable();
+            keys.dedup();
+            batch.fresh(term_id as usize, term, &keys)
         } else {
             let mut keys = BTreeSet::new();
-            if idx_num & 4 != 0 {
+            if idx_num & IDX_EK_LIST != 0 {
                 let mut items = args.in_values(1)?;
                 while let Some(item) = items.next()? {
                     if let ValueRef::Text(text) = item {
@@ -339,11 +356,9 @@ unsafe impl VTabCursor for PatternCursor<'_> {
             } else if let Value::Text(text) = args.get::<Value>(1)? {
                 keys.insert(text);
             }
-            Rows::Owned(
-                keys.iter()
-                    .filter_map(|ek| env_row(&batch, term, ek))
-                    .collect(),
-            )
+            keys.iter()
+                .filter_map(|ek| env_row(&batch, term, ek))
+                .collect()
         };
         Ok(())
     }
@@ -354,18 +369,19 @@ unsafe impl VTabCursor for PatternCursor<'_> {
     }
 
     fn eof(&self) -> bool {
-        self.rows.get(self.pos).is_none()
+        self.pos >= self.rows.len()
     }
 
     fn column(&self, context: &mut Context, column: c_int) -> Result<()> {
-        let row = self.rows.get(self.pos).expect("a row");
+        let row = &self.rows[self.pos];
         match column {
             COL_TERM => context.set_result(&self.term),
             COL_EK => context.set_result(&row.ek),
+            COL_NK => context.set_result(&(i64::from(row.file) << 32 | i64::from(row.node))),
             COL_FILE => context.set_result(&i64::from(row.file)),
             COL_NODE => context.set_result(&i64::from(row.node)),
             other => {
-                let index = (other - 4) as usize;
+                let index = (other - COL_VALUES) as usize;
                 context.set_result(&row.values.get(index).copied().flatten())
             }
         }
