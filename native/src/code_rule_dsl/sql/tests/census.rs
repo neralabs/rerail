@@ -393,7 +393,7 @@ fn the_slow_case_rows() {
             .into_iter()
             .map(|(sql, (nanos, rows, _))| (rows, nanos, sql))
             .collect();
-        rows.sort_by(|a, b| b.0.cmp(&a.0));
+        rows.sort_by_key(|row| std::cmp::Reverse(row.0));
         let total: usize = rows.iter().map(|row| row.0).sum();
         eprintln!(
             "{take} lines: {count} nodes, {pairs} (node, ancestor) pairs, {below} (node, descendant) pairs; sql {:.2}s, native {:.3}s, {total} rows written",
