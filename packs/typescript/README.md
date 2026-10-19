@@ -1,6 +1,6 @@
 # Rerail rule pack: TypeScript
 
-22 code rules for TypeScript, ported from typescript-eslint 8.70.1 (on ESLint 10.11.0), each with its default
+21 code rules for TypeScript, ported from typescript-eslint 8.70.1 (on ESLint 10.11.0), each with its default
 options. 11 start off (`"on": false`): no approved typescript-eslint configuration turns them on, so they are
 experimental. Each is scored against the tool's own findings on the tool's test fixtures and on a pinned corpus
 (vscode), through the engine's production workspace path, with every disagreement declared in `divergences.json`
@@ -22,7 +22,7 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack type
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`) and its recordings (`fixtures.expected.json`, `corpus-vscode.expected.json`); `upstream/eslint-plugin-vitest/UPSTREAM.md` lists the fixtures Rerail wrote (`fixtures/*/rerail-*`), which the recorder holds and records like the copied ones |
 | `upstream/generate.mjs` | typescript-eslint's recorder; `upstream/eslint-plugin-vitest/generate.mjs` records @vitest/eslint-plugin |
-| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail a V1 validation gate or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the recordings do not have) and `no-explicit-any` (the fixtures recording does not cover it yet) is listed in `conformance.json`, scored and reported on the fixtures, never gated; the vscode recording covers the shipped rules only. The three `vitest-*.json` documents are generated: edit `scripts/generate/packs/typescript-vitest-policies.mjs`, not the JSON, and run `node scripts/generate/packs/typescript-vitest-policies.mjs` from the repository root |
+| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail a rule gate ([docs/port-readiness.md](../../docs/port-readiness.md)) or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the recordings do not have) and `no-explicit-any` (the fixtures recording does not cover it yet) is listed in `conformance.json`, scored and reported on the fixtures, never gated; the vscode recording covers the shipped rules only. The three `vitest-*.json` documents are generated: edit `scripts/generate/packs/typescript-vitest-policies.mjs`, not the JSON, and run `node scripts/generate/packs/typescript-vitest-policies.mjs` from the repository root |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
 Re-recording runs offline against the pinned tool versions (the recorder's header lists them):

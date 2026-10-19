@@ -3,7 +3,7 @@
   "id": "typescript",
   "name": "TypeScript",
   "category": "language",
-  "covers": "22 typescript-eslint rules ported to Rerail, 11 of them on and 11 off until turned on, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "21 typescript-eslint rules ported to Rerail, 10 of them on and 11 off until turned on, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches TypeScript",
   "match": {
     "any": [
@@ -152,12 +152,6 @@
       "title": "typescript-eslint no-useless-empty-export: Disallow empty exports that don't change anything in a module file",
       "group": "typescript-eslint",
       "on": false
-    },
-    {
-      "id": "typescript-eslint-no-wrapper-object-types",
-      "document": "rules/typescript-eslint-no-wrapper-object-types.json",
-      "title": "typescript-eslint no-wrapper-object-types: Disallow using confusing built-in primitive class wrappers",
-      "group": "typescript-eslint"
     },
     {
       "id": "typescript-eslint-prefer-as-const",

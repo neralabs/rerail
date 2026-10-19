@@ -1,0 +1,18 @@
+{
+  "name": "validation-upstream-eslint-plugin-react",
+  "private": true,
+  "description": "eslint-plugin-react 7.37.5 as published, on the ESLint and parsers its own CI installs for ESLint 9 (eslint@9, @typescript-eslint/parser@8.17, babel-eslint@10, over its package.json devDependencies; it commits no lockfile): the parsers tests/helpers/parsers.js require.resolves, the latest TypeScript @typescript-eslint/parser 8.17 supports (upstream's own ^3.9.9 cannot load it), and the helpers' own requirements.",
+  "dependencies": {
+    "@babel/core": "7.29.7",
+    "@babel/eslint-parser": "7.29.9",
+    "@typescript-eslint/parser": "8.17.0",
+    "array.prototype.flatmap": "1.3.3",
+    "babel-eslint": "10.1.0",
+    "eslint": "9.39.5",
+    "eslint-plugin-react": "7.37.5",
+    "object.entries": "1.1.9",
+    "semver": "6.3.1",
+    "typescript": "5.7.3",
+    "typescript-eslint-parser": "20.1.1"
+  }
+}

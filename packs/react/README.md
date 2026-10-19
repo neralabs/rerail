@@ -1,12 +1,11 @@
 # Rerail rule pack: React
 
-Ports of eslint-plugin-react 7.37.5 and eslint-plugin-react-hooks 7.1.1 rules. A port starts in `candidates/rules/`
-and moves to `rules/` and `pack.json` once it passes the V1 rule validation gates
-([nera-rule-validation](https://github.com/neralabs/nera-rule-validation)). While `pack.json` lists no rules, the pack
-ships none and is never recommended. Every port is scored against the plugins' own findings on the plugins' test cases
-and the pinned corpus, through the engine's production workspace path. The conformance check (`--check`, run in CI)
-scores the test cases only: it gates the ports in `rules/` and reports the candidates without gating them. The corpus
-is scored on demand, with `--pack react --corpus excalidraw`.
+Ports of eslint-plugin-react 7.37.5 and eslint-plugin-react-hooks 7.1.1 rules. A port starts in `candidates/rules/` and
+moves to `rules/` and `pack.json` once it passes the [port readiness gates](../../docs/port-readiness.md), which CI runs on every
+port. While `pack.json` lists no rules, the pack ships none and is never recommended. Every port is scored against the
+plugins' own findings on the plugins' test cases and the pinned corpus, through the engine's production workspace path.
+The conformance check (`--check`, run in CI) scores the test cases only: it gates the ports in `rules/` and reports the
+candidates without gating them. The corpus is scored on demand, with `--pack react --corpus excalidraw`.
 
 Every rule runs on JavaScript and TypeScript files whose JSX runtime is React or not known; a file whose JSX belongs to
 another library is skipped. The runtime is the file's `@jsxImportSource` pragma when it names React, Emotion

@@ -1,0 +1,1 @@
+const log = <A,>(a: A): A => a;

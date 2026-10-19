@@ -1,0 +1,5 @@
+
+(function (iter) {
+  for (let name of iter) return true;
+})({});
+      

@@ -1,0 +1,1 @@
+// @ts-expect-error: Suppress next line

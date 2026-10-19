@@ -268,7 +268,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-wrapper-object-types"
       },
-      "policy": "rules/typescript-eslint-no-wrapper-object-types.json",
+      "policy": "candidates/rules/typescript-eslint-no-wrapper-object-types.json",
       "capabilities": [
         "syntax",
         "scope",

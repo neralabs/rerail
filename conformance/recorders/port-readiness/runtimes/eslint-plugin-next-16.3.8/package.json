@@ -1,0 +1,12 @@
+{
+  "name": "validation-upstream-eslint-plugin-next",
+  "private": true,
+  "description": "@next/eslint-plugin-next 16.3.8 as published, with the eslint, tsx, typescript and glob versions vercel/next.js's root package.json pins at v16.3.8: tsx loads the TypeScript rule tests, and index.test.ts imports glob.",
+  "dependencies": {
+    "@next/eslint-plugin-next": "16.3.8",
+    "eslint": "9.37.0",
+    "glob": "7.1.6",
+    "tsx": "4.19.2",
+    "typescript": "6.0.2"
+  }
+}

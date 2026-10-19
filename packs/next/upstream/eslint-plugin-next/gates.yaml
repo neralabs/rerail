@@ -1,0 +1,100 @@
+adapter: eslint
+# @next/eslint-plugin-next's documents in rerail's next pack (NER-1741).
+rerail:
+  pack: next
+  project: next.js
+upstream:
+  name: vercel/next.js @next/eslint-plugin-next rules
+  repository: https://github.com/vercel/next.js
+  # Tag v16.3.8 (lightweight) is this commit; packages/eslint-plugin-next/package.json there says 16.3.8. npm records no
+  # gitHead for the published 16.3.8, which ships only dist/ (the swc build of src/), so the tag is the only link from
+  # the tarball to the commit.
+  commit: b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6
+  version: 16.3.8
+  license: MIT
+  runtime: eslint-plugin-next-16.3.8
+  # The plugin's own flat configuration, `configs.recommended` (name next/recommended): all 22 rules, none with
+  # options. Team decision, in the form of tslint:latest: `configs['core-web-vitals']` is the same set with
+  # no-html-link-for-pages and no-sync-scripts raised from warn to error. It turns no other rule on and sets no
+  # options, so listing it second would change no result; it is one line to add. recommended-legacy and
+  # core-web-vitals-legacy are the eslintrc forms of the same two.
+  recommended_configs:
+    - recommended
+popularity:
+  observed_on: 2026-10-06
+  evidence:
+    - "npm: 47,739,164 downloads of @next/eslint-plugin-next in the week 2026-09-28 to 2026-10-04 (api.npmjs.org)"
+    - "GitHub: vercel/next.js has 143,240 stars and is not archived"
+known_gaps: []
+# Decisions for the team to confirm (the eslint adapter's literal readings for this plugin):
+# - Gate 5 lints every RuleTester case of test/unit/eslint-plugin-next/*.test.ts with the rule as configs.recommended
+#   sets it (no options; no case sets options or settings either), in eslint-config-next's environment (the
+#   `environment` above): its parsers, its browser and Node globals, and ESLint's default ECMAScript version take the
+#   place of the language options the case and its RuleTester set (espree, ecmaVersion 2018 or 2020, module, JSX, and
+#   no-location-assign-relative-destination.test.ts's browser globals). Eight of these rules read the file name
+#   (`pages`, `app/`, `_document`, some anchored at its start), so a case upstream names a file for is linted and
+#   evaluated at exactly that path (pages/_document.js, src/app/icon.js; an absolute name relative to the filesystem
+#   root, and a Windows name such as C:\Users\...\app\layout.tsx as the same directories, since the rules normalize
+#   its separators); a case without one gets a directory of its own and the file type its own parser read it as.
+# - In that environment a .ts or .tsx name is read by typescript-eslint's parser. no-head-element.test.ts's invalid[1]
+#   is JSX at pages/index.ts, which that parser rejects, so upstream has no answer for it and it is not scored, as
+#   rerail's recorder drops it.
+# - no-location-assign-relative-destination reports only references that resolve to declared globals
+#   (isGlobalReference reads the global scope's variables). eslint-config-next declares the browser's, so upstream
+#   reports the 29 findings its test expects; configs.recommended alone declares none, and would leave the rule with
+#   nothing to report.
+# - no-html-link-for-pages.test.ts and index.test.ts run no RuleTester: the first lints in it() bodies against the page
+#   directories beside it (its rule is not ported), the second checks the configurations; neither yields cases.
+# - A rule's end positions are compared only when every finding upstream reports on its own tests carries one.
+# - Gate 3's upstream code for a rule is its src/rules/<rule>.ts, the modules it imports by relative path
+#   (src/utils/define-rule.ts, node-attributes.ts, url.ts, get-root-dirs.ts) and, from @eslint-community/eslint-utils
+#   (a dependency of the published package), the modules that define the names it imports. Its comment vocabulary is
+#   TypeScript's JSDoc tags and pragmas and ESLint's directives and their values, read from the pinned eslint.
+# - no-typos writes upstream's edit distance 1 (src/rules/no-typos.ts: minDistance against getStaticProps,
+#   getStaticPaths and getServerSideProps, THRESHOLD 1) as one regex of every one-edit variant of the three names, and
+#   "the path contains pages" as a complement automaton (`...pag(?:[^e]|$)|page(?:[^s]|$)`), because Rust regex has no
+#   lookahead. ADR 0006's Regexes bullet reads both as upstream's checks written out, not as naming test words (the
+#   four test typos, and `page`), with unit tests on these regexes.
+# - Gate 3's test words are every RuleTester case's code, outputs, options, settings, globals and expected reports, and
+#   the page files of the directories no-html-link-for-pages.test.ts points its rule at (custom-pages/, with-app-dir/
+#   and the rest under test/unit/eslint-plugin-next/). The code no-html-link-for-pages.test.ts lints inside its it()
+#   bodies is not a RuleTester case and is not read.
+# - File types: eslint-config-next lints **/*.{js,jsx,mjs,ts,tsx,mts,cts}, and ESLint's defaults add .cjs; those are Gate
+#   2's in-scope samples and the files Gate 6 reads, in the catalog's task solutions and the rerail pack's corpora.
+# - Upstream's tests run in validation/upstream/eslint-plugin-next-16.3.8 on the eslint (9.37.0), tsx (4.19.2),
+#   typescript (6.0.2) and glob (7.1.6, which index.test.ts imports) versions vercel/next.js's root package.json pins at
+#   v16.3.8; eslint 9.37.0 is also the plugin's own devDependency, and tsx loads the TypeScript test files.
+eslint:
+  # The environment the pack is linted in, decided by the team on 2026-10-09 (docs/decisions/eslint-test-globals.md):
+  # eslint-config-next, the shareable configuration Next.js tells projects to use. Its file globs
+  # (**/*.{js,jsx,mjs,ts,tsx,mts,cts}), its parsers (Next.js's compiled Babel parser with next/babel, and
+  # typescript-eslint's for .ts and .tsx) and its browser and Node globals come before the approved configuration, for
+  # upstream's test cases and the corpus; its plugins, rules and settings are not the pack's. A test case's own parser
+  # and globals give way to them.
+  environment:
+    package: eslint-config-next
+    version: 16.3.8
+    runtime: eslint-config-next-16.3.8
+    source:
+      repository: https://github.com/vercel/next.js
+      commit: b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6
+      path: packages/eslint-config-next
+  plugin:
+    package: "@next/eslint-plugin-next"
+    namespace: "@next/next"
+  # The plugin publishes dist/, the swc build of src/; its tests import the package by name, which runs the installed
+  # build.
+  release:
+    tag: v16.3.8
+    path: packages/eslint-plugin-next/src
+    installed: "@next/eslint-plugin-next/dist"
+    verbatim: false
+  license: license.md
+  implementation: packages/eslint-plugin-next/src/rules/{rule}.ts
+  tests: ["test/unit/eslint-plugin-next/*.test.ts"]
+  test_fixtures: ["test/unit/eslint-plugin-next/*/**"]
+  helpers: ["@eslint-community/eslint-utils"]
+  checkout: ["/packages/eslint-plugin-next/", "/test/unit/eslint-plugin-next/", "/license.md", "/package.json"]
+  # The npm package of the environment's Babel parser, which reads JavaScript with JSX.
+  parsers:
+    eslint-config-next: javascript

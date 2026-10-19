@@ -1,0 +1,35 @@
+adapter: bandit
+# Bandit's documents in rerail's python pack (NER-1739).
+rerail:
+  pack: python
+  project: bandit
+upstream:
+  name: PyCQA/bandit
+  repository: https://github.com/PyCQA/bandit
+  # The release rerail's python pack records for every Bandit document (packs/python/licenses/bandit/UPSTREAM.md:
+  # Bandit 1.9.4); tag 1.9.4.
+  commit: 92ae8b82fb422a639f0ed8d99e96cea769594e08
+  version: 1.9.4
+  license: Apache-2.0
+  runtime: bandit-1.9.4
+  # Bandit has no named configuration; upstream's default is bare `bandit`: no profile, every registered test on,
+  # `# nosec` honoured (ADR 0006, "Bandit's `# nosec`"). bandit:b317 follows `# nosec` with a comment pattern; the other
+  # documents do not model it. It decides three Gate 5 results: bandit:B303 (examples/nosec.py:3), bandit:b308
+  # (examples/mark_safe_secure.py 38, 39 and 49, each ending `# nosec TODO`) and
+  # python-conformance:bandit-b506-yaml-load (the suppressed `yaml.load` lines of examples/new_candidates-all.py:17,
+  # new_candidates-nosec.py:13 and new_candidates-some.py:15) differ from upstream on their test files only on
+  # suppressed lines.
+  recommended_configs:
+    - default
+  # Positions are compared exactly as Bandit reports them (ADR 0006, "Bandit's keyword lines"). bandit:B602 differs on
+  # real code only on such positions: its four Gate 6 cases (iterative-dvc's dvc/stage.py 672, 745 and 784 and
+  # dvc/remote/hdfs.py 77) have the port at the call's first line with Bandit's columns, and are goldens. It also
+  # differs on its own tests (`# nosec` lines, `shell=[]` and `shell={}`, and line 7 of examples/new_candidates-all.py
+  # and new_candidates-some.py), so the reading decides no verdict. bandit:b106 meets the same positions (examples/pyghmi.py 5, dask's
+  # multi-line keyword calls) but reports the keyword rather than its value, so it differs there either way.
+popularity:
+  observed_on: 2026-10-06
+  evidence:
+    - "PyPI: 6,183,459 downloads of bandit in the week 2026-09-28 to 2026-10-04, without mirrors (pypistats.org)"
+    - "GitHub: PyCQA/bandit has 8,295 stars and is not archived"
+known_gaps: []

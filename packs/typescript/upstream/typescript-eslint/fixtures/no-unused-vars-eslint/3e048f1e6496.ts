@@ -1,0 +1,6 @@
+
+class Foo {
+  set bar(UNUSED) {}
+}
+console.log(Foo);
+      

@@ -10,3 +10,15 @@ coverage/
 .DS_Store
 .rerail/
 /tmp/
+
+# The port readiness gates' upstream runtimes are pinned by their manifests alone (conformance/recorders/port-readiness/runtimes.ts):
+# installs resolve in .rerail/port-readiness/runtimes/, and a lockfile here would put every transitive package in the dependency graph.
+conformance/recorders/port-readiness/runtimes/*/package-lock.json
+conformance/recorders/port-readiness/runtimes/*/uv.lock
+
+# The port readiness gates' recordings are not in the tree: each tool-pack commits a recording.lock naming the one its rules
+# are judged against, and the bytes live in a GitHub release (conformance/port-readiness/recording/store.ts). The recorder and
+# `npm run port-readiness -- fetch` put them in .rerail/port-readiness/recordings/; committing one again would put 71 MB of generated
+# JSON back in the history, where it stays forever.
+packs/*/upstream/*/recording.json
+packs/*/upstream/*/corpus.json

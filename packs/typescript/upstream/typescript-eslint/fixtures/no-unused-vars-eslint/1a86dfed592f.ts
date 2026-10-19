@@ -1,0 +1,7 @@
+
+(function (obj) {
+  for (let name in obj) {
+    return true;
+  }
+})({});
+      
