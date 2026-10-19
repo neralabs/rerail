@@ -221,6 +221,24 @@ fn oracle_result(case: &ContractCase) -> Value {
 }
 
 #[test]
+fn production_contract_phase_one_distinct_count_uses_related_capture() {
+    let cases = cases();
+    let case = cases
+        .iter()
+        .find(|case| case.name == "count-distinct-capture")
+        .expect("the distinct-count contract exists");
+    assert_eq!(
+        case.policy["clauses"][0]["budget"]["query"]["evidence"]["query"]["ast"]["rule"]["kind"],
+        "call"
+    );
+    assert_eq!(
+        case.policy["clauses"][0]["budget"]["query"]["evidence"]["query"]["ast"]["rule"]["has"]["pattern"],
+        "$A"
+    );
+    assert!(!case.expected.oracle.violations.is_empty());
+}
+
+#[test]
 fn production_contract_phase_one_oracles_match_committed_results() {
     let mut differences = Vec::new();
     for case in cases() {
