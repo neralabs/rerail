@@ -1,0 +1,3 @@
+SELECT
+    [FOO] AS [BAR]
+FROM [SCH].[TBL];

@@ -3,7 +3,7 @@
   "id": "sql",
   "name": "SQL",
   "category": "language",
-  "covers": "No rules yet: its 22 SQLFluff 4.4.0 ports are candidates until they pass the V1 rule validation gates.",
+  "covers": "No rules yet: its 22 SQLFluff 4.4.0 ports are candidates until they pass the port readiness gates.",
   "reason": "matches SQL",
   "match": {
     "any": [

@@ -13,7 +13,7 @@ import { z } from "zod";
 export const GATES_MANIFEST = "gates.yaml";
 
 /** The live adapters a tool-pack can name, one per upstream linter family (recorders/port-readiness/adapters/). */
-export const ADAPTERS = ["bandit", "ruff", "eslint", "phpcs", "tlint", "blade-parser", "phpstan", "psalm", "bladestan"] as const;
+export const ADAPTERS = ["bandit", "ruff", "eslint", "phpcs", "tlint", "blade-parser", "phpstan", "psalm", "bladestan", "sqlfluff", "clippy"] as const;
 
 const nonEmpty = z.string().min(1);
 const commit = z.string().regex(/^[0-9a-f]{40}$/u, "a full commit sha");
@@ -94,6 +94,14 @@ const eslintSchema = z.strictObject({
      */
     default_export: z.boolean().optional(),
     /**
+     * True when upstream's tests must load the checkout's own sources, as upstream's test runner does, rather than
+     * the installed build file for file: eslint-plugin-vue's tsdown build compiles each CommonJS source to a module
+     * that exports it only as `default`, so a test's named import from it (`import { getCoreRule } from
+     * '../../../lib/utils'`) finds nothing. The installed rule of each name, with the same metadata, runs in its source
+     * copy's place.
+     */
+    sources: z.boolean().optional(),
+    /**
      * The file at the pinned commit that declares the release's version when the package's package.json does not: the
      * version is the string an object literal in it maps the package's name to. facebook/react stamps each package's
      * version from ReactVersions.js when it builds, so packages/eslint-plugin-react-hooks/package.json at the
@@ -113,7 +121,11 @@ const eslintSchema = z.strictObject({
     runtime: runtimeDirectory,
     source: z.strictObject({ repository: githubRepository, commit, path: nonEmpty }),
   }).optional(),
-  /** The implementation of each rule; `{rule}` stands for the rule name, `{Rule}` for it in PascalCase (`RulesOfHooks`). */
+  /**
+   * The implementation of each rule; `{rule}` stands for the rule name, `{Rule}` for it in PascalCase (`RulesOfHooks`).
+   * Without an extension it resolves as a module path does, `.ts` then `.js` (eslint-plugin-vue writes some rules in
+   * each).
+   */
   implementation: z.string().regex(/\{(?:rule|Rule)\}/u, "names the rule as {rule} or {Rule}"),
   /** Globs of every upstream rule test file; each RuleTester run in them names the rule it tests. */
   tests: z.array(nonEmpty).min(1),
@@ -127,6 +139,13 @@ const eslintSchema = z.strictObject({
    * (@babel/eslint-parser finds facebook/react's Babel configuration from it); the runtime's directory when omitted.
    */
   test_cwd: repositoryPath.optional(),
+  /**
+   * True when upstream's test files are ES modules its runner imports as Node does (vitest), where a default import of
+   * a CommonJS package is the package's `module.exports` even when it is marked `__esModule` without a default
+   * (`import tsParser from '@typescript-eslint/parser'`). The gates load test files through tsx as CommonJS, whose
+   * interop would read that default as undefined, so such a package gets its exports as its default too.
+   */
+  esm_tests: z.boolean().optional(),
   /**
    * The npm packages whose modules count as upstream's code where upstream's code imports them: the helper libraries
    * its rules are written with (@eslint-community/eslint-utils), resolved in the pinned runtime.
@@ -144,7 +163,31 @@ const eslintSchema = z.strictObject({
    * The npm packages (aliases included) of the parsers upstream's tests lint with that declare no `meta.name`, mapped
    * to the language their trees are of. A case linted by another parser without a name is skipped.
    */
-  parsers: z.record(npmPackage, z.enum(["javascript", "typescript"])).optional(),
+  parsers: z.record(npmPackage, z.enum(["javascript", "typescript", "vue"])).optional(),
+  /**
+   * Vue single-file components, for a plugin whose approved configurations lint `.vue` files with vue-eslint-parser
+   * (eslint-plugin-vue).
+   */
+  vue: z.strictObject({
+    /**
+     * The runtime that pins @vue/compiler-sfc, the independent parser that splits a `.vue` file for a second opinion:
+     * its parse errors, and its script blocks read by runtimes/parsers' TypeScript and Babel.
+     */
+    runtime: runtimeDirectory,
+    /**
+     * vue-eslint-parser's `parserOptions.parser` for the corpus's `.vue` files, by `<script lang>`: the npm package,
+     * resolved in the pinned runtime, that parses that language's script blocks, as upstream's user guide has a
+     * TypeScript project set it. Any other lang is read by espree, as the approved configurations read it. Upstream's
+     * test cases set their own.
+     */
+    script_parsers: z.record(z.string().regex(/^[a-z]+$/u), npmPackage),
+    /**
+     * Rules of the approved configurations that stay on, at their approved setting, when the corpus is linted: they
+     * are how upstream reads a file rather than findings (eslint-plugin-vue's comment-directive, which its processor
+     * reads to honour `<!-- eslint-disable -->` in templates). Their own messages are never recorded.
+     */
+    directive_rules: unique(nonEmpty),
+  }).optional(),
   /**
    * Checkout modules of upstream's own rule testers besides ESLint's and typescript-eslint's RuleTester
    * (eslint-plugin-unicorn's test/utils/snapshot-rule-tester.js). Each default-exports a class whose
@@ -214,18 +257,23 @@ export const gatesManifestSchema = z.strictObject({
 
 export type GatesManifest = z.infer<typeof gatesManifestSchema>;
 
-/** The runtimes each adapter runs besides upstream's own (gates.yaml `upstream.runtime`). */
-const EXTRA_RUNTIMES: Record<GatesManifest["adapter"], string[]> = { bandit: ["python"], ruff: ["python"], eslint: ["parsers"], phpcs: ["php"], tlint: ["blade", "php"], "blade-parser": ["php"], phpstan: ["php"], psalm: ["php"], bladestan: ["blade", "php"] };
+/**
+ * The runtimes each adapter runs besides upstream's own (gates.yaml `upstream.runtime`). Clippy's independent parser is
+ * the pinned toolchain's own rustc, upstream's runtime.
+ */
+const EXTRA_RUNTIMES: Record<GatesManifest["adapter"], string[]> = { bandit: ["python"], ruff: ["python"], eslint: ["parsers"], phpcs: ["php"], tlint: ["blade", "php"], "blade-parser": ["php"], phpstan: ["php"], psalm: ["php"], bladestan: ["blade", "php"], sqlfluff: ["python"], clippy: [] };
 
 /**
- * Every runtime the adapter installs to record a tool-pack, sorted: upstream's own, the adapter's, and the environment
+ * Every runtime the adapter installs to record a tool-pack, sorted: upstream's own, the adapter's, the environment
  * the pack is linted in when gates.yaml names one (eslint-config-next's parsers and globals shape upstream's answers as
- * much as the plugin does). The recorder pins each of them in the lock, and the gates' pins-agree check holds a lock to
- * exactly these, so a runtime gates.yaml names and the lock doesn't makes the recording stale, not unchecked.
+ * much as the plugin does), and the independent parser of Vue single-file components when an ESLint tool-pack lints
+ * them (`eslint.vue.runtime`). The recorder pins each of them in the lock, and the gates' pins-agree check holds a lock
+ * to exactly these, so a runtime gates.yaml names and the lock doesn't makes the recording stale, not unchecked.
  */
 export function recordedRuntimes(manifest: GatesManifest): string[] {
   const environment = manifest.eslint?.environment?.runtime;
-  const runtimes = [manifest.upstream.runtime, ...EXTRA_RUNTIMES[manifest.adapter], ...(environment === undefined ? [] : [environment])];
+  const vue = manifest.eslint?.vue?.runtime;
+  const runtimes = [manifest.upstream.runtime, ...EXTRA_RUNTIMES[manifest.adapter], ...(environment === undefined ? [] : [environment]), ...(vue === undefined ? [] : [vue])];
   return [...new Set(runtimes)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 

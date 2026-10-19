@@ -1,0 +1,205 @@
+# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run port-readiness -- --write, sorted; a golden is never removed.
+clippy-allow-attributes
+	rerail:ripgrep
+		tests/util.rs	6862edaf5adad5eff8b7bf3c50ed28c221c0212fe733b22387d1f4f09909b447
+	rerail:tokio
+		examples/prewarm-fd-table.rs	0245a40fc5097a9db4c50d529c1d82cfb769624a65b6a9acbaaf262149b6c791
+		tokio-stream/tests/async_send_sync.rs	2fde5007212aba7efc1417fc8ea04e5be61545c2506983155fd3aa1cfb60c5fe
+		tokio-util/src/util/mod.rs	355746e276028d1aee294e84c37cabb9cb88cd1877fd925cbca1429b87b0f99e
+		tokio-util/src/util/poll_buf.rs	54736dde13f441b285f6ffeded9d0a80e30fccf468f5527493278e86c8451097
+		tokio-util/tests/udp.rs	a8b6ac72180dde0e2aa32b417a27bc5c06589263af5f88e411b16fa9209bc9ad
+		tokio/src/blocking.rs	837e6def94fc9cd91166cb56b11e73a1fea4de456b80a4e2d32f82430c78b540
+		tokio/src/io/blocking.rs	29e33ddfe6fe5e73398acf39fc0694b20f7ad360fc9db34690ad71d17287eb1f
+		tokio/src/io/poll_evented.rs	334619a06d840de8d5d7037bee6d6f48accf5e8e1252460841637a512fa233f8
+		tokio/src/lib.rs	5dbbe9e3be9ac8dcd1b551982e778e0f4b24efd5f1ea0fd8faa650e408ed8588
+		tokio/src/loom/std/mod.rs	6877ba7d2e7f079c4504eb4ddea9ff70b05803384332b68a09a27d6a57ccbf9e
+		tokio/src/macros/pin.rs	d8347f8258e8feccf56f132dadbfbe846d20fed3515e2211a4b41543177b2029
+		tokio/src/runtime/blocking/pool.rs	8e3c0a4dab069e3664eef33f5d553346dcfa18e78c4918bfc06dc5447ce89fa2
+		tokio/src/runtime/blocking/schedule.rs	a3402f8acb6faebd1e95660d8f5f607890ff89415ee7f8358761a3a7a87a2845
+		tokio/src/runtime/context/runtime.rs	e55c36973ba3132e066363f8649f6beb7733aeaa84a086c63ad673db334b5ab5
+		tokio/src/runtime/driver.rs	909512c24dfea59c99d94a3f4c91f006ae9571a88d55bb66d09c7af397c9b10d
+		tokio/src/runtime/mod.rs	17769dc98dcb13ac26b978c3fef05b7351a06a711d86305723a4ce60b99c9fa5
+		tokio/src/runtime/scheduler/mod.rs	c42aac129db11d810a37b451cb391aea9896a06d363ee74e6681b467d263fdad
+		tokio/src/runtime/scheduler/multi_thread/handle.rs	96885d14358599b06daac97252df572d76585854e9d2bbdada99016da1146a0e
+		tokio/src/runtime/task/mod.rs	915f6602c452b525b83ef7938c784750df665796adc110e90b2a7b3b1374c74f
+		tokio/src/util/blocking_check.rs	297f32a784088ba6f71507d5c6fa7bf5fbdc868e40d5412faa7968f990550b77
+		tokio/src/util/markers.rs	4f20e670ca3e9e77ee191b761e5d13c1225864af908e74961b669aff5aedfde7
+		tokio/tests/async_send_sync.rs	84d83a41bad64a9737d0cd07eda9b5298a142168a20104a8ac7a40e5e49d7109
+		tokio/tests/process_raw_handle.rs	e8ed3a4cf00f5be5f998bd588ac597acff2a43251f9956731034bc72d96bcdd6
+		tokio/tests/rt_common.rs	2a004048490d779a5703a492632646efd34666b39bb63a62c6f7eec3d01e2018
+		tokio/tests/rt_unstable_metrics.rs	462ae121c1548c2c0fe30710544ffd5b090947c7044ee4bb4844179a85382c66
+		tokio/tests/time_alt.rs	f61a78d283d8e32af87ec477e138f089bea011b3799231ba094bd9f74f6c433c
+clippy-allow-attributes-without-reason
+	rerail:ripgrep
+		tests/util.rs	6862edaf5adad5eff8b7bf3c50ed28c221c0212fe733b22387d1f4f09909b447
+	rerail:tokio
+		examples/prewarm-fd-table.rs	0245a40fc5097a9db4c50d529c1d82cfb769624a65b6a9acbaaf262149b6c791
+		tokio-stream/tests/async_send_sync.rs	2fde5007212aba7efc1417fc8ea04e5be61545c2506983155fd3aa1cfb60c5fe
+		tokio-util/src/util/mod.rs	355746e276028d1aee294e84c37cabb9cb88cd1877fd925cbca1429b87b0f99e
+		tokio-util/src/util/poll_buf.rs	54736dde13f441b285f6ffeded9d0a80e30fccf468f5527493278e86c8451097
+		tokio-util/tests/udp.rs	a8b6ac72180dde0e2aa32b417a27bc5c06589263af5f88e411b16fa9209bc9ad
+		tokio/src/blocking.rs	837e6def94fc9cd91166cb56b11e73a1fea4de456b80a4e2d32f82430c78b540
+		tokio/src/future/mod.rs	527c1ed5106c8f95936883befd7e595a2892b741cbef473a1c429beb265176b5
+		tokio/src/io/blocking.rs	29e33ddfe6fe5e73398acf39fc0694b20f7ad360fc9db34690ad71d17287eb1f
+		tokio/src/io/interest.rs	a359b014993e626ff47a797484472b2faeab4c0a6ddf1a5ea40c6fcc0d3c38a8
+		tokio/src/io/mod.rs	9bc5530625ca09865cfded5aeb0bcf88300c1fe7d9f202b1543c36a31223ed09
+		tokio/src/io/poll_evented.rs	334619a06d840de8d5d7037bee6d6f48accf5e8e1252460841637a512fa233f8
+		tokio/src/io/ready.rs	85fc7a192552607acf6623e1f083b4e12447067bfa57fd667fb2c6e9fce7a4d8
+		tokio/src/lib.rs	5dbbe9e3be9ac8dcd1b551982e778e0f4b24efd5f1ea0fd8faa650e408ed8588
+		tokio/src/loom/std/mod.rs	6877ba7d2e7f079c4504eb4ddea9ff70b05803384332b68a09a27d6a57ccbf9e
+		tokio/src/macros/mod.rs	b223651ad1aa5e4fa41db463fabae4c8c6f7e1bfb43d6be2100db247fc6ef2b7
+		tokio/src/macros/pin.rs	d8347f8258e8feccf56f132dadbfbe846d20fed3515e2211a4b41543177b2029
+		tokio/src/runtime/blocking/pool.rs	8e3c0a4dab069e3664eef33f5d553346dcfa18e78c4918bfc06dc5447ce89fa2
+		tokio/src/runtime/blocking/schedule.rs	a3402f8acb6faebd1e95660d8f5f607890ff89415ee7f8358761a3a7a87a2845
+		tokio/src/runtime/builder.rs	703f341f9c84629c6d440bcf77cb6ae60ef3c39956e62d3184c1f5df7d13fca4
+		tokio/src/runtime/config.rs	a80f2981d7ca8f02e04c050b139c4f0148ca5636900fbb6dc35159342ae7bcef
+		tokio/src/runtime/context/runtime.rs	e55c36973ba3132e066363f8649f6beb7733aeaa84a086c63ad673db334b5ab5
+		tokio/src/runtime/driver.rs	909512c24dfea59c99d94a3f4c91f006ae9571a88d55bb66d09c7af397c9b10d
+		tokio/src/runtime/io/mod.rs	9f7f85d298193291386ccf986bcf4ac47b83529e062883ad44b57bda2a1aa4da
+		tokio/src/runtime/io/registration.rs	3632b36eab0b67ef6733cfa7ebf5f15a07623a977505585bf2f835cb2b5baadc
+		tokio/src/runtime/mod.rs	17769dc98dcb13ac26b978c3fef05b7351a06a711d86305723a4ce60b99c9fa5
+		tokio/src/runtime/park.rs	9828d90e73909acff285625f7b48771a2624729230c1b6377a36f1f033c788ea
+		tokio/src/runtime/process.rs	b6bd15937ae2ab45ebd46cb06981244e8e5e75ea0c47e6d8d294a00ba9003f0e
+		tokio/src/runtime/scheduler/inject/synced.rs	c9c4cab69cfb824e8980bae3cb98df714fc554b944fed7be44b4e0e22403228e
+		tokio/src/runtime/scheduler/mod.rs	c42aac129db11d810a37b451cb391aea9896a06d363ee74e6681b467d263fdad
+		tokio/src/runtime/scheduler/multi_thread/handle.rs	96885d14358599b06daac97252df572d76585854e9d2bbdada99016da1146a0e
+		tokio/src/runtime/signal/mod.rs	20ad912680df1e8c1223ff8903f1a993a9528fe8144e94223389ee492477ea75
+		tokio/src/runtime/task/core.rs	7c896dec6ef10054ed2b8049a2b35667eae348615c162a46d1ceb9181fc71b5c
+		tokio/src/runtime/task/mod.rs	915f6602c452b525b83ef7938c784750df665796adc110e90b2a7b3b1374c74f
+		tokio/src/runtime/task/waker.rs	1fb267857256963bfdde25865115fb6b29bcc57417679acf80916fd16f0b317c
+		tokio/src/runtime/task_hooks.rs	57fc88576ec8e2eca8f401e3d1bd800f5c1283b98aaadc01326fb2c1138bf6ea
+		tokio/src/runtime/time/mod.rs	975fccd02630e5f159f6570abefdc1d00b083bdd85ed8b4b4fefffd03cdc5e96
+		tokio/src/sync/batch_semaphore.rs	88b0265c698d8da408ecb6c65d301926e9a54ba039637bdbedd4c915dff08efa
+		tokio/src/sync/mod.rs	0560ed6df8f7b53685ee18a31f7e21559d18b08ca6132a0d4710af01f88f38b4
+		tokio/src/sync/mpsc/mod.rs	455441acb6e0fadf2ba5599d8459bd5eabe823aae8a84782cc0056fb1053f5dc
+		tokio/src/sync/mutex.rs	f5ca224054d774db86f735e5400fde606aa6acb6e84a711598678082f562af85
+		tokio/src/sync/notify.rs	e3f395913051b554ff3b791d17ce75d0200d7dcac156e64abce079a8f0c276ad
+		tokio/src/sync/oneshot.rs	c9b2824053358a147ff59784a63472bea8b078010e912633998b3ac7992a2d78
+		tokio/src/sync/task/atomic_waker.rs	e859b923919f6c111f98c62090503887c1d104a0a0223074130811694de33358
+		tokio/src/sync/watch.rs	034e6769c20b5d053dac6b043fed3bab0b29e6c804ab0bb2a18ed687707ae53b
+		tokio/src/task/coop/mod.rs	7d36981992a2ee30d304364ce7d7cb474d85448723428a910a768cc646557904
+		tokio/src/time/clock.rs	a4769f71bbf20a0df3ad52f477f3118643ea0946148839f2010a6375336d5295
+		tokio/src/time/interval.rs	f7665ee3d5049b4d3be9453c47b935d6629981f7537a3fb4cfe4aa54863c3c1d
+		tokio/src/time/sleep.rs	a5c092e8c268fcb10c63b7923dc4aae1282bda60805f9d87f3987c4fecde4595
+		tokio/src/util/blocking_check.rs	297f32a784088ba6f71507d5c6fa7bf5fbdc868e40d5412faa7968f990550b77
+		tokio/src/util/cacheline.rs	204079442ea5db45488f327a48a3ef13a93702c8f77640511e5ed4398dca4390
+		tokio/src/util/error.rs	de1a0d662e9359da3e19739125b1450f571abadf30e34f50f085b23d8da28d80
+		tokio/src/util/linked_list.rs	000a612d74243ccf32d7e3d0563fa8b450e8cbb7261af156027ae7556b715983
+		tokio/src/util/markers.rs	4f20e670ca3e9e77ee191b761e5d13c1225864af908e74961b669aff5aedfde7
+		tokio/src/util/metric_atomics.rs	c123d1317a65138d310874a259afa40ecbd48d7e97c72ad9c199e13329bced53
+		tokio/tests/async_send_sync.rs	84d83a41bad64a9737d0cd07eda9b5298a142168a20104a8ac7a40e5e49d7109
+		tokio/tests/process_raw_handle.rs	e8ed3a4cf00f5be5f998bd588ac597acff2a43251f9956731034bc72d96bcdd6
+		tokio/tests/rt_common.rs	2a004048490d779a5703a492632646efd34666b39bb63a62c6f7eec3d01e2018
+		tokio/tests/rt_unstable_metrics.rs	462ae121c1548c2c0fe30710544ffd5b090947c7044ee4bb4844179a85382c66
+		tokio/tests/time_alt.rs	f61a78d283d8e32af87ec477e138f089bea011b3799231ba094bd9f74f6c433c
+clippy-decimal-literal-representation
+	rerail:tokio
+		tokio/tests/io_buf_reader.rs	03956adce9ef26a63945c3c78b2ced82beee0c215086e34088d5db1d9e002281
+		tokio/tests/rt_unstable_metrics.rs	462ae121c1548c2c0fe30710544ffd5b090947c7044ee4bb4844179a85382c66
+clippy-decimal-literal-representation-threshold
+	rerail:tokio
+		tokio-util/tests/time_delay_queue.rs	7ca922cef2f0dd1145b26c560536367f39f493bc3ef6b5fe95074bbb0e476180
+		tokio/src/runtime/mod.rs	17769dc98dcb13ac26b978c3fef05b7351a06a711d86305723a4ce60b99c9fa5
+		tokio/tests/io_buf_reader.rs	03956adce9ef26a63945c3c78b2ced82beee0c215086e34088d5db1d9e002281
+clippy-else-if-without-else
+	rerail:ripgrep
+		crates/core/flags/defs.rs	779953a821d814ba7f66877d0e581f2a7d7b44099b2cd5c6c7a7271b517ebd1f
+		crates/core/flags/doc/help.rs	c3a5ff9abf738dd84fe957378f2bb8e088838a531783f55a3b5e860a982877cb
+		crates/ignore/examples/walk.rs	801b849ef589050878e02cd2367fb856bbe55197cab28e1978acbe8b74539379
+		crates/ignore/src/dir.rs	e2ad00e37e22433feb6f06795e4a7aea6af2a4e06f44f6f56e171377e42f56f3
+		crates/ignore/src/pathutil.rs	69e4ca040721e33b94d0ce6a7ca2cd1289291ca336838fa67d71ed605a7a1f26
+		crates/index/src/literal.rs	09c40115a676960db2e4f40b39c4b4ba07f180fc19ab4169b90a3ce5543d2714
+		crates/pcre2/src/matcher.rs	dbcc491d733c9eaceaa86c3cdb0819548c2deeb5c2efa3b5b0d001fb443ea380
+		crates/printer/src/hyperlink/mod.rs	8887b066987643638d822ec53ebd44f10b9d1a1bab00d9152579a56dfad284fb
+		crates/printer/src/standard.rs	8fc94a8cba6add7dbe8394cd2c6f24dffb773b9f85852ee6d4e97747d40e7460
+		crates/printer/src/summary.rs	76ac78ad878a2a6a45a19563659e710b9080678397fbcffdb68746f5eefe3655
+		crates/regex/src/literal.rs	f1746f2df93ba9defed55f36ad0f7cd5dada16a7fa881f80193f8d98948c981f
+		crates/regex/src/matcher.rs	a98966ab3326c1ff8121987222f602dc8d861b627fbb4f9fa804667ca643065f
+		crates/searcher/src/lines.rs	37ec6404ed642b0692a726e21313acadae8ca4202da859d6421d5dfd44594bc1
+		crates/searcher/src/searcher/core.rs	7f3fd0976fc91e8aca2eaa07b423ab2a6ad919984b261604d35d715fa02ab3ef
+	rerail:tokio
+		tokio-macros/src/entry.rs	84cb4e937438ad7eece32412a2f27f3816cb9475b80f49070bb37f465ac6313a
+		tokio-stream/src/stream_map.rs	ed969945c9b69d6032bf75278c2890b6c2a256ef7c1eb19b570ab2727c238475
+		tokio-util/src/time/delay_queue.rs	d521221e8bd03e55d2c4a569a7f408604e47835a5ab7212bc35a2404433894e2
+		tokio-util/src/time/wheel/mod.rs	abd49054774609fcef0990c9d24cff4e4c48cf9f0a87fa6fa91e1762d054aa09
+		tokio-util/tests/time_delay_queue.rs	7ca922cef2f0dd1145b26c560536367f39f493bc3ef6b5fe95074bbb0e476180
+		tokio/src/fs/read_dir.rs	b6777ba0d0261a30226a814fd9be19b22a096153be3b5cbfc15c22819efc73af
+		tokio/src/future/try_join.rs	0ea5a069b17a34bbc091acbd74b9d51794a55a85dfa63fe2404d5ee91a4f0038
+		tokio/src/runtime/scheduler/multi_thread/park.rs	b4c4572dba85240791a508adb1e27fbf85170053efc6c8ed0d9decc42e1b04eb
+		tokio/src/runtime/task/harness.rs	a46be29d645becf3ec0a0e15dfb171b3874308d4162bb87cae1a736253698eaf
+		tokio/src/sync/batch_semaphore.rs	88b0265c698d8da408ecb6c65d301926e9a54ba039637bdbedd4c915dff08efa
+		tokio/tests/support/io_vec.rs	9b3001e120138ead4a63720019c669ff00f8455a74dea2fb231633b3b58c9b09
+clippy-needless-raw-string-hashes-one-allowed
+	rerail:ripgrep
+		crates/core/flags/defs.rs	779953a821d814ba7f66877d0e581f2a7d7b44099b2cd5c6c7a7271b517ebd1f
+		tests/regression.rs	77e84eb6c056a968e160c841681d471089ad62c924094fe4c0d769df271c9a78
+clippy-needless-raw-strings
+	rerail:ripgrep
+		crates/printer/src/hyperlink/mod.rs	8887b066987643638d822ec53ebd44f10b9d1a1bab00d9152579a56dfad284fb
+clippy-partial-pub-fields
+	rerail:tokio
+		tokio-util/src/codec/framed.rs	d60be330ca26b3e22f52f3a6ec9888199d77d0fe519c45777977c1d2d0752545
+		tokio/src/process/mod.rs	43beb73d468354cab1818b0043a9adafb37764b3b883b34455815ac2b4ec0cd8
+		tokio/tests/sync_mpsc_weak.rs	9db55b52431e29ff8b5eb197093145cb78d1ba0624639d2435817a5f0e27e246
+clippy-precedence-bits
+	rerail:tokio
+		tokio-stream/src/stream_map.rs	ed969945c9b69d6032bf75278c2890b6c2a256ef7c1eb19b570ab2727c238475
+		tokio/src/util/rand.rs	82ccfccee4efcc1260865e05d4bba8ce11a2512f2eb06533e3765fb69919e757
+clippy-redundant-static-lifetimes
+	rerail:ripgrep
+		tests/feature.rs	fbc6455c5d2cb73580cde4b390c0a43315107598200a6ca6023c3bfc155d8706
+clippy-single-char-lifetime-names
+	rerail:ripgrep
+		crates/ignore/src/pathutil.rs	69e4ca040721e33b94d0ce6a7ca2cd1289291ca336838fa67d71ed605a7a1f26
+		crates/index/src/literal.rs	09c40115a676960db2e4f40b39c4b4ba07f180fc19ab4169b90a3ce5543d2714
+		crates/printer/src/util.rs	59d984c9b7586592faaa8fc146a67346ece2aed3365f8ccc8a211c12744d9484
+	rerail:tokio
+		tokio-stream/src/stream_ext/all.rs	cedede9999101e9ce10d157088c7f038fdf9e83d631ba9552d06e035c5c0d84e
+		tokio-stream/src/stream_ext/any.rs	b65bf5a191f0d099589a00f7834961eeec72e91713e1852abe6b1f1d32a9814a
+		tokio-stream/src/stream_ext/next.rs	0cf1be87372999f4bc710fe06fa9c0f6742e4bc2c1f781e8f5dd065fe795fcec
+		tokio-stream/src/stream_ext/try_next.rs	3258a10910e84452571686427db3d0a477db60466c1bc96ff012530ad469520b
+		tokio-util/src/future/with_cancellation_token.rs	a2a683b427b781fddb2237787c6f2dc2c44f312982f416a880434e8544d4d12d
+		tokio-util/src/io/write_all_vectored.rs	1665381c603d4627133525f72717581155b0a562e6823b3a715853c540b5d3c0
+		tokio-util/src/sync/cancellation_token.rs	e1e8131516deea5fc45131cad9e446e32353433941dd2418ab22b58a6113cb25
+		tokio-util/src/task/task_tracker.rs	1333377da37b77bb73b22f3b6194f8c31932414bf3361e030a8021e40b1c6778
+		tokio/src/io/poll_evented.rs	334619a06d840de8d5d7037bee6d6f48accf5e8e1252460841637a512fa233f8
+		tokio/src/io/seek.rs	56c8405acdd82b843dae3a9b4d4e98adf47881f6deee6ed2e71cbdb91ba8379d
+		tokio/src/io/util/async_buf_read_ext.rs	5ff991408c5d2db7502514016024ca2e20626de2b0b26e3a10b9ae294b3ad01c
+		tokio/src/io/util/async_read_ext.rs	896c7ecdcd40b92626ac1eb1daec63cfccf997fa32499dd4080a86f3c7f446cd
+		tokio/src/io/util/async_write_ext.rs	720b4d838b22c09a56bbfc90d8886ec1594ac68bc04d0f791b17c0b73ced060b
+		tokio/src/io/util/copy.rs	aa17b30dc0d531ba4cc52802adb7fd86e5f309be6e304448f89b734e1b524c59
+		tokio/src/io/util/copy_buf.rs	9868da624e028c6090c86fc2fccb3d30e13bb4c8bffe3d9aeb67dd3ef3fed5fc
+		tokio/src/io/util/fill_buf.rs	223725d828071e923f25d2d49a0f6e470c411a6d9ba225700f2dd8d5793601bb
+		tokio/src/io/util/flush.rs	e3384731406fbbfd5745631b9c60bee706802fb1d0c94bfbb79c53fbf41e7a75
+		tokio/src/io/util/read.rs	3583f5adb74ddafc291d2c8aab3b40650cd5f8241197feeebfe78d8a3c06d6fd
+		tokio/src/io/util/read_buf.rs	812ac09bb6e19f14a382a523e5bb44d56e240309a46ab3fb2f9b4cfa71c7eb37
+		tokio/src/io/util/read_exact.rs	200f211e821e1f50730644cf4e621db5e47b262cda9ac9b9502b22c258085d04
+		tokio/src/io/util/read_line.rs	ac43fa4ef953f03b7ab6dbaa923a729c0065f1a798381d21f7b61be20e5e5d22
+		tokio/src/io/util/read_to_end.rs	1cbab61e586c6863bef2e86311c0b723ef4398c1cac16000426632307c274f68
+		tokio/src/io/util/read_to_string.rs	49c8e96c00b35bef4ee7bff8357893afe23de41e03db878c14d437e272008a6d
+		tokio/src/io/util/read_until.rs	3db4a5dcef1956df86a22a35099ab66645bfdcb29190755818c09ccd7e2555e1
+		tokio/src/io/util/shutdown.rs	dbf7e47a06b8cc436b9210ea185b92efd5e5359eb4469f678b75e888664a064b
+		tokio/src/io/util/write.rs	20d14ee545ab1f67732915522e97808d1ddde13d151505c1289b596be519f7c8
+		tokio/src/io/util/write_all.rs	379df45494ed544add0bbf609aeaafad6426740292bbe7c7b1e5731307d2781a
+		tokio/src/io/util/write_all_buf.rs	d19bb0491986b35c7826b45ee007f4134d9373835f7967225f71f48e7423ba86
+		tokio/src/io/util/write_buf.rs	8aefd591de37effd7b7b20fea879ee8b123e489516092ca2abe811b6f56bf573
+		tokio/src/io/util/write_vectored.rs	7a335a9f796daa048fa9708dc44d32d2567b36461a6d88f07893eb31f304b69d
+		tokio/src/runtime/park.rs	9828d90e73909acff285625f7b48771a2624729230c1b6377a36f1f033c788ea
+		tokio/src/task/join_set.rs	421b2f5af3e877a85fdd8920688f10e05e62cd75d2149c7db997277ffbf3074e
+		tokio/src/task/local.rs	14580991444b6bd419a654d7ff28e25af612251f03da4698f64a43822ad9b423
+		tokio/src/util/linked_list.rs	000a612d74243ccf32d7e3d0563fa8b450e8cbb7261af156027ae7556b715983
+		tokio/src/util/trace.rs	cfc48b92d3f9e8e314063b19a1cefee335cef9f2b353c1d597276b19b44d4e66
+		tokio/tests/io_poll_aio.rs	364cc39655657741f04589d832da33a3446b15f3c82e09cbd84d5c9909bcf1e9
+clippy-unnested-or-patterns
+	rerail:ripgrep
+		crates/globset/src/glob.rs	d230e938384da768864b4aff78836271c1e923ee9f1ffae2d9319fed8bb2ccb4
+clippy-unreadable-literal
+	rerail:ripgrep
+		tests/feature.rs	fbc6455c5d2cb73580cde4b390c0a43315107598200a6ca6023c3bfc155d8706
+	rerail:tokio
+		tokio/tests/tracing_sync.rs	837ca18fbdd2eb6fdc4edbb7d281d8d592e29d4ed6d62e54df242651bfe7e9d0
+clippy-unreadable-literal-no-fractions
+	rerail:ripgrep
+		tests/feature.rs	fbc6455c5d2cb73580cde4b390c0a43315107598200a6ca6023c3bfc155d8706
+	rerail:tokio
+		tokio/tests/tracing_sync.rs	837ca18fbdd2eb6fdc4edbb7d281d8d592e29d4ed6d62e54df242651bfe7e9d0

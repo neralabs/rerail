@@ -1,0 +1,159 @@
+adapter: clippy
+# Clippy's documents in rerail's rust pack (NER-1894).
+rerail:
+  pack: rust
+  project: clippy
+upstream:
+  name: rust-lang/rust-clippy
+  repository: https://github.com/rust-lang/rust-clippy
+  # The clippy Rust 1.99.0 ships (packs/rust/licenses/clippy/UPSTREAM.md): tag rust-1.99.0, `clippy 0.1.99
+  # (b940084d7e 2026-09-28)`.
+  commit: 49e2f89a2605a9a340e04955fdbefa9803e6027a
+  version: 0.1.99
+  license: MIT OR Apache-2.0
+  # The rustup toolchain 1.99.0 with its clippy component (runtimes/clippy-1.99.0/rust-toolchain.toml); the recorder
+  # refuses a toolchain whose rustc is not release 1.99.0 or whose clippy-driver is not that rustc's build.
+  runtime: clippy-1.99.0
+  # Clippy has no named configuration; `default` is its default lint levels: a lint of the correctness, suspicious,
+  # style, complexity or perf group (`declare_clippy_lint!`) is on, and a pedantic, restriction, nursery or cargo lint
+  # is off, so its document ships off.
+  #
+  # How the adapter applies it (decisions for the team):
+  # - Every ported lint is recorded with `-W clippy::<lint>`, as packs/rust/upstream/clippy/generate.py does, so a lint
+  #   the default levels leave off is judged on its own tests too; in-source `allow`/`expect` still apply.
+  # - A lint's upstream tests are the UI tests its `//~` annotations name, and the one named after it (the longest
+  #   lint name a file's stem starts with). Every ported lint is judged on every ported lint's tests, as
+  #   fixtures.expected.json records them.
+  # - The gates judge every case of an upstream lint for each document, with no per-document fixture scope, so cases
+  #   run under Clippy's default test configuration only: tests/ui with tests/clippy.toml. A tests/ui-toml test whose
+  #   clippy.toml is another is skipped, and the four documents that port a non-default clippy.toml
+  #   (clippy-decimal-literal-representation-threshold, clippy-inconsistent-digit-grouping-no-fractions,
+  #   clippy-needless-raw-string-hashes-one-allowed, clippy-unreadable-literal-no-fractions) are judged against the
+  #   defaults they deliberately differ from.
+  # - Positions are each diagnostic's primary span, start and end, in rustc's 1-based lines and character columns.
+  # - The corpus is ripgrep and tokio at conformance.json's pins, run as `cargo +1.99.0 clippy --keep-going --locked
+  #   --workspace --all-targets --all-features` on the recorder's host; a file no compiled unit read is excluded. tokio
+  #   commits no Cargo.lock: it is resolved with `cargo generate-lockfile --publish-time <its commit's time>`.
+  recommended_configs:
+    - default
+popularity:
+  observed_on: 2026-10-19
+  evidence:
+    - "GitHub: rust-lang/rust-clippy has 13,586 stars and 2,214 forks, and is not archived (gh api repos/rust-lang/rust-clippy)"
+    - "rustup: clippy is a component of rustup's default profile, which every `rustup` install of Rust uses unless told otherwise (rust-lang.github.io/rustup/concepts/profiles.html)"
+    - "crates.io: 497,230,628,220 crate downloads across 356,135 crates, the ecosystem Clippy lints (crates.io/api/v1/summary)"
+known_gaps:
+  - id: box-pattern-unnested-or-patterns
+    # The whole function: a probe must occur in the fixture and be a source file of its own.
+    probe: |
+      fn main() {
+          // Should be ignored by this lint, as nesting requires more characters.
+          if let &0 | &2 = &0 {}
+
+          if let box 0 | box 2 = Box::new(0) {}
+          //~^ unnested_or_patterns
+          if let box ((0 | 1)) | box (2 | 3) | box 4 = Box::new(0) {}
+          //~^ unnested_or_patterns
+          const C0: Option<u8> = Some(1);
+          if let Some(1) | C0 | Some(2) = None {}
+          //~^ unnested_or_patterns
+          if let &mut 0 | &mut 2 = &mut 0 {}
+          //~^ unnested_or_patterns
+          if let x @ 0 | x @ 2 = 0 {}
+          //~^ unnested_or_patterns
+          if let (0, 1) | (0, 2) | (0, 3) = (0, 0) {}
+          //~^ unnested_or_patterns
+          if let (1, 0) | (2, 0) | (3, 0) = (0, 0) {}
+          //~^ unnested_or_patterns
+          if let (x, ..) | (x, 1) | (x, 2) = (0, 1) {}
+          //~^ unnested_or_patterns
+          if let [0] | [1] = [0] {}
+          //~^ unnested_or_patterns
+          if let [x, 0] | [x, 1] = [0, 1] {}
+          //~^ unnested_or_patterns
+          if let [x, 0] | [x, 1] | [x, 2] = [0, 1] {}
+          //~^ unnested_or_patterns
+          if let [x, ..] | [x, 1] | [x, 2] = [0, 1] {}
+          //~^ unnested_or_patterns
+          struct TS(u8, u8);
+          if let TS(0, x) | TS(1, x) = TS(0, 0) {}
+          //~^ unnested_or_patterns
+          if let TS(1, 0) | TS(2, 0) | TS(3, 0) = TS(0, 0) {}
+          //~^ unnested_or_patterns
+          if let TS(x, ..) | TS(x, 1) | TS(x, 2) = TS(0, 0) {}
+          //~^ unnested_or_patterns
+          if let S { x: 0, y } | S { y, x: 1 } = (S { x: 0, y: 1 }) {}
+          //~^ unnested_or_patterns
+          if let S { x: 0, y, .. } | S { y, x: 1 } = (S { x: 0, y: 1 }) {}
+      }
+    fixtures:
+      - tests/ui/unnested_or_patterns.rs
+    reason: >-
+      tree-sitter-rust does not parse `box` patterns (`#![feature(box_patterns)]`, unstable; `if let box 0 | box 2 =
+      Box::new(0) {}`): the pattern is an ERROR region and the engine reads the file source-partial
+      (divergences.json, clippy-unnested-or-patterns, line 15). rustc's parser reads it.
+  - id: box-pattern-unnested-or-patterns2
+    # The whole function: a probe must occur in the fixture and be a source file of its own.
+    probe: |
+      fn main() {
+          if let Some(Some(0)) | Some(Some(1)) = None {}
+          //~^ unnested_or_patterns
+          if let Some(Some(0)) | Some(Some(1) | Some(2)) = None {}
+          //~^ unnested_or_patterns
+          if let Some(Some(0 | 1) | Some(2)) | Some(Some(3) | Some(4)) = None {}
+          //~^ unnested_or_patterns
+          if let Some(Some(0) | Some(1 | 2)) = None {}
+          //~^ unnested_or_patterns
+          if let ((0,),) | ((1,) | (2,),) = ((0,),) {}
+          //~^ unnested_or_patterns
+          if let 0 | (1 | 2) = 0 {}
+          //~^ unnested_or_patterns
+          if let box (0 | 1) | (box 2 | box (3 | 4)) = Box::new(0) {}
+          //~^ unnested_or_patterns
+          if let box box 0 | box (box 2 | box 4) = Box::new(Box::new(0)) {}
+          //~^ unnested_or_patterns
+      }
+    fixtures:
+      - tests/ui/unnested_or_patterns2.rs
+    reason: >-
+      tree-sitter-rust does not parse `box` patterns (`#![feature(box_patterns)]`, unstable; `if let box (0 | 1) |
+      (box 2 | box (3 | 4)) = Box::new(0) {}`): the patterns are ERROR regions and the engine reads the file
+      source-partial (divergences.json, clippy-unnested-or-patterns, lines 18 and 20). rustc's parser reads it.
+  - id: attribute-on-tuple-element
+    # The whole function: a probe must occur in the fixture and be a source file of its own.
+    probe: |
+      fn main() {
+          let good = (       // Hex:
+              127,           // 0x7F
+              256,           // 0x100
+              511,           // 0x1FF
+              2048,          // 0x800
+              4090,          // 0xFFA
+              16_371,        // 0x3FF3
+              61_683,        // 0xF0F3
+              2_131_750_925, // 0x7F0F_F00D
+          );
+          let bad = (        // Hex:
+              32_773,        // 0x8005
+              //~^ decimal_literal_representation
+              65_280,        // 0xFF00
+              //~^ decimal_literal_representation
+              2_131_750_927, // 0x7F0F_F00F
+              //~^ decimal_literal_representation
+              2_147_483_647, // 0x7FFF_FFFF
+              //~^ decimal_literal_representation
+              #[allow(overflowing_literals)]
+              4_042_322_160, // 0xF0F0_F0F0
+              //~^ decimal_literal_representation
+              32_773usize,   // 0x8005_usize
+              //~^ decimal_literal_representation
+              2_131_750_927isize, // 0x7F0F_F00F_isize
+              //~^ decimal_literal_representation
+          );
+      }
+    fixtures:
+      - tests/ui/decimal_literal_representation.rs
+    reason: >-
+      tree-sitter-rust does not parse an outer attribute on a tuple element expression
+      (`#[allow(overflowing_literals)]` before `4_042_322_160`, line 24): the line is an ERROR region and the engine
+      reads the file source-partial (divergences.json, clippy-allow-attributes, line 24). rustc's parser reads it.

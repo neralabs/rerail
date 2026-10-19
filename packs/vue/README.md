@@ -1,10 +1,13 @@
 # Rerail rule pack: Vue
 
-Ports of 24 eslint-plugin-vue 10.11.1 rules for Vue single-file components, with their default options. All 24 are
-candidates under `candidates/rules/`: they have not passed the V1 rule validation gates
-([nera-rule-validation](https://github.com/neralabs/nera-rule-validation)), so `pack.json` lists no rules, the pack
-ships none and is never recommended, and a candidate is scored and reported but never gates a check. A port moves to
-`rules/` and `pack.json` once it passes the gates. Each
+Ports of 24 eslint-plugin-vue 10.11.1 rules for Vue single-file components, with their default options. One ships:
+`no-setup-props-reactivity-loss`, off until turned on (no recommended configuration of eslint-plugin-vue turns it on).
+It passes every blocking port readiness gate ([docs/port-readiness.md](../../docs/port-readiness.md)), judged against
+`upstream/eslint-plugin-vue/gates.yaml`'s recording of eslint-plugin-vue's own RuleTester cases and of the pinned
+corpora. The other 23 are candidates under `candidates/rules/`, scored and reported but never gating a check, until
+they pass the gates: 14 stop at `matches-upstream-tests` (most report a point where eslint-plugin-vue reports a
+range, and the script-rule cases upstream lints as bare scripts are outside a `.vue`-only port's reach), 5 at
+`not-overfit` and 4 at `compact`. Each
 reads the component's two documents: its tree-sitter-vue tree, and the ECMAScript program its scripts and template
 expressions make (the `script-block` program a clause reads with `ast.embedded`, or reaches from a template node with
 `embedded`; `host` leads back from a program node to the template node it stands for). Each port
@@ -20,17 +23,19 @@ It is checked by:
 ```sh
 node --import tsx conformance/languages/cli.ts --pack vue
 npx vitest run test/engine/catalog/packs.test.ts -t "pack vue"
+npm run port-readiness -- --pack vue --tool eslint-plugin-vue
 ```
 
 ([pack structure and validation contract](../../docs/pack-format.md)).
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition, and no rules until a port passes |
-| `candidates/rules/` | The 24 candidate code-rule documents (`rerail.policy/v1`), scored but never shipped |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition and its one shipped rule, off |
+| `rules/` | The shipped code-rule document (`rerail.policy/v1`) |
+| `candidates/rules/` | The 23 candidate code-rule documents (`rerail.policy/v1`), scored but never shipped |
 | `conformance.json` | Each port's upstream rule, how findings compare, and the capabilities it exercises; the pinned parser stack and the pinned corpora |
 | `divergences.json` | Declared disagreements with eslint-plugin-vue (none) |
-| `upstream/eslint-plugin-vue/` | The copied RuleTester cases (`fixtures/`), the cases Rerail wrote (`authored.mjs`, written as `fixtures/<rule>/rerail-*.vue` and listed in `UPSTREAM.md`), each case's fate (`cases.json`) and the recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`) |
+| `upstream/eslint-plugin-vue/` | The copied RuleTester cases (`fixtures/`: `generate.mjs`'s `<valid\|invalid>-<n>.vue`, and the port readiness recorder's `<sha256 prefix>.<ext>`), the cases Rerail wrote (`authored.mjs`, written as `fixtures/<rule>/rerail-*.vue` and listed in `UPSTREAM.md`), each case's fate (`cases.json`), the conformance recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`), and the port readiness manifest, lock and goldens (`gates.yaml`, `recording.lock`, `goldens.tsv`) |
 | `licenses/eslint-plugin-vue/` | eslint-plugin-vue's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Rule details

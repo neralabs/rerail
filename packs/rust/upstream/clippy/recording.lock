@@ -1,0 +1,31 @@
+{
+  "format": "rerail.port-readiness-recording-lock/v1",
+  "tool": "clippy",
+  "release": "port-readiness-recordings",
+  "recorder": "0.1.0-next.2",
+  "pins": {
+    "repository": "https://github.com/rust-lang/rust-clippy",
+    "commit": "49e2f89a2605a9a340e04955fdbefa9803e6027a",
+    "version": "0.1.99",
+    "runtime": "clippy-1.99.0"
+  },
+  "runtimes": {
+    "clippy-1.99.0": {
+      "rust-toolchain.toml": "f9bf9b1091685d47c8d57c178ea17cacda869da53f635174d4547632967a2433"
+    }
+  },
+  "files": {
+    "recording.json": {
+      "sha256": "94aca4c92d9b5703a93129c413b039e42db14ce6ddfdc1efa5106adc73d6dca8",
+      "size": 1051439,
+      "format": "rerail.port-readiness-recording/v2",
+      "asset": "rust-clippy-recording-94aca4c92d9b5703a93129c413b039e42db14ce6ddfdc1efa5106adc73d6dca8.json.gz"
+    },
+    "corpus.json": {
+      "sha256": "2be5704611d053805213142c14928d9f3f01f1a85353c6a0f67091bed5411532",
+      "size": 276586,
+      "format": "rerail.port-readiness-corpus/v2",
+      "asset": "rust-clippy-corpus-2be5704611d053805213142c14928d9f3f01f1a85353c6a0f67091bed5411532.json.gz"
+    }
+  }
+}

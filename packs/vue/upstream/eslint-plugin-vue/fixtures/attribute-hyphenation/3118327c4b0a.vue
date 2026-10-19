@@ -1,0 +1,1 @@
+<template><div><custom v-bind:myProp="prop" :secondProp="test"></custom></div></template>
