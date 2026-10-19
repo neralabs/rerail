@@ -92,21 +92,11 @@ fn authored_cases(source: &str) -> Vec<ContractCase> {
 fn cases() -> Vec<ContractCase> {
     let mut cases = Vec::with_capacity(108);
     for fixture in [
-        include_str!(
-            "../../../../fixtures/code-rule-dsl/sql-conformance/production_contracts_001_020.json"
-        ),
-        include_str!(
-            "../../../../fixtures/code-rule-dsl/sql-conformance/production_contracts_021_040.json"
-        ),
-        include_str!(
-            "../../../../fixtures/code-rule-dsl/sql-conformance/production_contracts_041_060.json"
-        ),
-        include_str!(
-            "../../../../fixtures/code-rule-dsl/sql-conformance/production_contracts_061_080.json"
-        ),
-        include_str!(
-            "../../../../fixtures/code-rule-dsl/sql-conformance/production_contracts_081_108.json"
-        ),
+        include_str!("../../../../fixtures/code-rule-dsl/query/production_contracts_001_020.json"),
+        include_str!("../../../../fixtures/code-rule-dsl/query/production_contracts_021_040.json"),
+        include_str!("../../../../fixtures/code-rule-dsl/query/production_contracts_041_060.json"),
+        include_str!("../../../../fixtures/code-rule-dsl/query/production_contracts_061_080.json"),
+        include_str!("../../../../fixtures/code-rule-dsl/query/production_contracts_081_108.json"),
     ] {
         cases.extend(authored_cases(fixture));
     }

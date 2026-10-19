@@ -4,6 +4,7 @@
 // pack (`packs/<family>/`), or is a declared shared family; and every `packs/<id>/` holds at least one
 // rule document in `rules/`, or in `candidates/rules/` while it ships none because all its ports are candidates.
 // Declared shared families (`SHARED_FAMILIES`), each with its reason:
+//   - `code-rule-dsl`: cross-language contracts for the code-rule compiler;
 //   - `ecma`: ECMAScript recordings shared by the javascript and typescript languages and the
 //     typescript, react, next and node packs;
 //   - `host`: host-adapter inputs, not tied to a language;
@@ -15,7 +16,7 @@ export const id = 11;
 export const title = "No orphan fixture families or packs";
 export const target = "0";
 
-export const SHARED_FAMILIES = ["ecma", "host", "packs"];
+export const SHARED_FAMILIES = ["code-rule-dsl", "ecma", "host", "packs"];
 
 export function check(repo) {
   const families = new Set();
