@@ -3,11 +3,13 @@
 //! of the captures the term reads, decodes each into the node and an environment holding those
 //! bindings, and evaluates it natively (`Verdicts`) with the file's scopes installed: built on the
 //! file's first key and parked between statements, so a batch builds each file's scope tables,
-//! values and line tables once (`FileScopeSlot::park`). It returns the keys whose verdict is true
-//! or unknown, with `unk` and the values the term binds; `Op::Fact` reads them into a frame. A
-//! related-node terminal returns several rows per key, one per related node (`Walk::Related`).
-//! A key's file may be a parsed tree of the batch (`exec::SubFile`), evaluated with its host
-//! file's scopes.
+//! values and line tables once (`FileScopeSlot::park`), and the tables once between the sessions
+//! of a grouped batch where one built them first (`FileContext::scopes`). A term the batch
+//! evaluates again answers the keys it was asked before from its memo (`FactMemo`). It returns
+//! the keys whose verdict is true or unknown, with `unk` and the values the term binds; `Op::Fact`
+//! reads them into a frame, each input row finding its key's rows by the key. A related-node
+//! terminal returns several rows per key, one per related node (`Walk::Related`). A key's file
+//! may be a parsed tree of the batch (`exec::SubFile`), evaluated with its host file's scopes.
 
 use super::Terminal;
 use crate::code_rule_dsl::literal::{ID_FLAG, SubDoc};
@@ -33,7 +35,6 @@ use rusqlite::vtab::{
 };
 use rusqlite::{Error, Result};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CStr, c_int};
 use std::marker::PhantomData;
 use std::sync::{Arc, LazyLock};
@@ -53,6 +54,7 @@ pub(in crate::code_rule_dsl::sql) fn take_fact_time() -> Timing {
 }
 
 /// A verdict that is not false: unknown or true, with the values of the term's columns.
+#[derive(Clone)]
 pub(in crate::code_rule_dsl::sql) struct Verdict {
     pub(in crate::code_rule_dsl::sql) unknown: bool,
     pub(in crate::code_rule_dsl::sql) values: Vec<Value>,
@@ -71,6 +73,38 @@ impl Verdict {
             unknown: false,
             values,
         }
+    }
+}
+
+/// A fact term's verdicts in a batch by key, remembered from its second evaluation on: a term the
+/// batch evaluates again (an `each` round, a recursion level, a loop's statement) is mostly asked
+/// the keys it was asked before, so it answers them as it did then, and a term evaluated once
+/// remembers nothing. A verdict is the native leaf's at the key's node with its bindings, the
+/// same whichever statement asks.
+#[derive(Default)]
+pub(in crate::code_rule_dsl::sql) struct FactMemo {
+    evaluations: u32,
+    verdicts: rustc_hash::FxHashMap<Box<str>, Box<[Verdict]>>,
+}
+
+impl FactMemo {
+    /// The verdicts at key `ek`: those remembered, else `evaluate`'s, remembered from the term's
+    /// second evaluation in the batch on.
+    fn answer(
+        &mut self,
+        ek: &str,
+        evaluate: impl FnOnce() -> Result<Vec<Verdict>>,
+    ) -> Result<Vec<Verdict>> {
+        if self.evaluations < 2 {
+            return evaluate();
+        }
+        if let Some(known) = self.verdicts.get(ek) {
+            return Ok(known.to_vec());
+        }
+        let verdicts = evaluate()?;
+        self.verdicts
+            .insert(ek.into(), verdicts.clone().into_boxed_slice());
+        Ok(verdicts)
     }
 }
 
@@ -245,7 +279,9 @@ impl Drop for BatchScopes {
 /// Runs `body` with file `index`'s scopes installed: those parked by an earlier statement of the
 /// batch, else fresh ones as the native evaluator installs them per file (its cached scope
 /// tables, module, path and whether its syntax errors hide bindings), and its call-graph closure
-/// where it has one, as the evaluator installs it for `calls`.
+/// where it has one, as the evaluator installs it for `calls`. The file's tables are shared with
+/// the batch's other sessions (`FileContext::scopes`): it reads those they built, and shares
+/// those `body` built.
 pub(in crate::code_rule_dsl::sql) fn with_scopes<T>(
     index: usize,
     file: &BatchFile,
@@ -253,11 +289,15 @@ pub(in crate::code_rule_dsl::sql) fn with_scopes<T>(
 ) -> T {
     let parked = SCOPES.with_borrow_mut(|scopes| scopes.get_mut(index).and_then(Option::take));
     let slot = match parked {
-        Some(parked) => FileScopeSlot::resume(parked),
+        Some(parked) => {
+            let slot = FileScopeSlot::resume(parked);
+            slot.adopt(&file.context.scopes.lock());
+            slot
+        }
         None => {
             let errors = SyntaxErrors::of_doc(file.root.root().get_doc());
             let slot = FileScopeSlot::install(
-                file.context.scopes.clone(),
+                file.context.scopes.lock().clone(),
                 file.context.module.clone(),
                 errors.hide_bindings(),
             );
@@ -272,6 +312,18 @@ pub(in crate::code_rule_dsl::sql) fn with_scopes<T>(
     });
     let out = body();
     drop(calls);
+    let built = slot.tables();
+    {
+        let mut shared = file.context.scopes.lock();
+        for table in built {
+            if !shared
+                .iter()
+                .any(|held| held.language == table.language && held.reading == table.reading)
+            {
+                shared.push(table);
+            }
+        }
+    }
     if let Some(parked) = slot.park() {
         SCOPES.with_borrow_mut(|scopes| {
             if scopes.len() <= index {
@@ -336,26 +388,90 @@ fn environment<'t, D: Doc>(
     Some(env)
 }
 
-/// One answered key: each of its rows.
+/// The keys of one `xFilter`: their texts in one buffer, each with its file and node read from
+/// its `file,node` prefix, in evaluation order (by file, then by text) once `sort`ed.
+#[derive(Default)]
+struct Keys {
+    text: String,
+    keys: Vec<Key>,
+}
+
+/// A key of `Keys`: its file, node and the range of its text.
+struct Key {
+    file: usize,
+    node: u32,
+    start: u32,
+    end: u32,
+}
+
+impl Keys {
+    /// Adds a key's text; one whose `file,node` prefix does not parse names no node and is
+    /// left out.
+    fn push(&mut self, ek: &str) {
+        let mut parts = ek.splitn(3, ',');
+        let (Some(Ok(file)), Some(Ok(node))) = (
+            parts.next().map(str::parse::<usize>),
+            parts.next().map(str::parse::<u32>),
+        ) else {
+            return;
+        };
+        let start = self.text.len() as u32;
+        self.text.push_str(ek);
+        self.keys.push(Key {
+            file,
+            node,
+            start,
+            end: self.text.len() as u32,
+        });
+    }
+
+    fn text(&self, key: &Key) -> &str {
+        &self.text[key.start as usize..key.end as usize]
+    }
+
+    /// Orders the keys by file, then by text, each once. An `IN` list comes distinct and in its
+    /// index's order, by text, which already orders each file's keys: then only the files are
+    /// ordered (a stable sort over runs).
+    fn sort(&mut self) {
+        let mut keys = std::mem::take(&mut self.keys);
+        if keys
+            .windows(2)
+            .all(|pair| self.text(&pair[0]) < self.text(&pair[1]))
+        {
+            keys.sort_by_key(|key| key.file);
+        } else {
+            keys.sort_unstable_by(|left, right| {
+                left.file
+                    .cmp(&right.file)
+                    .then_with(|| self.text(left).cmp(self.text(right)))
+            });
+            keys.dedup_by(|right, left| self.text(left) == self.text(right));
+        }
+        self.keys = keys;
+    }
+}
+
+/// One answered key (by its index in `Keys`): each of its rows.
 struct FactRow {
-    ek: String,
+    key: u32,
     unknown: bool,
     values: Vec<Value>,
 }
 
-/// The values of a key after its `file,node`, one per read.
-fn key_values<'k>(term: &FactTerm, ek: &'k str) -> Result<Vec<&'k str>> {
-    let values: Vec<&str> = ek.split(',').skip(2).collect();
+/// The values of key `ek` after its `file,node`, one per read, into `values`.
+fn key_values<'k>(term: &FactTerm, ek: &'k str, values: &mut Vec<&'k str>) -> Result<()> {
+    values.clear();
+    values.extend(ek.split(',').skip(2));
     if values.len() != term.reads.len() {
         return Err(Error::ModuleError(format!("fact: malformed key {ek}")));
     }
-    Ok(values)
+    Ok(())
 }
 
-fn answered(rows: &mut Vec<FactRow>, ek: &str, verdicts: Vec<Verdict>) {
+fn answered(rows: &mut Vec<FactRow>, key: usize, verdicts: Vec<Verdict>) {
     for verdict in verdicts {
         rows.push(FactRow {
-            ek: ek.to_owned(),
+            key: key as u32,
             unknown: verdict.unknown,
             values: verdict.values,
         });
@@ -381,48 +497,56 @@ pub(in crate::code_rule_dsl::sql) fn tree_file(
     })
 }
 
-/// Evaluates `keys` of `term`, file by file.
-fn evaluate(batch: &Arc<Batch>, term: &FactTerm, keys: BTreeSet<String>) -> Result<Vec<FactRow>> {
-    let mut by_file: BTreeMap<usize, Vec<(String, u32)>> = BTreeMap::new();
-    for ek in keys {
-        let mut parts = ek.splitn(3, ',');
-        let (Some(Ok(file)), Some(Ok(node))) = (
-            parts.next().map(str::parse::<usize>),
-            parts.next().map(str::parse::<u32>),
-        ) else {
-            continue;
-        };
-        by_file.entry(file).or_default().push((ek, node));
-    }
+/// Evaluates `keys` (`Keys::sort`ed) of term `term_id`, `term`, file by file, answering the keys
+/// its memo remembers as it answered them before.
+fn evaluate(
+    batch: &Arc<Batch>,
+    term_id: usize,
+    term: &FactTerm,
+    keys: &Keys,
+) -> Result<Vec<FactRow>> {
     let limit = |limit: String| Error::ModuleError(format!("fact: limit {limit}"));
+    let mut memo = batch.fact_memos.lock().remove(&term_id).unwrap_or_default();
+    memo.evaluations += 1;
     let mut rows = Vec::new();
-    for (index, keys) in by_file {
+    let mut values = Vec::with_capacity(term.reads.len());
+    let mut end = 0;
+    let mut answered_all = Ok(());
+    while end < keys.keys.len() && answered_all.is_ok() {
+        let index = keys.keys[end].file;
+        let start = end;
+        end += keys.keys[start..]
+            .iter()
+            .take_while(|key| key.file == index)
+            .count();
+        let of_file = start..end;
         if let Some(file) = batch.files.get(index) {
             EVALUATING.set(Some((Arc::clone(batch), index)));
-            let answered_all = with_scopes(index, file, || -> Result<()> {
-                for (ek, node) in keys {
-                    if node >= file.facts.len() {
-                        continue;
-                    }
-                    let values = key_values(term, &ek)?;
-                    let Some(env) = environment(
-                        &file.facts,
-                        |id| node_at(&file.root, id),
-                        &term.reads,
-                        &values,
-                    ) else {
-                        continue;
-                    };
-                    let verdicts = term
-                        .verdicts
-                        .rows(node_at(&file.root, node), &env)
-                        .map_err(limit)?;
-                    answered(&mut rows, &ek, verdicts);
+            answered_all = with_scopes(index, file, || -> Result<()> {
+                for position in of_file {
+                    let key = &keys.keys[position];
+                    let verdicts = memo.answer(keys.text(key), || {
+                        if key.node >= file.facts.len() {
+                            return Ok(Vec::new());
+                        }
+                        key_values(term, keys.text(key), &mut values)?;
+                        let Some(env) = environment(
+                            &file.facts,
+                            |id| node_at(&file.root, id),
+                            &term.reads,
+                            &values,
+                        ) else {
+                            return Ok(Vec::new());
+                        };
+                        term.verdicts
+                            .rows(node_at(&file.root, key.node), &env)
+                            .map_err(limit)
+                    })?;
+                    answered(&mut rows, position, verdicts);
                 }
                 Ok(())
             });
             EVALUATING.set(None);
-            answered_all?;
         } else if let Some(sub) = batch.subfile(index) {
             // A parsed tree's node: read with its host file's scopes, as the matcher reads it
             // while matching the host, and an annotation's in its file's table.
@@ -430,24 +554,27 @@ fn evaluate(batch: &Arc<Batch>, term: &FactTerm, keys: BTreeSet<String>) -> Resu
             let root = &sub.root;
             let at = |id: u32| root.adopt(root.root().get_doc().node(id));
             let _tables = sub.table.clone().map(SubTables::enter);
-            let answered_all = with_scopes(sub.host, host, || -> Result<()> {
-                for (ek, node) in keys {
-                    if node >= sub.facts.len() {
-                        continue;
-                    }
-                    let values = key_values(term, &ek)?;
-                    let Some(env) = environment(&sub.facts, at, &term.reads, &values) else {
-                        continue;
-                    };
-                    let verdicts = term.verdicts.tree_rows(at(node), &env).map_err(limit)?;
-                    answered(&mut rows, &ek, verdicts);
+            answered_all = with_scopes(sub.host, host, || -> Result<()> {
+                for position in of_file {
+                    let key = &keys.keys[position];
+                    let verdicts = memo.answer(keys.text(key), || {
+                        if key.node >= sub.facts.len() {
+                            return Ok(Vec::new());
+                        }
+                        key_values(term, keys.text(key), &mut values)?;
+                        let Some(env) = environment(&sub.facts, at, &term.reads, &values) else {
+                            return Ok(Vec::new());
+                        };
+                        term.verdicts.tree_rows(at(key.node), &env).map_err(limit)
+                    })?;
+                    answered(&mut rows, position, verdicts);
                 }
                 Ok(())
             });
-            answered_all?;
         }
     }
-    Ok(rows)
+    batch.fact_memos.lock().insert(term_id, memo);
+    answered_all.map(|()| rows)
 }
 
 const COL_TERM: c_int = 0;
@@ -532,6 +659,7 @@ unsafe impl<'vtab> VTab<'vtab> for FactTable {
             base: sqlite3_vtab_cursor::default(),
             slot: Arc::clone(&self.slot),
             term: 0,
+            keys: Keys::default(),
             rows: Vec::new(),
             pos: 0,
             phantom: PhantomData,
@@ -544,6 +672,7 @@ pub(in crate::code_rule_dsl::sql) struct FactCursor<'vtab> {
     base: sqlite3_vtab_cursor,
     slot: Arc<BatchSlot>,
     term: i64,
+    keys: Keys,
     rows: Vec<FactRow>,
     pos: usize,
     phantom: PhantomData<&'vtab FactTable>,
@@ -564,25 +693,26 @@ unsafe impl VTabCursor for FactCursor<'_> {
             .ok_or_else(|| Error::ModuleError("fact: no batch installed".into()))?;
         let term_id = integer(ValueRef::from(&args.get::<Value>(0)?))
             .ok_or_else(|| Error::ModuleError("fact: term must be an integer".into()))?;
-        let Some(Terminal::Fact(term)) = usize::try_from(term_id)
-            .ok()
-            .and_then(|index| batch.program.terminals.get(index))
-        else {
+        let index = usize::try_from(term_id).unwrap_or(usize::MAX);
+        let Some(Terminal::Fact(term)) = batch.program.terminals.get(index) else {
             return Err(Error::ModuleError(format!("fact: no fact term {term_id}")));
         };
-        let mut keys = BTreeSet::new();
+        self.keys.text.clear();
+        self.keys.keys.clear();
+        self.rows.clear();
         if idx_num & 2 != 0 {
             let mut items = args.in_values(1)?;
             while let Some(item) = items.next()? {
                 if let ValueRef::Text(text) = item {
-                    keys.insert(String::from_utf8_lossy(text).into_owned());
+                    self.keys.push(&String::from_utf8_lossy(text));
                 }
             }
         } else if let Value::Text(text) = args.get::<Value>(1)? {
-            keys.insert(text);
+            self.keys.push(&text);
         }
+        self.keys.sort();
         let started = Started::now();
-        self.rows = evaluate(&batch, term, keys)?;
+        self.rows = evaluate(&batch, index, term, &self.keys)?;
         FACT_TIME.set(FACT_TIME.get().plus(started.elapsed()));
         #[cfg(test)]
         super::calls::UNKNOWN_VERDICTS.set(
@@ -607,7 +737,7 @@ unsafe impl VTabCursor for FactCursor<'_> {
         let row = &self.rows[self.pos];
         match column {
             COL_TERM => context.set_result(&self.term),
-            COL_EK => context.set_result(&row.ek),
+            COL_EK => context.set_result(&self.keys.text(&self.keys.keys[row.key as usize])),
             COL_UNK => context.set_result(&i64::from(row.unknown)),
             other => {
                 let index = (other - 3) as usize;

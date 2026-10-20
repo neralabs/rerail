@@ -416,12 +416,13 @@ fn sql_batch(
         let context = FileContext {
             path: Some(file.input.path.clone()),
             module: file.input.module.clone(),
-            scopes: file
-                .scopes
-                .as_ref()
-                .filter(|(revision, _)| *revision == file.source_revision)
-                .map(|(_, tables)| tables.clone())
-                .unwrap_or_default(),
+            scopes: Arc::new(parking_lot::Mutex::new(
+                file.scopes
+                    .as_ref()
+                    .filter(|(revision, _)| *revision == file.source_revision)
+                    .map(|(_, tables)| tables.clone())
+                    .unwrap_or_default(),
+            )),
             calls: CrossFileScheduler::calls(crossfile.as_ref()),
             kinds: ast.kinds.take(),
         };

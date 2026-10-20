@@ -673,7 +673,10 @@ impl Emitter<'_> {
     /// An input-set terminal's verdicts on the frame: its distinct keys, `file,node` (the node
     /// `0` where the terminal does not read it) and the bindings of `reads` (`lo:hi` for a list,
     /// empty where unbound), go to the `fact` table in one `xFilter`; it returns the keys that are
-    /// true or unknown, with the values of `binds`. A two-valued clause keeps the true ones.
+    /// true or unknown, with the values of `binds`. A two-valued clause keeps the true ones. Each
+    /// input row then finds its key's verdict by its key, computed again (`CROSS JOIN`: the frame
+    /// is the outer loop, the verdicts an automatic index), rather than through a materialized
+    /// copy of every row's key, which costs a B-tree write and an index entry per input row.
     pub(super) fn fact(
         &mut self,
         term: usize,
@@ -682,11 +685,7 @@ impl Emitter<'_> {
         binds: &[usize],
         input: &str,
     ) -> String {
-        let node = if at_node { "f.node" } else { "0" };
-        let mut key = format!("f.file || ',' || {node}");
-        for &slot in reads {
-            write!(key, " || ',' || {}", self.key_value("f", slot)).expect("write to a string");
-        }
+        let key = self.fact_key("f", reads, at_node);
         let mut overrides = Vec::new();
         let mut values = String::new();
         for &slot in binds {
@@ -696,8 +695,7 @@ impl Emitter<'_> {
             }
         }
         let with = format!(
-            "WITH e AS MATERIALIZED (SELECT f.k AS k, {key} AS ek FROM {input} f), \
-             t AS MATERIALIZED (SELECT ek, unk{values} FROM fact WHERE term = {term} AND ek IN (SELECT ek FROM e)) "
+            "WITH t AS MATERIALIZED (SELECT ek, unk{values} FROM fact WHERE term = {term} AND ek IN (SELECT {key} FROM {input} f)) "
         );
         let (select, known) = if self.three {
             (self.verdict("f", &overrides, "t.unk"), "")
@@ -707,9 +705,7 @@ impl Emitter<'_> {
         self.frame_with(
             "x",
             &with,
-            &format!(
-                "SELECT {select} FROM {input} f JOIN e ON e.k = f.k JOIN t ON t.ek = e.ek{known}"
-            ),
+            &format!("SELECT {select} FROM {input} f CROSS JOIN t ON t.ek = {key}{known}"),
             Reads::join(&[input]),
         )
     }

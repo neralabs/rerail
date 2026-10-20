@@ -10,28 +10,32 @@ use std::rc::Rc;
 
 impl Emitter<'_> {
     /// A key value of a slot of `alias`, as the `fact` table decodes it: a node id, a list's
-    /// `lo:hi`, a text's hexadecimal and its range, empty where unbound.
-    pub(super) fn key_value(&self, alias: &str, slot: SlotId) -> String {
-        let value = match self.slots[slot].kind {
-            SlotKind::List => format!("{alias}.s{slot}a || ':' || {alias}.s{slot}b"),
-            SlotKind::Text => format!("hex({alias}.s{slot}) || ':' || {alias}.s{slot}r"),
+    /// `lo:hi`, a text's hexadecimal and its range, empty where unbound (`concat` reads a NULL
+    /// as empty).
+    fn key_value(&self, alias: &str, slot: SlotId) -> String {
+        match self.slots[slot].kind {
+            SlotKind::List => format!("COALESCE({alias}.s{slot}a || ':' || {alias}.s{slot}b, '')"),
+            SlotKind::Text => {
+                format!("COALESCE(hex({alias}.s{slot}) || ':' || {alias}.s{slot}r, '')")
+            }
             SlotKind::Node | SlotKind::Count => format!("{alias}.s{slot}"),
-        };
-        format!("COALESCE({value}, '')")
+        }
     }
 
     /// The key of a fact term over `alias`'s rows: `file,node` (node 0 where the term does not
-    /// read it) and its reads' values.
-    fn fact_key(&self, alias: &str, reads: &[SlotId], at_node: bool) -> String {
+    /// read it) and its reads' values, built in one `concat` rather than a `||` per part (each a
+    /// string of its own, per row).
+    pub(super) fn fact_key(&self, alias: &str, reads: &[SlotId], at_node: bool) -> String {
         let node = if at_node {
             format!("{alias}.node")
         } else {
             "0".to_owned()
         };
-        let mut key = format!("{alias}.file || ',' || {node}");
+        let mut key = format!("concat({alias}.file, ',', {node}");
         for &slot in reads {
-            write!(key, " || ',' || {}", self.key_value(alias, slot)).expect("write to a string");
+            write!(key, ", ',', {}", self.key_value(alias, slot)).expect("write to a string");
         }
+        key.push(')');
         key
     }
 
@@ -61,9 +65,10 @@ impl Emitter<'_> {
                         at += 1;
                     }
                 }
+                // Each row finds its key's related rows by its key, computed again (as
+                // `three::fact` does): no materialized copy of every row's key.
                 let with = format!(
-                    "WITH e AS MATERIALIZED (SELECT f.k AS k, {key} AS ek FROM {input} f), \
-                     t AS MATERIALIZED (SELECT ek, {values} FROM fact WHERE term = {} AND ek IN (SELECT ek FROM e)) ",
+                    "WITH t AS MATERIALIZED (SELECT ek, {values} FROM fact WHERE term = {} AND ek IN (SELECT {key} FROM {input} f)) ",
                     source.term
                 );
                 let mut slots = String::new();
@@ -78,7 +83,7 @@ impl Emitter<'_> {
                     with,
                     format!(
                         "SELECT NULL, COALESCE(t.v0, f.file), t.v1{slots}, f.k, t.v2{} \
-                         FROM {input} f JOIN e ON e.k = f.k JOIN t ON t.ek = e.ek",
+                         FROM {input} f CROSS JOIN t ON t.ek = {key}",
                         self.zeros()
                     ),
                 )
@@ -293,15 +298,14 @@ impl Emitter<'_> {
     ) -> String {
         let key = self.fact_key("f", &[], true);
         let with = format!(
-            "WITH e AS MATERIALIZED (SELECT f.k AS k, {key} AS ek FROM {input} f), \
-             t AS MATERIALIZED (SELECT ek, unk, v0 FROM fact WHERE term = {term} AND ek IN (SELECT ek FROM e)) "
+            "WITH t AS MATERIALIZED (SELECT ek, unk, v0 FROM fact WHERE term = {term} AND ek IN (SELECT {key} FROM {input} f)) "
         );
         let parsed = self.name("p");
         self.create(&parsed, "k INTEGER PRIMARY KEY, unk, tree");
         self.insert(
             &parsed,
             format!(
-                "{with}INSERT INTO {parsed} SELECT e.k, t.unk, t.v0 FROM e JOIN t ON t.ek = e.ek"
+                "{with}INSERT INTO {parsed} SELECT f.k, t.unk, t.v0 FROM {input} f CROSS JOIN t ON t.ek = {key}"
             ),
             Reads::join(&[input]),
         );
