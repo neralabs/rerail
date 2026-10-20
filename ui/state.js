@@ -77,6 +77,8 @@ export const data = {
   agents: null,
   /** The database-wide status line preference: "compact" (Show) or "silent" (Do not show). */
   presence: null,
+  /** The scoped repository's Follow .gitignore setting (`repository_context_get`); loaded for Settings, `null` until then. */
+  followGitignore: null,
   /** Recommended packs for the scoped repository, each with its folder; fetched only when needed. */
   recommendations: null,
   /** Why the coding agents could not be checked, when `GET /api/coding-agents` failed. */

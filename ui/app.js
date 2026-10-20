@@ -8,7 +8,7 @@ import { settingWrites } from "./settings-writes.js";
 import { h, setAttr, setText, setContent } from "./dom.js";
 import { ago, plural, shortSessionId } from "./format.js";
 import { data, ui, summary, panelRuleId, titleOf, packOfRule, rulesArray, readScope, setScope, repoName, stateHere, keptPacks, reviewing } from "./state.js";
-import { startPolling, refreshNow, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier, showMoreActivity, loadAgents, loadPresence, loadRecommendations, changeScope } from "./poll.js";
+import { startPolling, refreshNow, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier, showMoreActivity, loadAgents, loadPresence, loadFollowGitignore, saveFollowGitignore, loadRecommendations, changeScope } from "./poll.js";
 import { attachmentWrites, packName } from "./attachments.js";
 import { renderOverview } from "./render/overview.js";
 import { renderRules, allGroupsFolded, sectionKeys, groupRules } from "./render/rules.js";
@@ -259,6 +259,7 @@ function enterView(view) {
     data.agentsError = null;
     loadAgents().catch(error => { data.agentsError = error.message; }).then(invalidate);
     loadPresence().then(invalidate, error => toast(`Could not read the status line setting: ${error.message}`));
+    if (ui.scope !== null) loadFollowGitignore().then(invalidate, error => toast(`Could not read the Follow .gitignore setting: ${error.message}`));
   }
   if (view === "review" && ui.scope !== null && data.recommendations === null) {
     loadRecommendations().then(invalidate, error => toast(`Could not read the repo: ${error.message}`));
@@ -509,6 +510,7 @@ const ACTIONS = {
     } catch (error) { data.presence = was; toast(`Could not save: ${error.message}`); }
     invalidate();
   },
+  gitignore: v => saveFollowGitignore(v === "on", { toast, invalidate }),
   cmdcopy: text => copyText(text, null, `Copied ${text}`),
   range: id => { ui.range = Number(id); ui.recentShown = 50; invalidate(); refreshNow(); },
   more: () => loadMore(showMoreActivity),

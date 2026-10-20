@@ -11,7 +11,7 @@ vi.mock("../../src/engine/native/rerail-build.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../../src/engine/native/rerail-build.js"),
   isMainRerailBuild: nativeBoundary.isMainRerailBuild,
 }));
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import superjson from "superjson";
@@ -19,10 +19,11 @@ import { z } from "zod";
 import type { AdapterDelivery } from "../../src/engine/index.js";
 import type { DaemonLaunchOptions } from "../../src/runtime/index.js";
 import { createNativeSession, NativeSessionClient } from "../../src/harness/native-session-client.js";
-import { defaultRerailDatabasePath } from "../../src/engine/index.js";
+import { CodeRuleBridge, codeRuleSchema, defaultRerailDatabasePath } from "../../src/engine/index.js";
 import { EVENTS_DROPPED_ENTRY_TYPE, MUTATION_ENTRY_TYPE, SqliteSessionReader } from "../../src/runtime/index.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native-daemon.js";
 import { startTestRepository } from "../support/started-repository.js";
+import { setUpTestRepository } from "../support/repository-rules.js";
 
 const delivery = (content: string, ruleIds: readonly string[] = []): AdapterDelivery => ({
   sessionId: "session", requested: "steer", mechanism: "native-queue", content, ruleIds,
@@ -227,6 +228,93 @@ describe("daemon native client branch encoding", () => {
 });
 
 describe("daemon native client polling resilience", () => {
+  it("waits for a daemon still working on an event, then sends the events queued behind it, dropping none", async () => {
+    vi.useFakeTimers();
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const requests: Array<{ operation: string; ticket?: string; eventId?: string }> = [];
+    const received: string[] = [];
+    let stillWorking = 2;
+    const sent = z.object({ operation: z.string(), input: z.object({ ticket: z.string().optional() }).passthrough().optional(), event: z.unknown().optional() });
+    vi.stubGlobal("fetch", async (_url: URL, init: RequestInit) => {
+      const request = sent.parse(JSON.parse(String(init.body)));
+      const eventId = request.event === undefined
+        ? undefined
+        : z.object({ eventId: z.string() }).parse(superjson.deserialize(request.event as Parameters<typeof superjson.deserialize>[0])).eventId;
+      const ticket = request.input?.ticket;
+      requests.push({ operation: request.operation, ...(ticket === undefined ? {} : { ticket }), ...(eventId === undefined ? {} : { eventId }) });
+      if (eventId === "slow") return Response.json({ pendingReply: "slow-ticket", deliveries: [], entries: [] });
+      if (request.operation === "await-reply") {
+        stillWorking -= 1;
+        return Response.json(stillWorking >= 0
+          ? { pendingReply: "slow-ticket", deliveries: [], entries: [] }
+          : { deliveries: [delivery("late steer")], entries: [] });
+      }
+      return Response.json({ deliveries: [], entries: [] });
+    });
+    const client = new NativeSessionClient({
+      instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "native-token",
+      host: "omp", sessionId: "busy", entries: () => [],
+      appendEntry() {},
+      deliver: (_client, deliveries) => { received.push(...deliveries.map(item => item.content)); },
+    });
+    await client.initialize({});
+    await client.activate();
+    const prompt = (eventId: string) => ({ kind: "user-prompt" as const, sessionId: "busy", eventId, text: eventId });
+
+    await expect(Promise.all([client.ingest(prompt("slow")), client.ingest(prompt("next"))])).resolves.toEqual([true, true]);
+    expect(requests.filter(request => request.operation !== "poll")).toEqual([
+      { operation: "initialize" },
+      { operation: "ingest", eventId: "slow" },
+      { operation: "await-reply", ticket: "slow-ticket" },
+      { operation: "await-reply", ticket: "slow-ticket" },
+      { operation: "await-reply", ticket: "slow-ticket" },
+      { operation: "ingest", eventId: "next" },
+    ]);
+    expect(received).toEqual(["late steer"]);
+    expect(stderr).not.toHaveBeenCalled();
+    await client.close();
+  });
+
+  it("gives up on an operation the daemon is still working on after two minutes, as an outage that drops what queued behind it", async () => {
+    vi.useFakeTimers();
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const operations: string[] = [];
+    vi.stubGlobal("fetch", async (_url: URL, init: RequestInit) => {
+      const { operation } = readBody(init);
+      operations.push(operation);
+      if (operation === "ingest") return Response.json({ pendingReply: "stuck", deliveries: [], entries: [] });
+      // A daemon holds each ask for its reply bound before saying it is still working.
+      if (operation === "await-reply") {
+        const held = Promise.withResolvers<void>();
+        setTimeout(held.resolve, 10_000);
+        await held.promise;
+        return Response.json({ pendingReply: "stuck", deliveries: [], entries: [] });
+      }
+      return Response.json({ deliveries: [], entries: [] });
+    });
+    const client = new NativeSessionClient({
+      instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "native-token",
+      host: "omp", sessionId: "stuck", entries: () => [],
+      appendEntry() {},
+      deliver() {},
+    });
+    await client.initialize({});
+    await client.activate();
+    const prompt = (eventId: string) => ({ kind: "user-prompt" as const, sessionId: "stuck", eventId, text: eventId });
+
+    const stuck = client.ingest(prompt("stuck"));
+    const behind = client.ingest(prompt("behind"));
+    await vi.advanceTimersByTimeAsync(119_000);
+    expect(stderr).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(Promise.all([stuck, behind])).resolves.toEqual([false, false]);
+    expect(operations.filter(operation => operation === "await-reply")).toHaveLength(12);
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("Rerail daemon was still working on ingest after 120s"));
+    await client.close();
+  });
+
   it("retries a transient poll failure and keeps later requests working", async () => {
     vi.useFakeTimers();
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
@@ -1032,4 +1120,67 @@ describe("daemon native client polling resilience", () => {
     expect(reattach).toHaveBeenCalledTimes(6);
     await client.close();
   });
+});
+
+describe("the end of a native host's run", () => {
+  it("with the experimental digest on, delivers, only when the run ends, the digest of a steer whose edit was checked after the step that made it", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-native-yield-")));
+    directories.push(root);
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    setUpTestRepository(root, { library: [{
+      kind: "code",
+      rule: codeRuleSchema.parse({
+        format: "rerail.policy/v1", id: "test:needle", revision: 1, mode: "steer",
+        scope: { include: ["**/*.py"], exclude: [] },
+        clauses: [{ id: "needle", violation: { code: "NEEDLE", anchor: "witness.span", message: "No needle" }, forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }],
+      }),
+    }] });
+    const daemon = await startNativeTestDaemon(root);
+    // The edit is checked only once the test releases it, after its tool result has been answered.
+    const release = Promise.withResolvers<void>();
+    const checked = Promise.withResolvers<void>();
+    const finish = CodeRuleBridge.prototype.finish;
+    vi.spyOn(CodeRuleBridge.prototype, "finish").mockImplementationOnce(function (this: CodeRuleBridge, toolCallId: string, failed?: boolean) {
+      void release.promise.then(async () => {
+        await finish.call(this, toolCallId, failed);
+        await this.settleGeneratedEdits();
+        checked.resolve();
+      });
+      return Promise.resolve([]);
+    });
+    const received: AdapterDelivery[] = [];
+    const client = new NativeSessionClient({
+      instance: { workspaceRoot: root, url: new URL(daemon.url) },
+      token: daemon.state().nativeToken!,
+      host: "omp", sessionId: "yield", entries: () => [],
+      appendEntry() {},
+      deliver: (_client, deliveries) => { received.push(...deliveries); },
+    });
+    const event = <Event extends object>(value: Event) => ({ ...value, sessionId: "yield" });
+    try {
+      await client.initialize({ cwd: root, modelPath: resolve("model") });
+      await client.activate();
+      await client.awaitCodeRules();
+      await client.ingest(event({ kind: "call" as const, eventId: "call", toolCallId: "write", toolName: "write", input: { path: "edited.py" } }));
+      await writeFile(join(root, "edited.py"), "NEEDLE\n");
+      await client.ingest(event({ kind: "result" as const, eventId: "result", toolCallId: "write", toolName: "write", output: "written" }));
+      release.resolve();
+      await checked.promise;
+
+      // A later step and the turn's end pass while the steer is held: their replies collect what a poll would.
+      await client.ingest(event({ kind: "user-prompt" as const, eventId: "next", text: "next" }));
+      await client.ingest(event({ kind: "turn-end" as const, eventId: "turn", text: "done" }));
+      expect(received).toEqual([]);
+
+      await client.yieldDeliveries();
+      expect(received).toEqual([expect.objectContaining({ requested: "steer", ruleIds: ["test:needle"] })]);
+      expect(received[0]!.content).toMatch(/^Rerail finished checking these edits only after the steps that made them had moved on:\n\n◆ Rerail · test:needle {2}steered\n/u);
+      expect(received[0]!.content).toContain("No needle (edited.py:1:1)");
+      await client.yieldDeliveries();
+      expect(received).toHaveLength(1);
+    } finally {
+      await client.close();
+    }
+  }, 30_000);
 });

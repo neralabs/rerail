@@ -39,6 +39,8 @@ export interface PiHostAdapterRuntime {
   shutdown(): Promise<void>;
   sessionFor(): Promise<AdapterSession | undefined>;
   ingest(event: AdapterEvent): Promise<void>;
+  /** Hands Pi the session's steers due at the end of the agent's run, with the digest of those that missed their step. */
+  yieldDeliveries(sessionId: string): Promise<void>;
   conversationRulesTool: PiConversationRulesToolRuntime;
   conversationRulesCommand: Omit<PiConversationRulesCommandRuntime, "reload">;
   packageRoot: string;
@@ -222,6 +224,14 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
     rememberCompleted(completedTurns, messageId);
     await runtime.ingest(turnEndEvent(session.sessionId, `turn-end:${messageId}`, messageText(event.message)));
   });
+  // The end of the agent's run, which Pi's turn end is not (it ends one at every model call). Pi's last actionable
+  // boundary: a steer sent here (`deliverAs: "steer"`, still inside the run) is queued, and Pi continues the run with
+  // it (pi-coding-agent 1.1.0 `AgentSession._runBeforeSettleBoundary`: `result.continue || agent.hasQueuedMessages()`).
+  pi.on("agent_before_settle", () => contained("agent_before_settle", (async () => {
+    const session = await runtime.sessionFor();
+    if (session === undefined) return;
+    await runtime.yieldDeliveries(session.sessionId);
+  })()));
   pi.on("session_shutdown", async () => {
     try {
       await runtime.shutdown();

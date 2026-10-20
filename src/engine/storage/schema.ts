@@ -154,7 +154,8 @@ export const ruleCatalogIdentities = sqliteTable(
  * A repository Rerail knows on this machine. The key is `remote:<host>/<path>` from the normalised
  * `origin` (or sole) remote, else `clone:<clone id>`; `aliases_json` lists other keys that resolve here.
  * `configured_at` null means Not set up, so nothing runs; `started` is the default every checkout follows, and null
- * means nobody started or stopped the repository yet (off).
+ * means nobody started or stopped the repository yet (off). `follow_gitignore` leaves files Git ignores out of every
+ * audit of the repository's checkouts; a session reads it when it opens.
  */
 export const repositories = sqliteTable(
   "repositories",
@@ -164,6 +165,7 @@ export const repositories = sqliteTable(
     aliases: text("aliases_json", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
     configuredAt: integer("configured_at"),
     started: integer("started", { mode: "boolean" }),
+    followGitignore: integer("follow_gitignore", { mode: "boolean" }).notNull().default(true),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
