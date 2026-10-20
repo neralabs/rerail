@@ -842,6 +842,48 @@ fn production_contract_phase_two_any_relations_match_authored_sql() {
 }
 
 #[test]
+fn production_contract_phase_two_authored_any_relations_equal_oracles() {
+    let statements = authored_sql_goldens();
+    for name in [
+        "any-first-branch",
+        "any-unknown-binding-blocks-later",
+        "any-unknown-without-binding",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the ordered alternative contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the ordered alternative policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: authored SQL ranges");
+        assert!(outcome.errors.is_empty(), "{name}: authored SQL failures");
+    }
+}
+
+#[test]
 fn production_contract_phase_two_all_relations_match_authored_sql() {
     let expected = authored_sql_goldens();
     for name in [
