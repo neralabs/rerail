@@ -1,9 +1,10 @@
 name: Port readiness (nightly)
 
 # Once a day, and on demand: re-records every gated tool-pack's upstream answers and fails when a committed recording
-# no longer matches the pinned upstream (port-readiness:record --check), then judges every rule again and saves the fresh
-# results for pull requests to read. Pull requests judge rules against the committed recordings (port-readiness.yml); this
-# job keeps them honest.
+# no longer matches the pinned upstream (port-readiness:record --check), then judges every rule again, fails when a fresh
+# verdict differs from the cached one under the same key (the key left out something the verdict depends on), and saves
+# the fresh results for pull requests to read. Pull requests judge rules against the committed recordings
+# (port-readiness.yml); this job keeps them honest.
 
 on:
   schedule:

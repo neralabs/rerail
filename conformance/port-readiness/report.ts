@@ -1,5 +1,5 @@
 import { comparedPositions } from "./checks/matches-upstream-tests.js";
-import type { GatesReport, RuleReport } from "./run.js";
+import type { GatesReport, RuleReport, VerdictDrift } from "./run.js";
 import { BLOCKING_GATES, GATES, type BlockingGateId, type Check, type GateId, type ParserVerdict } from "./types.js";
 
 export function cell(text: string): string {
@@ -22,6 +22,11 @@ export function firstFailure(rule: RuleReport): { stoppedAt: string; check: stri
   }
   if (rule.blockedBy !== null) return { stoppedAt: "Tool-pack checks", check: "tool-pack", why: rule.blockedBy };
   return null;
+}
+
+/** A fresh verdict that differs from the cached one under the same key: the rule, its file, what differs, cached and fresh. */
+export function driftLine(drift: VerdictDrift): string {
+  return `${drift.id} (${drift.file}) ${drift.what}: cached ${drift.cached}, fresh ${drift.fresh}`;
 }
 
 function stoppedLabel(rule: RuleReport): string {
@@ -144,7 +149,8 @@ export function renderMarkdown(report: GatesReport): string {
     `- Upstream: ${report.upstream.name}, ${report.upstream.repository} at \`${report.upstream.commit}\` (${report.upstream.version}, ${report.upstream.license}); runtime ${report.upstream.runtime}`,
     // A report written before reports recorded the native binary names none.
     `- Engine: this checkout's, identity \`${report.engine.sha256.slice(0, 16)}\`${report.engine.binary === undefined ? "" : `, native binary \`${report.engine.binary.slice(0, 16)}\``}`,
-    `- Cache: ${report.cache.hits} of ${report.cache.rules} rule result(s) from the cache`,
+    `- Cache: ${report.cache.hits} of ${report.cache.rules} rule result(s) from the cache; compared ${report.cache.compared ?? 0}; ${report.cache.differing?.length ?? 0} differ`,
+    ...(report.cache.differing ?? []).map((drift) => `  - ${cell(driftLine(drift))}`),
     `- Documents not mapped to an upstream rule: ${report.unmapped.length === 0 ? "none" : report.unmapped.map((entry) => `\`${entry.file}\` (${entry.location})`).join(", ")}`,
     `- conformance.json entries of ${report.tool} listed, no document yet: ${report.listedWithoutDocument}`,
     "",

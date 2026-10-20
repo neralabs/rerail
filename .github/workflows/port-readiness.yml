@@ -2,8 +2,9 @@ name: Port readiness
 
 # The port readiness gates (docs/port-readiness.md): every rule a pack ships must pass them; candidates run through them and are
 # only reported. Called by ci.yml after its build job (the gates read the `built` artifact's engine) when a pull request
-# or a push to main touches a gate input, and by port-readiness-nightly.yml, which judges every rule again and refreshes
-# the result cache. The gates read each tool-pack's recordings (recording.json and corpus.json, which
+# or a push to main touches a gate input, and by port-readiness-nightly.yml, which judges every rule again, fails when a
+# fresh verdict differs from the cached one under the same key, and refreshes the result cache. The gates read each
+# tool-pack's recordings (recording.json and corpus.json, which
 # packs/<id>/upstream/<tool>/recording.lock names and the fetch step downloads from the release), so no upstream linter
 # runs here, and no rule runs over the real-code corpus (that is NRV's real-code gate): only the pinned corpus files
 # the goldens name and upstream's pinned test files are fetched, and they are cached by their pins.
@@ -15,7 +16,8 @@ name: Port readiness
 #
 # Every run saves its results, pull requests included. GitHub scopes a pull request's cache to that pull request, so
 # main never reads one: a push to main reads only what main's own pushes and the nightly saved, and the nightly
-# judges every rule uncached. A pull request can therefore hand itself verdicts its own code computed, but it can edit the gate code
+# judges every rule again, comparing each fresh verdict with the one main cached. A pull request can therefore hand
+# itself verdicts its own code computed, but it can edit the gate code
 # that decides them just as easily, so this opens no route it did not already have.
 
 on:
@@ -26,7 +28,7 @@ on:
         type: string
         default: ""
       no-cache:
-        description: Judge every rule again instead of reusing the results of unchanged rules; the fresh results are saved.
+        description: Judge every rule again instead of reusing the results of unchanged rules, fail when a fresh verdict differs from the cached one under the same key, and save the fresh results.
         type: boolean
         default: false
       select:
@@ -140,8 +142,9 @@ jobs:
 
       # Each result is keyed by everything the rule's verdict depends on, so a stale entry is never read. The `-run-`
       # after the tool and shard keeps eslint-plugin-react's prefix from matching eslint-plugin-react-hooks' entries.
+      # A no-cache run (the nightly) restores them too, only to compare each fresh verdict with the cached one under the
+      # same key: it takes no result from them.
       - name: Restore earlier rule results
-        if: ${{ !inputs.no-cache }}
         uses: actions/cache/restore@v6
         with:
           path: .rerail/port-readiness/results

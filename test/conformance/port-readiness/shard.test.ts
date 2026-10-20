@@ -9,7 +9,7 @@ import { afterEach, describe, it } from "vitest";
 import { resolveNativeBindingPath } from "../../../src/engine/index.js";
 import { resultPath } from "../../../conformance/port-readiness/cache.js";
 import { checkoutBinary, mergeDirectory, mergeShards } from "../../../conformance/port-readiness/merge.js";
-import { summarizeRules, unusedGapLine, type GatesReport, type RuleReport } from "../../../conformance/port-readiness/run.js";
+import { blockingFailures, summarizeRules, unusedGapLine, type GatesReport, type RuleReport, type VerdictDrift } from "../../../conformance/port-readiness/run.js";
 import { parseShard, shardName, shardOf, type Shard } from "../../../conformance/port-readiness/shard.js";
 import { readReports } from "../../../conformance/port-readiness/summary.js";
 
@@ -95,8 +95,18 @@ describe("merge", () => {
     assert.deepEqual(report.summary, summarizeRules(report.rules));
     assert.deepEqual(report.summary.shipped, { rules: 8, pass: 7 });
     assert.deepEqual(report.summary.candidates, { rules: 3, pass: 3 });
-    assert.deepEqual(report.cache, { rules: 11, hits: 3 });
+    // Shard reports written before reports compared results have no compared or differing: none were.
+    assert.deepEqual(report.cache, { rules: 11, hits: 3, compared: 0, differing: [] });
     assert.equal(report.gapCandidates.length, 1);
+  });
+
+  it("adds up the results each shard compared with the cache, and lists every difference, each of which blocks", () => {
+    const drift = (id: string): VerdictDrift => ({ id, file: `packs/demo/rules/${id}.json`, location: "shipped", what: "compact", cached: "fail", fresh: "pass" });
+    const [first, second] = shards(2);
+    const report = mergeShards([{ ...first!, cache: { ...first!.cache, compared: 2, differing: [drift("h")] } }, { ...second!, cache: { ...second!.cache, compared: 3, differing: [drift("a")] } }]);
+    assert.equal(report.cache.compared, 5);
+    assert.deepEqual(report.cache.differing, [drift("a"), drift("h")]);
+    assert.equal(blockingFailures(report), 2);
   });
 
   it("a known gap counts as used when any shard used it", () => {

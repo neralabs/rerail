@@ -112,6 +112,13 @@ export function summarize(reports: GatesReport[], ungated: UngatedResult, gated:
     blocking.push({ pack: toolPack, rule: "(every rule)", stoppedAt: "Run", check: "plan", why: "planned, but not a gated tool-pack (no gates.yaml): the plan is wrong" });
   }
   for (const check of ungated.checks.filter((item) => !item.ok)) blocking.push({ pack: check.id.split(":")[1] ?? "", rule: "-", stoppedAt: "Not gated / pending", check: check.id.split(":")[0]!, why: check.detail });
+  // A refresh (the nightly) found a fresh verdict that differs from the cached one under the same key: the key leaves
+  // out something the verdict depends on. Every difference blocks, a candidate's too; the cache holds the fresh result.
+  for (const report of reports) {
+    for (const drift of report.cache.differing ?? []) {
+      blocking.push({ pack: report.toolPack, rule: drift.id, stoppedAt: "Cache", check: drift.what, why: `${drift.file}: cached ${drift.cached}, fresh ${drift.fresh} under the same key, which leaves out something this verdict depends on; the cache now holds the fresh result` });
+    }
+  }
 
   const engineGaps = reports.flatMap((report) => report.rules
     .filter((rule) => rule.location === "shipped" && rule.stoppedAt === "matches-upstream-tests")

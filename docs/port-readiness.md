@@ -159,12 +159,12 @@ one the language registry does not know, keys on the whole engine for the same r
 
 A Python-only engine change therefore judges the Python legs cold, and the unicorn leg, whose `unicorn-filename-case`
 names no language, and leaves every other leg reading main's results. The cost is the mirror image: a file listed as
-one family's that another family in fact reads would leave that family's verdicts stale until the nightly's uncached
-run. `test/conformance/port-readiness/engine.test.ts` fails when a listed path matches no engine source, so the list
-cannot rot silently.
+one family's that another family in fact reads would leave that family's verdicts stale until the nightly judges them
+again, which fails on each one that moved (below). `test/conformance/port-readiness/engine.test.ts` fails when a listed
+path matches no engine source, so the list cannot rot silently.
 
 Some things are deliberately out of the key. The Node.js version (CI pins only the major), `@napi-rs/cli` and
-`tsconfig.json` could in principle move a verdict; the nightly's uncached run is what catches that. The engine sources
+`tsconfig.json` could in principle move a verdict; the nightly is what catches that (below). The engine sources
 only `cargo test` compiles cannot. And the native binary: it is not bit-reproducible, so hashing it made a
 build-cache miss on unchanged sources re-judge every rule, and the sources it was built from say the same thing
 reproducibly. That holds only while the binary is their build, so a binary older than an engine source it is built from
@@ -173,6 +173,17 @@ reproducibly. That holds only while the binary is their build, so a binary older
 stale binary and merged after a rebuild are caught: rebuild once and rerun every shard.
 The test-only sources are every file a `#[cfg(test)] mod` declaration reaches, which is how the engine keeps its oracle
 tests beside the code they check.
+
+The nightly judges every rule again (`--refresh-cache`) and, before saving each fresh result over the one cached under
+the same key, compares the two: the rule's verdict (`pass` and `stoppedAt`), each blocking gate's pass except
+`passes-conformance` (which every run judges fresh), and `defaultOn`; never a check's free-text detail, which can name a
+temporary path. A difference means the key leaves out something the verdict depends on, so each one fails the run, a
+candidate's as much as a shipped rule's: an `::error::` line names the rule, its file and the gate, cached and fresh, and
+the summary has a blocking row for it. The fresh result is saved all the same, so the cache then holds what the gates
+say now. CI restores main's latest results for that run as for any other (`port-readiness.yml`), and only a result
+cached under the same key is compared, so a rule whose key moved since main last saved is judged with nothing to compare
+it with; each report says how many results it compared (`cache.compared`) and lists the differences (`cache.differing`).
+`--no-cache` reads, compares and saves nothing, and a run on a stale native binary compares nothing.
 
 In CI every run saves its results, pull requests included. GitHub scopes a pull request's cache to that pull request,
 so main never reads one: a push to main reads only what main's own pushes and the nightly saved. A pull request can
@@ -300,7 +311,8 @@ from the older one.
 
 `port-readiness-nightly.yml` runs the same recorder with `--check` in a read-only job of its own, so it reports when a
 committed recording no longer matches the pinned upstream and uploads nothing, then judges every rule again
-(`--refresh-cache`) and saves the fresh results.
+(`--refresh-cache`), fails when a fresh verdict differs from the one cached under the same key, naming the rule and the
+gate, and saves the fresh results ("What a cached result is keyed by").
 
 Because the recordings are no longer in the diff, `port-readiness:record` writes a per-rule summary of what moved instead —
 expected findings gained and lost on upstream's own tests, corpus files answered differently, facts changed

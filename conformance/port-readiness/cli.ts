@@ -1,6 +1,7 @@
 /**
  * `npm run port-readiness`: the port readiness gates over every gated tool-pack, from its recordings, and the summary CI posts.
- * Exit 1 when a shipped rule fails a blocking check (or the summary has a blocking failure), 2 on an exception.
+ * Exit 1 when a shipped rule fails a blocking check, a fresh verdict differs from the cached one under the same key
+ * (--refresh-cache), or the summary has a blocking failure; 2 on an exception.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -11,7 +12,7 @@ import { staleNativeBinary } from "./engine.js";
 import { checkoutBinary, mergeDirectory } from "./merge.js";
 import { ProcessCommandRunner } from "./process.js";
 import { fetchToolPackRecordings } from "./recording/fetch.js";
-import { renderMarkdown } from "./report.js";
+import { driftLine, renderMarkdown } from "./report.js";
 import { blockingFailures, gatedToolPacks, runToolPack } from "./run.js";
 import { parseShard, shardName } from "./shard.js";
 import { parsePlanned, writeSummary } from "./summary.js";
@@ -56,21 +57,26 @@ async function gates(args: string[]): Promise<number> {
   // (engine.ts): its verdicts are reported, never saved for later runs.
   const stale = staleNativeBinary(root);
   if (stale !== undefined) console.warn(`the native engine is older than ${stale}: rebuild it with npm run build:native. This run's results are not cached.`);
-  // --no-cache neither reads nor saves results; --refresh-cache judges every rule again and saves the fresh results.
+  // --no-cache neither reads, saves nor compares results; --refresh-cache judges every rule again, compares each fresh
+  // result with the cached one under its key (a verdict that differs fails the run) and saves the fresh one. A stale
+  // binary's verdicts are compared with nothing, being another build's.
   const readCache = flags["--no-cache"] !== true && flags["--refresh-cache"] !== true;
   const writeCache = flags["--no-cache"] !== true && stale === undefined;
+  const compareCache = flags["--refresh-cache"] === true && stale === undefined;
   const cacheRoot = resolve(typeof flags["--cache"] === "string" ? flags["--cache"] : DEFAULT_CACHE_ROOT);
   await mkdir(out, { recursive: true });
   const runner = new ProcessCommandRunner();
   let failing = 0;
   for (const { pack, tool } of selected) {
-    const report = await runToolPack({ root, pack, tool, cacheRoot, readCache, writeCache, runner, ...(shard === undefined ? {} : { shard }) });
+    const report = await runToolPack({ root, pack, tool, cacheRoot, readCache, writeCache, compareCache, runner, ...(shard === undefined ? {} : { shard }) });
     const name = `${pack}--${tool}`;
     await writeFile(join(out, `${name}.json`), `${JSON.stringify(report, null, 2)}\n`);
     await writeFile(join(out, `${name}.md`), renderMarkdown(report));
     const blocking = blockingFailures(report);
     failing += blocking;
-    console.log(`${report.toolPack}${shard === undefined ? "" : ` (${shardName(shard)}, ${report.rules.length} of ${report.shard!.rules} rules)`}: ${report.summary.shipped.pass}/${report.summary.shipped.rules} shipped pass, ${report.summary.candidates.pass}/${report.summary.candidates.rules} candidates pass; ${blocking} blocking failure(s); cache ${report.cache.hits}/${report.cache.rules}; tool-pack checks ${report.toolPackChecks.pass ? "pass" : "FAIL"}`);
+    // Each difference is one of the blocking failures; an annotation names its rule and gate in the run's page.
+    for (const drift of report.cache.differing ?? []) console.log(`::error::${report.toolPack}: ${driftLine(drift)}`);
+    console.log(`${report.toolPack}${shard === undefined ? "" : ` (${shardName(shard)}, ${report.rules.length} of ${report.shard!.rules} rules)`}: ${report.summary.shipped.pass}/${report.summary.shipped.rules} shipped pass, ${report.summary.candidates.pass}/${report.summary.candidates.rules} candidates pass; ${blocking} blocking failure(s); cache ${report.cache.hits}/${report.cache.rules}${compareCache ? `, compared ${report.cache.compared ?? 0}, ${report.cache.differing?.length ?? 0} differ` : ""}; tool-pack checks ${report.toolPackChecks.pass ? "pass" : "FAIL"}`);
   }
   console.log(`wrote ${selected.length} report(s) to ${out}`);
   return failing > 0 ? 1 : 0;

@@ -130,8 +130,9 @@ export function lockedClosure(lock: unknown, roots: readonly string[]): Map<stri
  * Some keyed entries are never loaded (json-with-bigint, @opentelemetry/api, the esbuild binaries of other
  * platforms): a bump of one costs a re-judge, never a verdict, which is the safe direction. Left out on purpose: the
  * Node.js version (CI pins only the major, in .github/actions/node-deps/action.yml, which no key covers), @napi-rs/cli
- * (the native binary is no part of the key, engine.ts) and tsconfig.json; the uncached nightly judges every rule
- * again, which catches a change to any of them.
+ * (the native binary is no part of the key, engine.ts) and tsconfig.json. The nightly (`--refresh-cache`) judges every
+ * rule again and compares each fresh verdict with the one cached under the same key before saving over it, so a change
+ * to any of them that moves a verdict fails it, naming the rule and the gate.
  */
 export function dependencyDigest(root: string): string {
   const lock: unknown = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8"));

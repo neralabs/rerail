@@ -74,7 +74,13 @@ export function mergeShards(reports: GatesReport[], binary?: string): GatesRepor
     integrity: [...integrity].sort(byText),
     knownGaps,
     gapCandidates: [...gapCandidates.values()].sort((a, b) => byText(a.gate, b.gate) || byText(a.file, b.file)),
-    cache: { rules: reports.reduce((sum, entry) => sum + entry.cache.rules, 0), hits: reports.reduce((sum, entry) => sum + entry.cache.hits, 0) },
+    cache: {
+      rules: reports.reduce((sum, entry) => sum + entry.cache.rules, 0),
+      hits: reports.reduce((sum, entry) => sum + entry.cache.hits, 0),
+      // A shard report written before reports compared results compared none.
+      compared: reports.reduce((sum, entry) => sum + (entry.cache.compared ?? 0), 0),
+      differing: reports.flatMap((entry) => entry.cache.differing ?? []).sort((a, b) => byText(a.file, b.file)),
+    },
     summary: summarizeRules(rules),
     rules,
   };

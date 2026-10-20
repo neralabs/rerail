@@ -115,6 +115,46 @@ export function isCachedPack(value: unknown): value is CachedPack {
     && isRecord(value.corpusComplete) && value.corpusComplete.id === "corpus-complete" && value.corpusComplete.ok === true && typeof value.corpusComplete.detail === "string";
 }
 
+/**
+ * One way a rule's fresh result differs from its cached result under the same key: `what` is `verdict` (its pass and
+ * stoppedAt: `passes` or `stops at <gate>`), a blocking gate whose pass differs (`pass` or `fail`), or `defaultOn`,
+ * upstream-status's call (`on` or `off`), with the cached value and the fresh one.
+ */
+export interface VerdictDrift {
+  id: string;
+  file: string;
+  location: Location;
+  what: "verdict" | Exclude<BlockingGateId, "passes-conformance"> | "defaultOn";
+  cached: string;
+  fresh: string;
+}
+
+/**
+ * How a rule's fresh result differs from its cached result under the same key: its verdict, each blocking gate's pass
+ * in the order a rule meets them, then upstream-status's defaultOn; empty when they agree. Both are the cached form,
+ * from before runToolPack judges passes-conformance, so that gate is a placeholder in each and is left out: it is judged
+ * fresh on every run. Free-text details are never compared, since they can name a run's temporary paths.
+ */
+export function verdictDrift(cached: CachedRule, fresh: CachedRule): VerdictDrift[] {
+  const { id, file, location } = fresh.report;
+  const drift: VerdictDrift[] = [];
+  const add = (what: VerdictDrift["what"], before: string, after: string) => {
+    if (before !== after) drift.push({ id, file, location, what, cached: before, fresh: after });
+  };
+  // A verdict sets pass and stoppedAt together; an entry whose two disagree is spelled out, so it differs from both.
+  const verdictOf = ({ pass, stoppedAt }: RuleReport): string => {
+    if (pass === (stoppedAt === null)) return stoppedAt === null ? "passes" : `stops at ${stoppedAt}`;
+    return `pass ${pass}, stoppedAt ${stoppedAt}`;
+  };
+  add("verdict", verdictOf(cached.report), verdictOf(fresh.report));
+  for (const { id: gateId } of BLOCKING_GATES) {
+    if (gateId === "passes-conformance") continue;
+    add(gateId, cached.report.gates[gateId].pass ? "pass" : "fail", fresh.report.gates[gateId].pass ? "pass" : "fail");
+  }
+  add("defaultOn", cached.report.defaultOn ? "on" : "off", fresh.report.defaultOn ? "on" : "off");
+  return drift;
+}
+
 export interface GatesReport {
   format: typeof REPORT_FORMAT;
   pack: string;
@@ -138,7 +178,12 @@ export interface GatesReport {
   unmapped: { file: string; location: Location }[];
   /** conformance.json entries of this tool whose document does not exist yet. */
   listedWithoutDocument: number;
-  cache: { rules: number; hits: number };
+  /**
+   * How many rule results came from the cache; and how many fresh results a refresh compared with the cached one under
+   * the same key, with every way one differs (verdictDrift), each a blocking failure. A report written before reports
+   * compared has neither `compared` nor `differing`.
+   */
+  cache: { rules: number; hits: number; compared?: number; differing?: VerdictDrift[] };
   /** The shard this report judged, and how many rules the whole tool-pack has; absent on a whole or merged report. */
   shard?: Shard & { rules: number };
   summary: {
@@ -161,6 +206,11 @@ export interface RunOptions {
   readCache: boolean;
   /** Save this run's results to the cache. */
   writeCache: boolean;
+  /**
+   * Compare each fresh result with the cached one under its key before saving over it (`--refresh-cache`): every way
+   * a verdict differs is listed in the report's `cache.differing` and fails the run.
+   */
+  compareCache: boolean;
   runner: CommandRunner;
   /** Judge only this shard's rules (shard.ts); every rule still counts for the tool-pack checks. */
   shard?: Shard;
@@ -452,7 +502,8 @@ export function goldenListLines(goldens: Goldens, realCodeGaps: RealCodeGap[], r
 
 /**
  * Run every gate on every document of one gated tool-pack, from its recordings. With the cache, a rule whose inputs are
- * unchanged takes its cached result; when every rule does, nothing is fetched or evaluated.
+ * unchanged takes its cached result; when every rule does, nothing is fetched or evaluated. With `compareCache`, each
+ * fresh result is compared with the cached one under its key before it is saved over it.
  */
 export async function runToolPack(options: RunOptions): Promise<GatesReport> {
   const { root, pack, tool } = options;
@@ -536,19 +587,25 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
     caseSources: [...new Set(keyed.flatMap((entry) => entry.caseSources))],
   }, judged.map((entry) => entry.key));
 
+  // An entry for another document under the rule's key is a miss, and is compared with nothing.
+  const readCachedRule = async (entry: (typeof judged)[number]): Promise<CachedRule | undefined> => {
+    const hit = await readCached(cacheRoot, pack, tool, entry.key, isCachedRule, shard);
+    return hit !== undefined && hit.report.file === entry.path && hit.report.location === entry.location ? hit : undefined;
+  };
   // Plan: every key first; when all hit, nothing is fetched or evaluated.
   const cached = new Map<string, CachedRule>();
   let packCached: CachedPack | undefined;
   if (options.readCache) {
     for (const entry of judged) {
-      const hit = await readCached(cacheRoot, pack, tool, entry.key, isCachedRule, shard);
-      // An entry for another document under this key is a miss.
-      if (hit !== undefined && hit.report.file === entry.path && hit.report.location === entry.location) cached.set(entry.key, hit);
+      const hit = await readCachedRule(entry);
+      if (hit !== undefined) cached.set(entry.key, hit);
     }
     packCached = await readCached(cacheRoot, pack, tool, `pack-${packKey}`, isCachedPack, shard);
   }
   const misses = judged.filter((entry) => !cached.has(entry.key));
   const results = new Map<string, CachedRule>(cached);
+  let compared = 0;
+  const drifted: VerdictDrift[] = [];
   let packResult: CachedPack;
 
   if (misses.length === 0 && packCached !== undefined) {
@@ -568,6 +625,8 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
     pinChecks.push(complete);
     // Results judged with a golden's task unfetched are reported (and fail through corpus-complete) but never cached.
     const save = options.writeCache && complete.ok;
+    // Nor compared: a refresh compares what it saves.
+    const compare = options.compareCache && complete.ok;
     const upstreamFiles = await adapter.lintCorpus(corpusFiles, names);
     const byPlace = new Map<string, UpstreamFile>(upstreamFiles.map((entry) => [`${entry.file.task}\0${entry.file.path}`, entry]));
     const cases = new Map<string, UpstreamCase[]>(names.filter((name) => adapter.rule(name) !== undefined).map((name) => [name, adapter.cases(name)]));
@@ -580,6 +639,13 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
       for (const entry of misses) {
         const result = await evaluateRule(context, entry.rule, entry.location, entry.location === "shipped" ? (on.get(entry.path) ?? true) : null);
         results.set(entry.key, result);
+        // Before the fresh result replaces the cached one: a verdict that differs under the same key means the key
+        // leaves out something the verdict depends on. The fresh one is saved all the same, and the difference fails.
+        const earlier = compare ? await readCachedRule(entry) : undefined;
+        if (earlier !== undefined) {
+          compared += 1;
+          drifted.push(...verdictDrift(earlier, result));
+        }
         if (save) await writeCached(cacheRoot, pack, tool, entry.key, result, shard);
       }
     } finally {
@@ -641,7 +707,7 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
     corpus: packResult.corpus,
     unmapped,
     listedWithoutDocument,
-    cache: { rules: judged.length, hits: cached.size },
+    cache: { rules: judged.length, hits: cached.size, compared, differing: drifted },
     ...(shard === undefined ? {} : { shard: { ...shard, rules: keyed.length } }),
     summary: summarizeRules(reports),
     rules: reports,
@@ -649,10 +715,14 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
   return report;
 }
 
-/** Whether a tool-pack report fails CI: a shipped rule fails, or a shipped document is not mapped to an upstream rule. */
+/**
+ * Whether a tool-pack report fails CI: a shipped rule fails, a shipped document is not mapped to an upstream rule, or a
+ * fresh verdict differs from the cached one under the same key, whichever rule it is: the key left out an input.
+ */
 export function blockingFailures(report: GatesReport): number {
   return report.rules.filter((rule) => rule.location === "shipped" && !rule.pass).length
-    + report.unmapped.filter((entry) => entry.location === "shipped").length;
+    + report.unmapped.filter((entry) => entry.location === "shipped").length
+    + (report.cache.differing?.length ?? 0);
 }
 
 export const relativeTo = (root: string, path: string) => relative(root, path);
