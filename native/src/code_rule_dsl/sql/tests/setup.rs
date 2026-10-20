@@ -6,7 +6,9 @@
 //!   with the square of `n`; a frame is a module registration and takes constant time.
 //! - `the_benchmark_policies_session_setup`: sessions over growing prefixes of the data-layer
 //!   benchmark's lowered grammar matchers (`RERAIL_SETUP_GRAMMARS`, default `50,100,200,400`),
-//!   each compiled as a workspace compiles them (`workspace::sql::SqlEngine`).
+//!   each compiled as a workspace compiles them (`workspace::sql::SqlEngine`): the program's plan
+//!   (steps, distinct texts, frame and B-tree names) and a new session's setup, which makes no
+//!   table until a clause runs.
 
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::model::{ClauseKind, Query};
@@ -139,15 +141,19 @@ fn run() {
         let (program, outcomes) = crate::code_rule_dsl::sql::compile_each(prefix);
         let compiled_in = started.elapsed();
         let lowered = outcomes.iter().filter(|outcome| outcome.is_ok()).count();
+        let census = program.census();
         let started = Instant::now();
         let session = program.session().expect("a session");
         let setup = started.elapsed().as_secs_f64();
+        // A session makes a clause's tables on its first run: a new one has made none.
         let (btrees, frames) = session.tables().expect("tables");
-        let tables = btrees + frames;
         eprintln!(
-            "{:>5} grammar matchers ({lowered} lowered): setup {setup:.3}s for {tables} tables ({btrees} B-trees, {frames} frames), {:.1} µs/table; program compiled in {:.1}s",
+            "{:>5} grammar matchers ({lowered} lowered): session in {setup:.3}s with {btrees} B-trees, {frames} frames made; plan of {} steps, {} distinct texts, {} frames, {} B-trees; program compiled in {:.1}s",
             prefix.len(),
-            setup * 1e6 / tables.max(1) as f64,
+            census.steps,
+            census.texts,
+            census.frames,
+            census.btrees,
             compiled_in.as_secs_f64(),
         );
     }

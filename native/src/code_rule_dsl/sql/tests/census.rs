@@ -52,7 +52,7 @@ fn query(
 fn audit(grammar: &crate::code_rule_dsl::matcher::GrammarMatcher, each: Option<&str>) {
     let program = crate::code_rule_dsl::sql::compile_enumerating(&[grammar], each)
         .expect("a clause that lowers compiles");
-    let session = program.session().expect("a session");
+    let mut session = program.session().expect("a session");
     for (sql, plan) in session.plans().expect("plans") {
         let scans = super::differential::inner_scans(&plan);
         assert!(
@@ -716,13 +716,17 @@ fn run_footprint() {
         let started = std::time::Instant::now();
         let (program, outcomes) = compile_each(&grammars);
         let elapsed = started.elapsed().as_secs_f64();
-        let (stages, clauses) = program.statement_count();
+        let census = program.census();
         eprintln!(
-            "all {} policies: {} clauses ({} lower), {stages} stage + {clauses} clause statements, {:.1} MiB SQL, {elapsed:.2}s, peak RSS {before:.0} -> {:.0} MiB",
+            "all {} policies: {} clauses ({} lower), {} steps, {} distinct texts ({:.1} MiB), {} frames, {} B-trees, {elapsed:.2}s, peak RSS {before:.0} -> {:.0} MiB",
             runtimes.len(),
             grammars.len(),
             outcomes.iter().filter(|outcome| outcome.is_ok()).count(),
-            program.statement_bytes() as f64 / 1048576.0,
+            census.steps,
+            census.texts,
+            census.bytes as f64 / 1048576.0,
+            census.frames,
+            census.btrees,
             resident_mib(),
         );
         return;
@@ -742,17 +746,18 @@ fn run_footprint() {
             let started = std::time::Instant::now();
             let (program, outcomes) = compile_each(std::slice::from_ref(grammar));
             if outcomes[0].is_ok() {
-                let (stages, clauses) = program.statement_count();
+                let census = program.census();
                 alone.push((
-                    program.statement_bytes(),
-                    stages + clauses,
+                    census.bytes,
+                    census.steps,
                     started.elapsed().as_secs_f64(),
                     name.clone(),
                 ));
-                // `RERAIL_FOOTPRINT_DUMP=<dir>`: each clause's statements, one per line.
+                // `RERAIL_FOOTPRINT_DUMP=<dir>`: each clause's steps, one per line.
                 if let Ok(dir) = std::env::var("RERAIL_FOOTPRINT_DUMP") {
                     let text: String = program
-                        .statements()
+                        .planned_statements()
+                        .iter()
                         .map(|statement| format!("{}\n", statement.replace('\n', " ")))
                         .collect();
                     std::fs::write(format!("{dir}/{}.sql", name.replace('/', "_")), text)
@@ -774,12 +779,16 @@ fn run_footprint() {
         let started = std::time::Instant::now();
         let (program, outcomes) = compile_each(&grammars);
         let elapsed = started.elapsed().as_secs_f64();
-        let (stages, clauses) = program.statement_count();
+        let census = program.census();
         eprintln!(
-            "{name}: {} clauses ({} lower), whole program {stages} stage + {clauses} clause statements, {:.1} MiB SQL, {elapsed:.2}s, peak RSS {before:.0} -> {:.0} MiB; alone, Σ {:.1} MiB SQL",
+            "{name}: {} clauses ({} lower), whole program {} steps, {} distinct texts ({:.1} MiB), {} frames, {} B-trees, {elapsed:.2}s, peak RSS {before:.0} -> {:.0} MiB; alone, Σ {:.1} MiB SQL",
             grammars.len(),
             outcomes.iter().filter(|outcome| outcome.is_ok()).count(),
-            program.statement_bytes() as f64 / 1048576.0,
+            census.steps,
+            census.texts,
+            census.bytes as f64 / 1048576.0,
+            census.frames,
+            census.btrees,
             resident_mib(),
             alone.iter().map(|entry| entry.0).sum::<usize>() as f64 / 1048576.0,
         );

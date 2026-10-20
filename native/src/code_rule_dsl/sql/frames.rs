@@ -214,11 +214,6 @@ impl FrameStore {
         Ok(name)
     }
 
-    /// Whether a frame has the name `name`.
-    pub(super) fn contains(&self, name: &str) -> bool {
-        self.frames.lock().contains_key(name)
-    }
-
     /// How many frames the store holds.
     #[cfg(test)]
     pub(super) fn len(&self) -> usize {
