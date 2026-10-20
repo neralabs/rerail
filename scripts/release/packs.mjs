@@ -122,6 +122,48 @@ export function planPacks(packs, tags) {
 }
 
 /**
+ * Which packs a promotion moves to `latest`, given the release tags and `latestOf(name)`, the version npm's `latest`
+ * names (null when it names none): each pack whose package.json version is released (its tag exists) and is not
+ * `latest` already. package.json holds the newest version a release run published, so a `latest` that differs from it
+ * is older. A version without its tag has not been published, so it is `unreleased`, not promoted.
+ */
+export function planPromotions(packs, tags, latestOf) {
+  const existing = new Set(tags);
+  const promote = [];
+  const unreleased = [];
+  for (const pack of packs) {
+    if (!existing.has(releaseTag(pack.name, pack.version))) {
+      unreleased.push(pack);
+      continue;
+    }
+    const latest = latestOf(pack.name);
+    if (latest !== pack.version) promote.push({ ...pack, latest });
+  }
+  return { promote, unreleased };
+}
+
+/**
+ * Points `latest` at each `{ name, version }` in `promotions`, refusing a version this repository never released (no
+ * tag). One failure does not stop the others; returns each failure, so the run reports them all and can be run again,
+ * which skips the packs already promoted. `steps.promote(name, version)` throws on failure.
+ */
+export function promotePacks(promotions, tags, steps) {
+  const existing = new Set(tags);
+  const failures = [];
+  for (const { name, version } of promotions) {
+    const tag = releaseTag(name, version);
+    try {
+      if (!existing.has(tag)) throw new Error("it was never released from this repository (no such git tag)");
+      steps.promote(name, version);
+      steps.log(`promoted ${tag} to latest`);
+    } catch (error) {
+      failures.push(`${tag}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return failures;
+}
+
+/**
  * `package-lock.json` with each pack workspace's recorded version set to its package.json's, and nothing else
  * changed: `changeset version` bumps the packs but leaves the lockfile behind.
  */

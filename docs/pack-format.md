@@ -288,10 +288,15 @@ core's `v*` release (`release.yml`) is separate.
    Packs are published one by one, and any failed run can be run again: a version already tagged is skipped, and
    one the registry already has without its tag (a run that failed after publishing) is checked and tagged, not
    published again. A pull request that touches packs runs the gate and the packing as a dry run.
-3. **Promote.** A version reaches `latest` only when promoted, pack by pack: run the workflow from `main`
-   (Actions → Release packs → Run workflow) with the pack's id and, optionally, the version (default: the one in its
-   `package.json`). Only a version with its release tag can be promoted. By hand, from a 2FA npm login:
-   `npm dist-tag add @neralabs/rerail-pack-<id>@<version> latest`.
+3. **Promote.** Publishing changes nothing for users: set-up and `rerail packs add <id>` fetch under `latest` (on
+   the default update channel), so a version is used once it is promoted. Run the workflow from `main` (Actions →
+   Release packs → Run workflow) with no inputs: its first job lists, in the run summary, every pack whose
+   `package.json` version is released and is not `latest` yet, and its promote job, once a reviewer approves the
+   `release` environment, points each one's `latest` at that version. A pack that fails to promote does not stop the
+   others; the run fails naming it and can be run again. To promote one pack alone, or put back an older released
+   version, give the pack's id and, optionally, the version. Only a version with its release tag can be promoted. By
+   hand, from a 2FA npm login: `npm dist-tag add @neralabs/rerail-pack-<id>@<version> latest`. To try a version
+   before promoting it: `rerail packs add <id>@next`.
 
 The scripts are in `scripts/release/`. To check a pack's tarball locally:
 `node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id>`.

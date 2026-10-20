@@ -1,5 +1,6 @@
-// scripts/release/packs.mjs: what a pack release run publishes, the lockfile sync after `changeset version`, the
-// publish gate's reading of the pack validation, and the patch-only bumps of packs below 1.0.0.
+// scripts/release/packs.mjs: what a pack release run publishes, what a promotion moves to `latest`, the lockfile sync
+// after `changeset version`, the publish gate's reading of the pack validation, and the patch-only bumps of packs below
+// 1.0.0.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -8,6 +9,8 @@ import {
   listPacks,
   packIds,
   planPacks,
+  planPromotions,
+  promotePacks,
   readChangesets,
   releasePacks,
   syncPackLockfile,
@@ -20,6 +23,50 @@ describe("planPacks", () => {
     const packs = [pack("bumped", "0.2.0"), pack("released", "0.1.0"), pack("new", "0.1.0")];
     const tags = ["@neralabs/rerail-pack-bumped@0.1.0", "@neralabs/rerail-pack-released@0.1.0", "@neralabs/rerail-pack-newer@0.1.0"];
     expect(planPacks(packs, tags)).toEqual({ publish: ["bumped"], first: ["new"] });
+  });
+});
+
+describe("planPromotions", () => {
+  const tags = ["@neralabs/rerail-pack-behind@0.1.3", "@neralabs/rerail-pack-current@0.1.2", "@neralabs/rerail-pack-untagged@0.1.1", "@neralabs/rerail-pack-fresh@0.1.0"];
+  const latest = { "@neralabs/rerail-pack-behind": "0.1.2", "@neralabs/rerail-pack-current": "0.1.2", "@neralabs/rerail-pack-untagged": "0.1.1", "@neralabs/rerail-pack-fresh": null };
+
+  it("promotes each released version that is not latest, skips one that is, and leaves an untagged version out as unreleased", () => {
+    const asked = [];
+    const plan = planPromotions(
+      [pack("behind", "0.1.3"), pack("current", "0.1.2"), pack("untagged", "0.1.2"), pack("fresh", "0.1.0")],
+      tags,
+      (name) => (asked.push(name), latest[name]),
+    );
+
+    expect(plan.promote.map(({ id, version, latest: was }) => [id, version, was])).toEqual([["behind", "0.1.3", "0.1.2"], ["fresh", "0.1.0", null]]);
+    expect(plan.unreleased.map(({ id, version }) => [id, version])).toEqual([["untagged", "0.1.2"]]);
+    // npm is not asked about a version that cannot be promoted.
+    expect(asked).not.toContain("@neralabs/rerail-pack-untagged");
+  });
+});
+
+describe("promotePacks", () => {
+  const promotion = (id, version) => ({ name: `@neralabs/rerail-pack-${id}`, version });
+
+  it("promotes the rest when one fails, and returns each failure, a version never released included", () => {
+    const promoted = [];
+    const failures = promotePacks(
+      [promotion("a", "0.1.3"), promotion("b", "0.1.3"), promotion("c", "0.1.3"), promotion("d", "9.9.9")],
+      ["@neralabs/rerail-pack-a@0.1.3", "@neralabs/rerail-pack-b@0.1.3", "@neralabs/rerail-pack-c@0.1.3"],
+      {
+        promote: (name, version) => {
+          if (name.endsWith("-b")) throw new Error("npm error code E403");
+          promoted.push(`${name}@${version}`);
+        },
+        log: () => {},
+      },
+    );
+
+    expect(promoted).toEqual(["@neralabs/rerail-pack-a@0.1.3", "@neralabs/rerail-pack-c@0.1.3"]);
+    expect(failures).toEqual([
+      "@neralabs/rerail-pack-b@0.1.3: npm error code E403",
+      "@neralabs/rerail-pack-d@9.9.9: it was never released from this repository (no such git tag)",
+    ]);
   });
 });
 
