@@ -1,4 +1,5 @@
-# matches-upstream-tests goldens, imported from NRV and reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.
+# matches-upstream-tests goldens, reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.
+# Source: imported from nera-rule-validation's validation/goldens/python-ruff.tsv at e8727c7, plus, for each shipped rule no upstream test file proves silent, one file where upstream reports nothing: the best-ranked agreeing negative of rerail's own real-code run, CI run 38969340726.
 ruff-async100-cancel-scope-no-checkpoint
 	dask-dask-2022.9.2-2022.10.0
 		dask/base.py	95ee0e9b57b8cb8ccce26686651e56763167b0c573f3041f0c6fa8681aa33361

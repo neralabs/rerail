@@ -21,8 +21,8 @@ gates and are only reported.
 A rule's verdict is the first blocking gate it fails. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
 that differs where the engine reported `source-partial`, `source-incomplete` or `budget-exceeded` fails the rule; the
 fix belongs in the engine (NER-1764). It also includes `no-real-code-gap`: a rule `gates.yaml` lists under
-`real_code_gaps` fails. The goldens and real-code gaps are reviewed data, imported from NRV's goldens and never written by
-the gates (docs/port-readiness.md, "Goldens").
+`real_code_gaps` fails. The goldens and real-code gaps are reviewed data, imported from NRV's goldens or, where NRV pins no tool, found by
+rerail's own real-code run (each goldens.tsv's source line says which), and never written by the gates (docs/port-readiness.md, "Goldens").
 
 ## Where the code comes from
 
@@ -90,7 +90,7 @@ request's cache to that pull request, so main reads only what main's pushes and 
 ```
 packs/<pack>/upstream/<tool>/gates.yaml         the tool-pack's manifest (manifest.ts)
 packs/<pack>/upstream/<tool>/recording.lock     which recording this commit is judged against (recording/store.ts)
-packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id, imported from NRV
+packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id, and the real-code run that found them
 
 .rerail/port-readiness/recordings/<sha256>.json          the recordings themselves, fetched or recorded, cached by digest
   recording.json                                upstream's recorded answers (recording/schema.ts, rerail.port-readiness-recording/v2)

@@ -48,15 +48,25 @@ Each check's detail says why it failed, in a sentence: the first differing upstr
 `not-overfit` found, the size metrics.
 
 From V1's numbers: Gate 1 is `upstream-status`, 2 `loads`, 3 `not-overfit`, 4 `compact`, 5 `matches-upstream-tests`.
-Gate 6, real code, runs in NRV only; rerail judges the goldens it found, in `matches-upstream-tests`.
+Gate 6, real code, does not run in rerail's CI; rerail judges the goldens a real-code run found, in `matches-upstream-tests`.
 
 ### Goldens
 
 A golden is a real-code file a rule must agree with upstream on. `packs/<id>/upstream/<tool>/goldens.tsv` lists each
 by rule, task or corpus, path and the file's sha256; its expected answer is upstream's findings on that file in
-`corpus.json`. Rerail does not run the rules over the corpus to find goldens, and never writes `goldens.tsv`. Finding
-them is V1's Gate 6, which stays in nera-rule-validation (NRV): NRV writes every file where a rule and upstream differ
-to its `validation/goldens/<pack>.tsv`, and a tool-pack's `goldens.tsv` is a reviewed list imported from there.
+`corpus.json`. Rerail's CI does not run the rules over the corpus to find goldens, and the gates never write
+`goldens.tsv`. Finding them is V1's Gate 6, and each `goldens.tsv` names the run that found its goldens on its second
+line (`# Source: ...`, which the gates require):
+
+- **NRV's Gate 6** for the tool-packs nera-rule-validation pins (python, javascript, react, typescript, next): NRV writes
+  every file where a rule and upstream differ to its `validation/goldens/<pack>.tsv`, and the tool-pack's `goldens.tsv`
+  is a reviewed list imported from there.
+- **Rerail's own Gate 6** for sql, rust and vue, which NRV pins no tool of: #141 ran #85's `matches-real-code` (at
+  `f7d18209`, before #85 moved Gate 6 to NRV) over each pack's pinned corpora and the SWE tasks' solutions, with
+  `--write`. Nothing finds new real-code disagreements for these three until real-code discovery runs again: in rerail,
+  as a nightly job, is the follow-up the expected-answers plan lists.
+
+For the NRV-imported tool-packs:
 
 - **Every rule's goldens are imported, candidates' too,** filed under NRV's id for the rule (the document id at NRV's
   pinned rerail commit, or `<tool>:<upstream rule>`) and mapped to the rerail document by its upstream rule. A
@@ -220,7 +230,7 @@ pinned test files:
 packs/<id>/upstream/<tool>/
 ├── gates.yaml          upstream pins, recommended configurations, known parser gaps, real-code gaps, and the team's decisions for the tool
 ├── recording.lock      the manifest: which recording this commit's rules are judged against (conformance/port-readiness/recording/store.ts)
-├── goldens.tsv         the rules' goldens, imported from NRV
+├── goldens.tsv         the rules' goldens, and on its second line the real-code run that found them
 └── fixtures/           upstream's test files, copied (listed in licenses/<project>/UPSTREAM.md)
 ```
 

@@ -1,4 +1,5 @@
-# matches-upstream-tests goldens, imported from NRV and reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.
+# matches-upstream-tests goldens, reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.
+# Source: not NRV's, which pins no eslint-plugin-vue: every file where a rule and eslint-plugin-vue differed on this pack's pinned corpora and the SWE tasks' solutions, found by rerail's own real-code gate (#85's matches-real-code at f7d18209, `npm run port-readiness -- --write`) in #141, before #85 moved Gate 6 to NRV.
 eslint-plugin-vue-attribute-hyphenation
 	rerail:hoppscotch
 		packages/hoppscotch-sh-admin/src/components/onboarding/AuthSetup.vue	39eaa1c069cd8cf5d1cac92721651fc08af9bc07cba9507d804a57b2739e1f3f

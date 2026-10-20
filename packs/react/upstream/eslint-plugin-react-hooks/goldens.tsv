@@ -1,4 +1,5 @@
-# matches-upstream-tests goldens, imported from NRV and reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.
+# matches-upstream-tests goldens, reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.
+# Source: imported from nera-rule-validation's validation/goldens/react-react-hooks.tsv at e8727c7.
 react-hooks-exhaustive-deps
 	rerail:excalidraw
 		excalidraw-app/App.tsx	721103a71d9f227f0dd089b7acfd5b6b75861006236059790bbdc96c44368a2b
