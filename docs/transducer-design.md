@@ -60,7 +60,7 @@ This does not require general wide arithmetic in the language.
 
 ## Tables
 
-Each transducer has four local tables:
+Each transducer has five local tables:
 
 | Table | Contents |
 | --- | --- |
@@ -68,6 +68,7 @@ Each transducer has four local tables:
 | Predicates | Pure text tests: equality, prefix, or regex, with a string index and declared text semantics. |
 | Labels | Capture and output names, each referring to a string entry. |
 | Long integers | Unsigned 64-bit constants for numeric tests that exceed 16 bits. |
+| Counts | `COUNT` tests: a navigation and its node selection, a sub-program position, and a minimum and optional maximum. |
 
 String lengths and backing-storage offsets are not limited to 16 bits.
 Strings can contain embedded NUL bytes. Neither instructions nor table indices contain inline string data.
@@ -78,6 +79,7 @@ In that mode, its 16-bit operand indexes the long-integer table instead of holdi
 It remains one instruction word.
 Other instructions have no implicit long mode.
 Tables contain data, not hidden instruction sequences or arbitrary executable expressions.
+A count entry names a sub-program position, as `TEST`'s operand does; it holds no instructions.
 
 ## Instructions
 
@@ -89,7 +91,7 @@ Kind and field operands use the input grammar's IDs. Field zero means no incomin
 | --- | --- | --- | --- | --- |
 | `00` | `STOP` | 0 | 0 | End this path without output. |
 | `01` | `KIND` | 0 | kind ID | Retain the path if the current kind equals the operand. |
-| `02` | `FIELD` | 0 | field ID | Retain the path if the incoming field equals the operand. |
+| `02` | `FIELD` | 0 or first-in-field | field ID | Retain the path if the incoming field equals the operand; with mode 1, the node must also be its parent's first child with that field. |
 | `03` | `FLAGS` | required flag mask | forbidden flag mask | Require every required flag and no forbidden flag. |
 | `04` | `TEXT` | 0 | predicate index | Retain the path if the current node's source bytes satisfy the predicate. |
 | `05` | `SIZE` | comparison, optionally long | value or long index | Compare the current span's byte length with the constant. |
@@ -97,9 +99,12 @@ Kind and field operands use the input grammar's IDs. Field zero means no incomin
 | `11` | `NEXT` | node selection | 0 | Move to the next selected sibling, or reject this path. |
 | `12` | `PARENT` | 0 | 0 | Move to the parent, or reject this path. |
 | `13` | `DESCEND` | node selection | 0 | Continue once for each selected proper descendant in preorder. |
+| `14` | `ANCESTOR` | node selection | 0 | Continue once for each selected proper ancestor, nearest first. |
 | `20` | `CAPTURE` | 0 | label index | Append the current node under this label. |
 | `30` | `FORK` | 0 | target instruction | Continue both at the next instruction and at the target, in that order. |
 | `31` | `GOTO` | 0 | target instruction | Continue at the target with the same node and captures. |
+| `32` | `TEST` | 0 or negated | sub-program position | Retain the path if a path started at the position on the current node emits (mode 1: if none does). |
+| `33` | `COUNT` | 0 | count index | Retain the path if the number of nodes the entry's navigation reaches from the current node, at which its sub-program emits, is within its bounds. |
 | `40` | `EMIT` | 0 | label index | Emit one record and end this path. |
 
 Flags use bits `0=named`, `1=extra`, `2=missing`, and `3=error`.
@@ -112,6 +117,11 @@ Node selection mode is `0=all nodes` or `1=named nodes`.
 Bit 7 selects a long-integer table reference. All other mode bits are zero.
 For example, `SIZE at-least,long 3` compares against `longs[3]`.
 The span length retains its native width during comparison. It is never narrowed before the test.
+
+`TEST` and `COUNT` run a sub-program as a lookahead: its paths start with no captures, their outputs are discarded,
+and only whether one emits matters. A sub-program position must lie after the instruction that runs it, so a lookahead
+never returns to the same instruction on the same node. A `COUNT` entry's navigation is `CHILD`, `PARENT`, `DESCEND`,
+or `ANCESTOR`; each reached node counts once.
 
 ## Alternatives, repetition, and ordering
 
@@ -206,7 +216,8 @@ A reachable fallthrough past the last instruction is an error, not an implicit `
 Missing source bytes for `TEXT` are an input error, not a negative text result.
 Cancellation or exhausted resources mean incomplete output, never a complete negative result.
 
-This language does not define SQL operators, rule-level negation, binding environments, rewrites, or a general expression evaluator.
+This language does not define SQL operators, binding environments, rewrites, or a general expression evaluator.
+Its only negation is `TEST`'s negated lookahead at one node, which keeps no captures.
 It does not claim that arbitrary Tree-sitter queries or ast-grep rules lower directly to these primitives without semantic adaptation.
 Those frontends and execution backends remain separate work.
 
@@ -219,6 +230,21 @@ python3 test/docs/test_transducer_design.py
 They check one-word encoding and its boundaries.
 The native implementation is `native/src/code_rule_dsl/transducer.rs`.
 It implements every instruction above, table validation, path ordering, capture isolation, cycle checks, and shared kind dispatch.
+
+## Node-set executor and SQL pushdown
+
+`transducer/sets.rs` executes a program whose control flow only goes forward and whose outputs' captures are not read.
+It computes, one instruction at a time, the set of nodes at which a path started there emits, restricted to the nodes a
+path can be at there. A forward pass propagates the starting nodes; a backward pass computes each instruction's set
+from the sets after it. Both are linear in the tree per instruction. Its result is the set of the path executor's
+output starts; `sql::tests::pushdown` checks the two agree on generated programs over the fixtures.
+
+The SQL engine compiles capture-free node-local sub-rules to such programs (`sql/pushdown.rs`): `kind`, `regex`,
+`all`/`any`/`not` of those, `has`/`inside` and their `field` forms with a neighbour or end stop, `count` without `as`
+over `has`/`inside`, and stages that compiled whole. The `program_match` virtual table runs a program once per
+statement over the statement's whole input set, or over a stage's whole files. The sub-rule's SQL lowering stays its
+definition: `RERAIL_SQL_PUSHDOWN=0` turns pushdown off, and
+`sql::tests::differential::pushed_down_programs_agree_with_their_sql_lowering` compares both over generated clauses.
 
 ## Implemented ast-grep comparison
 
