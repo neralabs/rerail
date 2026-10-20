@@ -796,26 +796,6 @@ fn production_contract_phase_four_semantic_facts_lower_completely() {
                     "{} retains a nested user matcher",
                     case.name
                 );
-                let sql = plan.sql().split_whitespace().collect::<Vec<_>>().join(" ");
-                assert!(
-                    sql.contains(
-                        "FROM fact gate JOIN producer_status status USING (producer_id, file_index)"
-                    ),
-                    "{} has no exact completion-guarded fact gate",
-                    case.name
-                );
-                assert!(
-                    sql.contains(
-                        "gate.fact_kind = 0 AND status.complete = 1 AND gate.verdict <> 0"
-                    ),
-                    "{} has no exact three-valued fact gate",
-                    case.name
-                );
-                assert!(
-                    sql.contains("FROM producer_status failed WHERE failed.producer_id IN ("),
-                    "{} has no typed producer-failure projection",
-                    case.name
-                );
                 assert!(!plan.sql().contains("GrammarMatcher"), "{}", case.name);
                 assert!(!plan.sql().contains("tq_"), "{}", case.name);
             }

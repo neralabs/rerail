@@ -903,8 +903,15 @@ impl SqlRenderer {
         let [RelationNode::Producer(spec)] = inputs else {
             return Err("a terminal scan must have one producer operand".to_owned());
         };
-        let producer = spec.producer_id()?;
-        let name = self.next_name("term");
+        self.render_terminal_producer(spec.producer_id()?, "term")
+    }
+
+    fn render_terminal_producer(
+        &mut self,
+        producer: usize,
+        family: &str,
+    ) -> Result<String, String> {
+        let name = self.next_name(family);
         let columns = qualified_row_columns_with_verdict("match", "1");
         self.ctes.push(format!(
             "{name} AS (\n  SELECT {columns}, COALESCE((\n    SELECT json_group_array(json_object('label', captured.capture_label, 'occurrence', captured.capture_occurrence, 'node', captured.node, 'text', captured.source_text, 'structure', captured.structural_key, 'leaf', captured.named_leaf, 'kind', captured.capture_kind, 'named', captured.capture_named, 'equality_occurrence', captured.equality_occurrence))\n    FROM capture captured\n    WHERE captured.producer_id = match.producer_id AND captured.file_index = match.file_index\n      AND captured.match_index = match.match_index AND captured.capture_label <> 'match'\n    ORDER BY captured.capture_index\n  ), json('[]')) AS bindings, '' AS choice_order\n  FROM terminal_match match\n  INNER JOIN producer_status status USING (producer_id, file_index)\n  WHERE match.producer_id = {producer} AND status.complete = 1\n    AND NOT EXISTS (\n      SELECT 1 FROM capture first\n      JOIN capture repeated ON repeated.producer_id = first.producer_id AND repeated.file_index = first.file_index\n        AND repeated.match_index = first.match_index AND repeated.capture_label = first.capture_label\n        AND repeated.capture_index > first.capture_index\n      WHERE first.producer_id = match.producer_id AND first.file_index = match.file_index\n        AND first.match_index = match.match_index AND first.capture_label <> 'match'\n        AND first.capture_kind = 1 AND repeated.capture_kind = 1\n        AND NOT {}\n    )\n)",
@@ -925,11 +932,25 @@ impl SqlRenderer {
             return Err("ordered conjunction requires at least two operands".to_owned());
         }
         if let [source, RelationNode::Semantic { spec }] = inputs
-            && spec.rules.is_empty()
             && spec.argument_labels.is_empty()
             && let Some(source_producer) = Self::terminal_producer(source)?
         {
-            return self.render_simple_semantic_gate(source_producer, spec.producer);
+            if spec.rules.is_empty() {
+                return self.render_simple_semantic_gate(source_producer, spec.producer);
+            }
+            if let [rule] = spec.rules.as_slice()
+                && rule.target_kind.is_none()
+                && let Some(relation) = &rule.relation
+                && let [root] = relation.roots.as_slice()
+                && let Some(target_producer) = Self::terminal_producer(root)?
+            {
+                return self.render_semantic_target(
+                    source_producer,
+                    spec.producer,
+                    target_producer,
+                    rule.slot,
+                );
+            }
         }
         let relations = inputs
             .iter()
@@ -1089,12 +1110,7 @@ impl SqlRenderer {
         source_producer: usize,
         fact_producer: usize,
     ) -> Result<String, String> {
-        let source = self.next_name("source");
-        let source_columns = qualified_row_columns_with_verdict("match", "1");
-        self.ctes.push(format!(
-            "{source} AS (\n  SELECT {source_columns}, COALESCE((\n    SELECT json_group_array(json_object('label', captured.capture_label, 'occurrence', captured.capture_occurrence, 'node', captured.node, 'text', captured.source_text, 'structure', captured.structural_key, 'leaf', captured.named_leaf, 'kind', captured.capture_kind, 'named', captured.capture_named, 'equality_occurrence', captured.equality_occurrence))\n    FROM capture captured\n    WHERE captured.producer_id = match.producer_id AND captured.file_index = match.file_index\n      AND captured.match_index = match.match_index AND captured.capture_label <> 'match'\n    ORDER BY captured.capture_index\n  ), json('[]')) AS bindings, '' AS choice_order\n  FROM terminal_match match\n  INNER JOIN producer_status status USING (producer_id, file_index)\n  WHERE match.producer_id = {source_producer} AND status.complete = 1\n    AND NOT EXISTS (\n      SELECT 1 FROM capture first\n      JOIN capture repeated ON repeated.producer_id = first.producer_id AND repeated.file_index = first.file_index\n        AND repeated.match_index = first.match_index AND repeated.capture_label = first.capture_label\n        AND repeated.capture_index > first.capture_index\n      WHERE first.producer_id = match.producer_id AND first.file_index = match.file_index\n        AND first.match_index = match.match_index AND first.capture_label <> 'match'\n        AND first.capture_kind = 1 AND repeated.capture_kind = 1\n        AND NOT {}\n    )\n)",
-            Self::capture_equality("first", "repeated")
-        ));
+        let source = self.render_terminal_producer(source_producer, "source")?;
         let gate = self.next_name("semantic_gate");
         let gate_columns = qualified_row_columns_with_verdict(
             "gate",
@@ -1112,6 +1128,32 @@ impl SqlRenderer {
             "{resolved} AS (\n  SELECT {columns}, {merged} AS bindings, source.choice_order || semantic.choice_order AS choice_order FROM {source} source\n  INNER JOIN {gate} semantic\n    ON semantic.file_index = source.file_index AND semantic.node = source.node\n    AND {compatible}\n)"
         ));
         Ok(resolved)
+    }
+
+    fn render_semantic_target(
+        &mut self,
+        source_producer: usize,
+        fact_producer: usize,
+        target_producer: usize,
+        slot: u16,
+    ) -> Result<String, String> {
+        let source = self.render_terminal_producer(source_producer, "source")?;
+        let targets = self.next_name("semantic_target");
+        let target_verdict = "CASE WHEN source.verdict = 0 OR gate.verdict = 0 THEN 0 WHEN source.verdict IS NULL OR gate.verdict < 0 OR gate.verdict IS NULL THEN NULL ELSE 1 END";
+        let target_columns = qualified_row_columns_with_verdict("source", target_verdict);
+        self.ctes.push(format!(
+            "{targets} AS (\n  SELECT {target_columns}, source.bindings, source.choice_order, target.related_node AS target_node FROM {source} source\n  JOIN fact gate ON gate.producer_id = {fact_producer} AND gate.file_index = source.file_index AND gate.node = source.node AND gate.fact_kind = 0\n  JOIN fact target ON target.producer_id = gate.producer_id AND target.file_index = gate.file_index AND target.node = gate.node AND target.match_index = gate.match_index AND target.fact_kind = {slot}\n  JOIN producer_status status ON status.producer_id = gate.producer_id AND status.file_index = gate.file_index\n  WHERE status.complete = 1 AND gate.verdict <> 0 AND target.verdict = 1\n)"
+        ));
+        let nested = self.render_terminal_producer(target_producer, "semantic_target_rule")?;
+        let checked = self.next_name("semantic_target_result");
+        let checked_verdict = "CASE WHEN target.verdict = 0 OR nested.verdict = 0 THEN 0 WHEN target.verdict IS NULL OR nested.verdict IS NULL THEN NULL ELSE 1 END";
+        let checked_columns = qualified_row_columns_with_verdict("target", checked_verdict);
+        let merged = Self::merged_bindings(&["target".to_owned(), "nested".to_owned()]);
+        let compatible = Self::binding_compatibility("target", "nested");
+        self.ctes.push(format!(
+            "{checked} AS (\n  SELECT {checked_columns}, {merged} AS bindings, target.choice_order || nested.choice_order AS choice_order FROM {targets} target\n  INNER JOIN {nested} nested\n    ON nested.file_index = target.file_index AND nested.node = target.target_node\n    AND {compatible}\n)"
+        ));
+        Ok(checked)
     }
 
     fn render_any(&mut self, inputs: &[RelationNode]) -> Result<String, String> {
