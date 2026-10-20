@@ -16,6 +16,13 @@ mod three_valued;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use serde_json::{Value, json};
 
+fn first_probe_enabled() -> bool {
+    #[cfg(feature = "unbounded-work")]
+    return super::diagnostics::first_probe();
+    #[cfg(not(feature = "unbounded-work"))]
+    false
+}
+
 /// A snapshot of `files`, each `(language, path, source)`.
 pub(super) fn snapshot(files: &[(&str, &str, &str)]) -> Value {
     json!({
@@ -116,8 +123,10 @@ fn a_sample_clause_set_runs_a_bounded_number_of_statements_per_batch() {
     // walk's sub-rule does not re-test the kind its candidates were read by (`on_candidates`).
     // Further copy elimination can reduce these counts. Pin the work ceiling, not a
     // particular physical plan, so the check still rejects statement-count regressions.
+    // The experimental first-candidate probe adds a bounded probe/fallback pair per search.
+    let ceiling = if first_probe_enabled() { 120 } else { 60 };
     assert!(
-        stages <= 6 && clauses <= 60,
+        stages <= 6 && clauses <= ceiling,
         "{stages} stages, {clauses} clauses"
     );
 }
@@ -181,7 +190,8 @@ fn walks_read_their_sub_rule_kinds_and_a_double_negation_is_a_semi_join() {
             .find(|statement| statement.contains("c.id <= fn.\"last\""))
             .expect("a has-end walk");
         assert_eq!(walk.contains("c.kind IN ("), narrowed, "{walk}");
-        if sub.get("all").is_some_and(|all| all[0] == calls) {
+        // Experimental probe fallback has its own anti-join, independent of the double negation.
+        if !first_probe_enabled() && sub.get("all").is_some_and(|all| all[0] == calls) {
             assert!(
                 !statements
                     .iter()
@@ -209,13 +219,12 @@ fn a_walk_s_candidates_hold_only_the_slots_read_after_them() {
             .iter()
             .find(|statement| statement.contains("c.id <= fn.\"last\""))
             .expect("a has-end walk");
-        let copied = walk
+        let carried = walk
             .split_once("SELECT NULL, c.file, c.node")
             .and_then(|(_, rest)| rest.split_once(", c.pk"))
             .expect("a candidate row")
-            .0
-            .matches(", f.s")
-            .count();
+            .0;
+        let copied = carried.matches(", f.s").count() + carried.matches(", c.s").count();
         let selected = statements
             .iter()
             .find_map(|statement| statement.strip_prefix("SELECT file, node"))

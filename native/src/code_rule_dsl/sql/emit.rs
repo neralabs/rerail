@@ -455,6 +455,10 @@ struct Layout {
 
 struct Emitter<'s> {
     #[cfg(feature = "unbounded-work")]
+    first_probe_active: bool,
+    #[cfg(feature = "unbounded-work")]
+    first_candidate: bool,
+    #[cfg(feature = "unbounded-work")]
     kinds_of: HashMap<String, Vec<u16>>,
     slots: &'s [Slot],
     units: &'s [Unit],
@@ -526,6 +530,10 @@ impl<'s> Emitter<'s> {
     fn new(statement: &'s Statement) -> Self {
         let slots = &statement.slots;
         let mut emitter = Self {
+            #[cfg(feature = "unbounded-work")]
+            first_probe_active: false,
+            #[cfg(feature = "unbounded-work")]
+            first_candidate: false,
             #[cfg(feature = "unbounded-work")]
             kinds_of: HashMap::new(),
             slots,
@@ -992,6 +1000,13 @@ impl<'s> Emitter<'s> {
         live: &Live,
     ) -> String {
         let tree = !matches!(walk, Walk::Slot(_) | Walk::Related(_));
+        #[cfg(feature = "unbounded-work")]
+        if tree
+            && !self.three
+            && let Some(kinds) = &need.kinds
+        {
+            self.kinds_of.insert(candidates.to_owned(), kinds.clone());
+        }
         let implied = |kinds: &[u16]| {
             tree && need
                 .kinds
@@ -1017,6 +1032,10 @@ impl<'s> Emitter<'s> {
 
     /// `op` on `input` (`Emitter::op`), in the output frame's layout.
     fn apply(&mut self, op: &Op, input: &str, live: &Live) -> String {
+        #[cfg(feature = "unbounded-work")]
+        if let Some(out) = self.try_first_probe(op, input, live) {
+            return out;
+        }
         if self.three
             && let Some(out) = self.op3(op, input, live)
         {
@@ -1803,16 +1822,20 @@ impl<'s> Emitter<'s> {
         input: &str,
         held: &BTreeSet<SlotId>,
     ) -> String {
+        #[cfg(not(feature = "unbounded-work"))]
+        let first = false;
+        #[cfg(feature = "unbounded-work")]
+        let first = std::mem::take(&mut self.first_candidate);
         let candidates = self.within(held, |this| match this.leaf_candidates(walk, input) {
             Some(candidates) => candidates,
-            None => this.tree_candidates(walk, need, input),
+            None => this.tree_candidates(walk, need, input, first),
         });
         self.open_space(&candidates, input, lineage::Derive::Probe);
         candidates
     }
 
     /// `candidates` of a walk over the tree.
-    fn tree_candidates(&mut self, walk: Walk, need: &Need, input: &str) -> String {
+    fn tree_candidates(&mut self, walk: Walk, need: &Need, input: &str, first: bool) -> String {
         let kinds = need.kinds.as_deref();
         // Mutant 15: a field relation walks as its plain relation.
         let walk = match walk {
@@ -1821,8 +1844,25 @@ impl<'s> Emitter<'s> {
             walk => walk,
         };
         let at = "JOIN node fn ON fn.file = f.file AND fn.id = f.node";
+        #[cfg(not(feature = "unbounded-work"))]
+        let direct = false;
+        #[cfg(feature = "unbounded-work")]
+        let direct = super::diagnostics::direct_candidates()
+            && matches!(
+                walk,
+                Walk::Has(Stop::Neighbor | Stop::End)
+                    | Walk::Inside(Stop::Neighbor | Stop::End)
+                    | Walk::Precedes(Stop::Neighbor | Stop::End)
+                    | Walk::Follows(Stop::Neighbor | Stop::End)
+            )
+            && !kinds.is_some_and(<[u16]>::is_empty);
+        let carry = if direct {
+            self.physical_of("f")
+        } else {
+            String::new()
+        };
         let simple = |from: &str| {
-            format!("SELECT f.k AS pk, c.file AS file, c.id AS node FROM {input} f {from}")
+            format!("SELECT f.k AS pk, c.file AS file, c.id AS node{carry} FROM {input} f {from}")
         };
         // The kind test on the candidate `node` row `c`, in its join.
         let c = match kinds {
@@ -1844,6 +1884,14 @@ impl<'s> Emitter<'s> {
                     ""
                 }
             )),
+            Walk::Has(Stop::End) if first => {
+                let predicate = c.replace("c.kind", "p.kind");
+                simple(&format!(
+                    "{at} JOIN node c ON c.file = f.file AND c.id = \
+                     (SELECT p.id FROM node p WHERE p.file = f.file AND p.id > f.node \
+                     AND p.id <= fn.\"last\"{predicate} ORDER BY p.id LIMIT 1)"
+                ))
+            }
             Walk::Has(Stop::End) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id > f.node AND c.id <= fn.\"last\"{c}"
             )),
@@ -1868,6 +1916,12 @@ impl<'s> Emitter<'s> {
             Walk::Inside(Stop::Neighbor) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id = fn.parent{c}"
             )),
+            Walk::Inside(Stop::End) if first => simple(&format!(
+                "JOIN node c ON c.file = f.file AND c.id = \
+                 (SELECT p.id FROM node p WHERE p.file = f.file AND p.id < f.node \
+                 AND p.\"last\" >= f.node{} ORDER BY p.id DESC LIMIT 1)",
+                c.replace("c.kind", "p.kind")
+            )),
             Walk::Inside(Stop::End) => simple(&format!(
                 "JOIN node c ON c.file = f.file AND c.id < f.node AND c.\"last\" >= f.node{c}"
             )),
@@ -1879,6 +1933,12 @@ impl<'s> Emitter<'s> {
             )),
             Walk::Precedes(Stop::Neighbor) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id = fn.next{c}"
+            )),
+            Walk::Precedes(Stop::End) if first => simple(&format!(
+                "{at} JOIN node c ON c.file = f.file AND c.id = \
+                 (SELECT p.id FROM node p WHERE p.file = f.file AND p.parent = fn.wpar \
+                 AND p.id >= fn.anext{} ORDER BY p.id LIMIT 1)",
+                c.replace("c.kind", "p.kind")
             )),
             Walk::Precedes(Stop::End) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id >= fn.anext{c}"
@@ -1892,6 +1952,12 @@ impl<'s> Emitter<'s> {
             )),
             Walk::Follows(Stop::Neighbor) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id = fn.prev{c}"
+            )),
+            Walk::Follows(Stop::End) if first => simple(&format!(
+                "{at} JOIN node c ON c.file = f.file AND c.id = \
+                 (SELECT p.id FROM node p WHERE p.file = f.file AND p.parent = fn.wpar \
+                 AND p.id <= fn.aprev{} ORDER BY p.id DESC LIMIT 1)",
+                c.replace("c.kind", "p.kind")
             )),
             Walk::Follows(Stop::End) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id <= fn.aprev{c}"
@@ -1985,12 +2051,18 @@ impl<'s> Emitter<'s> {
             self.extra_list()
         );
         self.create(&name, &columns);
+        let carried_from = if direct { "c" } else { "f" };
+        let restore = if direct {
+            String::new()
+        } else {
+            format!(" JOIN {input} f ON f.k = c.pk")
+        };
         self.insert(
             &name,
             format!(
                 "{with}INSERT INTO {name} SELECT NULL, c.file, c.node{}, c.pk, {order}{} \
-                 FROM ({source}) c JOIN {input} f ON f.k = c.pk",
-                self.physical_of("f"),
+                 FROM ({source}) c{restore}",
+                self.physical_of(carried_from),
                 self.zeros()
             ),
             Reads::join(&[input]),

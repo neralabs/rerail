@@ -77,6 +77,10 @@ fn table_after<'s>(sql: &'s str, prefix: &str) -> Option<&'s str> {
 /// `INDEX (…)` entries of its declaration (the plans weigh them as before; a frame builds an
 /// index on its first read on those columns), and emptying it whole becomes a `CLEAR` step.
 pub(super) fn rewrite(statements: Vec<String>) -> Vec<String> {
+    #[cfg(feature = "unbounded-work")]
+    if std::env::var("RERAIL_SQL_FRAME_STORAGE").is_ok_and(|value| value == "btree") {
+        return statements;
+    }
     let mut mutated: std::collections::HashSet<String> = std::collections::HashSet::new();
     // Each table's indexed columns, as `INDEX (…)` arguments.
     let mut indexes: HashMap<String, String> = HashMap::new();

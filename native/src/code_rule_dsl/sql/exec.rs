@@ -2019,7 +2019,28 @@ impl Session {
         *self.slot.current.write() = Some(Arc::clone(&batch));
         let scopes = BatchScopes::begin();
         let facts = take_fact_time();
-        let result = self.run_batch(&batch, runs);
+        #[cfg(not(feature = "unbounded-work"))]
+        let transaction = false;
+        #[cfg(feature = "unbounded-work")]
+        let transaction = super::diagnostics::batch_transaction();
+        let result = (|| {
+            if transaction {
+                self.connection.execute_batch("BEGIN")?;
+            }
+            let result = self.run_batch(&batch, runs);
+            if transaction {
+                let finished = self.connection.execute_batch(if result.is_ok() {
+                    "COMMIT"
+                } else {
+                    "ROLLBACK"
+                });
+                if finished.is_err() && !self.connection.is_autocommit() {
+                    let _ = self.connection.execute_batch("ROLLBACK");
+                }
+                finished?;
+            }
+            result
+        })();
         self.stats.facts.add(take_fact_time());
         debug_assert_eq!(
             facts,

@@ -28,6 +28,14 @@ pub(super) fn enabled(sql: &str) -> bool {
 }
 
 pub(super) fn configure(connection: &Connection) -> rusqlite::Result<()> {
+    if let Ok(mode) = std::env::var("RERAIL_SQL_TEMP_JOURNAL") {
+        if !matches!(mode.as_str(), "OFF" | "MEMORY") {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "RERAIL_SQL_TEMP_JOURNAL".into(),
+            ));
+        }
+        connection.pragma_update(Some("temp"), "journal_mode", mode)?;
+    }
     for (variable, pragma, minimum, maximum) in [
         ("RERAIL_SQL_CACHE_KIB", "cache_size", 1_i64, 1 << 24),
         ("RERAIL_SQL_AUTOMATIC_INDEX", "automatic_index", 0, 1),
@@ -76,6 +84,22 @@ pub(super) fn configure(connection: &Connection) -> rusqlite::Result<()> {
         .expect("write SQL metadata");
     }
     Ok(())
+}
+
+pub(super) fn batch_transaction() -> bool {
+    std::env::var("RERAIL_SQL_BATCH_TRANSACTION").is_ok_and(|value| value == "1")
+}
+
+pub(super) fn first_probe() -> bool {
+    std::env::var("RERAIL_SQL_FIRST_PROBE").is_ok_and(|value| matches!(value.as_str(), "1" | "all"))
+}
+
+pub(super) fn first_probe_all() -> bool {
+    std::env::var("RERAIL_SQL_FIRST_PROBE").is_ok_and(|value| value == "all")
+}
+
+pub(super) fn direct_candidates() -> bool {
+    std::env::var("RERAIL_SQL_DIRECT_CANDIDATES").is_ok_and(|value| value == "1")
 }
 
 pub(super) fn joined_diff() -> bool {

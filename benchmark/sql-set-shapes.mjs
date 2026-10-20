@@ -37,12 +37,27 @@ const family = sql => {
   return "other";
 };
 const families = {};
+const operation = (sql, kind) => {
+  if (sql.includes("SELECT NULL, c.file, c.node")) return "candidate-construction";
+  if (sql.includes(" FROM node n WHERE n.file IN")) return "initial-roots";
+  if (sql.includes("text_match")) return "regex-selection";
+  if (sql.includes(" FROM pattern ")) return "pattern-selection";
+  if (sql.includes(" FROM fact ")) return "fact-selection";
+  if (kind !== "other") return kind;
+  if (/INSERT INTO \w+ SELECT [ofr]\.k, [ofr]\.file,/.test(sql)) return "frame-selection-copy";
+  if (sql.includes("GROUP BY")) return "grouping";
+  return "other";
+};
+const operations = {};
 const ranked = [...statements.values()].sort((a, b) => b.cpuNs - a.cpuNs).map(record => {
   const kind = family(record.sql);
+  const role = operation(record.sql, kind);
   const total = families[kind] ??= Object.fromEntries(fields.map(key => [key, 0]));
+  const byOperation = operations[role] ??= Object.fromEntries(fields.map(key => [key, 0]));
   for (const key of fields) total[key] += record[key];
-  return { ...record, family: kind, plans: [...record.plans.values()], fullscanPerOutputRow: record.fullscanSteps / Math.max(record.rows, 1) };
+  for (const key of fields) byOperation[key] += record[key];
+  return { ...record, family: kind, operation: role, plans: [...record.plans.values()], fullscanPerOutputRow: record.fullscanSteps / Math.max(record.rows, 1) };
 });
 const totals = Object.fromEntries(fields.map(key => [key, ranked.reduce((sum, record) => sum + record[key], 0)]));
-writeFileSync(output, JSON.stringify({ directory, metadata, totals, families, statements: ranked }, null, 2) + "\n");
-console.log(JSON.stringify({ totals, families }, null, 2));
+writeFileSync(output, JSON.stringify({ directory, metadata, totals, families, operations, statements: ranked }, null, 2) + "\n");
+console.log(JSON.stringify({ totals, families, operations }, null, 2));

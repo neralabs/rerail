@@ -253,7 +253,7 @@ fn two_sites_of_one_recursion_run_its_loop_each_over_their_own_demand() {
         ["f(g(f)) A=f"]
     );
     // The loop is emitted once and run again at the second site.
-    assert_eq!(markers("typescript", ast), [1, 1, 1]);
+    assert_markers("typescript", ast, [1, 1, 1]);
 }
 
 /// How many loop blocks (`BLOCK`), loops (`LOOP`) and later runs of a block (`RUN`) the SQL
@@ -277,6 +277,22 @@ fn markers(language: &str, ast: Value) -> [usize; 3] {
     [count("/*BLOCK*/"), count("/*LOOP*/"), count("/*RUN*/")]
 }
 
+fn assert_markers(language: &str, ast: Value, expected: [usize; 3]) {
+    let actual = markers(language, ast);
+    #[cfg(feature = "unbounded-work")]
+    if crate::code_rule_dsl::sql::diagnostics::first_probe_all() {
+        // A probe and its fallback can demand the same unit at two sites. They must still
+        // share one body and one loop; there are at most twice as many demanding sites.
+        assert_eq!(&actual[..2], &expected[..2]);
+        assert!(
+            (expected[2]..=2 * expected[2] + 1).contains(&actual[2]),
+            "{actual:?}"
+        );
+        return;
+    }
+    assert_eq!(actual, expected);
+}
+
 #[test]
 fn a_utility_referenced_at_three_sites_is_one_unit_each_site_demands() {
     // `named` reads `$F` and is not recursive: its three references are one unit, each demanding
@@ -296,7 +312,7 @@ fn a_utility_referenced_at_three_sites_is_one_unit_each_site_demands() {
         agreed("typescript", ast.clone(), None, source),
         ["f(g(f)) F=f", "k([k]) F=k"]
     );
-    assert_eq!(markers("typescript", ast), [1, 1, 2]);
+    assert_markers("typescript", ast, [1, 1, 2]);
 }
 
 #[test]
@@ -321,7 +337,7 @@ fn a_unit_reading_a_capture_it_does_not_hold_is_keyed_by_it() {
             "k(x) F=k X=x"
         ]
     );
-    assert_eq!(markers("typescript", ast), [1, 1, 1]);
+    assert_markers("typescript", ast, [1, 1, 1]);
 }
 
 #[test]
@@ -376,7 +392,7 @@ fn a_parameterized_utility_called_at_two_sites_maps_its_parameters_per_site() {
         agreed("typescript", ast.clone(), None, source),
         ["f(g(f)) F=f Y=f", "k(k) F=k Y=k"]
     );
-    assert_eq!(markers("typescript", ast), [1, 1, 1]);
+    assert_markers("typescript", ast, [1, 1, 1]);
 }
 
 #[test]

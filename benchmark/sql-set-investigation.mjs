@@ -63,8 +63,9 @@ if (process.argv[3] === "--child") {
   const files = config.files.map(path => {
     const absolute = resolve(config.corpus, path);
     const source = readFileSync(absolute, "utf8");
-    const module = binding.modulePath("python", absolute);
-    return { path, language: "python", source, ...(module == null ? {} : { module }) };
+    const language = config.language ?? "python";
+    const module = binding.modulePath(language, absolute);
+    return { path, language, source, ...(module == null ? {} : { module }) };
   }).filter(file => workspace.acceptsPath(file.path));
   const request = JSON.stringify({ revision: 1, files, removed: [] });
   const load = loadavg();

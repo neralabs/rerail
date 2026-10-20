@@ -3,6 +3,7 @@
 The validated SQL access paths and Python candidate guards are now production defaults.
 The next compiler experiments remain opt-in in the `unbounded-work` build.
 They reduce demand cardinality, but leave a substantial gap from native execution.
+The subsequent [root-cause analysis](sql-set-composition-root-cause.md) measures the remaining generated work and a quadratic first-match defect.
 
 ## Implemented defaults
 
