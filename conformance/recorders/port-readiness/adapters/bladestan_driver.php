@@ -121,13 +121,17 @@ function register_development_autoload(ClassLoader $loader, string $checkout): v
 function test_application(string $checkout): void
 {
     $skeleton = realpath(RUNTIME_VENDOR . '/orchestra/testbench-core/laravel');
+    // The root first: the iterator yields entries in the filesystem's directory order, and a top-level file it yields
+    // before any directory (composer.json, which Laravel reads the application namespace from) had nowhere to go. A
+    // copy that fails stops the driver rather than leave the application short of a file.
+    mkdir('laravel');
     $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($skeleton, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST);
     foreach ($files as $file) {
         $target = 'laravel/' . substr($file->getPathname(), strlen($skeleton) + 1);
         if ($file->isDir()) {
             mkdir($target, 0777, true);
-        } else {
-            copy($file->getPathname(), $target);
+        } elseif (! copy($file->getPathname(), $target)) {
+            throw new RuntimeException("cannot copy Testbench's skeleton file {$file->getPathname()} to {$target}");
         }
     }
     // Testbench links the skeleton's vendor/ to the working directory's, as a package's own checkout has it.
