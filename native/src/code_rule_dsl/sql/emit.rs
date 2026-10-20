@@ -27,7 +27,7 @@ use super::plan::{
     CallReturn, CallSlot, Need, NodeSet, OfRule, Op, Shape, Slot, SlotId, SlotKind, Source,
     Statement, Stop, Unit, Walk,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 use std::rc::Rc;
 
@@ -479,6 +479,9 @@ struct Emitter<'s> {
     /// `masks` withheld-mask columns.
     three: bool,
     masks: usize,
+    /// The frames whose rows may withhold a capture (a `wh` column not 0): a three-valued `all`'s
+    /// (`all_open`), the only frames that write `wh` from anything but the zeros of a verdict.
+    withheld: HashSet<String>,
     /// The stop-rule stages whose verdict may be unknown.
     open: Vec<usize>,
     /// How many loops the statements being emitted run in: their tables are dropped first.
@@ -538,6 +541,7 @@ impl<'s> Emitter<'s> {
             next: 0,
             three: false,
             masks: 0,
+            withheld: HashSet::new(),
             open: Vec::new(),
             looping: 0,
             emitting: Vec::new(),

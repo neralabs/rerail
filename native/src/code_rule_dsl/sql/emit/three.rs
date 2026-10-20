@@ -112,6 +112,13 @@ impl Emitter<'_> {
             self.inherit(&current, &run, &BTreeSet::new());
             self.same_space(&current, &run);
             let out = self.op(&term.op, &run, after);
+            // The first term's rows are the pipeline's with no capture withheld yet: where they
+            // withhold none already, the term's own frame is the pipeline's (a copy would only
+            // write its `wh` as the zeros it holds).
+            if first && !self.withheld.contains(&out) {
+                current = out;
+                continue;
+            }
             let (term_slots, passed_slots) =
                 self.within(after, |this| (this.physical_of("o"), this.physical_of("p")));
             let mut select = if first {
@@ -164,6 +171,9 @@ impl Emitter<'_> {
                 Reads::join(&[&out])
             };
             let next = self.within(after, |this| this.frame("v", &select, reads));
+            if self.masks > 0 {
+                self.withheld.insert(next.clone());
+            }
             let changed = self.touched(&term.op);
             self.inherit(&current, &next, &changed);
             self.same_space(&current, &next);
