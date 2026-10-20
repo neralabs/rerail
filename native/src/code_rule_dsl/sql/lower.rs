@@ -773,6 +773,8 @@ impl<'p> Lowerer<'p> {
             keys: vec![key],
             refused: None,
             following: false,
+            // No member reads another.
+            monotone: true,
         })
     }
 
@@ -884,9 +886,10 @@ impl<'p> Lowerer<'p> {
             .then(|| self.slot(INTERNAL, FOLLOWING, SlotKind::Count));
         // A unit whose answer at a node is its utility's alone, whatever demands it, keeps its
         // answers for the batch under its utility's memo term (`emit::demand_table` says why that
-        // is exact): it reaches no recursion (no recursion check stands behind an answer),
-        // is keyed by the node alone (capture-free), is context-free (the native memo's shared
-        // term), two-valued, and is no call's, no excluded capture's and no parsed tree's.
+        // is exact): it is not recursive, and every recursion it reaches is well-founded (no
+        // recursion check stands behind an answer); it is keyed by the node alone
+        // (capture-free), context-free (the native memo's shared term) and two-valued; and it
+        // is no call's, no excluded capture's and no parsed tree's.
         // Mutant 23: the batch's tables are named by the utility's index in its table, not by
         // its memo term, so the clauses' unlike utilities of one index share answers.
         let shared = (params.is_none()
@@ -895,7 +898,8 @@ impl<'p> Lowerer<'p> {
             && !self.three
             && self.tree.is_none()
             && following.is_none()
-            && self.program.recursion.unfolds(util))
+            && self.program.recursion.cycle(util).is_none()
+            && self.program.recursion.well_founded(util))
         .then(|| util.shared_memo_term())
         .flatten()
         .map(|term| {

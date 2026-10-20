@@ -2016,9 +2016,10 @@ fn program_failures(seed: u64, vocabularies: &[Vocabulary], capabilities: &Value
 /// twice (so it is a unit) under its own root kind and relations, so each clause demands keys
 /// of its own and keys another demanded first. A utility of one name is one of two rules, so two
 /// clauses' utilities of a name are equal (one memo term, one batch unit) or not; most are
-/// capture-free and context-free (a batch unit), one binds a capture (a statement's unit), and
-/// the second may reach the first. Drawn from a generator of their own, so the cases above stay
-/// as their seed names them.
+/// capture-free and context-free (a batch unit), one binds a capture (a statement's unit), one
+/// reaches a recursion reading only enclosing nodes (still a batch unit), and the second may
+/// reach the first. Drawn from a generator of their own, so the cases above stay as their seed
+/// names them.
 fn program_cases(seed: u64) -> Vec<(&'static str, Vec<Value>)> {
     const CASES: usize = 96;
     let mut rng = Rng(seed ^ 0x5ba7_ed00_0000_0001);
@@ -2084,21 +2085,35 @@ fn program_cases(seed: u64) -> Vec<(&'static str, Vec<Value>)> {
             };
             let rule = |rng: &mut Rng| -> Value {
                 let kind = *rng.pick(kinds);
-                match rng.below(6) {
+                match rng.below(7) {
                     0 => json!({ "inside": { "stopBy": "end", "kind": kind } }),
                     1 => json!({ "has": { "stopBy": "end", "kind": kind } }),
                     2 => json!({ "inside": { "kind": kind } }),
                     3 => json!({ "not": { "has": { "kind": kind } } }),
                     4 => json!({ "any": [{ "kind": kind }, { "inside": { "stopBy": "end", "kind": *rng.pick(kinds) } }] }),
+                    5 => json!({ "inside": { "stopBy": "end", "matches": "nested" } }),
                     _ => json!({ "kind": kind, "pattern": "$V" }),
                 }
             };
             let rules: Vec<[Value; 2]> = (0..2)
                 .map(|_| [rule(&mut rng), rule(&mut rng)])
                 .collect();
+            // A recursion reading only enclosing nodes (`Cycle::monotone`), as spt's `fact-class`:
+            // a node of a kind that is a child of the root, or under one such.
+            let top = if language == "typescript" {
+                "program"
+            } else {
+                "module"
+            };
+            let nested = *rng.pick(kinds);
+            let nested = json!({ "kind": nested, "any": [
+                { "inside": { "kind": top } },
+                { "inside": { "stopBy": "end", "kind": nested, "matches": "nested" } },
+            ] });
             let clauses = (0..2 + rng.below(3))
                 .map(|_| {
                     let mut utils = Map::new();
+                    utils.insert("nested".into(), nested.clone());
                     utils.insert("u0".into(), rng.pick(&rules[0]).clone());
                     let second = rng.pick(&rules[1]).clone();
                     let second = if rng.chance(40) {

@@ -170,3 +170,56 @@ fn units_reading_more_than_their_node_keep_their_statement_s_tables() {
         );
     }
 }
+
+/// A utility reaching a recursion that reads only enclosing nodes (a function declaration nested
+/// in function declarations from the top level, as spt's `fact-class` nests classes) is a batch
+/// unit; one reaching a recursion that reads above and below its node is not. Both find what the
+/// native matcher finds, together and alone.
+#[test]
+fn units_reaching_a_monotone_recursion_share_their_answers_and_no_other() {
+    let doc = differential::tape(GrammarDialect::TypeScript, SOURCE);
+    let files = snapshot(&[("typescript", "a.ts", SOURCE)]);
+    let nested = json!({ "kind": "function_declaration", "any": [
+        { "inside": { "kind": "program" } },
+        { "inside": { "kind": "statement_block", "inside": {
+            "kind": "function_declaration", "matches": "nested",
+        } } },
+    ] });
+    let wandering = json!({ "any": [
+        { "kind": "program" },
+        { "inside": { "kind": "statement_block", "matches": "wandering" } },
+        { "has": { "kind": "identifier", "matches": "wandering" } },
+    ] });
+    let reaching = |name: &str, recursion: Value| {
+        json!({
+            "rule": { "kind": "identifier", "any": [
+                { "matches": "reach" },
+                { "inside": { "matches": "reach" } },
+            ] },
+            "utils": {
+                "reach": { "inside": { "stopBy": "end", "matches": name } },
+                name: recursion,
+            },
+        })
+    };
+    for (rule, shares) in [
+        (reaching("nested", nested), true),
+        (reaching("wandering", wandering), false),
+    ] {
+        let (together, evaluated, tables) = program(&[rule.clone(), rule.clone()], &doc);
+        assert_eq!(
+            !tables.is_empty() && evaluated > 0,
+            shares,
+            "batch tables {tables:?} for {rule}"
+        );
+        let rule_compiled = compiled(rule.clone());
+        same(&rule_compiled, &files);
+        let (alone, ..) = probe_sql(
+            &grammar_matchers(&rule_compiled)[0],
+            std::slice::from_ref(&doc),
+            1,
+        );
+        assert!(!alone[0].is_empty(), "{rule} finds something");
+        assert_eq!(together, [alone[0].clone(), alone[0].clone()]);
+    }
+}

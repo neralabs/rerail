@@ -99,9 +99,15 @@ pub(super) fn stage_namespace(stage: usize) -> String {
 ///   every clause; nor is it run excluding a `violation.each` range or in a following context;
 /// - the memo term digests the utility and every utility it reaches (`UtilOrigin`), so two
 ///   clauses' units of one term evaluate one rule, and every clause sharing them is two-valued;
-/// - it reaches no recursion (`Recursion::unfolds`). A statement checks its recursion only over
-///   the keys its own rows read (`exec::acyclic`), so an answer resting on a recursion its
-///   clause demanded but never read would be unchecked where a later clause reads it.
+/// - it is not recursive, and every recursion it reaches is monotone (`Recursion::well_founded`:
+///   its members read each other only strictly above, or only strictly below, the node, as the
+///   spt depth chain's `fact-class` reads its enclosing classes), so its read graph has no cycle
+///   at any key, and every answer of it is the matcher's whether a clause's rows read it or not
+///   (`recursion`'s argument holds over the whole graph; a chain of reads past the matcher's
+///   depth limit, which `exec::acyclic` refuses only where a statement reads it, is past the
+///   limits the engines lift). Another recursion's answers are accepted only at the keys a
+///   statement reads (`exec::acyclic`): an answer resting on one that its clause demanded and
+///   never read would be unchecked where a later clause reads it.
 ///
 /// So an answer stored by an earlier clause is the one a later clause would compute at that key,
 /// and a later clause that demands keys an earlier one did not evaluates exactly those. Keys are
