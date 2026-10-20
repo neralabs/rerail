@@ -86,6 +86,12 @@ fn start_table() -> String {
     format!("{NAMESPACE}ex")
 }
 
+/// A component's recursive reads into the units of other components (`(unit, key, unit, key)`,
+/// as `e{scc}` holds its reads among its own): only the recursion check reads them.
+fn cross_table(scc: usize) -> String {
+    format!("{NAMESPACE}r{scc}")
+}
+
 /// The table a stage's rows are stored in for the batch.
 pub(super) fn stage_table(stage: usize) -> String {
     format!("stage_{stage}")
@@ -485,6 +491,9 @@ struct Emitter<'s> {
     /// `masks` withheld-mask columns.
     three: bool,
     masks: usize,
+    /// The frames whose rows may withhold a capture (a `wh` column not 0): a three-valued `all`'s
+    /// (`all_open`), the only frames that write `wh` from anything but the zeros of a verdict.
+    withheld: HashSet<String>,
     /// The stop-rule stages whose verdict may be unknown.
     open: Vec<usize>,
     /// How many loops the statements being emitted run in: their tables are dropped first.
@@ -558,6 +567,7 @@ impl<'s> Emitter<'s> {
             next: 0,
             three: false,
             masks: 0,
+            withheld: HashSet::new(),
             open: Vec::new(),
             looping: 0,
             emitting: Vec::new(),
@@ -991,8 +1001,26 @@ impl<'s> Emitter<'s> {
                 members.join(", ")
             )
             .expect("write to a string");
+            if self.crosses(scc) {
+                write!(
+                    query,
+                    " UNION ALL SELECT su, s, du, d, 0 FROM {}",
+                    cross_table(scc)
+                )
+                .expect("write to a string");
+            }
         }
         self.push(query, Effect::default());
+    }
+
+    /// Whether a unit of component `scc` refers to a unit of another (`cross_table`).
+    fn crosses(&self, scc: usize) -> bool {
+        let units = self.units;
+        units.iter().filter(|unit| unit.scc == scc).any(|unit| {
+            let mut referred = Vec::new();
+            super::lower::referred(&unit.body, &mut referred);
+            referred.iter().any(|&to| units[to].scc != scc)
+        })
     }
 
     /// `op` on `input`, its output holding `live` (every frame of it holds those slots, `input`
@@ -1471,21 +1499,28 @@ impl<'s> Emitter<'s> {
         let mut columns: String = (0..site_columns.len())
             .map(|index| format!(", c{index}"))
             .collect();
-        let mut values: String = site_columns
+        // The input's distinct keys, as `c0…` (and `cf`), each probed once against the demand.
+        let mut keys: String = site_columns
             .iter()
-            .map(|column| format!(", f.{column}"))
+            .enumerate()
+            .map(|(index, column)| format!(", f.{column} AS c{index}"))
+            .collect();
+        let mut probe: String = (0..site_columns.len())
+            .map(|index| format!(" AND d.c{index} IS f.c{index}"))
             .collect();
         if units[unit].following.is_some() {
             let passed = context.map_or_else(|| "NULL".to_owned(), |slot| format!("f.s{slot}"));
             write!(matched, " AND d.cf IS {passed}").expect("write to a string");
             columns.push_str(", cf");
-            write!(values, ", {passed}").expect("write to a string");
+            write!(keys, ", {passed} AS cf").expect("write to a string");
+            probe.push_str(" AND d.cf IS f.cf");
         }
         self.insert(
             &demand,
             format!(
-                "INSERT INTO {demand}(file, node{columns}) SELECT DISTINCT f.file, f.node{values} FROM {input} f \
-                 WHERE NOT EXISTS (SELECT 1 FROM {demand} d WHERE d.file = f.file AND d.node = f.node{matched})"
+                "INSERT INTO {demand}(file, node{columns}) SELECT f.file, f.node{columns} FROM \
+                 (SELECT DISTINCT f.file AS file, f.node AS node{keys} FROM {input} f) f \
+                 WHERE NOT EXISTS (SELECT 1 FROM {demand} d WHERE d.file = f.file AND d.node = f.node{probe})"
             ),
             Reads::join(&[input]),
         );
@@ -1494,14 +1529,18 @@ impl<'s> Emitter<'s> {
             self.shared_loop(scc);
         }
         // The reference, for the recursion check: from the key of the unit whose body it lies in,
-        // into that unit's component's reads, or from the statement's own rows; recorded from the
-        // rows the matcher evaluates (`lineage`). Without an origin slot to name the key, it
-        // counts as the statement's own, which only starts the check at more keys.
+        // into that unit's component's reads (`cross_table` where it reads another component),
+        // or from the statement's own rows; recorded from the rows the matcher evaluates
+        // (`lineage`). Without an origin slot to name the key, it counts as the statement's own,
+        // which only starts the check at more keys.
         let (reads, source) = match (self.evaluating.last(), self.origin) {
-            (Some(&from), Some(origin)) => (
+            (Some(&from), Some(origin)) if units[from].scc == scc => (
                 format!("{NAMESPACE}e{}", units[from].scc),
                 format!("{from}, f.s{origin}"),
             ),
+            (Some(&from), Some(origin)) => {
+                (cross_table(units[from].scc), format!("{from}, f.s{origin}"))
+            }
             _ => (start_table(), "-1, 0".to_owned()),
         };
         self.record_read(
@@ -1582,6 +1621,17 @@ impl<'s> Emitter<'s> {
         ] {
             self.push(sql, Effect::default());
         }
+        // The reads into other components: no changed answer of this loop's is theirs, so only
+        // the recursion check reads them, and they need no index by the key read.
+        let crossing = self.crosses(scc).then(|| cross_table(scc));
+        if let Some(crossing) = &crossing {
+            for sql in [
+                format!("CREATE TEMP TABLE IF NOT EXISTS {crossing}(su, s, du, d)"),
+                format!("CREATE INDEX IF NOT EXISTS {crossing}_from ON {crossing}(su, s)"),
+            ] {
+                self.push(sql, Effect::default());
+            }
+        }
         self.emitting.push(scc);
         self.looping += 1;
         self.push(LOOP.to_owned(), Effect::default());
@@ -1623,10 +1673,12 @@ impl<'s> Emitter<'s> {
                 format!("UPDATE {demand} SET dirty = 0 WHERE id IN (SELECT k FROM {keys})"),
                 Reads::join(&[&keys]).writes(Writes::None),
             );
-            self.push(
-                format!("DELETE FROM {reads} WHERE su = {unit} AND s IN (SELECT k FROM {keys})"),
-                Reads::join(&[&reads, &keys]).writes(Writes::Delete(reads.clone())),
-            );
+            for reads in std::iter::once(&reads).chain(&crossing) {
+                self.push(
+                    format!("DELETE FROM {reads} WHERE su = {unit} AND s IN (SELECT k FROM {keys})"),
+                    Reads::join(&[reads, &keys]).writes(Writes::Delete(reads.clone())),
+                );
+            }
             self.evaluating.push(unit);
             self.member_start(&keys);
             let out = self.op(&units[unit].body, &keys, &answered);
