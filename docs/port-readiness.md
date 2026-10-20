@@ -69,9 +69,9 @@ to its `validation/goldens/<pack>.tsv`, and a tool-pack's `goldens.tsv` is a rev
   goldens and remove the entry. Eight typescript-eslint candidates are listed today; the next largest difference
   anywhere is 335 files.
 - **A negative where the tests have none.** `stays-silent` needs a case where upstream reports nothing and the rule
-  agrees. Ruff's upstream test files all have findings, so each shipped Ruff rule without another such case has one
-  golden where upstream reports nothing: the best-ranked negative file of the last real-code run in rerail, the file
-  richest in the rule's own constructs. NRV is to write these itself; then they are imported like the rest.
+  agrees. Ruff's upstream test files all have findings, so each Ruff rule without another such case has one golden
+  where upstream reports nothing. NRV's real-code gate writes it (nera-rule-validation#18): the best-ranked negative
+  file the rule agrees on, the one richest in the rule's own constructs. It is imported like the rest.
 
 Run integrity names a golden or `real_code_gaps` entry for a rule the tool-pack does not have, a rule with both, and a
 candidate that differs on more than 500 of its goldens. When the engine could not fully read a golden (a parse
