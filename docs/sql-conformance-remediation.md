@@ -696,28 +696,29 @@ The aggregate ordered terminal-catalog gate is green for all 39 contracts.
 
 The remaining aggregate defects are:
 
-- One Phase 2 SQL statement lacks the complete physical SQL boundary.
+- All Phase 2 SQL statements have complete physical SQL boundaries.
 - Ten Phase 3 SQL statements lack the complete physical SQL boundary.
-- The same 11 statements do not equal the compiler output.
-- `nested-all-any-not` is the first exact SQL mismatch.
+- The same ten Phase 3 statements do not equal the compiler output.
+- `utility-simple` is the first exact SQL mismatch.
 
 The catalog fixture contains only ordered terminal-catalog data.
 The SQL fixture is the only owner of authored SQL statements.
 This separation prevents two fixtures from assigning different meanings to one SQL contract.
 
 Commit `cd4dbb1d` is the aggregate TDD-red commit for incomplete Phase 2 and Phase 3 SQL boundaries.
-Commit `0601812d` is the active focused red commit for nested Phase 2 truth composition.
+Commit `0601812d` is the completed focused red commit for nested Phase 2 truth composition.
+Commit `17decf57` is the active focused red commit for leaf utility SQL.
 Do not use compiler output to create the authored SQL or catalog data.
 Reconcile each relational family from the policy semantics and the packed-row schema.
 
-The next required package is the Phase 2 and Phase 3 conformance package:
+The next required package is the Phase 3 utility conformance package:
 
-1. Add the complete physical boundary to each of the 23 authored statements.
+1. Add the complete physical boundary to each of the ten utility statements.
 2. Reconcile each statement with its relational implementation.
 3. Run all Phase 2 through Phase 4 behavioral oracle checks.
 4. Make the aggregate Phase 2 through Phase 4 SQL gate pass.
 
-The terminal-catalog work for this package is complete.
+The Phase 2 SQL work and the terminal-catalog work are complete.
 All 39 catalogs pass exact, repeated, and concurrent compilation checks.
 
 Do not start Phase 5 until this package is green.
