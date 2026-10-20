@@ -799,6 +799,45 @@ fn production_contract_phase_four_failure_matches_authored_sql() {
 }
 
 #[test]
+fn production_contract_phases_two_and_three_have_complete_physical_sql_contracts() {
+    let statements = authored_sql_goldens();
+    for name in PHASE_TWO_CASES.iter().chain(PHASE_THREE_CASES) {
+        let sql = &statements[*name];
+        assert_eq!(
+            sql.matches("rerail_matches").count(),
+            1,
+            "{name}: packed scan"
+        );
+        assert!(
+            sql.contains("batch_status AS MATERIALIZED"),
+            "{name}: batch status"
+        );
+        for family in [
+            "producer_status",
+            "terminal_match",
+            "capture",
+            "navigation",
+            "fact",
+            "document_map",
+        ] {
+            assert!(
+                sql.contains(&format!("{family} AS MATERIALIZED")),
+                "{name}: {family} physical row family"
+            );
+        }
+        assert!(sql.contains("AS clause_ordinal"), "{name}: clause identity");
+        assert!(
+            sql.contains("row_kind, failed.producer_id"),
+            "{name}: typed failure union"
+        );
+        assert!(
+            sql.ends_with("ORDER BY clause_ordinal, file_index, node, choice_order, producer_id, match_index, capture_index"),
+            "{name}: deterministic clause ordering"
+        );
+    }
+}
+
+#[test]
 fn production_contract_phases_two_to_four_match_authored_sql_statements() {
     let expected = authored_sql_goldens();
     let expected_names = PHASE_TWO_CASES
