@@ -150,6 +150,16 @@ The plan stores its statements by shape (`sql/shapes.rs`, `sql/texts.rs`). Claus
 
 The engine is selected at runtime (`engine: native|sql` in the evaluation options) so a single build can A/B and run differential tests. That switch is removed when native leaves production; native remains only as a `cfg(test)` oracle.
 
+## Shared literal facts
+
+Generated policies test the same capture-free sub-rule in many clauses with only a regex changed (a callee name `^count$`, `^delete$`, …). Such sub-rules are the *members* of a *family*: alike but for their regexes, the family's *holes*. A family is one per-batch stage, a *fact*, with rows `(lit, file, node)`: every member's nodes, the member's number in `lit` (`sql/facts.rs`, `sql/lower/facts.rs`).
+
+- **Which sub-rules.** Capture-free and two-valued, not in a parsed tree, not where `violation.each` excludes the enumerated capture's binding, with root kinds. The rule is a *spine* down to its regexes: `all`, `any` of terms with regexes only (a literal-free branch would hold for every member), relations with a neighbor or end stop and `field` relations with a neighbor stop; every other test on the way is a kind or the stage of its literal-free rule, bounded by kinds. Every regex lies below a walk: a regex at the rule's own node would test the text of every node of its kinds.
+- **Not pushdown's.** A spine whose every test is node-local is a transducer program (lever 3), and pushdown takes it on each clause's frame: no fact is made for it. Facts take what pushdown refuses, a pattern, a utility unit, a rule stop on the way.
+- **One walk.** The fact runs the spine top-down over node frames from every node of the root kinds in its files, and its verdicts bottom-up over member frames `(m, k)`. A hole is one `text_match` call over a list of regexes (`Terminal::Regexes`, a `RegexSet`), which returns each key once per member whose regex matches it. The rule is capture-free, so a relation holds for a member where one of its candidates does: set semantics, exact.
+- **Readers.** A member is `Op::InFact`: the rows whose node the member holds at. A walk whose sub-rule is an `all` with the member as a term builds rows only for the member's nodes (`Need::fact`).
+- **Stages.** A fact is a stage: its statements are written once every clause is lowered (members arrive with the clauses), it runs over its readers' files, and one with a single reader runs in that reader's run after its root frame (`Plan::sole`).
+
 ## Code layout
 
 `native/src/code_rule_dsl/sql/`:
@@ -215,3 +225,14 @@ Each gets a dedicated differential test:
 - the field `has` rule-mode one-level quirk;
 - the `each` stop condition;
 - `$$$` unification over named nodes only.
+
+## Proposal: facts persisted per file version
+
+Design note only; nothing below is built. Shared facts (literal facts above, and units of utilities native's memo shares across clauses) are per batch today. Persisting them in the content store would make an edit pay only for the files it changed.
+
+- **Identity.** A fact row set is keyed by `(shape digest, literal, file content hash, grammar build)`. The shape digest is the family's (dialect, root kinds, spine with its filter stages by their own digests, holes by position); a unit's is its utility's `memo_term` digest (`UtilOrigin::digest`, what it compiles from). The literal is the member's regexes (or nothing for a unit). The grammar build covers kind and field ids, which every spine names.
+- **Per-file facts.** A fact whose rule reads only its file's tree (every literal fact, every node-local unit) is a pure function of its key: never invalidated, only collected when no file version or policy references it. Lookups replace the fact's statements for the batch's files that have it; the others run it.
+- **Cross-file facts.** Rules reading `calls`, imports, scope resolution across files or `select_when` evidence depend on other files: key them also by the digest of the evidence they read (the import closure's content hashes, the call graph's revision), and invalidate by that dependency set. A first cut keeps them per batch, as now.
+- **Lazy evaluation.** A fact need not be computed for a file until some clause reads it there: the stage machinery already runs a stage only over its readers' files, and a sole reader computes it after its root frame, so not where the frame is empty. Persisted, a fact is computed on first read of `(file version, member)` and stored.
+- **Jeremy's fact caching.** His production path produces, caches and lazily evaluates intermediate shared facts and invalidates them on source change. The engine's side of that seam is the stage table: a stage reads `/*FILES*/` and writes `(lit, file, node)` rows, so a cache can stand behind it as a table filled from stored rows for the files it has and from the statements for the rest. The keys above are his cache keys; the shape digest is what makes two policies' equal facts one entry.
+

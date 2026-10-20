@@ -369,6 +369,7 @@ pub(in crate::code_rule_dsl) fn compile_enumerating(
             .clause_each(grammar, each)
             .map_err(SqlError::Unsupported)?;
         let mut clause = ClauseSql::of(&statement, each);
+        planner.facts(builder.fact_stages());
         planner.clause(&mut clause, cfg!(test));
         clauses.push(clause);
     }
@@ -429,6 +430,7 @@ impl ProgramCompiler {
         let mut clause = timed(&mut self.phases.emit, || ClauseSql::of(&statement, each));
         drop(statement);
         timed(&mut self.phases.plan, || {
+            self.planner.facts(self.builder.fact_stages());
             self.planner.clause(&mut clause, false);
         });
         self.clauses += 1;
@@ -563,7 +565,14 @@ impl Compiled {
     /// The program of `builder`'s terminals and stages and of the clauses `planner` planned.
     /// `clauses`: in the tests, a program `compile_enumerating` compiled keeps its emitted
     /// statements for the tests' censuses (`emitted`); a session runs the plan's.
-    fn new(builder: ProgramBuilder, planner: Planner, clauses: Option<Vec<ClauseSql>>) -> Self {
+    fn new(
+        mut builder: ProgramBuilder,
+        mut planner: Planner,
+        clauses: Option<Vec<ClauseSql>>,
+    ) -> Self {
+        // The facts' statements, now that every clause's members are known.
+        builder.emit_facts();
+        planner.facts(builder.fact_stages());
         let ProgramBuilder {
             terminals,
             mut stages,
@@ -856,6 +865,8 @@ struct Table {
 struct Catalog {
     ids: HashMap<String, usize>,
     tables: Vec<Table>,
+    /// The stages of the shared literal facts (`sql::facts`), whose rows are `(lit, file, node)`.
+    facts: HashSet<usize>,
 }
 
 impl Catalog {
@@ -883,15 +894,20 @@ impl Catalog {
     }
 
     /// The table of stage `index`. A three-valued stage keeps the nodes it is unknown at too,
-    /// with `unk`; a two-valued stage's are all 0.
+    /// with `unk`; a two-valued stage's are all 0. A shared literal fact's holds each member's
+    /// nodes, the member in `lit`.
     fn stage(&mut self, index: usize) -> Result<usize, String> {
         let table = emit::stage_table(index);
-        self.add(
-            &table,
-            Make::Frame(format!(
+        let make = if self.facts.contains(&index) {
+            format!(
+                "{table}(lit INTEGER, file INTEGER, node INTEGER, PRIMARY KEY (lit, file, node))"
+            )
+        } else {
+            format!(
                 "{table}(file INTEGER, node INTEGER, unk INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (file, node))"
-            )),
-        )
+            )
+        };
+        self.add(&table, Make::Frame(make))
     }
 
     /// Adds `sql`, a `CREATE INDEX`, to the making of the B-tree it indexes.
@@ -970,6 +986,12 @@ struct Planner {
 }
 
 impl Planner {
+    /// Records `stages` as shared literal facts' (`Catalog::stage`): before planning a clause
+    /// that may read them.
+    fn facts(&mut self, stages: impl Iterator<Item = usize>) {
+        self.catalog.facts.extend(stages);
+    }
+
     /// Plans the program's next clause, freeing its emitted statements unless it is to `keep`
     /// them.
     fn clause(&mut self, clause: &mut ClauseSql, keep: bool) {
@@ -1073,7 +1095,9 @@ impl Planner {
             )?;
             draft.tables.push(id);
             draft.clear.push(clear_step(id, &table, true));
-            let columns = if stage.three {
+            let columns = if stage.fact {
+                "lit, file, node"
+            } else if stage.three {
                 "file, node, unk"
             } else {
                 "file, node"

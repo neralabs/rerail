@@ -85,7 +85,7 @@ fn export_slots(exports: &[Export], out: &mut BTreeSet<SlotId>) {
 fn touched(op: &Op, names: &Names, out: &mut BTreeSet<SlotId>) {
     let sub = |op: &Op, out: &mut BTreeSet<SlotId>| touched(op, names, out);
     match op {
-        Op::Kinds(_) | Op::Regex(_) | Op::Program(_) | Op::Never => {}
+        Op::Kinds(_) | Op::Regex(_) | Op::Program(_) | Op::InFact { .. } | Op::Never => {}
         Op::Pattern { vars, reads, .. } => {
             out.extend(vars.iter().copied());
             out.extend(reads.iter().copied());

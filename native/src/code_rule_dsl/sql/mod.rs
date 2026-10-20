@@ -7,6 +7,7 @@
 pub(super) mod crossfile;
 mod emit;
 mod exec;
+mod facts;
 mod frames;
 mod lower;
 mod nearest;
@@ -73,7 +74,8 @@ pub(super) const DEFAULT_BATCH_SIZE: usize = 64;
 /// 21. a call's unit drops from its key the parameters its body reads and never holds, so it
 ///     reads them unbound (`lower`);
 /// 22. `violation.each` excludes a parsed tree's node by its range in the tree, not in the host
-///     (`emit/each`).
+///     (`emit/each`);
+/// 23. a clause reads another member's rows of a shared literal fact (`facts`).
 ///
 /// `tests/replay.jsonl` (`replayed_cases_agree`) kills each of them; `just rerail-sql-gate
 /// --mutants` checks it does, and that the differential at the gate's case count does too.

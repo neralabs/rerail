@@ -3,10 +3,12 @@
 //! compiled. An operator the SQL engine does not cover yet fails with `Unsupported`; the engine
 //! never answers for a clause it cannot lower.
 
+mod facts;
 mod leaves;
 mod three;
 
 use super::emit;
+use super::facts::Facts;
 use super::plan::{
     CallReturn, CallSlot, Excluding, MASK_BITS, Mask, Need, NodeSet, OfRule, Op, Shape, Slot,
     SlotId, SlotKind, Source, Statement, Stop, Unit, Unsupported, Walk, mask,
@@ -49,11 +51,14 @@ struct Following {
 /// context-free utilities are stages; equal ones (equal SQL) are one, keyed by digest. The last
 /// of its statements selects the stage's distinct `(file, node)` rows; its root frame reads the
 /// `/*FILES*/` the driver substitutes. A three-valued clause's stages are three-valued (`three`):
-/// they keep the nodes their rule is unknown at, with `unk`.
+/// they keep the nodes their rule is unknown at, with `unk`. A shared literal fact's stage
+/// (`fact`, `sql::facts`) selects `(lit, file, node)`, and its statements are emitted once every
+/// clause is lowered (`ProgramBuilder::emit_facts`).
 pub(super) struct Stage {
     pub(super) dialect: GrammarDialect,
     pub(super) sql: emit::Emitted,
     pub(super) three: bool,
+    pub(super) fact: bool,
 }
 
 /// The terminals and stages a set of clauses shares.
@@ -89,6 +94,10 @@ pub(super) struct ProgramBuilder {
     pub(super) stage_emission: Timing,
     /// The stages and programs pushdown compiled (`pushdown`).
     pub(super) pushdown: super::pushdown::Pushdown,
+    /// The shared literal facts' families and members (`sql::facts`).
+    facts: Facts,
+    /// Each rule lowered as a fact's member, by its address and dialect: `None` where it is none.
+    fact_rules: HashMap<(usize, String), Option<(usize, usize)>>,
 }
 
 /// The capture and value analyses lowering reads (`CaptureAnalysis`, `reads_values`,
@@ -141,6 +150,7 @@ impl ProgramBuilder {
         each: Option<&str>,
     ) -> Result<Statement, Unsupported> {
         let (terminals, stages) = (self.terminals.len(), self.stages.len());
+        let facts = self.facts.mark();
         let lowered = self.clause_each(grammar, each);
         if lowered.is_err() {
             self.terminals.truncate(terminals);
@@ -150,9 +160,24 @@ impl ProgramBuilder {
             self.regexes.retain(|_, term| *term < terminals);
             self.fresh_patterns.retain(|_, term| *term < terminals);
             self.leaves.retain(|_, term| *term < terminals);
+            self.facts.truncate(&facts, stages);
+            let kept = &self.facts;
+            self.fact_rules.retain(|_, fact| {
+                fact.is_none_or(|(stage, member)| kept.contains(stage, member))
+            });
             self.in_progress.clear();
         }
         lowered
+    }
+
+    /// The stages of the shared literal facts (`sql::facts`).
+    pub(super) fn fact_stages(&self) -> impl Iterator<Item = usize> + '_ {
+        self.facts.stages()
+    }
+
+    /// Every fact's statements, into its stage, once every clause is lowered.
+    pub(super) fn emit_facts(&mut self) {
+        self.facts.emit(&mut self.terminals, &mut self.stages);
     }
 
     /// Lowers one clause's grammar matcher to its statement; under `violation.each` (`each`, the
@@ -280,7 +305,11 @@ impl RootKinds {
             .shape(rule, analysis)
             .map(|shape| shape.past(kinds.as_deref()))
             .filter(Shape::structural);
-        Need { kinds, shape }
+        Need {
+            kinds,
+            shape,
+            fact: None,
+        }
     }
 
     /// A capture-free test every node `rule` holds, or is unknown, at passes; `None` where none is
@@ -458,6 +487,24 @@ fn kind_id(kind: &ast_grep_core::matcher::KindMatcher) -> u16 {
         .map_or(u16::MAX, |kind| kind as u16)
 }
 
+/// `need`, with the shared fact member `sub` holds only where it does: one it reads as a term of
+/// its `all` (`Need::fact`).
+fn with_fact(mut need: Need, sub: &Op) -> Need {
+    fn member(op: &Op) -> Option<(usize, usize)> {
+        match op {
+            Op::InFact { stage, member } => Some((*stage, *member)),
+            Op::All(items) => items.iter().find_map(member),
+            Op::Not(inner) => match &**inner {
+                Op::Not(rule) => member(rule),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    need.fact = member(sub);
+    need
+}
+
 /// The units each unit's body refers to (`Op::Recur`), in `out`.
 pub(super) fn referred(op: &Op, out: &mut Vec<usize>) {
     match op {
@@ -497,6 +544,7 @@ pub(super) fn referred(op: &Op, out: &mut Vec<usize>) {
         Op::Kinds(_)
         | Op::Regex(_)
         | Op::Program(_)
+        | Op::InFact { .. }
         | Op::Pattern { .. }
         | Op::Never
         | Op::NthChild { .. }
@@ -1195,6 +1243,7 @@ impl<'p> Lowerer<'p> {
             dialect: self.dialect,
             sql,
             three: self.three,
+            fact: false,
         });
         Ok(id)
     }
@@ -1261,6 +1310,10 @@ impl<'p> Lowerer<'p> {
         scope: usize,
         bound: &Bound,
     ) -> Result<(Op, Bound), Unsupported> {
+        // A capture-free sub-rule with regexes that a shared literal fact holds (`sql::facts`).
+        if let Some(op) = self.shared_fact(matcher, scope) {
+            return Ok((op, bound.clone()));
+        }
         match matcher {
             AstMatcher::Pattern(_) if self.tree.is_some() => unsupported("pattern inside parse"),
             AstMatcher::Pattern(pattern) => {
@@ -1408,12 +1461,13 @@ impl<'p> Lowerer<'p> {
                 self.leaks(&sub)?;
                 let sub = self.excluding(scope, sub);
                 let binds = sub.binds();
+                let need = with_fact(self.walk_need(related.rule()), &sub);
                 Ok((
                     Op::Relation {
                         walk,
                         sub: Box::new(sub),
                         binds,
-                        need: self.walk_need(related.rule()),
+                        need,
                     },
                     out,
                 ))
@@ -1429,12 +1483,13 @@ impl<'p> Lowerer<'p> {
                 self.leaks(&sub)?;
                 let sub = self.excluding(scope, sub);
                 let binds = sub.binds();
+                let need = with_fact(self.walk_need(&relation.rule), &sub);
                 Ok((
                     Op::Relation {
                         walk,
                         sub: Box::new(sub),
                         binds,
-                        need: self.walk_need(&relation.rule),
+                        need,
                     },
                     out,
                 ))

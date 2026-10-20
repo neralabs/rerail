@@ -310,7 +310,7 @@ pub(super) struct Emitted {
 }
 
 impl Emitted {
-    fn push(&mut self, sql: String, effect: Effect) {
+    pub(super) fn push(&mut self, sql: String, effect: Effect) {
         self.statements.push(sql);
         self.effects.push(effect);
     }
@@ -1140,6 +1140,18 @@ impl<'s> Emitter<'s> {
             }
             Op::Regex(term) => self.input_set("text_match", *term, input),
             Op::Program(term) => self.input_set("program_match", *term, input),
+            Op::InFact { stage, member } => {
+                let table = stage_table(*stage);
+                self.frame(
+                    "x",
+                    &format!(
+                        "SELECT {} FROM {input} f WHERE {}",
+                        self.cols_reading("f", input),
+                        super::facts::holds(*stage, *member, "f.file", "f.node")
+                    ),
+                    Reads::join(&[input, &table]),
+                )
+            }
             Op::Pattern {
                 term,
                 env,
@@ -2054,6 +2066,18 @@ impl<'s> Emitter<'s> {
             ),
             _ => source,
         };
+        // The candidates the shared fact's member holds at (`Need::fact`): the sub-rule is false
+        // at every other, so no row is built for them.
+        let source = match need.fact {
+            Some((stage, member)) => format!(
+                "SELECT * FROM ({source}) m WHERE {}",
+                super::facts::holds(stage, member, "m.file", "m.node")
+            ),
+            None => source,
+        };
+        let fact = need.fact.map(|(stage, _)| stage_table(stage));
+        let mut reads = vec![input];
+        reads.extend(fact.as_deref());
         let order = if walk.descending() {
             "-c.node"
         } else {
@@ -2074,7 +2098,7 @@ impl<'s> Emitter<'s> {
                 self.physical_reading("f", input),
                 self.zeros()
             ),
-            Reads::join(&[input]),
+            Reads::join(&reads),
         );
         // A node has one parent and its field's first child one: from a frame unique on a key,
         // the children (or field children) of its rows are unique on it too.

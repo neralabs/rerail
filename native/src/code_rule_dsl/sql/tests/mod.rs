@@ -2,6 +2,7 @@
 
 mod census;
 mod differential;
+mod facts;
 mod hard_cases;
 mod keyed;
 mod leaves;
@@ -294,9 +295,10 @@ fn a_walk_s_candidates_hold_only_the_slots_read_after_them() {
         (copied, selected)
     };
     let wide = json!({ "pattern": "$F($A, $B, $C, $D)" });
+    // A regex under `not`, which no shared literal fact takes (`sql::facts`): its walk stays.
     let cases = [
         (
-            json!({ "stopBy": "end", "kind": "identifier", "regex": "^x$" }),
+            json!({ "stopBy": "end", "kind": "identifier", "not": { "regex": "^x$" } }),
             0,
         ),
         (

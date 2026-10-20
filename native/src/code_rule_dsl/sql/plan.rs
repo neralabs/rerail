@@ -167,6 +167,9 @@ pub(super) struct Need {
     pub(super) kinds: Option<Vec<u16>>,
     /// A structural test beyond its kinds; `None`: none.
     pub(super) shape: Option<Shape>,
+    /// A shared literal fact's member the sub-rule holds only where it does (`Op::InFact`, a
+    /// term of its `all`): the fact stage and the member.
+    pub(super) fact: Option<(usize, usize)>,
 }
 
 /// A capture-free test on a node (`Need::shape`).
@@ -405,6 +408,12 @@ pub(super) enum Op {
         at_node: bool,
         binds: Vec<SlotId>,
     },
+    /// A shared literal fact's member (`facts`): the rows at whose node member `member` of the
+    /// fact `stage` holds. Two-valued: its rule cannot be unknown.
+    InFact {
+        stage: usize,
+        member: usize,
+    },
     /// A recursive unit's answers at the frame's keys: `slots` are the frame's slots for the
     /// unit's key, in order (`None`: the key's own slots, a shared utility in its caller's scope).
     /// `context`: the slot holding the following context the reference passes, where the unit is
@@ -531,7 +540,12 @@ impl Op {
     /// Whether the operator can bind a slot.
     pub(super) fn binds(&self) -> bool {
         match self {
-            Self::Kinds(_) | Self::Regex(_) | Self::Program(_) | Self::Never | Self::Not(_) => {
+            Self::Kinds(_)
+            | Self::Regex(_)
+            | Self::Program(_)
+            | Self::InFact { .. }
+            | Self::Never
+            | Self::Not(_) => {
                 false
             }
             Self::Unknowable { op, .. } => op.binds(),

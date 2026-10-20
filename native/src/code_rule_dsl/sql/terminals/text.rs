@@ -1,6 +1,8 @@
 //! The `text_match(term)` terminal for `regex`: an input-set terminal. It receives the distinct
 //! `(file, node)` keys of a frame (`file << 32 | node`) in one `xFilter` call and returns those
 //! whose node text the regex matches (`Regex::is_match`, unanchored, as the matcher tests it).
+//! A shared literal fact's hole (`Terminal::Regexes`) is a list of regexes: it returns each key
+//! once per member whose regex matches, the member in `idx` (0 for a single regex).
 //!
 //! # One scan of a file for many of its nodes
 //!
@@ -113,6 +115,7 @@ impl Scanner {
 
 const COL_TERM: c_int = 0;
 const COL_EK: c_int = 1;
+const COL_IDX: c_int = 2;
 
 #[repr(C)]
 pub(in crate::code_rule_dsl::sql) struct TextTable {
@@ -138,7 +141,7 @@ unsafe impl<'vtab> VTab<'vtab> for TextTable {
         let slot =
             Arc::clone(aux.ok_or_else(|| Error::ModuleError("text_match: no batch slot".into()))?);
         Ok((
-            Cow::Borrowed(c"CREATE TABLE x(term HIDDEN, ek)"),
+            Cow::Borrowed(c"CREATE TABLE x(term HIDDEN, ek, idx)"),
             Self {
                 base: sqlite3_vtab::default(),
                 slot,
@@ -191,6 +194,7 @@ unsafe impl<'vtab> VTab<'vtab> for TextTable {
             scanners: Arc::clone(&self.scanners),
             term: 0,
             keys: Vec::new(),
+            members: Vec::new(),
             pos: 0,
             phantom: PhantomData,
         })
@@ -204,6 +208,8 @@ pub(in crate::code_rule_dsl::sql) struct TextCursor<'vtab> {
     scanners: Arc<parking_lot::Mutex<HashMap<String, Option<Scanner>>>>,
     term: i64,
     keys: Vec<i64>,
+    /// Each key's member, where the term is a hole's regexes (`Terminal::Regexes`).
+    members: Vec<i64>,
     pos: usize,
     phantom: PhantomData<&'vtab TextTable>,
 }
@@ -223,13 +229,72 @@ unsafe impl VTabCursor for TextCursor<'_> {
             .ok_or_else(|| Error::ModuleError("text_match: no batch installed".into()))?;
         let term_id = integer(ValueRef::from(&args.get::<Value>(0)?))
             .ok_or_else(|| Error::ModuleError("text_match: term must be an integer".into()))?;
-        let Some(Terminal::Regex(regex)) = usize::try_from(term_id)
+        let terminal = usize::try_from(term_id)
             .ok()
-            .and_then(|index| batch.program.terminals.get(index))
-        else {
-            return Err(Error::ModuleError(format!(
-                "text_match: no regex term {term_id}"
-            )));
+            .and_then(|index| batch.program.terminals.get(index));
+        let regex = match terminal {
+            Some(Terminal::Regex(regex)) => regex,
+            Some(Terminal::Regexes(list)) => {
+                let mut keys = Vec::new();
+                if idx_num & 2 != 0 {
+                    let mut items = args.in_values(1)?;
+                    while let Some(item) = items.next()? {
+                        keys.extend(integer(item));
+                    }
+                } else {
+                    keys.extend(integer(ValueRef::from(&args.get::<Value>(1)?)));
+                }
+                keys.sort_unstable();
+                keys.dedup();
+                let (mut found, mut members) = (Vec::new(), Vec::new());
+                for key in keys {
+                    let file = (key >> 32) as usize;
+                    let node = (key & 0xffff_ffff) as u32;
+                    let mut test = |text: &str| {
+                        let mut matched = |index: usize| {
+                            for &member in &list.members[index] {
+                                found.push(key);
+                                members.push(i64::from(member));
+                            }
+                        };
+                        match &list.set {
+                            Some(set) => set.matches(text).iter().for_each(&mut matched),
+                            None => (0..list.regexes.len())
+                                .filter(|&index| list.regexes[index].is_match(text))
+                                .for_each(&mut matched),
+                        }
+                    };
+                    match batch.files.get(file) {
+                        Some(entry) => {
+                            if node < entry.facts.len() {
+                                test(entry.root.root().get_doc().transducer_text_str(node));
+                            }
+                        }
+                        // A parsed tree's node: its text, as the matcher reads it.
+                        None => {
+                            if let Some(sub) = batch.subfile(file)
+                                && node < sub.facts.len()
+                            {
+                                test(
+                                    &sub.root
+                                        .adopt(sub.root.root().get_doc().node(node))
+                                        .text(),
+                                );
+                            }
+                        }
+                    }
+                }
+                self.term = term_id;
+                self.keys = found;
+                self.members = members;
+                self.pos = 0;
+                return Ok(());
+            }
+            _ => {
+                return Err(Error::ModuleError(format!(
+                    "text_match: no regex term {term_id}"
+                )));
+            }
         };
         let mut keys = Vec::new();
         if idx_num & 2 != 0 {
@@ -312,6 +377,7 @@ unsafe impl VTabCursor for TextCursor<'_> {
         keys.retain(|_| verdicts.next().expect("a verdict per key"));
         self.term = term_id;
         self.keys = keys;
+        self.members.clear();
         self.pos = 0;
         Ok(())
     }
@@ -328,6 +394,7 @@ unsafe impl VTabCursor for TextCursor<'_> {
     fn column(&self, context: &mut Context, column: c_int) -> Result<()> {
         match column {
             COL_TERM => context.set_result(&self.term),
+            COL_IDX => context.set_result(&self.members.get(self.pos).copied().unwrap_or(0)),
             _ => context.set_result(&self.keys[self.pos]),
         }
     }

@@ -20,7 +20,7 @@ pub(super) use leaves::{
 };
 pub(super) use pattern::{PatternRow, PatternTable, fresh_match};
 pub(super) use program::{ProgramTable, ProgramTerm};
-use regex::Regex;
+use regex::{Regex, RegexSet};
 pub(super) use text::TextTable;
 
 /// The most value columns a pattern terminal has (`v0`…): far above any pattern's captures, and
@@ -35,6 +35,31 @@ pub(super) enum Terminal {
     Program(ProgramTerm),
     /// An input-set terminal's three-valued verdicts (`fact`).
     Fact(FactTerm),
+    /// A shared literal fact's hole (`sql::facts`): `text_match` returns each key whose text one
+    /// of the regexes matches once per member that regex is the hole's of.
+    Regexes(Regexes),
+}
+
+/// A shared literal fact's hole: its distinct regexes, each with its members, and their set
+/// (`None` where it does not build; each regex is then tested alone).
+pub(super) struct Regexes {
+    pub(super) regexes: Vec<Regex>,
+    pub(super) members: Vec<Vec<u32>>,
+    pub(super) set: Option<RegexSet>,
+}
+
+impl Terminal {
+    /// A hole's terminal: each distinct regex, as the front end compiled it, with its members. A
+    /// set of them reports every one that matches, as each one's `is_match` does.
+    pub(super) fn regexes(patterns: Vec<(Regex, Vec<u32>)>) -> Self {
+        let (regexes, members): (Vec<Regex>, Vec<Vec<u32>>) = patterns.into_iter().unzip();
+        let set = RegexSet::new(regexes.iter().map(Regex::as_str)).ok();
+        Self::Regexes(Regexes {
+            regexes,
+            members,
+            set,
+        })
+    }
 }
 
 /// A `pattern` term: its captures in column order (single ones one column, lists four), the

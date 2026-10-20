@@ -1816,6 +1816,35 @@ fn generated_rules_agree_with_the_native_matcher() {
         "following: {following_compared} recursions through a binding's nodes agree ({following_found} violations), {} do not",
         following_failures.len()
     );
+    // Clauses reading a shared literal fact, which the generator above does not shape.
+    let fact_rules = fact_cases(seed);
+    let facts = fact_rules
+        .par_iter()
+        .map(|(language, ast, violation)| {
+            let at = FIXTURES
+                .iter()
+                .position(|(label, _)| label == language)
+                .expect("a fixture language");
+            (ast, run_case(ast, violation, &inputs[at], &capabilities))
+        })
+        .collect::<Vec<_>>();
+    let (mut facts_compared, mut facts_found) = (0usize, 0usize);
+    for (ast, outcome) in facts {
+        match outcome {
+            Outcome::Same { found, .. } => {
+                facts_compared += 1;
+                facts_found += found;
+            }
+            Outcome::Rejected | Outcome::NativeLimit => {}
+            Outcome::Unsupported(reason) => following_failures.push(format!("{reason}\n  {ast}")),
+            Outcome::Differs { native, sql } => following_failures.push(format!(
+                "difference:\n  rule: {ast}\n  native: {}\n  sql: {}",
+                native.chars().take(1500).collect::<String>(),
+                sql.chars().take(1500).collect::<String>()
+            )),
+        }
+    }
+    eprintln!("facts: {facts_compared} clauses reading shared literal facts agree ({facts_found} violations)");
     for failure in following_failures.iter().take(5) {
         eprintln!("following: {failure}");
     }
@@ -1931,6 +1960,71 @@ fn following_cases(seed: u64) -> Vec<(&'static str, Value, Value)> {
                 json!({ "kind": root, "matches": called })
             };
             let ast = json!({ "language": language, "rule": rule, "utils": utils });
+            (language, ast, violation.clone())
+        })
+        .collect()
+}
+
+/// Clauses whose callee tests differ only in their regexes (`sql::facts`): one to three members
+/// of a family in a clause, under `has`, `inside`, `any` and `not`, half of them with a pattern
+/// test no transducer program takes, so they read a shared fact under pushdown too. Drawn from a
+/// generator of their own, so the cases above stay as their seed names them.
+fn fact_cases(seed: u64) -> Vec<(&'static str, Value, Value)> {
+    const CASES: usize = 64;
+    let mut rng = Rng(seed ^ 0xfac7_0000_0000_0001);
+    let violation = json!({ "anchor": "witness.span", "code": "X", "message": "x" });
+    (0..CASES)
+        .map(|index| {
+            let python = index % 2 == 1;
+            let (language, roots, names, call, identifier, member, property, filter) = if python {
+                (
+                    "python",
+                    &["function_definition", "module", "class_definition", "block"][..],
+                    &["^print$", "^range$", "^open$", "^describe$", "^build$", "e", "^_", "^nope$"][..],
+                    "call",
+                    "identifier",
+                    "attribute",
+                    "attribute",
+                    "print(1)",
+                )
+            } else {
+                (
+                    "typescript",
+                    &["function_declaration", "program", "class_declaration", "statement_block"][..],
+                    &["^push$", "^sort$", "^slice$", "^method$", "^hoisted$", "s", "^use$", "^nope$"][..],
+                    "call_expression",
+                    "identifier",
+                    "member_expression",
+                    "property",
+                    "use(1)",
+                )
+            };
+            let filtered = rng.chance(50);
+            let member = |rng: &mut Rng| {
+                let name = *rng.pick(names);
+                let other = if rng.chance(70) { name } else { *rng.pick(names) };
+                let mut test = json!({
+                    "kind": call,
+                    "has": { "field": "function", "any": [
+                        { "kind": identifier, "regex": name },
+                        { "kind": member, "has": { "field": property, "regex": other } },
+                    ] },
+                });
+                if filtered {
+                    test["not"] = json!({ "pattern": filter });
+                }
+                let walk = if rng.chance(75) { "has" } else { "inside" };
+                json!({ walk: { "stopBy": "end", "all": [test] } })
+            };
+            let count = 1 + rng.below(3);
+            let members: Vec<Value> = (0..count).map(|_| member(&mut rng)).collect();
+            let body = match rng.below(3) {
+                0 => json!({ "any": members }),
+                1 => json!({ "all": members }),
+                _ => json!({ "not": { "any": members } }),
+            };
+            let rule = json!({ "kind": *rng.pick(roots), "all": [body] });
+            let ast = json!({ "language": language, "rule": rule });
             (language, ast, violation.clone())
         })
         .collect()
