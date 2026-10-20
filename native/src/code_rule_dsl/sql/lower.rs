@@ -1030,19 +1030,23 @@ impl<'p> Lowerer<'p> {
         Ok(set)
     }
 
+    /// A stage's statement. A rule that cannot be unknown is lowered two-valued even in a
+    /// three-valued clause (its verdict is the same, with no `unk` to carry through its frames),
+    /// and its stage's rows say `unk = 0` for the clause's readers.
     fn stage_of(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
-        let kinds = RootKinds::new(self.three)
+        let three = self.three && reads_values(rule, &mut BTreeSet::new());
+        let kinds = RootKinds::new(three)
             .of(rule)
             .map(|kinds| kinds.into_iter().collect());
         let statement = {
             let mut lowerer = Lowerer::new(self.program, self.dialect);
-            lowerer.three = self.three;
+            lowerer.three = three;
             lowerer.shared = recursion::repeated(&[rule]);
             let (op, _) = lowerer.lower(rule, 0, &BTreeSet::new())?;
             let op = lowerer.unknowable(op);
             lowerer.finish(kinds, op)
         };
-        let sql = emit::stage(&statement);
+        let sql = emit::stage(&statement, self.three);
         let digest = format!("{}:{}", self.dialect, sql.statements.join(";\n"));
         if let Some(&existing) = self.program.stage_index.get(&digest) {
             return Ok(existing);

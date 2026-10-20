@@ -411,12 +411,16 @@ pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Emitte
 }
 
 /// A stage's statements: the last selects the distinct `(file, node)` its rule matches; in a
-/// three-valued statement `(file, node, unk)`, where it is true or unknown.
-pub(super) fn stage(statement: &Statement) -> Emitted {
+/// three-valued statement `(file, node, unk)`, where it is true or unknown. `three`: the stage's
+/// table has `unk` (its readers are three-valued), which a two-valued statement (a rule that
+/// cannot be unknown) fills with 0.
+pub(super) fn stage(statement: &Statement, three: bool) -> Emitted {
     let mut emitter = Emitter::new(statement);
     let out = emitter.statement(statement);
     let select = if emitter.three {
         format!("SELECT file, node, MIN(unk) FROM {out} GROUP BY file, node")
+    } else if three {
+        format!("SELECT DISTINCT file, node, 0 FROM {out}")
     } else {
         format!("SELECT DISTINCT file, node FROM {out}")
     };
