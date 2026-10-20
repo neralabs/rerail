@@ -118,7 +118,9 @@ pub(super) fn shape_test(shape: &Shape, file: &str, node: &str, alias: &mut usiz
     let list_of = |kinds: &[u16]| list(kinds);
     match shape {
         // No node has none of no kinds: false, with no table read.
-        Shape::Kinds(own) | Shape::Contains(own) | Shape::Child(own) if own.is_empty() => {
+        Shape::Kinds(own) | Shape::Contains(own) | Shape::Child(own) | Shape::Field(_, own)
+            if own.is_empty() =>
+        {
             "0".to_owned()
         }
         Shape::Kinds(own) => {
@@ -140,6 +142,14 @@ pub(super) fn shape_test(shape: &Shape, file: &str, node: &str, alias: &mut usiz
             let d = fresh(alias);
             format!(
                 "EXISTS (SELECT 1 FROM node {d} WHERE {d}.file = {file} AND {d}.parent = {node} AND {d}.kind IN ({}))",
+                list_of(below)
+            )
+        }
+        Shape::Field(field, below) => {
+            let d = fresh(alias);
+            format!(
+                "EXISTS (SELECT 1 FROM node {d} WHERE {d}.file = {file} AND {d}.parent = {node} AND {d}.kind IN ({}) \
+                 AND {d}.field = {field} AND {d}.ffirst = 1)",
                 list_of(below)
             )
         }
@@ -499,6 +509,15 @@ struct Emitter<'s> {
     /// The frames known to hold one row per `(file, node, slots of a set)`, with each such set
     /// (`keyed`).
     unique: HashMap<String, Vec<BTreeSet<SlotId>>>,
+    /// The frames known to hold some slots unbound (NULL) in every row: the root frame's, which
+    /// binds none, and every frame an operator derives from one, which leaves the slots it does
+    /// not name as they were (`plan`'s contract). A key need not hold them (`keyed`).
+    nulls: HashMap<String, Rc<BTreeSet<SlotId>>>,
+    /// The frames whose nodes are known to be of some kinds (sorted): a tree walk's candidates
+    /// (its need's kinds, read from the kind postings), a kind test's output, and every frame an
+    /// operator derives from one, which holds a subset of its input's nodes (`plan`'s contract).
+    /// A kind test they all pass is not run (`Emitter::apply`).
+    kinds: HashMap<String, Rc<[u16]>>,
     /// The slots each operator names, by its address (`keyed::touched`).
     touched_slots: HashMap<usize, Rc<BTreeSet<SlotId>>>,
     /// The k-space of each frame in a unit's body (`lineage`), by name.
@@ -507,6 +526,11 @@ struct Emitter<'s> {
     /// The unit bodies being emitted, innermost last, and the next one's id.
     members: Vec<lineage::Member>,
     next_member: usize,
+}
+
+/// `kinds` sorted, each once (`Emitter::kinds`).
+fn sorted(kinds: &[u16]) -> Rc<[u16]> {
+    kinds.iter().copied().collect::<BTreeSet<u16>>().into_iter().collect()
 }
 
 /// `An+B` at a 1-based position `index`, as `nth_child::Position::holds` computes it.
@@ -553,6 +577,8 @@ impl<'s> Emitter<'s> {
                 .iter()
                 .position(|slot| slot.scope == INTERNAL && slot.name == ORIGIN),
             unique: HashMap::new(),
+            nulls: HashMap::new(),
+            kinds: HashMap::new(),
             touched_slots: HashMap::new(),
             space_of: HashMap::new(),
             spaces: Vec::new(),
@@ -718,8 +744,18 @@ impl<'s> Emitter<'s> {
 
     /// Appends the physical columns of `alias` to `out`, comma-led: `, alias.s0…`.
     fn push_physical_of(&self, out: &mut String, alias: &str) {
+        self.push_physical_reading(out, alias, &HashSet::new());
+    }
+
+    /// `push_physical_of`, with `NULL` for the columns of `nulls`: a column the frame read as
+    /// `alias` holds unbound in every row (`Emitter::nulls`) is not read.
+    fn push_physical_reading(&self, out: &mut String, alias: &str, nulls: &HashSet<String>) {
         for column in self.layout.columns.iter() {
             out.push_str(", ");
+            if nulls.contains(column) {
+                out.push_str("NULL");
+                continue;
+            }
             out.push_str(alias);
             out.push('.');
             out.push_str(column);
@@ -730,6 +766,21 @@ impl<'s> Emitter<'s> {
     fn physical_of(&self, alias: &str) -> String {
         let mut out = String::with_capacity(self.layout.list.len() * 2);
         self.push_physical_of(&mut out, alias);
+        out
+    }
+
+    /// The columns of the slots `frame` holds unbound in every row (`nulls`).
+    fn null_columns(&self, frame: &str) -> HashSet<String> {
+        self.nulls_of(frame)
+            .iter()
+            .flat_map(|&slot| self.columns(slot))
+            .collect()
+    }
+
+    /// `physical_of(alias)` where `alias` reads `frame`: `NULL` for its unbound slots' columns.
+    fn physical_reading(&self, alias: &str, frame: &str) -> String {
+        let mut out = String::with_capacity(self.layout.list.len() * 2);
+        self.push_physical_reading(&mut out, alias, &self.null_columns(frame));
         out
     }
 
@@ -779,6 +830,15 @@ impl<'s> Emitter<'s> {
 
     /// The frame columns of `alias`.
     fn cols(&self, alias: &str) -> String {
+        self.cols_with(alias, &HashSet::new())
+    }
+
+    /// `cols(alias)` where `alias` reads `frame`: `NULL` for its unbound slots' columns.
+    fn cols_reading(&self, alias: &str, frame: &str) -> String {
+        self.cols_with(alias, &self.null_columns(frame))
+    }
+
+    fn cols_with(&self, alias: &str, nulls: &HashSet<String>) -> String {
         let mut out = String::with_capacity(
             3 * alias.len() + 16 + self.layout.list.len() * 2 + self.zeros.len(),
         );
@@ -788,7 +848,7 @@ impl<'s> Emitter<'s> {
         out.push_str(".file, ");
         out.push_str(alias);
         out.push_str(".node");
-        self.push_physical_of(&mut out, alias);
+        self.push_physical_reading(&mut out, alias, nulls);
         out.push_str(&self.zeros);
         out
     }
@@ -908,6 +968,11 @@ impl<'s> Emitter<'s> {
         self.out.root = Some(root.clone());
         // One row per root: a file's roots are either all its nodes or the selected ones.
         self.keyed_by(&root, vec![BTreeSet::new()]);
+        // Every slot unbound, every node of the clause's kinds.
+        self.nulls.insert(root.clone(), Rc::new(held.iter().copied().collect()));
+        if let Some(kinds) = &statement.kinds {
+            self.kinds.insert(root.clone(), sorted(kinds));
+        }
         if self.units.is_empty() {
             return self.op(op, &root, &live);
         }
@@ -968,43 +1033,41 @@ impl<'s> Emitter<'s> {
         });
         let changed = self.touched(op);
         self.inherit(input, &out, &changed);
+        self.inherit_kinds(input, &out);
+        self.inherit_nulls(input, &out, &changed);
         self.same_space(input, &out);
         out
     }
 
-    /// `op` on a tree walk's `candidates`, which hold only `need`'s kinds (`tree_candidates`): a
-    /// leading kind test those kinds pass is not run again (a walk to `kind: call` would
-    /// otherwise copy every candidate row once more to re-test its kind).
-    fn on_candidates(
-        &mut self,
-        op: &Op,
-        walk: Walk,
-        candidates: &str,
-        need: &Need,
-        live: &Live,
-    ) -> String {
-        let tree = !matches!(walk, Walk::Slot(_) | Walk::Related(_));
-        let implied = |kinds: &[u16]| {
-            tree && need
-                .kinds
-                .as_deref()
-                .is_some_and(|need| need.iter().all(|kind| kinds.contains(kind)))
+    /// Records that the frame `to` holds a subset of `from`'s nodes: they have the kinds known
+    /// of `from`'s (`kinds`), and of `to`'s own where some are known.
+    fn inherit_kinds(&mut self, from: &str, to: &str) {
+        let Some(known) = self.kinds.get(from).filter(|_| from != to) else {
+            return;
         };
-        match op {
-            Op::Kinds(kinds) if implied(kinds) => candidates.to_owned(),
-            Op::All(items) if matches!(items.first(), Some(Op::Kinds(kinds)) if implied(kinds)) => {
-                let lives = self.pipeline(items[1..].iter(), live);
-                let mut current = candidates.to_owned();
-                for (item, live) in items[1..].iter().zip(&lives) {
-                    current = self.op(item, &current, live);
-                }
-                let changed = self.touched(op);
-                self.inherit(candidates, &current, &changed);
-                self.same_space(candidates, &current);
-                current
-            }
-            _ => self.op(op, candidates, live),
+        let kinds = match self.kinds.get(to) {
+            Some(own) => own.iter().filter(|kind| known.contains(kind)).copied().collect(),
+            None => Rc::clone(known),
+        };
+        self.kinds.insert(to.to_owned(), kinds);
+    }
+
+    /// Records that the frame `to` holds `from`'s rows with only the slots of `changed` rebound:
+    /// `from`'s unbound slots not among them are unbound in it (`nulls`).
+    pub(super) fn inherit_nulls(&mut self, from: &str, to: &str, changed: &BTreeSet<SlotId>) {
+        let Some(known) = self.nulls.get(from).filter(|_| from != to) else {
+            return;
+        };
+        let mut nulls: BTreeSet<SlotId> = known.difference(changed).copied().collect();
+        if let Some(own) = self.nulls.get(to) {
+            nulls.extend(own.iter().copied());
         }
+        self.nulls.insert(to.to_owned(), Rc::new(nulls));
+    }
+
+    /// The slots `frame` holds unbound in every row (`nulls`).
+    pub(super) fn nulls_of(&self, frame: &str) -> Rc<BTreeSet<SlotId>> {
+        self.nulls.get(frame).map_or_else(Rc::default, Rc::clone)
     }
 
     /// `op` on `input` (`Emitter::op`), in the output frame's layout.
@@ -1015,26 +1078,40 @@ impl<'s> Emitter<'s> {
             return out;
         }
         match op {
+            // A kind test every node of the input passes is the input itself: a walk to
+            // `kind: call` would otherwise copy every candidate row once more to re-test it.
             Op::Kinds(kinds) => {
+                let known = self.kinds.get(input).map(Rc::clone);
+                if let Some(known) = &known
+                    && known.iter().all(|kind| kinds.contains(kind))
+                {
+                    return input.to_owned();
+                }
                 let test = match kinds.as_slice() {
                     [kind] => format!("n.kind = {kind}"),
                     kinds => format!("n.kind IN ({})", list(kinds)),
                 };
-                self.frame(
+                let out = self.frame(
                     "x",
                     &format!(
                         "SELECT {} FROM {input} f JOIN node n ON n.file = f.file AND n.id = f.node WHERE {test}",
-                        self.cols("f")
+                        self.cols_reading("f", input)
                     ),
                     Reads::join(&[input]),
-                )
+                );
+                let passed: Rc<[u16]> = match known {
+                    Some(known) => known.iter().filter(|kind| kinds.contains(kind)).copied().collect(),
+                    None => sorted(kinds),
+                };
+                self.kinds.insert(out.clone(), passed);
+                out
             }
             Op::Regex(term) => self.frame(
                 "x",
                 &format!(
                     "SELECT {} FROM {input} f WHERE (f.file * 4294967296 + f.node) IN \
                      (SELECT ek FROM text_match WHERE term = {term} AND ek IN (SELECT file * 4294967296 + node FROM {input}))",
-                    self.cols("f")
+                    self.cols_reading("f", input)
                 ),
                 Reads::join(&[input]),
             ),
@@ -1072,12 +1149,14 @@ impl<'s> Emitter<'s> {
                                 "y",
                                 &format!(
                                     "SELECT {} FROM {rest} f WHERE f.k NOT IN (SELECT k FROM {out})",
-                                    this.cols("f")
+                                    this.cols_reading("f", &rest)
                                 ),
                                 Reads::anti(&rest, &[&out]),
                             )
                         });
                         self.inherit(&rest, &next, &BTreeSet::new());
+                        self.inherit_kinds(&rest, &next);
+                        self.inherit_nulls(&rest, &next, &BTreeSet::new());
                         self.same_space(&rest, &next);
                         rest = next;
                     }
@@ -1085,7 +1164,7 @@ impl<'s> Emitter<'s> {
                 }
                 let union = outs
                     .iter()
-                    .map(|out| format!("SELECT {} FROM {out} f", self.cols("f")))
+                    .map(|out| format!("SELECT {} FROM {out} f", self.cols_reading("f", out)))
                     .collect::<Vec<_>>()
                     .join(" UNION ALL ");
                 let branches: Vec<&str> = outs.iter().map(String::as_str).collect();
@@ -1100,7 +1179,7 @@ impl<'s> Emitter<'s> {
                     "x",
                     &format!(
                         "SELECT {} FROM {input} f WHERE f.k NOT IN (SELECT k FROM {out})",
-                        self.cols("f")
+                        self.cols_reading("f", input)
                     ),
                     Reads::anti(input, &[&out]),
                 )
@@ -1126,7 +1205,7 @@ impl<'s> Emitter<'s> {
                 let held = self.live_before(op, &back);
                 let candidates = self.candidates(*walk, need, input, &held);
                 self.first_match(&candidates, *walk, false);
-                let matched = self.on_candidates(sub, *walk, &candidates, need, &back);
+                let matched = self.op(sub, &candidates, &back);
                 self.first_matched(&candidates, &matched);
                 if *binds {
                     // `ord` is the walk order (negated ids for descending walks): its minimum
@@ -1148,7 +1227,7 @@ impl<'s> Emitter<'s> {
                         "x",
                         &format!(
                             "SELECT {} FROM {input} f WHERE f.k IN (SELECT g.pk FROM {matched} s JOIN {candidates} g ON g.k = s.k)",
-                            self.cols("f")
+                            self.cols_reading("f", input)
                         ),
                         Reads::join(&[input, &matched, &candidates]),
                     )
@@ -1738,7 +1817,7 @@ impl<'s> Emitter<'s> {
         } else {
             format!(
                 "SELECT {} FROM {input} f WHERE f.k IN (SELECT k FROM {out})",
-                self.cols("f")
+                self.cols_reading("f", input)
             )
         };
         self.frame("x", &select, Reads::join(&[input, &out]))
@@ -1759,7 +1838,16 @@ impl<'s> Emitter<'s> {
     ) -> String {
         let candidates = self.within(held, |this| match this.leaf_candidates(walk, input) {
             Some(candidates) => candidates,
-            None => this.tree_candidates(walk, need, input),
+            None => {
+                let candidates = this.tree_candidates(walk, need, input);
+                // A tree walk's candidates copy the input's bindings of the slots they hold.
+                let nulls: BTreeSet<SlotId> =
+                    this.nulls_of(input).intersection(held).copied().collect();
+                if !nulls.is_empty() {
+                    this.nulls.insert(candidates.clone(), Rc::new(nulls));
+                }
+                candidates
+            }
         });
         self.open_space(&candidates, input, lineage::Derive::Probe);
         candidates
@@ -1944,7 +2032,7 @@ impl<'s> Emitter<'s> {
             format!(
                 "{with}INSERT INTO {name} SELECT NULL, c.file, c.node{}, c.pk, {order}{} \
                  FROM ({source}) c JOIN {input} f ON f.k = c.pk",
-                self.physical_of("f"),
+                self.physical_reading("f", input),
                 self.zeros()
             ),
             Reads::join(&[input]),
@@ -1956,6 +2044,10 @@ impl<'s> Emitter<'s> {
             Walk::Has(Stop::Neighbor) | Walk::FieldHas(_, Stop::Neighbor)
         ) {
             self.inherit(input, &name, &BTreeSet::new());
+        }
+        // The candidates hold only the kinds read from the postings.
+        if let Some(kinds) = kinds {
+            self.kinds.insert(name.clone(), sorted(kinds));
         }
         name
     }
@@ -1983,7 +2075,7 @@ impl<'s> Emitter<'s> {
                     &format!(
                         "SELECT {} FROM {input} f JOIN node n ON n.file = f.file AND n.id = f.node \
                          WHERE n.parent IS NOT NULL AND n.named = 1 AND {}",
-                        self.cols("f"),
+                        self.cols_reading("f", input),
                         holds(index, step, offset)
                     ),
                     Reads::join(&[input]),
@@ -2017,7 +2109,7 @@ impl<'s> Emitter<'s> {
                 let index = if reverse { "(r.cnt - r.r + 1)" } else { "r.r" };
                 let select = format!(
                     "SELECT {} FROM {input} f JOIN r ON r.file = f.file AND r.node = f.node WHERE {}",
-                    self.cols("f"),
+                    self.cols_reading("f", input),
                     holds(index, step, offset)
                 );
                 let table = set_inputs(*set);
