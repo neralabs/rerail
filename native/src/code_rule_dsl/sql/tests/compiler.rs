@@ -95,3 +95,98 @@ fn shared_search_avoids_quadratic_rows_for_early_late_and_missing_matches() {
         );
     }
 }
+
+#[test]
+fn capture_demand_keeps_nullable_composite_and_occurrence_semantics() {
+    for three in [false, true] {
+        for (binding, source) in [
+            ("$X($$$)", "f(f);\ng(g);\nh(x);\n"),
+            ("f($X)", "f(a + b);\nf(a);\nf((a));\n"),
+        ] {
+            let mut ast = json!({ "rule": { "all": [
+                { "pattern": binding },
+                { "has": { "stopBy": "end", "all": [
+                    { "kind": "identifier" }, { "pattern": "$X" }
+                ] } }
+            ] } });
+            if three {
+                ast["rule"]["all"][1]["has"]["all"]
+                    .as_array_mut()
+                    .unwrap()
+                    .insert(0, json!({ "testUnknown": "^never$" }));
+            }
+            let found = agreed("typescript", ast, source);
+            assert!(!found.is_empty());
+        }
+    }
+    // A nullable slot must match freely, and disjunction must not inherit only one arm's guard.
+    let ast = json!({ "rule": { "kind": "call_expression", "all": [
+        { "any": [{ "pattern": "f($X)" }, { "pattern": "g($$$)" }] },
+        { "has": { "stopBy": "end", "kind": "identifier", "pattern": "$X" } }
+    ] } });
+    assert_eq!(
+        agreed("typescript", ast, "f(a);\ng(b);\n"),
+        ["f(a) X=a", "g(b) X=g"]
+    );
+}
+
+#[test]
+fn capture_demand_does_not_cross_binding_or_an_optional_branch() {
+    let ast = json!({ "rule": { "pattern": "$X($$$)", "has": {
+        "stopBy": "end", "any": [
+            { "kind": "number", "pattern": "$Y" },
+            { "kind": "identifier", "pattern": "$X" }
+        ]
+    } } });
+    assert_eq!(
+        agreed("typescript", ast, "f(1);\ng(g);\n"),
+        ["f(1) X=f", "g(g) X=g"]
+    );
+}
+
+#[cfg(feature = "unbounded-work")]
+#[test]
+fn capture_postings_reduce_materialized_candidates_in_both_verdict_modes() {
+    let calls = 100;
+    let source = format!("f({}f);\n", "a, ".repeat(128)).repeat(calls);
+    for three in [false, true] {
+        let mut terms = vec![json!({ "pattern": "$F($$$)" })];
+        if three {
+            terms.push(json!({ "testUnknown": "^never$" }));
+        }
+        terms.push(json!({ "has": { "kind": "arguments", "has": {
+            "stopBy": "end", "kind": "identifier", "pattern": "$F"
+        } } }));
+        let rule = compile("typescript", json!({ "rule": { "all": terms } }));
+        STATEMENT_PROFILE.set(Some(Default::default()));
+        let result = same(&rule, &snapshot(&[("typescript", "a.ts", &source)]));
+        assert_eq!(result["violations"].as_array().map(Vec::len), Some(calls));
+        let profile = STATEMENT_PROFILE.take().unwrap_or_default();
+        let narrowed: usize = profile
+            .iter()
+            .filter(|(sql, _)| sql.contains("needle.leaf"))
+            .map(|(_, (_, rows, _))| rows)
+            .sum();
+        assert!(
+            narrowed > 0 && narrowed <= calls * 3,
+            "three={three}: {narrowed} restricted rows"
+        );
+    }
+}
+
+#[test]
+fn subtree_demand_support_preserves_recursive_capture_occurrences() {
+    let source = "f(a);\ng(z);\nh(a + b);\nf(f(a), f(a));\n";
+    for three in [false, true] {
+        let mut terms = vec![json!({ "pattern": "$F($$$)" })];
+        if three {
+            terms.push(json!({ "testUnknown": "^never$" }));
+        }
+        terms.push(json!({ "has": { "kind": "arguments", "matches": "find" } }));
+        let ast = json!({ "rule": { "all": terms }, "utils": { "find": { "any": [
+            { "kind": "identifier", "pattern": "$F" },
+            { "has": { "stopBy": "neighbor", "matches": "find" } }
+        ] } } });
+        assert_eq!(agreed("typescript", ast, source), ["f(f(a), f(a)) F=f"]);
+    }
+}

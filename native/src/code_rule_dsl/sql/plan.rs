@@ -167,6 +167,9 @@ pub(super) struct Need {
     pub(super) kinds: Option<Vec<u16>>,
     /// A structural test beyond its kinds; `None`: none.
     pub(super) shape: Option<Shape>,
+    /// A bound, single-node metavariable required at the candidate itself. Only a named-leaf
+    /// input permits a text-posting restriction; the ordinary pattern still confirms the match.
+    pub(super) capture: Option<SlotId>,
 }
 
 /// A capture-free test on a node (`Need::shape`).
@@ -298,6 +301,7 @@ pub(super) enum Op {
         env: bool,
         vars: Vec<SlotId>,
         reads: Vec<SlotId>,
+        single_capture: Option<SlotId>,
     },
     All(Vec<Op>),
     Any(Vec<Op>),

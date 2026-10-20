@@ -104,7 +104,7 @@ const FIXTURES: &[(&str, &[&str])] = &[
     ),
 ];
 
-pub(super) fn tape(dialect: GrammarDialect, source: &str) -> TapeDoc {
+pub(in crate::code_rule_dsl::sql) fn tape(dialect: GrammarDialect, source: &str) -> TapeDoc {
     let never = || false;
     let grammar = Grammar::new(dialect).expect("grammar");
     let image = TapeImage::parse(&grammar, source, &never)
@@ -1940,7 +1940,7 @@ fn replayed_cases_agree() {
 /// The loops of a statement's `EXPLAIN QUERY PLAN` rows `(id, parent, detail)` that read a whole
 /// table once per row of an outer loop: a `SCAN` after the first loop of its join, or in a
 /// correlated subquery. A `node` table loop is bounded where a constraint on `id`, `parent` or
-/// `last` drives it (its index string: `i`, `p`, `l` codes); a terminal's where it has a term
+/// `last` drives it (its index string: `i`, `p`, `l` codes); a kind/value posting lookup is bounded by both `k` and `h`; a terminal's where it has a term
 /// (a nonzero index number). `SEARCH` loops (an index, a primary key, an automatic index) are
 /// bounded by their key.
 pub(super) fn inner_scans(plan: &[(i64, i64, String)]) -> Vec<String> {
@@ -1980,14 +1980,15 @@ pub(super) fn inner_scans(plan: &[(i64, i64, String)]) -> Vec<String> {
                     // A frame's lookup on its constrained columns (`frames`).
                     true
                 } else {
-                    ["i=", "p=", "i>", "i}", "i<", "i{", "l}", "l>"]
-                        .iter()
-                        .any(|code| {
-                            codes
-                                .as_bytes()
-                                .chunks(2)
-                                .any(|pair| pair == code.as_bytes())
-                        })
+                    (codes.contains("k=") && codes.contains("h="))
+                        || ["i=", "p=", "i>", "i}", "i<", "i{", "l}", "l>"]
+                            .iter()
+                            .any(|code| {
+                                codes
+                                    .as_bytes()
+                                    .chunks(2)
+                                    .any(|pair| pair == code.as_bytes())
+                            })
                 }
             }
             None => false,

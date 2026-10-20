@@ -276,6 +276,7 @@ impl RootKinds {
         Need {
             kinds: kinds.map(|kinds| kinds.into_iter().collect()),
             shape,
+            capture: None,
         }
     }
 
@@ -1231,6 +1232,12 @@ impl<'p> Lowerer<'p> {
                     .collect();
                 let reads: Vec<SlotId> = term.reads.iter().map(|&index| vars[index]).collect();
                 let env = !reads.is_empty();
+                let single_capture = match &pattern.node {
+                    ast_grep_core::matcher::PatternNode::MetaVar {
+                        meta_var: ast_grep_core::meta_var::MetaVariable::Capture(_, true),
+                    } if env && vars.len() == 1 && reads.len() == 1 => Some(vars[0]),
+                    _ => None,
+                };
                 let key = std::ptr::from_ref(pattern) as usize;
                 let id = match (env, self.program.fresh_patterns.get(&key)) {
                     (false, Some(&id)) => id,
@@ -1251,6 +1258,7 @@ impl<'p> Lowerer<'p> {
                         env,
                         vars,
                         reads,
+                        single_capture,
                     },
                     out,
                 ))

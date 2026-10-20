@@ -2,7 +2,7 @@
 
 mod census;
 mod compiler;
-mod differential;
+pub(super) mod differential;
 mod hard_cases;
 mod keyed;
 mod leaves;
@@ -12,6 +12,8 @@ mod probe;
 mod recursion;
 mod setops;
 mod setup;
+#[path = "../spikes/mod.rs"]
+mod spikes;
 mod three_valued;
 
 use crate::code_rule_dsl::CompiledCodeRuleDsl;

@@ -14,6 +14,7 @@
 //! appends: a `ROW_NUMBER() OVER ()` would buffer every row in an ephemeral table first and
 //! insert them by seeking.
 
+mod demand;
 mod each;
 mod following;
 mod fusion;
@@ -1058,6 +1059,7 @@ impl<'s> Emitter<'s> {
                 env,
                 vars,
                 reads,
+                ..
             } => self.pattern(*term, *env, vars, reads, input),
             Op::All(items) => {
                 let lives = self.pipeline(items.iter(), live);
@@ -1139,7 +1141,8 @@ impl<'s> Emitter<'s> {
                     Live::default()
                 };
                 let held = self.live_before(op, &back);
-                let candidates = self.candidates(*walk, need, input, &held);
+                let narrowed = self.capture_need(need, sub);
+                let candidates = self.candidates(*walk, &narrowed, input, &held);
                 self.first_match(&candidates, *walk, false);
                 let matched = self.on_candidates(sub, *walk, &candidates, need, &back);
                 self.first_matched(&candidates, &matched);
@@ -1178,7 +1181,8 @@ impl<'s> Emitter<'s> {
                 need,
             } => {
                 let held = self.live_before(op, &Live::default());
-                let candidates = self.candidates(*walk, need, input, &held);
+                let narrowed = self.capture_need(need, sub);
+                let candidates = self.candidates(*walk, &narrowed, input, &held);
                 let matched = self.op(sub, &candidates, &Live::default());
                 let counts = self.grouped(
                     "n",
@@ -1426,6 +1430,8 @@ impl<'s> Emitter<'s> {
         context: Option<SlotId>,
         input: &str,
     ) -> String {
+        let supported = self.supported_demand(unit, site, input);
+        let input = supported.as_deref().unwrap_or(input);
         let units = self.units;
         let key = &units[unit].key;
         let unit_columns = self.key_columns(key);
@@ -1801,7 +1807,19 @@ impl<'s> Emitter<'s> {
             String::new()
         };
         let simple = |from: &str| {
-            format!("SELECT f.k AS pk, c.file AS file, c.id AS node{carry} FROM {input} f {from}")
+            let base = format!(
+                "SELECT f.k AS pk, c.file AS file, c.id AS node{carry} FROM {input} f {from}"
+            );
+            match need.capture.filter(|_| direct && kinds.is_some()) {
+                Some(slot) => format!(
+                    "SELECT f.k AS pk, c.file AS file, c.id AS node{carry} FROM {input} f \
+                     CROSS JOIN node needle ON needle.file = f.file AND needle.id = f.s{slot} AND needle.leaf = 1 \
+                     {from} AND c.thash = needle.thash \
+                     UNION ALL {base} WHERE NOT EXISTS \
+                     (SELECT 1 FROM node needle WHERE needle.file = f.file AND needle.id = f.s{slot} AND needle.leaf = 1)"
+                ),
+                None => base,
+            }
         };
         // The kind test on the candidate `node` row `c`, in its join.
         let c = match kinds {

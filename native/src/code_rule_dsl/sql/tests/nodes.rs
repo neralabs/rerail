@@ -169,3 +169,33 @@ fn every_axis_lists_the_nodes_the_tape_walks_visit() {
     });
     assert!(zero_width > 0, "the sources hold zero-width nodes");
 }
+
+#[test]
+fn value_postings_intersect_kind_and_structural_ranges() {
+    let dialect = dialect_by_label("typescript").unwrap();
+    with_nodes(
+        vec![tape(dialect, "f(a, b, a); g(a); a;\n")],
+        |connection, batch| {
+            let facts = &batch.files[0].facts;
+            for needle in 0..facts.len() {
+                let kind = facts.kind(needle);
+                let hash = facts.thash(needle);
+                for lo in 0..facts.len() {
+                    let hi = (lo + 7).min(facts.len());
+                    let expected: Vec<u32> = (lo..hi)
+                        .filter(|&id| facts.kind(id) == kind && facts.thash(id) == hash)
+                        .collect();
+                    let mut statement = connection.prepare_cached(
+                    "SELECT id FROM node WHERE file=0 AND kind=?1 AND thash=?2 AND id>=?3 AND id<?4 ORDER BY id"
+                ).unwrap();
+                    let got: Vec<u32> = statement
+                        .query_map(params![kind, hash, lo, hi], |row| row.get(0))
+                        .unwrap()
+                        .map(Result::unwrap)
+                        .collect();
+                    assert_eq!(got, expected, "needle {needle}, range {lo}..{hi}");
+                }
+            }
+        },
+    );
+}

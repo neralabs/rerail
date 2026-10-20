@@ -290,7 +290,8 @@ impl Emitter<'_> {
             Live::default()
         };
         let held = self.live_before(op, &back);
-        let candidates = self.candidates(walk, &self.narrowed(walk, need), input, &held);
+        let narrowed = self.capture_need(&self.narrowed(walk, need), sub);
+        let candidates = self.candidates(walk, &narrowed, input, &held);
         // A non-strict search passes over unknown candidates: only a true one ends it.
         self.first_match(&candidates, walk, !strict);
         let matched = self.op(sub, &candidates, &back);
@@ -453,7 +454,8 @@ impl Emitter<'_> {
         input: &str,
     ) -> String {
         let held = self.live_before(op, &Live::default());
-        let candidates = self.candidates(walk, &self.narrowed(walk, need), input, &held);
+        let narrowed = self.capture_need(&self.narrowed(walk, need), sub);
+        let candidates = self.candidates(walk, &narrowed, input, &held);
         let matched = self.op(sub, &candidates, &Live::default());
         let opened = self.opened(walk, input, &candidates);
         let open = opened.map_or("0".to_owned(), |opened| {

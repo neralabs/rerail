@@ -16,6 +16,7 @@ use rusqlite::vtab::{
 };
 use rusqlite::{Error, Result};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::ffi::{CStr, c_int};
 use std::hash::{BuildHasher, Hasher};
 use std::marker::PhantomData;
@@ -54,8 +55,11 @@ pub(super) struct NodeFacts {
     tree: Tree,
     len: u32,
     postings: OnceLock<Postings>,
+    values: parking_lot::Mutex<ValuePostings>,
     positions: OnceLock<Positions>,
 }
+
+type ValuePostings = HashMap<u16, HashMap<i64, Arc<[u32]>>>;
 
 /// The tree a document's rows come from.
 enum Tree {
@@ -139,6 +143,7 @@ impl NodeFacts {
             tree,
             len,
             postings: OnceLock::new(),
+            values: Default::default(),
             positions: OnceLock::new(),
         }
     }
@@ -228,6 +233,34 @@ impl NodeFacts {
             Tree::Tape(root) => text_hash(root.root().get_doc().transducer_text_str(id)),
             Tree::Sub(root) => text_hash(&Self::sub_node(root, id).text()),
         }
+    }
+
+    /// Shared by every requesting clause in this immutable batch. Each requested kind is
+    /// hashed once. Composite nodes are included: native leaf unification compares their text.
+    pub(super) fn value_nodes(&self, kind: u16, hash: i64) -> Arc<[u32]> {
+        let mut values = self.values.lock();
+        let postings = values.entry(kind).or_insert_with(|| {
+            let mut by_value: HashMap<i64, Vec<u32>> = HashMap::new();
+            for at in self.kind_range(kind) {
+                let id = self.posted(at);
+                by_value.entry(self.thash(id)).or_default().push(id);
+            }
+            #[cfg(test)]
+            count_bytes(
+                by_value
+                    .values()
+                    .map(|ids| ids.len() * size_of::<u32>())
+                    .sum(),
+            );
+            by_value
+                .into_iter()
+                .map(|(key, ids)| (key, ids.into()))
+                .collect()
+        });
+        postings
+            .get(&hash)
+            .cloned()
+            .unwrap_or_else(|| Arc::from([]))
     }
 
     pub(super) fn named(&self, id: u32) -> bool {
@@ -418,6 +451,7 @@ enum Used {
     IdLt,
     IdLe,
     Parent,
+    TextHash,
     LastGe,
     LastGt,
     Kind {
@@ -436,6 +470,7 @@ impl Used {
             Self::IdLt => "i<",
             Self::IdLe => "i{",
             Self::Parent => "p=",
+            Self::TextHash => "h=",
             Self::LastGe => "l}",
             Self::LastGt => "l>",
             Self::Kind { list: false } => "k=",
@@ -453,6 +488,7 @@ impl Used {
             b"i<" => Self::IdLt,
             b"i{" => Self::IdLe,
             b"p=" => Self::Parent,
+            b"h=" => Self::TextHash,
             b"l}" => Self::LastGe,
             b"l>" => Self::LastGt,
             b"k=" => Self::Kind { list: false },
@@ -500,6 +536,7 @@ unsafe impl<'vtab> VTab<'vtab> for NodeTable {
         let mut parent = None;
         let mut last = None;
         let mut kind = None;
+        let mut text_hash = None;
         for (index, constraint) in info.constraints().enumerate() {
             if !constraint.is_usable() {
                 continue;
@@ -523,6 +560,9 @@ unsafe impl<'vtab> VTab<'vtab> for NodeTable {
                 }
                 (COL_ID, Op::SQLITE_INDEX_CONSTRAINT_LE) => {
                     id_hi.get_or_insert((index, Used::IdLe));
+                }
+                (COL_THASH, Op::SQLITE_INDEX_CONSTRAINT_EQ) => {
+                    text_hash.get_or_insert(index);
                 }
                 (COL_PARENT, Op::SQLITE_INDEX_CONSTRAINT_EQ) => {
                     parent.get_or_insert(index);
@@ -583,6 +623,12 @@ unsafe impl<'vtab> VTab<'vtab> for NodeTable {
             let list = info.is_in_constraint(index)? && info.set_in_constraint(index, true)?;
             used.push((index, Used::Kind { list }));
         }
+        let cost = if let Some(index) = text_hash {
+            used.push((index, Used::TextHash));
+            if kind.is_some() { cost.min(8.0) } else { cost }
+        } else {
+            cost
+        };
         let cost = if file.is_some() { cost } else { cost * 1_000.0 };
         let mut codes = String::new();
         for (argv, (index, use_)) in used.iter().enumerate() {
@@ -646,6 +692,7 @@ struct Filter {
     last_lo: Option<u32>,
     /// The node's kind is one of the cursor's `kinds`.
     kinds: bool,
+    text_hash: Option<i64>,
     /// No row can satisfy the constraints (a NULL or out-of-range value).
     empty: bool,
 }
@@ -663,6 +710,12 @@ enum Source {
     },
     /// The file's postings (`NodeFacts::posted`) `next..end`.
     Posted {
+        next: usize,
+        end: usize,
+    },
+    /// Immutable value postings shared by every lookup in this batch.
+    Values {
+        ids: Arc<[u32]>,
         next: usize,
         end: usize,
     },
@@ -740,7 +793,27 @@ impl NodeCursor<'_> {
         let len = facts.len();
         let lo = filter.id_lo.unwrap_or(0);
         let hi = filter.id_hi.map_or(len, |hi| hi.saturating_add(1).min(len));
-        self.source = if let Some(parent) = filter.parent {
+        self.source = if lo >= hi {
+            Source::Done
+        } else if let Some(hash) = filter.text_hash.filter(|_| filter.kinds) {
+            if let [kind] = self.kinds[..] {
+                let ids = facts.value_nodes(kind, hash);
+                let next = ids.partition_point(|&id| id < lo);
+                let end = ids.partition_point(|&id| id < hi);
+                self.source = Source::Values { ids, next, end };
+                return;
+            }
+            self.ids.clear();
+            for &kind in &self.kinds {
+                let ids = facts.value_nodes(kind, hash);
+                let from = ids.partition_point(|&id| id < lo);
+                let to = ids.partition_point(|&id| id < hi);
+                self.ids.extend_from_slice(&ids[from..to]);
+            }
+            self.ids.sort_unstable();
+            self.ids.dedup();
+            Source::Listed { pos: 0 }
+        } else if let Some(parent) = filter.parent {
             // From the range's first id where it is a child, else the first child.
             let first = match filter.id_lo {
                 _ if parent >= len => NONE,
@@ -764,8 +837,6 @@ impl NodeCursor<'_> {
             }
             self.ids.reverse();
             Source::Listed { pos: 0 }
-        } else if lo >= hi {
-            Source::Done
         } else if filter.kinds && (hi - lo) as usize > 8 * self.kinds.len() {
             // The kinds' postings within `lo..hi`, unless the range is the shorter read.
             let within = |kind: u16| {
@@ -821,6 +892,10 @@ impl NodeCursor<'_> {
                 *next += 1;
                 facts.posted(*next - 1)
             }),
+            Source::Values { ids, next, end } => (*next < *end).then(|| {
+                *next += 1;
+                ids[*next - 1]
+            }),
             Source::Done => None,
         }
     }
@@ -838,6 +913,7 @@ impl NodeCursor<'_> {
                 .is_none_or(|parent| facts.parent(id) == parent)
             && filter.last_lo.is_none_or(|last| facts.last(id) >= last)
             && (!filter.kinds || self.kinds.binary_search(&facts.kind(id)).is_ok())
+            && filter.text_hash.is_none_or(|hash| facts.thash(id) == hash)
     }
 
     fn advance(&mut self) {
@@ -931,6 +1007,7 @@ unsafe impl VTabCursor for NodeCursor<'_> {
                         continue;
                     };
                     match other {
+                        Used::TextHash => filter.text_hash = Some(value),
                         Used::IdEq => narrow(&mut filter, Some(value), Some(value)),
                         Used::IdGt => narrow(&mut filter, Some(value.saturating_add(1)), None),
                         Used::IdGe => narrow(&mut filter, Some(value), None),

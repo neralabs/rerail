@@ -42,6 +42,8 @@ pub(super) struct PatternTerm {
     pub(super) vars: Vec<(String, SlotKind)>,
     pub(super) kinds: Option<Vec<u16>>,
     pub(super) reads: Vec<usize>,
+    /// Smart root `$X`: execute the leaf-input subset without constructing an environment.
+    pub(super) root_capture: bool,
 }
 
 impl PatternTerm {
@@ -54,12 +56,20 @@ impl PatternTerm {
         let kinds = pattern
             .potential_kinds()
             .map(|kinds| kinds.iter().map(|kind| kind as u16).collect());
+        let root_capture = matches!(pattern.strictness, ast_grep_core::MatchStrictness::Smart)
+            && matches!(
+                &pattern.node,
+                PatternNode::MetaVar {
+                    meta_var: MetaVariable::Capture(_, true)
+                }
+            );
         Self {
             pattern,
             dialect,
             vars,
             kinds,
             reads: Vec::new(),
+            root_capture,
         }
     }
 

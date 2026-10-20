@@ -19,7 +19,8 @@ const metadata = {
   machine: { cpu: cpus()[0]?.model, logicalCpus: cpus().length, node: process.version },
   runnerSha256: hash(readFileSync(runner)),
   capabilitiesSha256: hash(readFileSync(base.capabilities)),
-  sourceHashes: ["emit.rs", "emit/keyed.rs", "emit/guards.rs", "emit/fusion.rs", "emit/shared_search.rs", "emit/inline.rs", "emit/three.rs", "exec.rs", "frames.rs", "diagnostics.rs", "terminals/pattern.rs", "../../lib.rs"].map(name => {
+  sourceHashesDescription: "Driver working tree at invocation; per-variant buildManifest records binary source provenance when supplied.",
+  sourceHashes: ["nodes.rs", "lower.rs", "plan.rs", "emit/demand.rs", "emit.rs", "emit/keyed.rs", "emit/guards.rs", "emit/fusion.rs", "emit/shared_search.rs", "emit/inline.rs", "emit/three.rs", "exec.rs", "frames.rs", "diagnostics.rs", "terminals/mod.rs", "terminals/pattern.rs", "../../lib.rs"].map(name => {
     const path = fileURLToPath(new URL(`../native/src/code_rule_dsl/sql/${name}`, import.meta.url));
     return { path, sha256: hash(readFileSync(path)) };
   }),
@@ -52,6 +53,7 @@ for (let round = 0; round < (definition.rounds ?? 1); round++) {
       result.parity = oracle !== undefined && result.digest === oracle && result.counts.failures === 0;
     }
     records.push({ round, variant, startedLoad, addonSha256: hash(readFileSync(config.addon)),
+      ...(variant.buildManifest ? { buildManifest: JSON.parse(readFileSync(variant.buildManifest, "utf8")) } : {}),
       policyHashes: config.policies.map(path => ({ path, sha256: hash(readFileSync(path)) })), ...result });
     writeFileSync(definition.output, JSON.stringify({ ...metadata, oracle, records }, null, 2) + "\n");
     console.error(JSON.stringify({ round, variant: variant.name, apply: result.apply, parity: result.parity, error: result.error }));

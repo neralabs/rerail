@@ -116,6 +116,57 @@ fn values<'t>(
     values
 }
 
+type CaptureMatch = Option<Arc<[Option<i64>]>>;
+
+/// The exact Smart root-capture subset. `None` leaves composite structural unification to the
+/// general matcher; `Some(None)` is a proved nonmatch. Native insert overwrites a unified capture
+/// with the candidate occurrence. Smart root metavariables also capture named extras.
+fn root_capture(
+    batch: &Batch,
+    term: &PatternTerm,
+    file: usize,
+    node: u32,
+    inputs: &[Option<i64>],
+) -> Option<CaptureMatch> {
+    if !term.root_capture {
+        return None;
+    }
+    let entry = batch.files.get(file)?;
+    if node >= entry.facts.len() {
+        return Some(None);
+    }
+    let candidate = node_at(&entry.root, node);
+    if !candidate.is_named()
+        || term
+            .kinds
+            .as_ref()
+            .is_some_and(|kinds| !kinds.contains(&candidate.kind_id()))
+    {
+        return Some(None);
+    }
+    if !term.reads.is_empty() {
+        let bound = *inputs.first()?;
+        if let Some(bound) = bound {
+            let Ok(bound) = u32::try_from(bound) else {
+                return Some(None);
+            };
+            if bound >= entry.facts.len() {
+                return Some(None);
+            }
+            if bound != node {
+                let bound = node_at(&entry.root, bound);
+                if !bound.is_named_leaf() && !candidate.is_named_leaf() {
+                    return None;
+                }
+                if bound.text() != candidate.text() {
+                    return Some(None);
+                }
+            }
+        }
+    }
+    Some(Some(Arc::from([Some(i64::from(node))])))
+}
+
 /// The capture columns of `term`'s fresh-env match at `node` of batch file `file`, where it
 /// matches. Only a node of a batch file of the term's dialect, of one of its root kinds, can match.
 pub(in crate::code_rule_dsl::sql) fn fresh_match(
@@ -135,6 +186,9 @@ pub(in crate::code_rule_dsl::sql) fn fresh_match(
     {
         return None;
     }
+    if let Some(result) = root_capture(batch, term, file, node, &[]) {
+        return result;
+    }
     let mut env = Cow::Owned(MetaVarEnv::new());
     term.pattern
         .match_node_with_env(node_at(&entry.root, node), &mut env)?;
@@ -143,6 +197,19 @@ pub(in crate::code_rule_dsl::sql) fn fresh_match(
 
 /// The frame owns the input tuple; only its integer row key crosses SQLite.
 fn typed_match(
+    batch: &Batch,
+    term: &PatternTerm,
+    file: u32,
+    node: u32,
+    inputs: &[Option<i64>],
+) -> Option<Arc<[Option<i64>]>> {
+    if let Some(result) = root_capture(batch, term, file as usize, node, inputs) {
+        return result;
+    }
+    general_match(batch, term, file, node, inputs)
+}
+
+fn general_match(
     batch: &Batch,
     term: &PatternTerm,
     file: u32,
@@ -428,5 +495,54 @@ unsafe impl VTabCursor for PatternCursor<'_> {
 
     fn rowid(&self) -> Result<i64> {
         Ok(self.pos as i64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::code_rule_dsl::{
+        language::GrammarDialect,
+        sql::{exec::with_nodes, tests::differential::tape},
+    };
+    use ast_grep_core::{MatchStrictness, Pattern};
+
+    #[test]
+    fn packed_root_capture_matches_general_unification_for_every_input_pair() {
+        for (dialect, source) in [
+            (
+                GrammarDialect::Python,
+                "# a\nf(a, a)\nx = 'a'\nf(a + b)\nf(\n",
+            ),
+            (
+                GrammarDialect::TypeScript,
+                "// a\nf(a, a); ({a}); let x = 'a'; f(;\n",
+            ),
+        ] {
+            with_nodes(vec![tape(dialect, source)], |_, batch| {
+                let mut patterns = vec![Pattern::try_new("$X", dialect).unwrap()];
+                let mut cst = patterns[0].clone();
+                cst.strictness = MatchStrictness::Cst;
+                patterns.push(cst);
+                if dialect == GrammarDialect::TypeScript {
+                    patterns.push(Pattern::contextual("$X;", "identifier", dialect).unwrap());
+                }
+                for pattern in patterns {
+                    let mut term = PatternTerm::new(pattern, dialect);
+                    term.reads = vec![0];
+                    let len = batch.files[0].facts.len();
+                    for bound in std::iter::once(None).chain((0..len).map(|id| Some(i64::from(id))))
+                    {
+                        for candidate in 0..len {
+                            assert_eq!(
+                                typed_match(batch, &term, 0, candidate, &[bound]),
+                                general_match(batch, &term, 0, candidate, &[bound]),
+                                "{dialect:?}: {bound:?} -> {candidate}"
+                            );
+                        }
+                    }
+                }
+            });
+        }
     }
 }
