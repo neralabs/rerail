@@ -2121,6 +2121,23 @@ const PHASE_THREE_CASES: &[&str] = &[
 ];
 
 #[test]
+fn production_contract_phase_three_leaf_utilities_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["utility-simple", "utility-nested"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the leaf utility contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored named utility SQL contract"
+        );
+    }
+}
+
+#[test]
 fn production_contract_phase_three_utilities_lower_to_named_sql_components() {
     let expected_catalogs = [
         (
