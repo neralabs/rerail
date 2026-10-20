@@ -731,6 +731,24 @@ fn production_contract_phase_four_semantic_facts_lower_completely() {
 }
 
 #[test]
+fn production_contract_phase_four_calls_through_consumes_bounded_target_facts() {
+    let statements = authored_sql_goldens();
+    let sql = &statements["semantic-calls-through"];
+    assert!(
+        !sql.starts_with("WITH RECURSIVE"),
+        "call reachability belongs to the bounded fact producer"
+    );
+    assert!(
+        sql.contains("target.fact_kind = 16"),
+        "SQL must consume typed call-target facts"
+    );
+    assert!(
+        !sql.contains("reach(file_index"),
+        "SQL must not rebuild the call graph"
+    );
+}
+
+#[test]
 fn production_contract_phase_four_authored_sql_results_equal_semantic_oracles() {
     let statements = authored_sql_goldens();
     for case in cases().into_iter().filter(|case| {
