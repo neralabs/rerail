@@ -4,6 +4,8 @@ The previous fixes are committed as `235dde6a`.
 They remove bad demand access paths, but leave substantial unnecessary evaluation and materialization.
 A complete statement trace now quantifies that work.
 A separate scaling experiment proves a quadratic first-match defect.
+The measured optimizations were opt-in during this investigation.
+The [implementation report](sql-set-composition-implementation.md) records their subsequent promotion to production defaults.
 
 These results use the diagnostic build and allocator described in the [implementation report](sql-set-composition-implementation.md).
 Tim's external twelve-policy, 818-clause catalog remains unavailable.

@@ -25,7 +25,6 @@
 //! Only tables that statements append to and empty whole are frames (`exec`): a table some
 //! statement updates or deletes from by a condition stays a B-tree.
 
-#[cfg(feature = "unbounded-work")]
 use super::nodes::integer;
 use rusqlite::types::{ToSqlOutput, Value, ValueRef};
 use rusqlite::vtab::{
@@ -187,7 +186,6 @@ fn arguments(text: &str) -> Vec<&str> {
 impl FrameStore {
     /// Reads typed pattern inputs by frame key, without a SQL-side environment copy.
     /// The callback cannot retain a reference into the frame or execute SQL on this connection.
-    #[cfg(feature = "unbounded-work")]
     pub(super) fn pattern_inputs(
         &self,
         descriptor: &str,
@@ -408,7 +406,6 @@ enum Key {
 type Lookup = (Vec<usize>, Rc<[u32]>);
 
 struct Frame {
-    #[cfg(feature = "unbounded-work")]
     names: Vec<String>,
     columns: Vec<Column>,
     len: usize,
@@ -814,7 +811,6 @@ fn parse(args: &[&str]) -> Result<(CString, Frame)> {
     Ok((
         schema,
         Frame {
-            #[cfg(feature = "unbounded-work")]
             names,
             columns,
             len: 0,

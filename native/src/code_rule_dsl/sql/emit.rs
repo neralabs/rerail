@@ -16,6 +16,7 @@
 
 mod each;
 mod following;
+mod guards;
 mod keyed;
 mod leaves;
 mod lineage;
@@ -458,7 +459,6 @@ struct Emitter<'s> {
     first_probe_active: bool,
     #[cfg(feature = "unbounded-work")]
     first_candidate: bool,
-    #[cfg(feature = "unbounded-work")]
     kinds_of: HashMap<String, Vec<u16>>,
     slots: &'s [Slot],
     units: &'s [Unit],
@@ -534,7 +534,6 @@ impl<'s> Emitter<'s> {
             first_probe_active: false,
             #[cfg(feature = "unbounded-work")]
             first_candidate: false,
-            #[cfg(feature = "unbounded-work")]
             kinds_of: HashMap::new(),
             slots,
             units: &statement.units,
@@ -895,9 +894,8 @@ impl<'s> Emitter<'s> {
             Some(kinds) => format!(" AND n.kind IN ({})", list(kinds)),
         };
         let guard = String::new();
-        #[cfg(feature = "unbounded-work")]
-        let guard = if !self.three && super::diagnostics::root_guards() {
-            spike::root_guard(op, self.units)
+        let guard = if !self.three && super::options::root_guards() {
+            guards::root_guard(op, self.units)
                 .map_or(guard.clone(), |guard| format!(" AND ({guard})"))
         } else {
             guard
@@ -919,7 +917,6 @@ impl<'s> Emitter<'s> {
         self.out.root = Some(root.clone());
         // One row per root: a file's roots are either all its nodes or the selected ones.
         self.keyed_by(&root, vec![BTreeSet::new()]);
-        #[cfg(feature = "unbounded-work")]
         if let Some(kinds) = &statement.kinds {
             self.kinds_of.insert(root.clone(), kinds.clone());
         }
@@ -959,9 +956,8 @@ impl<'s> Emitter<'s> {
     /// those and every slot `op` names): per distinct key where it walks over a frame that may
     /// repeat a key (`keyed`), else directly.
     fn op(&mut self, op: &Op, input: &str, live: &Live) -> String {
-        #[cfg(feature = "unbounded-work")]
         if !self.three
-            && super::diagnostics::elide_kind_copies()
+            && super::options::elide_kind_copies()
             && let Op::Kinds(kinds) = op
             && self
                 .kinds_of
@@ -977,7 +973,6 @@ impl<'s> Emitter<'s> {
         let changed = self.touched(op);
         self.inherit(input, &out, &changed);
         self.same_space(input, &out);
-        #[cfg(feature = "unbounded-work")]
         if !self.three {
             if let Op::Kinds(kinds) = op {
                 self.kinds_of.insert(out.clone(), kinds.clone());
@@ -1000,7 +995,6 @@ impl<'s> Emitter<'s> {
         live: &Live,
     ) -> String {
         let tree = !matches!(walk, Walk::Slot(_) | Walk::Related(_));
-        #[cfg(feature = "unbounded-work")]
         if tree
             && !self.three
             && let Some(kinds) = &need.kinds
@@ -1747,8 +1741,7 @@ impl<'s> Emitter<'s> {
             );
             return self.frame_with("x", &with, &select, Reads::join(&[input]));
         }
-        #[cfg(feature = "unbounded-work")]
-        if super::diagnostics::integer_pattern_keys() {
+        if super::options::integer_pattern_keys() {
             let columns: Vec<String> = reads
                 .iter()
                 .flat_map(|&slot| match self.slots[slot].kind {
@@ -1844,10 +1837,7 @@ impl<'s> Emitter<'s> {
             walk => walk,
         };
         let at = "JOIN node fn ON fn.file = f.file AND fn.id = f.node";
-        #[cfg(not(feature = "unbounded-work"))]
-        let direct = false;
-        #[cfg(feature = "unbounded-work")]
-        let direct = super::diagnostics::direct_candidates()
+        let direct = super::options::direct_candidates()
             && matches!(
                 walk,
                 Walk::Has(Stop::Neighbor | Stop::End)

@@ -184,8 +184,7 @@ fn env_row(batch: &Batch, term: &PatternTerm, ek: &str) -> Option<PatternRow> {
     })
 }
 
-/// Benchmark spike: the frame owns the input tuple; only its integer row key crosses SQLite.
-#[cfg(feature = "unbounded-work")]
+/// The frame owns the input tuple; only its integer row key crosses SQLite.
 fn typed_match(
     batch: &Batch,
     term: &PatternTerm,
@@ -406,7 +405,6 @@ unsafe impl VTabCursor for PatternCursor<'_> {
             keys.dedup();
             batch.fresh(term_id as usize, term, &keys)
         } else if idx_num & IDX_FRAME != 0 {
-            #[cfg(feature = "unbounded-work")]
             {
                 let descriptor = args.get::<String>(2)?;
                 let mut keys = Vec::new();
@@ -437,10 +435,6 @@ unsafe impl VTabCursor for PatternCursor<'_> {
                 )?;
                 rows
             }
-            #[cfg(not(feature = "unbounded-work"))]
-            return Err(Error::ModuleError(
-                "integer pattern inputs require unbounded-work".into(),
-            ));
         } else {
             let mut keys = BTreeSet::new();
             if idx_num & IDX_EK_LIST != 0 {

@@ -1,8 +1,9 @@
 # SQL composition fixes and compiler spike
 
 The validated SQL access paths and Python candidate guards are now production defaults.
-The next compiler experiments remain opt-in in the `unbounded-work` build.
-They reduce demand cardinality, but leave a substantial gap from native execution.
+The measured compiler optimizations and batch transactions are also enabled in production.
+The first-candidate probe remains opt-in because it regresses the real Python policy scan.
+The enabled changes reduce demand cardinality, but leave a substantial gap from native execution.
 The subsequent [root-cause analysis](sql-set-composition-root-cause.md) measures the remaining generated work and a quadratic first-match defect.
 
 ## Implemented defaults
@@ -42,15 +43,24 @@ The Rerail prototype applies that principle to existing typed frame inputs.
 It does not import the persistent fact schema or the integration branch.
 Rerail already has per-worker sessions, prepared-statement reuse, and capture liveness.
 
-## Compiler experiments
+## Enabled compiler optimizations
 
-Each experiment is independent and disabled by default.
+Integer pattern inputs, conservative root guards, kind-copy elimination, and direct candidates are now enabled by default.
+Each batch also runs inside one transaction.
+The production build does not read environment switches for these defaults.
+The benchmark build can disable individual paths for comparison.
 
-| Environment setting | Behavior |
+| Benchmark setting that disables the default | Enabled behavior |
 | --- | --- |
-| `RERAIL_SQL_PATTERN_KEYS=integer` | Pass integer input-row handles to bound pattern terminals |
-| `RERAIL_SQL_ROOT_GUARDS=1` | Apply proven structural restrictions before root frame construction |
-| `RERAIL_SQL_ELIDE_KIND_COPIES=1` | Reuse frames whose known kinds already satisfy a kind test |
+| `RERAIL_SQL_PATTERN_KEYS=text` | Pass integer input-row handles to bound pattern terminals |
+| `RERAIL_SQL_ROOT_GUARDS=0` | Apply proven structural restrictions before root frame construction |
+| `RERAIL_SQL_ELIDE_KIND_COPIES=0` | Reuse frames whose known kinds already satisfy a kind test |
+| `RERAIL_SQL_DIRECT_CANDIDATES=0` | Carry captures through candidate construction without a second input-frame lookup |
+| `RERAIL_SQL_BATCH_TRANSACTION=0` | Run one transaction per batch, with rollback and cleanup on failure |
+
+The promoted combination preserved all 580 full findings on the 138-file scan.
+Its measured CPU time was 33.126 seconds, compared with 43.468 for the previous defaults.
+The [root-cause report](sql-set-composition-root-cause.md) retains the original opt-in experiment results.
 
 ### Integer pattern inputs
 

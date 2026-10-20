@@ -86,10 +86,6 @@ pub(super) fn configure(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-pub(super) fn batch_transaction() -> bool {
-    std::env::var("RERAIL_SQL_BATCH_TRANSACTION").is_ok_and(|value| value == "1")
-}
-
 pub(super) fn first_probe() -> bool {
     std::env::var("RERAIL_SQL_FIRST_PROBE").is_ok_and(|value| matches!(value.as_str(), "1" | "all"))
 }
@@ -98,24 +94,8 @@ pub(super) fn first_probe_all() -> bool {
     std::env::var("RERAIL_SQL_FIRST_PROBE").is_ok_and(|value| value == "all")
 }
 
-pub(super) fn direct_candidates() -> bool {
-    std::env::var("RERAIL_SQL_DIRECT_CANDIDATES").is_ok_and(|value| value == "1")
-}
-
 pub(super) fn joined_diff() -> bool {
     std::env::var("RERAIL_SQL_ANSWER_DIFF").is_ok_and(|value| value == "join")
-}
-
-pub(super) fn integer_pattern_keys() -> bool {
-    std::env::var("RERAIL_SQL_PATTERN_KEYS").is_ok_and(|value| value == "integer")
-}
-
-pub(super) fn root_guards() -> bool {
-    std::env::var("RERAIL_SQL_ROOT_GUARDS").is_ok_and(|value| value == "1")
-}
-
-pub(super) fn elide_kind_copies() -> bool {
-    std::env::var("RERAIL_SQL_ELIDE_KIND_COPIES").is_ok_and(|value| value == "1")
 }
 
 pub(super) fn counters(statement: &rusqlite::Statement<'_>) -> [i64; 4] {

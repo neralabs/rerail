@@ -199,7 +199,6 @@ impl Batch {
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct BatchSlot {
     current: RwLock<Option<Arc<Batch>>>,
-    #[cfg(feature = "unbounded-work")]
     pub(super) frames: Arc<FrameStore>,
 }
 
@@ -1842,9 +1841,6 @@ impl Session {
         let plan = compiled.plan()?;
         let slot = Arc::new(BatchSlot::default());
         let connection = connect(&slot)?;
-        #[cfg(not(feature = "unbounded-work"))]
-        let frames = Arc::new(FrameStore::default());
-        #[cfg(feature = "unbounded-work")]
         let frames = Arc::clone(&slot.frames);
         connection.execute_batch(
             "PRAGMA temp_store = MEMORY; \
@@ -2019,10 +2015,7 @@ impl Session {
         *self.slot.current.write() = Some(Arc::clone(&batch));
         let scopes = BatchScopes::begin();
         let facts = take_fact_time();
-        #[cfg(not(feature = "unbounded-work"))]
-        let transaction = false;
-        #[cfg(feature = "unbounded-work")]
-        let transaction = super::diagnostics::batch_transaction();
+        let transaction = super::options::batch_transaction();
         let result = (|| {
             if transaction {
                 self.connection.execute_batch("BEGIN")?;
