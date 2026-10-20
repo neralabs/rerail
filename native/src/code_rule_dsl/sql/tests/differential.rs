@@ -1253,7 +1253,97 @@ impl Generator<'_> {
         if !named.is_empty() && self.rng.chance(if self.three { 45 } else { 30 }) {
             violation["each"] = json!(*self.rng.pick(&named));
         }
+        // Else, now and then, over the capture a `parse` binds in its tree and exports: the
+        // rounds record its host range, and the tree's searches exclude its nodes by their host
+        // ranges (`each::binding_range`).
+        if violation.get("each").is_none()
+            && text.contains("\"capture\":\"K\"")
+            && self.rng.chance(50)
+        {
+            violation["each"] = json!("K");
+        }
+        // Now and then, in place of the drawn case, one enumerating a capture of a parsed tree
+        // that holds several nodes of its kind (`parse_each`).
+        if self.rng.chance(4)
+            && let Some(case) = self.parse_each()
+        {
+            return case;
+        }
         (Value::Object(ast), violation)
+    }
+
+    /// `violation.each` over a parsed tree's capture `K`: the tree's search for it in a literal
+    /// (excluding its nodes by their host ranges), through a parameterized utility (whose frame
+    /// excludes it under its parameter and returns it as text), or bound at the tree's root and
+    /// searched for by a host relation (which excludes the exported capture by its host range).
+    /// Three-valued now and then: an unknown host candidate stops a strict search.
+    fn parse_each(&mut self) -> Option<(Value, Value)> {
+        let (grammar, root, kinds, literal, outer): (&str, &str, &[&str], Value, &str) =
+            match self.vocabulary.label {
+                "python" => {
+                    let (grammar, kinds): (&str, &[&str]) = if self.rng.chance(50) {
+                        (
+                            "percentFormat",
+                            &["placeholder", "mapping_key", "conversion"],
+                        )
+                    } else {
+                        ("braceFormat", &["field", "field_name", "format_spec"])
+                    };
+                    let literal = json!([{ "kind": "string" }, { "kind": "concatenated_string" }]);
+                    (grammar, "format", kinds, literal, "call")
+                }
+                "php" => (
+                    "printfFormat",
+                    "format",
+                    &["placeholder", "literal"],
+                    json!([{ "kind": "string" }, { "kind": "encapsed_string" }]),
+                    "function_call_expression",
+                ),
+                "typescript" => (
+                    "eslintDirective",
+                    "directive",
+                    &["item", "setting"],
+                    json!([{ "kind": "comment" }]),
+                    "program",
+                ),
+                _ => return None,
+            };
+        self.recursive = false;
+        let mut inner = json!({ "kind": *self.rng.pick(kinds), "stopBy": "end", "capture": "K" });
+        if self.rng.chance(30) {
+            inner["regex"] = json!(*self.rng.pick(&["^[a-z]", "s", "[0-9]", "^%"]));
+        }
+        let tree = |has: Value| json!({ "grammar": grammar, "has": has });
+        let mut ast = json!({ "language": self.vocabulary.label });
+        let mut each = "K";
+        let mut host = match self.rng.below(4) {
+            0 => json!({ "any": literal, "parse": tree(inner) }),
+            1 => {
+                json!({ "kind": outer, "has": { "stopBy": "end", "any": literal, "parse": tree(inner) } })
+            }
+            2 => {
+                inner["capture"] = json!("P");
+                ast["utils"] = json!({ "p0": { "params": ["P"],
+                    "rule": { "any": literal, "parse": tree(inner) } } });
+                each = "A";
+                json!({ "matches": { "p0": { "P": "$A" } } })
+            }
+            _ => json!({ "kind": outer, "has": { "stopBy": "end", "any": literal,
+                "parse": { "grammar": grammar, "kind": root, "capture": "K" } } }),
+        };
+        if self.rng.chance(40) {
+            // An unknown literal (`testUnknown`, true elsewhere): where a strict search meets it
+            // first, the root is unknown.
+            let unknown = json!(*self.rng.pick(&["^.?[a-z]", "s", "[0-9]"]));
+            match host.get_mut("has") {
+                Some(has) => has["testUnknown"] = unknown,
+                None => host["testUnknown"] = unknown,
+            }
+        }
+        ast["rule"] = host;
+        let violation =
+            json!({ "anchor": "witness.span", "code": "X", "message": "x", "each": each });
+        Some((ast, violation))
     }
 }
 
@@ -1668,8 +1758,9 @@ fn generated_rules_agree_with_the_native_matcher() {
     // binding `ofRule` may be unknown (the matcher's excluding re-match leaves its unknown verdict
     // on the answer), and it must refuse them rather than answer. The semantic leaves' refusals
     // (`lower::leaves`): what a parsed tree runs per batch rather than per tree (patterns, stop
-    // rules, recursive utilities, a nested parse), a tree's capture `violation.each` enumerates,
-    // and `redefines.every` with binding sub-rules or under `violation.each`.
+    // rules, recursive utilities, a nested parse), a capture `violation.each` enumerates in a
+    // `formatArgs` template's tree or a nested tree (which keep no host file of their own), and
+    // `redefines.every` with binding sub-rules or under `violation.each`.
     let refused = |reason: &String| {
         [
             "Unsupported(nthChild with a binding ofRule as a relation's rule)",
@@ -1682,7 +1773,8 @@ fn generated_rules_agree_with_the_native_matcher() {
             "Unsupported(stopBy rule inside parse)",
             "Unsupported(recursive utility inside parse)",
             "Unsupported(parse exporting a nested parse's capture)",
-            "Unsupported(a parsed tree's capture enumerated by violation.each)",
+            "Unsupported(a formatArgs template's capture enumerated by violation.each)",
+            "Unsupported(a nested tree's capture enumerated by violation.each)",
             "Unsupported(binds.redefines.every with binding sub-rules)",
             "Unsupported(binds.redefines.every under violation.each)",
             "Unsupported(terminal binding more than 16 columns)",
