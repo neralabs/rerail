@@ -2,10 +2,8 @@
 //! condition only; native unification remains the final check, including hash collisions.
 
 use super::{Emitter, Op};
-use crate::code_rule_dsl::sql::plan::{Need, SlotId, Unit};
-#[cfg(test)]
+use crate::code_rule_dsl::sql::plan::{Need, SlotId, SlotKind, Unit};
 use crate::code_rule_dsl::sql::plan::{Stop, Walk};
-#[cfg(test)]
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
@@ -75,13 +73,44 @@ impl Emitter<'_> {
         narrowed.capture = required_capture(sub, self.units, &mut BTreeSet::new());
         narrowed
     }
+    /// Demand a recursive key only if a mandatory leaf witness can occur in its subtree.
+    /// This retains occurrence keys: semantic atoms are not substituted into general memo keys.
+    pub(super) fn supported_demand(&self, unit: usize, site: Option<&[SlotId]>) -> Option<String> {
+        let key = &self.units[unit].key;
+        let proof = key
+            .iter()
+            .enumerate()
+            .filter(|(_, slot)| self.slots[**slot].kind == SlotKind::Node)
+            .find_map(|(index, &slot)| {
+                let kinds = subtree_support(
+                    &self.units[unit].body,
+                    slot,
+                    None,
+                    0,
+                    self.units,
+                    &mut BTreeMap::new(),
+                )?;
+                (!kinds.is_empty()).then(|| (site.map_or(slot, |site| site[index]), kinds))
+            });
+        let (slot, kinds) = proof?;
+        let kinds = kinds
+            .into_iter()
+            .map(|kind| kind.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        Some(format!(
+            "NOT EXISTS (SELECT 1 FROM node needle WHERE needle.file = f.file AND needle.id = f.s{slot} AND needle.leaf = 1 \
+             AND NOT EXISTS (SELECT 1 FROM node anchor CROSS JOIN node hit ON hit.file = f.file \
+             AND hit.id >= f.node AND hit.id <= anchor.\"last\" AND hit.kind IN ({kinds}) AND hit.thash = needle.thash \
+             WHERE anchor.file = f.file AND anchor.id = f.node))"
+        ))
+    }
 }
 
 /// A positive, strictly descending recursive proof. Every successful or unknown evaluation needs
 /// an equal-text witness of the returned kinds in the node's subtree. A revisited unit contributes
 /// no new base case only after a strict descent; same-node cycles and other axes are barriers.
 /// Kind restrictions are required so lookups use bounded value postings, not all-node hashes.
-#[cfg(test)]
 fn subtree_support(
     op: &Op,
     slot: SlotId,
@@ -90,6 +119,19 @@ fn subtree_support(
     units: &[Unit],
     visiting: &mut BTreeMap<usize, usize>,
 ) -> Option<BTreeSet<u16>> {
+    support(op, slot, allowed, depth, units, visiting, &mut 4096)
+}
+
+fn support(
+    op: &Op,
+    slot: SlotId,
+    allowed: Option<BTreeSet<u16>>,
+    depth: usize,
+    units: &[Unit],
+    visiting: &mut BTreeMap<usize, usize>,
+    fuel: &mut usize,
+) -> Option<BTreeSet<u16>> {
+    *fuel = fuel.checked_sub(1)?;
     if visiting.len() > 64 {
         return None;
     }
@@ -98,7 +140,7 @@ fn subtree_support(
             single_capture: Some(read),
             ..
         } if *read == slot => allowed,
-        Op::All(items) => support_all(items.iter(), slot, allowed, depth, units, visiting),
+        Op::All(items) => support_all(items.iter(), slot, allowed, depth, units, visiting, fuel),
         Op::AllOpen(terms) => support_all(
             terms.iter().map(|term| &term.op),
             slot,
@@ -106,8 +148,9 @@ fn subtree_support(
             depth,
             units,
             visiting,
+            fuel,
         ),
-        Op::Any(items) => support_any(items.iter(), slot, allowed, depth, units, visiting),
+        Op::Any(items) => support_any(items.iter(), slot, allowed, depth, units, visiting, fuel),
         Op::AnyOpen(branches) => support_any(
             branches.iter().map(|(branch, _)| branch),
             slot,
@@ -115,9 +158,10 @@ fn subtree_support(
             depth,
             units,
             visiting,
+            fuel,
         ),
         Op::Relation {
-            walk: Walk::Has(Stop::End | Stop::Neighbor),
+            walk: Walk::Has(_),
             sub,
             ..
         }
@@ -125,7 +169,7 @@ fn subtree_support(
             walk: Walk::Has(Stop::End | Stop::Neighbor),
             sub,
             ..
-        } => subtree_support(sub, slot, None, depth + 1, units, visiting),
+        } => support(sub, slot, None, depth + 1, units, visiting, fuel),
         Op::Recur {
             unit, slots: None, ..
         } => {
@@ -133,19 +177,24 @@ fn subtree_support(
                 return (depth > *previous).then(BTreeSet::new);
             }
             visiting.insert(*unit, depth);
-            let proof = subtree_support(&units[*unit].body, slot, allowed, depth, units, visiting);
+            let proof = support(
+                &units[*unit].body,
+                slot,
+                allowed,
+                depth,
+                units,
+                visiting,
+                fuel,
+            );
             visiting.remove(unit);
             proof
         }
-        Op::Constrained { rule, .. } => {
-            subtree_support(rule, slot, allowed, depth, units, visiting)
-        }
+        Op::Constrained { rule, .. } => support(rule, slot, allowed, depth, units, visiting, fuel),
         Op::Never => Some(BTreeSet::new()),
         _ => None,
     }
 }
 
-#[cfg(test)]
 fn support_all<'a>(
     items: impl Iterator<Item = &'a Op>,
     slot: SlotId,
@@ -153,7 +202,20 @@ fn support_all<'a>(
     depth: usize,
     units: &[Unit],
     visiting: &mut BTreeMap<usize, usize>,
+    fuel: &mut usize,
 ) -> Option<BTreeSet<u16>> {
+    let items: Vec<_> = items.collect();
+    // Every direct kind test is mandatory in a conjunction, even after the capture pattern.
+    // The node stays fixed; this does not commute bindings or unknown-producing terms.
+    for item in &items {
+        if let Op::Kinds(kinds) = item {
+            let kinds: BTreeSet<_> = kinds.iter().copied().collect();
+            allowed = Some(allowed.map_or_else(
+                || kinds.clone(),
+                |allowed| allowed.intersection(&kinds).copied().collect(),
+            ));
+        }
+    }
     for item in items {
         if let Op::Kinds(kinds) = item {
             let kinds: BTreeSet<_> = kinds.iter().copied().collect();
@@ -162,17 +224,18 @@ fn support_all<'a>(
                 |allowed| allowed.intersection(&kinds).copied().collect(),
             ));
         }
-        if let Some(proof) = subtree_support(item, slot, allowed.clone(), depth, units, visiting) {
+        if let Some(proof) = support(item, slot, allowed.clone(), depth, units, visiting, fuel) {
             return Some(proof);
         }
-        if !matches!(item, Op::Kinds(_) | Op::Regex(_) | Op::Never) {
+        let pure = matches!(item, Op::Kinds(_) | Op::Regex(_) | Op::Never)
+            || matches!(item, Op::Not(inner) if matches!(&**inner, Op::Kinds(_)));
+        if !pure {
             return None;
         }
     }
     None
 }
 
-#[cfg(test)]
 fn support_any<'a>(
     items: impl Iterator<Item = &'a Op>,
     slot: SlotId,
@@ -180,16 +243,18 @@ fn support_any<'a>(
     depth: usize,
     units: &[Unit],
     visiting: &mut BTreeMap<usize, usize>,
+    fuel: &mut usize,
 ) -> Option<BTreeSet<u16>> {
     let mut union = BTreeSet::new();
     for item in items {
-        union.extend(subtree_support(
+        union.extend(support(
             item,
             slot,
             allowed.clone(),
             depth,
             units,
             visiting,
+            fuel,
         )?);
     }
     Some(union)
@@ -207,7 +272,6 @@ mod tests {
     }
     fn witness() -> Op {
         Op::All(vec![
-            Op::Kinds(vec![7]),
             Op::Pattern {
                 term: 0,
                 env: true,
@@ -215,6 +279,7 @@ mod tests {
                 reads: vec![0],
                 single_capture: Some(0),
             },
+            Op::Kinds(vec![7]),
         ])
     }
     fn proof(body: Op) -> Option<BTreeSet<u16>> {
@@ -248,6 +313,7 @@ mod tests {
         };
         assert_eq!(proof(Op::Any(vec![witness(), ascend])), None);
         assert_eq!(proof(Op::Any(vec![witness(), Op::Kinds(vec![8])])), None);
+        assert_eq!(proof(Op::Any((0..5000).map(|_| witness()).collect())), None);
     }
     #[test]
     #[ignore = "prints the real B020 utility IR and proof barriers"]

@@ -190,3 +190,39 @@ fn recursive_search_preserves_capture_occurrences() {
         assert_eq!(agreed("typescript", ast, source), ["f(f(a), f(a)) F=f"]);
     }
 }
+
+#[cfg(feature = "unbounded-work")]
+#[test]
+fn recursive_demand_insert_rejects_subtrees_without_a_capture_witness() {
+    let pairs = 50;
+    let prefix = "a + ".repeat(128);
+    let source = format!("f({prefix}a);\nf({prefix}f);\n").repeat(pairs);
+    for three in [false, true] {
+        let mut terms = vec![json!({ "pattern": "$F($$$)" })];
+        if three {
+            terms.push(json!({ "testUnknown": "^never$" }));
+        }
+        terms.push(json!({ "has": { "kind": "arguments", "matches": "find" } }));
+        let rule = compile(
+            "typescript",
+            json!({ "rule": { "all": terms }, "utils": { "find": { "any": [
+            { "kind": "identifier", "pattern": "$F" },
+            { "has": { "stopBy": "neighbor", "matches": "find" } }
+        ] } } }),
+        );
+        STATEMENT_PROFILE.set(Some(Default::default()));
+        let result = same(&rule, &snapshot(&[("typescript", "a.ts", &source)]));
+        assert_eq!(result["violations"].as_array().map(Vec::len), Some(pairs));
+        let profile = STATEMENT_PROFILE.take().unwrap_or_default();
+        let inserts: Vec<_> = profile
+            .iter()
+            .filter(|(sql, _)| sql.contains("node hit"))
+            .collect();
+        assert!(!inserts.is_empty(), "the support guard must execute");
+        let rows: usize = inserts.iter().map(|(_, (_, rows, _))| rows).sum();
+        assert!(
+            rows > 0 && rows < pairs * 10,
+            "three={three}: {rows} demands"
+        );
+    }
+}

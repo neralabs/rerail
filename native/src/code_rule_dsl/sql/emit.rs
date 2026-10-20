@@ -1430,6 +1430,9 @@ impl<'s> Emitter<'s> {
         context: Option<SlotId>,
         input: &str,
     ) -> String {
+        let supported = self
+            .supported_demand(unit, site)
+            .map_or(String::new(), |guard| format!("{guard} AND "));
         let units = self.units;
         let key = &units[unit].key;
         let unit_columns = self.key_columns(key);
@@ -1463,7 +1466,7 @@ impl<'s> Emitter<'s> {
             &demand,
             format!(
                 "INSERT INTO {demand}(file, node{columns}) SELECT DISTINCT f.file, f.node{values} FROM {input} f \
-                 WHERE NOT EXISTS (SELECT 1 FROM {demand} d WHERE d.file = f.file AND d.node = f.node{matched})"
+                 WHERE {supported}NOT EXISTS (SELECT 1 FROM {demand} d WHERE d.file = f.file AND d.node = f.node{matched})"
             ),
             Reads::join(&[input]),
         );
