@@ -3,7 +3,7 @@
   "source_commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "unit": "LinterConfig check, including all its diagnostic clauses and policy behavior",
   "batch_size": 10,
-  "status": "Batches 1\u20134 have candidate ports with passing recorded source-detection parity; batches 5\u201315 remain planned.",
+  "status": "Batches 1\u20136 have candidate ports with passing recorded source-detection parity; batches 7\u201315 remain planned.",
   "batches": [
     {
       "id": 1,
@@ -91,7 +91,9 @@
         "backend_coupling",
         "internal_dead_code",
         "imperative_private_functions"
-      ]
+      ],
+      "status": "candidate-ports",
+      "evidence": "batch-05-evidence.json"
     },
     {
       "id": 6,
@@ -107,7 +109,9 @@
         "impl_direct_execution",
         "raw_execute_regression",
         "legacy_execution_surfaces"
-      ]
+      ],
+      "status": "candidate-ports",
+      "evidence": "batch-06-evidence.json"
     },
     {
       "id": 7,

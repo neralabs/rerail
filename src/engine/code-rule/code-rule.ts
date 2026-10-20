@@ -187,6 +187,10 @@ export type CodeRuleDslReportingClause = CodeRuleDslClauseBase & (
 
 /** Finite SQL joins and recursive walks over projected native evidence tables. */
 export interface CodeRuleDslRelational {
+  /** Authored file-start diagnostic locations, including files absent from the input inventory. */
+  locations?: string[];
+  /** Evaluate independent inputs and SQL stages per file, caching final local findings. */
+  partitionBy?: "file" | "repository";
   inputs: Record<string, CodeRuleDslRelation>;
   references?: { language: "python"; siblingLinks?: NonNullable<CodeRuleDslAstRule["calls"]>["siblingLinks"]; constructorFields?: NonNullable<CodeRuleDslAstRule["calls"]>["constructorFields"] };
   stages?: { name: string; query: string; indexes?: string[][] }[];
@@ -563,7 +567,8 @@ export interface CodeRuleDslCompare {
  * A cross-file relation projected from an AST query's matches in every file of the code rule's
  * scope (narrowed by `paths`). Each match is one row of the `project` fields: `capture.NAME`
  * (the capture's source text), `capture.NAME.text` (decoded exported text or host text),
- * `capture.NAME.startByte`, `capture.NAME.startLine`, `file.path`, `file.directory`, `file.name`, `file.stem` (the name
+ * `capture.NAME.startByte`, `capture.NAME.endByte`, `capture.NAME.startLine`,
+ * `capture.NAME.kind` (host AST node kind), `file.path`, `file.directory`, `file.name`, `file.stem` (the name
  * without extensions), `file.module` or `file.package` (Python). A file whose query failed or
  * was read around syntax errors has unknown rows: no absence or upper bound ignores it.
  */

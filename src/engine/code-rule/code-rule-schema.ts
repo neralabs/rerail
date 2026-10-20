@@ -1240,7 +1240,7 @@ export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
     ) as unknown as z.ZodType<CodeRuleDslQuery>,
 );
 
-const PROJECTION_SOURCE = /^(capture\.[A-Z_][A-Z0-9_]*(?:\.(?:startByte|startLine|text))?|file\.(path|directory|name|stem|module|package))$/;
+const PROJECTION_SOURCE = /^(capture\.[A-Z_][A-Z0-9_]*(?:\.(?:startByte|endByte|startLine|kind|text))?|file\.(path|directory|name|stem|module|package))$/;
 
 export const codeRuleEvidenceQuerySchema = z
   .object({
@@ -1429,6 +1429,9 @@ export const codeRuleClauseSchema = z
       .strict()
       .optional(),
     relational: z.object({
+      partitionBy: z.enum(["file", "repository"]).optional(),
+      locations: z.array(z.string().min(1).max(4096).refine(path => !/[\\:\u0000]/u.test(path) && path.split("/").every(part => part !== "" && part !== "." && part !== ".."),
+        "A declared diagnostic location must be a normalized relative path.")).min(1).max(4096).refine(paths => new Set(paths).size === paths.length, "Declared diagnostic locations must be distinct.").optional(),
       inputs: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), codeRuleRelationSchema),
       stages: z.array(z.object({ name: nonEmptyString, query: nonEmptyString, indexes: z.array(z.array(nonEmptyString).min(1).max(16)).max(8).optional() }).strict()).max(32).optional(),
       references: z.object({ language: z.literal("python"),
@@ -1436,7 +1439,8 @@ export const codeRuleClauseSchema = z
         constructorFields: z.object({ fieldToParameter: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict().optional(),
       }).strict().optional(),
       query: nonEmptyString, key: z.array(nonEmptyString).min(1).max(16).optional(), code: nonEmptyString.optional(),
-    }).strict().optional(),
+    }).strict().refine(plan => plan.partitionBy !== "file" || (plan.references === undefined && plan.locations === undefined),
+      "File partitions cannot declare references or diagnostic locations.").optional(),
     llm: z.unknown().optional(),
     define: codeRuleDefineSchema.optional(),
   })

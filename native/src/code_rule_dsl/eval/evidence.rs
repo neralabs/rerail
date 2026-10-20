@@ -79,6 +79,21 @@ pub(super) fn project<D: Doc>(
     groups: &[NodeGroup],
 ) -> Value {
     let env = matched.get_env();
+    let capture_range = |capture: &str| {
+        env.get_match(capture)
+            .map(|node| node.range())
+            .or_else(|| {
+                let nodes = env.get_multiple_matches(capture);
+                Some(nodes.first()?.range().start..nodes.last()?.range().end)
+            })
+            .or_else(|| exported_span(env, capture))
+            .or_else(|| {
+                groups
+                    .iter()
+                    .find(|(name, _, _)| name == capture)
+                    .map(|(_, _, range)| range.clone())
+            })
+    };
     let (directory, name) = file.path.rsplit_once('/').unwrap_or(("", &file.path));
     let module = file.module.as_deref();
     let fields = project
@@ -91,36 +106,19 @@ pub(super) fn project<D: Doc>(
              }| {
                 let value = match source {
                     ProjectionSource::Capture(capture) => {
-                        let range = env
-                            .get_match(capture)
-                            .map(|node| node.range())
-                            .or_else(|| {
-                                let nodes = env.get_multiple_matches(capture);
-                                Some(nodes.first()?.range().start..nodes.last()?.range().end)
-                            })
-                            .or_else(|| exported_span(env, capture))
-                            .or_else(|| {
-                                groups
-                                    .iter()
-                                    .find(|(name, _, _)| name == capture)
-                                    .map(|(_, _, range)| range.clone())
-                            });
+                        let range = capture_range(capture);
                         range
                             .and_then(|range| file.source.get(range))
                             .map_or(Value::Null, |text| Value::String(text.to_owned()))
                     }
-                    ProjectionSource::CaptureLine(capture) => env
-                        .get_match(capture)
-                        .map(|node| node.start_pos().line())
-                        .or_else(|| {
-                            exported_span(env, capture).map(|span| {
-                                crate::code_rule_dsl::matcher::file_lines(
-                                    &file.source,
-                                    crate::code_rule_dsl::lines::Terminators::Newlines,
-                                )
-                                .span(span.start, span.end)
-                                .start_line
-                            })
+                    ProjectionSource::CaptureLine(capture) => capture_range(capture)
+                        .map(|span| {
+                            crate::code_rule_dsl::matcher::file_lines(
+                                &file.source,
+                                crate::code_rule_dsl::lines::Terminators::Newlines,
+                            )
+                            .span(span.start, span.end)
+                            .start_line
                         })
                         .map_or(Value::Null, |line| json!(line)),
                     ProjectionSource::CaptureText(capture) => exported_text(env, capture)
@@ -130,12 +128,20 @@ pub(super) fn project<D: Doc>(
                             })
                         })
                         .or_else(|| env.get_match(capture).map(|node| node.text().into_owned()))
+                        .or_else(|| {
+                            capture_range(capture)
+                                .and_then(|range| file.source.get(range).map(str::to_owned))
+                        })
                         .map_or(Value::Null, Value::String),
-                    ProjectionSource::CaptureStart(capture) => env
+                    ProjectionSource::CaptureStart(capture) => {
+                        capture_range(capture).map_or(Value::Null, |span| json!(span.start))
+                    }
+                    ProjectionSource::CaptureEnd(capture) => {
+                        capture_range(capture).map_or(Value::Null, |span| json!(span.end))
+                    }
+                    ProjectionSource::CaptureKind(capture) => env
                         .get_match(capture)
-                        .map(|node| node.range().start)
-                        .or_else(|| exported_span(env, capture).map(|span| span.start))
-                        .map_or(Value::Null, |at| json!(at)),
+                        .map_or(Value::Null, |node| Value::String(node.kind().into_owned())),
                     ProjectionSource::Path => Value::String(file.path.clone()),
                     ProjectionSource::Directory => Value::String(directory.to_owned()),
                     ProjectionSource::Name => Value::String(name.to_owned()),

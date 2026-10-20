@@ -428,6 +428,8 @@ pub(super) enum ProjectionSource {
     Capture(String),
     /// A capture's source byte offset, for identity and partition keys.
     CaptureStart(String),
+    CaptureEnd(String),
+    CaptureKind(String),
     CaptureLine(String),
     /// Decoded/exported capture text, or a host node's source text.
     CaptureText(String),
@@ -665,6 +667,8 @@ pub(super) struct CompiledClause {
     pub(super) violation: ViolationSpec,
     pub(super) kind: ClauseKind,
     pub(super) synthetic: bool,
+    /// A SQL input needs only its selected anchor and already computed projection.
+    pub(super) projected_only: bool,
     /// A synthetic leaf under a `select_when`'s `exists` side: one witness answers it, so a file's
     /// evaluation stops at its first witness.
     pub(super) decision: bool,

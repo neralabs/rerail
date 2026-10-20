@@ -1,0 +1,656 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-execution-authority-bypass",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer execution_authority_bypass at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l[0-9][0-9][0-9][0-9]_*/**/*.py",
+      "impl/**/*.py",
+      "data_layer/**/*.py",
+      "conform/**/*.py",
+      "tests/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          }
+        }
+      }
+    },
+    {
+      "id": "authority-sites",
+      "relational": {
+        "inputs": {
+          "raw_functions": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "pattern": "$DECL"
+                      },
+                      {
+                        "has": {
+                          "pattern": "$NAME",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "decorated_definition"
+                                },
+                                {
+                                  "pattern": "$WRAPPER"
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          {
+                            "pattern": "$_"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.NAME",
+                "wrapper": "capture.WRAPPER.startByte"
+              }
+            }
+          },
+          "raw_classes": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "class_definition"
+                      },
+                      {
+                        "pattern": "$DECL"
+                      },
+                      {
+                        "has": {
+                          "pattern": "$NAME",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "decorated_definition"
+                                },
+                                {
+                                  "pattern": "$WRAPPER"
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          {
+                            "pattern": "$_"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.NAME",
+                "wrapper": "capture.WRAPPER.startByte"
+              }
+            }
+          },
+          "private_symbols": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:_explicit_authority_var|_legacy_boundary_var)$"
+                              }
+                            ]
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "any": [
+                                  {
+                                    "kind": "import_statement"
+                                  },
+                                  {
+                                    "kind": "import_from_statement"
+                                  }
+                                ],
+                                "stopBy": "end"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "attribute",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "keyword_argument",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "function_definition",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "class_definition",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "default_parameter",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "typed_default_parameter",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "any": [
+                                  {
+                                    "kind": "parameters"
+                                  },
+                                  {
+                                    "kind": "list_splat_pattern"
+                                  },
+                                  {
+                                    "kind": "dictionary_splat_pattern"
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "all": [
+                                {
+                                  "inside": {
+                                    "kind": "typed_parameter",
+                                    "stopBy": "neighbor"
+                                  }
+                                },
+                                {
+                                  "nthChild": {
+                                    "position": 1,
+                                    "ofRule": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:_explicit_authority_var|_legacy_boundary_var)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          },
+          "explicit_calls": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "call"
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:explicit_execution_authority)$"
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "regex": "^(?:explicit_execution_authority)$"
+                                      }
+                                    ],
+                                    "stopBy": "neighbor",
+                                    "field": "attribute"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          },
+          "monkeypatches": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "call"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:setattr)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "has": {
+                                "all": [
+                                  {
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "kind": "string"
+                                          },
+                                          {
+                                            "kind": "concatenated_string"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "regex": "(?i)^[rub]*[\"']"
+                                      },
+                                      {
+                                        "value": {
+                                          "regex": "(?:execution_boundary\\._explicit_authority_var|execution_boundary\\._legacy_boundary_var|execution_boundary\\._caller_token|execution_boundary\\.verify_callsite_authorization|l2050_transaction\\.execution_boundary\\._explicit_authority_var|l2050_transaction\\.execution_boundary\\._legacy_boundary_var|l2050_transaction\\.execution_boundary\\._caller_token|l2050_transaction\\.execution_boundary\\.verify_callsite_authorization)"
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "nthChild": {
+                                      "position": 1,
+                                      "ofRule": {
+                                        "not": {
+                                          "kind": "comment"
+                                        }
+                                      }
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              },
+                              "stopBy": "neighbor",
+                              "field": "arguments"
+                            }
+                          },
+                          {
+                            "all": [
+                              {
+                                "has": {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "all": [
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string"
+                                              },
+                                              {
+                                                "kind": "concatenated_string"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "regex": "(?i)^[rub]*[\"']"
+                                          },
+                                          {
+                                            "value": {
+                                              "regex": "^(?:_caller_token|_explicit_authority_var|_legacy_boundary_var|verify_callsite_authorization)$"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "nthChild": {
+                                          "position": 2,
+                                          "ofRule": {
+                                            "not": {
+                                              "kind": "comment"
+                                            }
+                                          }
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  },
+                                  "stopBy": "neighbor",
+                                  "field": "arguments"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:execution_boundary)$"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "attribute"
+                                              },
+                                              {
+                                                "has": {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:execution_boundary)$"
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor",
+                                                  "field": "attribute"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "nthChild": {
+                                          "position": 1,
+                                          "ofRule": {
+                                            "not": {
+                                              "kind": "comment"
+                                            }
+                                          }
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  },
+                                  "stopBy": "neighbor",
+                                  "field": "arguments"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "stages": [
+          {
+            "name": "frames",
+            "query": "SELECT __path,__start,__end,coalesce(wrapper,__start) AS lexical_start,name,1 AS is_function FROM raw_functions UNION ALL SELECT __path,__start,__end,coalesce(wrapper,__start),name,0 FROM raw_classes",
+            "indexes": [
+              [
+                "__path",
+                "__start"
+              ],
+              [
+                "__path",
+                "lexical_start"
+              ]
+            ]
+          },
+          {
+            "name": "parents",
+            "query": "SELECT f.*,(SELECT p.__start FROM frames p WHERE p.__path=f.__path AND p.__start<f.__start AND p.__end>=f.__end ORDER BY p.__start DESC LIMIT 1) AS parent FROM frames f",
+            "indexes": [
+              [
+                "__path",
+                "parent"
+              ],
+              [
+                "__path",
+                "__start"
+              ]
+            ]
+          },
+          {
+            "name": "contexts",
+            "query": "WITH RECURSIVE scopes(path,start,qualname,depth) AS (\n SELECT __path,__start,name,is_function FROM parents WHERE parent IS NULL UNION ALL\n SELECT c.__path,c.__start,p.qualname || CASE WHEN c.is_function AND p.depth>0 THEN '.<locals>.' ELSE '.' END || c.name,p.depth+c.is_function\n FROM scopes p CROSS JOIN parents c ON c.__path=p.path AND c.parent=p.start)\n SELECT * FROM scopes",
+            "indexes": [
+              [
+                "path",
+                "start"
+              ]
+            ]
+          },
+          {
+            "name": "sites",
+            "query": "SELECT r.*,coalesce((SELECT c.qualname FROM frames f JOIN contexts c ON c.path=f.__path AND c.start=f.__start\n WHERE f.__path=r.__path AND f.lexical_start<=r.__start AND f.__end>=r.__end ORDER BY f.__start DESC LIMIT 1),'<module>') AS qualname,\n replace(rx_replace(r.__path,'\\.py$',''),'/','.') AS module FROM (\n SELECT *, 'AUTH001' AS issue FROM private_symbols UNION ALL SELECT *,'AUTH002' FROM explicit_calls UNION ALL SELECT *,'AUTH003' FROM monkeypatches) r"
+          },
+          {
+            "name": "private_exceptions",
+            "query": "SELECT json_extract(value,'$[0]') AS path,json_extract(value,'$[1]') AS qualname FROM json_each('[[\"l2050_transaction/tests/test_execution_boundary.py\",\"test_explicit_execution_authority_uses_outer_callsite\"],[\"l2050_transaction/tests/test_execution_boundary.py\",\"test_raw_explicit_authority_contextvar_value_does_not_authorize\"]]')",
+            "indexes": [
+              [
+                "path",
+                "qualname"
+              ]
+            ]
+          },
+          {
+            "name": "explicit_exceptions",
+            "query": "SELECT json_extract(value,'$[0]') AS path,json_extract(value,'$[1]') AS qualname FROM json_each('[[\"l2050_transaction/tests/test_execution_boundary.py\",\"test_explicit_execution_authority_uses_outer_callsite.<locals>.helper\"]]')",
+            "indexes": [
+              [
+                "path",
+                "qualname"
+              ]
+            ]
+          },
+          {
+            "name": "signed_callsites",
+            "query": "SELECT json_extract(value,'$[0]') AS module,json_extract(value,'$[1]') AS qualname FROM json_each('[[\"impl.common.l2070_server_plan.execution_context\",\"explicit_plan_execution_scope\"],[\"l1300_session.bootstrap\",\"ensure_system_session_exists.<locals>._insert_if_missing\"],[\"l2000_connection.schema_transaction\",\"AsyncSchemaTransaction._enter_async\"],[\"l2000_connection.schema_transaction\",\"LazySchemaTransaction._enter_sync\"],[\"l2050_transaction.execution_boundary\",\"execute_server_plan_async\"],[\"l2050_transaction.execution_boundary\",\"execute_server_plan_now\"],[\"l3200_metadata.schema_lock\",\"_schema_lock_bootstrap_row\"],[\"l3200_metadata.schema_lock\",\"_schema_lock_bootstrap_row_async\"],[\"l4170_inbound_bridge.process\",\"_invoke_inbound_bridge_handler_eager\"],[\"l7500_commit_triggers.registry\",\"CommitTriggerRegistry._materialize_pending_triggers_under_authority\"],[\"l7500_commit_triggers.registry\",\"CommitTriggerRegistry._materialize_pending_triggers_under_authority_async\"]]')",
+            "indexes": [
+              [
+                "module",
+                "qualname"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT __path AS path,__start AS start_byte,__end AS end_byte,issue FROM sites s WHERE\n (issue='AUTH001' AND __path<>'l2050_transaction/execution_boundary.py' AND NOT EXISTS(SELECT 1 FROM private_exceptions e WHERE e.path=s.__path AND e.qualname=s.qualname))\n OR (issue='AUTH002' AND NOT EXISTS(SELECT 1 FROM signed_callsites e WHERE e.module=s.module AND e.qualname=s.qualname) AND NOT EXISTS(SELECT 1 FROM explicit_exceptions e WHERE e.path=s.__path AND e.qualname=s.qualname))\n OR (issue='AUTH003' AND NOT EXISTS(SELECT 1 FROM private_exceptions e WHERE e.path=s.__path AND e.qualname=s.qualname))",
+        "key": [
+          "issue"
+        ],
+        "code": "issue",
+        "partitionBy": "file"
+      },
+      "violation": {
+        "code": "AUTH001",
+        "message": "Execution authority boundary violation",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

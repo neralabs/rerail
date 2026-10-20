@@ -37,9 +37,33 @@ pub(super) fn compile(
     let spec = object(value, path)?;
     reject_unknown(
         spec,
-        &["inputs", "stages", "query", "key", "code", "references"],
+        &[
+            "inputs",
+            "stages",
+            "query",
+            "key",
+            "code",
+            "references",
+            "locations",
+            "partitionBy",
+        ],
         path,
     )?;
+    let per_file = match spec.get("partitionBy") {
+        None => false,
+        Some(Value::String(value)) if value == "file" => true,
+        Some(Value::String(value)) if value == "repository" => false,
+        _ => {
+            return Err(invalid(format!(
+                "{path}/partitionBy must be `file` or `repository`"
+            )));
+        }
+    };
+    if per_file && (spec.contains_key("references") || spec.contains_key("locations")) {
+        return Err(invalid(format!(
+            "{path}: file partitions cannot declare references or locations"
+        )));
+    }
     let input_spec = object(
         spec.get("inputs")
             .ok_or_else(|| invalid(format!("{path}/inputs is required")))?,
@@ -49,6 +73,27 @@ pub(super) fn compile(
         return Err(invalid(format!(
             "{path}/inputs must contain 1 to 32 relations"
         )));
+    }
+    let mut locations = BTreeSet::new();
+    if let Some(value) = spec.get("locations") {
+        let items = value
+            .as_array()
+            .filter(|values| !values.is_empty() && values.len() <= 4096)
+            .ok_or_else(|| invalid(format!("{path}/locations must contain 1 to 4096 paths")))?;
+        for value in items {
+            let location = non_empty_str(Some(value), &format!("{path}/locations"))?;
+            if location.len() > 4096
+                || location.contains(['\\', ':', '\0'])
+                || location
+                    .split('/')
+                    .any(|part| matches!(part, "" | "." | ".."))
+                || !locations.insert(location.to_owned())
+            {
+                return Err(invalid(format!(
+                    "{path}/locations must contain distinct normalized relative paths"
+                )));
+            }
+        }
     }
     let db = relational::connection(
         capabilities.limits.max_regex_pattern_bytes,
@@ -193,7 +238,9 @@ pub(super) fn compile(
         }
     }
     Ok(Plan {
+        per_file,
         references,
+        locations,
         inputs,
         stages,
         query,

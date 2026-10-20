@@ -569,6 +569,7 @@ fn compile_clause(
         violation,
         kind,
         synthetic: false,
+        projected_only: false,
         decision: false,
     })
 }

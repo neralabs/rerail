@@ -25,13 +25,15 @@ async function run(policyDirectory?: string, recorded = recording) {
 
 function sentinel(pattern: string): string {
   const directory = mkdtempSync(join(tmpdir(), "rerail-data-layer-sentinel-"));
-  const schema = z.object({ id: z.string(), clauses: z.array(z.object({ id: z.string(), violation: z.object({ code: z.string() }).optional() })) });
+  const schema = z.object({ id: z.string(), clauses: z.array(z.object({ id: z.string(), violation: z.object({
+    code: z.union([z.string(), z.object({ $option: z.string() }).passthrough()]),
+  }).optional() })) });
   for (const file of readdirSync(policies)) {
     const original = schema.parse(JSON.parse(readFileSync(new URL(file, policies), "utf8")));
     const policy = { format: "rerail.policy/v1", id: original.id, revision: 1, mode: "block",
       scope: { include: ["**/*.py"], exclude: [] }, clauses: original.clauses.filter(clause => clause.violation !== undefined).map(clause => ({
         id: clause.id, forbid: { regex: { source: "file.content", pattern } },
-        violation: { code: clause.violation!.code, anchor: "witness.span", message: "Deliberately incorrect detector" },
+        violation: { code: typeof clause.violation!.code === "string" ? clause.violation!.code : "SENTINEL", anchor: "witness.span", message: "Deliberately incorrect detector" },
       })) };
     writeFileSync(join(directory, file), JSON.stringify(policy));
   }

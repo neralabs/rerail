@@ -932,6 +932,22 @@ pub(crate) struct Witness {
 /// The key under which a witness of an evidence producer carries its projected row.
 const PROJECTION: &str = "$project";
 
+#[cfg(test)]
+#[test]
+fn cloned_evidence_shares_its_projection_until_replaced() {
+    let mut original = Captures::default();
+    original.set_projection(Some(json!({"text":"payload".repeat(4096)})));
+    let mut cloned = original.clone();
+    assert!(std::ptr::eq(
+        original.projection().unwrap(),
+        cloned.projection().unwrap()
+    ));
+    cloned.set_projection(Some(json!({"text":"replacement"})));
+    assert_ne!(original.projection(), cloned.projection());
+    let encoded = serde_json::to_value(&original).unwrap();
+    assert_eq!(Captures::from_value(&encoded), Some(original));
+}
+
 /// A witness's captures: each bound name's spans, and an evidence projection when its clause
 /// projects one. It serializes as the JSON object of each name's span list and the projection
 /// under `PROJECTION`, in key order.
@@ -939,7 +955,7 @@ const PROJECTION: &str = "$project";
 pub(crate) struct Captures {
     /// Each name's spans, in name order.
     spans: Vec<(Box<str>, Vec<Span>)>,
-    projection: Option<Box<Value>>,
+    projection: Option<Arc<Value>>,
 }
 
 impl Captures {
@@ -966,7 +982,11 @@ impl Captures {
     }
 
     pub(crate) fn set_projection(&mut self, projection: Option<Value>) {
-        self.projection = projection.map(Box::new);
+        self.projection = projection.map(Arc::new);
+    }
+
+    pub(crate) fn retain_projection(&mut self) {
+        self.spans = Vec::new();
     }
 
     /// The captures a stored witness's JSON object holds; `None` for any other shape.
@@ -974,7 +994,7 @@ impl Captures {
         let mut captures = Self::default();
         for (name, value) in value.as_object()? {
             if name == PROJECTION {
-                captures.projection = Some(Box::new(value.clone()));
+                captures.projection = Some(Arc::new(value.clone()));
             } else {
                 let spans = value
                     .as_array()?

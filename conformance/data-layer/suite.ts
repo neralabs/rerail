@@ -17,18 +17,22 @@ const pageSchema = z.object({ done: z.boolean(), cursor: z.number(),
   failures: z.array(z.unknown()),
 });
 const { values } = parseArgs({ options: { recording: { type: "string" }, output: { type: "string" }, allocator: { type: "string", default: "unspecified" },
-  policies: { type: "string", default: "packs/data-layer/candidates/rules" } } });
+  policies: { type: "string", default: "packs/data-layer/candidates/rules" }, progress: { type: "boolean", default: false } } });
 if (values.recording === undefined || values.output === undefined) throw new Error("Usage: suite.ts --recording <json> --output <json>");
 const recording = recordingSchema.parse(JSON.parse(readFileSync(values.recording, "utf8")));
 if (recording.source_mismatches.length !== 0) throw new Error("Pinned source verification failed");
 const native = loadNativeBinding();
+const nativeSha256 = createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex");
 const workspace = new native.CodeRuleDslWorkspace();
 const policyDigests: Record<string, string> = {};
 const policyCompilationMs: Record<string, number> = {};
 const files = recording.files.map(file => ({ ...file, language: file.path.endsWith(".rs") ? "rust" : "python" }));
 let revision = 0;
+let loadedFiles = 0;
 const send = async (batchFiles: typeof files, deferGlobal: boolean): Promise<void> => {
   await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: ++revision, files: batchFiles, removed: [], quiet: true, deferGlobal }));
+  loadedFiles += batchFiles.length;
+  if (values.progress) console.error(JSON.stringify({ phase: deferGlobal ? "file-inputs" : "global-results", loadedFiles, revision, rssBytes: process.memoryUsage().rss }));
 };
 const collect = async (): Promise<{ violations: z.infer<typeof pageSchema>["violations"]; failures: unknown[] }> => {
   const violations: z.infer<typeof pageSchema>["violations"] = [], failures: unknown[] = [];
@@ -91,7 +95,8 @@ try {
     oracleMs: recording.oracle_ms, oracleWorkers: recording.workers, policyDigests, policyCompilationMs, compilationMs, coldMs, unchangedFileMs, editedFileMs, editedPath: file.path,
     incrementalDifferences,
     expected: expected.length, actual: actual.length, falsePositives: difference(actual, expected), falseNegatives: difference(expected, actual), failures,
-    allocator: values.allocator, policies: values.policies, nativeSha256: createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex"), nativeWorkers: 4 };
+    peakRssBytes: process.resourceUsage().maxRSS * 1024,
+    allocator: values.allocator, policies: values.policies, nativeSha256, nativeWorkers: 4 };
   writeFileSync(values.output, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ...report, falsePositives: report.falsePositives.length, falseNegatives: report.falseNegatives.length, failures: failures.length, incrementalDifferences: incrementalDifferences.length }, null, 2));
   if (report.falsePositives.length + report.falseNegatives.length + failures.length + incrementalDifferences.length !== 0) process.exitCode = 1;

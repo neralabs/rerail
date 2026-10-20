@@ -17,8 +17,8 @@ pub(super) use output::{
     violation_ids,
 };
 pub(super) use query::{
-    WitnessError, evaluate_query, file_language, grammar_matcher, witness_from_match,
-    witnesses_from_match,
+    TapeCacheSlot, WitnessError, evaluate_query, file_language, grammar_matcher,
+    witness_from_match, witnesses_from_match,
 };
 #[cfg(test)]
 pub(super) use query::{reset_shared_group_lookups, shared_group_lookups};
@@ -260,6 +260,7 @@ pub(super) fn evaluate_clauses(
     mode: &str,
     clauses: &[CompiledClause],
 ) -> Result<Evaluation> {
+    let _tapes = TapeCacheSlot::install();
     if mode != "decision" && mode != "report" {
         return Err(invalid(format!("unsupported evaluation mode `{mode}`")));
     }
@@ -401,23 +402,38 @@ pub(super) fn evaluate_clauses(
                 );
             }
             ClauseKind::Relational(plan) => {
-                let rows = plan
-                    .inputs
-                    .iter()
-                    .map(|(_, input)| {
-                        stateless_rows(
-                            code_rule,
-                            clause,
-                            (input, evidence::Side::Counted),
-                            snapshot,
-                            &mut evaluation.metrics,
-                        )
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                merge(
-                    &mut evaluation,
-                    super::relational::evaluate(code_rule, clause, plan, rows, snapshot),
-                );
+                let partitions = if plan.per_file {
+                    snapshot
+                        .files
+                        .iter()
+                        .filter(|file| code_rule.scope.matches(&file.path))
+                        .map(|file| Snapshot {
+                            revision: snapshot.revision,
+                            files: vec![file.clone()],
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![snapshot.clone()]
+                };
+                for partition in partitions {
+                    let rows = plan
+                        .inputs
+                        .iter()
+                        .map(|(_, input)| {
+                            stateless_rows(
+                                code_rule,
+                                clause,
+                                (input, evidence::Side::Counted),
+                                &partition,
+                                &mut evaluation.metrics,
+                            )
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    merge(
+                        &mut evaluation,
+                        super::relational::evaluate(code_rule, clause, plan, rows, &partition),
+                    );
+                }
             }
             ClauseKind::Llm => evaluation.failures.push(failure(
                 &clause.id,
