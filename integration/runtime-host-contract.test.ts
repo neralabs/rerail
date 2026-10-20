@@ -73,9 +73,9 @@ describe("shared host engine", () => {
           sessionId: session.sessionId,
           requested: "steer",
           mechanism: "native-queue",
-          content: await steerText("require-transaction-guidance", "CONVERSATION: preserve transaction atomicity"),
-          // Conversation rule matches are not code-rule steers: steer attribution only credits code rules.
-          ruleIds: [],
+          content: steerText("require-transaction-guidance", "CONVERSATION: preserve transaction atomicity"),
+          ruleIds: ["require-transaction-guidance"],
+          rules: [expect.objectContaining({ id: "require-transaction-guidance", state: "steered" })],
         },
       ]);
       await runtime.ingest({

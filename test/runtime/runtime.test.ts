@@ -11,7 +11,7 @@ import {
   openRerailDatabase,
   SqliteAuditControlStore,
   setRuleSetting,
-  steerBlock,
+  renderSteer,
 } from "../../src/engine/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
@@ -401,9 +401,10 @@ describe("Rerail tool results waiting for their edit's check", () => {
           checks.push((async () => {
             await check.promise;
             if (violations.length === 0) return;
-            const steer = steerBlock("test:no-bad", violations.map(violation => `${violation.message} (${violation.path}:2:7)`).join("\n"), { mode: "steer" });
+            const steer = renderSteer(violations);
             await steerDelivery.requestSteer(sessionId, "steer", steer, {
-              revision: batch.revision, scope: batch.edits.map(edit => edit.path), ruleIds: ["test:no-bad"], background: true,
+              revision: batch.revision, scope: batch.edits.map(edit => edit.path), ruleIds: ["test:no-bad"],
+              rules: [{ id: "test:no-bad", state: "steered" }], background: true,
               generatedEdit: { violations, sourceOf: () => undefined },
             });
             steered.resolve();
@@ -431,8 +432,8 @@ describe("Rerail tool results waiting for their edit's check", () => {
   }
 
   /** `a.ts`'s finding as a steer renders it, and the digest that lists it at the end of the agent's run. */
-  const STEER = steerBlock("test:no-bad", "Do not write bad. (a.ts:2:7)", { mode: "steer" });
-  const DIGEST = `Rerail finished checking these edits only after the steps that made them had moved on:\n\n${STEER}`;
+  const STEER = renderSteer([finding("a.ts")]);
+  const DIGEST = renderSteer([finding("a.ts")], { kind: "late" });
 
   it("waits for the edit's check, so its steer goes back with the tool result", async () => {
     const { runtime, check, edit } = await hookSession();
@@ -488,7 +489,7 @@ describe("Rerail tool results waiting for their edit's check", () => {
       expect(await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId: "hook-check", text: "next" })).toEqual([]);
       const stop = await turnEnd("turn");
       expect(stop).toEqual([expect.objectContaining({ requested: "steer", ruleIds: ["test:no-bad"], content: DIGEST })]);
-      expect(stop[0]!.content).toContain("Do not write bad. (a.ts:2:7)");
+      expect(stop[0]!.content).toContain("- a.ts:2:7 — Do not write bad. [test:no-bad]");
       // Listed once.
       expect(await turnEnd("turn-2")).toEqual([]);
     } finally {
@@ -670,6 +671,56 @@ describe("Rerail session restore", () => {
       ]);
     } finally {
       await after.dispose();
+    }
+  });
+
+  it("leads a tool call's guidance with the tool, and credits its rule in the delivery's rule ids and rules", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-tool-steer-"));
+    directories.push(root);
+    const databasePath = join(root, "rerail.sqlite");
+    setUpTestRepository(root, {
+      library: [{
+        kind: "conversation",
+        rule: {
+          id: "acme:no-force-push",
+          mode: "steer",
+          match: { field: "input.command", regex: String.raw`\bgit\s+push\b[^\n]*--force\b` },
+          sample: { source: "tool:Bash", boundary: "tool-call" },
+          action: { content: "Ask before force-pushing." },
+          repeat: { mode: "always" },
+        },
+      }],
+    }, databasePath);
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      modelPath: resolve("model"),
+      databasePath,
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => false,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+    });
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: "tool", cwd: root } });
+      const deliveries = await runtime.ingest({
+        kind: "call", eventId: "push", sessionId: "tool", toolCallId: "push", toolName: "Bash", input: { command: "git push --force origin main" },
+      });
+      expect(deliveries).toEqual([expect.objectContaining({
+        requested: "steer",
+        content: [
+          "Rerail has guidance for this Bash call:",
+          "- Ask before force-pushing. [acme:no-force-push]",
+          "Follow it, or tell the user in one line why you won't.",
+        ].join("\n"),
+        ruleIds: ["acme:no-force-push"],
+        rules: [{ id: "acme:no-force-push", state: "steered" }],
+      })]);
+    } finally {
+      await runtime.dispose();
     }
   });
 });

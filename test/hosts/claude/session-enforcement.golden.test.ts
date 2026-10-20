@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { sessionStartNote } from "../../../src/engine/index.js";
 import { claudeHookOutput } from "../../../src/hosts/claude/claude-hook-adapter.js";
-import { drawn, goldenJson, NO_EXPLICIT_ANY, NO_FLOATING_PROMISES, SCENE_DASHBOARD, SCENE_MARK, SCENE_SESSION } from "../../support/session-enforcement-scenes.js";
+import { drawn, goldenJson, NO_EXPLICIT_ANY, TWO_RULES, SCENE_DASHBOARD, SCENE_MARK, SCENE_SESSION } from "../../support/session-enforcement-scenes.js";
 import { fixturesPath } from "../../support/oracles.js";
 
 const GOLDEN = fixturesPath("host", "session-enforcement", "claude-code");
@@ -22,7 +22,7 @@ describe("Claude Code session enforcement golden output", () => {
   });
 
   it("N4b: two rules in one edit, one line each", async () => {
-    const output = claudeHookOutput("PostToolUse", [NO_EXPLICIT_ANY, NO_FLOATING_PROMISES], { mark: SCENE_MARK });
+    const output = claudeHookOutput("PostToolUse", [TWO_RULES], { mark: SCENE_MARK });
     await expect(goldenJson(output)).toMatchFileSnapshot(`${GOLDEN}/n4b-two-rules.json`);
     await expect(drawn(String(output.systemMessage))).toMatchFileSnapshot(`${GOLDEN}/n4b-two-rules.txt`);
   });

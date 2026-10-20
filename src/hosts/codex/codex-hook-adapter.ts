@@ -2,6 +2,7 @@ import { hookText, type AdapterDelivery, type RerailEventLoop } from "../../engi
 import { codexHookEvents } from "./codex-event-adapter.js";
 import {
   deliveryRuleIds,
+  deliveryRules,
   deliveryText,
   pendingPath,
   prepareGuidanceOutput,
@@ -52,7 +53,7 @@ export function codexHookOutput(hook: string, deliveries: readonly AdapterDelive
   const context = [note, content].filter(text => text !== undefined).join("\n\n");
   if (context === "" || CONTEXT_EVENTS[hook] !== true) return {};
   // Codex draws hook text as plain text with no links, so each line prints its `why?` link after it.
-  const lines = content === undefined ? [] : steerHeadlines(content).map(headline => headlineText(headline, "plain"));
+  const lines = steerHeadlines(deliveryRules(deliveries)).map(headline => headlineText(headline, "plain"));
   const output = {
     ...(lines.length === 0 ? {} : { systemMessage: lines.join("\n") }),
     hookSpecificOutput: { hookEventName: hook, additionalContext: context },
@@ -70,7 +71,7 @@ export async function handleCodexEvent(
   const deliveries: AdapterDelivery[] = [];
   for (const event of codexHookEvents(input)) deliveries.push(...await eventLoop.ingest(event));
   const path = pendingPath(storageRoot, "codex", sessionId);
-  // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
+  // The runtime records no links; the rules point at this checkout's dashboard only here.
   const cwd = requiredText(input, "cwd");
   const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "codex", sessionId, await presentedSessionNoteRules({ host: "codex", sessionId, cwd })) : undefined;
   return codexHookOutput(hook, await linkDeliveries(await routeDeliveries(path, hook, deliveries, CARRY_EVENTS), cwd), note);

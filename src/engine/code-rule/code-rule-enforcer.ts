@@ -29,6 +29,7 @@ import {
   type AuditorCloseOptions,
   type SteerSourceOf,
 } from "./code-rule.js";
+import type { SteerTrigger } from "./rerail-steer.js";
 import {
   AUDIT_BLIND_REASONS,
   AUDIT_FAILURE_CODES,
@@ -1135,7 +1136,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       byRevision.set(findings.revision, group);
     }
     for (const [revision, group] of byRevision)
-      await this.#publish(revision, group.sources, group.violations, group.mode, true);
+      await this.#publish(revision, group.sources, group.violations, group.mode, { kind: "resteer" }, true);
   }
 
   #scopeFailureForEdit(
@@ -1419,7 +1420,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
             mode,
             violations: result.violations.filter((violation) => violation.path === path),
           });
-    await this.#publish(revision, scope === "repository" ? [] : sourcePaths, result.violations, mode, generatedEdit);
+    await this.#publish(
+      revision,
+      scope === "repository" ? [] : sourcePaths,
+      result.violations,
+      mode,
+      { kind: scope === "repository" ? "audit" : "edit" },
+      generatedEdit,
+    );
     return { resultPagesMilliseconds, violations: streamed.violationCount, failures: unboundedFailures.length, status };
   }
 
@@ -1798,6 +1806,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         current.map(([path]) => path),
         violations,
         mode,
+        { kind: "edit" },
         true,
       );
     }
@@ -1808,6 +1817,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     sourceScope: readonly string[],
     violations: readonly CodeRuleViolation[],
     mode: AuditMode,
+    trigger: SteerTrigger,
     generatedEdit = false,
   ): Promise<void> {
     if (this.#sessionId === undefined || this.#closing || mode !== "steer") return;
@@ -1825,11 +1835,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       const recorded = provenance.find(entry => entry.ruleId === ruleId);
       return recorded !== undefined && "source" in recorded ? recorded.source : undefined;
     };
-    const steer = buildSteer(steerable, sourceOf);
+    const steer = buildSteer(steerable, trigger, sourceOf);
     await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
       revision,
       scope,
       ruleIds: steer.ruleIds,
+      rules: steer.rules,
       background: true,
       ...(generatedEdit ? { generatedEdit: { violations: steerable, sourceOf } } : {}),
     });

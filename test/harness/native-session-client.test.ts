@@ -26,7 +26,7 @@ import { startTestRepository } from "../support/started-repository.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 
 const delivery = (content: string, ruleIds: readonly string[] = []): AdapterDelivery => ({
-  sessionId: "session", requested: "steer", mechanism: "native-queue", content, ruleIds,
+  sessionId: "session", requested: "steer", mechanism: "native-queue", content, ruleIds, rules: ruleIds.map(id => ({ id, state: "steered" })),
 });
 
 interface NativeRequestBody {
@@ -1174,9 +1174,9 @@ describe("the end of a native host's run", () => {
       expect(received).toEqual([]);
 
       await client.yieldDeliveries();
-      expect(received).toEqual([expect.objectContaining({ requested: "steer", ruleIds: ["test:needle"] })]);
-      expect(received[0]!.content).toMatch(/^Rerail finished checking these edits only after the steps that made them had moved on:\n\n◆ Rerail · test:needle {2}steered\n/u);
-      expect(received[0]!.content).toContain("No needle (edited.py:1:1)");
+      expect(received).toEqual([expect.objectContaining({ requested: "steer", ruleIds: ["test:needle"], rules: [expect.objectContaining({ id: "test:needle", state: "steered" })] })]);
+      expect(received[0]!.content).toMatch(/^Rerail finished checking your earlier edits after you moved on:\n/u);
+      expect(received[0]!.content).toContain("- edited.py:1:1 — No needle [test:needle]");
       await client.yieldDeliveries();
       expect(received).toHaveLength(1);
     } finally {

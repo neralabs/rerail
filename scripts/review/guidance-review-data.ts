@@ -4,7 +4,7 @@
  *
  * Cases come from the rule's `examples` in pack.json and from its upstream fixtures, run through the native engine
  * the way the conformance runner runs them (conformance/languages/runner.ts). Each caught case's guidance is
- * `renderSteer`'s output for that file's violations: the block the coding agent reads, with the `Why?` link relative.
+ * `renderSteer`'s output for that file's violations: the block the coding agent reads after an edit, verbatim.
  *
  *   node --import tsx scripts/review/guidance-review-data.ts [--pack <id>]... [--out <file>]
  */
@@ -279,7 +279,6 @@ async function packData(directory: string): Promise<ReviewPack | undefined> {
     for (const name of readdirSync(candidates).filter(name => name.endsWith(".json")).sort(compareDeterministicStrings)) add(undefined, `candidates/rules/${name}`);
   }
 
-  const sourceOf = (): { kind: "pack"; packId: string } => ({ kind: "pack", packId: packJson.id });
   const cases = new Map<string, ReviewCase[]>(entries.map(entry => [entry.document.id, []]));
   const counts = new Map(entries.map(entry => [entry.document.id, { caught: 0, extra: 0, missed: 0, units: 0 }]));
   const kept = (id: string, kind: ReviewCase["kind"]): number => (cases.get(id) ?? []).filter(item => item.kind === kind).length;
@@ -296,8 +295,7 @@ async function packData(directory: string): Promise<ReviewPack | undefined> {
       snippet,
       flagged,
       upstream,
-      // steerOrigin names a pack by its id when this machine has not installed it; the person's install names it.
-      guidance: violations.length === 0 ? "" : renderSteer(violations, sourceOf).replaceAll(`From the ${packJson.id} rule pack.`, `From the ${packJson.name} rule pack.`),
+      guidance: violations.length === 0 ? "" : renderSteer(violations, { kind: "edit" }),
       failures,
     };
   };
