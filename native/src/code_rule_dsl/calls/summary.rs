@@ -26,7 +26,7 @@ use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
 
 /// Bumped whenever extraction changes what a summary holds for the same file.
-pub(crate) const EXTRACTOR_VERSION: u32 = 11;
+pub(crate) const EXTRACTOR_VERSION: u32 = 18;
 
 pub(crate) const ASYNC: u8 = 1;
 pub(crate) const CLASS: u8 = 2;
@@ -70,6 +70,8 @@ pub(crate) struct Summary {
     pub(crate) reference_targets: Vec<u32>,
     /// Imported declarations, without run-time assignment aliases.
     pub(crate) reference_aliases: Vec<(u32, u32)>,
+    /// Decorated methods and their syntactic decorator names.
+    pub(crate) reference_decorators: Vec<(u32, u32)>,
     /// Every callee name any call of the file names, in a definition or not. Sorted, distinct.
     pub(crate) targets: Vec<u32>,
     /// Module- and class-level names other code may call through: `(this module's name for it,
@@ -121,14 +123,88 @@ pub(crate) enum Callee {
 }
 
 impl Summary {
-    pub(crate) fn as_references(&self) -> Self {
+    pub(crate) fn as_references(&self, links: super::contracts::Key) -> Self {
         let mut summary = self.clone();
         summary.edges = self.references.clone();
         summary.targets = self.reference_targets.clone();
-        summary.aliases = self.reference_aliases.clone();
+        summary.aliases.clear();
+        summary.supers.clear();
+        summary.stars.clear();
+        let latest = self
+            .defs
+            .iter()
+            .enumerate()
+            .map(|(index, def)| (def.name, index))
+            .collect::<HashMap<_, _>>();
+        let class_starts = self
+            .defs
+            .iter()
+            .filter(|def| def.flags & CLASS != 0)
+            .map(|def| (self.name(def.name), def.start))
+            .collect::<HashMap<_, _>>();
+        let mut names = self
+            .names
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, name)| (name, index as u32))
+            .collect::<HashMap<_, _>>();
+        let family = self.names.first().map_or(Family::Python, Name::family);
+        let mut intern = |text: &str| {
+            let name = Name::new(family, text);
+            *names.entry(name.clone()).or_insert_with(|| {
+                let id = summary.names.len() as u32;
+                summary.names.push(name);
+                id
+            })
+        };
+        for &(alias, target) in &self.reference_aliases {
+            let name = self.name(alias);
+            if let Some((class, rest)) = name.split_once(".<field-declaration>.") {
+                if let Some((start, field)) = rest.split_once(':')
+                    && start.parse::<u32>().ok().as_ref() == class_starts.get(class)
+                {
+                    summary
+                        .aliases
+                        .push((intern(&format!("{class}.{field}")), target));
+                }
+            } else if let Some((class, rest)) = name.split_once(".<base-slot>.") {
+                if let Some((start, _)) = rest.split_once(':')
+                    && start.parse::<u32>().ok().as_ref() == class_starts.get(class)
+                {
+                    summary.supers.push((intern(class), target, BASE));
+                }
+            } else {
+                summary.aliases.push((alias, target));
+            }
+        }
+        let contracts = super::contracts::get(links);
+        for group in self
+            .reference_decorators
+            .chunk_by(|left, right| left.0 == right.0)
+        {
+            let owner = group[0].0;
+            let def = &self.defs[owner as usize];
+            let decorators = group
+                .iter()
+                .map(|(_, name)| self.name(*name))
+                .collect::<Vec<_>>();
+            if let Some(target) = contracts.sibling(self.name(def.name), &decorators) {
+                let id = intern(&target);
+                summary.edges.push((owner, id));
+                summary.targets.push(id);
+            }
+        }
+        summary.edges.sort_unstable();
+        summary.edges.dedup();
+        summary.targets.sort_unstable();
+        summary.targets.dedup();
         summary.open_sites = false;
-        for def in &mut summary.defs {
+        for (index, def) in summary.defs.iter_mut().enumerate() {
             def.flags &= !OPEN;
+            if latest.get(&def.name) == Some(&index) {
+                def.flags &= !SHADOWED;
+            }
         }
         summary
     }
@@ -178,7 +254,7 @@ impl Summary {
     /// A stable serialization for the content store.
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(
-            58 + self
+            62 + self
                 .names
                 .iter()
                 .map(|name| name.text().len() + 4)
@@ -187,7 +263,8 @@ impl Summary {
                 + 8 * (self.edges.len()
                     + self.references.len()
                     + self.aliases.len()
-                    + self.reference_aliases.len())
+                    + self.reference_aliases.len()
+                    + self.reference_decorators.len())
                 + 4 * (self.targets.len()
                     + self.reference_targets.len()
                     + self.opaque.len()
@@ -217,6 +294,7 @@ impl Summary {
             &self.references,
             &self.aliases,
             &self.reference_aliases,
+            &self.reference_decorators,
         ] {
             put(&mut out, pairs.len() as u32);
             for (a, b) in pairs {
@@ -288,6 +366,7 @@ impl Summary {
         let references = pairs(&|def| (def as usize) < defs.len())?;
         let aliases = pairs(&known)?;
         let reference_aliases = pairs(&known)?;
+        let reference_decorators = pairs(&|def| (def as usize) < defs.len())?;
         let mut ids = || {
             (0..reader.count(4)?)
                 .map(|_| reader.u32().filter(|id| known(*id)))
@@ -311,6 +390,7 @@ impl Summary {
             references,
             reference_targets,
             reference_aliases,
+            reference_decorators,
             targets,
             aliases,
             opaque,
@@ -379,6 +459,7 @@ struct Context {
     owner: Option<u32>,
     reference_owner: Option<u32>,
     reference_receiver: Option<Receiver>,
+    reference_class: Option<String>,
     /// Prepended to a definition's name here.
     prefix: String,
     /// In a class body: the class's qualified name.
@@ -452,6 +533,7 @@ struct Extractor<'t> {
     references: Vec<(u32, u32)>,
     reference_targets: Vec<u32>,
     reference_aliases: Vec<(u32, u32)>,
+    reference_decorators: Vec<(u32, u32)>,
     targets: Vec<u32>,
     aliases: Vec<(u32, u32)>,
     opaque: Vec<u32>,
@@ -473,6 +555,7 @@ impl<'t> Extractor<'t> {
             references: Vec::new(),
             reference_targets: Vec::new(),
             reference_aliases: Vec::new(),
+            reference_decorators: Vec::new(),
             targets: Vec::new(),
             aliases: Vec::new(),
             opaque: Vec::new(),
@@ -512,6 +595,7 @@ impl<'t> Extractor<'t> {
             &mut self.references,
             &mut self.aliases,
             &mut self.reference_aliases,
+            &mut self.reference_decorators,
         ] {
             list.sort_unstable();
             list.dedup();
@@ -537,6 +621,7 @@ impl<'t> Extractor<'t> {
             references: self.references,
             reference_targets: self.reference_targets,
             reference_aliases: self.reference_aliases,
+            reference_decorators: self.reference_decorators,
             targets: self.targets,
             aliases: self.aliases,
             opaque: self.opaque,
@@ -556,6 +641,7 @@ impl<'t> Extractor<'t> {
             owner: None,
             reference_owner: None,
             reference_receiver: None,
+            reference_class: None,
             prefix: self
                 .module
                 .as_ref()
@@ -609,11 +695,22 @@ impl<'t> Extractor<'t> {
                     && table.reference(&node.range()).is_some_and(|reference| {
                         table
                             .resolve(reference, &python_identifier(&node))
-                            .is_some_and(|binding| binding.site.form == Form::Parameter)
+                            .is_some_and(|binding| {
+                                binding.site.form == Form::Parameter
+                                    && parameter_owner(binding, &node).is_some_and(|start| {
+                                        contexts[context].reference_owner.is_some_and(|owner| {
+                                            self.defs[owner as usize].start == start
+                                        })
+                                    })
+                            })
                     });
                 let expression = if kind == "call" {
                     node.field("function")
-                } else if (kind == "attribute" && !call_target)
+                } else if (kind == "attribute"
+                    && !call_target
+                    && node
+                        .field("object")
+                        .is_some_and(|object| object.kind() == "identifier"))
                     || (kind == "identifier"
                         && !head_of_attribute
                         && !call_target
@@ -628,25 +725,73 @@ impl<'t> Extractor<'t> {
                 };
                 if let Some(expression) = expression {
                     let owner = contexts[context].reference_owner;
-                    match follow_reference(
-                        table,
-                        self.path,
-                        &expression,
-                        contexts[context].reference_receiver.as_ref(),
-                        Vec::new(),
-                        0,
-                    ) {
-                        Some(Found::Name(name)) => {
-                            let name = self.intern(&name);
-                            self.reference_targets.push(name);
-                            if let Some(owner) = owner {
-                                self.references.push((owner, name));
+                    let local_value = kind != "call"
+                        && expression.kind() == "identifier"
+                        && table
+                            .reference(&expression.range())
+                            .is_some_and(|reference| {
+                                let name = python_identifier(&expression);
+                                table.resolve_python_index(reference, &name).is_some_and(
+                                    |(scope, index)| {
+                                        let binding = &table.scopes[scope as usize].bindings
+                                            [name.as_ref()][index];
+                                        (scope != 0 || binding.deferred || binding.outer)
+                                            && !matches!(binding.site.form, Form::Definition)
+                                            && !(binding.site.form == Form::Parameter
+                                                && parameter_owner(binding, &expression)
+                                                    .is_some_and(|start| {
+                                                        owner.is_some_and(|owner| {
+                                                            self.defs[owner as usize].start != start
+                                                        })
+                                                    }))
+                                    },
+                                )
+                            });
+                    let builtin_value = kind != "call"
+                        && expression.kind() == "identifier"
+                        && PythonOptions::new(DEFAULT_PYTHON_MINOR)
+                            .declares(&python_identifier(&expression));
+                    let unqualified =
+                        (expression.kind() == "identifier" && !local_value && !builtin_value)
+                            .then(|| {
+                                let short = python_identifier(&expression);
+                                let bare = self
+                                    .module
+                                    .as_ref()
+                                    .map(|module| format!("{module}.<bare>.{short}=>"))
+                                    .unwrap_or_default();
+                                contexts[context]
+                                    .reference_class
+                                    .as_ref()
+                                    .map(|class| format!("{class}.<unqualified>.{short}=>{bare}"))
+                                    .unwrap_or(bare)
+                            })
+                            .filter(|prefix| !prefix.is_empty());
+                    if !local_value && !builtin_value {
+                        match follow_reference(
+                            table,
+                            self.path,
+                            &expression,
+                            contexts[context].reference_receiver.as_ref(),
+                            contexts[context].reference_class.as_deref(),
+                            owner.map(|owner| self.defs[owner as usize].start),
+                        ) {
+                            Some(Found::Name(name)) => {
+                                let name = unqualified.as_ref().map_or_else(
+                                    || name.clone(),
+                                    |prefix| format!("{prefix}{name}"),
+                                );
+                                self.reference_named(owner, &name);
+                            }
+                            Some(Found::Local(site, tail)) => {
+                                local_references.push((owner, site, tail, unqualified))
+                            }
+                            _ => {
+                                if let Some(name) = unqualified {
+                                    self.reference_named(owner, &name);
+                                }
                             }
                         }
-                        Some(Found::Local(site, tail)) => {
-                            local_references.push((owner, site, tail))
-                        }
-                        _ => {}
                     }
                 }
             }
@@ -681,15 +826,22 @@ impl<'t> Extractor<'t> {
             let name = self.intern(&name);
             self.call(owner, name);
         }
-        for (owner, site, tail) in local_references {
+        for (owner, site, tail, unqualified) in local_references {
             if let Some(def) = self.def_index(site) {
                 let name = self.def_name(def, &tail);
-                let name = self.intern(&name);
-                self.reference_targets.push(name);
-                if let Some(owner) = owner {
-                    self.references.push((owner, name));
-                }
+                let name = unqualified
+                    .as_ref()
+                    .map_or_else(|| name.clone(), |prefix| format!("{prefix}{name}"));
+                self.reference_named(owner, &name);
             }
+        }
+    }
+
+    fn reference_named(&mut self, owner: Option<u32>, name: &str) {
+        let name = self.intern(name);
+        self.reference_targets.push(name);
+        if let Some(owner) = owner {
+            self.references.push((owner, name));
         }
     }
 
@@ -738,6 +890,40 @@ impl<'t> Extractor<'t> {
             end: node.range().end as u32,
             flags,
         });
+        if !class
+            && outer.class.is_some()
+            && let Some(decorated) = node
+                .parent()
+                .filter(|parent| parent.kind() == "decorated_definition")
+        {
+            for decorator in decorated
+                .children()
+                .filter(|child| child.kind() == "decorator")
+            {
+                let Some(expression) = decorator
+                    .children()
+                    .find(|child| child.is_named() && child.kind() != "comment")
+                else {
+                    continue;
+                };
+                let mut expression = unparenthesized(&expression);
+                if expression.kind() == "call" {
+                    let Some(function) = expression.field("function") else {
+                        continue;
+                    };
+                    expression = unparenthesized(&function);
+                }
+                let terminal = if expression.kind() == "attribute" {
+                    expression.field("attribute")
+                } else {
+                    Some(expression)
+                };
+                if let Some(terminal) = terminal.filter(|node| node.kind() == "identifier") {
+                    let name = self.intern(&python_identifier(&terminal));
+                    self.reference_decorators.push((def, name));
+                }
+            }
+        }
         if class {
             self.bases(node, name, outer);
         }
@@ -746,6 +932,7 @@ impl<'t> Extractor<'t> {
                 owner: outer.owner,
                 reference_owner: outer.reference_owner,
                 reference_receiver: outer.reference_receiver.clone(),
+                reference_class: outer.reference_class.clone(),
                 prefix: format!("{qualified}."),
                 class: Some(qualified),
                 receiver: None,
@@ -754,6 +941,11 @@ impl<'t> Extractor<'t> {
             Context {
                 owner: Some(def),
                 reference_owner: outer.reference_owner.or(Some(def)),
+                reference_class: if outer.reference_owner.is_some() {
+                    outer.reference_class.clone()
+                } else {
+                    outer.class.clone()
+                },
                 reference_receiver: if outer.reference_owner.is_some() {
                     outer.reference_receiver.clone()
                 } else {
@@ -882,6 +1074,26 @@ impl<'t> Extractor<'t> {
             {
                 head = unparenthesized(&value);
             }
+            if kind == BASE {
+                let short = head.text();
+                let short = short
+                    .split('[')
+                    .next()
+                    .unwrap_or(&short)
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                let alias = format!(
+                    "{}.<base-slot>.{}:{:010}",
+                    self.names[key as usize],
+                    class.range().start,
+                    self.reference_aliases.len()
+                );
+                let target = format!("{}.<base>.{short}", self.module.as_deref().unwrap_or(""));
+                let pair = (self.intern(&alias), self.intern(&target));
+                self.reference_aliases.push(pair);
+            }
             let found = match self.table {
                 Some(table) => follow(
                     table,
@@ -935,6 +1147,37 @@ impl<'t> Extractor<'t> {
                 None
             };
             for (name, bindings) in &scope.bindings {
+                if scope.kind == ScopeKind::Class
+                    && let Some(prefix) = &prefix
+                    && let Some(annotation) = bindings
+                        .iter()
+                        .rev()
+                        .find_map(|binding| {
+                            (matches!(binding.site.form, Form::Annotated | Form::Annotation))
+                                .then_some(binding.site.annotation)
+                                .flatten()
+                                .filter(|site| {
+                                    site.find(root.clone()).is_some_and(|annotation| {
+                                        annotation
+                                            .ancestors()
+                                            .find(|node| node.kind() == "expression_statement")
+                                            .and_then(|statement| statement.parent())
+                                            .is_some_and(|block| {
+                                                block.kind() == "block"
+                                                    && block.parent().is_some_and(|owner| {
+                                                        owner.kind() == "class_definition"
+                                                    })
+                                            })
+                                    })
+                                })
+                        })
+                        .and_then(|annotation| annotation.find(root.clone()))
+                {
+                    reference_aliases.push((
+                        format!("{prefix}.<field-declaration>.{}:{name}", scope.range.start),
+                        annotation_reference(&annotation.text()),
+                    ));
+                }
                 let last = last_bindings(root, bindings);
                 for (at, binding) in bindings.iter().enumerate() {
                     if matches!(binding.import, Some(Import::Definition))
@@ -968,6 +1211,91 @@ impl<'t> Extractor<'t> {
                 }
             }
         }
+        // The declared inventory ignores assignments and includes top-level class
+        // methods in the module's short-name namespace, preferring functions.
+        if let Some(module) = &self.module {
+            let mut selected = std::collections::BTreeMap::<String, (bool, String)>::new();
+            for def in &self.defs {
+                let qualified = self.names[def.name as usize].as_ref();
+                if qualified.contains(".<locals>.") {
+                    continue;
+                }
+                let short = qualified.rsplit('.').next().unwrap_or(qualified);
+                let function = def.flags & CLASS == 0;
+                let entry = selected
+                    .entry(short.to_owned())
+                    .or_insert((function, qualified.to_owned()));
+                if function && !entry.0 {
+                    *entry = (true, qualified.to_owned());
+                }
+            }
+            for (short, (_, target)) in selected {
+                reference_aliases.push((format!("{module}.<declared>.{short}"), target));
+            }
+            let mut classes = std::collections::BTreeMap::new();
+            for def in &self.defs {
+                if def.flags & CLASS != 0 {
+                    let qualified = self.names[def.name as usize].as_ref();
+                    let short = qualified.rsplit('.').next().unwrap_or(qualified);
+                    classes
+                        .entry(short.to_owned())
+                        .or_insert_with(|| qualified.to_owned());
+                }
+            }
+            for (short, target) in classes {
+                reference_aliases.push((format!("{module}.<class>.{short}"), target));
+            }
+            let mut imports =
+                std::collections::BTreeMap::<(String, String), (usize, String)>::new();
+            for scope in &table.scopes {
+                for (name, bindings) in &scope.bindings {
+                    for binding in bindings {
+                        if !matches!(
+                            binding.import,
+                            Some(Import::Qualified(_) | Import::Relative { .. })
+                        ) {
+                            continue;
+                        }
+                        let Some(node) = binding.site.node.and_then(|site| site.find(root.clone()))
+                        else {
+                            continue;
+                        };
+                        let Some(statement) = node.ancestors().find(|node| {
+                            matches!(
+                                node.kind().as_ref(),
+                                "import_statement" | "import_from_statement"
+                            )
+                        }) else {
+                            continue;
+                        };
+                        let (kind, target) = if statement.kind() == "import_from_statement" {
+                            let Some(Some(target)) = self.member(root, table, binding) else {
+                                continue;
+                            };
+                            ("imported", target)
+                        } else {
+                            (
+                                "module-imported",
+                                node.field("name")
+                                    .unwrap_or(node.clone())
+                                    .text()
+                                    .into_owned(),
+                            )
+                        };
+                        let entry = imports
+                            .entry((kind.to_owned(), name.to_string()))
+                            .or_insert((0, String::new()));
+                        if node.range().start >= entry.0 {
+                            *entry = (node.range().start, target);
+                        }
+                    }
+                }
+            }
+            for ((kind, name), (_, target)) in imports {
+                reference_aliases.push((format!("{module}.<{kind}>.{name}"), target));
+            }
+        }
+        reference_aliases.extend(self.constructor_parameters(root, table));
         // Interned in a stable order: a summary is the same for the same file.
         aliases.sort();
         for (alias, target) in aliases {
@@ -984,6 +1312,108 @@ impl<'t> Extractor<'t> {
             let id = self.intern(&name);
             self.opaque.push(id);
         }
+    }
+
+    /// Constructor parameter declarations are metadata. A graph opts into a field
+    /// naming convention before using them; no assignment inference is implicit.
+    fn constructor_parameters<D: Doc>(
+        &self,
+        root: &Node<'_, D>,
+        table: &ScopeTable,
+    ) -> Vec<(String, String)> {
+        let latest = self
+            .defs
+            .iter()
+            .enumerate()
+            .map(|(index, def)| (def.name, index))
+            .collect::<HashMap<_, _>>();
+        let mut aliases = Vec::new();
+        for scope in &table.scopes {
+            if scope.kind != ScopeKind::Function {
+                continue;
+            }
+            let Some(index) = self.def_index(scope.range.start as u32) else {
+                continue;
+            };
+            let def = &self.defs[index];
+            if latest.get(&def.name) != Some(&index) {
+                continue;
+            }
+            let qualified = self.names[def.name as usize].as_ref();
+            let Some(class) = qualified.strip_suffix(".__init__") else {
+                continue;
+            };
+            let mut parent = scope.parent;
+            let mut method = false;
+            while let Some(index) = parent {
+                let parent_scope = &table.scopes[index as usize];
+                if parent_scope.kind == ScopeKind::Class {
+                    method = true;
+                    break;
+                }
+                if matches!(
+                    parent_scope.kind,
+                    ScopeKind::Module | ScopeKind::Function | ScopeKind::Lambda
+                ) {
+                    break;
+                }
+                parent = parent_scope.parent;
+            }
+            if !method {
+                continue;
+            }
+            for (name, bindings) in &scope.bindings {
+                let Some(binding) = bindings
+                    .iter()
+                    .find(|binding| binding.site.form == Form::Parameter)
+                else {
+                    continue;
+                };
+                let Some(parameter) = binding.site.node.and_then(|site| site.find(root.clone()))
+                else {
+                    continue;
+                };
+                let splat = |node: &Node<'_, D>| {
+                    matches!(
+                        node.kind().as_ref(),
+                        "list_splat_pattern" | "dictionary_splat_pattern"
+                    ) || node.children().any(|child| {
+                        matches!(
+                            child.kind().as_ref(),
+                            "list_splat_pattern" | "dictionary_splat_pattern"
+                        )
+                    })
+                };
+                if splat(&parameter)
+                    || parameter.parent().is_some_and(|parameters| {
+                        parameters.children().any(|child| {
+                            child.kind() == "positional_separator"
+                                && child.range().start > parameter.range().end
+                        })
+                    })
+                {
+                    continue;
+                }
+                let keyword = parameter.parent().is_some_and(|parameters| {
+                    parameters.children().any(|child| {
+                        child.range().end <= parameter.range().start
+                            && (child.kind() == "keyword_separator" || splat(&child))
+                    })
+                });
+                if !keyword && matches!(name.as_ref(), "self" | "cls") {
+                    continue;
+                }
+                let target = match binding.site.annotation {
+                    None => super::contracts::UNANNOTATED.to_owned(),
+                    Some(annotation) => annotation
+                        .find(root.clone())
+                        .map(|annotation| annotation_reference(&annotation.text()))
+                        .unwrap_or_else(|| super::contracts::UNRESOLVED_TYPE.to_owned()),
+                };
+                aliases.push((super::contracts::parameter_key(class, name), target));
+            }
+        }
+        aliases
     }
 
     /// What a module or class member's `binding` makes it: an alias of a name (`Some(Some)`), a
@@ -1222,9 +1652,63 @@ fn follow_reference<D: Doc>(
     path: Option<&ModulePath>,
     expression: &Node<'_, D>,
     receiver: Option<&Receiver>,
-    after: Vec<String>,
-    depth: u8,
+    class: Option<&str>,
+    parameter_owner: Option<u32>,
 ) -> Option<Found> {
+    if let (Some(object), Some(attribute)) =
+        (expression.field("object"), expression.field("attribute"))
+    {
+        if object.kind() == "identifier"
+            && matches!(python_identifier(&object).as_ref(), "self" | "cls")
+        {
+            return class.map(|class| {
+                Found::Name(format!("{class}.<self>.{}", python_identifier(&attribute)))
+            });
+        }
+        if object.kind() == "attribute"
+            && object.field("object").is_some_and(|base| {
+                base.kind() == "identifier"
+                    && matches!(python_identifier(&base).as_ref(), "self" | "cls")
+            })
+            && let Some(field) = object.field("attribute")
+        {
+            return class.map(|class| {
+                Found::Name(format!(
+                    "{class}.<field>.{}.{}",
+                    python_identifier(&field),
+                    python_identifier(&attribute)
+                ))
+            });
+        }
+        if object.kind() == "call"
+            && object.field("function").is_some_and(|function| {
+                function.kind() == "identifier" && python_identifier(&function) == "super"
+            })
+        {
+            return class.map(|class| {
+                Found::Name(format!("{class}.<super>.{}", python_identifier(&attribute)))
+            });
+        }
+    }
+    if let Some(object) = expression.field("object") {
+        if object.kind() != "identifier" {
+            return None;
+        }
+        if let Some(reference) = table.reference(&object.range())
+            && let Some((scope, _)) =
+                table.resolve_python_index(reference, &python_identifier(&object))
+            && let Some(binding) = table.scopes[scope as usize]
+                .bindings
+                .get(python_identifier(&object).as_ref())
+                .and_then(|chain| {
+                    chain
+                        .iter()
+                        .find(|binding| binding.site.form == Form::Parameter)
+                })
+        {
+            return declared_parameter_reference(table, path, expression, binding, parameter_owner);
+        }
+    }
     let mut head = unparenthesized(expression);
     while head.kind() == "attribute" {
         head = unparenthesized(&head.field("object")?);
@@ -1240,21 +1724,29 @@ fn follow_reference<D: Doc>(
     {
         return None;
     }
-    let found = follow(table, path, expression, receiver, after, depth);
-    if !matches!(found, Some(Found::Open)) {
-        return found;
-    }
+    let receiver = receiver.filter(|receiver| {
+        expression.kind() != "identifier" && matches!(receiver.parameter.as_str(), "self" | "cls")
+    });
+    follow(table, path, expression, receiver, Vec::new(), 0)
+}
+
+fn declared_parameter_reference<D: Doc>(
+    table: &ScopeTable,
+    path: Option<&ModulePath>,
+    expression: &Node<'_, D>,
+    binding: &Binding,
+    parameter_owner: Option<u32>,
+) -> Option<Found> {
     let attribute = expression.field("attribute")?;
-    let object = expression.field("object")?;
-    if object.kind() != "identifier" {
-        return found;
-    }
-    let reference = table.reference(&object.range())?;
-    let binding = table.resolve(reference, &python_identifier(&object))?;
-    if binding.site.form != Form::Parameter {
-        return found;
-    }
     let parameter = binding.site.node?.find(expression.root().root())?;
+    if parameter_owner.is_some_and(|owner| {
+        parameter
+            .ancestors()
+            .find(|node| node.kind() == "function_definition")
+            .is_none_or(|node| node.range().start != owner as usize)
+    }) {
+        return None;
+    }
     if parameter.children().any(|child| {
         matches!(
             child.kind().as_ref(),
@@ -1268,6 +1760,52 @@ fn follow_reference<D: Doc>(
         return None;
     }
     let annotation = binding.site.annotation?.find(expression.root().root())?;
+    if let Some(module) = path.and_then(ModulePath::import_name) {
+        let annotation = annotation_reference(&annotation.text());
+        let name = annotation.strip_prefix("<annotation>.")?;
+        return Some(Found::Name(format!(
+            "{module}.<type>.{name}.{}",
+            python_identifier(&attribute)
+        )));
+    }
+    let ty = declared_type(table, path, &expression.root().root(), &annotation)?;
+    Some(match ty {
+        Found::Name(name) => Found::Name(qualify(
+            &name,
+            &[python_identifier(&attribute).into_owned()],
+        )),
+        Found::Local(site, mut tail) => {
+            tail.push(python_identifier(&attribute).into_owned());
+            Found::Local(site, tail)
+        }
+        Found::Open => Found::Open,
+    })
+}
+
+fn parameter_owner<D: Doc>(binding: &Binding, node: &Node<'_, D>) -> Option<u32> {
+    binding
+        .site
+        .node?
+        .find(node.root().root())?
+        .ancestors()
+        .find(|node| node.kind() == "function_definition")
+        .map(|node| node.range().start as u32)
+}
+
+fn annotation_reference(text: &str) -> String {
+    let name = text.split(['[', '|']).next().unwrap_or("").trim();
+    if name.contains('.') {
+        return super::contracts::UNRESOLVED_TYPE.to_owned();
+    }
+    format!("<annotation>.{name}")
+}
+
+fn declared_type<D: Doc>(
+    table: &ScopeTable,
+    path: Option<&ModulePath>,
+    root: &Node<'_, D>,
+    annotation: &Node<'_, D>,
+) -> Option<Found> {
     let text = annotation.text();
     let name = text.split(['[', '|']).next()?.trim();
     // A forward string or qualified expression does not declare a module binding.
@@ -1279,15 +1817,7 @@ fn follow_reference<D: Doc>(
     ) {
         return None;
     }
-    bound(
-        table,
-        path,
-        &expression.root().root(),
-        ty,
-        vec![python_identifier(&attribute).into_owned()],
-        None,
-        0,
-    )
+    bound(table, path, root, ty, Vec::new(), None, 0)
 }
 
 /// What one binding makes a callee with attribute names `tail`.

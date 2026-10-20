@@ -51,7 +51,7 @@ pub(super) fn compile_query_plan(
 }
 
 /// One file's evidence for a synthetic clause.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(super) struct Partition {
     pub(super) witnesses: Vec<Witness>,
     /// The static message of the clause's failure in the file: its witnesses there are unknown.
@@ -117,15 +117,15 @@ pub(super) fn record_evidence(state: &mut WorkspaceState, path: &str, file: &Fil
         };
         let partitions = state.evidence.entry(id).or_default();
         if failure.is_some() || syntax.is_some() || !witnesses.is_empty() {
-            partitions.insert(
-                path.to_owned(),
-                Partition {
-                    witnesses,
-                    failure,
-                    syntax,
-                },
-            );
-            state.dirty_globals.insert(id.0);
+            let partition = Partition {
+                witnesses,
+                failure,
+                syntax,
+            };
+            if partitions.get(path) != Some(&partition) {
+                partitions.insert(path.to_owned(), partition);
+                state.dirty_globals.insert(id.0);
+            }
         } else if partitions.remove(path).is_some() {
             state.dirty_globals.insert(id.0);
         }
@@ -165,6 +165,7 @@ fn evaluate_relations(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     producers: &[ClauseId],
+    snapshot: &Snapshot,
 ) -> Evaluation {
     match (&clause.kind, producers) {
         (ClauseKind::RequireEach { subject, evidence }, &[subject_id, evidence_id]) => {
@@ -178,7 +179,16 @@ fn evaluate_relations(
         (ClauseKind::Budget { query, .. }, &[id]) => {
             evidence::budget(code_rule, clause, query, relation_rows(state, id, query))
         }
-        _ => unreachable!("relation plans are compiled for require_each and budget"),
+        (ClauseKind::Relational(plan), ids) => {
+            let rows = plan
+                .inputs
+                .iter()
+                .zip(ids)
+                .map(|((_, input), id)| relation_rows(state, *id, input))
+                .collect();
+            crate::code_rule_dsl::relational::evaluate(code_rule, clause, plan, rows, snapshot)
+        }
+        _ => unreachable!("relation plans are compiled for relation clauses"),
     }
 }
 
@@ -324,6 +334,7 @@ pub(super) fn evaluate_global(
     snapshot: &Snapshot,
 ) -> Result<Evaluation> {
     let code_rule = &state.code_rules[index];
+    let _graph = state.crossfile.evaluation_slot();
     let mut evaluation = Evaluation::default();
     for clause in &state.globals[&index] {
         if let Some(plan) = state.query_plans.get(&(index, clause.id.clone())) {
@@ -372,7 +383,7 @@ pub(super) fn evaluate_global(
                 }
             }
         } else if let Some(producers) = state.relation_plans.get(&(index, clause.id.clone())) {
-            let mut result = evaluate_relations(state, code_rule, clause, producers);
+            let mut result = evaluate_relations(state, code_rule, clause, producers, snapshot);
             evaluation.violations.append(&mut result.violations);
             evaluation.failures.append(&mut result.failures);
             evaluation.metrics.witnesses += result.metrics.witnesses;

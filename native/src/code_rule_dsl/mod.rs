@@ -20,6 +20,7 @@ mod placement;
 #[cfg(feature = "code-rule-profile")]
 mod profile;
 mod query;
+mod relational;
 mod scope;
 mod semver;
 mod soundness;

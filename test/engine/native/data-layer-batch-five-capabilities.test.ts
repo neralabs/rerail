@@ -5,6 +5,148 @@ import { codeRuleSchema, loadNativeBinding } from "../../../src/engine/index.js"
 const native = loadNativeBinding();
 const capabilities = readFileSync(new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url), "utf8");
 
+it("authors constructor field conventions and preserves unknown annotation shadowing", async () => {
+  const policy = (id: string, constructorFields?: { fieldToParameter: { replace: string; by: string } }) => ({
+    format: "rerail.policy/v1", id, revision: 1, mode: "log", clauses: [{ id: "reference", forbid: { ast: { language: "python", rule: {
+      kind: "function_definition", all: [{ has: { field: "name", pattern: "run" } }, { calls: {
+        graph: "references", at: "definition", constructorFields, kind: "function_definition", has: { field: "name", pattern: "_query" },
+      } }],
+    } } }, violation: { code: "REFERENCE", message: "References a query", anchor: "witness.span" } }],
+  });
+  const convention = { fieldToParameter: { replace: "^state_", by: "" } };
+  const compile = (id: string, fields?: typeof convention) => {
+    const document = policy(id, fields); expect(codeRuleSchema.safeParse(document).success).toBe(true);
+    return native.CodeRuleDslRuntime.compile(JSON.stringify(document), "json", capabilities);
+  };
+  const linked = compile("constructor-contract", convention), plain = compile("plain-fields");
+  const source = "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Pure:\n def read(self, x): return x\nclass Client:\n def __init__(self, dependency: DB): pass\n def run(self): return self.state_dependency.read(1)\n";
+  const files = [
+    { path: "impl/client.py", language: "python", source },
+    { path: "api/use.py", language: "python", source: "from impl.client import Client\ndef run(client: Client): return client.run()\n" },
+  ];
+  const snapshot = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files, facts: [] });
+  const expected = JSON.parse(linked.evaluate(snapshot, "report"));
+  expect(expected.failures).toEqual([]); expect(expected.violations).toHaveLength(2);
+  expect(JSON.parse(plain.evaluate(snapshot, "report"))).toMatchObject({ violations: [], failures: [] });
+  const workspace = new native.CodeRuleDslWorkspace();
+  try {
+    workspace.addCodeRule(linked); workspace.addCodeRule(plain);
+    const evaluate = async (revision: number, source: string) => JSON.parse(await workspace.applyAsync(JSON.stringify({ revision,
+      files: revision === 1 ? files : [{ ...files[0]!, source }], removed: [] }))).evaluation;
+    expect(await evaluate(1, source)).toMatchObject({ violations: expected.violations, failures: [] });
+    expect(await evaluate(2, source.replace("dependency: DB", "dependency: Pure"))).toMatchObject({ violations: [], failures: [] });
+    const unknown = source.replace("class Client:\n", "class Client:\n state_dependency: DB\n").replace("dependency: DB)", "dependency: Missing)");
+    const result = await evaluate(3, unknown);
+    expect(result.failures).toEqual([]); expect(result.violations).toHaveLength(2);
+    expect(result.violations.every((v: { ruleId: string }) => v.ruleId === "plain-fields")).toBe(true);
+  } finally { workspace.close(); }
+});
+
+it("invalidates a declared bare-name fallback when an imported helper is renamed", async () => {
+  const policy = { format: "rerail.policy/v1", id: "declared-fallback", revision: 1, mode: "log", clauses: [{
+    id: "reference", forbid: { ast: { language: "python", rule: { kind: "function_definition", all: [
+      { has: { field: "name", pattern: "run" } },
+      { calls: { graph: "references", at: "definition", kind: "function_definition", has: { field: "name", pattern: "_query" } } },
+    ] } } }, violation: { code: "REFERENCE", message: "References a query", anchor: "witness.span" },
+  }] };
+  const rule = native.CodeRuleDslRuntime.compile(JSON.stringify(policy), "json", capabilities);
+  const files = [
+    { path: "impl/query.py", language: "python", source: "def _query(): return 1\ndef helper(): return _query()\n" },
+    { path: "impl/service.py", language: "python", source: "from impl.query import helper\nclass Service:\n def run(self): return helper()\n" },
+    { path: "api/use.py", language: "python", source: "from impl.service import Service\ndef run(service: Service): return service.run()\n" },
+  ];
+  const workspace = new native.CodeRuleDslWorkspace();
+  try {
+    workspace.addCodeRule(rule);
+    const evaluate = async (revision: number, changed: typeof files) => JSON.parse(await workspace.applyAsync(JSON.stringify({ revision, files: changed, removed: [] }))).evaluation;
+    const first = await evaluate(1, files);
+    expect(first.failures).toEqual([]);
+    expect(first.violations).toHaveLength(2);
+    const changed = { ...files[0]!, source: files[0]!.source.replace("def helper()", "def other()") };
+    expect(await evaluate(2, [changed])).toMatchObject({ violations: [], failures: [] });
+  } finally { workspace.close(); }
+});
+
+it("authors decorated sibling delegation without leaking it into another graph", async () => {
+  const links = [{ decorator: "^compat$", name: { replace: "(?:_async)?$", by: "_deferred" } }];
+  const policy = (id: string, siblingLinks?: typeof links) => ({ format: "rerail.policy/v1", id, revision: 1, mode: "log", clauses: [{
+    id: "reference", forbid: { ast: { language: "python", rule: { kind: "function_definition", all: [
+      { has: { field: "name", regex: "^(read|read_async|run)$" } },
+      { calls: { graph: "references", at: "definition", siblingLinks, kind: "function_definition", has: { field: "name", pattern: "_query" } } },
+    ] } } }, violation: { code: "REFERENCE", message: "References a query", anchor: "witness.span" },
+  }] });
+  const compile = (id: string, siblingLinks?: typeof links) => {
+    const document = policy(id, siblingLinks);
+    expect(codeRuleSchema.safeParse(document).success).toBe(true);
+    return native.CodeRuleDslRuntime.compile(JSON.stringify(document), "json", capabilities);
+  };
+  const linked = compile("with-contract", links), plain = compile("without-contract");
+  const source = "class Service:\n def _query(self): return 1\n def read_deferred(self): return self._query()\n @compat\n def read(self): return None\n @compat\n def read_async(self): return None\n def run(self): return self.read()\n";
+  const files = [
+    { path: "impl/service.py", language: "python", source },
+    { path: "api/use.py", language: "python", source: "from impl.service import Service\ndef run(client: Service): return client.run()\n" },
+  ];
+  const snapshot = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files, facts: [] });
+  const expected = JSON.parse(linked.evaluate(snapshot, "report"));
+  expect(expected.failures).toEqual([]);
+  expect(expected.violations).toHaveLength(4);
+  expect(JSON.parse(plain.evaluate(snapshot, "report"))).toMatchObject({ violations: [], failures: [] });
+  const workspace = new native.CodeRuleDslWorkspace();
+  try {
+    workspace.addCodeRule(linked); workspace.addCodeRule(plain);
+    const evaluate = async (revision: number, changed: typeof files) => JSON.parse(await workspace.applyAsync(JSON.stringify({ revision, files: changed, removed: [] }))).evaluation;
+    expect(await evaluate(1, files)).toMatchObject({ violations: expected.violations, failures: [] });
+    const result = await evaluate(2, [{ ...files[0]!, source: source.replace("@compat\n def read(self)", "@other\n def read(self)") }]);
+    expect(result.failures).toEqual([]);
+    expect(result.violations).toEqual([expect.objectContaining({ ruleId: "with-contract", path: "impl/service.py", span: expect.objectContaining({ startLine: 6 }) })]);
+  } finally { workspace.close(); }
+});
+
+it("validates sibling contracts and applies regex limits even after a contract was interned", () => {
+  const policy = (siblingLinks: unknown) => JSON.stringify({ format: "rerail.policy/v1", id: "contract-validation", revision: 1, mode: "log", clauses: [{
+    id: "reference", forbid: { ast: { language: "python", rule: { kind: "function_definition", calls: {
+      graph: "references", at: "definition", siblingLinks, kind: "function_definition", has: { field: "name", pattern: "_query" },
+    } } } }, violation: { code: "REFERENCE", message: "Reference", anchor: "witness.span" },
+  }] });
+  for (const links of [[], [{ decorator: "[", name: { replace: "$", by: "_deferred" } }],
+    [{ decorator: "compat", name: { replace: "[", by: "_deferred" } }],
+    [{ decorator: "compat", name: { replace: "$", by: 1 } }],
+    [{ decorator: "compat", name: { replace: "$", by: "_deferred" }, unknown: true }]]) {
+    expect(() => native.CodeRuleDslRuntime.compile(policy(links), "json", capabilities)).toThrow();
+  }
+  const document = policy([{ decorator: "^compat$", name: { replace: "$", by: "_deferred" } }]);
+  native.CodeRuleDslRuntime.compile(document, "json", capabilities);
+  const limited = JSON.parse(capabilities); limited.limits.maxRegexPatternBytes = 4;
+  expect(() => native.CodeRuleDslRuntime.compile(document, "json", JSON.stringify(limited))).toThrow(/siblingLinks\/0\/decorator/);
+});
+
+it("follows declared field types and super methods and invalidates unchanged consumers", async () => {
+  const policy = { format: "rerail.policy/v1", id: "declared-fields", revision: 1, mode: "log", clauses: [{
+    id: "reference", forbid: { ast: { language: "python", rule: { kind: "function_definition", all: [
+      { has: { field: "name", regex: "^(read|run)$" } },
+      { calls: { graph: "references", at: "definition", kind: "function_definition", has: { field: "name", regex: "^_query$" } } },
+    ] } } }, violation: { code: "REFERENCE", message: "References a query", anchor: "witness.span" },
+  }] };
+  const rule = native.CodeRuleDslRuntime.compile(JSON.stringify(policy), "json", capabilities);
+  const source = "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Pure:\n def read(self, x): return x\nclass Holder:\n db: DB\n def read(self, x): return self.db.read(x)\nclass Child(Holder):\n def run(self, x): return super().read(x)\n";
+  const files = [
+    { path: "impl/query.py", language: "python", source },
+    { path: "api/use.py", language: "python", source: "from impl.query import Child\ndef run(client: Child): return client.run(1)\n" },
+  ];
+  const snapshot = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files, facts: [] }), "report"));
+  expect(snapshot.failures).toEqual([]);
+  expect(snapshot.violations).toHaveLength(4);
+  const workspace = new native.CodeRuleDslWorkspace();
+  try {
+    workspace.addCodeRule(rule);
+    const evaluate = async (revision: number, changed: typeof files) => JSON.parse(await workspace.applyAsync(JSON.stringify({ revision, files: changed, removed: [] }))).evaluation;
+    expect(await evaluate(1, files)).toMatchObject({ violations: snapshot.violations, failures: [] });
+    const result = await evaluate(2, [{ ...files[0]!, source: source.replace("db: DB", "db: Pure") }]);
+    expect(result.failures).toEqual([]);
+    expect(result.violations).toEqual([expect.objectContaining({ path: "impl/query.py", span: expect.objectContaining({ startLine: 2 }) })]);
+  } finally { workspace.close(); }
+});
+
 it("validates the declared-reference query interface in both compilers", () => {
   for (const calls of [
     { graph: "missing", at: "definition", kind: "function_definition" },

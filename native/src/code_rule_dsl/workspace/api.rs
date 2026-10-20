@@ -201,6 +201,22 @@ impl CodeRuleDslWorkspace {
                             .relation_plans
                             .insert((index, clause.id.clone()), vec![id]);
                     }
+                    ClauseKind::Relational(plan) => {
+                        let ids = plan
+                            .inputs
+                            .iter()
+                            .map(|(_, input)| {
+                                compile_relation_producer(
+                                    input,
+                                    Side::Counted,
+                                    clause,
+                                    index,
+                                    code_rule,
+                                )
+                            })
+                            .collect();
+                        state.relation_plans.insert((index, clause.id.clone()), ids);
+                    }
                     ClauseKind::Llm => {}
                 }
             }
@@ -568,6 +584,10 @@ fn reads_package_manifests(code_rule: &CompiledCodeRule) -> bool {
         }
         ClauseKind::Budget { query, .. } => in_manifest_family(&query.ast.query),
         ClauseKind::Llm => false,
+        ClauseKind::Relational(plan) => plan
+            .inputs
+            .iter()
+            .any(|(_, input)| in_manifest_family(&input.ast.query)),
     })
 }
 

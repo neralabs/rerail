@@ -17,7 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// The constraint forms a clause other than a define holds.
-pub(super) const CLAUSE_KINDS: [&str; 4] = ["forbid", "require_each", "budget", "llm"];
+pub(super) const CLAUSE_KINDS: [&str; 5] =
+    ["forbid", "require_each", "budget", "relational", "llm"];
 
 /// Each language's shared utilities, by id.
 pub(super) type SharedUtils<'a> = BTreeMap<String, BTreeMap<String, UtilDef<'a>>>;
@@ -138,7 +139,11 @@ fn check_dialects<'u>(
     // utility settle it there.
     let ignored = std::cell::RefCell::new(BTreeSet::new());
     // A shared utility's `calls` terms are the calling queries' (their seeds carry its rule).
-    let calls = crate::code_rule_dsl::calls::CallsCollector::new(String::new(), false);
+    let calls = crate::code_rule_dsl::calls::CallsCollector::new(
+        String::new(),
+        false,
+        capabilities.limits.max_regex_pattern_bytes,
+    );
     for (dialect, grammar) in &grammars {
         let table = Arc::new(UtilTable::new(
             utils.keys().cloned().collect(),

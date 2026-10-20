@@ -47,6 +47,8 @@ type Stamped = (HashKey, Arc<[TermId]>);
 
 #[derive(Default)]
 pub(super) struct CallsState {
+    globals: BTreeSet<usize>,
+    dirty_globals: BTreeSet<usize>,
     terms: Terms,
     /// Per term, the synthetic clause running its seed query: one per distinct seed query.
     producers: Vec<ClauseId>,
@@ -76,6 +78,19 @@ pub(super) struct CallsState {
 }
 
 impl CallsState {
+    pub(super) fn take_dirty_globals(&mut self) -> BTreeSet<usize> {
+        std::mem::take(&mut self.dirty_globals)
+    }
+
+    pub(super) fn evaluation_slot(&self) -> Option<calls::EvaluationSlot> {
+        self.view.as_ref().map(|view| {
+            calls::EvaluationSlot::install(calls::EvaluationCalls {
+                view: Arc::clone(view),
+                summaries: HashMap::new(),
+            })
+        })
+    }
+
     pub(super) fn active(&self) -> bool {
         !self.terms.is_empty()
     }
@@ -116,7 +131,7 @@ impl CallsState {
     ) -> Result<()> {
         for clause_index in 0..code_rule.clauses.len() {
             let clause = &code_rule.clauses[clause_index];
-            let ClauseKind::Forbid(query) = &clause.kind else {
+            let Some(query) = clause.kind.calls_query() else {
                 continue;
             };
             let terms = query.calls();
@@ -160,7 +175,11 @@ impl CallsState {
                 producer.violation.fix = None;
                 code_rule.clauses.push(producer);
             }
-            self.consumers.insert((index, clause_index), ids);
+            if matches!(&template.kind, ClauseKind::Relational(_)) {
+                self.globals.insert(index);
+            } else {
+                self.consumers.insert((index, clause_index), ids);
+            }
         }
         Ok(())
     }
@@ -345,6 +364,9 @@ impl CallsState {
         if !self.active() {
             return None;
         }
+        if self.view.is_none() || !self.dirty.is_empty() {
+            self.dirty_globals.extend(&self.globals);
+        }
         // `None`: every file; else the files an update names.
         let affected = match &mut self.view {
             None => {
@@ -516,6 +538,10 @@ fn graph_fingerprint(summary: &Summary, seeds: &FileSeeds) -> u64 {
     summary.reference_aliases.len().hash(&mut hasher);
     for (alias, target) in &summary.reference_aliases {
         (summary.name(*alias), summary.name(*target)).hash(&mut hasher);
+    }
+    summary.reference_decorators.len().hash(&mut hasher);
+    for (owner, name) in &summary.reference_decorators {
+        (owner, summary.name(*name)).hash(&mut hasher);
     }
     for star in &summary.stars {
         summary.name(*star).hash(&mut hasher);

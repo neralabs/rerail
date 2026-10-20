@@ -9,7 +9,7 @@ use super::summary::{BASE, CLASS, DECORATED, METACLASS, OPEN, Summary, UNKNOWN_B
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::language::adapter::{Adapter, CallRules, with_adapter};
 use rayon::prelude::*;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 /// Terms of one dense closure: bit `i` is the `i`th term.
@@ -429,6 +429,8 @@ thread_local! {
 pub(crate) struct Graph {
     /// A declared-symbol graph links classes themselves and does not dispatch to subclasses.
     references: bool,
+    reference_contracts: super::contracts::Key,
+    reference_classes: HashMap<String, Vec<Name>>,
     /// Files by slot; a removed file's slot is reused.
     slots: Vec<Option<GraphFile>>,
     free: Vec<u32>,
@@ -527,7 +529,57 @@ pub(crate) fn path_module(path: &str) -> Option<String> {
     (valid > 0).then(|| segments[segments.len() - valid..].join("."))
 }
 
+#[derive(Clone)]
+pub(crate) struct ReferenceEdge {
+    pub(crate) path: Arc<str>,
+    pub(crate) source: super::summary::Def,
+    pub(crate) source_name: Name,
+    pub(crate) target_path: Arc<str>,
+    pub(crate) target: super::summary::Def,
+    pub(crate) target_name: Name,
+}
+
+pub(crate) struct ReferenceRows {
+    pub(crate) edges: Vec<ReferenceEdge>,
+    pub(crate) incomplete: BTreeSet<Arc<str>>,
+}
+
 impl Graph {
+    pub(crate) fn reference_rows(&self) -> ReferenceRows {
+        let mut rows = ReferenceRows {
+            edges: Vec::new(),
+            incomplete: BTreeSet::new(),
+        };
+        for file in self.slots.iter().flatten() {
+            if !file
+                .summary
+                .names
+                .first()
+                .is_some_and(|name| name.family() == Family::Python)
+            {
+                continue;
+            }
+            if file.summary.open {
+                rows.incomplete.insert(Arc::clone(&file.path));
+            }
+            for (owner, target) in &file.edges {
+                let source = file.summary.defs[*owner as usize];
+                let target_file = self.slots[target.file as usize]
+                    .as_ref()
+                    .expect("linked target file");
+                let target = target_file.summary.defs[target.local as usize];
+                rows.edges.push(ReferenceEdge {
+                    path: Arc::clone(&file.path),
+                    source,
+                    source_name: file.summary.interned(source.name).clone(),
+                    target_path: Arc::clone(&target_file.path),
+                    target,
+                    target_name: target_file.summary.interned(target.name).clone(),
+                });
+            }
+        }
+        rows
+    }
     /// Links every summary. Definitions are numbered by file path, so the result is independent
     /// of order.
     pub(crate) fn link(files: Vec<(Arc<str>, Arc<Summary>)>) -> Self {
@@ -540,9 +592,13 @@ impl Graph {
         graph
     }
 
-    pub(crate) fn link_references(files: Vec<(Arc<str>, Arc<Summary>)>) -> Self {
+    pub(crate) fn link_references(
+        contracts: super::contracts::Key,
+        files: Vec<(Arc<str>, Arc<Summary>)>,
+    ) -> Self {
         let mut graph = Self {
             references: true,
+            reference_contracts: contracts,
             ..Self::default()
         };
         graph.update(
@@ -714,6 +770,33 @@ impl Graph {
         // order), a late-bound Python name through its class's subclasses.
         let linked = keys.is_some();
         let mut keys = keys.unwrap_or_default();
+        if self.references && (!linked || !keys.is_empty()) {
+            let mut classes = HashMap::<String, Vec<Name>>::new();
+            for file in self.slots.iter().flatten() {
+                for def in &file.summary.defs {
+                    if def.flags & CLASS != 0 {
+                        let name = file.summary.interned(def.name);
+                        let short = name.text().rsplit('.').next().unwrap_or(name.text());
+                        classes
+                            .entry(short.to_owned())
+                            .or_default()
+                            .push(name.clone());
+                    }
+                }
+            }
+            for values in classes.values_mut() {
+                values.sort_unstable();
+            }
+            for short in self.reference_classes.keys().chain(classes.keys()) {
+                if self.reference_classes.get(short) != classes.get(short) {
+                    keys.insert(Name::new(
+                        Family::Python,
+                        &format!("<global-class>.{short}"),
+                    ));
+                }
+            }
+            self.reference_classes = classes;
+        }
         let mut orphans_changed = false;
         if !linked || !keys.is_empty() {
             let (bases, orphans) = self.python_classes(linked.then_some(&keys));
@@ -1600,12 +1683,145 @@ impl Graph {
     /// module whose member this is. A late-bound name (`pkg.C.m^`, `pkg.C.^` for `cls()`) is the
     /// class's and every workspace subclass's.
     pub(crate) fn link_python(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
+        if self.references
+            && let Some((module, rest)) = name.text().split_once(".<type>.")
+            && let Some((short, attribute)) = rest.split_once('.')
+        {
+            return self
+                .reference_type(module, short, name.family(), hops, followed)
+                .and_then(|class| {
+                    self.reference_method(
+                        &self.reference_order(&class, followed),
+                        attribute,
+                        followed,
+                    )
+                })
+                .unwrap_or_default();
+        }
+        if self.references
+            && let Some((class, rest)) = name.text().split_once(".<field>.")
+            && let Some((field, member)) = rest.split_once('.')
+        {
+            return self.reference_field(
+                &Name::new(name.family(), class),
+                field,
+                member,
+                hops + 1,
+                followed,
+            );
+        }
+        if self.references
+            && !name.text().contains(".<unqualified>.")
+            && let Some((module, rest)) = name.text().split_once(".<bare>.")
+            && let Some((short, fallback)) = rest.split_once("=>")
+        {
+            let declared = Name::new(name.family(), &format!("{module}.<declared>.{short}"));
+            followed.push(declared.clone());
+            if let Some(aliases) = self.aliases.get(&declared) {
+                return self.union(
+                    aliases.iter().map(|(_, target)| target.clone()).collect(),
+                    hops + 1,
+                    followed,
+                );
+            }
+            let imported = Name::new(name.family(), &format!("{module}.<imported>.{short}"));
+            followed.push(imported.clone());
+            if let Some(aliases) = self.aliases.get(&imported) {
+                return self.union(
+                    aliases.iter().map(|(_, target)| target.clone()).collect(),
+                    hops + 1,
+                    followed,
+                );
+            }
+            return if fallback.is_empty() {
+                Link::default()
+            } else {
+                let fallback = Name::new(name.family(), fallback);
+                followed.push(fallback.clone());
+                self.link_python(&fallback, hops + 1, followed)
+            };
+        }
+        if self.references
+            && let Some((class, rest)) = name.text().split_once(".<unqualified>.")
+            && let Some((method, fallback)) = rest.split_once("=>")
+        {
+            let own = Name::new(name.family(), &format!("{class}.{method}"));
+            followed.push(own.clone());
+            if self.by_name.get(&own).is_some_and(|definitions| {
+                definitions.iter().any(|(_, (_, flags))| flags & CLASS == 0)
+            }) {
+                return self.member(&own, hops + 1, followed).unwrap_or_default();
+            }
+            return if fallback.is_empty() {
+                Link::default()
+            } else {
+                let fallback = Name::new(name.family(), fallback);
+                followed.push(fallback.clone());
+                self.link_python(&fallback, hops + 1, followed)
+            };
+        }
+        if self.references
+            && let Some((class, attribute)) = name.text().split_once(".<self>.")
+        {
+            let class = Name::new(name.family(), class);
+            let order = self.reference_order(&class, followed);
+            if let Some(found) = self.reference_method(&order, attribute, followed) {
+                return found;
+            }
+            // Composition can supply a method to a mixin through a sibling base.
+            for child in self.subclasses.get(&class).into_iter().flatten() {
+                followed.push(child.clone());
+                for co_base in self.reference_bases(child, followed) {
+                    if co_base != class {
+                        let order = self.reference_order(&co_base, followed);
+                        if let Some(found) = self.reference_method(&order, attribute, followed) {
+                            return found;
+                        }
+                    }
+                }
+            }
+            return Link::default();
+        }
+        if self.references
+            && let Some((class, attribute)) = name.text().split_once(".<super>.")
+        {
+            let class = Name::new(name.family(), class);
+            let order = self.reference_order(&class, followed);
+            return self
+                .reference_method(&order[1..], attribute, followed)
+                .unwrap_or_default();
+        }
         if name.text().ends_with('^') {
             if self.references {
                 let declared = name.text().trim_end_matches('^').trim_end_matches('.');
                 return self.link_python(&Name::new(name.family(), declared), hops + 1, followed);
             }
             return self.link_late_python(name, hops, followed);
+        }
+        if self.references {
+            if let Some(entries) = self.by_name.get(name) {
+                return Link {
+                    defs: entries
+                        .iter()
+                        .map(|(file, (local, _))| DefRef {
+                            file: *file,
+                            local: *local,
+                        })
+                        .collect(),
+                    open: false,
+                };
+            }
+            if let Some((module, short)) = name.text().rsplit_once('.') {
+                let imported = Name::new(name.family(), &format!("{module}.<imported>.{short}"));
+                followed.push(imported.clone());
+                if let Some(aliases) = self.aliases.get(&imported) {
+                    return self.union(
+                        aliases.iter().map(|(_, target)| target.clone()).collect(),
+                        hops + 1,
+                        followed,
+                    );
+                }
+            }
         }
         if let Some(link) = self.member(name, hops, followed) {
             return link;
@@ -1616,6 +1832,15 @@ impl Graph {
                 let targets = entries
                     .iter()
                     .filter(|(_, target)| target != prefix)
+                    // Declared reexports resolve symbols, not module-valued
+                    // attributes. Direct module imports already name their
+                    // target before linking; following this prefix would add
+                    // a runtime alias relation absent from the reference graph.
+                    .filter(|(_, target)| {
+                        !self.references
+                            || !self.modules.contains_key(target)
+                            || self.by_name.contains_key(target)
+                    })
                     .map(|(_, target)| {
                         Name::new(target.family(), &format!("{}{rest}", target.text()))
                     })
@@ -1626,6 +1851,12 @@ impl Graph {
             }
             if let Some(entries) = self.by_name.get(prefix) {
                 let attribute = &rest[1..];
+                if self.references
+                    && entries.iter().all(|(_, (_, flags))| flags & CLASS != 0)
+                    && let Some((field, member)) = attribute.split_once('.')
+                {
+                    return self.reference_field(prefix, field, member, hops + 1, followed);
+                }
                 if !attribute.contains('.')
                     && entries.iter().all(|(_, (_, flags))| flags & CLASS != 0)
                 {
@@ -1654,6 +1885,74 @@ impl Graph {
         }
         // Outside the workspace: the standard library, installed packages, builtins.
         Link::default()
+    }
+
+    fn reference_field(
+        &self,
+        class: &Name,
+        field: &str,
+        member: &str,
+        hops: u32,
+        followed: &mut Vec<Name>,
+    ) -> Link {
+        let order = self.reference_order(class, followed);
+        let names = super::contracts::get(self.reference_contracts).constructor_names(field);
+        for base in order {
+            if let Some(names) = &names {
+                for parameter in names {
+                    let key = Name::new(
+                        base.family(),
+                        &super::contracts::parameter_key(base.text(), parameter),
+                    );
+                    followed.push(key.clone());
+                    if let Some(aliases) = self.aliases.get(&key) {
+                        if aliases
+                            .iter()
+                            .all(|(_, target)| target.text() == super::contracts::UNANNOTATED)
+                        {
+                            break;
+                        }
+                        return self.reference_type_members(class, aliases, member, hops, followed);
+                    }
+                }
+            }
+            let key = Name::new(base.family(), &format!("{}.{field}", base.text()));
+            followed.push(key.clone());
+            if let Some(aliases) = self.aliases.get(&key) {
+                return self.reference_type_members(class, aliases, member, hops, followed);
+            }
+        }
+        Link::default()
+    }
+
+    fn reference_type_members(
+        &self,
+        caller: &Name,
+        aliases: &[(u32, Name)],
+        member: &str,
+        hops: u32,
+        followed: &mut Vec<Name>,
+    ) -> Link {
+        let mut targets = Vec::new();
+        for (_, target) in aliases {
+            let class = if let Some(annotation) = target.text().strip_prefix("<annotation>.") {
+                caller.parent().and_then(|module| {
+                    self.reference_type(module.text(), annotation, target.family(), hops, followed)
+                })
+            } else {
+                match self.class_of(target, hops + 1, followed) {
+                    Some(Mro::Workspace(class)) => Some(class),
+                    _ => None,
+                }
+            };
+            if let Some(class) = class {
+                targets.push(Name::new(
+                    class.family(),
+                    &format!("{}.{member}", class.text()),
+                ));
+            }
+        }
+        self.union(targets, hops + 1, followed)
     }
 
     /// What `name` itself names: its functions, what instantiating its class runs, what it
@@ -1791,9 +2090,74 @@ impl Graph {
         hops: u32,
         followed: &mut Vec<Name>,
     ) -> Link {
+        if self.references {
+            let order = self.reference_order(class, followed);
+            return self
+                .reference_method(&order, attribute, followed)
+                .unwrap_or_default();
+        }
         self.mro(class, hops, followed)
             .and_then(|order| self.lookup(&order, attribute, hops, followed))
             .unwrap_or(OPEN_LINK)
+    }
+
+    // Declared references use a visited breadth-first hierarchy walk. Alias limits
+    // constrain a single name resolution, independently of inheritance depth.
+    fn reference_bases(&self, class: &Name, followed: &mut Vec<Name>) -> Vec<Name> {
+        followed.push(class.clone());
+        self.supers
+            .get(class)
+            .into_iter()
+            .flatten()
+            .filter(|(_, (_, kind))| *kind == BASE)
+            .filter_map(
+                |(_, (target, _))| match self.class_of(target, 0, followed) {
+                    Some(Mro::Workspace(base)) => Some(base),
+                    _ => None,
+                },
+            )
+            .collect()
+    }
+
+    fn reference_order(&self, class: &Name, followed: &mut Vec<Name>) -> Vec<Name> {
+        let mut order = Vec::new();
+        let mut seen = HashSet::new();
+        let mut pending = VecDeque::from([class.clone()]);
+        while let Some(class) = pending.pop_front() {
+            if !seen.insert(class.clone()) {
+                continue;
+            }
+            let bases = self.reference_bases(&class, followed);
+            order.push(class);
+            pending.extend(bases);
+        }
+        order
+    }
+
+    fn reference_method(
+        &self,
+        order: &[Name],
+        attribute: &str,
+        followed: &mut Vec<Name>,
+    ) -> Option<Link> {
+        for class in order {
+            let member = Name::new(class.family(), &format!("{}.{attribute}", class.text()));
+            followed.push(member.clone());
+            if let Some(defs) = self.by_name.get(&member) {
+                let defs: Vec<_> = defs
+                    .iter()
+                    .filter(|(_, (_, flags))| flags & CLASS == 0)
+                    .map(|(file, (local, _))| DefRef {
+                        file: *file,
+                        local: *local,
+                    })
+                    .collect();
+                if !defs.is_empty() {
+                    return Some(Link { defs, open: false });
+                }
+            }
+        }
+        None
     }
 
     /// The first class of `order` that defines `attribute`, linked; unknown as well where a class
@@ -1861,6 +2225,48 @@ impl Graph {
         Some(order)
     }
 
+    fn reference_fq_class(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Option<Name> {
+        if hops > MAX_HOPS {
+            return None;
+        }
+        followed.push(name.clone());
+        if let Some(entries) = self.by_name.get(name) {
+            return entries
+                .iter()
+                .all(|(_, (_, flags))| flags & CLASS != 0)
+                .then(|| name.clone());
+        }
+        let (module, short) = name.text().rsplit_once('.')?;
+        let key = Name::new(name.family(), &format!("{module}.<imported>.{short}"));
+        followed.push(key.clone());
+        self.aliases
+            .get(&key)?
+            .iter()
+            .find_map(|(_, target)| self.reference_fq_class(target, hops + 1, followed))
+    }
+
+    fn reference_type(
+        &self,
+        module: &str,
+        short: &str,
+        family: Family,
+        hops: u32,
+        followed: &mut Vec<Name>,
+    ) -> Option<Name> {
+        for kind in ["imported", "class"] {
+            let key = Name::new(family, &format!("{module}.<{kind}>.{short}"));
+            followed.push(key.clone());
+            if let Some(aliases) = self.aliases.get(&key)
+                && let Some(class) = aliases
+                    .iter()
+                    .find_map(|(_, target)| self.reference_fq_class(target, hops + 1, followed))
+            {
+                return Some(class);
+            }
+        }
+        None
+    }
+
     /// The class `name` denotes as a base: a workspace class, through aliases and star imports;
     /// another module's (`External`); `None` where it may be any value.
     fn class_of(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Option<Mro> {
@@ -1878,6 +2284,30 @@ impl Graph {
     ) -> Option<Mro> {
         if hops > MAX_HOPS {
             return None;
+        }
+        if self.references
+            && let Some((module, short)) = name.text().split_once(".<base>.")
+        {
+            let family = name.family();
+            for kind in ["imported", "class"] {
+                let key = Name::new(family, &format!("{module}.<{kind}>.{short}"));
+                followed.push(key.clone());
+                if let Some(aliases) = self.aliases.get(&key) {
+                    for (_, target) in aliases {
+                        followed.push(target.clone());
+                        if self.by_name.get(target).is_some_and(|entries| {
+                            entries.iter().all(|(_, (_, flags))| flags & CLASS != 0)
+                        }) {
+                            return Some(Mro::Workspace(target.clone()));
+                        }
+                    }
+                }
+            }
+            followed.push(Name::new(family, &format!("<global-class>.{short}")));
+            return match self.reference_classes.get(short).map(Vec::as_slice) {
+                Some([class]) => Some(Mro::Workspace(class.clone())),
+                _ => None,
+            };
         }
         followed.push(name.clone());
         if let Some(entries) = self.by_name.get(name) {

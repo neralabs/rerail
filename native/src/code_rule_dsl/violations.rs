@@ -387,7 +387,10 @@ pub(super) fn bind(
 ) -> Result<()> {
     let query = match kind {
         ClauseKind::Forbid(query) => Some(emitting(query)),
-        ClauseKind::RequireEach { .. } | ClauseKind::Budget { .. } | ClauseKind::Llm => None,
+        ClauseKind::RequireEach { .. }
+        | ClauseKind::Budget { .. }
+        | ClauseKind::Relational(_)
+        | ClauseKind::Llm => None,
     };
     let mut names = BTreeSet::new();
     // The values counts bind (`as`): text a message alone may interpolate.
@@ -912,7 +915,7 @@ fn fix_target<'t, D: Doc>(
     binding_range(env, name).map(|range| (range, None))
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(crate) struct Witness {
     pub(crate) path: String,
     pub(crate) span: Span,

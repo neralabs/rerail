@@ -19,6 +19,7 @@ mod order;
 #[cfg(test)]
 mod params_tests;
 mod parse;
+mod relational;
 mod resolve;
 mod transform;
 mod utils;
@@ -392,7 +393,15 @@ fn compile_clause(
     let clause = object(value, path)?;
     reject_unknown(
         clause,
-        &["id", "forbid", "require_each", "budget", "llm", "violation"],
+        &[
+            "id",
+            "forbid",
+            "require_each",
+            "budget",
+            "relational",
+            "llm",
+            "violation",
+        ],
         path,
     )?;
     let id = required_str(value, "id", path)?.to_owned();
@@ -532,6 +541,13 @@ fn compile_clause(
                 distinct,
             }
         }
+        "relational" => ClauseKind::Relational(relational::compile(
+            &clause["relational"],
+            &format!("{path}/relational"),
+            capabilities,
+            defines,
+            required_ast,
+        )?),
         "llm" => {
             *requires_llm = true;
             ClauseKind::Llm
@@ -938,7 +954,11 @@ fn compile_query_as(
                 ast.get("languageOptions"),
             ))
             .map_err(|error| invalid(error.to_string()))?;
-            let calls = crate::code_rule_dsl::calls::CallsCollector::new(salt, seed);
+            let calls = crate::code_rule_dsl::calls::CallsCollector::new(
+                salt,
+                seed,
+                capabilities.limits.max_regex_pattern_bytes,
+            );
             let mut bindable = BTreeSet::new();
             let origins = util_origins(&utils, language_name)?;
             for (dialect, language) in &grammars {

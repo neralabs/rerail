@@ -5,6 +5,7 @@
 //! runs per file as the term's seed query; the callee's subtree is never walked at query time.
 
 pub(crate) mod closure;
+pub(crate) mod contracts;
 pub(crate) mod names;
 pub(crate) mod php;
 pub(crate) mod rust;
@@ -70,6 +71,7 @@ pub(crate) struct Mode {
     pub(crate) through: Through,
     pub(crate) references: bool,
     pub(crate) definition: bool,
+    pub(crate) links: contracts::Key,
 }
 
 impl From<Through> for Mode {
@@ -78,6 +80,7 @@ impl From<Through> for Mode {
             through,
             references: false,
             definition: false,
+            links: 0,
         }
     }
 }
@@ -86,8 +89,8 @@ impl Mode {
     fn allows(self, flags: u8) -> bool {
         self.through.allows(flags)
     }
-    fn index(self) -> usize {
-        self.through.index() + 2 * usize::from(self.references)
+    fn index(self) -> (bool, contracts::Key, usize) {
+        (self.references, self.links, self.through.index())
     }
 }
 
@@ -123,14 +126,16 @@ pub(crate) struct CallsCollector {
     /// Collecting for a seed query, which cannot hold `calls` (a shared utility may bring one).
     seed: bool,
     found: RefCell<Vec<FoundTerm>>,
+    max_pattern: usize,
 }
 
 impl CallsCollector {
-    pub(crate) fn new(salt: String, seed: bool) -> Self {
+    pub(crate) fn new(salt: String, seed: bool, max_pattern: usize) -> Self {
         Self {
             salt,
             seed,
             found: RefCell::new(Vec::new()),
+            max_pattern,
         }
     }
 
@@ -162,16 +167,26 @@ impl CallsCollector {
             inner,
             references,
             definition,
+            links,
+            constructor,
         } = split(value, path)?;
         if (references || definition) && Family::of(language) != Family::Python {
             return Err(invalid(format!(
                 "{path}: reference graphs and definition queries require Python"
             )));
         }
+        if (links.is_some() || constructor.is_some()) && !references {
+            return Err(invalid(format!(
+                "{path}/siblingLinks requires graph references"
+            )));
+        }
+        let links =
+            contracts::compile(links.as_ref(), constructor.as_ref(), path, self.max_pattern)?;
         let mode = Mode {
             through,
             references,
             definition,
+            links,
         };
         let digest = |canonical: serde_json::Result<String>| -> Result<Arc<str>> {
             let canonical = canonical.map_err(|error| invalid(error.to_string()))?;
@@ -181,6 +196,7 @@ impl CallsCollector {
             through_name(through),
             references,
             definition,
+            contracts::get(links).canonical.as_ref(),
             &inner,
             &self.salt,
         )))?;
@@ -217,10 +233,19 @@ pub(crate) struct Split {
     pub(crate) inner: Value,
     pub(crate) references: bool,
     pub(crate) definition: bool,
+    pub(crate) links: Option<Value>,
+    pub(crate) constructor: Option<Value>,
 }
 
 /// The keys of a `calls` value that are its own; the rest is its inner rule.
-const OWN_KEYS: [&str; 4] = ["through", "chain", "graph", "at"];
+const OWN_KEYS: [&str; 6] = [
+    "through",
+    "chain",
+    "graph",
+    "at",
+    "siblingLinks",
+    "constructorFields",
+];
 
 pub(crate) fn split(value: &Value, path: &str) -> Result<Split> {
     let calls = object(value, path)?;
@@ -278,6 +303,8 @@ pub(crate) fn split(value: &Value, path: &str) -> Result<Split> {
         inner: Value::Object(inner),
         references,
         definition,
+        links: calls.get("siblingLinks").cloned(),
+        constructor: calls.get("constructorFields").cloned(),
     })
 }
 
@@ -529,9 +556,11 @@ pub(crate) struct Verdict {
 /// A linked call graph and each term's answer over it: what `calls` terms read. Answers are
 /// computed when first read, shared by terms asking the same, and kept across updates until an
 /// edit can change them.
+type OpenRegions = BTreeMap<(bool, contracts::Key, usize), OnceLock<Arc<HashSet<DefRef>>>>;
+
 pub(crate) struct CallsView {
     graph: Graph,
-    references: Option<Graph>,
+    references: BTreeMap<contracts::Key, Graph>,
     keys: Vec<Arc<str>>,
     ids: HashMap<Arc<str>, TermId>,
     questions: Vec<Question>,
@@ -539,7 +568,7 @@ pub(crate) struct CallsView {
     shared: parking_lot::Mutex<HashMap<Question, Arc<Answer>>>,
     /// Per mode, the definitions that may reach something unknown: every term's open answer
     /// but for its unknown seed files.
-    open: [OnceLock<Arc<HashSet<DefRef>>>; 4],
+    open: OpenRegions,
 }
 
 impl Clone for CallsView {
@@ -558,6 +587,9 @@ impl Clone for CallsView {
 }
 
 impl CallsView {
+    pub(crate) fn reference_rows(&self, key: contracts::Key) -> Option<closure::ReferenceRows> {
+        self.references.get(&key).map(Graph::reference_rows)
+    }
     /// Links `summaries` for `terms` with `seeds`; no term is answered yet.
     #[cfg(test)]
     pub(crate) fn build(
@@ -580,14 +612,44 @@ impl CallsView {
         summaries: Vec<(Arc<str>, Arc<Summary>)>,
         seeds: &HashMap<Arc<str>, FileSeeds>,
     ) -> Self {
-        let references = terms.iter().any(|(_, mode)| mode.references).then(|| {
-            Graph::link_references(
-                summaries
-                    .iter()
-                    .map(|(path, summary)| (Arc::clone(path), Arc::new(summary.as_references())))
-                    .collect(),
-            )
-        });
+        let link_keys = terms
+            .iter()
+            .filter(|(_, mode)| mode.references)
+            .map(|(_, mode)| mode.links)
+            .collect::<BTreeSet<_>>();
+        let references = link_keys
+            .iter()
+            .map(|links| {
+                (
+                    *links,
+                    Graph::link_references(
+                        *links,
+                        summaries
+                            .iter()
+                            .map(|(path, summary)| {
+                                (Arc::clone(path), Arc::new(summary.as_references(*links)))
+                            })
+                            .collect(),
+                    ),
+                )
+            })
+            .collect();
+        let mut open = BTreeMap::new();
+        for through in Through::ALL {
+            open.insert(Mode::from(through).index(), OnceLock::new());
+            for links in &link_keys {
+                open.insert(
+                    Mode {
+                        through,
+                        references: true,
+                        definition: false,
+                        links: *links,
+                    }
+                    .index(),
+                    OnceLock::new(),
+                );
+            }
+        }
         let graph = Graph::link(summaries);
         let questions = questions(&graph, &terms, seeds);
         Self {
@@ -602,7 +664,7 @@ impl CallsView {
             answers: vec![OnceLock::new(); questions.len()],
             questions,
             shared: parking_lot::Mutex::default(),
-            open: Default::default(),
+            open,
         }
     }
 
@@ -617,16 +679,23 @@ impl CallsView {
         changes: Vec<(Arc<str>, Option<Arc<Summary>>)>,
         seeds: &HashMap<Arc<str>, FileSeeds>,
     ) -> BTreeSet<Arc<str>> {
-        let reference_update = self.references.as_mut().map(|graph| {
-            graph.update(changes.iter().map(|(path, summary)| {
+        let reference_update = self
+            .references
+            .iter_mut()
+            .map(|(links, graph)| {
                 (
-                    Arc::clone(path),
-                    summary
-                        .as_ref()
-                        .map(|summary| Arc::new(summary.as_references())),
+                    *links,
+                    graph.update(changes.iter().map(|(path, summary)| {
+                        (
+                            Arc::clone(path),
+                            summary
+                                .as_ref()
+                                .map(|summary| Arc::new(summary.as_references(*links))),
+                        )
+                    })),
                 )
-            }))
-        });
+            })
+            .collect::<BTreeMap<_, _>>();
         let update = self.graph.update(changes);
         // Sorted and distinct.
         let changed = &update.slots;
@@ -656,17 +725,9 @@ impl CallsView {
             let Some(old) = self.answers[term].take() else {
                 continue;
             };
-            let graph = if question.through.references {
-                self.references
-                    .as_ref()
-                    .expect("reference mode has a graph")
-            } else {
-                &self.graph
-            };
+            let graph = self.graph_for(question.through);
             let changed_graph = if question.through.references {
-                reference_update
-                    .as_ref()
-                    .expect("reference graph was updated")
+                &reference_update[&question.through.links]
             } else {
                 &update
             };
@@ -687,35 +748,23 @@ impl CallsView {
         }
         self.questions = questions;
         *self.shared.get_mut() = shared;
-        for through in Through::ALL.into_iter().flat_map(|through| {
-            [
-                Mode {
-                    through,
-                    references: false,
-                    definition: false,
+        for key in self.open.keys().copied().collect::<Vec<_>>() {
+            let through = Mode {
+                through: if key.2 == 0 {
+                    Through::Sync
+                } else {
+                    Through::Any
                 },
-                Mode {
-                    through,
-                    references: true,
-                    definition: false,
-                },
-            ]
-        }) {
-            let slot = &mut self.open[through.index()];
-            let Some(old) = slot.take() else {
+                references: key.0,
+                definition: false,
+                links: key.1,
+            };
+            let Some(old) = self.open.get_mut(&key).and_then(OnceLock::take) else {
                 continue;
             };
-            let graph = if through.references {
-                self.references
-                    .as_ref()
-                    .expect("reference graph has cached open region")
-            } else {
-                &self.graph
-            };
+            let graph = self.graph_for(through);
             let changed_graph = if through.references {
-                reference_update
-                    .as_ref()
-                    .expect("reference graph was updated")
+                &reference_update[&through.links]
             } else {
                 &update
             };
@@ -730,7 +779,7 @@ impl CallsView {
             } else {
                 old
             };
-            let _ = slot.set(open);
+            let _ = self.open[&key].set(open);
         }
         let mut files = changed
             .iter()
@@ -743,7 +792,7 @@ impl CallsView {
                     .iter()
                     .filter_map(|def| self.graph.path(def.file()).cloned()),
             );
-            if let Some(graph) = &self.references {
+            for graph in self.references.values() {
                 files.extend(graph.calling(&moved));
             }
         }
@@ -753,20 +802,22 @@ impl CallsView {
     /// Swaps in `path`'s new summary, which reads the same as its linked one but for where its
     /// definitions start.
     pub(crate) fn resummarize(&mut self, path: &str, summary: Arc<Summary>) {
-        if let Some(graph) = &mut self.references {
-            graph.resummarize(path, Arc::new(summary.as_references()));
+        for (links, graph) in &mut self.references {
+            graph.resummarize(path, Arc::new(summary.as_references(*links)));
         }
         self.graph.resummarize(path, summary);
     }
 
-    fn graph(&self, term: TermId) -> &Graph {
-        if self.questions[term as usize].through.references {
-            self.references
-                .as_ref()
-                .expect("reference mode has a graph")
+    fn graph_for(&self, mode: Mode) -> &Graph {
+        if mode.references {
+            &self.references[&mode.links]
         } else {
             &self.graph
         }
+    }
+
+    fn graph(&self, term: TermId) -> &Graph {
+        self.graph_for(self.questions[term as usize].through)
     }
 
     pub(crate) fn term(&self, key: &str) -> Option<TermId> {
@@ -785,18 +836,8 @@ impl CallsView {
     }
 
     fn open(&self, through: Mode) -> &HashSet<DefRef> {
-        self.open[through.index()].get_or_init(|| {
-            Arc::new(open_region(
-                if through.references {
-                    self.references
-                        .as_ref()
-                        .expect("reference mode has a graph")
-                } else {
-                    &self.graph
-                },
-                through.through,
-            ))
-        })
+        self.open[&through.index()]
+            .get_or_init(|| Arc::new(open_region(self.graph_for(through), through.through)))
     }
 
     fn verdict_of(&self, defs: &[DefRef], open: bool, term: TermId) -> Verdict {
@@ -1126,6 +1167,10 @@ pub(crate) struct EvaluationCalls {
 
 thread_local! {
     static EVALUATION: RefCell<Option<EvaluationCalls>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn reference_rows(key: contracts::Key) -> Option<closure::ReferenceRows> {
+    EVALUATION.with_borrow(|slot| slot.as_ref()?.view.reference_rows(key))
 }
 
 /// Installs an evaluation's `EvaluationCalls` until dropped.
