@@ -431,6 +431,13 @@ struct Emitter<'s> {
     sources: &'s [Source],
     /// Every slot's physical columns, in order.
     physical: Vec<String>,
+    /// What every frame of the statement lists, fixed once it is configured (`configure`): the
+    /// physical columns comma-led (`, s0, s1a…`), the three-valued columns after them (`, unk,
+    /// wh0…`) and their values in a true row (`, 0, 0…`), and a frame's declared columns.
+    physical_list: String,
+    extra_list: String,
+    zeros: String,
+    frame_columns: String,
     /// The statements so far, each with its effect.
     out: Emitted,
     next: usize,
@@ -490,11 +497,15 @@ impl<'s> Emitter<'s> {
             .enumerate()
             .flat_map(|(id, slot)| slot.columns(id))
             .collect();
-        Self {
+        let mut emitter = Self {
             slots,
             units: &statement.units,
             sources: &statement.sources,
             physical,
+            physical_list: String::new(),
+            extra_list: String::new(),
+            zeros: String::new(),
+            frame_columns: String::new(),
             out: Emitted::default(),
             next: 0,
             three: false,
@@ -513,7 +524,32 @@ impl<'s> Emitter<'s> {
             spaces: Vec::new(),
             members: Vec::new(),
             next_member: 0,
+        };
+        emitter.fix_columns();
+        emitter
+    }
+
+    /// Fixes the column lists every frame reads (`physical_list`…) for the statement's columns
+    /// and valuedness.
+    fn fix_columns(&mut self) {
+        let mut physical = String::with_capacity(self.physical.iter().map(|c| c.len() + 2).sum());
+        for column in &self.physical {
+            physical.push_str(", ");
+            physical.push_str(column);
         }
+        let mut extra = String::new();
+        let mut zeros = String::new();
+        if self.three {
+            extra.push_str(", unk");
+            for word in 0..self.masks {
+                write!(extra, ", wh{word}").expect("write to a string");
+            }
+            zeros = ", 0".repeat(1 + self.masks);
+        }
+        self.frame_columns = format!("k INTEGER PRIMARY KEY, file, node{physical}{extra}");
+        self.physical_list = physical;
+        self.extra_list = extra;
+        self.zeros = zeros;
     }
 
     /// Emits `sql`, which does `effect`.
@@ -547,19 +583,25 @@ impl<'s> Emitter<'s> {
     }
 
     /// The physical columns, comma-led: `, s0, s1a…`.
-    fn physical_list(&self) -> String {
-        self.physical
-            .iter()
-            .map(|column| format!(", {column}"))
-            .collect()
+    fn physical_list(&self) -> &str {
+        &self.physical_list
+    }
+
+    /// Appends the physical columns of `alias` to `out`, comma-led: `, alias.s0…`.
+    fn push_physical_of(&self, out: &mut String, alias: &str) {
+        for column in &self.physical {
+            out.push_str(", ");
+            out.push_str(alias);
+            out.push('.');
+            out.push_str(column);
+        }
     }
 
     /// The physical columns of `alias`, comma-led: `, alias.s0…`.
     fn physical_of(&self, alias: &str) -> String {
-        self.physical
-            .iter()
-            .map(|column| format!(", {alias}.{column}"))
-            .collect()
+        let mut out = String::with_capacity(self.physical_list.len() * 2);
+        self.push_physical_of(&mut out, alias);
+        out
     }
 
     /// Emits `sql`, an `INSERT` into `table`, empty as `reads` says.
@@ -571,13 +613,16 @@ impl<'s> Emitter<'s> {
     /// as `reads` says.
     fn frame_with(&mut self, prefix: &str, with: &str, select: &str, reads: Reads) -> String {
         let name = self.name(prefix);
-        let columns = format!(
-            "k INTEGER PRIMARY KEY, file, node{}{}",
-            self.physical_list(),
-            self.extra_list()
-        );
+        let columns = std::mem::take(&mut self.frame_columns);
         self.create(&name, &columns);
-        self.insert(&name, format!("{with}INSERT INTO {name} {select}"), reads);
+        self.frame_columns = columns;
+        let mut sql = String::with_capacity(with.len() + name.len() + select.len() + 13);
+        sql.push_str(with);
+        sql.push_str("INSERT INTO ");
+        sql.push_str(&name);
+        sql.push(' ');
+        sql.push_str(select);
+        self.insert(&name, sql, reads);
         name
     }
 
@@ -598,24 +643,50 @@ impl<'s> Emitter<'s> {
 
     /// The frame columns of `alias`.
     fn cols(&self, alias: &str) -> String {
-        format!(
-            "{alias}.k, {alias}.file, {alias}.node{}{}",
-            self.physical_of(alias),
-            self.zeros()
-        )
+        let mut out = String::with_capacity(
+            3 * alias.len() + 16 + self.physical_list.len() * 2 + self.zeros.len(),
+        );
+        out.push_str(alias);
+        out.push_str(".k, ");
+        out.push_str(alias);
+        out.push_str(".file, ");
+        out.push_str(alias);
+        out.push_str(".node");
+        self.push_physical_of(&mut out, alias);
+        out.push_str(&self.zeros);
+        out
+    }
+
+    /// The canonical columns of `alias` (`k`, `file`, `node`), then each physical column of
+    /// `alias` or its expression in `overrides`.
+    fn overridden(&self, alias: &str, overrides: &[(String, String)]) -> String {
+        let mut select = String::with_capacity(
+            3 * alias.len() + 16 + self.physical_list.len() * 2 + self.zeros.len(),
+        );
+        select.push_str(alias);
+        select.push_str(".k, ");
+        select.push_str(alias);
+        select.push_str(".file, ");
+        select.push_str(alias);
+        select.push_str(".node");
+        for column in &self.physical {
+            select.push_str(", ");
+            match overrides.iter().find(|(name, _)| name == column) {
+                Some((_, expr)) => select.push_str(expr),
+                None => {
+                    select.push_str(alias);
+                    select.push('.');
+                    select.push_str(column);
+                }
+            }
+        }
+        select
     }
 
     /// The frame columns of `alias`, with some physical columns replaced by expressions.
     fn select(&self, alias: &str, overrides: &[(String, String)]) -> String {
-        let mut select = format!("{alias}.k, {alias}.file, {alias}.node");
-        for column in &self.physical {
-            match overrides.iter().find(|(name, _)| name == column) {
-                Some((_, expr)) => write!(select, ", {expr}"),
-                None => write!(select, ", {alias}.{column}"),
-            }
-            .expect("write to a string");
-        }
-        select.push_str(&self.zeros());
+        let mut select = self.overridden(alias, overrides);
+        select.push_str(&self.zeros);
         select
     }
 
@@ -633,37 +704,24 @@ impl<'s> Emitter<'s> {
 
     /// A three-valued frame's columns after the slots, comma-led: `, unk, wh0…`; empty in a
     /// two-valued statement.
-    fn extra_list(&self) -> String {
-        if !self.three {
-            return String::new();
-        }
-        let mut list = String::from(", unk");
-        for word in 0..self.masks {
-            write!(list, ", wh{word}").expect("write to a string");
-        }
-        list
+    fn extra_list(&self) -> &str {
+        &self.extra_list
     }
 
     /// The values of `extra_list` for a row an operator emits as true: `, 0, 0…`.
-    fn zeros(&self) -> String {
-        if !self.three {
-            return String::new();
-        }
-        ", 0".repeat(1 + self.masks)
+    fn zeros(&self) -> &str {
+        &self.zeros
     }
 
     /// `select` with the verdict `unk` (an expression) and no withheld capture: the row of a
     /// three-valued operator.
     fn verdict(&self, alias: &str, overrides: &[(String, String)], unk: &str) -> String {
-        let mut select = format!("{alias}.k, {alias}.file, {alias}.node");
-        for column in &self.physical {
-            match overrides.iter().find(|(name, _)| name == column) {
-                Some((_, expr)) => write!(select, ", {expr}"),
-                None => write!(select, ", {alias}.{column}"),
-            }
-            .expect("write to a string");
+        let mut select = self.overridden(alias, overrides);
+        select.push_str(", ");
+        select.push_str(unk);
+        for _ in 0..self.masks {
+            select.push_str(", 0");
         }
-        write!(select, ", {unk}{}", ", 0".repeat(self.masks)).expect("write to a string");
         select
     }
 
@@ -675,6 +733,7 @@ impl<'s> Emitter<'s> {
                 self.three = true;
                 self.masks = *masks;
                 self.open.clone_from(open);
+                self.fix_columns();
                 op
             }
             op => op,
@@ -1271,7 +1330,7 @@ impl<'s> Emitter<'s> {
                 };
                 write!(select, ", {value}").expect("write to a string");
             }
-            select.push_str(&self.zeros());
+            select.push_str(self.zeros());
             let keys = self.frame(
                 "u",
                 &format!("SELECT {select} FROM {demand} d WHERE d.dirty = 1"),

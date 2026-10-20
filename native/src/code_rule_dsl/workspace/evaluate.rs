@@ -4,7 +4,7 @@
 use super::crossfile::{CrossFileConsumer, CrossFileScheduler};
 use super::documents;
 use super::persisted::{candidate_catalog, restore_persisted_file, result_context};
-use super::sql::{SQL_UNSUPPORTED, SQL_UNSUPPORTED_MESSAGE, SqlEngine};
+use super::sql::{Pipeline, SQL_UNSUPPORTED, SQL_UNSUPPORTED_MESSAGE, SqlEngine};
 use super::storage::StorageContext;
 use super::{
     CLAUSE_WORK_BUDGET_EXCEEDED, ClauseId, FILE_CLAUSE_WORK_EXCEEDED, FileState, LocalFailure,
@@ -32,7 +32,7 @@ use crate::code_rule_dsl::model::{
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
 use crate::code_rule_dsl::soundness::{SyntaxErrors, SyntaxReading, UNREAD};
-use crate::code_rule_dsl::sql::{ClauseRun, FileContext, SqlMatch};
+use crate::code_rule_dsl::sql::{ClauseRun, FileContext, SqlMatch, timed};
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use crate::code_rule_dsl::{query, tape, violations};
 use crate::content_store::HashKey;
@@ -338,6 +338,7 @@ fn sql_batch(
     #[cfg(feature = "code-rule-profile")]
     let _worker_profile = profile::WorkerProfile::start();
     let mut started = Vec::with_capacity(batch.len());
+    let mut pipeline = Pipeline::default();
     for job in batch {
         let Job {
             path,
@@ -353,22 +354,20 @@ fn sql_batch(
             let mut pass = FilePass::begin(&mut file, context.code_rules, partial);
             let mut ast = None;
             if pass.ast
-                && let Some(doc) = restore_ast_file(
-                    &mut file,
-                    context.code_rules,
-                    grammars,
-                    closed,
-                    pass.lines.clone(),
-                    &mut pass.metrics,
-                )?
+                && let Some(doc) = timed(&mut pipeline.parse, || {
+                    restore_ast_file(
+                        &mut file,
+                        context.code_rules,
+                        grammars,
+                        closed,
+                        pass.lines.clone(),
+                        &mut pass.metrics,
+                    )
+                })?
             {
-                ast = Some(SqlFile::plan(
-                    &mut file,
-                    context.code_rules,
-                    doc,
-                    &mut pass.metrics,
-                    sql,
-                ));
+                ast = Some(timed(&mut pipeline.plan, || {
+                    SqlFile::plan(&mut file, context.code_rules, doc, &mut pass.metrics, sql)
+                }));
             }
             Ok(Started {
                 budget: budget.suspend(),
@@ -443,7 +442,7 @@ fn sql_batch(
             }
         }
     }
-    started
+    let finished = started
         .into_iter()
         .map(|(path, mut file, consumes, crossfile, start)| {
             let work = start.and_then(|started| {
@@ -458,9 +457,10 @@ fn sql_batch(
                 #[cfg(test)]
                 let consumer_budget = consumer_budget(crossfile.is_some());
                 let _consumer = CrossFileScheduler::install(crossfile);
-                let rendered = ast
-                    .map(|ast| ast.render(&mut file, context.code_rules, &mut pass))
-                    .transpose();
+                let rendered = timed(&mut pipeline.render, || {
+                    ast.map(|ast| ast.render(&mut file, context.code_rules, &mut pass))
+                        .transpose()
+                });
                 #[cfg(test)]
                 restore_consumer_budget(consumer_budget);
                 let restored = rendered?;
@@ -478,7 +478,9 @@ fn sql_batch(
             CrossFileScheduler::retain_scopes(&mut file, consumes);
             (path, file, work)
         })
-        .collect()
+        .collect();
+    sql.add_pipeline(pipeline);
+    finished
 }
 
 /// Evaluates `file`'s candidates. `restored` receives the document its AST clauses were read on,

@@ -19,6 +19,7 @@ use crate::code_rule_dsl::soundness::SyntaxErrors;
 use crate::code_rule_dsl::sql::exec::{Batch, BatchFile, BatchSlot};
 use crate::code_rule_dsl::sql::nodes::{NodeFacts, integer, sub_index};
 use crate::code_rule_dsl::sql::plan::SlotKind;
+use crate::code_rule_dsl::sql::timing::{Started, Timing};
 use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::Doc;
 use ast_grep_core::Node;
@@ -39,6 +40,17 @@ use std::sync::{Arc, LazyLock};
 
 /// The most value columns a fact terminal returns (`v0`…).
 pub(in crate::code_rule_dsl::sql) const FACT_COLUMNS: usize = 16;
+
+thread_local! {
+    /// The time this thread's fact terminals spent evaluating their keys, since it was last taken.
+    static FACT_TIME: std::cell::Cell<Timing> = const { std::cell::Cell::new(Timing::ZERO) };
+}
+
+/// The time this thread's fact terminals spent evaluating their keys since the last call: a
+/// session's statements run their terminals on its thread (`exec::Session::run`).
+pub(in crate::code_rule_dsl::sql) fn take_fact_time() -> Timing {
+    FACT_TIME.take()
+}
 
 /// A verdict that is not false: unknown or true, with the values of the term's columns.
 pub(in crate::code_rule_dsl::sql) struct Verdict {
@@ -569,7 +581,9 @@ unsafe impl VTabCursor for FactCursor<'_> {
         } else if let Value::Text(text) = args.get::<Value>(1)? {
             keys.insert(text);
         }
+        let started = Started::now();
         self.rows = evaluate(&batch, term, keys)?;
+        FACT_TIME.set(FACT_TIME.get().plus(started.elapsed()));
         #[cfg(test)]
         super::calls::UNKNOWN_VERDICTS.set(
             super::calls::UNKNOWN_VERDICTS.get()

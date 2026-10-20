@@ -279,8 +279,9 @@ impl CodeRuleDslWorkspace {
         }
         CrossFileScheduler::register(&mut state, index, Arc::make_mut(&mut resident))?;
         state.code_rules.push(resident);
-        // An engine report before this rule compiled the SQL program without it.
-        state.sql = None;
+        // On SQL, the rule's clauses compile into the workspace's program now, as its native
+        // compile ran before: an apply pays neither.
+        super::sql::register(&mut state, index);
         if let Err(error) = check_closed(&self.closed) {
             *self
                 .scopes

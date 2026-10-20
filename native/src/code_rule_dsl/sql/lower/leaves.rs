@@ -7,8 +7,7 @@
 use super::{Bound, INTERNAL, Lowerer, unsupported};
 use crate::code_rule_dsl::sql::recursion;
 use crate::code_rule_dsl::matcher::{
-    AstMatcher, BindingFilter, BindingTest, Binds, CaptureAnalysis, FormatArgs, ParseTest,
-    Semantic, may_bind,
+    AstMatcher, BindingFilter, BindingTest, Binds, FormatArgs, ParseTest, Semantic,
 };
 use crate::code_rule_dsl::sql::plan::{
     AllTerm, Export, Need, Op, SlotId, SlotKind, Source, Unsupported, Walk,
@@ -207,7 +206,8 @@ impl Lowerer<'_> {
                 None => self.lower(rule, scope, current)?,
             };
             *current = out;
-            items.push(self.search_over(Walk::Slot(slot), sub, may_bind(rule)));
+            let may_bind = self.program.analysis.may_bind(rule);
+            items.push(self.search_over(Walk::Slot(slot), sub, may_bind));
         }
         Ok(())
     }
@@ -226,7 +226,8 @@ impl Lowerer<'_> {
         self.leaks(&sub)?;
         *current = out;
         let sub = self.excluding(scope, sub);
-        items.push(self.search_over(walk, sub, may_bind(rule)));
+        let may_bind = self.program.analysis.may_bind(rule);
+        items.push(self.search_over(walk, sub, may_bind));
         Ok(())
     }
 
@@ -473,7 +474,7 @@ impl Lowerer<'_> {
         // `violation.each` reads a tree's bindings by their host ranges; a tree whose rule binds
         // the enumerated capture would exclude candidates by them.
         if let Some(name) = &self.exclude
-            && CaptureAnalysis::default().binds(rule).contains(name)
+            && self.program.analysis.captures.binds(rule).contains(name)
         {
             return unsupported("a parsed tree's capture enumerated by violation.each");
         }
