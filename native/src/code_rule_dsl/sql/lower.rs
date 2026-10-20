@@ -533,6 +533,38 @@ impl<'p> Lowerer<'p> {
             .need(rule)
     }
 
+    /// Whether `rule`'s per-batch stage (`stage`) holds only nodes of some kinds: its rule has
+    /// root kinds, or it is read as the complement of a stage that has. A stage that is not reads
+    /// every node of the batch.
+    fn stage_bounded(&mut self, rule: &AstMatcher) -> bool {
+        let three = self.three;
+        let complementable = |inner: &AstMatcher| {
+            capture_free(inner) && !(three && reads_values(inner, &mut BTreeSet::new()))
+        };
+        match rule {
+            AstMatcher::Not(inner) if complementable(inner) => self.stage_bounded(inner),
+            AstMatcher::Any(items)
+                if items.iter().any(|item| matches!(item, AstMatcher::Not(_)))
+                    && complementable(rule) =>
+            {
+                // The dual `all[R, not X…]`: bounded where one of its terms `R` has root kinds.
+                items.iter().any(|item| match item {
+                    AstMatcher::Not(inner) => self
+                        .kinds
+                        .get_or_insert_with(|| RootKinds::new(three))
+                        .of(inner)
+                        .is_some(),
+                    _ => false,
+                })
+            }
+            _ => self
+                .kinds
+                .get_or_insert_with(|| RootKinds::new(three))
+                .of(rule)
+                .is_some(),
+        }
+    }
+
     /// The statement of what was lowered: its root kinds, its operator and its units.
     fn finish(self, kinds: Option<Vec<u16>>, op: Op) -> Statement {
         let mut units = self.units;
@@ -1243,10 +1275,14 @@ impl<'p> Lowerer<'p> {
             AstMatcher::NthChild(nth) => {
                 let (of_rule, out) = match &nth.of_rule {
                     None => (None, bound.clone()),
+                    // A capture-free `ofRule` is a per-batch stage where that stage is bounded by
+                    // kinds; one that would read every node of the batch is probed at the input's
+                    // siblings alone, as a capture-reading one is (the ranks read no other node).
                     Some(rule)
                         if capture_free(rule)
                             && self.tree.is_none()
-                            && !recursion::reaches(rule, &self.program.in_progress) =>
+                            && !recursion::reaches(rule, &self.program.in_progress)
+                            && self.stage_bounded(rule) =>
                     {
                         (Some(OfRule::Stage(self.stage(rule)?)), bound.clone())
                     }
