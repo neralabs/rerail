@@ -56,11 +56,12 @@ A golden is a real-code file a rule must agree with upstream on. `packs/<id>/ups
 by rule, task or corpus, path and the file's sha256; its expected answer is upstream's findings on that file in
 `corpus.json`. Rerail does not run the rules over the corpus to find goldens, and never writes `goldens.tsv`. Finding
 them is V1's Gate 6, which stays in nera-rule-validation (NRV): NRV writes every file where a rule and upstream differ
-to its `validation/goldens/<pack>.tsv`, and a tool-pack's `goldens.tsv` is a reviewed list imported from there.
+to its `validation/goldens/<pack>.tsv`, plus the negatives below, and a tool-pack's `goldens.tsv` is a reviewed list
+imported from there.
 
-- **Every rule's goldens are imported, candidates' too,** filed under NRV's id for the rule (the document id at NRV's
-  pinned rerail commit, or `<tool>:<upstream rule>`) and mapped to the rerail document by its upstream rule. A
-  candidate held back by a golden stays held until it agrees there, and the gates see the moment it does.
+- **Every rule's goldens are imported, candidates' too,** filed under the rule's document id, which NRV has used since
+  nera-rule-validation#18 (it finds each document through the upstream rule it ports). A candidate held back by a
+  golden stays held until it agrees there, and the gates see the moment it does.
 - **A candidate that differs throughout takes one line instead.** A candidate that differs on more than 500 of its
   goldens (`SYSTEMATIC_FILES` in `goldens.ts`) is wrong on real code as a whole, not on cases: its goldens would only
   restate that, at the cost of judging thousands of files. It is listed once under `real_code_gaps` in the tool-pack's
@@ -69,9 +70,10 @@ to its `validation/goldens/<pack>.tsv`, and a tool-pack's `goldens.tsv` is a rev
   goldens and remove the entry. Eight typescript-eslint candidates are listed today; the next largest difference
   anywhere is 335 files.
 - **A negative where the tests have none.** `stays-silent` needs a case where upstream reports nothing and the rule
-  agrees. Ruff's upstream test files all have findings, so each Ruff rule without another such case has one golden
-  where upstream reports nothing. NRV's real-code gate writes it (nera-rule-validation#18): the best-ranked negative
-  file the rule agrees on, the one richest in the rule's own constructs. It is imported like the rest.
+  agrees. Most of Ruff's upstream test files have findings, so most Ruff rules take that case from a golden where
+  upstream reports nothing. NRV's real-code gate writes one for each rule with no other such case
+  (nera-rule-validation#18): the best-ranked negative file the rule agrees on, the one richest in the rule's own
+  constructs. A rule that misfires on every negative file gets none and stays held at `stays-silent`.
 
 Run integrity names a golden or `real_code_gaps` entry for a rule the tool-pack does not have, a rule with both, and a
 candidate that differs on more than 500 of its goldens. When the engine could not fully read a golden (a parse
