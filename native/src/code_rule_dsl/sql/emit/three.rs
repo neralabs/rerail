@@ -4,7 +4,7 @@
 
 use super::{Emitter, Reads, holds, in_set, set_inputs, stage_table};
 use crate::code_rule_dsl::sql::nearest;
-use crate::code_rule_dsl::sql::plan::{AllTerm, NodeSet, OfRule, Op, Stop, Walk};
+use crate::code_rule_dsl::sql::plan::{AllTerm, Need, NodeSet, OfRule, Op, Stop, Walk};
 use std::collections::BTreeSet;
 use std::fmt::Write;
 
@@ -43,16 +43,16 @@ impl Emitter<'_> {
                 sub,
                 binds,
                 strict,
-                kinds,
-            } => self.search(*walk, kinds.as_deref(), sub, *binds, *strict, input),
+                need,
+            } => self.search(*walk, need, sub, *binds, *strict, input),
             Op::Count {
                 walk,
                 sub,
                 min,
                 max,
                 bind,
-                kinds,
-            } => self.count_open(*walk, kinds.as_deref(), sub, *min, *max, *bind, input),
+                need,
+            } => self.count_open(*walk, need, sub, *min, *max, *bind, input),
             Op::NthChild {
                 step,
                 offset,
@@ -245,13 +245,13 @@ impl Emitter<'_> {
     fn search(
         &mut self,
         walk: Walk,
-        kinds: Option<&[u16]>,
+        need: &Need,
         sub: &Op,
         binds: bool,
         strict: bool,
         input: &str,
     ) -> String {
-        let candidates = self.candidates(walk, self.narrowed(walk, kinds), input);
+        let candidates = self.candidates(walk, &self.narrowed(walk, need), input);
         // A non-strict search passes over unknown candidates: only a true one ends it.
         self.first_match(&candidates, walk, !strict);
         let matched = self.op(sub, &candidates);
@@ -317,10 +317,14 @@ impl Emitter<'_> {
         self.frame_with("x", &with, &select, reads)
     }
 
-    /// The kinds a three-valued walk's candidates may be narrowed to: none where the walk has an
+    /// What a three-valued walk's candidates may be narrowed to: nothing where the walk has an
     /// unknown stop (`opened`), whose events are placed among every candidate the walk visits.
-    fn narrowed<'k>(&self, walk: Walk, kinds: Option<&'k [u16]>) -> Option<&'k [u16]> {
-        kinds.filter(|_| self.open_stop(walk).is_none())
+    fn narrowed(&self, walk: Walk, need: &Need) -> Need {
+        if self.open_stop(walk).is_some() {
+            Need::default()
+        } else {
+            need.clone()
+        }
     }
 
     /// The stop-rule set of `walk` whose verdict may be unknown, where it has one: a stage's own
@@ -403,14 +407,14 @@ impl Emitter<'_> {
     fn count_open(
         &mut self,
         walk: Walk,
-        kinds: Option<&[u16]>,
+        need: &Need,
         sub: &Op,
         min: usize,
         max: Option<usize>,
         bind: Option<(usize, i64)>,
         input: &str,
     ) -> String {
-        let candidates = self.candidates(walk, self.narrowed(walk, kinds), input);
+        let candidates = self.candidates(walk, &self.narrowed(walk, need), input);
         let matched = self.op(sub, &candidates);
         let opened = self.opened(walk, input, &candidates);
         let open = opened.map_or("0".to_owned(), |opened| {
