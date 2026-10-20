@@ -49,8 +49,8 @@ function recordingOf(rules: Record<string, unknown>): ReturnType<typeof gatesRec
   });
 }
 
-const rule = (expected: [number, number | null, number | null, number | null][], tests: string[] = ["examples/pickle.py"]) => ({
-  facts: { name: "B301", implementation: ["bandit/blacklists/calls.py"], tests, deprecation: null, recommended: null, notOnRealCode: null },
+const rule = (expected: [number, number | null, number | null, number | null][], tests: string[] = ["examples/pickle.py"], recommended: { config: string; options: unknown[] } | null = null) => ({
+  facts: { name: "B301", implementation: ["bandit/blacklists/calls.py"], tests, deprecation: null, recommended, notOnRealCode: null },
   names: { implementation: { sets: [], names: [], regexes: [] }, shared: { sets: [], names: [], regexes: [] } },
   spanParts: { endLine: true, endCol: true },
   cases: [{ fixture: "examples/pickle.py", variant: "default", path: "pickle.py", skipped: null, expected, markup: null, file: "fixtures/pickle.py" }],
@@ -306,4 +306,38 @@ test("the per-rule summary names what moved, and says so plainly when nothing di
   assert.match(uncompared, /^## Port readiness recordings: ⚠️ 1 tool-pack not compared$/mu);
   assert.match(uncompared, /`demo\/bandit`: ⚠️ not compared\n\n.*\(demo-bandit-recording\.json\.gz is not in the cache\)/u);
   assert.doesNotMatch(uncompared, /: first recording|✅/u);
+});
+
+test("the per-rule summary calls a fact changed only when its value changed, whatever order its object keys are in", () => {
+  // Bandit's shell_injection options, in the order its gen_config builds them, which is how the recorder holds a fresh
+  // recording in memory; the nested object stands for an ESLint rule's options. The recording the lock names is read
+  // back from its key-sorted text, so the same options come back with every key sorted.
+  const options = (shell: string[]) => [{ subprocess: ["subprocess.Popen"], shell, no_shell: ["os.execl"] }, { allow: true, ignore: { patterns: ["^_"], names: ["x"] } }];
+  const recorded = (shell: string[]): RecordedPair => ({ recording: recordingOf({ B602: rule([[1, 0, 1, 17]], ["examples/subprocess_shell.py"], { config: "default", options: options(shell) }) }), corpus: null });
+  const fresh = recorded(["os.system"]);
+  const locked: RecordedPair = { recording: gatesRecordingSchema.parse(JSON.parse(recordingText(fresh.recording))), corpus: null };
+  // The two hold the same options in different key orders, so the comparison below is not vacuous.
+  assert.notEqual(JSON.stringify(locked.recording.rules.B602!.facts.recommended), JSON.stringify(fresh.recording.rules.B602!.facts.recommended));
+
+  // Run 39319650531 listed `recommended` as changed for nine Bandit rules whose recordings were identical.
+  assert.deepEqual(diffRecordings("demo", "bandit", locked, fresh).rules, []);
+  assert.deepEqual(diffRecordings("demo", "bandit", fresh, locked).rules, []);
+  assert.match(renderRecordingChanges([diffRecordings("demo", "bandit", locked, fresh)]), /`demo\/bandit`: unchanged/u);
+
+  // A value that did change still does, and a list is a value whose order counts: only object keys are unordered.
+  const changed = [{ rule: "B602", status: "changed", expectedAdded: 0, expectedRemoved: 0, corpusFilesChanged: 0, factsChanged: ["recommended"] }];
+  assert.deepEqual(diffRecordings("demo", "bandit", locked, recorded(["os.system", "os.popen"])).rules, changed);
+  assert.deepEqual(diffRecordings("demo", "bandit", recorded(["os.popen", "os.system"]), recorded(["os.system", "os.popen"])).rules, changed);
+});
+
+test("the per-rule summary calls a fact the older recording lacks changed, instead of failing the record", () => {
+  // The schema requires every fact today, but a field added later would be optional for the recordings made before it,
+  // so a re-record would compare a fresh recording that has it with a locked one that does not.
+  const fresh: RecordedPair = { recording: recordingOf({ B301: rule([[1, 0, 1, 17]]) }), corpus: null };
+  const older = gatesRecordingSchema.parse(JSON.parse(recordingText(fresh.recording)));
+  delete (older.rules.B301!.facts as Record<string, unknown>).notOnRealCode;
+
+  assert.deepEqual(diffRecordings("demo", "bandit", { recording: older, corpus: null }, fresh).rules, [
+    { rule: "B301", status: "changed", expectedAdded: 0, expectedRemoved: 0, corpusFilesChanged: 0, factsChanged: ["notOnRealCode"] },
+  ]);
 });

@@ -11,6 +11,8 @@ import {
   inSemanticErrorArm,
   parseShowSettings,
   raiseSites,
+  ruffVersionMatches,
+  runtimeVersionCheck,
   settingsKey,
   testModuleStrings,
   useTarget,
@@ -299,6 +301,52 @@ test("instability is null only for a stable rule", () => {
   assert.equal(instability({ Stable: { since: "v0.0.92" } }), null);
   assert.equal(instability({ Preview: { since: "0.5.0" } }), "preview since 0.5.0 (ruff rule --all)");
   assert.equal(instability({ Removed: { since: "0.8.0" } }), "removed since 0.8.0 (ruff rule --all)");
+});
+
+test("ruffVersionMatches accepts the pinned version alone or with the pinned commit, and nothing else", () => {
+  const commit = "0be08a206f9c3180afd3e93bcc792ed5cb1f4db1";
+  const other = { ok: false, form: "other" };
+  // CI's Linux wheel of 0.16.9 prints the version alone; the macOS wheel prints the commit it was built from.
+  assert.deepEqual(ruffVersionMatches("ruff 0.16.9", "0.16.9", commit), { ok: true, form: "bare" });
+  assert.deepEqual(ruffVersionMatches("ruff 0.16.9 (0be08a206 2026-09-24)", "0.16.9", commit), { ok: true, form: "with-commit" });
+  // A printed commit that is not the pinned one, or a version that only starts with the pinned one, still fails.
+  assert.deepEqual(ruffVersionMatches("ruff 0.16.9 (1234abcde 2026-09-24)", "0.16.9", commit), other);
+  // A longer hash whose first 9 characters are the pinned commit's names another commit (the pin goes on 0be08a206f).
+  assert.deepEqual(ruffVersionMatches("ruff 0.16.9 (0be08a2069 2026-09-24)", "0.16.9", commit), other);
+  assert.deepEqual(ruffVersionMatches("ruff 0.16.8", "0.16.9", commit), other);
+  assert.deepEqual(ruffVersionMatches("ruff 0.16.8 (0be08a206 2026-09-24)", "0.16.9", commit), other);
+  assert.deepEqual(ruffVersionMatches("ruff 0.16.90", "0.16.9", commit), other);
+  assert.deepEqual(ruffVersionMatches("ruff 0.16.90 (0be08a206 2026-09-24)", "0.16.9", commit), other);
+  // Ruff's form for a build past the release tag.
+  assert.deepEqual(ruffVersionMatches("ruff 0.16.9+3 (0be08a206 2026-09-24)", "0.16.9", commit), other);
+  assert.deepEqual(ruffVersionMatches("", "0.16.9", commit), other);
+});
+
+test("runtimeVersionCheck passes on the pinned Ruff and the pinned Python, and its detail names the form printed", () => {
+  const upstream = { version: "0.16.9", commit: "0be08a206f9c3180afd3e93bcc792ed5cb1f4db1" };
+  const python = { version: "Python 3.13.12", pinned: "3.13.12" };
+  const pins = "the pack pins 0.16.9 at 0be08a206 on Python 3.13.12";
+  assert.deepEqual(runtimeVersionCheck("ruff 0.16.9", python, upstream), {
+    id: "runtime-version",
+    ok: true,
+    detail: `the installed wheel reports \`ruff 0.16.9\` (the version alone, no build commit printed) on Python 3.13.12; ${pins}`,
+  });
+  assert.deepEqual(runtimeVersionCheck("ruff 0.16.9 (0be08a206 2026-09-24)", python, upstream), {
+    id: "runtime-version",
+    ok: true,
+    detail: `the installed wheel reports \`ruff 0.16.9 (0be08a206 2026-09-24)\` (the version and the pinned commit) on Python 3.13.12; ${pins}`,
+  });
+  // The pinned Ruff on another interpreter than .python-version pins still fails.
+  assert.deepEqual(runtimeVersionCheck("ruff 0.16.9", { version: "Python 3.13.11", pinned: "3.13.12" }, upstream), {
+    id: "runtime-version",
+    ok: false,
+    detail: `the installed wheel reports \`ruff 0.16.9\` (the version alone, no build commit printed) on Python 3.13.11; ${pins}`,
+  });
+  assert.deepEqual(runtimeVersionCheck("ruff 0.16.8", python, upstream), {
+    id: "runtime-version",
+    ok: false,
+    detail: `the installed wheel reports \`ruff 0.16.8\` (neither the pinned version alone nor with the pinned commit) on Python 3.13.12; ${pins}`,
+  });
 });
 
 test("codePointPosition counts code points, breaks lines as Ruff does, and skips a byte-order mark", () => {

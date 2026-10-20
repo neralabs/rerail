@@ -8,10 +8,10 @@ import type { CorpusFile } from "../../../port-readiness/corpus.js";
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
 import { notebookCodeCells } from "../../../port-readiness/recorded-adapter.js";
 import { diagnosticSpan, RUFF_SPAN_PARTS, ruffSpan } from "../../../port-readiness/span-units/ruff.js";
-import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../port-readiness/types.js";
+import type { Check, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPythonToolkit } from "../languages/python.js";
 import { closingIndex, lexRust, rustLiterals, rustRegex, withoutTestItems, type RustLiterals, type RustToken } from "../languages/rust.js";
-import { checkoutUpstream, filesUnder, uvRuntime } from "../runtimes.js";
+import { checkoutUpstream, filesUnder, uvRuntime, type PythonRuntime } from "../runtimes.js";
 import { enabledSelections, kebabCase, ruffTestLints, type RuleVariants } from "./ruff-tests.js";
 
 /**
@@ -105,6 +105,39 @@ export function settingsKey(option: string): string {
 export function instability(status: Record<string, { since: string }>): string | null {
   const [kind, detail] = Object.entries(status)[0] ?? ["Unknown", { since: "?" }];
   return kind === "Stable" ? null : `${kind.toLowerCase()} since ${detail.since} (ruff rule --all)`;
+}
+
+/**
+ * Which form of the pinned release `ruff version` printed: `ruff <version>` alone ("bare", as CI's Linux wheel of 0.16.9
+ * prints it), or `ruff <version> (<first 9 of the pinned commit> <date>)` ("with-commit", as the macOS wheel prints it).
+ * Anything else, another version or another printed commit among them, is "other". The check accepts a wheel that
+ * leaves its commit out, because runtime-matches-commit is what ties the release tag to the pinned commit; a commit the
+ * wheel does print must be that one.
+ */
+export function ruffVersionMatches(output: string, version: string, commit: string): { ok: boolean; form: "bare" | "with-commit" | "other" } {
+  const release = `ruff ${version}`;
+  if (output === release) return { ok: true, form: "bare" };
+  if (output.startsWith(`${release} (${commit.slice(0, 9)} `)) return { ok: true, form: "with-commit" };
+  return { ok: false, form: "other" };
+}
+
+const VERSION_FORMS = {
+  bare: "the version alone, no build commit printed",
+  "with-commit": "the version and the pinned commit",
+  other: "neither the pinned version alone nor with the pinned commit",
+} as const;
+
+/**
+ * The runtime-version pack check: `ruff version` printed the pinned release (see ruffVersionMatches) and the
+ * interpreter is the one .python-version pins. The detail names which form of the release the wheel printed.
+ */
+export function runtimeVersionCheck(output: string, python: Pick<PythonRuntime, "version" | "pinned">, upstream: Pick<PackManifest["upstream"], "version" | "commit">): Check {
+  const printed = ruffVersionMatches(output, upstream.version, upstream.commit);
+  return {
+    id: "runtime-version",
+    ok: printed.ok && python.version === `Python ${python.pinned}`,
+    detail: `the installed wheel reports \`${output}\` (${VERSION_FORMS[printed.form]}) on ${python.version}; the pack pins ${upstream.version} at ${upstream.commit.slice(0, 9)} on Python ${python.pinned}`,
+  };
 }
 
 function compareSpans(a: Span, b: Span): number {
@@ -435,11 +468,7 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
       },
       packChecks: [
         ...upstream.checks,
-        {
-          id: "runtime-version",
-          ok: version.startsWith(`ruff ${pack.upstream.version} (${pack.upstream.commit.slice(0, 9)} `) && runtime.version === `Python ${runtime.pinned}`,
-          detail: `the installed wheel reports \`${version}\` on ${runtime.version}; the pack pins ${pack.upstream.version} at ${pack.upstream.commit.slice(0, 9)} on Python ${runtime.pinned}`,
-        },
+        runtimeVersionCheck(version, runtime, pack.upstream),
         {
           id: "declared-license",
           ok: declaredLicense === pack.upstream.license && wheelLicense === pack.upstream.license,

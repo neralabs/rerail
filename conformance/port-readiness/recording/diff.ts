@@ -8,6 +8,7 @@
  * changed. A rule that is absent here did not move, and a change in it is a reason to look at the rule.
  */
 
+import { canonicalJson } from "../checks/compact.js";
 import type { GatesCorpusRecording, GatesRecording, RecordedSpan } from "./schema.js";
 
 /** How one upstream rule's recorded answers moved. */
@@ -20,7 +21,12 @@ export interface RuleChange {
   expectedRemoved: number;
   /** Corpus files whose findings for the rule differ, in either direction. */
   corpusFilesChanged: number;
-  /** The fields of `rule().facts` that differ, sorted (`deprecation`, `recommended`, `tests`). */
+  /**
+   * The fields of `rule().facts` whose values differ, sorted (`deprecation`, `recommended`, `tests`). Objects are
+   * compared by value, whatever order their keys are in: a locked recording is read back from its key-sorted text, and
+   * a fresh one keeps the order upstream built its options in (Bandit's gen_config dicts are not sorted). Lists keep
+   * their order, and a field the locked recording lacks counts as changed.
+   */
   factsChanged: string[];
 }
 
@@ -43,6 +49,12 @@ export interface RecordingChanges {
 }
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * A fact as text that two equal values share whatever order their object keys are in. A fact the recording lacks, as
+ * one made before the field existed would, is text no value has, so it reads as changed instead of failing the record.
+ */
+const factText = (value: unknown): string => (value === undefined ? "\u0000absent" : canonicalJson(value));
 
 /** A case's findings as a multiset of positions, so two cases are compared by what upstream reported, not by order. */
 function spanCounts(spans: RecordedSpan[]): Map<string, number> {
@@ -144,7 +156,7 @@ export function diffRecordings(pack: string, tool: string, before: RecordedPair 
     const nowCorpus = corpusFindings(after.corpus, rule, shared);
     const corpusFilesChanged = [...new Set([...wasCorpus.keys(), ...nowCorpus.keys()])].filter((place) => wasCorpus.get(place) !== nowCorpus.get(place)).length;
     const factsChanged = (Object.keys(now.facts) as (keyof typeof now.facts)[])
-      .filter((field) => JSON.stringify(was.facts[field]) !== JSON.stringify(now.facts[field]))
+      .filter((field) => factText(was.facts[field]) !== factText(now.facts[field]))
       .map(String)
       .sort(byText);
     if (expected.added + expected.removed + corpusFilesChanged + factsChanged.length === 0) continue;

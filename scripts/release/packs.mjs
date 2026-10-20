@@ -121,6 +121,82 @@ export function planPacks(packs, tags) {
   return { publish, first };
 }
 
+/** The dist-tag that holds a pack at a version put back on purpose, so a sweep leaves it there. */
+export const HOLD_TAG = "held";
+
+/**
+ * What one promotion run was asked for. With no `id`, every pack at its package.json version: the sweep. With one,
+ * that pack alone, at `version` or else its package.json one. package.json holds the newest released version, so
+ * naming another puts an older one back on purpose: a `hold`. Throws on an unknown id, or a version without an id.
+ */
+export function promotionRequest(packs, id, version) {
+  if (id === undefined) {
+    if (version !== undefined) throw new Error(`version ${version} needs the pack it is for`);
+    return { packs, named: false };
+  }
+  const pack = packs.find((candidate) => candidate.id === id);
+  if (pack === undefined) throw new Error(`${id} is not a pack under packs/`);
+  const wanted = version ?? pack.version;
+  return { packs: [{ ...pack, version: wanted, hold: wanted !== pack.version }], named: true };
+}
+
+/**
+ * Which packs a promotion moves to `latest`, given the release tags and `distTagsOf(name)`: the pack's `latest` and
+ * `held` dist-tags (absent when npm has none), or null when npm could not be read. A pack is promoted when its
+ * version is released (its tag exists) and is not `latest` already; one without its tag is `unreleased`. A sweep
+ * leaves out a pack held at its `latest` (put back on purpose); naming that pack promotes it. A promotion that is
+ * not itself a hold releases any hold the pack has (`release`).
+ */
+export function planPromotions(packs, tags, distTagsOf, { named = false } = {}) {
+  const existing = new Set(tags);
+  const plan = { promote: [], unreleased: [], held: [], unreadable: [] };
+  for (const pack of packs) {
+    if (!existing.has(releaseTag(pack.name, pack.version))) {
+      plan.unreleased.push(pack);
+      continue;
+    }
+    const distTags = distTagsOf(pack.name);
+    if (distTags === null) {
+      plan.unreadable.push(pack);
+      continue;
+    }
+    const latest = distTags.latest ?? null;
+    const held = distTags[HOLD_TAG] ?? null;
+    const hold = pack.hold === true;
+    if (!named && held !== null && held === latest) {
+      plan.held.push({ ...pack, latest });
+      continue;
+    }
+    if (latest === pack.version && held === (hold ? pack.version : null)) continue;
+    plan.promote.push({ ...pack, latest, hold, release: !hold && held !== null });
+  }
+  return plan;
+}
+
+/**
+ * Points `latest` at each `{ name, version }` in `promotions`, refusing a version this repository never released (no
+ * tag); a `hold` also sets the `held` dist-tag there, and a `release` removes it. One failure does not stop the
+ * others; returns each failure, so the run reports them all and can be run again. `steps.promote(name, version)`,
+ * `steps.hold(name, version)` and `steps.release(name)` throw on failure.
+ */
+export function promotePacks(promotions, tags, steps) {
+  const existing = new Set(tags);
+  const failures = [];
+  for (const { name, version, hold = false, release = false } of promotions) {
+    const tag = releaseTag(name, version);
+    try {
+      if (!existing.has(tag)) throw new Error("it was never released from this repository (no such git tag)");
+      steps.promote(name, version);
+      if (hold) steps.hold(name, version);
+      if (release) steps.release(name);
+      steps.log(`promoted ${tag} to latest${hold ? `, held there (${HOLD_TAG})` : ""}${release ? `, ${HOLD_TAG} released` : ""}`);
+    } catch (error) {
+      failures.push(`${tag}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return failures;
+}
+
 /**
  * `package-lock.json` with each pack workspace's recorded version set to its package.json's, and nothing else
  * changed: `changeset version` bumps the packs but leaves the lockfile behind.

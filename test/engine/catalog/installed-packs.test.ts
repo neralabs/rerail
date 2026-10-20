@@ -54,7 +54,7 @@ function editJson(directory: string, file: string, edit: (value: Json) => Json):
 
 const VALID = fixturesPath("packs", "valid");
 const COMPLEXITY = repositoryPath("packs", "complexity");
-/** The complexity pack's own version: Version packs bumps it, and the copies installed here carry it. */
+/** This repository's complexity pack's version, which each pack release bumps. */
 const COMPLEXITY_VERSION = (JSON.parse(readFileSync(join(COMPLEXITY, "package.json"), "utf8")) as { version: string }).version;
 const PYTHON_RULE = "complexity-cyclomatic-python";
 
