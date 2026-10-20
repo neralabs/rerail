@@ -40,6 +40,18 @@
 //! and the argument above holds with a read graph that has no edge. Every reference demands its
 //! keys and reads their answers, so the body is lowered and emitted once however many references
 //! reach it, and equal keys share an answer, as the matcher's per-file utility memo shares it.
+//!
+//! # Following
+//!
+//! The matcher's verdict at a node also reads the binding sub-rules it is matching
+//! (`binding::FOLLOWING`): a binding's site, value or annotation sub-rule fails where it comes
+//! back to a `(node, rule)` in progress, and the memo keys verdicts by them. A cycle one of whose
+//! members holds such a sub-rule reaching the cycle again (`Cycle::following`) has its units keyed
+//! by that context as well, as a set (`emit::following`), so a key is again everything its verdict
+//! reads and the argument above holds over those keys. Only the cycle's own sub-rules can come
+//! back within it: a pair pushed outside the cycle names a rule no member reaches, so a reference
+//! entering the cycle passes the empty context, and a stage the cycle's members read must not
+//! reach back into it (`Lowerer::stage` refuses one).
 
 use super::plan::{SlotKind, Unsupported};
 use super::terminals::pattern_vars;
