@@ -787,20 +787,39 @@ impl<'p> Lowerer<'p> {
             .filter(|(name, _)| params.is_none_or(|params| params.contains(name)))
             .map(|(name, kind)| self.slot(own, name, *kind))
             .collect();
-        // A utility sharing its caller's scope also reads captures it does not hold (a
-        // `compare` against the caller's binding): its answer depends on them as well, so they
-        // are its key too, every slot the scope has of them (as a terminal reads them,
-        // `read_slots`), as the matcher's memo keys its verdicts by every capture it may read.
-        // Mutant 18: the key drops the caller's captures the unit reads.
-        if params.is_none() && !super::mutant(18) {
+        // A unit also reads captures it does not hold (a `compare` against the caller's binding,
+        // or against a parameter the body only reads): its answer depends on them as well, so
+        // they are its key too, as the matcher's memo keys its verdicts by every capture it may
+        // read. Sharing its caller's scope, every slot the scope has of them (as a terminal reads
+        // them, `read_slots`). A call's frame holds a parameter in every kind its caller's
+        // capture has (`unify_capture`), and the unit's frame is every call's: a parameter it
+        // reads and never holds is keyed in every kind.
+        // Mutant 18: the key drops the caller's captures the unit reads. Mutant 21: a call's
+        // unit drops the parameters it reads and never holds.
+        if !super::mutant(if params.is_none() { 18 } else { 21 }) {
             let held_names: BTreeSet<&str> = held.iter().map(|(name, _)| name.as_str()).collect();
             let read: BTreeSet<String> = util
                 .with_target(|rule| self.program.analysis.captures.mentions(rule))
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|name| !held_names.contains(name.as_str()))
+                .filter(|name| params.is_none_or(|params| params.contains(name)))
                 .collect();
-            key.extend(self.read_slots(own, &read).0);
+            match params {
+                None => key.extend(self.read_slots(own, &read).0),
+                Some(_) => {
+                    for name in &read {
+                        for kind in [
+                            SlotKind::Node,
+                            SlotKind::List,
+                            SlotKind::Count,
+                            SlotKind::Text,
+                        ] {
+                            key.push(self.slot(own, name, kind));
+                        }
+                    }
+                }
+            }
         }
         if exclude.is_some()
             && let Some(root) = self.root
@@ -1543,13 +1562,23 @@ impl<'p> Lowerer<'p> {
                                 self.slot(callee, &name, kind)
                             })
                             .collect();
+                        // It returns only what its body may hold: a parameter it only reads
+                        // leaves the frame as the caller passed it.
+                        let returned: Bound = self
+                            .program
+                            .recursion
+                            .scope_kinds(&call.util)
+                            .iter()
+                            .filter(|(name, _)| params.contains(name))
+                            .filter_map(|(name, kind)| self.existing(callee, name, *kind))
+                            .collect();
                         (
                             Op::Recur {
                                 unit,
                                 slots: Some(slots),
                                 context: self.context(&cycle),
                             },
-                            None,
+                            Some(returned),
                         )
                     }
                     None => {
