@@ -323,14 +323,21 @@ pub(super) fn clause(statement: &Statement) -> Emitted {
 }
 
 /// A clause's statements under `violation.each` (the enumerated capture's scope-0 node slot is
-/// `name`), for one round of the enumeration: the statement's matches, the fresh ranges they bind
-/// recorded per root (`EACH` `x`) and the roots that bound one kept for the next round (`a`). The
-/// last selects what the round reports, as `clause`'s does: in round 0 every match, in a later
-/// round the matches that bound a fresh range.
-pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Emitted {
+/// `node`, its text slot, where a parsed tree exports it, `exported`), for one round of the
+/// enumeration: the statement's matches, the fresh ranges they bind recorded per root (`EACH`
+/// `x`) and the roots that bound one kept for the next round (`a`). A match's range is its
+/// node's, else its exported capture's host range (`each::binding_range`). The last selects what
+/// the round reports, as `clause`'s does: in round 0 every match, in a later round the matches
+/// that bound a fresh range.
+pub(super) fn clause_each(
+    statement: &Statement,
+    node: Option<SlotId>,
+    exported: Option<SlotId>,
+) -> Emitted {
     let mut emitter = Emitter::new(statement);
     let mut emitted = clause_slots(statement);
-    emitted.extend(name);
+    emitted.extend(node);
+    emitted.extend(exported);
     let out = emitter.statement(statement, emitted);
     let columns: Vec<String> = statement
         .slots
@@ -346,13 +353,8 @@ pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Emitte
             .collect()
     };
     let bare: String = columns.iter().map(|column| format!(", {column}")).collect();
-    let (range, join) = match name {
-        Some(slot) => (
-            "x.start, x.\"end\"".to_owned(),
-            format!(" LEFT JOIN node x ON x.file = o.file AND x.id = o.s{slot}"),
-        ),
-        None => ("NULL, NULL".to_owned(), String::new()),
-    };
+    let (join, start, end) = each::host_range("o", "x", node, exported);
+    let range = format!("{start}, {end}");
     // A root whose verdict is unknown does not match (`run.rs` `enumerate`): it is neither
     // reported nor enumerated further.
     let known = if emitter.three {
@@ -1273,16 +1275,7 @@ impl<'s> Emitter<'s> {
                 ),
                 Reads::join(&[input]),
             ),
-            Op::Excluded { name, root } => self.frame(
-                "x",
-                &format!(
-                    "SELECT {} FROM {input} f LEFT JOIN node b ON b.file = f.file AND b.id = f.s{name} \
-                     LEFT JOIN {EACH}x e ON e.file = f.file AND e.root = f.s{root} AND e.start = b.start AND e.\"end\" = b.\"end\" \
-                     WHERE e.root IS NULL",
-                    self.cols("f")
-                ),
-                Reads::anti(input, &[&format!("{EACH}x")]),
-            ),
+            Op::Excluded { binding, root } => self.excluded(binding, *root, input),
             Op::NthCommit { nth, commit } => {
                 let positioned = self.op(nth, input, &Live::default());
                 let held = self.live_before(commit, live);

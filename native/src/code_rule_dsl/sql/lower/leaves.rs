@@ -28,6 +28,13 @@ pub(super) struct TreeContext {
     scope: usize,
 }
 
+impl TreeContext {
+    /// The slots holding the tree's number and its host's file.
+    pub(super) fn host_file(&self) -> (SlotId, SlotId) {
+        (self.tree, self.host.0)
+    }
+}
+
 /// The captures a binding filter reads ranges of (`bindings.within`).
 fn filter_reads(filter: &BindingFilter, out: &mut BTreeSet<String>) {
     if let Some(within) = filter
@@ -471,12 +478,18 @@ impl Lowerer<'_> {
         host: Option<(SlotId, SlotId)>,
         tree: SlotId,
     ) -> Result<(Op, usize), Unsupported> {
-        // `violation.each` reads a tree's bindings by their host ranges; a tree whose rule binds
-        // the enumerated capture would exclude candidates by them.
+        // `violation.each` reads a tree's bindings by their host ranges (`Lowerer::excluding`):
+        // `parse`'s host file is the host row's. A `formatArgs` template's tree keeps no host
+        // file, and a tree inside another's maps its ranges through both.
         if let Some(name) = &self.exclude
             && self.program.analysis.captures.binds(rule).contains(name)
         {
-            return unsupported("a parsed tree's capture enumerated by violation.each");
+            if host.is_none() {
+                return unsupported("a formatArgs template's capture enumerated by violation.each");
+            }
+            if self.tree.is_some() {
+                return unsupported("a nested tree's capture enumerated by violation.each");
+            }
         }
         self.scopes += 1;
         let scope = self.scopes;
@@ -494,8 +507,7 @@ impl Lowerer<'_> {
             scope,
         };
         let saved = self.tree.replace(context);
-        let lowered =
-            self.with_exclude(None, |lowerer| lowerer.lower(rule, scope, &BTreeSet::new()));
+        let lowered = self.lower(rule, scope, &BTreeSet::new());
         self.tree = saved;
         Ok((lowered?.0, scope))
     }
@@ -526,7 +538,7 @@ impl Lowerer<'_> {
     }
 
     /// The program's `Exported` terminal, one for every export.
-    fn exported_term(&mut self) -> usize {
+    pub(super) fn exported_term(&mut self) -> usize {
         let key = (usize::MAX, Vec::new());
         if let Some(&term) = self.program.leaves.get(&key) {
             return term;

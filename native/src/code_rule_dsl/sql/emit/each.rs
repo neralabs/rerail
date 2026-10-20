@@ -55,6 +55,12 @@
 //! - **Rounds** (`run.rs` `enumerate`, `match_rule`): a root whose verdict is unknown does not
 //!   match, so it is not visited and its enumeration ends. `clause_each` reads the matches with
 //!   `unk = 0` only: an unknown root is neither reported nor kept for the next round.
+//! - **Parsed trees** (`parse.rs` `match_tree` enters `HostRanges`; `each::binding_range`): a
+//!   binding is a range of the host file. A tree's node is excluded by its host range, which the
+//!   `Exported` terminal gives, for the root of the host file the parse kept (`Excluding::Tree`);
+//!   a capture a parsed tree exported (or `calls.chain` binds) is excluded, and recorded by the
+//!   rounds, by the host range its text slot holds, after a node of the same name
+//!   (`Excluding::Host`). A `host` rule excludes nothing (`each::suspended`).
 //!
 //! Why every sub-rule must read the exclusion in a three-valued clause, where a two-valued one
 //! may read some without it: a row's bindings only grow (an unknown verdict keeps its input's),
@@ -66,7 +72,7 @@
 //! reads unknown (or the reverse) would change the search.
 
 use super::{EACH, Emitter, Live, Reads};
-use crate::code_rule_dsl::sql::plan::Op;
+use crate::code_rule_dsl::sql::plan::{Excluding, Op, SlotId};
 use std::rc::Rc;
 
 impl Emitter<'_> {
@@ -79,34 +85,103 @@ impl Emitter<'_> {
                 let roots = self.op(root, input, &held);
                 self.op(op, &roots, live)
             }
-            [op, Op::Excluded { name, root }] => self.excluding_open(op, *name, *root, input, live),
+            [op, Op::Excluded { binding, root }] => {
+                self.excluding_open(op, binding, *root, input, live)
+            }
             _ => unreachable!("a three-valued clause lowers `all` as AllOpen"),
         }
     }
 
-    /// `op`'s verdicts with the true rows that bind the enumerated capture (`name`) to a range
+    /// `op`'s verdicts with the true rows that bind the enumerated capture (`binding`) to a range
     /// reported for their root dropped: an excluded true candidate is passed over, an unknown one
     /// stays unknown.
     fn excluding_open(
         &mut self,
         op: &Op,
-        name: usize,
-        root: usize,
+        binding: &Excluding,
+        root: SlotId,
         input: &str,
         live: &Live,
     ) -> String {
         let mut held = (**live).clone();
-        held.extend([name, root]);
+        held.extend(binding.slots());
+        held.insert(root);
         let out = self.op(op, input, &Rc::new(held));
-        self.frame(
+        let (with, joins) = self.excluded_joins(binding, root, &out);
+        self.frame_with(
             "x",
+            &with,
             &format!(
-                "SELECT {} FROM {out} f LEFT JOIN node b ON b.file = f.file AND b.id = f.s{name} \
-                 LEFT JOIN {EACH}x e ON e.file = f.file AND e.root = f.s{root} AND e.start = b.start AND e.\"end\" = b.\"end\" \
-                 WHERE f.unk = 1 OR e.root IS NULL",
+                "SELECT {} FROM {out} f{joins} WHERE f.unk = 1 OR e.root IS NULL",
                 self.verdict("f", &[], "f.unk")
             ),
             Reads::anti(&out, &[&format!("{EACH}x")]),
+        )
+    }
+
+    /// `Op::Excluded` in a two-valued statement: the rows of `input` that do not bind the
+    /// enumerated capture to a range reported for their root.
+    pub(super) fn excluded(&mut self, binding: &Excluding, root: SlotId, input: &str) -> String {
+        let (with, joins) = self.excluded_joins(binding, root, input);
+        self.frame_with(
+            "x",
+            &with,
+            &format!(
+                "SELECT {} FROM {input} f{joins} WHERE e.root IS NULL",
+                self.cols("f")
+            ),
+            Reads::anti(input, &[&format!("{EACH}x")]),
+        )
+    }
+
+    /// The CTEs and joins that find, for each row `f` of `input`, the enumerated capture's
+    /// binding (`binding`) among the ranges reported for the row's root (`EACH` `x`, joined as
+    /// `e`; NULL where none is), its range read as `each::binding_range` reads it: a host node's
+    /// own, an exported capture's host range (the text slot's `start:end`), and a parsed tree's
+    /// node's host range, the `Exported` terminal's.
+    fn excluded_joins(&self, binding: &Excluding, root: SlotId, input: &str) -> (String, String) {
+        let (with, joins, file, start, end) = match *binding {
+            Excluding::Host { node, exported } => {
+                let (joins, start, end) = host_range("f", "b", node, exported);
+                (String::new(), joins, "f.file".to_owned(), start, end)
+            }
+            // Mutant 22: a parsed tree's node is excluded by its range in the tree, not in the
+            // host.
+            Excluding::Tree {
+                node, tree, file, ..
+            } if crate::code_rule_dsl::sql::mutant(22) => (
+                String::new(),
+                format!(" LEFT JOIN node b ON b.file = f.s{tree} AND b.id = f.s{node}"),
+                format!("f.s{file}"),
+                "b.start".to_owned(),
+                "b.\"end\"".to_owned(),
+            ),
+            Excluding::Tree {
+                node,
+                tree,
+                file,
+                term,
+            } => {
+                let (start, end) = text_bounds("v1");
+                let key = format!("f.s{tree} || ',' || f.s{node}");
+                (
+                    format!(
+                        "WITH h AS MATERIALIZED (SELECT ek, {start} AS hs, {end} AS he FROM fact \
+                         WHERE term = {term} AND ek IN (SELECT {key} FROM {input} f WHERE f.s{node} IS NOT NULL)) "
+                    ),
+                    format!(" LEFT JOIN h ON h.ek = {key}"),
+                    format!("f.s{file}"),
+                    "h.hs".to_owned(),
+                    "h.he".to_owned(),
+                )
+            }
+        };
+        (
+            with,
+            format!(
+                "{joins} LEFT JOIN {EACH}x e ON e.file = {file} AND e.root = f.s{root} \
+                 AND e.start = {start} AND e.\"end\" = {end}"
+            ),
         )
     }
 
@@ -157,4 +232,45 @@ impl Emitter<'_> {
             Reads::join(&[input, &positioned]),
         )
     }
+}
+
+/// The range in the host file of row `alias`'s binding of a host node (`node`, read from the
+/// `node` table joined as `nodes`) or of an exported capture (`exported`, the `start:end` its text
+/// slot holds), as `each::binding_range` reads it, a node first where both are bound: the joins
+/// it needs, and its start and end (NULL where neither is bound).
+pub(super) fn host_range(
+    alias: &str,
+    nodes: &str,
+    node: Option<SlotId>,
+    exported: Option<SlotId>,
+) -> (String, String, String) {
+    let mut joins = String::new();
+    let (mut starts, mut ends) = (Vec::new(), Vec::new());
+    if let Some(node) = node {
+        joins = format!(
+            " LEFT JOIN node {nodes} ON {nodes}.file = {alias}.file AND {nodes}.id = {alias}.s{node}"
+        );
+        starts.push(format!("{nodes}.start"));
+        ends.push(format!("{nodes}.\"end\""));
+    }
+    if let Some(exported) = exported {
+        let (start, end) = text_bounds(&format!("{alias}.s{exported}r"));
+        starts.push(start);
+        ends.push(end);
+    }
+    let first = |parts: &[String]| match parts {
+        [] => "NULL".to_owned(),
+        [one] => one.clone(),
+        _ => format!("COALESCE({})", parts.join(", ")),
+    };
+    (joins, first(&starts), first(&ends))
+}
+
+/// The bounds of a `start:end` text (a host range as the `Exported` terminal and an exported
+/// capture's text slot hold it), as integers.
+fn text_bounds(text: &str) -> (String, String) {
+    (
+        format!("CAST(substr({text}, 1, instr({text}, ':') - 1) AS INTEGER)"),
+        format!("CAST(substr({text}, instr({text}, ':') + 1) AS INTEGER)"),
+    )
 }
