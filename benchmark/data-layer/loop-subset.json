@@ -8252,62 +8252,62 @@
   },
   "calibration": {
     "format": "rerail.sql-loop-calibration/v3",
-    "date": "2026-10-20T18:22:07.833Z",
-    "addon": "sha256:4db64b876fd3e5a73630cee69d2f76a8437edae18c597ef6a7e0fde53a656287",
-    "head": "3494bc6eb09d53ccf8e8d71b842a7830137a11a9",
+    "date": "2026-10-20T21:59:02.720Z",
+    "addon": "sha256:227cb5ed327b4d5d1dfe23b332aa70ffb1a047888d5007d91ab076802b692a08",
+    "head": "ac8bc95468f0d61b11146d8f20ba73fcaaf9eb20",
     "subset": {
       "rounds": 1,
       "files": 138,
       "native": {
-        "wallMs": 2053.3022090000013,
-        "cpuMs": 6838.134
+        "wallMs": 1970.0822499999995,
+        "cpuMs": 6541.527
       },
       "sql": {
-        "wallMs": 49951.2395,
-        "cpuMs": 154806.281
+        "wallMs": 8956.971042,
+        "cpuMs": 26265.632
       },
       "parse": {
-        "wallMs": 175.75829099999993,
-        "cpuMs": 601.142
+        "wallMs": 162.861375,
+        "cpuMs": 553.892
       },
-      "sqlStatementsCpuMs": 30331.784644,
+      "sqlStatementsCpuMs": 22675.924467,
       "ratio": {
-        "wall": 24.327271105565725,
-        "cpu": 22.638673211142102,
-        "matchingCpu": 24.7242803902907
+        "wall": 4.546495986144742,
+        "cpu": 4.015214184700301,
+        "matchingCpu": 4.294139505831601
       }
     },
     "full": {
       "rounds": 1,
       "files": 5725,
       "native": {
-        "wallMs": 9672.223833,
-        "cpuMs": 36222.581
+        "wallMs": 8996.825791,
+        "cpuMs": 32299.968
       },
       "sql": {
-        "wallMs": 99360.47904199999,
-        "cpuMs": 367071.645
+        "wallMs": 26922.188749999998,
+        "cpuMs": 102855.289
       },
       "parse": {
-        "wallMs": 2043.7487500000002,
-        "cpuMs": 7102.934
+        "wallMs": 2106.779833,
+        "cpuMs": 7184.435
       },
-      "sqlStatementsCpuMs": 111721.539589,
+      "sqlStatementsCpuMs": 79422.016555,
       "ratio": {
-        "wall": 10.272764646223214,
-        "cpu": 10.133779395786293,
-        "matchingCpu": 12.36171272955335
+        "wall": 2.9924096981995234,
+        "cpu": 3.1843774272469867,
+        "matchingCpu": 3.8092304869659745
       }
     },
     "correction": {
-      "wall": 0.42227361226195875,
-      "cpu": 0.447631329860742,
-      "matchingCpu": 0.49998271069631745
+      "wall": 0.6581793335612234,
+      "cpu": 0.7930778485941894,
+      "matchingCpu": 0.8870765567334032
     },
     "load": {
-      "subset": 8.056640625,
-      "full": 12.31787109375
+      "subset": 18.24169921875,
+      "full": 11.92724609375
     },
-    "note": "the program stage (every policy in one workspace per engine, one apply, 4 worker threads) over the subset (138 files) and the full corpus (5725 files), 1 round(s) each; untrusted: load 8.1 > 6 before it; 1 round: spread unknown; load 12.3 > 6 before it"
+    "note": "the program stage (every policy in one workspace per engine, one apply, 4 worker threads) over the subset (138 files) and the full corpus (5725 files), 1 round(s) each; untrusted: load 18.2 > 6 before it; 1 round: spread unknown; load 11.9 > 6 before it"
   }
 }
