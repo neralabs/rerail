@@ -278,7 +278,11 @@ describe("rerail scan and settings CLI", () => {
   }, 30_000);
 
   it("fails a repository scan where a rule finds more than it may report on a file, which is no coverage gap", async () => {
-    const { root, home, daemon } = await fixture();
+    const { root, home, daemon, runtime } = await fixture();
+    // The session's first walk is done before the writes, so it audits neither file on its own: the scan stays the
+    // session's latest audit.
+    await runtime.codeRulesOpened("s1");
+    await runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId: "s1", text: "" });
     // More matches than the engine's 10,000-witness budget: an output cap, not running out of work.
     await writeFile(join(root, "api/generated.py"), "print(1)\n".repeat(10_001));
     await writeFile(join(root, "api/noisy.py"), "print('checked')\n");
