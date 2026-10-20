@@ -411,12 +411,16 @@ pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Emitte
 }
 
 /// A stage's statements: the last selects the distinct `(file, node)` its rule matches; in a
-/// three-valued statement `(file, node, unk)`, where it is true or unknown.
-pub(super) fn stage(statement: &Statement) -> Emitted {
+/// three-valued statement `(file, node, unk)`, where it is true or unknown. `three`: the stage's
+/// table has `unk` (its readers are three-valued), which a two-valued statement (a rule that
+/// cannot be unknown) fills with 0.
+pub(super) fn stage(statement: &Statement, three: bool) -> Emitted {
     let mut emitter = Emitter::new(statement);
     let out = emitter.statement(statement);
     let select = if emitter.three {
         format!("SELECT file, node, MIN(unk) FROM {out} GROUP BY file, node")
+    } else if three {
+        format!("SELECT DISTINCT file, node, 0 FROM {out}")
     } else {
         format!("SELECT DISTINCT file, node FROM {out}")
     };
@@ -810,6 +814,33 @@ impl<'s> Emitter<'s> {
         out
     }
 
+    /// `op` on a tree walk's `candidates`, which hold only `need`'s kinds (`tree_candidates`): a
+    /// leading kind test those kinds pass is not run again (a walk to `kind: call` would
+    /// otherwise copy every candidate row once more to re-test its kind).
+    fn on_candidates(&mut self, op: &Op, walk: Walk, candidates: &str, need: &Need) -> String {
+        let tree = !matches!(walk, Walk::Slot(_) | Walk::Related(_));
+        let implied = |kinds: &[u16]| {
+            tree && need
+                .kinds
+                .as_deref()
+                .is_some_and(|need| need.iter().all(|kind| kinds.contains(kind)))
+        };
+        match op {
+            Op::Kinds(kinds) if implied(kinds) => candidates.to_owned(),
+            Op::All(items) if matches!(items.first(), Some(Op::Kinds(kinds)) if implied(kinds)) => {
+                let mut current = candidates.to_owned();
+                for item in &items[1..] {
+                    current = self.op(item, &current);
+                }
+                let changed = self.touched(op);
+                self.inherit(candidates, &current, &changed);
+                self.same_space(candidates, &current);
+                current
+            }
+            _ => self.op(op, candidates),
+        }
+    }
+
     fn apply(&mut self, op: &Op, input: &str) -> String {
         if self.three
             && let Some(out) = self.op3(op, input)
@@ -853,6 +884,8 @@ impl<'s> Emitter<'s> {
                 }
                 current
             }
+            // One branch is that branch: no union copies its rows.
+            Op::Any(branches) if branches.len() == 1 => self.op(&branches[0], input),
             Op::Any(branches) => {
                 let mut rest = input.to_owned();
                 let mut outs = Vec::new();
@@ -912,7 +945,7 @@ impl<'s> Emitter<'s> {
             } => {
                 let candidates = self.candidates(*walk, need, input);
                 self.first_match(&candidates, *walk, false);
-                let matched = self.op(sub, &candidates);
+                let matched = self.on_candidates(sub, *walk, &candidates, need);
                 self.first_matched(&candidates, &matched);
                 if *binds {
                     // `ord` is the walk order (negated ids for descending walks): its minimum
@@ -1837,13 +1870,19 @@ impl<'s> Emitter<'s> {
                 }
             }
         }
-        // The input's rows, each under its own `k`, the parameters bound.
-        let framed = self.frame(
-            "i",
-            &format!("SELECT {} FROM {input} f", self.select("f", &overrides)),
-            Reads::copy(input),
-        );
-        self.same_space(input, &framed);
+        // The input's rows, each under its own `k`, the parameters bound: the input itself where
+        // no parameter is copied, rather than a copy of every row.
+        let framed = if overrides.is_empty() {
+            input.to_owned()
+        } else {
+            let framed = self.frame(
+                "i",
+                &format!("SELECT {} FROM {input} f", self.select("f", &overrides)),
+                Reads::copy(input),
+            );
+            self.same_space(input, &framed);
+            framed
+        };
         let bound = self.op(body, &framed);
         if returns.is_empty() {
             return bound;
