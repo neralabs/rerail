@@ -144,12 +144,26 @@ fn touched(op: &Op, names: &Names, out: &mut BTreeSet<SlotId>) {
             out.extend(reads.iter().copied());
             out.extend(binds.iter().copied());
         }
-        Op::Recur { unit, slots } => {
+        Op::Recur {
+            unit,
+            slots,
+            context,
+        } => {
             match slots {
                 Some(slots) => out.extend(slots.iter().copied()),
                 None => out.extend(names.units[*unit].key.iter().copied()),
             }
+            out.extend(*context);
             out.extend(names.origin);
+        }
+        Op::Follow {
+            base,
+            out: added,
+            sub: rule,
+            ..
+        } => {
+            out.extend([*base, *added]);
+            sub(rule, out);
         }
         Op::EachRoot { root } => {
             out.insert(*root);
@@ -211,7 +225,9 @@ fn walks(op: &Op) -> bool {
         } => true,
         Op::All(items) | Op::Any(items) | Op::Seq(items) => items.iter().any(walks),
         Op::Not(inner) | Op::Unknowable { op: inner, .. } => walks(inner),
-        Op::Call { body, .. } | Op::Parse { body, .. } => walks(body),
+        Op::Call { body, .. } | Op::Parse { body, .. } | Op::Follow { sub: body, .. } => {
+            walks(body)
+        }
         Op::Host { rule, .. } => walks(rule),
         Op::Constrained { rule, constraints } => {
             walks(rule) || constraints.iter().any(|(_, op)| walks(op))

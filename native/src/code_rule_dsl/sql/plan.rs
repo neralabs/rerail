@@ -268,6 +268,11 @@ pub(super) struct AllTerm {
 /// an answer table (the bindings after the body, for the keys it matched). The driver evaluates
 /// the body over every demanded key, pass after pass, until no answer changes and no key is
 /// added; a `Recur` reference reads the answers so far.
+///
+/// A unit of a cycle whose recursion goes through a binding's site, value or annotation
+/// (`recursion::Cycle::following`) is keyed by its following context too (`following`): the
+/// binding sub-rules being matched (`binding::FOLLOWING`, which the matcher's memo keys its
+/// verdicts by), as an interned set (`Op::Follow`).
 #[derive(Debug)]
 pub(super) struct Unit {
     /// The slots the body reads and binds, in the unit's own scope: its key, and its answer.
@@ -275,6 +280,8 @@ pub(super) struct Unit {
     pub(super) body: Op,
     /// The units that reach each other (a strongly connected component) share one loop.
     pub(super) scc: usize,
+    /// The slot holding the following context its body starts from, where it is keyed by one.
+    pub(super) following: Option<SlotId>,
 }
 
 #[derive(Debug)]
@@ -370,9 +377,23 @@ pub(super) enum Op {
     },
     /// A recursive unit's answers at the frame's keys: `slots` are the frame's slots for the
     /// unit's key, in order (`None`: the key's own slots, a shared utility in its caller's scope).
+    /// `context`: the slot holding the following context the reference passes, where the unit is
+    /// keyed by one and the reference lies in its cycle; elsewhere it passes none (`Op::Follow`).
     Recur {
         unit: usize,
         slots: Option<Vec<SlotId>>,
+        context: Option<SlotId>,
+    },
+    /// A binding's site, value or annotation sub-rule `sub` at the row's node, as
+    /// `binding::match_binding_nodes` guards it (`FOLLOWING`): false where the row's following
+    /// context (the interned set in `base`, none where NULL) holds `(node, rule)` already; else
+    /// `sub` runs with `out` holding the context with `(node, rule)` added. `rule` numbers the
+    /// sub-rule in its statement, one number per matcher whatever the lowerings of it.
+    Follow {
+        rule: usize,
+        base: SlotId,
+        out: SlotId,
+        sub: Box<Op>,
     },
     /// `violation.each`: the root a row is evaluated for, set in `root`, and on a later round of
     /// the enumeration only the roots still enumerated.
@@ -467,6 +488,7 @@ impl Op {
             Self::EachRoot { .. } | Self::Excluded { .. } | Self::Gate(_) => false,
             Self::Host { .. } | Self::Every { .. } => false,
             Self::Seq(items) => items.iter().any(Self::binds),
+            Self::Follow { sub, .. } => sub.binds(),
             Self::Parse { exports, .. } | Self::Exports { exports, .. } => !exports.is_empty(),
         }
     }

@@ -56,7 +56,9 @@ pub(super) const DEFAULT_BATCH_SIZE: usize = 64;
 /// 17. the pattern terminals' tested nodes are keyed by node only, not (term, node) (`exec`);
 /// 18. a unit's key drops the caller's captures it reads (`lower`);
 /// 19. a stage `ofRule`'s `nthChild` ranks over the whole stage, not per parent (`emit`,
-///     `emit/three`).
+///     `emit/three`);
+/// 20. a binding's site, value or annotation sub-rule ignores the `FOLLOWING` guard, entering a
+///     binding node again under the sub-rule it is matching (`emit/following`).
 ///
 /// `tests/replay.jsonl` (`replayed_cases_agree`) kills each of them; `just rerail-sql-gate
 /// --mutants` checks it does, and that the differential at the gate's case count does too.
