@@ -1811,13 +1811,19 @@ impl<'s> Emitter<'s> {
                 }
             }
         }
-        // The input's rows, each under its own `k`, the parameters bound.
-        let framed = self.frame(
-            "i",
-            &format!("SELECT {} FROM {input} f", self.select("f", &overrides)),
-            Reads::copy(input),
-        );
-        self.same_space(input, &framed);
+        // The input's rows, each under its own `k`, the parameters bound: the input itself where
+        // no parameter is copied, rather than a copy of every row.
+        let framed = if overrides.is_empty() {
+            input.to_owned()
+        } else {
+            let framed = self.frame(
+                "i",
+                &format!("SELECT {} FROM {input} f", self.select("f", &overrides)),
+                Reads::copy(input),
+            );
+            self.same_space(input, &framed);
+            framed
+        };
         let bound = self.op(body, &framed);
         if returns.is_empty() {
             return bound;
