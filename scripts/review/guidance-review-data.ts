@@ -273,6 +273,11 @@ async function packData(directory: string): Promise<ReviewPack | undefined> {
   };
   for (const rule of loaded?.pack.rules ?? []) add(rule, rule.policy);
   for (const rule of packJson.rules) add(undefined, rule.document);
+  // Candidates not yet recorded in conformance.json (no upstream, no fixture cases) are reviewed too.
+  const candidates = join(directory, "candidates", "rules");
+  if (existsSync(candidates)) {
+    for (const name of readdirSync(candidates).filter(name => name.endsWith(".json")).sort(compareDeterministicStrings)) add(undefined, `candidates/rules/${name}`);
+  }
 
   const sourceOf = (): { kind: "pack"; packId: string } => ({ kind: "pack", packId: packJson.id });
   const cases = new Map<string, ReviewCase[]>(entries.map(entry => [entry.document.id, []]));
@@ -398,13 +403,14 @@ async function packData(directory: string): Promise<ReviewPack | undefined> {
   const rules: ReviewRule[] = entries.map(entry => {
     const id = entry.document.id;
     const packRule = entry.packRule;
+    const candidate = entry.rule === undefined ? entry.documentPath.startsWith("candidates/") : isCandidate(entry.rule);
     const rule: Omit<ReviewRule, "digest"> = {
       id,
       pack: packJson.id,
       title: packRule?.title ?? (candidateTitle(entry.rule) || id),
       description: entry.document.description ?? "",
-      candidate: entry.rule === undefined ? false : isCandidate(entry.rule),
-      on: packRule?.on ?? (entry.rule === undefined || !isCandidate(entry.rule)),
+      candidate,
+      on: packRule?.on ?? !candidate,
       mode: packRule?.mode ?? entry.document.mode ?? "steer",
       group: packRule?.group ?? null,
       document: relative(RERAIL_ROOT, join(directory, entry.documentPath)),
