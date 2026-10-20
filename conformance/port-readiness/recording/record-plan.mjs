@@ -8,14 +8,15 @@
 // runs nothing the pull request wrote.
 //
 //   node conformance/port-readiness/recording/record-plan.mjs --event pull_request_target \
-//     --base <sha> --head <sha> --tool-packs <json> [--comment <file>]
+//     --base <sha> --head <sha> --tool-packs <json> [--comment <file>] [--annotations <file>]
 //   node conformance/port-readiness/recording/record-plan.mjs --event workflow_dispatch \
-//     --pack <pack> --tool <tool> --tool-packs <json> [--comment <file>]
+//     --pack <pack> --tool <tool> --tool-packs <json> [--comment <file>] [--annotations <file>]
 //
 // --tool-packs is main's TOOL_PACKS, the only tool-packs a run records; --comment writes a Markdown body for the pull
-// request saying what is recorded and why, or why nothing is. Prints a ::warning for each change a label cannot
-// record and one line per tool-pack and why. When $GITHUB_OUTPUT is set, appends `legs`, the record job's matrix
-// include list, as compact JSON.
+// request saying what is recorded and why, or why nothing is. Prints one line per tool-pack and why, and a ::warning
+// for each change a label cannot record (an ::error when it fails), into --annotations when it is given: authorize
+// runs this with workflow commands stopped and prints that file once they resume. When $GITHUB_OUTPUT is set, appends
+// `legs`, the record job's matrix include list, as compact JSON.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -46,11 +47,15 @@ const firstOf = (items) => `${items[0]}${items.length === 1 ? "" : ` (and ${item
 const listed = (items) => `${items.slice(0, 5).join(", ")}${items.length > 5 ? ` and ${items.length - 5} more` : ""}`;
 const plural = (count) => `${count} tool-pack${count === 1 ? "" : "s"}`;
 /**
- * Text the pull request chose (a path, an upstream rule name, a parse error quoting its file), control characters
- * escaped: a file or rule named with a newline must not start a workflow command on stdout or a Markdown block in the
- * comment.
+ * Text the pull request chose (a path, an upstream rule name, a parse error quoting its file), with control characters
+ * escaped and the second character of every `::` and `##[`: a file or rule named with a newline must not start a
+ * workflow command on stdout or a Markdown block in the comment, nor a `##[<command>]` make one anywhere in a line, as
+ * the runner reads it (`##[set-output name=legs;]x`).
  */
-const shown = (text) => text.replace(/[\u0000-\u001f\u007f]/gu, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
+const shown = (text) => text
+  .replace(/[\u0000-\u001f\u007f]/gu, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
+  .replace(/::/gu, ":\\u003a")
+  .replace(/##\[/gu, "#\\u0023[");
 
 /** main's TOOL_PACKS: a JSON list of `{"pack", "tool"}`. Anything else throws: it is the whole of what may record. */
 export function parseToolPacks(text) {
@@ -84,9 +89,10 @@ function git(root, args) {
 /** A file's text at a commit, or null when the commit has no such file; throws when git cannot read the commit. */
 function show(root, commit, path) {
   const [entry = ""] = git(root, ["ls-tree", "-z", commit, "--", path]).split("\0");
-  const [meta = "", name] = entry.split("\t");
-  const [, type, object] = meta.split(" ");
-  return type === "blob" && name === path ? git(root, ["cat-file", "blob", object]) : null;
+  // `<mode> <type> <object>\t<path>`, and the path may hold a tab of its own.
+  const tab = entry.indexOf("\t");
+  const [, type, object] = entry.slice(0, tab).split(" ");
+  return tab >= 0 && type === "blob" && entry.slice(tab + 1) === path ? git(root, ["cat-file", "blob", object]) : null;
 }
 
 /** Which of these paths the commit has. */
@@ -297,10 +303,10 @@ export function writeOutputs(file, planned) {
 }
 
 const USAGE = "usage: node conformance/port-readiness/recording/record-plan.mjs --event <event> --tool-packs <json> "
-  + "[--base <sha> --head <sha>] [--pack <pack>] [--tool <tool>] [--comment <file>]\n";
+  + "[--base <sha> --head <sha>] [--pack <pack>] [--tool <tool>] [--comment <file>] [--annotations <file>]\n";
 
 function main(args) {
-  const options = Object.fromEntries(["event", "base", "head", "pack", "tool", "tool-packs", "comment"].map((name) => [name, { type: "string" }]));
+  const options = Object.fromEntries(["event", "base", "head", "pack", "tool", "tool-packs", "comment", "annotations"].map((name) => [name, { type: "string" }]));
   let values;
   try {
     ({ values } = parseArgs({ args, options, strict: true }));
@@ -311,11 +317,16 @@ function main(args) {
     process.stderr.write(USAGE);
     return 2;
   }
+  // A workflow command's message escapes %, CR and LF (GitHub's escapeData).
+  const escaped = (message) => message.replace(/%/gu, "%25").replace(/\r/gu, "%0D").replace(/\n/gu, "%0A");
+  const annotations = values.annotations ?? "";
+  if (annotations !== "") writeFileSync(annotations, "");
+  const command = (line) => (annotations === "" ? console.log(line) : appendFileSync(annotations, `${line}\n`));
   let toolPacks;
   try {
     toolPacks = parseToolPacks(values["tool-packs"]);
   } catch (error) {
-    console.log(`::error::${error.message}`);
+    command(`::error::${escaped(error.message)}`);
     return 2;
   }
   const pack = values.pack ?? "";
@@ -324,12 +335,10 @@ function main(args) {
     ? labelPlan(toolPacks, values.base ?? "", values.head ?? "")
     : dispatchPlan(toolPacks, pack, tool);
   if (planned.event === "dispatch" && planned.legs.length === 0) {
-    console.log(`::error::no gated tool-pack is pack '${pack}', tool '${tool}'`);
+    command(`::error::${escaped(`no gated tool-pack is pack '${pack}', tool '${tool}'`)}`);
     return 1;
   }
-  // A workflow command's message escapes %, CR and LF (GitHub's escapeData).
-  const escaped = (message) => message.replace(/%/gu, "%25").replace(/\r/gu, "%0D").replace(/\n/gu, "%0A");
-  for (const warning of planned.warnings) console.log(`::warning title=Port readiness recording::${escaped(warning)}`);
+  for (const warning of planned.warnings) command(`::warning title=Port readiness recording::${escaped(warning)}`);
   for (const line of planned.lines) console.log(line);
   if (values.comment !== undefined && values.comment !== "") writeFileSync(values.comment, commentBody(planned));
   if (process.env.GITHUB_OUTPUT !== undefined && process.env.GITHUB_OUTPUT !== "") writeOutputs(process.env.GITHUB_OUTPUT, planned);

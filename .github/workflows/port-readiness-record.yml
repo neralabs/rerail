@@ -197,7 +197,10 @@ jobs:
 
       # Under the label, the tool-packs whose recorder inputs the pull request changes, diffed from its merge base with
       # the base commit; a dispatch keeps its pack and tool filter. The comment says what records and why, or why
-      # nothing does, and goes to the run's summary.
+      # nothing does, and goes to the run's summary. What record-plan.mjs prints quotes paths and rule names the pull
+      # request chose, so it runs with workflow commands stopped, under a token made here that nothing the pull request
+      # wrote can know (the runner takes `##[<command>]` anywhere in a line, and `legs` is the record job's matrix).
+      # Its own ::warning and ::error lines go to a file, printed once commands resume, and `legs` to $GITHUB_OUTPUT.
       - id: legs
         name: Choose the tool-packs to record
         env:
@@ -222,9 +225,15 @@ jobs:
             ]
         run: |
           set -euo pipefail
+          token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          status=0
+          echo "::stop-commands::$token"
           node conformance/port-readiness/recording/record-plan.mjs --event "$EVENT" --base "$BASE_SHA" \
             --head "$HEAD_SHA" --pack "$WANT_PACK" --tool "$WANT_TOOL" --tool-packs "$TOOL_PACKS" \
-            --comment "$RUNNER_TEMP/record-plan.md"
+            --comment "$RUNNER_TEMP/record-plan.md" --annotations "$RUNNER_TEMP/record-plan.annotations" || status=$?
+          echo "::$token::"
+          [ ! -f "$RUNNER_TEMP/record-plan.annotations" ] || cat "$RUNNER_TEMP/record-plan.annotations"
+          [ "$status" -eq 0 ] || exit "$status"
           cat "$RUNNER_TEMP/record-plan.md" >> "$GITHUB_STEP_SUMMARY"
 
       # authorize removed the label, so without this a label that records nothing would leave no sign it was read.
