@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-import { sqlfluffSpan, violationSpan } from "../../../conformance/port-readiness/span-units/sqlfluff.js";
+import { sqlfluffSpan, violationSpan } from "../../../../conformance/port-readiness/span-units/sqlfluff.js";
 
 test("sqlfluffSpan counts characters, breaks lines as SQLFluff does, and keeps no end", () => {
   const at = (source: string, text: string) => {
