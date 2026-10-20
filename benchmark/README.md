@@ -249,3 +249,22 @@ Most of those rules scope `nera-data-layer/…` paths of a landing checkout and 
 checkout, as in #2622. The twelve ported data-layer linters (`--rules $RERAIL_BENCH_HOME/data-layer/policies`) are
 the SQL engine's own workload; they need `--store off` while the content store refuses their publications (more
 than 10 relationship statements per batch).
+
+### The production-path loop
+
+`just rerail-workspaces prod-path --rules <tempo169> --rules $RERAIL_BENCH_HOME/data-layer/policies --workspaces <dir>
+--output-dir <dir> [--addon <addon>]` is the SQL engine's production-shape check: the workspace path the enforcer
+takes, not the speed loop's whole-tree apply. It runs `run` on native, then on SQL, each in its own process (each peak
+is its own), then `compare`, and fails when the findings differ. The workload (`PROD_PATH` in
+`workspaces/workspaces.ts`) is workspace 01 with `--store off` (the stored index refuses the data-layer policies'
+publications), a fixed 40% of its files in scope (`--sample 40`: those whose path's sha256, first four bytes mod 100,
+is below 40; 2,350 files), applied in the enforcer's 32-file chunks, then 8 edits (twice each of the minimum, median,
+p95 and maximum Python file) and no idle wait. Native takes about 10 s for the scan; `--only`, `--sample` and
+`--edits` override the workload.
+
+`compare` reports full-scan wall and CPU time, edit p50 and p95, and peak RSS for both engines. Each run records a
+sha256 of its violations and of its failures as sorted JSON lines, read from every result page after the scan and
+again after the edits; `compare` requires the violations to be equal and reports the failures, which differ where
+native's work budget fails a file (`budget-exceeded`, which SQL does not emulate: the design's §Budgets). The edit
+p95 of 8 edits is the largest file's (`impl/common/l2200_sql_dialect/sql_connection.py`, 718 KB), where native gives
+up `spt-022-runtime-authority` on its budget and SQL evaluates it.
