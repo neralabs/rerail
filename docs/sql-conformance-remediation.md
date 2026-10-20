@@ -687,6 +687,112 @@ Add executable checks for these invariants:
 
 Run the architecture checks with structural, semantic, cross-file, negative, and failure cases.
 
+## Current status and execution direction
+
+Phases 1 through 3 have behavioral implementations. Their aggregate conformance gate is not complete.
+Phase 4 has complete focused SQL, catalog, fact-row, failure, and oracle checks.
+The aggregate Phase 2 through Phase 4 gate remains red.
+
+The remaining aggregate defects are:
+
+- Thirteen Phase 2 SQL statements lack the complete physical SQL boundary.
+- Ten Phase 3 SQL statements lack the complete physical SQL boundary.
+- The same 23 statements do not equal the compiler output.
+- The 23 Phase 2 and Phase 3 terminal catalogs are absent.
+- `node-value-positive` is the first exact SQL mismatch.
+
+Commit `cd4dbb1d` is the active TDD-red commit for the incomplete Phase 2 and Phase 3 SQL boundaries.
+Do not use compiler output to create the authored SQL or catalog data.
+Reconcile each relational family from the policy semantics and the packed-row schema.
+
+The next required package is the Phase 2 and Phase 3 conformance package:
+
+1. Add the complete physical boundary to each of the 23 authored statements.
+2. Reconcile each statement with its relational implementation.
+3. Author each ordered terminal catalog from its terminal semantics.
+4. Run repeated and concurrent compilation checks.
+5. Make both aggregate Phase 2 through Phase 4 gates pass.
+6. Run all Phase 2 through Phase 4 behavioral oracle checks.
+
+Do not start Phase 5 until this package is green.
+
+### Relation to the packed execution spike
+
+The target execution shape matches the Landing packed-batch spike:
+
+```text
+one policy catalog
+  -> one callback-free relational plan
+  -> one SQL statement
+  -> one immutable sparse task grid
+  -> one rerail_matches(:batch) xFilter
+  -> one packed backend invocation
+  -> one materialized typed relation
+  -> SQL violation extraction
+```
+
+A terminal catalog does not define the backend invocation count.
+Many files, programs, roots, and clauses share one sparse task grid.
+The Metal JIT selects the program from `task.program` inside one kernel dispatch.
+
+SQLite runs relational composition on the CPU.
+This work does not cause more GPU dispatches.
+The packed backend runs bounded terminal and fact work.
+
+A normal file-local batch has this target GPU shape:
+
+1. An optional anchor-selection dispatch runs.
+2. One packed terminal and fact dispatch runs.
+3. A later consumer dispatch runs only when a required workspace phase exists.
+
+A hard backend limit can partition an internal dispatch.
+The partition must not create another SQL statement or another `xFilter` execution.
+The demand records the partition count and its cause.
+
+This shape is not yet an end-to-end production result.
+`prepare_packed_inputs` and `publish_sql_outcome` remain incomplete.
+Pattern execution also remains CPU-only in the active route.
+There is no valid post-cutover launch trace or benchmark.
+
+### Execution proof package
+
+Phases 5 through 7 must complete the remaining semantic inputs before the execution proof starts.
+Phase 8 then proves the immutable demand and one-execution boundary.
+Phase 9 proves the complete workspace route.
+
+The execution proof must use a multi-file and multi-program workspace.
+The workspace must include positive, negative, semantic, and failed tasks.
+The proof must record these counters:
+
+- Demand registrations.
+- SQL statements.
+- `rerail_matches` references.
+- `xFilter` calls.
+- Backend invocations.
+- Internal backend partitions.
+- Terminal tasks.
+- Metal command buffers.
+- Metal kernel dispatches.
+- Matcher calls.
+- Host callbacks.
+
+For one admitted file-local batch, the required values are:
+
+```text
+registrations        = 1
+SQL statements       = 1
+rerail_matches scans = 1
+xFilter calls        = 1
+backend invocations  = 1
+terminal tasks       > 1
+matcher calls        = 0
+host callbacks       = 0
+```
+
+On Metal, one unpartitioned packed batch must use one packed command buffer and one packed kernel dispatch.
+An optional anchor dispatch must have a separate counter.
+Do not combine the anchor count with the packed-program count.
+
 ## Workplan
 
 Complete each phase before work starts on the next phase.
@@ -882,15 +988,33 @@ Do not reconstruct output in Rust.
 - Enforce the closed producer-state model.
 - Enforce per-producer and per-task limits.
 - Keep registration inert.
+- Build one immutable sparse file, producer, and root task grid.
+- Record backend invocation, partition, command-buffer, and dispatch counters.
+- Keep backend selection inside the first `xFilter` call.
+
+The demand contains verified programs, restored tapes, selected roots, metadata, maps, and limits.
+The demand does not contain matcher objects, callbacks, prepared statements, or mutable environments.
+A missing file and producer pair means that eligibility rejected the task before registration.
+
+Registration stores the demand and returns its token.
+Registration does not select more roots, run a producer, or construct a result row.
+The first `xFilter` executes all admitted tasks as one backend batch.
+A `OnceLock` stores the normalized rows and terminal failure state.
+Later cursors read the stored value.
 
 **TDD red**
 
 Require exact physical rows, statuses, and counters for each producer family.
+Use one workspace with multiple files, programs, roots, and negative tasks.
+Require more than one terminal task and exactly one backend invocation.
+Open a second cursor and require no additional execution.
 
 **Implementation**
 
 Extend `PackedDemand` with verified immutable descriptors and metadata.
 Execute each demanded task once inside `xFilter`.
+Use one Metal program table and dispatch by `task.program` inside the kernel.
+Partition only when a recorded hard backend limit requires it.
 
 **Exit criteria**
 
@@ -898,6 +1022,10 @@ Execute each demanded task once inside `xFilter`.
 - Invalid row-state combinations are rejected.
 - Registration creates no result rows.
 - Repeated cursors do not repeat execution.
+- One unpartitioned batch records one backend invocation.
+- One unpartitioned Metal batch records one packed kernel dispatch.
+- A partition records its count, limit, and stable task ranges.
+- SQL does not change when the selected packed backend changes.
 
 ### Phase 9: Complete workspace preparation and publication
 
@@ -908,23 +1036,35 @@ Execute each demanded task once inside `xFilter`.
 - Execute one SQL statement.
 - Implement `publish_sql_outcome` from `SqlViolationRow` values.
 - Remove remaining workspace stubs and transitional matcher scheduling.
+- Expose the Phase 8 execution counters in workspace results and profiles.
+
+`prepare_packed_inputs` can restore and verify immutable data.
+It must not run semantic work or construct witnesses.
+`publish_sql_outcome` accepts only typed final SQL rows.
+It must not inspect terminal rows to reconstruct a violation.
 
 **TDD red**
 
 Run complete workspace applies for structural, semantic, cross-file, negative, and failure cases.
+For the file-local case, require one statement, one `xFilter`, and one backend invocation.
+Remove one required SQL output column and require typed publication failure.
 
 **Implementation**
 
 Prepare immutable inputs without semantic evaluation.
 Publish only rows returned by SQL.
+Preserve the same SQL statement for CPU, CPU-JIT, Metal, and Metal-JIT backends.
 
 **Exit criteria**
 
 - A workspace apply completes through SQL only.
 - One statement causes one `xFilter` and one terminal execution.
+- One unpartitioned Metal batch records one packed kernel dispatch.
+- Optional anchor work has a separate dispatch counter.
 - Production records zero callbacks and zero matcher calls.
 - Unsupported lowering fails before registration.
 - Production contains no fallback route.
+- SQL publication rejects incomplete or inconsistent final rows.
 
 ### Phase 10: Complete conformance and performance validation
 
@@ -952,6 +1092,8 @@ Do not change expected behavior to match incorrect production output.
 - The complete relevant suite passes without warnings.
 - The canonical benchmark uses the exact required policy suite and corpus.
 - The benchmark report separates historical and post-cutover results.
+- The report includes statement, `xFilter`, backend, partition, and kernel-dispatch counts.
+- The report separates anchor dispatches from packed-program dispatches.
 
 ## Required code validation
 
@@ -979,5 +1121,9 @@ The complete validation must contain no warnings.
 Run the canonical benchmark only after SQL-only workspace publication works.
 Use the exact 12 policies, 829 clauses, 5,725 files, and 95,697,853 bytes.
 Keep raw output under `/tmp`.
+
+Record the task count and all execution counters with the timing and memory data.
+Explain each internal partition from a recorded hard backend limit.
+Do not report a matcher-backed run or a lowering rejection as a post-cutover result.
 
 Current benchmark status: no valid post-cutover result exists.
