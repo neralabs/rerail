@@ -186,7 +186,7 @@ fn rule_stop_walks_read_the_stop_set_without_recursion() {
                 let grammars = grammar_matchers(&compiled);
                 let program =
                     crate::code_rule_dsl::sql::compile(&[&grammars[0]]).expect("compiles");
-                let session = program.session().expect("a session");
+                let mut session = program.session().expect("a session");
                 let plans = session.plans().expect("plans");
                 // `has` with a field and a rule stop tests one level below the field child: no
                 // walk (`a_field_has_with_a_stop_rule_tests_one_level_below_the_field_child`).

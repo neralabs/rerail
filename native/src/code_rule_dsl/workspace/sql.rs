@@ -215,7 +215,8 @@ impl SqlEngine {
     }
 
     /// Runs one batch on a pooled session (a new one where none is free): each file with what
-    /// its scopes read beyond its tape. A session whose batch failed is dropped.
+    /// its scopes read beyond its tape. A session whose batch failed is emptied by it, and pooled
+    /// as any other: sessions are made once per worker, and kept across batches and applies.
     pub(super) fn run(
         &self,
         docs: Vec<(TapeDoc, FileContext)>,
@@ -226,11 +227,14 @@ impl SqlEngine {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .pop();
-        let mut session = match pooled {
-            Some(session) => session,
-            None => self.compiled.session()?,
+        // A new session's setup counts in the engine's statistics.
+        let (mut session, before) = match pooled {
+            Some(session) => {
+                let before = session.stats();
+                (session, before)
+            }
+            None => (self.compiled.session()?, Stats::default()),
         };
-        let before = session.stats();
         #[cfg(feature = "unbounded-work")]
         let paths: Vec<String> = docs
             .iter()
@@ -238,17 +242,25 @@ impl SqlEngine {
             .collect();
         #[cfg(feature = "unbounded-work")]
         let (found, statements, clause_times) = profiled(|| session.run(docs, runs));
-        #[cfg(feature = "unbounded-work")]
-        let found = found?;
         #[cfg(not(feature = "unbounded-work"))]
-        let found = session.run(docs, runs)?;
-        for run in runs.iter().filter(|run| !run.files.is_empty()) {
-            self.ran[run.statement].store(true, Ordering::Relaxed);
-        }
+        let found = session.run(docs, runs);
         let after = session.stats();
         {
             let mut stats = self.stats.lock().unwrap_or_else(|error| error.into_inner());
             stats.add_since(&after, &before);
+        }
+        let found = match found {
+            Ok(found) => found,
+            Err(error) => {
+                self.sessions
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .push(session);
+                return Err(error);
+            }
+        };
+        for run in runs.iter().filter(|run| !run.files.is_empty()) {
+            self.ran[run.statement].store(true, Ordering::Relaxed);
         }
         #[cfg(feature = "unbounded-work")]
         {
@@ -293,6 +305,14 @@ impl SqlEngine {
     #[cfg_attr(not(feature = "unbounded-work"), allow(clippy::let_and_return))]
     pub(super) fn report(&self) -> Value {
         let stats = *self.stats.lock().unwrap_or_else(|error| error.into_inner());
+        let census = self.compiled.census();
+        let prepared: usize = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .map(Session::prepared_statements)
+            .sum();
         let milliseconds = |nanos: u64| nanos as f64 / 1e6;
         let report = json!({
             "engine": "sql",
@@ -319,6 +339,25 @@ impl SqlEngine {
                 "skippedRuns": stats.skipped_runs,
                 "skippedBlocks": stats.skipped_blocks,
                 "skippedClears": stats.skipped_clears,
+            },
+            // The program as sessions run it: its steps, their distinct texts and those texts'
+            // bytes, and its tables.
+            "program": {
+                "steps": census.steps,
+                "texts": census.texts,
+                "bytes": census.bytes,
+                "frames": census.frames,
+                "btrees": census.btrees,
+            },
+            // The sessions made and their setup (`sql::Session::activate`): the texts their
+            // caches were sized for, the tables they made, and the statements the pooled ones
+            // hold prepared.
+            "sessions": {
+                "count": stats.sessions,
+                "setupMilliseconds": milliseconds(stats.setup_nanos),
+                "texts": stats.texts,
+                "tables": stats.tables,
+                "prepared": prepared,
             },
         });
         #[cfg(feature = "unbounded-work")]
@@ -504,5 +543,7 @@ mod tests {
             peak_mib(),
         );
         eprintln!("statements {statements}");
+        eprintln!("program {}", report["program"]);
+        eprintln!("sessions {}", report["sessions"]);
     }
 }

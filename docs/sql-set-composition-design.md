@@ -25,7 +25,7 @@ That design measured 1,589 s against native's 34 s for the same rules. This desi
 
 ### Batch
 
-A batch is a set of file versions evaluated together: the changed files of a workspace apply, or a slice of the whole tree in the benchmark. Each worker thread owns an in-memory SQLite connection. Statements are prepared once per policy set per connection, and the statement cache is sized to the policy set (lesson D31).
+A batch is a set of file versions evaluated together: the changed files of a workspace apply, or a slice of the whole tree in the benchmark. Each worker thread owns an in-memory SQLite connection, a session made once per worker and kept across batches and applies (a failed batch empties its tables and returns the session to the pool). The program's statement texts are fixed once per policy set and shared by every session. A session makes a stage's or clause's tables when it first runs, and prepares a statement on its first execution, so its statement cache is sized to the distinct texts of the clauses that ran (lesson D31).
 
 ### `node` virtual table
 
@@ -141,6 +141,8 @@ For each batch, the driver:
 Workers process batches in parallel, with the same thread count as native. Batch size is a tuning parameter.
 
 A batch runs every compiled statement of every clause, most of them over empty frames, so the driver passes over the statements that cannot write a row. The emitter records each statement's effect as it writes it: the frames it reads, the table it writes and an emptiness rule (`EmptyIfAnyInputEmpty` for joins, semi-joins, relations and terminals over an input set; `EmptyIfAllInputsEmpty` for unions of branches; `EmptyIfPrimaryEmpty` for anti-joins, which still run when only their probe is empty; `CopyOf`; `AlwaysRun`). The session counts every frame's rows per batch from `sqlite3_changes()` and reads the rule before each statement. A clause or stage whose root frame is empty (no root of its kinds, or the RequiredText gate and anchors settled every document) skips everything after its root frame; a recursion block skips a run with no new demand rows; `each` rounds end on an empty enumeration. `RERAIL_SQL_SKIP=check` runs everything and panics where a statement the rules would skip changed a row; `RERAIL_SQL_SKIP=0` runs everything. The rules are documented with their dispatch in `skip.rs`.
+
+Frame names are allocated like registers. Clauses run one after another and a clause's tables are emptied when it ends, so an operator's temporary frame is live only from its first mention to its last, extended through every loop that mentions it and to each `RUN` of a block that mentions it. Each temporary takes the lowest free frame name of its declaration's class, and a name taken a second time in one clause is emptied before its new temporary's first mention. Clauses therefore share frame names, and statements that differed only in them share one text and one prepared statement. A recursion unit's demand, answer and reads tables keep names of their own, and so do a stage's frames, which live until the batch ends.
 
 The engine is selected at runtime (`engine: native|sql` in the evaluation options) so a single build can A/B and run differential tests. That switch is removed when native leaves production; native remains only as a `cfg(test)` oracle.
 

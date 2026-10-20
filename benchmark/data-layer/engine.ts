@@ -272,6 +272,22 @@ export const engineReportSchema = z.union([
       skippedClears: z.number().optional(),
       profile: statementProfileSchema.optional(),
     }).passthrough(),
+    /** The program as sessions run it (`sql/exec.rs` `Plan`): steps, their distinct texts and those texts' bytes, frame and B-tree names. */
+    program: z.object({
+      steps: z.number(),
+      texts: z.number(),
+      bytes: z.number(),
+      frames: z.number(),
+      btrees: z.number(),
+    }).optional(),
+    /** Sessions made, their setup time, the statement texts their caches were sized for, the tables they made, and the statements the pooled ones hold prepared. */
+    sessions: z.object({
+      count: z.number(),
+      setupMilliseconds: z.number(),
+      texts: z.number(),
+      tables: z.number(),
+      prepared: z.number(),
+    }).optional(),
     profile: sqlProfileSchema.optional(),
   }),
 ]);
