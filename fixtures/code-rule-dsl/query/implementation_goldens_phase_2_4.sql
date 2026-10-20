@@ -1,7 +1,6 @@
 -- fixture: disabled-when
--- form: when(false)
--- policy: sql-contract-disabled-when/contract
-WITH RECURSIVE packed AS MATERIALIZED (
+-- A disabled query has an empty selected relation and no producer-failure union.
+WITH packed AS MATERIALIZED (
   SELECT batch, row_kind, producer_id, file_index, task_index, match_index,
          capture_index, capture_occurrence, capture_sequence_start,
          capture_sequence_count, node, related_node, axis_kind, axis_order,
@@ -39,6 +38,16 @@ clause_0_empty_0 AS (
   FROM terminal_match
   WHERE 0
 ),
+clause_0_selected_1 AS (
+  SELECT candidate.* FROM clause_0_empty_0 candidate
+  WHERE candidate.verdict = 1 AND NOT EXISTS (
+    SELECT 1 FROM clause_0_empty_0 earlier
+    WHERE earlier.file_index = candidate.file_index AND earlier.node = candidate.node
+      AND (earlier.choice_order < candidate.choice_order
+        OR (earlier.choice_order = candidate.choice_order AND earlier.producer_id < candidate.producer_id)
+        OR (earlier.choice_order = candidate.choice_order AND earlier.producer_id = candidate.producer_id AND earlier.match_index < candidate.match_index))
+  )
+),
 clause_0 AS (
   SELECT result.batch, result.row_kind, result.producer_id, result.file_index,
          result.task_index, result.match_index, result.capture_index,
@@ -53,7 +62,7 @@ clause_0 AS (
          result.named_leaf, result.capture_kind, result.capture_named,
          result.equality_occurrence, result.bindings, result.choice_order,
          0 AS clause_ordinal
-  FROM clause_0_empty_0 result
+  FROM clause_0_selected_1 result
   CROSS JOIN batch_status batch
   WHERE batch.complete = 1
     AND NOT EXISTS (
@@ -62,7 +71,7 @@ clause_0 AS (
       WHERE undecided.complete <> 1 OR undecided.verdict IS NULL
     )
 )
-SELECT * FROM (SELECT * FROM clause_0)
+SELECT * FROM clause_0
 ORDER BY clause_ordinal, file_index, node, choice_order, producer_id,
          match_index, capture_index;
 

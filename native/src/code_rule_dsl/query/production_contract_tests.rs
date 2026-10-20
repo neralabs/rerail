@@ -837,6 +837,33 @@ fn production_contract_phase_two_disabled_query_matches_authored_sql() {
 }
 
 #[test]
+fn production_contract_phase_two_authored_disabled_query_is_empty() {
+    let statements = authored_sql_goldens();
+    let name = "disabled-when";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the disabled query contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("the disabled query policy compiles");
+    let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+        &compiled,
+        &case.workspace.files[0].source,
+        crate::code_rule_dsl::language::GrammarDialect::Python,
+        &statements[name],
+    );
+    assert!(outcome.ranges.is_empty(), "disabled query has no ranges");
+    assert!(
+        outcome.errors.is_empty(),
+        "disabled query has no producer failures"
+    );
+}
+
+#[test]
 fn production_contract_phase_two_nested_truth_matches_authored_sql() {
     let expected = authored_sql_goldens();
     let name = "nested-all-any-not";
