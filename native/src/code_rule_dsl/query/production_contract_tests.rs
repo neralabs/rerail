@@ -853,12 +853,34 @@ fn production_contract_phase_four_has_complete_terminal_catalogs() {
             "{} catalog",
             golden.name
         );
+        let case = &cases[&golden.name];
         assert_eq!(
-            actual_implementation_golden(&cases[&golden.name]).terminal_catalog,
+            actual_implementation_golden(case).terminal_catalog,
             golden.terminal_catalog,
             "{} exact ordered terminal catalog",
             golden.name
         );
+        assert_eq!(
+            actual_implementation_golden(case).terminal_catalog,
+            golden.terminal_catalog,
+            "{} repeated catalog compilation",
+            golden.name
+        );
+        std::thread::scope(|scope| {
+            let parallel = (0..2)
+                .map(|_| scope.spawn(|| actual_implementation_golden(case).terminal_catalog))
+                .collect::<Vec<_>>();
+            for catalog in parallel {
+                assert_eq!(
+                    catalog
+                        .join()
+                        .expect("parallel catalog compilation completes"),
+                    golden.terminal_catalog,
+                    "{} parallel catalog compilation",
+                    golden.name
+                );
+            }
+        });
     }
 }
 
