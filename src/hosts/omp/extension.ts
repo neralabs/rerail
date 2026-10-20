@@ -177,6 +177,8 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       return pending;
     };
 
+    /** The tool results being ingested, each with the steers placed in it so far. */
+    const openResults = new Map<string, string[]>();
     // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
     const sendDeliveries = async (current: NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
       sendNativeDeliveries(await linkDeliveries(deliveries, currentContext?.cwd), async (message, options_) => {
@@ -191,7 +193,12 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
         // string-only normalization path; the hook prevents queue consumption.
         await new Promise<void>(resolve_ => queueMicrotask(resolve_));
         if (!context.hasPendingMessages()) throw new Error("OMP did not accept Rerail policy guidance");
-      }, (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds));
+      }, (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds), (toolCallId, content) => {
+        // A steer placed into its call's result skips OMP's steer queue.
+        const placed = openResults.get(toolCallId);
+        placed?.push(content);
+        return placed !== undefined;
+      });
 
     /**
      * Hands the event to the live runtime. `outcome` learns whether the event reached the daemon through the runtime that is
@@ -568,9 +575,11 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
         ), undefined, { quietAttachFailure: true });
       }));
     });
-    pi.on("tool_result", (event) => {
+    pi.on("tool_result", async (event) => {
       codeRuleTools.delete(event.toolCallId);
-      return contained("tool_result", sequenceCodeRuleEvent(async () => {
+      const placed: string[] = [];
+      openResults.set(event.toolCallId, placed);
+      await contained("tool_result", sequenceCodeRuleEvent(async () => {
         await ingestEvent(sessionId => resultEvent(
           sessionId,
           `tool-result:${event.toolCallId}`,
@@ -580,6 +589,9 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
           event.isError,
         ), undefined, { quietAttachFailure: true });
       }));
+      if (openResults.get(event.toolCallId) === placed) openResults.delete(event.toolCallId);
+      // A steer for this call's rolled-back edit is what the model sees of its result; a later one goes out as a message.
+      return placed.length === 0 ? undefined : { content: [{ type: "text" as const, text: placed.join("\n\n") }], isError: true };
     });
 
     /** The latest turn's end, still being checked: the daemon settles the turn's code rules before it answers. */

@@ -25,6 +25,15 @@ export type DeliveryMechanism =
   | "additional-context"
   | "deferred-context";
 
+/**
+ * How a code-rule steer reaches the coding agent, set per checkout in its audit settings (`steerStrategy`):
+ * `message` sends it as its own message, as Rerail always has; `rewind` rolls the violating edit back to its captured
+ * preimage and puts the steer into that tool call's result; `subagent` sends the message with an instruction to hand
+ * the fix to a subagent and keep to the agent's own task.
+ */
+export const STEER_STRATEGIES = ["message", "rewind", "subagent"] as const;
+export type SteerStrategy = (typeof STEER_STRATEGIES)[number];
+
 export interface AdapterCapabilityProfile {
   host: RerailHost;
   assistantObservation: AssistantObservation;
@@ -254,6 +263,14 @@ export interface AdapterDelivery {
   content: string;
   /** Distinct rule ids whose violations were rendered into `content`, first-seen order; empty when the delivery is not a code-rule steer. */
   ruleIds: readonly string[];
+  /** The steer strategy that shaped a code-rule steer; absent for every other delivery. */
+  strategy?: SteerStrategy;
+  /**
+   * Set only when Rerail rolled this tool call's edit back (`rewind`): the host puts `content` into that call's result
+   * in place of a message. Rolled-back paths are in `rewound`.
+   */
+  toolCallId?: string;
+  rewound?: readonly string[];
 }
 
 /** The `customType` every host records Rerail rule guidance under in its own session transcript. */
@@ -266,26 +283,34 @@ type NativeRuleMessage = {
   details: Pick<AdapterDelivery, "requested" | "mechanism" | "sessionId">;
 };
 
+/**
+ * Sends each steer as a `rerail.rule` message and records its receipt. A steer for a tool call (`toolCallId`) that
+ * `place` claims goes into that call's result instead, and is recorded the same way; one it does not claim is sent.
+ */
 export async function sendNativeDeliveries(
   deliveries: readonly AdapterDelivery[],
   send: (message: NativeRuleMessage, options: { deliverAs: "steer" }) => void | Promise<void>,
   record: (sessionId: string, receiptId: string, ruleIds: readonly string[]) => void | Promise<void>,
+  place?: (toolCallId: string, content: string) => boolean,
 ): Promise<void> {
   for (const delivery of deliveries) {
     if (!steers(delivery.requested)) continue;
-    await send(
-      {
-        customType: RULE_MESSAGE_TYPE,
-        content: delivery.content,
-        display: true,
-        details: {
-          requested: delivery.requested,
-          mechanism: delivery.mechanism,
-          sessionId: delivery.sessionId,
+    const placed = delivery.toolCallId !== undefined && place?.(delivery.toolCallId, delivery.content) === true;
+    if (!placed) {
+      await send(
+        {
+          customType: RULE_MESSAGE_TYPE,
+          content: delivery.content,
+          display: true,
+          details: {
+            requested: delivery.requested,
+            mechanism: delivery.mechanism,
+            sessionId: delivery.sessionId,
+          },
         },
-      },
-      { deliverAs: "steer" },
-    );
+        { deliverAs: "steer" },
+      );
+    }
     if (delivery.content.trim() === "") continue;
     try {
       await record(delivery.sessionId, randomUUID(), delivery.ruleIds);

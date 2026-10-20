@@ -694,15 +694,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (batch.revision <= this.#revision) throw new Error("Executable policy revisions must increase");
     this.#revision = batch.revision;
     this.refreshCodeRules();
+    const mode = batch.mode ?? this.#mode;
     if (this.#scope === "repository") {
       if (batch.edits.length > 0) {
         for (const edit of batch.edits) this.#versions.set(edit.path, batch.revision);
-        this.#trackAudit(this.#runScopeAudit("repository", this.#mode, [], true), true);
+        this.#trackAudit(this.#runScopeAudit("repository", mode, [], true), true);
       }
       return this.#response(batch.revision);
     }
     const scope = this.#scope;
-    const mode = this.#mode;
     const accepted = batch.edits.filter(
       (edit) =>
         this.acceptsPath(edit.path) && withinCheckout(this.#workspaceRoot, resolve(this.#workspaceRoot, edit.path)),

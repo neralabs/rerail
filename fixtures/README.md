@@ -45,7 +45,7 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `{ecma,python}/matcher/ast-grep/` | `matcher` | relational rules, `field`, `nthChild`, `stopBy`, `utils` against ast-grep (`test/code-rule-dsl-upstream-differential.test.ts`) |
 | `{php,sql}/matcher/arguments/` | `matcher` | argument slots (`matcher/arguments.rs`; SQL's, PostgreSQL's binding, `matcher/arguments_sql.rs`) |
 | `{rust,sql,vue}/language/` | `language` | measurements that choose a planned language's registry entry: candidate grammars (`grammar/`, T1), Rust's capability census (`feasibility/`), Vue's embedded view (`view/`) |
-| `host/benchmark/` | — | the query-parity benchmark's semantic catalogs (`benchmark/query-parity.ts`) |
+| `host/benchmark/` | — | the query-parity benchmark's semantic catalogs (`benchmark/query-parity.ts`); `steer-strategy/`, the steer-strategy benchmark's task project and prompt (`benchmark/steer-strategy.ts`) |
 | `host/code-rule-dsl/` | — | engine-contract rule documents (`test/native-code-rule-dsl-runtime.test.ts`) |
 | `host/constraint-code-rules/` | — | constraint examples (`test/engine/code-rule/code-rule-dsl-constraints.test.ts`) |
 | `host/database/` | — | the database schema at the migration baseline (`test/engine/storage/database-baseline.test.ts`) |

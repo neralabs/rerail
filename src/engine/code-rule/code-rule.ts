@@ -1282,6 +1282,11 @@ export interface CodeRuleEditBatch {
   revision: number;
   checkpoints: CodeRuleCheckpoint[];
   edits: CodeRuleEdit[];
+  /**
+   * Audits these edits in this mode rather than the session's: Rerail's own rollback of an edit (`rewind`) is audited
+   * in `log` mode, so the restored source is judged and recorded but steers nothing.
+   */
+  mode?: AuditMode;
 }
 
 export interface CodeRuleSourceSpan {

@@ -48,6 +48,11 @@ export interface PiHostAdapterRuntime {
   configuredDatabase?(cwd: string): string | undefined;
   /** What the session-start note says about `session`'s rules. */
   sessionNoteRules(session: AdapterSession): Promise<SessionNoteRules>;
+  /**
+   * Opens `toolCallId`'s result to the steers for that call (`rewind`) while it is being ingested; the returned
+   * function closes it and yields what was placed, so a later steer for the call goes out as a message.
+   */
+  openToolResult(toolCallId: string): () => readonly string[];
 }
 
 function streamId(message: PiMessage): string {
@@ -202,18 +207,24 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
       event.input,
     ));
   })()));
-  pi.on("tool_result", event => contained("tool_result", (async () => {
-    const session = await runtime.sessionFor();
-    if (session === undefined) return;
-    await runtime.ingest(resultEvent(
-      session.sessionId,
-      `tool-result:${event.toolCallId}`,
-      event.toolCallId,
-      event.toolName,
-      event.content,
-      event.isError,
-    ));
-  })()));
+  pi.on("tool_result", async event => {
+    const close = runtime.openToolResult(event.toolCallId);
+    await contained("tool_result", (async () => {
+      const session = await runtime.sessionFor();
+      if (session === undefined) return;
+      await runtime.ingest(resultEvent(
+        session.sessionId,
+        `tool-result:${event.toolCallId}`,
+        event.toolCallId,
+        event.toolName,
+        event.content,
+        event.isError,
+      ));
+    })());
+    const steers = close();
+    // A steer for this call's rolled-back edit is what the model sees of its result.
+    return steers.length === 0 ? undefined : { content: [{ type: "text" as const, text: steers.join("\n\n") }], isError: true };
+  });
   pi.on("turn_end", async event => {
     const session = await runtime.sessionFor();
     if (session === undefined) return;

@@ -151,7 +151,7 @@ function usage(): string {
     "  rerail show-me [--cleanup] [--repo <dir>] [--json]",
     "  rerail [--profile <name>] events",
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
-    "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
+    "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--steer-strategy message|rewind|subagent] [--json]",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
     "  rerail [--profile <name>] activate --code <code> --activation-url <url> --trust-root <roots.json>",
     "  rerail [--profile <name>] activation request --deployment <id> --output <file>",

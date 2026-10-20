@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   headlineText,
   linkSteers,
+  rewoundSteer,
   sessionStartNote,
   steerBlock,
   steerHeadlines,
+  subagentSteer,
 } from "../../../src/engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../../../src/engine/code-rule/steer-origin.js";
 import { installPack } from "../../support/installed-packs.js";
@@ -103,5 +105,31 @@ describe("Rerail steer text", () => {
     expect(note).toContain("not set up yet, so no rules are checked");
     expect(note).toContain("$rerail-start");
     expect(note).not.toContain("◆ Rerail");
+  });
+
+  it("tells the coding agent to hand the fix to a subagent with its own subagent tool, keeping the steer's headline", () => {
+    const steer = steerBlock("ts:no-any", "Use unknown. (src/a.ts:1:1)", STEER);
+    const tools = { pi: "rerail_fix", omp: "task", "claude-code": "Task", cursor: "Task", codex: "spawn_agent" } as const;
+    for (const [host, tool] of Object.entries(tools) as Array<[keyof typeof tools, string]>) {
+      const content = subagentSteer(steer, host);
+      expect(content.startsWith(`${steer}\n\n`)).toBe(true);
+      expect(content).toContain(`subagent with the \`${tool}\` tool`);
+      expect(content).toContain("This note comes from Rerail, not the person, and your task is unchanged.");
+      expect(content).toContain("keep working on your own task");
+      expect(steerHeadlines(linkSteers(content, DASHBOARD))).toEqual(steerHeadlines(linkSteers(steer, DASHBOARD)));
+    }
+  });
+
+  it("tells the coding agent which files a rolled-back edit put back and to redo it following the rule", () => {
+    const steer = steerBlock("py:no-needle", "No needle (api/a.py:1:1)", STEER);
+    const content = rewoundSteer(steer, { restored: ["api/a.py"], deleted: ["api/new.py", "api/other.py"] });
+    expect(content).toBe([
+      "Rerail rolled back this edit because it breaks the rule below: `api/a.py` is back as before the edit; "
+        + "`api/new.py`, `api/other.py`, which the edit created, are deleted. Redo it so it follows the rule; if you decide "
+        + "the rule does not apply, redo it as it was and tell the person in one line why.",
+      "",
+      steer,
+    ].join("\n"));
+    expect(steerHeadlines(content)).toEqual(steerHeadlines(steer));
   });
 });

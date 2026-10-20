@@ -1,6 +1,6 @@
 import { inArray, sql, type SQL } from "drizzle-orm";
 import { blob, check, index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
-import { ADAPTER_CAPABILITIES, type RerailHost } from "../adapter-contract.js";
+import { ADAPTER_CAPABILITIES, type RerailHost, type SteerStrategy } from "../adapter-contract.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import {
   AUDIT_MODES,
@@ -515,7 +515,8 @@ export const auditUnlistedFailures = sqliteTable(
 );
 export const auditSettings = sqliteTable("audit_settings", {
   workspaceRoot: text("workspace_root").primaryKey(),
-  settings: text("settings_json", { mode: "json" }).$type<{ scope: AuditScope; mode: AuditMode }>().notNull(),
+  // `steerStrategy` is absent from rows saved before it existed; they read as `message`.
+  settings: text("settings_json", { mode: "json" }).$type<{ scope: AuditScope; mode: AuditMode; steerStrategy?: SteerStrategy }>().notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
 

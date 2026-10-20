@@ -1009,4 +1009,55 @@ describe("OMP conversation-rules extension", () => {
       await ended;
     });
   });
+
+  describe("steer strategies", () => {
+    const rewound = (toolCallId: string): AdapterDelivery => ({
+      sessionId: "omp-test-session",
+      requested: "steer",
+      mechanism: "native-queue",
+      content: "Your edit of a.ts was rolled back. Redo it following the rule.",
+      ruleIds: ["no-any"],
+      strategy: "rewind",
+      toolCallId,
+      rewound: ["a.ts"],
+    });
+    const editResult = { type: "tool_result", toolCallId: "call-1", toolName: "edit", input: {}, content: [{ type: "text", text: "Edited a.ts" }], details: { diff: "+x" }, isError: false };
+
+    it("puts a rolled-back edit's steer into that call's result, past OMP's steer queue, and counts it", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      // A steer that went to OMP's queue would be refused here: nothing ever lands in it.
+      Object.assign(harness.context, { hasPendingMessages: () => false });
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      daemon.state.ingest = async () => [rewound("call-1"), { ...rewound("call-1"), content: "Second rule." }];
+
+      await expect(harness.handlers.get("tool_result")!(editResult, harness.context)).resolves.toEqual({
+        content: [{ type: "text", text: "Your edit of a.ts was rolled back. Redo it following the rule.\n\nSecond rule." }],
+        isError: true,
+      });
+      expect(harness.messages).toEqual([]);
+      expect(daemon.requests.filter(request => request.operation === "record-steering-delivery")).toHaveLength(2);
+    });
+
+    it("sends a steer for a call whose result is not being ingested as a message", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      daemon.state.ingest = async () => [rewound("call-closed")];
+
+      await expect(harness.handlers.get("tool_result")!(editResult, harness.context)).resolves.toBeUndefined();
+      expect(harness.messages).toEqual([{
+        message: {
+          customType: RULE_MESSAGE_TYPE,
+          content: "Your edit of a.ts was rolled back. Redo it following the rule.",
+          display: true,
+          details: { requested: "steer", mechanism: "native-queue", sessionId: "omp-test-session" },
+        },
+        options: { deliverAs: "steer" },
+      }]);
+      expect(daemon.requests.filter(request => request.operation === "record-steering-delivery")).toHaveLength(1);
+    });
+  });
 });

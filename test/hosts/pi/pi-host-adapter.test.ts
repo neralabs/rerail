@@ -39,6 +39,7 @@ function lifecycleHarness(changeOwnerBeforeFailure: boolean) {
     packageRoot: "/package-root",
     started: () => true,
     sessionNoteRules: async () => ({ setUp: false }),
+    openToolResult: () => () => [],
   });
   return { context, handlers, ingested: () => ingested };
 }

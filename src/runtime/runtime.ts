@@ -4,17 +4,22 @@ import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
   ADAPTER_CAPABILITIES,
+  STEER_STRATEGIES,
   type AdapterDelivery,
   type AdapterEvent,
   type AdapterSample,
   type AdapterSession,
   type RerailEventLoop,
   type RerailHost,
+  type SteerStrategy,
 } from "../engine/adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
-import { BOUNDARY_DISCOVERY_WAIT_MS, CodeRuleBridge, generatedEditPaths, type SourceObservationCache } from "../engine/code-rule/code-rule-bridge.js";
-import type { AuditorCloseOptions, CodeRuleAuditor, AuditSettings, RuleSteerDelivery, RepositoryAuditHooks } from "../engine/code-rule/code-rule.js";
+import {
+  BOUNDARY_DISCOVERY_WAIT_MS, CodeRuleBridge, generatedEditPaths, type RewoundEdit, type SourceObservationCache,
+} from "../engine/code-rule/code-rule-bridge.js";
+import type { AuditorCloseOptions, CodeRuleAuditor, AuditSettings, RuleSteerDelivery, RepositoryAuditHooks, SteerMetadata } from "../engine/code-rule/code-rule.js";
+import type { AuditSettings as CheckoutAuditSettings } from "../engine/audit/audit-control-schema.js";
 import type { AuditRecorder, AuditRecord } from "../engine/audit/audit.js";
 import { SqliteAuditStore } from "../engine/audit/audit-store.js";
 import { DEFAULT_AUDIT_SETTINGS, SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
@@ -32,7 +37,7 @@ import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-sch
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
-import { steerBlock } from "../engine/code-rule/rerail-steer.js";
+import { rewoundSteer, steerBlock, subagentSteer } from "../engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../engine/code-rule/steer-origin.js";
 import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
 import type {
@@ -177,6 +182,9 @@ const LedgerEntrySchema = z.union([
       mechanism: z.enum(["observe", "native-queue", "additional-context", "deferred-context"]),
       content: z.string(),
       ruleIds: z.array(z.string()),
+      strategy: z.enum(STEER_STRATEGIES).optional(),
+      toolCallId: z.string().optional(),
+      rewound: z.array(z.string()).optional(),
     }),
   }),
   z.object({ type: z.literal("rule-mutation"), mutation: z.unknown() }),
@@ -312,6 +320,15 @@ interface PendingSteer {
   scope: string[];
 }
 
+/**
+ * A tool call's result being ingested: while it is open, a `rewind` steer for the call's edit rolls that edit back.
+ * `steers` settle once each steer that began a rollback in it is queued, so the result answers with that steer.
+ */
+interface RewindWindow {
+  readonly toolCallId: string;
+  readonly steers: Promise<void>[];
+}
+
 /** The checkout a session started in (physical root), the session folder relative to it, and that folder resolved once. */
 interface StartingCheckout {
   root: string;
@@ -343,6 +360,10 @@ interface RuntimeSessionState {
   turn: number;
   eventDeliveries: Map<string, AdapterDelivery[]>;
   pendingSteers: PendingSteer[];
+  /** How the session's code-rule steers reach the agent; read with its audit settings. */
+  steerStrategy: SteerStrategy;
+  /** Open while a tool call's result is ingested; unset otherwise. */
+  rewindWindow: RewindWindow | undefined;
   codeRuleRevision: number;
   codeRuleSourceVersions: Map<string, number>;
   /** The session's evaluator, opening or open; unset for good once it could not open. */
@@ -468,7 +489,8 @@ export interface RerailRuntimeOptions {
    * nothing is recorded, set up or imported for them. Defaults to true.
    */
   trusted?: boolean;
-  auditSettings?: AuditSettings;
+  /** Defaults for checkouts without saved audit settings; saved settings win. */
+  auditSettings?: Partial<CheckoutAuditSettings>;
   /** Delivers a completed background code-rule result without waiting for another host event. */
   deliverBackground?: (delivery: AdapterDelivery) => Promise<void> | void;
   /** Transfers a prepared session's host ownership before durable publication. */
@@ -516,7 +538,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #createAuditor: NonNullable<RerailRuntimeOptions["createAuditor"]>;
   readonly #deliverBackground: RerailRuntimeOptions["deliverBackground"];
   readonly #beforeSessionPublish: RerailRuntimeOptions["beforeSessionPublish"];
-  readonly #auditSettings: Required<AuditSettings>;
+  readonly #auditSettings: CheckoutAuditSettings;
   readonly #controls: SqliteAuditControlStore;
   readonly #controlTimer: NodeJS.Timeout;
   readonly #autostart: boolean;
@@ -636,11 +658,23 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const index = state.pendingCodeRuleCalls.findIndex((call) => call.id === event.toolCallId);
       if (index >= 0) {
         const [call] = state.pendingCodeRuleCalls.splice(index, 1);
-        await bridge?.finish(call!.id, event.failed === true);
-        await this.#append(state, { type: "policy-result", toolCallId: call!.id });
-        const settled = bridge?.settleGeneratedEdits();
-        if (ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native") await settled;
-        else if (settled !== undefined) await settledWithin(settled, HOOK_EDIT_CHECK_MS);
+        // While the result is ingested, a `rewind` steer for the call's edit may roll it back (`#rewind`).
+        const window: RewindWindow | undefined = bridge === undefined ? undefined : { toolCallId: call!.id, steers: [] };
+        state.rewindWindow = window;
+        try {
+          await bridge?.finish(call!.id, event.failed === true, { rewindable: true });
+          await this.#append(state, { type: "policy-result", toolCallId: call!.id });
+          const settled = bridge?.settleGeneratedEdits();
+          if (ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native") await settled;
+          else if (settled !== undefined) await settledWithin(settled, HOOK_EDIT_CHECK_MS);
+        } finally {
+          if (window !== undefined) {
+            // A steer from now on is a message; one that already rolled the edit back is queued before this answers.
+            state.rewindWindow = undefined;
+            bridge!.release(call!.id);
+            await Promise.all(window.steers);
+          }
+        }
       }
     }
     if (event.kind === "turn-end") {
@@ -919,6 +953,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const items = ledger.flatMap((entry) => (entry.type === "sample" ? [entry.item] : []));
     const source = new MutableContentSource(items);
     const watermarks = await JsonlWatermarkStore.open(join(directory, "watermarks.jsonl"));
+    // Saved settings win over the runtime's defaults; `#scheduleAuditRequests` keeps the strategy current.
+    const auditSettings = this.#controls.getWorkspaceSettings(checkout.cwd);
     const opened: RuntimeSessionState = {
       descriptor: session,
       checkout,
@@ -936,6 +972,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       turn,
       eventDeliveries: new Map(),
       pendingSteers: [],
+      steerStrategy: (auditSettings ?? this.#auditSettings).steerStrategy,
+      rewindWindow: undefined,
       codeRuleRevision: 0,
       codeRuleSourceVersions: new Map(),
       ownerClaim: undefined,
@@ -951,7 +989,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     };
     // Set when the evaluator failed to open: what it observed while opening belongs to no live evaluator.
     let retired = false;
-    const auditSettings = this.#controls.getWorkspaceSettings(checkout.cwd);
     const steerDelivery: RuleSteerDelivery = {
       requestSteer: async (sessionId, requested, content, metadata) => {
         const activeState = this.#sessions.get(sessionId);
@@ -964,12 +1001,28 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
             mechanism: ADAPTER_CAPABILITIES[activeState.descriptor.host].delivery[requested],
             content,
             ruleIds: metadata?.ruleIds ?? [],
+            strategy: "message",
           },
           revision,
           scope: metadata?.scope ?? [],
         };
         if (!this.#isCurrentSteer(activeState, pending)) return "discarded";
-        activeState.pendingSteers.push(pending);
+        const strategy = activeState.steerStrategy;
+        if (strategy === "subagent")
+          pending.delivery = { ...pending.delivery, content: subagentSteer(content, activeState.descriptor.host), strategy };
+        const window = activeState.rewindWindow;
+        if (strategy === "rewind" && window !== undefined && metadata?.generatedEdit === true) {
+          // Queued before the result answers, so the steer goes out with the edit it rolled back.
+          const queued = Promise.withResolvers<void>();
+          window.steers.push(queued.promise);
+          try {
+            await this.#rewind(activeState, window.toolCallId, pending, metadata);
+            if (activeState.closed || retired || !this.#isCurrentSteer(activeState, pending)) return "discarded";
+            activeState.pendingSteers.push(pending);
+          } finally {
+            queued.resolve();
+          }
+        } else activeState.pendingSteers.push(pending);
         if (activeState.codeRuleReady && metadata?.background === true && this.#deliverBackground !== undefined) {
           const inFlight = this.#deliverSteer(activeState, pending, true);
           const waitsForNativeBoundary = metadata.generatedEdit === true
@@ -1300,9 +1353,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #scheduleAuditRequests(sessionId: string): void {
     const state = this.#sessions.get(sessionId);
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
-    state.codeRuleBridge?.updateSettings(this.#controls.hasUserSettings(sessionId)
-      ? this.#controls.getSettings(sessionId).settings
-      : this.#auditSettings);
+    const settings = this.#controls.hasUserSettings(sessionId) ? this.#controls.getSettings(sessionId).settings : this.#auditSettings;
+    state.steerStrategy = settings.steerStrategy;
+    state.codeRuleBridge?.updateSettings(settings);
     if (state.auditRequestWork !== undefined) return;
     const work = this.#runAuditRequests(sessionId);
     state.auditRequestWork = work;
@@ -1360,6 +1413,33 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       && (pending.scope.length === 0
         ? pending.revision >= state.codeRuleRevision
         : pending.scope.every(path => (state.codeRuleSourceVersions.get(path) ?? 0) <= pending.revision));
+  }
+
+  /**
+   * Rolls the window's tool call back for `pending` when the bridge can (`CodeRuleBridge.rewind`), and makes `pending`
+   * the rollback's steer: the notice of what was put back and the steer, tagged with the call, at the rollback's
+   * revision. Otherwise `pending` stays the message it is.
+   */
+  async #rewind(state: RuntimeSessionState, toolCallId: string, pending: PendingSteer, metadata: SteerMetadata): Promise<void> {
+    const bridge = state.codeRuleBridge;
+    if (bridge === undefined) return;
+    let rewound: RewoundEdit | undefined;
+    try {
+      rewound = await bridge.rewind(toolCallId, metadata.revision, metadata.scope);
+    } catch (error) {
+      process.stderr.write(`rerail: could not roll back tool call ${toolCallId}: ${error instanceof Error ? error.message : String(error)}\n`);
+      return;
+    }
+    const paths = rewound === undefined ? [] : [...rewound.restored, ...rewound.deleted];
+    if (rewound === undefined || paths.length === 0) return;
+    pending.revision = Math.max(pending.revision, rewound.revision);
+    pending.delivery = {
+      ...pending.delivery,
+      content: rewoundSteer(pending.delivery.content, rewound),
+      strategy: "rewind",
+      toolCallId,
+      rewound: paths,
+    };
   }
 
   #deliverSteer(

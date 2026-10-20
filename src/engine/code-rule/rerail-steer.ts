@@ -90,6 +90,48 @@ export function steerHeadlines(content: string): SteerHeadline[] {
   return headlines;
 }
 
+/** The tool each coding agent starts a subagent with; Pi has none of its own, so Rerail registers `rerail_fix` there. */
+export const SUBAGENT_TOOLS: Readonly<Record<RerailHost, string>> = {
+  pi: "rerail_fix",
+  omp: "task",
+  "claude-code": "Task",
+  cursor: "Task",
+  codex: "spawn_agent",
+};
+
+/**
+ * A `subagent` steer: the steer blocks, then that the coding agent hands the fix to a subagent with its own subagent
+ * tool and keeps to its task. The note reads as neither a header nor a `Why?` line, so `steerHeadlines` is unchanged.
+ */
+export function subagentSteer(content: string, host: RerailHost): string {
+  return `${content}\n\nThis note comes from Rerail, not the person, and your task is unchanged. Hand the fix to a `
+    + `subagent with the \`${SUBAGENT_TOOLS[host]}\` tool, giving it the rule, the file and the guidance above, then `
+    + "keep working on your own task.";
+}
+
+/** The files Rerail put back when it rolled an edit back: `restored` to their text before it, `deleted` as new files it created. */
+export interface RewoundPaths {
+  readonly restored: readonly string[];
+  readonly deleted: readonly string[];
+}
+
+const quoted = (paths: readonly string[]): string => paths.map(path => `\`${path}\``).join(", ");
+
+/**
+ * A `rewind` steer, which the coding agent reads in the result of the edit it rolled back: what Rerail put back, that
+ * the edit is to be redone following the rule, then the steer blocks. Nothing in the note reads as a header or a
+ * `Why?` line.
+ */
+export function rewoundSteer(content: string, { restored, deleted }: RewoundPaths): string {
+  const undone = [
+    ...(restored.length === 0 ? [] : [`${quoted(restored)} ${restored.length === 1 ? "is" : "are"} back as before the edit`]),
+    ...(deleted.length === 0 ? [] : [`${quoted(deleted)}, which the edit created, ${deleted.length === 1 ? "is" : "are"} deleted`]),
+  ].join("; ");
+  return `Rerail rolled back this edit because it breaks the rule below: ${undone}. Redo it so it follows the rule; `
+    + "if you decide the rule does not apply, redo it as it was and tell the person in one line why.\n\n"
+    + content;
+}
+
 /**
  * How a coding agent can show the `why?` link: on the word itself (an OSC 8 terminal link, or a markdown link the
  * agent writes), or, where it can draw no link, printed after it.

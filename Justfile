@@ -61,3 +61,7 @@ rerail-query-parity *args:
 # Dashboard history load: seed a throwaway database with N audits, then time each history read, a poll, and /healthz under polling (--audits 4000).
 rerail-dashboard-history *args:
     @node --import tsx benchmark/dashboard-history.ts {{ args }}
+
+# Steer strategies on real harnesses: run the fixture task per host × strategy and report completion, steers, cost and compaction attribution (--hosts pi --strategies message,rewind --trials 3). Needs a fresh dist/ (npm run build:ts) and provider credentials.
+rerail-steer-strategy *args:
+    @node --import tsx benchmark/steer-strategy.ts {{ args }}

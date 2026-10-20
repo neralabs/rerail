@@ -29,9 +29,9 @@
  * Anything that depends on what the model chose to say is printed as INFO, never asserted.
  */
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
@@ -44,11 +44,10 @@ import {
   upsertLibraryRule,
 } from "../../src/engine/index.js";
 import { setRepositoryStarted, SqliteSessionReader, type SessionEventRecord } from "../../src/runtime/index.js";
+import { DIST, ensureFresh, jsonlFiles } from "./host-harness.js";
 
 type Host = "omp" | "pi";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const DIST = join(ROOT, "dist");
 const TIMEOUT_MS = 180_000;
 /**
  * Ceiling on the extension's own session start, measured from Rerail's records (process spawn to the
@@ -58,7 +57,7 @@ const TIMEOUT_MS = 180_000;
 const MAX_SESSION_START_MS = 12_000;
 const CODE = "SQL_EXECUTE_FSTRING";
 /** The one enabled code rule: a Python `.execute(...)` call whose SQL is an f-string interpolating into the statement. */
-const CODE_RULE = {
+export const CODE_RULE = {
   format: CODE_RULE_FORMAT,
   id: "rerail-lifecycle:sql-execute-fstring",
   revision: 1,
@@ -232,16 +231,6 @@ function extensionErrors(run: Run): string[] {
     .map((line) => line.trim().replace(/^.*(default|pi)-extension\.js\): /u, "").slice(0, 160));
 }
 
-/** Refuse to prove anything about a `dist/` that is older than `src/`: the run would test stale code. */
-async function ensureFresh(extension: string): Promise<void> {
-  const built = await stat(extension).catch(() => undefined);
-  if (built === undefined) throw new Error(`${extension} is missing: run \`npm run build:ts\` first`);
-  for (const name of await readdir(join(ROOT, "src"), { recursive: true })) {
-    const source = await stat(join(ROOT, "src", name));
-    if (source.isFile() && source.mtimeMs > built.mtimeMs) throw new Error(`${extension} is older than src/${name}: run \`npm run build:ts\` first`);
-  }
-}
-
 async function project(): Promise<Workspace> {
   const root = await mkdtemp(join(tmpdir(), "rerail-lifecycle-"));
   await mkdir(join(root, "api"), { recursive: true });
@@ -268,18 +257,6 @@ async function project(): Promise<Workspace> {
   }
   env.RERAIL_HOME = rerailHome;
   return { root, env, databasePath, sessionDir: join(root, ".host-sessions") };
-}
-
-async function jsonlFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
-  const files = await Promise.all(
-    entries.map(async (entry) => {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) return jsonlFiles(path);
-      return entry.name.endsWith(".jsonl") ? [path] : [];
-    }),
-  );
-  return files.flat();
 }
 
 function textOf(content: z.infer<typeof Content>): string {

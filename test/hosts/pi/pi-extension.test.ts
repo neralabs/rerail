@@ -28,9 +28,11 @@ import {
   steerBlock,
   steerOrigin,
   type ConversationRule,
+  type AdapterDelivery,
+  type AdapterEvent,
 } from "../../../src/engine/index.js";
 import { createPiConversationRulesExtension } from "../../../src/hosts/pi/pi-extension.js";
-import { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE, SqliteSessionStore } from "../../../src/runtime/index.js";
+import { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE, RerailRuntime, SqliteSessionStore } from "../../../src/runtime/index.js";
 import type { HostCommandContext } from "../../../src/harness/index.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
@@ -267,6 +269,86 @@ describe("Pi conversation-rules extension", () => {
     }, harness.context);
     expect(harness.messages).toEqual([]);
     expect(receiptCount(harness)).toBe(0);
+  });
+
+  describe("steer strategies", () => {
+    /** Adds `extra(event)` to what the runtime returns for each event, as the engine's strategies would. */
+    const withDeliveries = (extra: (event: AdapterEvent) => AdapterDelivery[]) => {
+      const ingest = RerailRuntime.prototype.ingest;
+      return vi.spyOn(RerailRuntime.prototype, "ingest").mockImplementation(async function (this: RerailRuntime, event) {
+        return [...await ingest.call(this, event), ...extra(event)];
+      });
+    };
+    const rewound = (toolCallId: string): AdapterDelivery => ({
+      sessionId: "pi-test-session",
+      requested: "steer",
+      mechanism: "native-queue",
+      content: "Your edit of a.ts was rolled back. Redo it following the rule.",
+      ruleIds: ["no-any"],
+      strategy: "rewind",
+      toolCallId,
+      rewound: ["a.ts"],
+    });
+    const result = { type: "tool_result", toolCallId: "call-1", toolName: "edit", input: {}, content: [{ type: "text", text: "Edited a.ts" }], details: { diff: "+x" }, isError: false };
+
+    it("puts a rolled-back edit's steer into that call's result instead of a message, and counts it", async () => {
+      const harness = createHarness();
+      await install(harness);
+      const spy = withDeliveries(event => event.kind === "result" ? [rewound(event.toolCallId), { ...rewound(event.toolCallId), content: "Second rule." }] : []);
+      try {
+        await expect(Promise.resolve(harness.handlers.get("tool_result")!(result, harness.context))).resolves.toEqual({
+          content: [{ type: "text", text: "Your edit of a.ts was rolled back. Redo it following the rule.\n\nSecond rule." }],
+          isError: true,
+        });
+        expect(harness.messages).toEqual([]);
+        expect(receiptCount(harness)).toBe(2);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("sends a steer for a call whose result is not being ingested as a message", async () => {
+      const harness = createHarness();
+      await install(harness);
+      const spy = withDeliveries(event => event.kind === "result" ? [rewound("call-closed")] : []);
+      try {
+        await expect(Promise.resolve(harness.handlers.get("tool_result")!(result, harness.context))).resolves.toBeUndefined();
+        expect(harness.messages).toEqual([{
+          message: {
+            customType: RULE_MESSAGE_TYPE,
+            content: "Your edit of a.ts was rolled back. Redo it following the rule.",
+            display: true,
+            details: { requested: "steer", mechanism: "native-queue", sessionId: "pi-test-session" },
+          },
+          options: { deliverAs: "steer" },
+        }]);
+        expect(receiptCount(harness)).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("registers rerail_fix once, with the first subagent steer, and still sends the steer as a message", async () => {
+      const harness = createHarness();
+      const registered: string[] = [];
+      harness.pi.registerTool = ((tool: { name: string }) => { registered.push(tool.name); }) as ExtensionAPI["registerTool"];
+      await install(harness);
+      const subagent = (event: AdapterEvent): AdapterDelivery[] => event.kind === "turn-end"
+        ? [{ sessionId: "pi-test-session", requested: "steer", mechanism: "native-queue", content: "Delegate the fix with `rerail_fix`.", ruleIds: ["no-any"], strategy: "subagent" }]
+        : [];
+      const spy = withDeliveries(subagent);
+      try {
+        expect(registered).toEqual([]);
+        for (const responseId of ["response-1", "response-2"]) {
+          await harness.handlers.get("turn_end")!({ type: "turn_end", turnIndex: 0, message: { role: "assistant", timestamp: 101, responseId, content: [] }, toolResults: [] }, harness.context);
+        }
+        expect(registered).toEqual(["rerail_fix"]);
+        const steer = { message: expect.objectContaining({ content: "Delegate the fix with `rerail_fix`." }), options: { deliverAs: "steer" } };
+        expect(harness.messages).toEqual([steer, steer]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 
   it("records a turn once when Pi replays its turn_end lifecycle event", async () => {

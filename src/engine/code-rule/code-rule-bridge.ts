@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, rm } from "node:fs/promises";
+import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   AuditorCloseOptions,
   CodeRuleEdit,
@@ -14,6 +14,7 @@ import type {
   CodeRuleSourceLanguage,
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
+import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { languageOfPath, SOURCE_LANGUAGES } from "./code-rule-languages.js";
 
@@ -56,6 +57,16 @@ function observation({ text: _text, deleted: _deleted, ...source }: Source): Obs
 interface PendingEdit {
   readonly paths: readonly string[];
   readonly preimages: ReadonlyMap<string, Preimage>;
+}
+/** A finished edit `rewind` may still roll back: the revision its finish audited, and each path's digest after it (none when absent). */
+interface RewindableEdit {
+  readonly revision: number;
+  readonly preimages: ReadonlyMap<string, Preimage>;
+  readonly after: ReadonlyMap<string, string | undefined>;
+}
+/** The paths `rewind` put back, and the revision that audited them back (in `log` mode). */
+export interface RewoundEdit extends RewoundPaths {
+  readonly revision: number;
 }
 
 /** Which boundary asked for a discovery pass; a stronger request absorbs weaker ones queued behind the same walk. */
@@ -205,6 +216,8 @@ export class CodeRuleBridge {
   readonly #onRevision: ((sessionId: string, revision: number, paths: readonly string[]) => void) | undefined;
   readonly #observations: SourceObservationCache | undefined;
   readonly #pending = new Map<string, PendingEdit>();
+  /** Finished edits kept rewindable by their tool call, from `finish` until `release`. */
+  readonly #rewindable = new Map<string, RewindableEdit>();
   /** Command tool calls whose results must reconcile shell writes. */
   readonly #commands = new Set<string>();
   readonly #observed = new Map<string, ObservedSource>();
@@ -246,6 +259,7 @@ export class CodeRuleBridge {
         await this.#auditor.close();
       }
       this.#pending.clear();
+      this.#rewindable.clear();
       this.#commands.clear();
       this.#observed.clear();
       this.#discovery = undefined;
@@ -288,8 +302,11 @@ export class CodeRuleBridge {
     });
   }
 
-  /** A failed command may still have written files, so command results reconcile regardless of `failed`. */
-  async finish(toolCallId: string, failed = false): Promise<readonly CodeRuleResponse[]> {
+  /**
+   * A failed command may still have written files, so command results reconcile regardless of `failed`. With
+   * `rewindable` the edit's preimages are kept for `rewind` until `release`.
+   */
+  async finish(toolCallId: string, failed = false, options: { rewindable?: boolean } = {}): Promise<readonly CodeRuleResponse[]> {
     const discovery = this.#requireDiscovery();
     if (this.#commands.delete(toolCallId)) return await this.#reconcile(discovery);
     return await this.#enqueue(async () => {
@@ -299,8 +316,101 @@ export class CodeRuleBridge {
       if (pending === undefined || failed) return [];
       this.refreshCodeRules();
       const edits = await this.#readEdits(discovery, pending.paths, pending.preimages);
-      return edits.length === 0 ? [] : [await this.#auditEdits(edits, ["edit", "function"])];
+      if (edits.length === 0) return [];
+      // Kept before the audit starts, so a steer its evaluation publishes finds it.
+      if (options.rewindable === true) {
+        const after = new Map([...pending.preimages.keys()].map(path => [path, this.#observed.get(path)?.digest]));
+        this.#rewindable.set(toolCallId, { revision: this.#revision + 1, preimages: pending.preimages, after });
+      }
+      return [await this.#auditEdits(edits, ["edit", "function"])];
     });
+  }
+
+  /** Ends the window in which `rewind` may roll the call's edit back. */
+  release(toolCallId: string): void {
+    this.#rewindable.delete(toolCallId);
+  }
+
+  /**
+   * Rolls a finished, still rewindable edit back to its captured preimages, every file or none: a file that did not
+   * exist is deleted. Only for a steer at the revision its finish audited whose `scope` lies within the captured
+   * paths, while every preimage was read and every file still holds what the edit left. The rollback is observed as
+   * Rerail's own write, so no walk reports it as an uncaptured edit, and audited in `log` mode, so the evaluator holds
+   * the restored source without a steer for it. Undefined when nothing was rolled back.
+   */
+  async rewind(toolCallId: string, revision: number, scope: readonly string[]): Promise<RewoundEdit | undefined> {
+    const rewindable = this.#rewindable.get(toolCallId);
+    if (rewindable === undefined || rewindable.revision !== revision) return undefined;
+    this.#rewindable.delete(toolCallId);
+    const { preimages, after } = rewindable;
+    if (scope.length === 0 || scope.some(path => !preimages.has(path))) return undefined;
+    if ([...preimages.values()].some(preimage => preimage.readError !== undefined)) return undefined;
+    const discovery = this.#discovery;
+    if (discovery === undefined || discovery.cancelled) return undefined;
+    return await this.#enqueue(async () => {
+      if (this.#discovery !== discovery || discovery.cancelled) return undefined;
+      const root = await realpath(this.#cwd);
+      const targets: Array<{ location: SourceLocation; preimage: Preimage; current: Source }> = [];
+      for (const [path, preimage] of preimages) {
+        const location = this.#sourceLocation(root, path);
+        const current = await this.#readSource(root, path);
+        if (location === undefined || current === undefined || current.readError !== undefined) return undefined;
+        if (current.digest !== after.get(path)) return undefined;
+        if (current.deleted && preimage.text !== undefined && !await this.#ownsFolder(root, location)) return undefined;
+        targets.push({ location, preimage, current });
+      }
+      const written: typeof targets = [];
+      try {
+        for (const target of targets) {
+          if (target.current.text === target.preimage.text) continue;
+          await this.#writeSource(target.location, target.preimage.text);
+          written.push(target);
+        }
+      } catch {
+        // Every file or none: what was already put back takes the edit's text again.
+        for (const target of written) await this.#writeSource(target.location, target.current.text).catch(() => undefined);
+        return undefined;
+      }
+      const edits: CodeRuleEdit[] = [];
+      for (const { location, current } of written) {
+        const source = await this.#readSource(root, location.path);
+        this.#touchSource(discovery, location.path);
+        if (source === undefined) continue;
+        this.#updateObservedSource(source);
+        const edit = this.#editFromToolSource(source, current.text === undefined ? {} : { text: current.text });
+        if (edit !== undefined) edits.push(edit);
+      }
+      if (edits.length > 0) await this.#auditEdits(edits, ["edit", "function"], "log");
+      return {
+        revision: this.#revision,
+        restored: written.filter(target => target.preimage.text !== undefined).map(target => target.location.path),
+        deleted: written.filter(target => target.preimage.text === undefined).map(target => target.location.path),
+      };
+    });
+  }
+
+  /** Whether the folder a file is to be created in lies in the checkout that owns the file. */
+  async #ownsFolder(root: string, location: SourceLocation): Promise<boolean> {
+    const owner = this.#auditor.sourceRoot === undefined ? root : this.#auditor.sourceRoot(location.path);
+    if (owner === undefined) return false;
+    const folder = await realpath(dirname(location.absolute)).catch(() => undefined);
+    return folder !== undefined && (folder === owner || folder.startsWith(`${owner}${sep}`));
+  }
+
+  /** Writes `text` to the file without following a final symlink; without text the file is removed. */
+  async #writeSource(location: SourceLocation, text: string | undefined): Promise<void> {
+    if (text === undefined) {
+      await unlink(location.absolute).catch((error: unknown) => {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      });
+      return;
+    }
+    const handle = await open(location.absolute, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o666);
+    try {
+      await handle.writeFile(text, "utf8");
+    } finally {
+      await handle.close();
+    }
   }
 
   /**
@@ -373,6 +483,7 @@ export class CodeRuleBridge {
       if (this.#discovery !== discovery) return;
       this.#sessionId = undefined;
       this.#pending.clear();
+      this.#rewindable.clear();
       this.#commands.clear();
       this.#observed.clear();
       this.#discovery = undefined;
@@ -738,12 +849,14 @@ export class CodeRuleBridge {
     };
   }
 
-  async #auditEdits(edits: CodeRuleEditBatch["edits"], checkpoints: CodeRuleCheckpoint[]): Promise<CodeRuleResponse> {
+  async #auditEdits(edits: CodeRuleEditBatch["edits"], checkpoints: CodeRuleCheckpoint[], mode?: AuditMode): Promise<CodeRuleResponse> {
     const sessionId = this.#requireSession();
     const paths = edits.map(edit => edit.path).sort(compareDeterministicStrings);
     this.#revision += 1;
     this.#onRevision?.(sessionId, this.#revision, paths);
-    this.#lastResponse = await this.#auditor.auditGeneratedEdits(sessionId, { revision: this.#revision, checkpoints, edits });
+    this.#lastResponse = await this.#auditor.auditGeneratedEdits(sessionId, {
+      revision: this.#revision, checkpoints, edits, ...(mode === undefined ? {} : { mode }),
+    });
     return this.#lastResponse;
   }
 
