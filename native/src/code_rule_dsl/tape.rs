@@ -1157,7 +1157,11 @@ pub(super) struct TapeDoc {
     kind_overrides: Arc<Vec<(u32, u16)>>,
     syntax_errors: Arc<Vec<(u32, u32)>>,
     programs: Arc<Vec<EmbeddedProgram>>,
+    #[cfg(feature = "code-rule-profile")]
+    pub(super) shared_kind_postings: Arc<std::sync::OnceLock<Arc<KindPostings>>>,
 }
+
+pub(super) type KindPostings = rustc_hash::FxHashMap<u16, Vec<u32>>;
 
 /// A node's row and column, as tree-sitter's `TSPoint` counts them: only `\n` ends a row. The
 /// evaluator's line table follows the linter a port mirrors (a lone `\r` ends a Ruff line), so
@@ -1419,6 +1423,8 @@ impl TapeDoc {
             kind_overrides: Arc::new(image.kind_overrides.clone()),
             syntax_errors: Arc::new(image.syntax_errors.clone()),
             programs: Arc::new(image.programs.clone()),
+            #[cfg(feature = "code-rule-profile")]
+            shared_kind_postings: Arc::new(std::sync::OnceLock::new()),
         })
     }
 
@@ -1576,7 +1582,18 @@ impl TapeDoc {
 
     #[cfg(feature = "code-rule-profile")]
     pub(super) fn navigation_bytes(&self) -> usize {
+        #[cfg(feature = "code-rule-profile")]
+        let shared_bytes = self.shared_kind_postings.get().map_or(0, |index| {
+            index.capacity() * std::mem::size_of::<(u16, Vec<u32>)>()
+                + index
+                    .values()
+                    .map(|rows| rows.capacity() * std::mem::size_of::<u32>())
+                    .sum::<usize>()
+        });
+        #[cfg(not(feature = "code-rule-profile"))]
+        let shared_bytes = 0;
         std::mem::size_of::<Self>()
+            + shared_bytes
             + self.data.capacity() * std::mem::size_of::<Rec>()
             + self.kind_aliases.capacity() * std::mem::size_of::<(String, bool)>()
             + self

@@ -8,7 +8,7 @@ import { capabilitiesJson } from "../engine.js";
 import { escapeHatchSignatureFailure } from "./signed-allowlist.js";
 
 const recordingSchema = z.object({
-  commit: z.string(), workers: z.number(), oracle_ms: z.number(), source_mismatches: z.array(z.string()),
+  commit: z.string(), workers: z.number(), oracle_ms: z.number().nullable(), source_mismatches: z.array(z.string()),
   files: z.array(z.object({ path: z.string(), source: z.string() })),
   events: z.array(z.object({ check: z.string(), findings: z.array(z.object({ path: z.string(), line: z.number(), code: z.string() })) })),
 });
@@ -17,15 +17,24 @@ const pageSchema = z.object({ done: z.boolean(), cursor: z.number(),
   failures: z.array(z.unknown()),
 });
 const { values } = parseArgs({ options: { recording: { type: "string" }, output: { type: "string" }, allocator: { type: "string", default: "unspecified" },
-  policies: { type: "string", default: "packs/data-layer/candidates/rules" }, progress: { type: "boolean", default: false } } });
+  policies: { type: "string", default: "packs/data-layer/candidates/rules" }, progress: { type: "boolean", default: false }, "cold-only": { type: "boolean", default: false } } });
 if (values.recording === undefined || values.output === undefined) throw new Error("Usage: suite.ts --recording <json> --output <json>");
 const recording = recordingSchema.parse(JSON.parse(readFileSync(values.recording, "utf8")));
+const workloadSha256 = createHash("sha256").update(JSON.stringify({ commit: recording.commit, files: recording.files, events: recording.events })).digest("hex");
 if (recording.source_mismatches.length !== 0) throw new Error("Pinned source verification failed");
 const native = loadNativeBinding();
 const nativeSha256 = createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex");
 const workspace = new native.CodeRuleDslWorkspace();
 const policyDigests: Record<string, string> = {};
 const policyCompilationMs: Record<string, number> = {};
+const phaseCpuMs: Record<string, { userMs: number; systemMs: number }> = {};
+const finishCpu = (phase: string, started: NodeJS.CpuUsage): void => {
+  const elapsed = process.cpuUsage(started);
+  phaseCpuMs[phase] = { userMs: elapsed.user / 1000, systemMs: elapsed.system / 1000 };
+};
+const markPhase = (phase: string): void => {
+  if (process.env.RERAIL_PROFILE_PHASES !== undefined) console.error(`RERAIL_PROFILE_PHASE ${JSON.stringify({ phase, startUnixUs: Date.now() * 1000 })}`);
+};
 const files = recording.files.map(file => ({ ...file, language: file.path.endsWith(".rs") ? "rust" : "python" }));
 let revision = 0;
 let loadedFiles = 0;
@@ -46,6 +55,8 @@ const collect = async (): Promise<{ violations: z.infer<typeof pageSchema>["viol
 };
 const findingKeys = (rows: z.infer<typeof pageSchema>["violations"]): string[] => rows.map(f => JSON.stringify([f.ruleId, f.path, f.span.startLine + 1, f.code])).sort();
 try {
+  markPhase("compile");
+  const compileCpu = process.cpuUsage();
   const compileStarted = performance.now();
   for (const event of recording.events) {
     const id = `data-layer-${event.check.replaceAll("_", "-")}`;
@@ -60,6 +71,9 @@ try {
     workspace.addCodeRule(compiled);
   }
   const compilationMs = performance.now() - compileStarted;
+  finishCpu("compile", compileCpu);
+  markPhase("cold");
+  const coldCpu = process.cpuUsage();
   const started = performance.now();
   let batch: typeof files = [], bytes = 0;
   for (const file of files) {
@@ -71,21 +85,31 @@ try {
   await send([], false);
   const { violations, failures } = await collect();
   const coldMs = performance.now() - started;
+  finishCpu("cold", coldCpu);
   const file = files.find(file => file.path === "impl/common/l2200_sql_dialect/sql_connection.py") ?? files[0]!;
-  const resendStarted = performance.now();
-  await send([file], false);
-  const unchangedResult = await collect();
-  const unchangedFileMs = performance.now() - resendStarted;
-  const editStarted = performance.now();
-  await send([{ ...file, source: file.source + "\n" }], false);
-  const editedResult = await collect();
-  const editedFileMs = performance.now() - editStarted;
+  const incrementalResults: { phase: string; result: Awaited<ReturnType<typeof collect>> }[] = [];
+  let unchangedFileMs: number | null = null, editedFileMs: number | null = null;
+  if (!values["cold-only"]) {
+    markPhase("unchanged");
+    const unchangedCpu = process.cpuUsage(), resendStarted = performance.now();
+    await send([file], false);
+    const unchangedResult = await collect();
+    unchangedFileMs = performance.now() - resendStarted;
+    finishCpu("unchanged", unchangedCpu);
+    incrementalResults.push({ phase: "unchanged", result: unchangedResult });
+    markPhase("edit");
+    const editCpu = process.cpuUsage(), editStarted = performance.now();
+    await send([{ ...file, source: file.source + "\n" }], false);
+    const editedResult = await collect();
+    editedFileMs = performance.now() - editStarted;
+    finishCpu("edit", editCpu);
+    incrementalResults.push({ phase: "trailing-newline-edit", result: editedResult });
+  }
+  markPhase("report");
   const expected = recording.events.flatMap(event => event.findings.map(f => JSON.stringify([`data-layer-${event.check.replaceAll("_", "-")}`, f.path, f.line, f.code]))).sort();
   const actual = findingKeys(violations);
   const difference = (a: string[], b: string[]) => { const rest = [...b]; return a.filter(key => { const at = rest.indexOf(key); if (at < 0) return true; rest.splice(at, 1); return false; }); };
-  const incrementalDifferences = [
-    { phase: "unchanged", result: unchangedResult }, { phase: "trailing-newline-edit", result: editedResult },
-  ].flatMap(({ phase, result }) => {
+  const incrementalDifferences = incrementalResults.flatMap(({ phase, result }) => {
     const keys = findingKeys(result.violations);
     const falsePositives = difference(keys, expected), falseNegatives = difference(expected, keys);
     return falsePositives.length + falseNegatives.length + result.failures.length === 0 ? []
@@ -93,7 +117,7 @@ try {
   });
   const report = { commit: recording.commit, files: files.length, bytes: files.reduce((sum, file) => sum + Buffer.byteLength(file.source), 0),
     oracleMs: recording.oracle_ms, oracleWorkers: recording.workers, policyDigests, policyCompilationMs, compilationMs, coldMs, unchangedFileMs, editedFileMs, editedPath: file.path,
-    incrementalDifferences,
+    incrementalDifferences, phaseCpuMs, measuredPhases: Object.keys(phaseCpuMs), workloadSha256,
     expected: expected.length, actual: actual.length, falsePositives: difference(actual, expected), falseNegatives: difference(expected, actual), failures,
     peakRssBytes: process.resourceUsage().maxRSS * 1024,
     allocator: values.allocator, policies: values.policies, nativeSha256, nativeWorkers: 4 };

@@ -444,14 +444,25 @@ fn evaluate_file_relations(
         });
     let mut result = Evaluation::default();
     for path in paths {
+        #[cfg(feature = "code-rule-profile")]
+        let _context = crate::code_rule_dsl::profile::trace::Context::enter(
+            &code_rule.id,
+            &clause.id,
+            Some(&path),
+        );
+        #[cfg(feature = "code-rule-profile")]
+        let mut span =
+            crate::code_rule_dsl::profile::trace::Span::start("file-relation", "evaluate");
         let key = (index, clause.id.clone(), path.clone());
         let version = super::documents::current_version(state, &path)
             .ok_or_else(|| invalid(format!("{path} has no current source version")))?;
-        if !state
+        let cached = state
             .file_relation_results
             .get(&key)
-            .is_some_and(|(cached, _)| cached == &version)
-        {
+            .is_some_and(|(cached, _)| cached == &version);
+        #[cfg(feature = "code-rule-profile")]
+        span.detail(|| serde_json::json!({"cached":cached}));
+        if !cached {
             let mut input = state
                 .files
                 .get(&path)

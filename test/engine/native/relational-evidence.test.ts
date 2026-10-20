@@ -19,6 +19,53 @@ const query = `SELECT f.__path AS path, f.__start AS start_byte, f.__end AS end_
   WHERE f.name NOT LIKE '%_async' AND g.name IS NULL`;
 const compile = (document: unknown) => native.CodeRuleDslRuntime.compile(JSON.stringify(document), "json", capabilities);
 
+it("preserves nullable and numeric projections across SQLite insertion batches and tails", () => {
+  const previous = process.env.RERAIL_SQL_INSERT_BATCH;
+  const document = policy("SELECT __path AS path,__start AS start_byte,__end AS end_byte,name AS family,'batch' AS issue,annotation,offset FROM functions");
+  const evidence = { as: "f", query: { ast: { language: "python", rule: { all: [
+    { kind: "function_definition" }, { has: { field: "name", pattern: "$NAME" } },
+    { any: [{ has: { field: "return_type", pattern: "$TYPE" } }, { pattern: "$_" }] },
+  ] } } }, project: { name: "capture.NAME", annotation: "capture.TYPE", offset: "capture.NAME.startByte" } };
+  const rule = compile({ ...document, clauses: [{ ...document.clauses[0], relational: {
+    ...document.clauses[0]!.relational, inputs: { functions: { evidence } },
+  } }] });
+  const sources = [Array.from({ length: 131 }, (_, i) => `def read_ä${i}()${i % 2 ? " -> str" : ""}: pass`).join("\n"), "value = 'clean'\n"];
+  try {
+    for (const source of sources) {
+      const snapshot = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0,
+        files: [{ path: "unicode/ü.py", language: "python", source }] });
+      process.env.RERAIL_SQL_INSERT_BATCH = "1";
+      const expected = JSON.parse(rule.evaluate(snapshot, "report"));
+      expect(expected.failures).toEqual([]);
+      expect(expected.violations).toHaveLength(source.startsWith("def") ? 131 : 0);
+      for (const batch of [7, 32, 256]) {
+        process.env.RERAIL_SQL_INSERT_BATCH = String(batch);
+        const actual = JSON.parse(rule.evaluate(snapshot, "report"));
+        expect(actual.failures).toEqual(expected.failures);
+        expect(actual.violations).toEqual(expected.violations);
+      }
+    }
+  } finally {
+    if (previous === undefined) delete process.env.RERAIL_SQL_INSERT_BATCH;
+    else process.env.RERAIL_SQL_INSERT_BATCH = previous;
+  }
+});
+
+it("accepts 64 shared SQL stages and rejects 65 in both schema and native compilation", () => {
+  const document = policy("SELECT __path AS path,__start AS start_byte,__end AS end_byte,name AS family,'shared' AS issue FROM level_63");
+  const stages = Array.from({ length: 64 }, (_, i) => ({ name: `level_${i}`, query: `SELECT * FROM ${i ? `level_${i - 1}` : "functions"}` }));
+  const withStages = { ...document, clauses: [{ ...document.clauses[0], relational: { ...document.clauses[0]!.relational, stages } }] };
+  expect(codeRuleSchema.safeParse(withStages).success).toBe(true);
+  const rule = compile(withStages);
+  const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0,
+    files: [{ path: "a.py", language: "python", source: "def read(): pass\n" }] }), "report"));
+  expect(result.failures).toEqual([]);
+  expect(result.violations).toHaveLength(1);
+  stages.push({ name: "overflow", query: "SELECT * FROM level_63" });
+  expect(codeRuleSchema.safeParse(withStages).success).toBe(false);
+  expect(() => compile(withStages)).toThrow("at most 64 stages");
+});
+
 it.each([{ locations: ["missing.py"] }, { references: { language: "python" } }])("rejects project-only inputs on file partitions: %j", extra => {
   const base = policy(query);
   const document = { ...base, clauses: [{ ...base.clauses[0], relational: { ...base.clauses[0]!.relational, partitionBy: "file", ...extra } }] };
@@ -156,6 +203,45 @@ it("joins native reference edges and invalidates them after an edit in another f
     expect(await evaluate(3,[files[1]!])).toMatchObject({ failures: [], violations: expected.violations });
     expect(await evaluate(4,[{ ...files[0]!,source:"def another(x): return x\n" }])).toMatchObject({ failures: [], violations: [] });
   } finally { workspace.close(); }
+});
+
+it("batches reference edges across full batches and tails and repairs edits", async () => {
+  const previous = process.env.RERAIL_SQL_INSERT_BATCH;
+  const document = policy(`SELECT __path AS path,__start AS start_byte,__end AS end_byte,
+    source_name || target_name AS family,'reference' AS issue FROM reference_edges WHERE target_name LIKE '%._effect'`);
+  Object.assign(document.clauses[0]!.relational, { references: { language: "python" } });
+  const rule = compile(document);
+  const files = [
+    { path: "pkg/effect.py", language: "python", source: "def _effect(x): return x\n" },
+    { path: "pkg/use.py", language: "python", source: "from pkg.effect import _effect\n" +
+      Array.from({ length: 131 }, (_, i) => `def run${i}(xs): return map(_effect,xs)`).join("\n") },
+  ];
+  const evaluate = () => JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files }), "report"));
+  const workspace = new native.CodeRuleDslWorkspace();
+  try {
+    delete process.env.RERAIL_SQL_INSERT_BATCH;
+    const expected = evaluate();
+    expect(expected.failures).toEqual([]);
+    expect(expected.violations).toHaveLength(131);
+    for (const batch of [1, 7, 32, 256]) {
+      process.env.RERAIL_SQL_INSERT_BATCH = String(batch);
+      const actual = evaluate();
+      expect(actual.failures).toEqual([]);
+      expect(actual.violations).toEqual(expected.violations);
+    }
+    delete process.env.RERAIL_SQL_INSERT_BATCH;
+    workspace.addCodeRule(rule);
+    const apply = async (revision: number, changed: typeof files, removed: string[] = []) =>
+      JSON.parse(await workspace.applyAsync(JSON.stringify({ revision, files: changed, removed }))).evaluation;
+    expect(await apply(1, files)).toMatchObject({ failures: [], violations: expected.violations });
+    expect(await apply(2, [{ ...files[1]!, source: "pass\n" }])).toMatchObject({ failures: [], violations: [] });
+    expect(await apply(3, [files[1]!])).toMatchObject({ failures: [], violations: expected.violations });
+    expect(await apply(4, [], [files[0]!.path])).toMatchObject({ failures: [], violations: [] });
+  } finally {
+    workspace.close();
+    if (previous === undefined) delete process.env.RERAIL_SQL_INSERT_BATCH;
+    else process.env.RERAIL_SQL_INSERT_BATCH = previous;
+  }
 });
 
 it("keeps direct module attributes separate from attributes of reexported module values", () => {

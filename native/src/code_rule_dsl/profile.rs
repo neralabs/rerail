@@ -2,6 +2,7 @@
 //! Disabled in production builds. Reports worker CPU separately from wall time.
 
 mod semantic;
+pub(crate) mod trace;
 use ast_grep_core::matcher::{DumpPattern, Matcher};
 use serde_json::{Value, json};
 use std::borrow::Cow;
@@ -110,8 +111,11 @@ pub(super) fn record_query(
     matcher: &AstMatcher,
     root_kinds: Option<BTreeSet<u16>>,
 ) {
-    eprintln!(
-        "RERAIL_CODE_RULE_ANCHOR {}",
+    if std::env::var_os("RERAIL_CODE_RULE_ANCHORS").is_none() {
+        return;
+    }
+    trace::emit(
+        "RERAIL_CODE_RULE_ANCHOR",
         json!({
             "ruleId": rule_id,
             "clauseId": check_id,
@@ -119,7 +123,7 @@ pub(super) fn record_query(
             "rootKinds": root_kinds.map(|kinds| kinds.into_iter()
                 .map(|id| language.kind_name(id)).collect::<Vec<_>>()),
             "matcher": describe_matcher(matcher, language),
-        })
+        }),
     );
 }
 
@@ -260,10 +264,15 @@ impl Drop for PhaseTimer {
 
 /// Associates one Rayon worker with the active apply profile. Nested timers then
 /// suspend candidate lookup and rule-evaluation preparation, so each CPU interval has one owner.
-pub(super) struct WorkerProfile;
+pub(super) struct WorkerProfile(bool);
 
 impl WorkerProfile {
     pub(super) fn start() -> Self {
+        // Rayon can run a small iterator on the apply thread itself. Keep that
+        // thread's session and timers; clearing them loses the rest of the apply.
+        if PROFILE.with(|profile| profile.borrow().is_some()) {
+            return Self(false);
+        }
         let session = ACTIVE_SESSION
             .lock()
             .expect("profile session mutex poisoned")
@@ -274,12 +283,15 @@ impl WorkerProfile {
             stack.clear();
             stack.push((Phase::Manifest, thread_cpu_ns().unwrap_or_default()));
         });
-        Self
+        Self(true)
     }
 }
 
 impl Drop for WorkerProfile {
     fn drop(&mut self) {
+        if !self.0 {
+            return;
+        }
         let now = thread_cpu_ns().unwrap_or_default();
         while PHASE_STACK.with(|stack| !stack.borrow().is_empty()) {
             PHASE_STACK.with(|stack| {
@@ -483,8 +495,8 @@ impl Drop for ApplyProfile {
                 + profile.serialization_ns
                 + profile.other_ns;
             let named_worker_cpu_ns = total_worker_cpu_ns.saturating_sub(profile.other_ns);
-            eprintln!(
-                "RERAIL_CODE_RULE_PROFILE {}",
+            trace::emit(
+                "RERAIL_CODE_RULE_PROFILE",
                 serde_json::json!({
                     "revision": profile.revision,
                     "applyNs": elapsed,
@@ -519,7 +531,7 @@ impl Drop for ApplyProfile {
                     "rejectedRuleFiles": profile.rejected_rule_files,
                     "selectedRootPairs": profile.selected_root_pairs,
                     "fallbackRuleFiles": profile.fallback_rule_files,
-                })
+                }),
             );
         }
     }
@@ -528,6 +540,19 @@ impl Drop for ApplyProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nested_worker_keeps_the_apply_session_and_phase_stack() {
+        let _apply = ApplyProfile::start(17, thread_cpu_ns());
+        let session = PROFILE.with(|profile| profile.borrow().clone().unwrap());
+        let before = PHASE_STACK.with(|stack| stack.borrow().len());
+        {
+            let _worker = WorkerProfile::start();
+            let _timer = PhaseTimer::start(Phase::Other);
+        }
+        assert!(PROFILE.with(|profile| Arc::ptr_eq(profile.borrow().as_ref().unwrap(), &session)));
+        assert_eq!(PHASE_STACK.with(|stack| stack.borrow().len()), before);
+    }
 
     #[test]
     fn transient_peak_includes_lines_without_a_document_and_counts_shared_lines_once() {

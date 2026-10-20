@@ -11,6 +11,8 @@ PIN='2b1504adc4291daaf080b2e932962b134da1a69a'
 p=argparse.ArgumentParser(description=__doc__)
 for name in ('source','repo'):p.add_argument('--'+name,type=Path,required=True)
 p.add_argument('--output',type=Path,default=Path('packs/data-layer/candidates/rules'))
+p.add_argument('--independent-sql',action='store_true',help='Generate the previous independent quality SQL groups for comparison')
+p.add_argument('--quality-all-sql',action='store_true',help='Experimental single quality SQL scope with explicit production source gates')
 a=p.parse_args();source=a.source.resolve();sys.path[:0]=[str(source),str(source/'scripts')];a.output.mkdir(parents=True,exist_ok=True)
 modules={name:importlib.import_module(module) for name,module in MODULES.items()}
 verify_sources(source,a.repo,PIN)
@@ -66,7 +68,7 @@ W('legacy_execution_surfaces',legacy_clauses(m),roots=[p.relative_to(source).as_
 from data_layer_six.quality import quality_clauses
 from data_layer_six.conditional import conditional_clauses
 m=modules['serverplan_quality']
-W('serverplan_quality',quality_clauses(m)+conditional_clauses(m),roots=['**/*.py'],exclude=['**/.git/**','**/.venv/**','**/venv/**','**/tmp/**','**/__pycache__/**'])
+W('serverplan_quality',quality_clauses(m,shared_sql=not a.independent_sql,share_all=a.quality_all_sql)+conditional_clauses(m),roots=['**/*.py'],exclude=['**/.git/**','**/.venv/**','**/venv/**','**/tmp/**','**/__pycache__/**'])
 
 from data_layer_six.state import state_clauses
 m=modules['serverplan_state_tripwires'];clauses,utils=state_clauses(m)

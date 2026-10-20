@@ -52,7 +52,7 @@ def python_stages():
  row_number() OVER(PARTITION BY f.__path,f.id ORDER BY p.__start)-1 AS position FROM functions f JOIN nodes p ON p.__path=f.__path AND p.parent=f.parameters_kind||':'||f.parameters_start||':'||f.parameters_end JOIN nodes n ON n.__path=p.__path AND (n.id=p.id AND p.kind='identifier' OR n.parent=p.id AND n.ordinal=0 AND n.kind='identifier')
  WHERE p.kind IN ('identifier','typed_parameter','default_parameter','typed_default_parameter')""",('__path','fn','name'))]
 
-def grouped_relations(prefix,stages,rows,full_entries,extra_inputs=None,production_rows=None,row_groups=None):
+def grouped_relations(prefix,stages,rows,full_entries,extra_inputs=None,production_rows=None,row_groups=None,shared_sql=False):
  """Prune detector dependencies, then group within the declared stage bound.
 
  Rows contain (entry-point tuple, source query, full-analyzer query).
@@ -69,21 +69,36 @@ def grouped_relations(prefix,stages,rows,full_entries,extra_inputs=None,producti
   tag=(row_groups or {}).get(row[2],'default')
   needed=dependencies(row[1]+' '+row[2])
   if len(needed)>32:raise ValueError(f'{row[0]} needs {len(needed)} stages')
-  group=next((g for g in groups if g['tag']==tag and len(g['names']|needed)<=32 and sum(len(r[2].encode())+11 for r in g['rows'])+len(row[2].encode())<(13000 if production_rows else 16000)),None)
+  group=next((g for g in groups if g['tag']==tag and (shared_sql or len(g['names']|needed)<=32 and sum(len(r[2].encode())+11 for r in g['rows'])+len(row[2].encode())<(13000 if production_rows else 16000))),None)
   if group is None:group={'rows':[],'names':set(),'tag':tag};groups.append(group)
   group['names']|=needed;group['rows'].append(row)
  result=[]
  for i,group in enumerate(groups):
   entries=sorted({entry for es,_,_ in group['rows'] for entry in es})
-  full=' UNION ALL '.join(sql for _,_,sql in group['rows'])
-  queries={**{e:full for e in full_entries},**{entry:' UNION ALL '.join(sql for es,sql,_ in group['rows'] if entry in es) for entry in entries}}
-  if production_rows is not None:
-   queries['all']=choice('oracleAnalyzer',full,' UNION ALL '.join(production_rows[sql] for _,_,sql in group['rows']))
-  clause=relational(prefix+'-'+str(i+1),[],{'$option':'entryPoint','cases':queries,'default':'SELECT * FROM ('+full+') WHERE 0'},key=('detector','issue','identity'))
+  def query_for(selected):
+   full=' UNION ALL '.join(sql for _,_,sql in selected)
+   queries={**{e:full for e in full_entries},**{entry:' UNION ALL '.join(sql for es,sql,_ in selected if entry in es) for entry in sorted({e for es,_,_ in selected for e in es})}}
+   if production_rows is not None:
+    queries['all']=choice('oracleAnalyzer',full,' UNION ALL '.join(production_rows[sql] for _,_,sql in selected))
+   return {'$option':'entryPoint','cases':queries,'default':'SELECT * FROM ('+full+') WHERE 0'}
+  # Share source inputs and indexed SQL tables in one ordinary relational clause.
+  # Split only diagnostic SELECTs to keep each authored SQL statement bounded.
+  # SQLite owns every intermediate relation; there is no runtime artifact cache.
+  outputs=[]
+  if shared_sql:
+   packets=[]
+   for row in group['rows']:
+    size=max(len(row[1].encode()),len(row[2].encode()),len(production_rows[row[2]].encode()) if production_rows else 0)+32
+    if not packets or packets[-1][1]+size>12000:packets.append(([],0))
+    packet,total=packets[-1];packet.append(row);packets[-1]=(packet,total+size)
+   outputs=[S('diagnostics_'+str(j),query_for(packet)) for j,(packet,_) in enumerate(packets)]
+   query=' UNION ALL '.join('SELECT * FROM '+stage['name'] for stage in outputs)
+  else:query=query_for(group['rows'])
+  clause=relational(prefix+'-'+str(i+1),[],query,key=('detector','issue','identity'))
   import copy
-  clause['relational']['stages']=[copy.deepcopy(s) for s in all_stages if s['name'] in group['names']]
+  clause['relational']['stages']=[copy.deepcopy(s) for s in all_stages if s['name'] in group['names']]+outputs
   clause['relational']['inputs']['raw_nodes']['evidence']['query']['ast']['rule']['all'].append(gate([*entries,*full_entries]))
-  reads=set(re.findall(r'(?i)\b(?:FROM|JOIN)\s+([a-z_]\w*)',full+' '+' '.join(s['query'] if isinstance(s['query'],str) else json.dumps(s['query']) for s in clause['relational']['stages'])))
+  reads=set(re.findall(r'(?i)\b(?:FROM|JOIN)\s+([a-z_]\w*)',json.dumps(query)+' '+' '.join(s['query'] if isinstance(s['query'],str) else json.dumps(s['query']) for s in clause['relational']['stages'])))
   clause['relational']['inputs'].update({name:copy.deepcopy(value) for name,value in (extra_inputs or {}).items() if name in reads})
   if row_groups is not None:clause['_authoring_group']=group['tag']
   result.append(clause)
@@ -161,4 +176,28 @@ def typed_input_partitions(clause):
  for stage in plan['stages']:
   if stage['name']=='nodes':stage['query']=stage['query'].replace('FROM raw_nodes','FROM ('+union+')')
  plan['stages']=[*helpers,*plan['stages']]
- if len(plan['stages'])>32:raise ValueError(clause['id']+' needs too many materialized syntax stages')
+ if len(plan['stages'])>64:raise ValueError(clause['id']+' needs too many materialized syntax stages')
+
+def batched_reachability(clause):
+ """Lower explicit graph producers to the generic batched SQLite stage."""
+ plan=clause['relational']
+ for stage in plan.get('stages',[]):
+  if stage['name']!='descendants':continue
+  original=stage['query']
+  if original.startswith('WITH RECURSIVE roots(__path,id) AS ('):
+   # Conditional architecture declares roots across the repository.
+   roots=original.split(', walk(__path,root,node) AS (',1)[0]+' SELECT __path,id FROM roots'
+  elif clause['id'].startswith('quality-contracts'):
+   # Every consumer family contributes roots. Comprehension parents and bare
+   # comparison operands have no field role and require explicit requests.
+   projected={key for value in plan['inputs'].values() for key in value['evidence']['project']}
+   seeds=["SELECT __path,id FROM nodes WHERE kind IN ('function_definition','class_definition','for_statement','for_in_clause','assignment','delete_statement','block','if_statement','elif_clause','match_statement')",
+    "SELECT __path,parent FROM nodes WHERE kind='for_in_clause' AND parent IS NOT NULL",
+    "SELECT child.__path,child.id FROM nodes child JOIN nodes cmp ON cmp.__path=child.__path AND cmp.id=child.parent WHERE cmp.kind='comparison_operator'"]
+   seeds += [f"SELECT __path,{f}_kind||':'||{f}_start||':'||{f}_end FROM nodes WHERE {f}_start IS NOT NULL" for f in FIELDS if {f+'_kind',f+'_start',f+'_end'}<=projected]
+   if any(s['name']=='arguments' for s in plan['stages']):seeds.append('SELECT __path,id FROM arguments')
+   roots=' UNION '.join(seeds)
+  else:
+   # Other linters retain all authored seeds until a smaller producer is proved.
+   continue
+  stage.clear();stage.update(name='descendants',reachability={'roots':roots,'edges':'SELECT __path,src,dst FROM edges'})

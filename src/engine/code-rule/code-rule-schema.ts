@@ -1433,7 +1433,12 @@ export const codeRuleClauseSchema = z
       locations: z.array(z.string().min(1).max(4096).refine(path => !/[\\:\u0000]/u.test(path) && path.split("/").every(part => part !== "" && part !== "." && part !== ".."),
         "A declared diagnostic location must be a normalized relative path.")).min(1).max(4096).refine(paths => new Set(paths).size === paths.length, "Declared diagnostic locations must be distinct.").optional(),
       inputs: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), codeRuleRelationSchema),
-      stages: z.array(z.object({ name: nonEmptyString, query: nonEmptyString, indexes: z.array(z.array(nonEmptyString).min(1).max(16)).max(8).optional() }).strict()).max(32).optional(),
+      stages: z.array(z.union([
+        z.object({ name: nonEmptyString, query: nonEmptyString, indexes: z.array(z.array(nonEmptyString).min(1).max(16)).max(8).optional() }).strict(),
+        z.object({ name: nonEmptyString, reachability: z.object({ roots: nonEmptyString, edges: nonEmptyString,
+          batchSize: z.number().int().min(1).max(4096).optional(),
+        }).strict() }).strict(),
+      ])).max(64).optional(),
       references: z.object({ language: z.literal("python"),
         siblingLinks: z.array(z.object({ decorator: nonEmptyString, name: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict()).min(1).max(32).optional(),
         constructorFields: z.object({ fieldToParameter: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict().optional(),

@@ -3,7 +3,7 @@
 from .common import *
 from .ast_relations import grouped_relations,python_stages
 
-def quality_clauses(m):
+def quality_clauses(m,shared_sql=True,share_all=False):
  def rel(path):return path.relative_to(m.ROOT).as_posix() if path.is_relative_to(m.ROOT) else path.as_posix()
  def at(path):return 'p.__path='+q(rel(path))
  def under(path):return 'substr(p.__path,1,'+str(len(rel(path))+1)+')='+q(rel(path)+'/')
@@ -81,7 +81,17 @@ def quality_clauses(m):
    stage['indexes']=[['__path','id'],['__path','build','__start','__end'],['__path','direct','__start','__end']]
   if stage['name']=='branch_flags':
    stage['query']=stage['query'].replace('JOIN execution_calls c','CROSS JOIN execution_calls c').replace('FROM calls node CROSS JOIN execution_calls c ON c.__path=node.__path AND c.id=node.id AND c.build WHERE node.__path=b.__path AND node.__start>=b.else_start AND node.__end<=b.else_end','FROM execution_calls c WHERE c.__path=b.__path AND c.build AND c.__start>=b.else_start AND c.__end<=b.else_end').replace('FROM calls node CROSS JOIN execution_calls c ON c.__path=node.__path AND c.id=node.id AND c.direct WHERE node.__path=b.__path AND node.__start>=b.else_start AND node.__end<=b.else_end','FROM execution_calls c WHERE c.__path=b.__path AND c.direct AND c.__start>=b.else_start AND c.__end<=b.else_end')
- clauses=grouped_relations('quality-contracts',stages,rows,['all','_check_serverplan_quality_source'],extra_inputs,production_rows,row_groups)
+ # Production SELECTs already enforce primary_file/fallback_file independently.
+ # Their source domains can therefore share the union of those file domains.
+ callback_pattern='|'.join(re.escape(v) for v in sorted(m.FORBIDDEN_CALLBACK_ARCHITECTURE_NAMES|{'CompiledStep','PipelineLifecycleEffect','pending_pipeline_effects'}))
+ if share_all:
+  # Preserve the source-trigger gates explicitly in the production SQL.
+  for sql,tag in row_groups.items():
+   if tag in ('callback','inventory'):
+    pattern=callback_pattern if tag=='callback' else 'MAINTENANCE|ORDERED_SEMANTIC'
+    production_rows[sql]+=' AND rx_matches(p.source,'+q(pattern)+')'
+ sql_groups={sql:('all-shared' if share_all else 'contracts' if tag in ('primary','fallback') else tag) for sql,tag in row_groups.items()} if shared_sql else row_groups
+ clauses=grouped_relations('quality-contracts',stages,rows,['all','_check_serverplan_quality_source'],extra_inputs,production_rows,sql_groups,shared_sql=shared_sql)
  primary_paths=sorted(set(rel(p) for p in (*m.CORE_PLAN_FILES,*m.BATCHING_SUPPORT_FILES,*m.LIFECYCLE_FILES,m.OPTIMIZER_ANALYSIS_FILE,m.CONDITIONAL_DIALECT_TEST_FILE)))
  directory_paths=[rel(p) for p in (*m.STEP_DIRS,m.STRATEGY_DIR)]
  primary_ast=O({'filePath':{'regex':'^(?:'+'|'.join(re.escape(p) for p in primary_paths)+')$'}},A(N({'filePath':{'regex':r'(?:^|/)__init__\.py$'}}),{'filePath':{'regex':'^(?:'+'|'.join(re.escape(p)+'/' for p in directory_paths)+r'|impl/common/l2070_server_plan/[^/]+$)'}}))
@@ -89,7 +99,17 @@ def quality_clauses(m):
  callback_ast=A(N({'filePath':{'regex':r'(?:^|/)__init__\.py$'}}),{'filePath':{'regex':r'^(?:impl|l[0-9]{4}_[^/]+)/'}})
  for clause in clauses:
   group=clause.pop('_authoring_group')
-  enabled={'primary':primary_ast,'fallback':O(primary_ast,fallback_ast),'callback':O(primary_ast,callback_ast),'inventory':TRUE}[group]
+  if group=='all-shared':
+   callback_trigger=A(K('module'),RX(callback_pattern))
+   inventory_trigger=A(K('module'),RX('MAINTENANCE|ORDERED_SEMANTIC'))
+   triggered=lambda name:O({'matches':name},I({'matches':name}))
+   enabled=O(O(primary_ast,fallback_ast),A(O(primary_ast,callback_ast),triggered('quality-shared-callback')),triggered('quality-shared-inventory'))
+   for relation in clause['relational']['inputs'].values():
+    ast=relation['evidence']['query']['ast']
+    ast.setdefault('utils',{}).update({'quality-shared-callback':callback_trigger,'quality-shared-inventory':inventory_trigger})
+    ast['rule']=A({'$option':'entryPoint','cases':{'all':choice('oracleAnalyzer',TRUE,enabled)},'default':TRUE},ast['rule'])
+   continue
+  enabled={'primary':primary_ast,'fallback':O(primary_ast,fallback_ast),'contracts':O(primary_ast,fallback_ast),'callback':O(primary_ast,callback_ast),'inventory':TRUE}[group]
   for relation in clause['relational']['inputs'].values():
    ast=relation['evidence']['query']['ast']
    if group in ('callback','inventory'):

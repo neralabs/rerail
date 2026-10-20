@@ -5,9 +5,13 @@ use super::json::{hex_digest, invalid};
 use super::model::{CompiledClause, CompiledCodeRule, Evaluation, FactQuery, Snapshot};
 use super::violations::{Captures, Witness};
 use napi::Result;
+use rusqlite::Connection;
 use rusqlite::functions::FunctionFlags;
 use rusqlite::hooks::{AuthAction, Authorization};
-use rusqlite::{Connection, params_from_iter};
+
+mod insert;
+mod reachability;
+pub(super) use reachability::Reachability;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{
@@ -20,6 +24,7 @@ pub(super) struct Stage {
     pub(super) name: String,
     pub(super) query: String,
     pub(super) indexes: Vec<Vec<String>>,
+    pub(super) reachability: Option<Reachability>,
 }
 #[derive(Clone)]
 pub(super) struct References {
@@ -163,6 +168,19 @@ pub(super) fn columns(
             {
                 Authorization::Allow
             }
+            // A generated reachability view exposes only its public columns. SQLite
+            // reports its backing reads with the persisted view as the accessor;
+            // direct policy reads (including CTEs) never receive this exception.
+            AuthAction::Read { table_name, .. }
+                if context.accessor.is_some_and(|view| {
+                    tables.contains(view)
+                        && ["keys", "pairs"]
+                            .iter()
+                            .any(|suffix| table_name == format!("__reach_{view}_{suffix}"))
+                }) =>
+            {
+                Authorization::Allow
+            }
             AuthAction::Function { function_name }
                 if matches!(
                     function_name.to_ascii_lowercase().as_str(),
@@ -253,8 +271,32 @@ pub(super) fn create_input(db: &Connection, name: &str, fields: &[String]) -> Re
     Ok(())
 }
 pub(super) fn create_stage(db: &Connection, stage: &Stage, materialize: bool) -> Result<()> {
-    db.execute(
-        &format!(
+    if materialize && let Some(spec) = &stage.reachability {
+        return reachability::create(db, stage, spec);
+    }
+    #[cfg(feature = "code-rule-profile")]
+    if materialize && std::env::var_os("RERAIL_SQL_QUERY_PLANS").is_some() {
+        let mut span = super::profile::trace::Span::start("sql-plan", &stage.name);
+        let plan = (|| -> rusqlite::Result<Vec<Value>> {
+            let mut statement = db.prepare(&format!("EXPLAIN QUERY PLAN {}", stage.query))?;
+            statement
+                .query_map([], |row| {
+                    Ok(json!({
+                        "id":row.get::<_, i64>(0)?, "parent":row.get::<_, i64>(1)?,
+                        "detail":row.get::<_, String>(3)?,
+                    }))
+                })?
+                .collect()
+        })();
+        span.detail(|| match plan {
+            Ok(rows) => json!({"query":stage.query,"plan":rows}),
+            Err(error) => json!({"error":error.to_string()}),
+        });
+    }
+    #[cfg(feature = "code-rule-profile")]
+    let mut span = super::profile::trace::Span::start("sql-materialize", &stage.name);
+    let mut statement = db
+        .prepare(&format!(
             "CREATE TEMP TABLE {} AS {}",
             quote(&stage.name),
             if materialize {
@@ -265,12 +307,23 @@ pub(super) fn create_stage(db: &Connection, stage: &Stage, materialize: bool) ->
                 // LIMIT 0 creates the schema without evaluating authored expressions.
                 format!("SELECT * FROM ({}) LIMIT 0", stage.query)
             }
-        ),
-        [],
-    )
-    .map_err(sql_error)?;
+        ))
+        .map_err(sql_error)?;
+    let executed = statement.execute([]).map_err(sql_error);
+    #[cfg(feature = "code-rule-profile")]
+    {
+        use rusqlite::StatementStatus;
+        span.detail(|| json!({"vmSteps":statement.get_status(StatementStatus::VmStep),
+            "fullscanSteps":statement.get_status(StatementStatus::FullscanStep),
+            "sorts":statement.get_status(StatementStatus::Sort),
+            "autoIndexRows":statement.get_status(StatementStatus::AutoIndex),"failed":executed.is_err()}));
+        drop(span);
+    }
+    executed?;
     if materialize {
         for (index, fields) in stage.indexes.iter().enumerate() {
+            #[cfg(feature = "code-rule-profile")]
+            let _span = super::profile::trace::Span::start("sql-index", &stage.name);
             db.execute(
                 &format!(
                     "CREATE INDEX {} ON {} ({})",
@@ -287,6 +340,8 @@ pub(super) fn create_stage(db: &Connection, stage: &Stage, materialize: bool) ->
             .map_err(sql_error)?;
         }
         if !stage.indexes.is_empty() {
+            #[cfg(feature = "code-rule-profile")]
+            let _span = super::profile::trace::Span::start("sql-analyze", &stage.name);
             db.execute(&format!("ANALYZE temp.{}", quote(&stage.name)), [])
                 .map_err(sql_error)?;
         }
@@ -330,8 +385,20 @@ pub(super) fn evaluate(
     clause: &CompiledClause,
     plan: &Plan,
     rows: Vec<Rows>,
-    _snapshot: &Snapshot,
+    snapshot: &Snapshot,
 ) -> Evaluation {
+    #[cfg(not(feature = "code-rule-profile"))]
+    let _ = snapshot;
+    #[cfg(feature = "code-rule-profile")]
+    let _context = super::profile::trace::Context::enter(
+        &code_rule.id,
+        &clause.id,
+        (snapshot.files.len() == 1).then(|| snapshot.files[0].path.as_str()),
+    );
+    #[cfg(feature = "code-rule-profile")]
+    let _span = super::profile::trace::Span::start("relational", "evaluate");
+    #[cfg(feature = "code-rule-profile")]
+    let _cpu = super::profile::PhaseTimer::start(super::profile::Phase::Other);
     let mut result = Evaluation::default();
     if let Some(path) = rows.iter().flat_map(|rows| rows.incomplete.iter()).next() {
         result.failures.push(failure(
@@ -343,9 +410,11 @@ pub(super) fn evaluate(
         return result;
     }
     let count = rows.iter().map(|rows| rows.witnesses.len()).sum();
-    let work = Arc::new(AtomicUsize::new(
+    let work = Arc::new(AtomicUsize::new(0));
+    work.store(
         code_rule.capabilities.limits.visits_for(count),
-    ));
+        Ordering::Relaxed,
+    );
     let run = || -> Result<Vec<Value>> {
         let db = connection(
             code_rule.capabilities.limits.max_regex_pattern_bytes,
@@ -368,40 +437,30 @@ pub(super) fn evaluate(
                 .map(|project| project.field.clone())
                 .collect::<Vec<_>>();
             create_input(&db, name, &fields)?;
-            let sql = format!(
-                "INSERT INTO {} VALUES ({})",
-                quote(name),
-                vec!["?"; fields.len() + 3].join(",")
-            );
-            let mut statement = db.prepare(&sql).map_err(sql_error)?;
-            for witness in &rows.witnesses {
-                if work
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
-                        left.checked_sub(1)
-                    })
-                    .is_err()
-                    || super::budget::step_budget_exhausted()
-                {
-                    return Err(invalid("relational input row budget exceeded"));
-                }
-                let span = super::violations::anchored_span(&input.anchor, witness).0;
-                let projected = witness.captures.projection().and_then(Value::as_object);
-                let mut values = vec![
-                    rusqlite::types::Value::Text(witness.path.clone()),
-                    rusqlite::types::Value::Integer(span.start_byte as i64),
-                    rusqlite::types::Value::Integer(span.end_byte as i64),
-                ];
-                values.extend(fields.iter().map(|field| {
-                    sql_value(
-                        projected
-                            .and_then(|fields| fields.get(field))
-                            .unwrap_or(&Value::Null),
-                    )
-                }));
-                statement
-                    .execute(params_from_iter(values))
-                    .map_err(sql_error)?;
-            }
+            insert::insert_rows(
+                &db,
+                name,
+                fields.len() + 3,
+                rows.witnesses.iter().map(|witness| {
+                    let location = super::violations::anchored_span(&input.anchor, witness).0;
+                    let projected = witness.captures.projection().and_then(Value::as_object);
+                    [
+                        rusqlite::types::Value::Text(witness.path.clone()),
+                        rusqlite::types::Value::Integer(location.start_byte as i64),
+                        rusqlite::types::Value::Integer(location.end_byte as i64),
+                    ]
+                    .into_iter()
+                    .chain(fields.iter().map(move |field| {
+                        sql_value(
+                            projected
+                                .and_then(|fields| fields.get(field))
+                                .unwrap_or(&Value::Null),
+                        )
+                    }))
+                }),
+                &work,
+                "relational input row budget exceeded",
+            )?;
             tables.insert(name.clone());
         }
         if let Some(reference) = &plan.references {
@@ -422,36 +481,33 @@ pub(super) fn evaluate(
                     .map(|field| (*field).to_owned())
                     .collect::<Vec<_>>(),
             )?;
-            let mut statement = db
-                .prepare("INSERT INTO reference_edges VALUES (?,?,?,?,?,?,?,?,?)")
-                .map_err(sql_error)?;
-            for edge in graph.edges {
-                if !code_rule.scope.matches(&edge.path) {
-                    continue;
-                }
-                if work
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
-                        left.checked_sub(1)
-                    })
-                    .is_err()
-                    || super::budget::step_budget_exhausted()
-                {
-                    return Err(invalid("native reference row budget exceeded"));
-                }
-                statement
-                    .execute(rusqlite::params![
-                        edge.path.as_ref(),
-                        edge.source.start,
-                        edge.source.end,
-                        edge.target_path.as_ref(),
-                        edge.target.start,
-                        edge.target.end,
-                        edge.source_name.text(),
-                        edge.target_name.text(),
-                        i64::from(edge.target.flags & super::calls::summary::CLASS != 0)
-                    ])
-                    .map_err(sql_error)?;
-            }
+            insert::insert_rows(
+                &db,
+                "reference_edges",
+                9,
+                graph
+                    .edges
+                    .iter()
+                    .filter(|edge| code_rule.scope.matches(&edge.path))
+                    .map(|edge| {
+                        use rusqlite::types::Value as Sql;
+                        [
+                            Sql::Text(edge.path.to_string()),
+                            Sql::Integer(edge.source.start as i64),
+                            Sql::Integer(edge.source.end as i64),
+                            Sql::Text(edge.target_path.to_string()),
+                            Sql::Integer(edge.target.start as i64),
+                            Sql::Integer(edge.target.end as i64),
+                            Sql::Text(edge.source_name.text().to_owned()),
+                            Sql::Text(edge.target_name.text().to_owned()),
+                            Sql::Integer(i64::from(
+                                edge.target.flags & super::calls::summary::CLASS != 0,
+                            )),
+                        ]
+                    }),
+                &work,
+                "native reference row budget exceeded",
+            )?;
             tables.insert("reference_edges".to_owned());
         }
         db.execute_batch("COMMIT").map_err(sql_error)?;
@@ -472,15 +528,19 @@ pub(super) fn evaluate(
         )
         .map_err(sql_error)?;
         for stage in &plan.stages {
-            columns(&db, &stage.query, &tables)?;
+            {
+                #[cfg(feature = "code-rule-profile")]
+                let _span = super::profile::trace::Span::start("sql-validate", &stage.name);
+                columns(&db, &stage.query, &tables)?;
+            }
             #[cfg(feature = "code-rule-profile")]
             let started = std::time::Instant::now();
             let materialized = create_stage(&db, stage, true);
             #[cfg(feature = "code-rule-profile")]
             if std::env::var_os("RERAIL_CODE_RULE_RELATIONAL_PROFILE").is_some() {
-                eprintln!(
-                    "RERAIL_CODE_RULE_RELATIONAL {}",
-                    json!({"stage":stage.name,"elapsedMs":started.elapsed().as_secs_f64()*1000.0,"workLeft":work.load(Ordering::Relaxed),"failed":materialized.is_err()})
+                super::profile::trace::emit(
+                    "RERAIL_CODE_RULE_RELATIONAL",
+                    json!({"stage":stage.name,"elapsedMs":started.elapsed().as_secs_f64()*1000.0,"workLeft":work.load(Ordering::Relaxed),"failed":materialized.is_err()}),
                 );
             }
             materialized.map_err(|error| {
@@ -488,6 +548,8 @@ pub(super) fn evaluate(
             })?;
             tables.insert(stage.name.clone());
         }
+        #[cfg(feature = "code-rule-profile")]
+        let _span = super::profile::trace::Span::start("sql-result", "query");
         let names = columns(&db, &plan.query, &tables)?;
         let mut statement = db.prepare(&plan.query).map_err(sql_error)?;
         let mut query = statement.query([]).map_err(sql_error)?;

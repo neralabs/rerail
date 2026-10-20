@@ -416,17 +416,31 @@ pub(super) fn evaluate_clauses(
                     vec![snapshot.clone()]
                 };
                 for partition in partitions {
+                    #[cfg(feature = "code-rule-profile")]
+                    let _context = super::profile::trace::Context::enter(
+                        &code_rule.id,
+                        &clause.id,
+                        (partition.files.len() == 1).then(|| partition.files[0].path.as_str()),
+                    );
                     let rows = plan
                         .inputs
                         .iter()
-                        .map(|(_, input)| {
+                        .map(|(name, input)| {
+                            #[cfg(not(feature = "code-rule-profile"))]
+                            let _ = name;
+                            #[cfg(feature = "code-rule-profile")]
+                            let mut span = super::profile::trace::Span::start("input-extract", name);
+                            let rows =
                             stateless_rows(
                                 code_rule,
                                 clause,
                                 (input, evidence::Side::Counted),
                                 &partition,
                                 &mut evaluation.metrics,
-                            )
+                            );
+                            #[cfg(feature = "code-rule-profile")]
+                            span.detail(|| serde_json::json!({"rows": rows.as_ref().ok().map(|rows| rows.witnesses.len()), "failed": rows.is_err()}));
+                            rows
                         })
                         .collect::<Result<Vec<_>>>()?;
                     merge(
