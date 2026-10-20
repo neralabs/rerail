@@ -304,21 +304,32 @@
             }
           },
           "rule": {
-            "kind": "identifier",
             "all": [
               {
-                "pattern": "$NAME"
-              },
-              {
-                "not": {
-                  "follows": {
-                    "stopBy": "neighbor",
-                    "regex": "^\\.$"
-                  }
+                "inside": {
+                  "kind": "for_statement",
+                  "field": "left",
+                  "stopBy": "end"
                 }
               },
               {
-                "matches": "in-target"
+                "kind": "identifier",
+                "all": [
+                  {
+                    "pattern": "$NAME"
+                  },
+                  {
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "^\\.$"
+                      }
+                    }
+                  },
+                  {
+                    "matches": "in-target"
+                  }
+                ]
               }
             ]
           }

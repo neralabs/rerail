@@ -91,9 +91,20 @@ fn install_tree_sitter_allocator() {
 }
 
 pub(crate) const WORKER_THREADS: usize = 4;
+fn worker_threads() -> usize {
+    #[cfg(feature = "unbounded-work")]
+    if let Ok(value) = std::env::var("RERAIL_BENCH_WORKERS") {
+        return value
+            .parse::<usize>()
+            .ok()
+            .filter(|n| (1..=16).contains(n))
+            .expect("RERAIL_BENCH_WORKERS must be between 1 and 16");
+    }
+    WORKER_THREADS
+}
 pub(crate) static WORK_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
     rayon::ThreadPoolBuilder::new()
-        .num_threads(WORKER_THREADS)
+        .num_threads(worker_threads())
         .thread_name(|index| format!("rerail-worker-{index}"))
         .build()
         .expect("build Rerail worker pool")
@@ -196,7 +207,7 @@ pub fn native_memory_profile() -> String {
     serde_json::json!({
         "allocator": allocator,
         "workerPool": {
-            "threads": WORKER_THREADS,
+            "threads": worker_threads(),
         },
     })
     .to_string()

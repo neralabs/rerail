@@ -33,7 +33,7 @@ use std::sync::{Arc, LazyLock};
 pub(in crate::code_rule_dsl::sql) struct PatternRow {
     file: u32,
     node: u32,
-    ek: Option<String>,
+    ek: Value,
     values: Arc<[Option<i64>]>,
 }
 
@@ -47,7 +47,7 @@ impl PatternRow {
         Self {
             file,
             node,
-            ek: None,
+            ek: Value::Null,
             values,
         }
     }
@@ -179,9 +179,55 @@ fn env_row(batch: &Batch, term: &PatternTerm, ek: &str) -> Option<PatternRow> {
     Some(PatternRow {
         file,
         node,
-        ek: Some(ek.to_owned()),
+        ek: Value::Text(ek.to_owned()),
         values: values(term, &entry.facts, &env).into(),
     })
+}
+
+/// Benchmark spike: the frame owns the input tuple; only its integer row key crosses SQLite.
+#[cfg(feature = "unbounded-work")]
+fn typed_match(
+    batch: &Batch,
+    term: &PatternTerm,
+    file: u32,
+    node: u32,
+    inputs: &[Option<i64>],
+) -> Option<Arc<[Option<i64>]>> {
+    let entry = batch.files.get(file as usize)?;
+    if node >= entry.facts.len() {
+        return None;
+    }
+    let mut env = MetaVarEnv::new();
+    let mut inputs = inputs.iter();
+    for &read in &term.reads {
+        let (name, kind) = &term.vars[read];
+        let first = *inputs.next()?;
+        match kind {
+            SlotKind::List => {
+                let last = *inputs.next()?;
+                if let (Some(lo), Some(hi)) = (first, last) {
+                    let nodes = list_nodes(&entry.facts, lo, hi)
+                        .into_iter()
+                        .map(|id| node_at(&entry.root, id))
+                        .collect();
+                    env.insert_multi(name, nodes)?;
+                }
+            }
+            _ => {
+                if let Some(id) = first {
+                    let id = u32::try_from(id).ok()?;
+                    if id >= entry.facts.len() {
+                        return None;
+                    }
+                    env.insert(name, node_at(&entry.root, id))?;
+                }
+            }
+        }
+    }
+    let mut env = Cow::Owned(env);
+    term.pattern
+        .match_node_with_env(node_at(&entry.root, node), &mut env)?;
+    Some(values(term, &entry.facts, &env).into())
 }
 
 const COL_TERM: c_int = 0;
@@ -191,6 +237,7 @@ const COL_FILE: c_int = 3;
 const COL_NODE: c_int = 4;
 /// The first value column (`v0`).
 const COL_VALUES: c_int = 5;
+const COL_FRAME: c_int = COL_VALUES + PATTERN_COLUMNS as c_int;
 
 /// `idx_num` bits: a term, then the input set, one key (`EQ`) or a list (`IN`), of `ek` (env-input)
 /// or `nk` (fresh-env).
@@ -199,13 +246,14 @@ const IDX_EK: c_int = 2;
 const IDX_EK_LIST: c_int = 4;
 const IDX_NK: c_int = 8;
 const IDX_NK_LIST: c_int = 16;
+const IDX_FRAME: c_int = 32;
 
 static SCHEMA: LazyLock<std::ffi::CString> = LazyLock::new(|| {
     let values = (0..PATTERN_COLUMNS)
         .map(|index| format!(", v{index}"))
         .collect::<String>();
     std::ffi::CString::new(format!(
-        "CREATE TABLE x(term HIDDEN, ek HIDDEN, nk HIDDEN, file, node{values})"
+        "CREATE TABLE x(term HIDDEN, ek HIDDEN, nk HIDDEN, file, node{values}, frame HIDDEN)"
     ))
     .expect("no NUL")
 });
@@ -244,6 +292,7 @@ unsafe impl<'vtab> VTab<'vtab> for PatternTable {
         let mut term = None;
         let mut ek = None;
         let mut nk = None;
+        let mut frame = None;
         for (index, constraint) in info.constraints().enumerate() {
             if !constraint.is_usable()
                 || constraint.operator() != IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
@@ -259,6 +308,9 @@ unsafe impl<'vtab> VTab<'vtab> for PatternTable {
                 }
                 COL_NK => {
                     nk.get_or_insert(index);
+                }
+                COL_FRAME => {
+                    frame.get_or_insert(index);
                 }
                 _ => {}
             }
@@ -278,7 +330,16 @@ unsafe impl<'vtab> VTab<'vtab> for PatternTable {
             usage.set_argv_index(argv as c_int + 1);
             usage.set_omit(true);
         }
-        info.set_idx_num(IDX_TERM | if is_list { list } else { one });
+        if let Some(frame) = frame {
+            let mut usage = info.constraint_usage(frame);
+            usage.set_argv_index(3);
+            usage.set_omit(true);
+        }
+        info.set_idx_num(
+            IDX_TERM
+                | if is_list { list } else { one }
+                | if frame.is_some() { IDX_FRAME } else { 0 },
+        );
         info.set_estimated_cost(100.0);
         info.set_estimated_rows(100);
         Ok(true)
@@ -344,6 +405,42 @@ unsafe impl VTabCursor for PatternCursor<'_> {
             keys.sort_unstable();
             keys.dedup();
             batch.fresh(term_id as usize, term, &keys)
+        } else if idx_num & IDX_FRAME != 0 {
+            #[cfg(feature = "unbounded-work")]
+            {
+                let descriptor = args.get::<String>(2)?;
+                let mut keys = Vec::new();
+                if idx_num & IDX_EK_LIST != 0 {
+                    let mut items = args.in_values(1)?;
+                    while let Some(item) = items.next()? {
+                        keys.extend(integer(item));
+                    }
+                } else {
+                    keys.extend(integer(ValueRef::from(&args.get::<Value>(1)?)));
+                }
+                keys.sort_unstable();
+                keys.dedup();
+                let mut rows = Vec::new();
+                self.slot.frames.pattern_inputs(
+                    &descriptor,
+                    &keys,
+                    |key, file, node, inputs| {
+                        if let Some(values) = typed_match(&batch, term, file, node, inputs) {
+                            rows.push(PatternRow {
+                                file,
+                                node,
+                                ek: Value::Integer(key),
+                                values,
+                            });
+                        }
+                    },
+                )?;
+                rows
+            }
+            #[cfg(not(feature = "unbounded-work"))]
+            return Err(Error::ModuleError(
+                "integer pattern inputs require unbounded-work".into(),
+            ));
         } else {
             let mut keys = BTreeSet::new();
             if idx_num & IDX_EK_LIST != 0 {
@@ -380,6 +477,7 @@ unsafe impl VTabCursor for PatternCursor<'_> {
             COL_NK => context.set_result(&(i64::from(row.file) << 32 | i64::from(row.node))),
             COL_FILE => context.set_result(&i64::from(row.file)),
             COL_NODE => context.set_result(&i64::from(row.node)),
+            COL_FRAME => context.set_result(&Value::Null),
             other => {
                 let index = (other - COL_VALUES) as usize;
                 context.set_result(&row.values.get(index).copied().flatten())

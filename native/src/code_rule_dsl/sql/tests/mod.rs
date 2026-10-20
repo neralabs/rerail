@@ -6,6 +6,7 @@ mod hard_cases;
 mod keyed;
 mod leaves;
 mod nodes;
+mod policy_guards;
 mod probe;
 mod recursion;
 mod setops;
@@ -113,7 +114,12 @@ fn a_sample_clause_set_runs_a_bounded_number_of_statements_per_batch() {
     // `count` groups into a table keyed by row (`Emitter::grouped`). No rule walks over a frame
     // that repeats a key (the nested `has` walks children, one row each): nothing is keyed. A
     // walk's sub-rule does not re-test the kind its candidates were read by (`on_candidates`).
-    assert_eq!((stages, clauses), (6, 60));
+    // Further copy elimination can reduce these counts. Pin the work ceiling, not a
+    // particular physical plan, so the check still rejects statement-count regressions.
+    assert!(
+        stages <= 6 && clauses <= 60,
+        "{stages} stages, {clauses} clauses"
+    );
 }
 
 /// Terminals run once per statement over their whole input set, never once per row: a fresh

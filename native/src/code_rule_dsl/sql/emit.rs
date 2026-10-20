@@ -31,6 +31,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 use std::rc::Rc;
 
+#[cfg(feature = "unbounded-work")]
+mod spike;
+
 /// Where the driver substitutes the statement's whole files (`n.file IN (…)` of the root frame).
 pub(super) const FILES: &str = "/*FILES*/";
 /// Where the driver substitutes the statement's selected roots, `(file, node)` rows, in files
@@ -451,6 +454,8 @@ struct Layout {
 }
 
 struct Emitter<'s> {
+    #[cfg(feature = "unbounded-work")]
+    kinds_of: HashMap<String, Vec<u16>>,
     slots: &'s [Slot],
     units: &'s [Unit],
     /// The terminals' related-node walks (`Walk::Related`).
@@ -521,6 +526,8 @@ impl<'s> Emitter<'s> {
     fn new(statement: &'s Statement) -> Self {
         let slots = &statement.slots;
         let mut emitter = Self {
+            #[cfg(feature = "unbounded-work")]
+            kinds_of: HashMap::new(),
             slots,
             units: &statement.units,
             sources: &statement.sources,
@@ -879,6 +886,14 @@ impl<'s> Emitter<'s> {
             Some(kinds) if kinds.is_empty() => " AND 0".to_owned(),
             Some(kinds) => format!(" AND n.kind IN ({})", list(kinds)),
         };
+        let guard = String::new();
+        #[cfg(feature = "unbounded-work")]
+        let guard = if !self.three && super::diagnostics::root_guards() {
+            spike::root_guard(op, self.units)
+                .map_or(guard.clone(), |guard| format!(" AND ({guard})"))
+        } else {
+            guard
+        };
         // Every root of the clause's kinds in the whole files, then the selected roots of those
         // kinds in the narrowed files. It reads the batch's own rows (`FILES`, `ROOTS`), which the
         // session does not count: it always runs, and every later statement reads what it holds.
@@ -886,9 +901,9 @@ impl<'s> Emitter<'s> {
             "r",
             &format!(
                 "SELECT NULL, file, id{nulls}{} FROM (\
-                 SELECT n.file AS file, n.id AS id FROM node n WHERE n.file IN ({FILES}){kinds} \
+                 SELECT n.file AS file, n.id AS id FROM node n WHERE n.file IN ({FILES}){kinds}{guard} \
                  UNION ALL SELECT n.file, n.id FROM ({ROOTS}) r CROSS JOIN node n \
-                 ON n.file = r.file AND n.id = r.node WHERE 1{kinds})",
+                 ON n.file = r.file AND n.id = r.node WHERE 1{kinds}{guard})",
                 self.zeros()
             ),
             Reads::always(),
@@ -896,6 +911,10 @@ impl<'s> Emitter<'s> {
         self.out.root = Some(root.clone());
         // One row per root: a file's roots are either all its nodes or the selected ones.
         self.keyed_by(&root, vec![BTreeSet::new()]);
+        #[cfg(feature = "unbounded-work")]
+        if let Some(kinds) = &statement.kinds {
+            self.kinds_of.insert(root.clone(), kinds.clone());
+        }
         if self.units.is_empty() {
             return self.op(op, &root, &live);
         }
@@ -932,6 +951,17 @@ impl<'s> Emitter<'s> {
     /// those and every slot `op` names): per distinct key where it walks over a frame that may
     /// repeat a key (`keyed`), else directly.
     fn op(&mut self, op: &Op, input: &str, live: &Live) -> String {
+        #[cfg(feature = "unbounded-work")]
+        if !self.three
+            && super::diagnostics::elide_kind_copies()
+            && let Op::Kinds(kinds) = op
+            && self
+                .kinds_of
+                .get(input)
+                .is_some_and(|known| known.iter().all(|kind| kinds.contains(kind)))
+        {
+            return input.to_owned();
+        }
         let out = self.within(live, |this| match this.keyed(op, input, live) {
             Some(out) => out,
             None => this.apply(op, input, live),
@@ -939,6 +969,14 @@ impl<'s> Emitter<'s> {
         let changed = self.touched(op);
         self.inherit(input, &out, &changed);
         self.same_space(input, &out);
+        #[cfg(feature = "unbounded-work")]
+        if !self.three {
+            if let Op::Kinds(kinds) = op {
+                self.kinds_of.insert(out.clone(), kinds.clone());
+            } else if let Some(kinds) = self.kinds_of.get(input).cloned() {
+                self.kinds_of.entry(out.clone()).or_insert(kinds);
+            }
+        }
         out
     }
 
@@ -1391,6 +1429,7 @@ impl<'s> Emitter<'s> {
         self.unit_tables(unit);
         let demand = demand_table(unit);
         let answer = answer_table(unit);
+        let join = "CROSS JOIN";
         let mut matched: String = site_columns
             .iter()
             .enumerate()
@@ -1436,8 +1475,14 @@ impl<'s> Emitter<'s> {
             &reads,
             input,
             &demand,
-            format!("INSERT INTO {reads} SELECT DISTINCT {source}, {unit}, d.id FROM {input} f"),
-            format!(" JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched}"),
+            if !self.evaluating.is_empty() && self.origin.is_some() {
+                format!(
+                    "INSERT OR IGNORE INTO {reads} SELECT {source}, {unit}, d.id FROM {input} f"
+                )
+            } else {
+                format!("INSERT INTO {reads} SELECT DISTINCT {source}, {unit}, d.id FROM {input} f")
+            },
+            format!(" {join} {demand} d ON d.file = f.file AND d.node = f.node{matched}"),
         );
         let overrides: Vec<(String, String)> = site_columns
             .iter()
@@ -1452,8 +1497,8 @@ impl<'s> Emitter<'s> {
         self.frame(
             "x",
             &format!(
-                "SELECT {select} FROM {input} f JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched} \
-                 JOIN {answer} r ON r.id = d.id"
+                "SELECT {select} FROM {input} f {join} {demand} d ON d.file = f.file AND d.node = f.node{matched} \
+                 {join} {answer} r ON r.id = d.id"
             ),
             Reads::join(&[input, &demand, &answer]),
         )
@@ -1501,13 +1546,17 @@ impl<'s> Emitter<'s> {
         }
         let reads = format!("{NAMESPACE}e{scc}");
         let changed = format!("{NAMESPACE}c{scc}");
-        for sql in [
-            format!("CREATE TEMP TABLE IF NOT EXISTS {reads}(su, s, du, d)"),
+        // Typed IDs let SQLite probe both source-key columns. The primary key also
+        // stores dependency edges as a set and covers source lookups.
+        let tables = [
+            format!(
+                "CREATE TEMP TABLE IF NOT EXISTS {reads}(su INTEGER, s INTEGER, du INTEGER, d INTEGER, PRIMARY KEY(su, s, du, d)) WITHOUT ROWID"
+            ),
             format!("CREATE INDEX IF NOT EXISTS {reads}_to ON {reads}(du, d)"),
-            format!("CREATE INDEX IF NOT EXISTS {reads}_from ON {reads}(su, s)"),
             format!("CREATE TEMP TABLE IF NOT EXISTS {changed}(u, id)"),
             format!("CREATE INDEX IF NOT EXISTS {changed}_at ON {changed}(u, id)"),
-        ] {
+        ];
+        for sql in tables {
             self.push(sql, Effect::default());
         }
         self.emitting.push(scc);
@@ -1581,14 +1630,31 @@ impl<'s> Emitter<'s> {
             );
             // The evaluated keys whose answer changed: added, dropped or rebound.
             let before = format!("SELECT * FROM {answer} WHERE id IN (SELECT k FROM {keys})");
-            self.insert(
-                &changed,
-                format!(
-                    "INSERT INTO {changed} SELECT {unit}, id FROM \
+            let difference = format!(
+                "INSERT INTO {changed} SELECT {unit}, id FROM \
                      (SELECT * FROM {fresh} EXCEPT {before} UNION SELECT * FROM ({before} EXCEPT SELECT * FROM {fresh}))"
-                ),
-                Reads::union(&[&fresh, &answer]),
             );
+            #[cfg(feature = "unbounded-work")]
+            let difference = if super::diagnostics::joined_diff() {
+                let mut equal = (0..width)
+                    .map(|column| format!("n.c{column} IS a.c{column}"))
+                    .collect::<Vec<_>>();
+                if self.three {
+                    equal.push("n.unk IS a.unk".to_owned());
+                }
+                let changed_value = if equal.is_empty() {
+                    String::new()
+                } else {
+                    format!(" OR NOT ({})", equal.join(" AND "))
+                };
+                format!(
+                    "INSERT INTO {changed} SELECT {unit}, n.id FROM {fresh} n LEFT JOIN {answer} a ON a.id = n.id WHERE a.id IS NULL{changed_value} \
+                    UNION ALL SELECT {unit}, a.id FROM {answer} a LEFT JOIN {fresh} n ON n.id = a.id WHERE n.id IS NULL AND a.id IN (SELECT k FROM {keys})"
+                )
+            } else {
+                difference
+            };
+            self.insert(&changed, difference, Reads::union(&[&fresh, &answer]));
             self.push(
                 format!("DELETE FROM {answer} WHERE id IN (SELECT k FROM {keys})"),
                 Reads::join(&[&answer, &keys]).writes(Writes::Delete(answer.clone())),
@@ -1602,9 +1668,10 @@ impl<'s> Emitter<'s> {
         }
         for &unit in &members {
             let demand = demand_table(unit);
+            let changed_join = format!("{changed} c CROSS JOIN {reads} e");
             self.push(
                 format!(
-                    "UPDATE {demand} SET dirty = 1 WHERE id IN (SELECT e.s FROM {reads} e JOIN {changed} c \
+                    "UPDATE {demand} SET dirty = 1 WHERE id IN (SELECT e.s FROM {changed_join} \
                      ON c.u = e.du AND c.id = e.d WHERE e.su = {unit})"
                 ),
                 Reads::join(&[&reads, &changed]).writes(Writes::None),
@@ -1657,6 +1724,30 @@ impl<'s> Emitter<'s> {
             );
             let select = format!(
                 "SELECT {} FROM {input} f JOIN p ON p.file = f.file AND p.node = f.node",
+                self.select("f", &overrides)
+            );
+            return self.frame_with("x", &with, &select, Reads::join(&[input]));
+        }
+        #[cfg(feature = "unbounded-work")]
+        if super::diagnostics::integer_pattern_keys() {
+            let columns: Vec<String> = reads
+                .iter()
+                .flat_map(|&slot| match self.slots[slot].kind {
+                    SlotKind::List => vec![format!("s{slot}a"), format!("s{slot}b")],
+                    _ => vec![format!("s{slot}")],
+                })
+                .collect();
+            let descriptor = if columns.is_empty() {
+                input.to_owned()
+            } else {
+                format!("{input},{}", columns.join(","))
+            };
+            let with = format!(
+                "WITH p AS MATERIALIZED (SELECT ek{values} FROM pattern WHERE term = {term} \
+                 AND frame = '{descriptor}' AND ek IN (SELECT k FROM {input})) "
+            );
+            let select = format!(
+                "SELECT {} FROM {input} f JOIN p ON p.ek = f.k",
                 self.select("f", &overrides)
             );
             return self.frame_with("x", &with, &select, Reads::join(&[input]));

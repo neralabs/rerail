@@ -25,6 +25,8 @@
 //! Only tables that statements append to and empty whole are frames (`exec`): a table some
 //! statement updates or deletes from by a condition stays a B-tree.
 
+#[cfg(feature = "unbounded-work")]
+use super::nodes::integer;
 use rusqlite::types::{ToSqlOutput, Value, ValueRef};
 use rusqlite::vtab::{
     Context, CreateVTab, Filters, IndexConstraintOp, IndexFlags, IndexInfo, Inserts, Module,
@@ -179,6 +181,107 @@ fn arguments(text: &str) -> Vec<&str> {
 }
 
 impl FrameStore {
+    /// Reads typed pattern inputs by frame key, without a SQL-side environment copy.
+    /// The callback cannot retain a reference into the frame or execute SQL on this connection.
+    #[cfg(feature = "unbounded-work")]
+    pub(super) fn pattern_inputs(
+        &self,
+        descriptor: &str,
+        keys: &[i64],
+        mut visit: impl FnMut(i64, u32, u32, &[Option<i64>]),
+    ) -> Result<()> {
+        let mut parts = descriptor.split(',');
+        let name = parts.next().unwrap_or_default();
+        let shared =
+            self.frames.lock().get(name).cloned().ok_or_else(|| {
+                Error::ModuleError(format!("pattern: missing input frame {name}"))
+            })?;
+        let frame = shared.get();
+        if frame.columns.len() < 3 {
+            return Err(Error::ModuleError(
+                "pattern: input frame has no node columns".into(),
+            ));
+        }
+        let columns = parts
+            .map(|name| {
+                frame
+                    .names
+                    .iter()
+                    .position(|column| column == name)
+                    .ok_or_else(|| Error::ModuleError(format!("pattern: no input column {name}")))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let Key::Rowid(column) = frame.key else {
+            return Err(Error::ModuleError(
+                "pattern: input requires an integer row key".into(),
+            ));
+        };
+        let order = if frame.ascending {
+            None
+        } else {
+            Some(frame.lookup(&[column])?)
+        };
+        let mut values = Vec::with_capacity(columns.len());
+        for &key in keys {
+            // Borrow only while copying this row's scalar inputs. No frame reference is
+            // live across the callback, which evaluates the native pattern.
+            let frame = shared.get();
+            let at = if let Some(order) = &order {
+                let at =
+                    order.partition_point(|&row| frame.columns[column].integer(row as usize) < key);
+                order.get(at).copied().map(|row| row as usize)
+            } else if frame.dense && frame.len > 0 {
+                usize::try_from(key.wrapping_sub(frame.columns[column].integer(0))).ok()
+            } else {
+                Some(partition(frame.len, |row| {
+                    frame.columns[column].integer(row) < key
+                }))
+            };
+            let Some(row) =
+                at.filter(|&row| row < frame.len && frame.columns[column].integer(row) == key)
+            else {
+                continue;
+            };
+            let (Some(file), Some(node)) = (
+                integer(frame.columns[1].get(row)),
+                integer(frame.columns[2].get(row)),
+            ) else {
+                continue;
+            };
+            let (Ok(file), Ok(node)) = (u32::try_from(file), u32::try_from(node)) else {
+                continue;
+            };
+            values.clear();
+            let mut valid = true;
+            for &column in &columns {
+                let value = match frame.columns[column].get(row) {
+                    ValueRef::Null => None,
+                    ValueRef::Integer(value) => Some(value),
+                    ValueRef::Text(value) => match std::str::from_utf8(value)
+                        .ok()
+                        .and_then(|text| text.parse().ok())
+                    {
+                        Some(value) => Some(value),
+                        None => {
+                            valid = false;
+                            break;
+                        }
+                    },
+                    _ => {
+                        valid = false;
+                        break;
+                    }
+                };
+                values.push(value);
+            }
+            if !valid {
+                continue;
+            }
+            visit(key, file, node, &values);
+        }
+        Ok(())
+    }
+
     /// Makes the frame a `FRAME` step declares (`declaration` is the step after the marker) on
     /// `connection`: a registration of the `frame` module under the frame's name, whose eponymous
     /// table is the frame. A frame of that name already made stays (`CREATE TABLE IF NOT
@@ -301,6 +404,8 @@ enum Key {
 type Lookup = (Vec<usize>, Rc<[u32]>);
 
 struct Frame {
+    #[cfg(feature = "unbounded-work")]
+    names: Vec<String>,
     columns: Vec<Column>,
     len: usize,
     key: Key,
@@ -705,6 +810,8 @@ fn parse(args: &[&str]) -> Result<(CString, Frame)> {
     Ok((
         schema,
         Frame {
+            #[cfg(feature = "unbounded-work")]
+            names,
             columns,
             len: 0,
             key,
@@ -756,6 +863,20 @@ unsafe impl<'vtab> VTab<'vtab> for FrameTable {
 
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
         use IndexConstraintOp as Op;
+        #[cfg(not(feature = "unbounded-work"))]
+        let scan_cost = SCAN_COST;
+        #[cfg(feature = "unbounded-work")]
+        let scan_cost =
+            {
+                static COST: std::sync::LazyLock<f64> =
+                    std::sync::LazyLock::new(|| {
+                        std::env::var("RERAIL_SQL_FRAME_SCAN_COST").map_or(SCAN_COST, |value| {
+                    value.parse::<f64>().ok().filter(|n| n.is_finite() && (1.0..=1e12).contains(n))
+                        .expect("RERAIL_SQL_FRAME_SCAN_COST must be finite and between 1 and 1e12")
+                })
+                    });
+                *COST
+            };
         let frame = self.shared.get();
         // Per column, its first usable `=` or `IS` constraint.
         let mut used: Vec<(usize, usize, bool)> = Vec::new();
@@ -795,8 +916,8 @@ unsafe impl<'vtab> VTab<'vtab> for FrameTable {
         }
         if used.is_empty() {
             info.set_idx_num(0);
-            info.set_estimated_cost(SCAN_COST);
-            info.set_estimated_rows(SCAN_COST as i64);
+            info.set_estimated_cost(scan_cost);
+            info.set_estimated_rows(scan_cost as i64);
             return Ok(true);
         }
         let unique = match &frame.key {
@@ -829,14 +950,14 @@ unsafe impl<'vtab> VTab<'vtab> for FrameTable {
         } else if constants.iter().any(Option::is_none) {
             (60.0, 20)
         } else {
-            let rows = constants.iter().fold(SCAN_COST, |rows, small| {
+            let rows = constants.iter().fold(scan_cost, |rows, small| {
                 if *small == Some(true) {
                     rows / 2.0
                 } else {
                     rows / 4.0
                 }
             });
-            (SCAN_COST, rows as i64)
+            (scan_cost, rows as i64)
         };
         let mut codes = String::from("@");
         for (argv, &(index, column, is)) in used.iter().enumerate() {

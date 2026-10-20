@@ -526,18 +526,41 @@
             }
           },
           "rule": {
-            "kind": "identifier",
-            "pattern": "$N",
-            "matches": "load-name",
-            "any": [
+            "all": [
               {
-                "matches": "function-body"
+                "inside": {
+                  "matches": "loop",
+                  "stopBy": "end"
+                }
               },
               {
                 "inside": {
-                  "stopBy": "end",
-                  "matches": "function-body"
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "lambda"
+                    }
+                  ],
+                  "stopBy": "end"
                 }
+              },
+              {
+                "kind": "identifier",
+                "pattern": "$N",
+                "matches": "load-name",
+                "any": [
+                  {
+                    "matches": "function-body"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "matches": "function-body"
+                    }
+                  }
+                ]
               }
             ]
           }

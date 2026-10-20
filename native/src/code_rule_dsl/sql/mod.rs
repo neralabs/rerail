@@ -5,6 +5,8 @@
 //! (`eval::Engine::Sql`).
 
 pub(super) mod crossfile;
+#[cfg(feature = "unbounded-work")]
+mod diagnostics;
 mod emit;
 mod exec;
 mod frames;

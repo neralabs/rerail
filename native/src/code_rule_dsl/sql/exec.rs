@@ -199,6 +199,8 @@ impl Batch {
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct BatchSlot {
     current: RwLock<Option<Arc<Batch>>>,
+    #[cfg(feature = "unbounded-work")]
+    pub(super) frames: Arc<FrameStore>,
 }
 
 impl BatchSlot {
@@ -1840,7 +1842,10 @@ impl Session {
         let plan = compiled.plan()?;
         let slot = Arc::new(BatchSlot::default());
         let connection = connect(&slot)?;
+        #[cfg(not(feature = "unbounded-work"))]
         let frames = Arc::new(FrameStore::default());
+        #[cfg(feature = "unbounded-work")]
+        let frames = Arc::clone(&slot.frames);
         connection.execute_batch(
             "PRAGMA temp_store = MEMORY; \
              CREATE TEMP TABLE runs(run INTEGER NOT NULL, file INTEGER NOT NULL, \
@@ -1848,6 +1853,8 @@ impl Session {
              CREATE TEMP TABLE roots(run INTEGER NOT NULL, file INTEGER NOT NULL, \
              node INTEGER NOT NULL, PRIMARY KEY (run, file, node)) WITHOUT ROWID;",
         )?;
+        #[cfg(feature = "unbounded-work")]
+        super::diagnostics::configure(&connection)?;
         connection.set_prepared_statement_cache_capacity(BATCH_STATEMENTS);
         let names = plan
             .tables
@@ -2546,8 +2553,24 @@ impl Runner<'_> {
             bound.text(step, &mut text);
         }
         let started = Started::now();
-        let rows = self.connection.prepare_cached(&text)?.execute([])?;
+        let mut statement = self.connection.prepare_cached(&text)?;
+        let rows = statement.execute([])?;
         let elapsed = started.elapsed();
+        #[cfg(feature = "unbounded-work")]
+        if super::diagnostics::enabled(&text) {
+            let counters = super::diagnostics::counters(&statement);
+            drop(statement);
+            super::diagnostics::record(
+                self.connection,
+                &text,
+                elapsed,
+                rows,
+                counters,
+                bound
+                    .inputs(action)
+                    .map(|table| (self.counts.name(table), self.counts.rows(table))),
+            );
+        }
         self.stats.statements += 1;
         self.stats.rows += rows;
         self.stats.time.add(elapsed);
@@ -2711,6 +2734,7 @@ pub(in crate::code_rule_dsl) fn profiled<T>(
     let outer = STATEMENT_PROFILE.replace(Some(StatementProfile::default()));
     let outer_clauses = CLAUSE_PROFILE.replace(Some(Vec::new()));
     let result = body();
+    super::diagnostics::flush();
     let statements = STATEMENT_PROFILE.replace(outer).unwrap_or_default();
     let clauses = CLAUSE_PROFILE.replace(outer_clauses).unwrap_or_default();
     STATEMENT_PROFILE.with_borrow_mut(|profile| {
