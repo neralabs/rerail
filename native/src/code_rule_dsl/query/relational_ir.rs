@@ -933,17 +933,34 @@ impl SqlRenderer {
             return Err("ordered conjunction requires at least two operands".to_owned());
         }
         if let [source, RelationNode::Semantic { spec }] = inputs
-            && spec.argument_labels.is_empty()
             && let Some(source_producer) = Self::terminal_producer(source)?
         {
             if spec.rules.is_empty() {
                 return self.render_simple_semantic_gate(
                     source_producer,
                     spec.producer,
+                    &spec.argument_labels,
                     spec.require_all_candidates,
                 );
             }
-            if let [rule] = spec.rules.as_slice() {
+            if !spec.argument_labels.is_empty()
+                && let [rule] = spec.rules.as_slice()
+                && rule.target_kind.is_none()
+                && let Some(relation) = &rule.relation
+                && let [root] = relation.roots.as_slice()
+                && let Some(target_producer) = Self::terminal_producer(root)?
+            {
+                return self.render_argument_target(
+                    source_producer,
+                    spec.producer,
+                    target_producer,
+                    rule.slot,
+                    &spec.argument_labels,
+                );
+            }
+            if spec.argument_labels.is_empty()
+                && let [rule] = spec.rules.as_slice()
+            {
                 if let Some(target_kind) = rule.target_kind {
                     return self.render_semantic_kind_target(
                         source_producer,
@@ -1094,6 +1111,27 @@ impl SqlRenderer {
         Ok(name)
     }
 
+    fn semantic_join(node: &RelationNode) -> Option<&[RelationNode]> {
+        let RelationNode::Apply { operation, inputs } = node else {
+            return None;
+        };
+        if *operation == SqlOperation::InnerJoin {
+            return Some(inputs);
+        }
+        if matches!(
+            operation,
+            SqlOperation::ScanCapture
+                | SqlOperation::CaseTruth
+                | SqlOperation::WindowRank
+                | SqlOperation::Projection
+                | SqlOperation::OrderBy
+        ) && let [input] = inputs.as_slice()
+        {
+            return Self::semantic_join(input);
+        }
+        None
+    }
+
     fn terminal_producer(node: &RelationNode) -> Result<Option<usize>, String> {
         let RelationNode::Apply { operation, inputs } = node else {
             return Ok(None);
@@ -1118,10 +1156,32 @@ impl SqlRenderer {
         Ok(None)
     }
 
+    fn semantic_bindings(argument_labels: &[String]) -> String {
+        let mut rows = argument_labels
+            .iter()
+            .enumerate()
+            .map(|(key, label)| {
+                format!(
+                    "SELECT json_object('label', {}, 'occurrence', 0, 'node', argument.related_node, 'text', argument.source_text, 'structure', argument.structural_key, 'leaf', argument.named_leaf, 'kind', 1, 'named', argument.capture_named, 'equality_occurrence', 0) AS value FROM fact argument WHERE argument.producer_id = gate.producer_id AND argument.file_index = gate.file_index AND argument.node = gate.node AND argument.fact_kind = 15 AND argument.match_index = {key}",
+                    Self::sql_text(label)
+                )
+            })
+            .collect::<Vec<_>>();
+        rows.push(
+            "SELECT json_object('label', input.output_label, 'occurrence', input.capture_occurrence, 'node', input.related_node, 'text', input.source_text, 'structure', input.structural_key, 'leaf', input.named_leaf, 'kind', input.capture_kind, 'named', input.capture_named, 'equality_occurrence', input.equality_occurrence) AS value FROM fact input WHERE input.producer_id = gate.producer_id AND input.file_index = gate.file_index AND input.node = gate.node AND input.fact_kind = 17 AND input.match_index = gate.match_index"
+                .to_owned(),
+        );
+        format!(
+            "COALESCE((SELECT json_group_array(json(value)) FROM ({})), json('[]'))",
+            rows.join(" UNION ALL ")
+        )
+    }
+
     fn render_simple_semantic_gate(
         &mut self,
         source_producer: usize,
         fact_producer: usize,
+        argument_labels: &[String],
         require_all_candidates: bool,
     ) -> Result<String, String> {
         let source = self.render_terminal_producer(source_producer, "source")?;
@@ -1130,13 +1190,14 @@ impl SqlRenderer {
             "gate",
             "CASE WHEN gate.verdict < 0 THEN NULL ELSE gate.verdict END",
         );
+        let bindings = Self::semantic_bindings(argument_labels);
         let candidate_guard = if require_all_candidates {
             "\n    AND NOT EXISTS (SELECT 1 FROM fact candidate WHERE candidate.producer_id = gate.producer_id AND candidate.file_index = gate.file_index AND candidate.node = gate.node AND candidate.match_index = gate.match_index AND candidate.fact_kind = 8 AND candidate.verdict IS NOT 1)"
         } else {
             ""
         };
         self.ctes.push(format!(
-            "{gate} AS (\n  SELECT {gate_columns}, COALESCE((SELECT json_group_array(json(value)) FROM (SELECT json_object('label', input.output_label, 'occurrence', input.capture_occurrence, 'node', input.related_node, 'text', input.source_text, 'structure', input.structural_key, 'leaf', input.named_leaf, 'kind', input.capture_kind, 'named', input.capture_named, 'equality_occurrence', input.equality_occurrence) AS value FROM fact input WHERE input.producer_id = gate.producer_id AND input.file_index = gate.file_index AND input.node = gate.node AND input.fact_kind = 17 AND input.match_index = gate.match_index)), json('[]')) AS bindings, '' AS choice_order FROM fact gate\n  JOIN producer_status status USING (producer_id, file_index)\n  WHERE gate.producer_id = {fact_producer} AND gate.fact_kind = 0 AND status.complete = 1 AND gate.verdict <> 0{candidate_guard}\n)"
+            "{gate} AS (\n  SELECT {gate_columns}, {bindings} AS bindings, '' AS choice_order FROM fact gate\n  JOIN producer_status status USING (producer_id, file_index)\n  WHERE gate.producer_id = {fact_producer} AND gate.fact_kind = 0 AND status.complete = 1 AND gate.verdict <> 0{candidate_guard}\n)"
         ));
         let resolved = self.next_name("resolved");
         let verdict = "CASE WHEN source.verdict = 0 OR semantic.verdict = 0 THEN 0 WHEN source.verdict IS NULL OR semantic.verdict IS NULL THEN NULL ELSE 1 END";
@@ -1145,6 +1206,43 @@ impl SqlRenderer {
         let compatible = Self::binding_compatibility("source", "semantic");
         self.ctes.push(format!(
             "{resolved} AS (\n  SELECT {columns}, {merged} AS bindings, source.choice_order || semantic.choice_order AS choice_order FROM {source} source\n  INNER JOIN {gate} semantic\n    ON semantic.file_index = source.file_index AND semantic.node = source.node\n    AND {compatible}\n)"
+        ));
+        Ok(resolved)
+    }
+
+    fn render_argument_target(
+        &mut self,
+        source_producer: usize,
+        fact_producer: usize,
+        target_producer: usize,
+        slot: u16,
+        argument_labels: &[String],
+    ) -> Result<String, String> {
+        let source = self.render_terminal_producer(source_producer, "source")?;
+        let gate = self.next_name("semantic_argument");
+        let gate_columns = qualified_row_columns_with_verdict(
+            "gate",
+            "CASE WHEN gate.verdict < 0 THEN NULL ELSE gate.verdict END",
+        );
+        let bindings = Self::semantic_bindings(argument_labels);
+        self.ctes.push(format!(
+            "{gate} AS (\n  SELECT {gate_columns}, {bindings} AS bindings, '' AS choice_order FROM fact gate\n  JOIN producer_status status USING (producer_id, file_index)\n  WHERE gate.producer_id = {fact_producer} AND gate.fact_kind = 0 AND status.complete = 1 AND gate.verdict <> 0\n)"
+        ));
+        let nested = self.render_terminal_producer(target_producer, "semantic_argument_rule")?;
+        let checked = self.next_name("semantic_argument_checked");
+        let checked_columns = qualified_row_columns("argument");
+        let checked_bindings = Self::merged_bindings(&["argument".to_owned(), "nested".to_owned()]);
+        let checked_compatible = Self::binding_compatibility("argument", "nested");
+        self.ctes.push(format!(
+            "{checked} AS (\n  SELECT DISTINCT {checked_columns}, {checked_bindings} AS bindings, argument.choice_order || nested.choice_order AS choice_order FROM {gate} argument\n  JOIN fact target ON target.producer_id = {fact_producer} AND target.file_index = argument.file_index AND target.node = argument.node AND target.match_index = argument.match_index AND target.fact_kind = {slot} AND target.verdict = 1\n  JOIN {nested} nested ON nested.file_index = argument.file_index AND nested.node = target.related_node AND {checked_compatible}\n)"
+        ));
+        let resolved = self.next_name("resolved");
+        let verdict = "CASE WHEN source.verdict = 0 OR checked.verdict = 0 THEN 0 WHEN source.verdict IS NULL OR checked.verdict IS NULL THEN NULL ELSE 1 END";
+        let columns = qualified_row_columns_with_verdict("source", verdict);
+        let merged = Self::merged_bindings(&["source".to_owned(), "checked".to_owned()]);
+        let compatible = Self::binding_compatibility("source", "checked");
+        self.ctes.push(format!(
+            "{resolved} AS (\n  SELECT {columns}, {merged} AS bindings, source.choice_order || checked.choice_order AS choice_order FROM {source} source\n  INNER JOIN {checked} checked\n    ON checked.file_index = source.file_index AND checked.node = source.node\n    AND {compatible}\n)"
         ));
         Ok(resolved)
     }
@@ -1355,29 +1453,7 @@ impl SqlRenderer {
 
     fn render_semantic(&mut self, spec: &SemanticFactSpec) -> Result<String, String> {
         let mut current = self.next_name("semantic_gate");
-        let mut labels = spec
-            .argument_labels
-            .iter()
-            .enumerate()
-            .map(|(key, label)| {
-                format!(
-                    "SELECT json_object('label', {}, 'occurrence', 0, 'node', argument.related_node, 'text', argument.source_text, 'structure', argument.structural_key, 'leaf', argument.named_leaf, 'kind', 1, 'named', argument.capture_named, 'equality_occurrence', 0) AS value FROM fact argument WHERE argument.producer_id = gate.producer_id AND argument.file_index = gate.file_index AND argument.node = gate.node AND argument.fact_kind = 15 AND argument.match_index = {key}",
-                    Self::sql_text(label)
-                )
-            })
-            .collect::<Vec<_>>();
-        labels.push(
-            "SELECT json_object('label', input.output_label, 'occurrence', input.capture_occurrence, 'node', input.related_node, 'text', input.source_text, 'structure', input.structural_key, 'leaf', input.named_leaf, 'kind', input.capture_kind, 'named', input.capture_named, 'equality_occurrence', input.equality_occurrence) AS value FROM fact input WHERE input.producer_id = gate.producer_id AND input.file_index = gate.file_index AND input.node = gate.node AND input.fact_kind = 17 AND input.match_index = gate.match_index"
-                .to_owned(),
-        );
-        let bindings = if labels.is_empty() {
-            "json('[]')".to_owned()
-        } else {
-            format!(
-                "COALESCE((SELECT json_group_array(json(value)) FROM ({})), json('[]'))",
-                labels.join(" UNION ALL ")
-            )
-        };
+        let bindings = Self::semantic_bindings(&spec.argument_labels);
         let gate_columns = qualified_row_columns_with_verdict(
             "gate",
             "CASE WHEN gate.verdict < 0 THEN NULL ELSE gate.verdict END",
@@ -1779,6 +1855,23 @@ impl SqlRenderer {
         source: &RelationNode,
         constraints: &[(String, RelationNode)],
     ) -> Result<String, String> {
+        if let Some(inputs) = Self::semantic_join(source)
+            && let [terminal, RelationNode::Semantic { spec }] = inputs
+            && let Some(source_producer) = Self::terminal_producer(terminal)?
+            && spec.rules.is_empty()
+            && let [(capture, constraint)] = constraints
+            && spec.argument_labels.len() == 1
+            && spec.argument_labels[0] == *capture
+            && let Some(target_producer) = Self::terminal_producer(constraint)?
+        {
+            return self.render_argument_target(
+                source_producer,
+                spec.producer,
+                target_producer,
+                15,
+                &spec.argument_labels,
+            );
+        }
         let mut current = self.render(source)?;
         for (capture, constraint) in constraints {
             let constraint = self.render(constraint)?;
