@@ -14,7 +14,7 @@ import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { languageFor } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../src/engine/native/native.js";
-import { loadBundledRules } from "../../../src/engine/catalog/bundled-rule-documents.js";
+import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-documents.js";
 import { repositoryPath } from "../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../native/src/code_rule_dsl/", import.meta.url));
@@ -120,7 +120,7 @@ function findings(compiled: NativeCompiledCodeRuleDsl, files: { path: string; so
   return Object.fromEntries(result.violations.map(violation => [key(violation.path, violation.span.startLine + 1), violation.message]));
 }
 
-const documents = loadBundledRules().filter(document => document.rule.id.startsWith("complexity-"));
+const documents = loadPackRuleDocuments([repositoryPath("packs", "complexity")]).filter(document => document.rule.id.startsWith("complexity-"));
 function ruleJson(language: CorpusLanguage): string {
   const document = documents.find(candidate => candidate.rule.id === RULES[language]);
   if (document === undefined) throw new Error(`${RULES[language]} is not bundled`);

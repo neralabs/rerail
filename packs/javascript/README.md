@@ -1,7 +1,7 @@
-# Rerail rule pack: JavaScript
+# Rerail rule pack: JavaScript and TypeScript (ESLint core)
 
-65 code rules for JavaScript and TypeScript source, ported from ESLint 10.11.0's core rules with their default options.
-22 start on; 43 start off (`"on": false`) because `eslint:recommended` does not turn them on, so they are experimental.
+71 code rules for JavaScript and TypeScript source, ported from ESLint 10.11.0's core rules with their default options.
+24 start on; 47 start off (`"on": false`) because `eslint:recommended` does not turn them on, so they are experimental.
 Each shipped rule is scored against ESLint's own findings on ESLint's test cases, through the engine's production
 workspace path, with every disagreement declared in `divergences.json` (none today).
 
@@ -17,6 +17,7 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack java
 | `upstream/eslint/` | ESLint's copied test cases (`fixtures/`) and its recording (`fixtures.expected.json`) |
 | `upstream/generate.mjs` | ESLint's recorder |
 | `upstream/eslint-plugin-unicorn/` | eslint-plugin-unicorn's copied test cases, its recording and its recorder (`generate.mjs`) |
+| `upstream/<tool>/gates.yaml`, `recording.lock`, `goldens.tsv` | The port readiness gates' manifest for the tool, the lock naming its recordings (`recording.json`, `corpus.json`, held in a GitHub release) and its goldens ([docs/port-readiness.md](../../docs/port-readiness.md)) |
 | `candidates/rules/` | Ports of ESLint and eslint-plugin-unicorn rules still being evaluated: listed in `conformance.json`, scored and reported, never gated, never shipped |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 

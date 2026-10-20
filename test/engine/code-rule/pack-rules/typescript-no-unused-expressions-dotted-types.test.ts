@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../../src/engine/native/native.js";
-import { loadBundledRules } from "../../../../src/engine/catalog/bundled-rule-documents.js";
+import { loadPackRuleDocuments } from "../../../../src/engine/catalog/rule-documents.js";
 import { repositoryPath } from "../../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));
@@ -30,7 +30,7 @@ const evaluationSchema = z.object({
 
 function compile(): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  const document = loadBundledRules([repositoryPath("packs", "typescript")]).find(candidate => candidate.rule.id === RULE_ID);
+  const document = loadPackRuleDocuments([repositoryPath("packs", "typescript")]).find(candidate => candidate.rule.id === RULE_ID);
   if (document === undefined) throw new Error(`${RULE_ID} is not in packs/typescript`);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }

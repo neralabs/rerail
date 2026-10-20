@@ -1,0 +1,1 @@
+type promiseVoidUnion = Promise<void> | void;

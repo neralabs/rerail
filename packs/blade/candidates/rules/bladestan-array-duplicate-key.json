@@ -3,7 +3,7 @@
   "id": "bladestan-array-duplicate-key",
   "revision": 3,
   "mode": "steer",
-  "description": "Bladestan 0.11.7 (PHPStan 2.2.16 over the compiled template) array.duplicateKey (DuplicateKeysInLiteralArraysRule): an array literal's first explicitly keyed element (`[$K => $V]`, the element bound whole by `$P`, as a Blade rule cannot select a PHP pattern's metavariable) whose key PHP coerces to the same key as a later explicit key's (reported, as PHPStan does, at the first). A key PHP cannot evaluate (`$page->getUrl()`) equals none. Arrays spanning more than 256 lines are not checked: comparing every pair of keys of a larger literal (generated data tables) exceeds the per-file AST work budget, which would fail every policy on the file.",
+  "description": "Bladestan 0.11.7 (PHPStan 2.2.16 over the compiled template) array.duplicateKey (DuplicateKeysInLiteralArraysRule): an array literal's first explicitly keyed element (`[$K => $V]`, the element bound whole by `$P`, whose key the `key` text mode reads) whose key PHP coerces to the same key as a later explicit key's (reported, as PHPStan does, at the first). A key PHP cannot evaluate (`$page->getUrl()`) equals none. Arrays spanning more than 256 lines are not checked: comparing every pair of keys of a larger literal (generated data tables) exceeds the per-file AST work budget, which would fail every policy on the file.",
   "scope": {
     "include": [
       "**/*.blade.php"
@@ -16,6 +16,7 @@
       "forbid": {
         "ast": {
           "language": "blade",
+          "embedded": "compiled-view",
           "rule": {
             "all": [
               {

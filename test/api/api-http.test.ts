@@ -8,7 +8,7 @@ import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import {
-  loadBundledCatalog,
+  loadRuleCatalog,
   openRerailDatabase,
   type RerailDatabase,
   type CodeRuleViolation,
@@ -23,6 +23,7 @@ import {
 import { MOCK_CODE_RULES, MOCK_CONVERSATION_RULES } from "../../src/cli/index.js";
 import { SqliteSessionStore } from "../../src/runtime/index.js";
 import { codingAgentHome, codingAgentStates, registerHarnesses, registrationRoot } from "../../src/setup/index.js";
+import { installPack, uninstallPack } from "../support/installed-packs.js";
 
 /** The host a browser addressed the page to through a container port mapping; the fixture never binds it. */
 const PAGE_HOST = "localhost:35831";
@@ -55,6 +56,8 @@ describe("Rerail API over HTTP", () => {
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-api-"));
     process.env.RERAIL_HOME = join(root, "home");
+    // Core ships no packs; these tests add, configure and copy the complexity pack's rules.
+    installPack("complexity");
     databasePath = join(root, "rerail.sqlite");
     database = openRerailDatabase(databasePath);
     auditStore = new SqliteAuditStore(databasePath);
@@ -95,9 +98,9 @@ describe("Rerail API over HTTP", () => {
   }
 
   function addLibraryRules(): void {
-    const bundle = loadBundledCatalog();
-    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, bundle, rule, "code");
-    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, bundle, rule, "conversation", { revision: 1 });
+    const ruleCatalog = loadRuleCatalog();
+    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, ruleCatalog, rule, "code");
+    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, ruleCatalog, rule, "conversation", { revision: 1 });
   }
 
   function addRepository(key: string, options: { name?: string; configuredAt?: number | null; started?: boolean | null } = {}): void {
@@ -352,6 +355,21 @@ describe("Rerail API over HTTP", () => {
     expect(activity).toHaveBeenCalledTimes(4);
   });
 
+  it("answers a history read afresh once a pack is removed, with no database write between", async () => {
+    addLibraryRules();
+    addRepository(WEB, { configuredAt: 5, started: true });
+    const first = await app.request("/api/rules/activity?since=0");
+    const tag = first.headers.get("etag")!;
+    const rules = Object.keys((await first.json() as { rules: Record<string, unknown> }).rules);
+    expect(rules.some(id => id.startsWith("complexity-"))).toBe(true);
+
+    uninstallPack("complexity");
+
+    const after = await app.request("/api/rules/activity?since=0", { headers: { "if-none-match": tag } });
+    expect(after.status).toBe(200);
+    expect(Object.keys((await after.json() as { rules: Record<string, unknown> }).rules).some(id => id.startsWith("complexity-"))).toBe(false);
+  });
+
   it("admits a write whose Origin is an allowlisted host on the requested port and rejects every other", async () => {
     addRepository(WEB);
     const write = async (headers: Record<string, string>, api = app): Promise<Response> => await api.request("/api/repository/settings", {
@@ -446,7 +464,7 @@ describe("Rerail API over HTTP", () => {
     // "I'll pick rule packs myself": set up, nothing added.
     const configured = await putJson("/api/repository/attachments", { repository: WEB, configure: true });
     expect(await configured.json()).toMatchObject({ repository: { setUp: true }, attachments: [] });
-    const pack = [...loadBundledCatalog().packs.keys()][0]!;
+    const pack = [...loadRuleCatalog().packs.keys()][0]!;
     const added = await putJson("/api/repository/attachments", { repository: WEB, add: [{ sourceKind: "pack", sourceId: pack, folder: "web/" }] });
     expect(await added.json()).toMatchObject({ attachments: [{ folder: "web", sourceKind: "pack", sourceId: pack }] });
     expect((await putJson("/api/repository/attachments", { repository: WEB, add: [{ sourceKind: "pack", sourceId: pack, folder: "../x" }] })).status).toBe(400);

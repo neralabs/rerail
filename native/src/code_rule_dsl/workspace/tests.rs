@@ -1805,23 +1805,25 @@ fn broken_files_report_sound_witnesses_and_are_marked_partial() {
 /// is every clause where the program has an error of its own.
 #[test]
 fn a_vue_template_error_leaves_program_clauses_complete() {
-    let vue = |id: &str, rule: Value| {
+    let vue = |id: &str, ast: Value| {
         json!({
             "id": id,
-            "forbid": { "ast": { "language": "vue", "rule": rule } },
+            "forbid": { "ast": ast },
             "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
         })
     };
-    // Each is unsound under errors: a negated relation leaves the witness.
+    // Each is unsound under errors: a negated relation leaves the witness. The script clause
+    // reads the component's program (`embed`), the template clause its own tree: each document
+    // has its own syntax errors.
     let clauses = || {
         vec![
             vue(
                 "script",
-                json!({ "kind": "binary_expression", "not": { "inside": { "kind": "function_declaration", "stopBy": "end" } } }),
+                json!({ "language": "vue", "embedded": "script-block", "rule": { "kind": "binary_expression", "not": { "inside": { "kind": "function_declaration", "stopBy": "end" } } } }),
             ),
             vue(
                 "template",
-                json!({ "kind": "element", "not": { "follows": { "kind": "element" } } }),
+                json!({ "language": "vue", "rule": { "kind": "element", "not": { "follows": { "kind": "element" } } } }),
             ),
         ]
     };
@@ -1835,6 +1837,7 @@ fn a_vue_template_error_leaves_program_clauses_complete() {
         assert_eq!(violations.len(), 1, "{evaluation}");
         assert_eq!(violations[0]["clauseId"], "script", "{evaluation}");
         assert_eq!(violations[0]["span"]["startLine"], 3, "{evaluation}");
+        // A file read around syntax errors in any of its documents reports them on its clauses.
         assert_eq!(
             failure_codes(&evaluation),
             [
@@ -1844,19 +1847,82 @@ fn a_vue_template_error_leaves_program_clauses_complete() {
             "{evaluation}"
         );
     }
-    let script_error = template_error.replace("a + 1\n", "a + 1\nfunction (\n");
+    let script_error = template_error
+        .replace("a + 1\n", "a + 1\nfunction (\n")
+        .replace("{{ x </div>", "{{ x }}</div>");
     let files = json!([{ "language": "vue", "path": "Broken.vue", "source": script_error }]);
     for evaluation in [
         apply_clauses(clauses(), files.clone()),
         stateless(clauses(), files),
     ] {
-        assert_eq!(evaluation["violations"], json!([]), "{evaluation}");
+        let violations = evaluation["violations"].as_array().expect("findings");
+        assert_eq!(violations.len(), 1, "{evaluation}");
+        assert_eq!(violations[0]["clauseId"], "template", "{evaluation}");
         assert_eq!(
             failure_codes(&evaluation),
             [
                 ("script".to_owned(), "source-incomplete".to_owned()),
-                ("template".to_owned(), "source-incomplete".to_owned()),
+                ("template".to_owned(), "source-partial".to_owned()),
             ],
+            "{evaluation}"
+        );
+    }
+}
+
+/// A file's syntax errors are its documents' together: a document no clause reads still leaves the
+/// file read around its errors, and a clause crossing between the documents (`embedded`) reads
+/// around both's.
+#[test]
+fn every_document_of_a_vue_file_has_its_errors_read() {
+    let vue = |id: &str, ast: Value| {
+        json!({
+            "id": id,
+            "forbid": { "ast": ast },
+            "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
+        })
+    };
+    // Only the program is read; the template's error still makes the file partial.
+    let script = || {
+        vec![vue(
+            "script",
+            json!({ "language": "vue", "embedded": "script-block", "rule": { "kind": "lexical_declaration" } }),
+        )]
+    };
+    let template_error =
+        "<script setup>\nconst a = 1\n</script>\n<template>\n  <div>{{ a </div>\n</template>\n";
+    let files = json!([{ "language": "vue", "path": "T.vue", "source": template_error }]);
+    for evaluation in [
+        apply_clauses(script(), files.clone()),
+        stateless(script(), files),
+    ] {
+        assert_eq!(
+            evaluation["violations"].as_array().map(Vec::len),
+            Some(1),
+            "{evaluation}"
+        );
+        assert_eq!(
+            failure_codes(&evaluation),
+            [("script".to_owned(), "source-partial".to_owned())],
+            "{evaluation}"
+        );
+    }
+    // The template is clean and the program broken: a template clause reaching the program
+    // (`embedded`, unsound under errors) is incomplete.
+    let crossing = || {
+        vec![vue(
+            "crossing",
+            json!({ "language": "vue", "rule": { "kind": "interpolation", "embedded": { "kind": "identifier" } } }),
+        )]
+    };
+    let script_error = "<script setup>\nconst a = 1\nfunction (\n</script>\n<template>\n  <div>{{ a }}</div>\n</template>\n";
+    let files = json!([{ "language": "vue", "path": "S.vue", "source": script_error }]);
+    for evaluation in [
+        apply_clauses(crossing(), files.clone()),
+        stateless(crossing(), files),
+    ] {
+        assert_eq!(
+            failure_codes(&evaluation),
+            [("crossing".to_owned(), "source-incomplete".to_owned())],
             "{evaluation}"
         );
     }

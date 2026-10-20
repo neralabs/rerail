@@ -1,5 +1,11 @@
 # @neralabs/rerail-pack-vue
 
+## 0.1.3
+
+### Patch Changes
+
+- 1fbb06c: Vue pack candidates: script and template-expression ports read the component's program with `ast.embedded: "script-block"`, script markers and template elements through `host`, and template rules reach the program with `embedded`. `no-unused-vars` counts a native descendant tag as a use, as eslint-plugin-vue does, so its declared divergence is gone.
+
 ## 0.1.2
 
 ### Patch Changes

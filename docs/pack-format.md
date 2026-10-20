@@ -1,9 +1,9 @@
 # Rule pack structure and validation contract
 
-Status: the layout and the validation contract (checks 1 to 6) are implemented. `test/engine/catalog/packs.test.ts` validates every
-`packs/*` directory: `python`, `php`, `blade`, `typescript`, `javascript`, `react`, `node`, `next`, `sql` and `complexity`. Core does not load
-installed packs yet: it ships the complexity pack inside its own package (`packs/complexity/pack.json` and
-`packs/complexity/rules/` in its `files`, read from `CORE_RULE_PACKS` in `src/engine/catalog/bundled-rule-documents.ts`; see [rule packs](rule-packs.md)).
+Status: the layout and the validation contract (checks 1 to 7) are implemented. `test/engine/catalog/packs.test.ts` validates every
+`packs/*` directory: `python`, `php`, `blade`, `rust`, `typescript`, `javascript`, `react`, `vue`, `node`, `next`, `sql` and `complexity`. Core
+ships none of them: set-up and `rerail packs add` install them from npm into `$RERAIL_HOME/packs`, and core reads them
+from there; it lists them by name only, in `src/engine/catalog/pack-list.generated.ts` ([rule packs](rule-packs.md#installing-packs)).
 Each pack is published on its own by the [release workflow](#release). A pack introduces no new file format: it
 combines the two schemas the repository already has. To start one, see [language packs](language-packs.md#start-a-pack).
 
@@ -13,8 +13,9 @@ against, is `native/src/code_rule_dsl/capabilities.json`.
 
 ## Principles
 
-1. **A pack is data.** Rule documents plus the evidence that they behave. It contains no code and never imports the
-   engine: core runs its rules, and the repository's tests validate it.
+1. **A pack is data.** Rule documents plus the evidence that they behave. It contains no code, not even to decide
+   whether it fits a repository (its `match` is globs and dependency names), and never imports the engine: core runs
+   its rules, and the repository's tests validate it.
 2. **The directory is the contract.** What a pack must prove follows from which files it has. There is no separate
    validation manifest.
 3. **Every rule is proven.** By examples it must catch and let pass, or, for a rule ported from another tool, by that
@@ -61,10 +62,12 @@ packs/<id>/
 }
 ```
 
-- The core version range lives in `peerDependencies`, so npm warns when the installed core does not fit. It is a
-  declaration, not an import: a pack has no `dependencies`. The `-0` admits core's prereleases (`0.1.0-next.0`).
+- The core version range lives in `peerDependencies`. It is a declaration, not an import: a pack has no
+  `dependencies`. The `-0` admits core's prereleases (`0.1.0-next.0`). Rerail's catalog enforces it: an installed pack
+  whose range excludes the active core is left out ([rule packs](rule-packs.md#installing-packs)). npm does not, since
+  core is never installed beside the packs in `$RERAIL_HOME/packs`.
 - The peer is `optional`: `packs/*` are workspaces of this repository, whose root package is core itself, and npm
-  would otherwise try to install a published core into them. npm still checks the range when core is installed.
+  would otherwise try to install a published core into them.
 - `files` publishes the pack and its licence records. `conformance.json`, `divergences.json`, `upstream/` and
   `candidates/` are validation material: they stay in the repository and never reach npm, which keeps copied
   upstream tests out of the package.
@@ -124,14 +127,18 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
 
 ## The validation contract
 
-Implemented: `validatePack(directory, { corpora?, corpusRoot? })` in `conformance/pack-validation.ts` runs checks 1
-to 6 over one pack and returns each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`).
+Implemented: `validatePack(directory, { corpora?, corpusRoot?, listed? })` in `conformance/pack-validation.ts` runs
+checks 1 to 7 over one pack and returns each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`).
 `test/engine/catalog/packs.test.ts` calls it for every directory under `packs/`, with one test per check and one per rule, and has
 the validator's own tests over the fixture packs in `fixtures/packs/`. `npm test` runs it with the local core.
 Running it against the newest published core inside each pack's range is for pack CI, which does not exist yet.
 
+The contract is the floor every pack meets. A ported rule must also pass the [port readiness gates](port-readiness.md) to ship:
+they compare it with its upstream on start and end positions, on real code, and for overfitting and size; they block
+CI for shipped rules and only report candidates.
+
 ```sh
-npx vitest run test/engine/catalog/packs.test.ts                         # every pack: checks 1 to 6, each rule's status
+npx vitest run test/engine/catalog/packs.test.ts                         # every pack: checks 1 to 7, each rule's status
 npx vitest run test/engine/catalog/packs.test.ts -t "pack python"        # one pack
 RERAIL_PACK_CORPORA=1 npx vitest run test/engine/catalog/packs.test.ts   # check 4 on every pinned corpus too
 ```
@@ -148,7 +155,8 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
 | 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
 | 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `restricted`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
-| 6 | Licences | A copied file is missing from an `UPSTREAM.md`; `reuse lint` or the licence allowlist fails |
+| 6 | Licences | A copied file is missing from an `UPSTREAM.md`, or is copied from an upstream path its `UPSTREAM.md` lists as not copied; `reuse lint` or the licence allowlist fails |
+| 7 | Manifest | `pack.json` has no `match`, or its `match` fails the schema; core's generated pack list does not name the pack or is stale |
 
 Precisely:
 
@@ -215,9 +223,16 @@ Precisely:
    corpus) is listed instead in the tool's own `upstream/<tool>/UPSTREAM.md`, with the same table rows: it is Rerail's,
    so it adds no licence to `licenses/` or to the package's `license`. That record may list only files under its own
    `upstream/<tool>/`. Every listed file must exist, every recorded licence must be on the repository allowlist
-   (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. `reuse lint` and `node scripts/check/check-licenses.mjs`
+   (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. An `UPSTREAM.md` may declare upstream
+   paths nothing is copied from, one per line as ``- Not copied: `<upstream path prefix>` — <project>, <SPDX id>``
+   (an upstream's material derived from a copyleft project, such as Ruff's fixtures for its pylint ports); a row whose
+   upstream path (its second column) starts with one fails. `reuse lint` and `node scripts/check/check-licenses.mjs`
    stay repository-wide gates in CI; annotate copied files in `REUSE.toml` as well, since `reuse lint` alone accepts
-   a copied file the catch-all Apache-2.0 annotation covers.
+   a copied file the catch-all Apache-2.0 annotation covers. Structure metric 7 (`npm run check:structure`) fails a
+   listed file whose REUSE licence lacks the one its `UPSTREAM.md` records, or whose REUSE copyright names only Rerail.
+7. `match` must be present: without it set-up never recommends the pack. For a directory under `packs/`,
+   `src/engine/catalog/pack-list.generated.ts` must list the pack's id and equal what `npm run generate:packs` writes.
+   Fixture packs elsewhere are not published, so no list names them; `listed: true` checks the list for them too.
 
 **Languages not supported yet.** A pack may hold code rules for a language core's
 [language registry](language-packs.md) lists as `planned`, or rules that read a capability their language has
@@ -302,7 +317,7 @@ repository allowlist are accepted.
 
 | Today | Becomes |
 |---|---|
-| Core's shipped complexity rules and their documents | `packs/complexity/pack.json` and `rules/`, still shipped in core's package until core loads installed packs |
+| Core's shipped complexity rules and their documents | `packs/complexity/pack.json` and `rules/`, published on their own; core ships no packs |
 | `conformance/languages/<lang>/pack.json`, `rules/`, `divergences.json` | `packs/<lang>/conformance.json`, `rules/` or `candidates/`, `divergences.json`, plus a `pack.json` |
 | `fixtures/<family>/rules/<tool>/` recordings, copied tests and recorders | `packs/<lang>/upstream/<tool>/`; for a language without rules yet, `fixtures/<family>/upstream/<tool>/` |
 | `fixtures/<family>/{candidates,probes,policies}/` | `packs/<lang>/candidates/` |

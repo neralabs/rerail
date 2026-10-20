@@ -1,0 +1,1 @@
+/* Filename: Nested/app/Pages/Foo.vue */

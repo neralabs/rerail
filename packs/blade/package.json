@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-blade",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Rerail rule pack: no rules yet; its Bladestan, tlint and stillat/blade-parser ports are candidates until they pass the V1 rule validation gates.",
   "license": "Apache-2.0 AND MIT",
   "repository": {

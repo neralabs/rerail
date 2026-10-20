@@ -194,6 +194,14 @@ export interface CodeRuleDslAstQuery {
     language: CodeRuleLanguageId;
     rule: CodeRuleDslAstRule;
     /**
+     * The `via` of an embedding `language` declares (Blade's `compiled-view`, Vue's `script-block`): the query runs on
+     * the file's embedded program of that via, a document of its own in the embedded language's grammar, instead of
+     * the file's own tree. Kinds, patterns and utilities are the embedded language's; witnesses, captures and fixes
+     * map to the bytes of the file they stand for, and a fix applies only where its range lies in one copied stretch.
+     * `host` reaches the file's own tree from a node of the program.
+     */
+    embedded?: string;
+    /**
      * Named rules that `rule`, `constraints`, and other utilities reference with `matches` (ast-grep's local
      * utilities). A utility shares the caller's metavariables and may recurse through a relation. A `define` clause
      * of the query's language shares more; an id may not be both.

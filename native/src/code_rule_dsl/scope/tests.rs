@@ -1176,7 +1176,10 @@ fn source_range(table: &ScopeTable, reference: &Reference) -> std::ops::Range<us
             .annotations
             .iter()
             .find(|annotation| annotation.tree.offset() == offset)
-            .and_then(|annotation| annotation.tree.host_span(range.clone()))
+            .and_then(|annotation| {
+                crate::code_rule_dsl::origin::Origin::of_range(&*annotation.tree, range.clone())
+                    .map(|ranges| ranges.primary())
+            })
         else {
             break;
         };

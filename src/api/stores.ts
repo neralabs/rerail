@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import type { z } from "zod";
-import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { SqliteAuditReader } from "../engine/audit/audit-store.js";
 import { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
-import type { BundledCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
+import type { RuleCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { createCheckoutResolver } from "../engine/catalog/repository-registry.js";
 import { workspaceStartState, startStateReader } from "../runtime/repository-start.js";
 import { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
@@ -80,8 +80,8 @@ export class DatabaseApiStores implements RerailApiStores {
     return this.#database;
   }
 
-  bundle(): BundledCatalog {
-    return loadBundledCatalog();
+  ruleCatalog(): RuleCatalog {
+    return loadRuleCatalog();
   }
 
   checkouts(): (workspace: string) => CheckoutContext | undefined {

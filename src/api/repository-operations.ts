@@ -285,7 +285,7 @@ function checkConfig(stores: RerailApiStores, change: SettingChange): void {
   if (change.folder !== "") throw new ApiError(400, "invalid-setting", "config applies to a rule over the whole repository; set it with folder \"\"");
   const library = stores.database().select({ id: libraryRules.ruleId }).from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
   if (library !== undefined) throw new ApiError(400, "invalid-setting", `config applies to rules by Rerail; ${id} is your library rule`);
-  const configured = configureBundledCodeRule(stores.bundle(), id, change.config);
+  const configured = configureBundledCodeRule(stores.ruleCatalog(), id, change.config);
   if (!configured.ok) throw new ApiError(400, "invalid-setting", configured.reason);
 }
 
@@ -361,9 +361,9 @@ function libraryWrite<T>(write: () => T): T {
 }
 
 function ruleSourceExists(stores: RerailApiStores, kind: "pack" | "rerail_rule" | "library_rule", id: string): boolean {
-  const bundle = stores.bundle();
-  if (kind === "pack") return bundle.packs.has(id);
-  if (kind === "rerail_rule") return bundle.documents.has(id);
+  const ruleCatalog = stores.ruleCatalog();
+  if (kind === "pack") return ruleCatalog.packs.has(id);
+  if (kind === "rerail_rule") return ruleCatalog.documents.has(id);
   return getLibraryRule(stores.database(), id) !== undefined;
 }
 
@@ -422,7 +422,7 @@ export const repositoryOperations: readonly Operation[] = [
     handler: (stores, input, caller) => {
       const target = resolveTarget(stores, input, caller, false);
       const db = stores.database();
-      const view = listRepositoryRules(db, stores.bundle(), target.repository.repositoryKey, target.checkout === undefined ? {} : {
+      const view = listRepositoryRules(db, stores.ruleCatalog(), target.repository.repositoryKey, target.checkout === undefined ? {} : {
         checkoutPath: target.checkout.checkoutPath,
         parentCheckoutPaths: parentCheckouts(db, target.checkout).map(parent => parent.checkoutPath),
       });
@@ -559,7 +559,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "rule_packs_recommend",
     method: "GET",
     path: "/api/rule-packs/recommendations",
-    summary: "Recommend rule packs for a repository by matching a checkout's files and package.json dependencies against each pack, each with the folder to add it in (the whole repository for repository packs). Local; changes nothing. A checkout is rescanned at most once a minute.",
+    summary: "Recommend installed rule packs for a repository by matching a checkout's files and dependency manifests against each pack, each with the folder to add it in (the whole repository for repository packs). Local; changes nothing. A checkout is rescanned at most once a minute.",
     query: z.object({ ...targetShape }).strict(),
     output: rulePackRecommendationsSchema,
     handler: (stores, input, caller) => {
@@ -577,17 +577,17 @@ export const repositoryOperations: readonly Operation[] = [
     id: "rerail_rules_list",
     method: "GET",
     path: "/api/rerail-rules",
-    summary: "List the By Rerail rules that ship with Rerail, each with the pack it belongs to (null for rules in no pack).",
+    summary: "List the By Rerail rules of the installed rule packs, each with the pack it belongs to (null for rules in no pack).",
     query: kindFilter,
     output: z.object({ rules: z.array(rerailRuleSchema) }),
     handler: (stores, input) => {
-      const bundle = stores.bundle();
+      const ruleCatalog = stores.ruleCatalog();
       return {
-        rules: [...bundle.documents.values()]
+        rules: [...ruleCatalog.documents.values()]
           .filter(document => input.kind === undefined || document.kind === input.kind)
           .map(document => document.kind === "code"
-            ? { kind: "code" as const, rule: document.rule, packId: bundle.packOf.get(document.rule.id) ?? null, ...inactiveOf("code", document.rule) }
-            : { kind: "conversation" as const, rule: document.rule, packId: bundle.packOf.get(document.rule.id) ?? null }),
+            ? { kind: "code" as const, rule: document.rule, packId: ruleCatalog.packOf.get(document.rule.id) ?? null, ...inactiveOf("code", document.rule) }
+            : { kind: "conversation" as const, rule: document.rule, packId: ruleCatalog.packOf.get(document.rule.id) ?? null }),
       };
     },
   }),
@@ -630,13 +630,13 @@ export const repositoryOperations: readonly Operation[] = [
     handler: (stores, input, caller) => {
       if (input.rule.id !== input.id) throw new ApiError(400, "rule-id-mismatch", `path id ${input.id} does not match rule.id ${input.rule.id}`);
       const db = stores.database();
-      const bundle = stores.bundle();
+      const ruleCatalog = stores.ruleCatalog();
       const existing = db.select({ copiedFrom: libraryRules.copiedFromRuleId }).from(libraryRules).where(eq(libraryRules.ruleId, input.id)).get();
       // A library rule a later release bundled the id of wins over the By Rerail rule, so writing it edits it.
-      if (existing === undefined && bundle.documents.has(input.id)) {
+      if (existing === undefined && ruleCatalog.documents.has(input.id)) {
         // Copy-on-edit: an agent may add the copy to a set-up repository, as people may.
         const target = resolveTarget(stores, input, caller, true);
-        const copied = libraryWrite(() => copyRerailRuleToLibrary(db, bundle, target.repository.repositoryKey, input.id, input.rule));
+        const copied = libraryWrite(() => copyRerailRuleToLibrary(db, ruleCatalog, target.repository.repositoryKey, input.id, input.rule));
         return {
           rule: libraryRecord(copied.rule),
           copiedFromRuleId: input.id,
@@ -652,7 +652,7 @@ export const repositoryOperations: readonly Operation[] = [
       const document = libraryWrite(() => validateLibraryDocument(input.rule, input.kind));
       // The rule, its attachment and a first set-up are one change.
       libraryWrite(() => db.transaction(tx => {
-        writeLibraryRule(tx, bundle, document, input.revision === undefined ? {} : { revision: input.revision });
+        writeLibraryRule(tx, ruleCatalog, document, input.revision === undefined ? {} : { revision: input.revision });
         if (target === undefined) return;
         const repositoryKey = target.repository.repositoryKey;
         const attachment = { folder: target.folder, sourceKind: "library_rule" as const, sourceId: input.id };
@@ -695,16 +695,16 @@ function guardRepositoriesUsing(stores: RerailApiStores, caller: ApiCaller, rule
  */
 export function activityRules(stores: RerailApiStores, key: string | undefined): { id: string; kind: "code" | "conversation"; rule: unknown }[] {
   const db = stores.database();
-  const bundle = stores.bundle();
+  const ruleCatalog = stores.ruleCatalog();
   if (key === undefined) {
     return [
-      ...[...bundle.documents.values()].map(document => ({ id: document.rule.id, kind: document.kind, rule: document.rule as unknown })),
+      ...[...ruleCatalog.documents.values()].map(document => ({ id: document.rule.id, kind: document.kind, rule: document.rule as unknown })),
       ...listLibraryRules(db).map(rule => ({ id: rule.document.rule.id, kind: rule.document.kind, rule: rule.document.rule as unknown })),
     ];
   }
   const repository = findRepository(db, key);
   if (repository === undefined) return [];
-  const present = new Map(listRepositoryRules(db, bundle, repository.repositoryKey).rules
+  const present = new Map(listRepositoryRules(db, ruleCatalog, repository.repositoryKey).rules
     .map(rule => [rule.document.rule.id, { kind: rule.document.kind, rule: rule.document.rule as unknown }] as const));
   return [...present].map(([id, { kind, rule }]) => ({ id, kind, rule }));
 }

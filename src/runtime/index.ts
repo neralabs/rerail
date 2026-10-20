@@ -39,3 +39,4 @@ export {
   SqliteSessionStore,
 } from "./session-store.js";
 export { type RepositorySetupIo, onRuleCount } from "./repository-start.js";
+export { type NpmRunner } from "./npm.js";

@@ -749,9 +749,11 @@ path = [
   "packs/python/upstream/ruff/fixtures/flake8_pyi/**",
   "packs/python/upstream/ruff/fixtures/flake8_return/**",
   "packs/python/upstream/ruff/fixtures/flake8_simplify/**",
+  "packs/python/upstream/ruff/fixtures/isort/**",
   "packs/python/upstream/ruff/fixtures/pep8_naming/**",
   "packs/python/upstream/ruff/fixtures/pycodestyle/**",
   "packs/python/upstream/ruff/fixtures/ruff/**",
+  "packs/python/upstream/ruff/fixtures/ruff_notebook/**",
   "packs/python/upstream/ruff/fixtures/syntax_errors/**",
 ]
 precedence = "override"
@@ -1029,3 +1031,20 @@ path = "packs/next/upstream/eslint-plugin-next/fixtures/*/rerail-*"
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Nera Software Inc."
 SPDX-License-Identifier = "Apache-2.0"
+
+# The port readiness gates' recordings hold upstream test text inline (fixtureTexts.inline): excerpts of the upstream's tests
+# beside Rerail's recorded answers. They are no longer in this repository — each tool-pack commits a recording.lock
+# and the bytes are a GitHub release asset (conformance/port-readiness/recording/store.ts) — so REUSE cannot annotate them, and
+# there is nothing here to annotate. The attribution travels with the asset: each recording.json carries upstream's
+# LICENSE text (licenseText, its copyright and permission notice; recordings made before it was added carry only its
+# digest, licenseSha256, until they are recorded again). In this repository each upstream's
+# packs/<pack>/licenses/<project>/UPSTREAM.md lists the recording as excerpts under upstream's licence and Apache-2.0,
+# and the kept LICENSE sits beside it. Nothing under an upstream path an UPSTREAM.md lists as "Not copied" (Ruff's
+# fixtures for its ports of copyleft plugins) is ever in a recording. Every upstream whose text a recording holds is
+# MIT; Bandit (Apache-2.0) contributes none, its recording naming upstream's files by path and digest only.
+#
+# Upstream by upstream, as the removed annotations read: Ruff 0.16.9 (2022 Charles Marsh), typescript-eslint 8.70.1
+# (2019 typescript-eslint and other contributors), @vitest/eslint-plugin 1.6.27 (2022 - PRESENT Verite Mugabo
+# Makuza), eslint-plugin-react 7.37.5 (2014 Yannick Croissant), eslint-plugin-react-hooks 7.1.1 (Meta Platforms, Inc.
+# and affiliates.), @next/eslint-plugin-next 16.3.8 (2025 Vercel, Inc.), ESLint 10.11.0 (OpenJS Foundation and other
+# contributors), eslint-plugin-unicorn 76.0.0 (Sindre Sorhus) — each MIT, combined with Rerail's Apache-2.0.

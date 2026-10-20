@@ -3,7 +3,7 @@
   "id": "python",
   "name": "Python",
   "category": "language",
-  "covers": "138 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "136 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches Python",
   "match": {
     "any": [
@@ -211,6 +211,12 @@
       "id": "ruff-b029-except-with-empty-tuple",
       "document": "rules/ruff-b029-except-with-empty-tuple.json",
       "title": "Ruff B029: Except with empty tuple",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-b030-except-with-non-exception-classes",
+      "document": "rules/ruff-b030-except-with-non-exception-classes.json",
+      "title": "Ruff B030: Except with non exception classes",
       "group": "Ruff"
     },
     {
@@ -466,13 +472,6 @@
       "document": "rules/ruff-f707-default-except-not-last.json",
       "title": "Ruff F707: Default except not last",
       "group": "Ruff"
-    },
-    {
-      "id": "ruff-f722-forward-annotation-syntax-error",
-      "document": "rules/ruff-f722-forward-annotation-syntax-error.json",
-      "title": "Ruff F722: Forward annotation syntax error",
-      "group": "Ruff",
-      "on": false
     },
     {
       "id": "ruff-f822-undefined-export",
@@ -831,12 +830,6 @@
       "group": "Bandit"
     },
     {
-      "id": "bandit-b406-import-xml-sax",
-      "document": "rules/bandit-b406-import-xml-sax.json",
-      "title": "Bandit B406: Import xml sax",
-      "group": "Bandit"
-    },
-    {
       "id": "bandit-b407-import-xml-expat",
       "document": "rules/bandit-b407-import-xml-expat.json",
       "title": "Bandit B407: Import xml expat",
@@ -894,12 +887,6 @@
       "id": "bandit-b606-start-process-with-no-shell",
       "document": "rules/bandit-b606-start-process-with-no-shell.json",
       "title": "Bandit B606: Start process with no shell",
-      "group": "Bandit"
-    },
-    {
-      "id": "bandit-b610-django-extra-used",
-      "document": "rules/bandit-b610-django-extra-used.json",
-      "title": "Bandit B610: Django extra used",
       "group": "Bandit"
     },
     {

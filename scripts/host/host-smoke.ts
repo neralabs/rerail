@@ -7,7 +7,7 @@ import {
   defaultRerailDatabasePath,
   openRerailDatabase,
   recordCheckout,
-  loadBundledCatalog,
+  loadRuleCatalog,
   setUpRepository,
   upsertLibraryRule,
   type ConversationRule,
@@ -55,9 +55,9 @@ function seedSmokeRules(rerailHome: string, project: string, conversationRule: C
   const databasePath = defaultRerailDatabasePath({ ...process.env, RERAIL_HOME: rerailHome });
   const database = openRerailDatabase(databasePath);
   try {
-    const bundle = loadBundledCatalog();
-    upsertLibraryRule(database, bundle, rule, "code");
-    upsertLibraryRule(database, bundle, conversationRule, "conversation");
+    const ruleCatalog = loadRuleCatalog();
+    upsertLibraryRule(database, ruleCatalog, rule, "code");
+    upsertLibraryRule(database, ruleCatalog, conversationRule, "conversation");
     const { repositoryKey } = recordCheckout(database, project);
     setUpRepository(database, repositoryKey, {
       packs: [],

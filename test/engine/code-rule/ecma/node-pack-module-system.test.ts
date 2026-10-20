@@ -24,16 +24,16 @@ async function directory(prefix: string): Promise<string> {
   return root;
 }
 
-/** The pack's documents that pinned sourceType commonjs before each file kept its own module system. */
+/**
+ * The pack's documents that pinned sourceType commonjs before each file kept its own module system. All are candidates
+ * until eslint-plugin-n is gated (NER-1898).
+ */
 const CODE_RULES = await Promise.all(
   [
-    ...[
-      "n-exports-style", "n-global-require", "n-no-exports-assign", "n-no-path-concat", "n-prefer-global-buffer", "n-prefer-global-console",
-      "n-prefer-global-process", "n-prefer-global-text-decoder", "n-prefer-global-text-encoder", "n-prefer-global-url-search-params",
-      "n-prefer-global-url", "n-prefer-promises-dns", "n-prefer-promises-fs",
-    ].map(id => ["rules", id]),
-    ["candidates/rules", "n-no-deprecated-api"],
-  ].map(async ([tier, id]) => codeRuleSchema.parse(JSON.parse(await readFile(repositoryPath("packs", "node", tier!, `${id}.json`), "utf8")))),
+    "n-exports-style", "n-global-require", "n-no-exports-assign", "n-no-path-concat", "n-prefer-global-buffer", "n-prefer-global-console",
+    "n-prefer-global-process", "n-prefer-global-text-decoder", "n-prefer-global-text-encoder", "n-prefer-global-url-search-params",
+    "n-prefer-global-url", "n-prefer-promises-dns", "n-prefer-promises-fs", "n-no-deprecated-api",
+  ].map(async id => codeRuleSchema.parse(JSON.parse(await readFile(repositoryPath("packs", "node", "candidates", "rules", `${id}.json`), "utf8")))),
 );
 
 /** CommonJS code: each line is one rule's finding there. */

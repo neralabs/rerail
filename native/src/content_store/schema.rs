@@ -84,6 +84,23 @@ CREATE TABLE IF NOT EXISTS tape_objects (
     UNIQUE (source_id, grammar_id, grammar_version, tape_format_version)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS tape_objects_by_hash ON tape_objects(canonical_hash_id);
+-- The documents a file derives from its own (an embedded program, a generated one), keyed by the
+-- primary document's tape: documents are a function of source, grammar version and tape format,
+-- not of a path. Each derived document's text is an ordinary source and its tape an ordinary
+-- tape row; a row keeps that tape (and so its source) alive and dies with the primary tape.
+-- Ordinal 0 is the primary itself and has no row; a single-language file has none.
+CREATE TABLE IF NOT EXISTS file_documents (
+    tape_id INTEGER NOT NULL REFERENCES tape_objects(tape_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal > 0),
+    parent_ordinal INTEGER NOT NULL CHECK(parent_ordinal >= 0 AND parent_ordinal < ordinal),
+    role_id INTEGER NOT NULL CHECK(role_id > 0),
+    via_id INTEGER NOT NULL,
+    document_tape_id INTEGER NOT NULL REFERENCES tape_objects(tape_id),
+    source_map BLOB NOT NULL,
+    host_errors BLOB NOT NULL,
+    PRIMARY KEY (tape_id, ordinal)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS file_documents_by_document ON file_documents(document_tape_id);
 
 -- A tree is complete only when its row says so and it still has the entry count its publication
 -- wrote, so a partial entry set is republished whichever writer left it.

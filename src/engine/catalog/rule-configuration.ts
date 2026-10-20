@@ -9,7 +9,7 @@ import type { RerailDatabase } from "../storage/database.js";
 import {
   folderContains,
   normalizeFolder,
-  type BundledCatalog,
+  type RuleCatalog,
   type CheckoutContext,
   type CheckoutRuleSet,
   type Decider,
@@ -137,7 +137,7 @@ interface ConfigurationRows {
   readonly library: readonly LibraryRow[];
 }
 
-function readRows(db: RerailDatabase, bundle: BundledCatalog, repositoryKey: RepositoryKey, ownerCheckoutPaths: readonly string[]): ConfigurationRows {
+function readRows(db: RerailDatabase, ruleCatalog: RuleCatalog, repositoryKey: RepositoryKey, ownerCheckoutPaths: readonly string[]): ConfigurationRows {
   const repository = db.select({ configuredAt: repositories.configuredAt }).from(repositories).where(eq(repositories.repositoryKey, repositoryKey)).get();
   const attachments = db.select().from(ruleAttachments).where(eq(ruleAttachments.repositoryKey, repositoryKey)).all();
   const repositoryOwned = and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, repositoryKey));
@@ -146,15 +146,15 @@ function readRows(db: RerailDatabase, bundle: BundledCatalog, repositoryKey: Rep
     : or(repositoryOwned, and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, [...ownerCheckoutPaths])))).all();
   // Attached library rules, and library rules that shadow a present By Rerail rule, pack members included.
   const ids = [...new Set(attachments.flatMap(row => row.sourceKind === "pack"
-    ? (bundle.packs.get(row.sourceId)?.rules ?? []).map(rule => rule.id)
+    ? (ruleCatalog.packs.get(row.sourceId)?.rules ?? []).map(rule => rule.id)
     : [row.sourceId]))];
   const library = ids.length === 0 ? [] : db.select().from(libraryRules).where(inArray(libraryRules.ruleId, ids)).all();
   return { configuredAt: repository?.configuredAt ?? null, attachments, settings, library };
 }
 
-function signatureOf(bundleDigest: string, ownerCheckoutPaths: readonly string[], rows: ConfigurationRows): string {
+function signatureOf(catalogDigest: string, ownerCheckoutPaths: readonly string[], rows: ConfigurationRows): string {
   const lines = [
-    `bundle\0${bundleDigest}`,
+    `catalog\0${catalogDigest}`,
     `configured\0${String(rows.configuredAt)}`,
     `owners\0${ownerCheckoutPaths.join("\0")}`,
     ...rows.attachments.map(row => `attachment\0${row.folder}\0${row.sourceKind}\0${row.sourceId}`).sort(compareDeterministicStrings),
@@ -172,17 +172,17 @@ function signatureOf(bundleDigest: string, ownerCheckoutPaths: readonly string[]
 }
 
 /**
- * Changes whenever the bundle, the repository's set-up, attachments or settings, the settings of the given checkouts
+ * Changes whenever the rule catalog, the repository's set-up, attachments or settings, the settings of the given checkouts
  * (the checkout and its parents), or a library rule that is attached or shadows a present By Rerail rule changes.
  * Not the start state.
  */
 export function ruleConfigurationSignature(
   db: RerailDatabase,
-  bundle: BundledCatalog,
+  ruleCatalog: RuleCatalog,
   repositoryKey: RepositoryKey,
   ownerCheckoutPaths: readonly string[],
 ): string {
-  return signatureOf(bundle.digest, ownerCheckoutPaths, readRows(db, bundle, repositoryKey, ownerCheckoutPaths));
+  return signatureOf(ruleCatalog.digest, ownerCheckoutPaths, readRows(db, ruleCatalog, repositoryKey, ownerCheckoutPaths));
 }
 
 /** A rule present at a path, before its settings are applied. */
@@ -211,7 +211,7 @@ function bundledPresenceFields(document: RuleDocument): Pick<Presence, "revision
 /** Resolves effective rules at any path from rows read once. */
 class ConfigurationResolver {
   readonly unavailable: readonly UnavailableReference[];
-  readonly #bundle: BundledCatalog;
+  readonly #ruleCatalog: RuleCatalog;
   readonly #attachments: readonly AttachmentRow[];
   readonly #owners: readonly Owner[];
   readonly #settingsByOwner = new Map<string, SettingRow[]>();
@@ -220,8 +220,8 @@ class ConfigurationResolver {
   readonly #libraryIds: ReadonlySet<string>;
   readonly #bundledFields = new Map<string, Pick<Presence, "revision" | "payloadHash">>();
 
-  constructor(bundle: BundledCatalog, rows: ConfigurationRows, owners: readonly Owner[]) {
-    this.#bundle = bundle;
+  constructor(ruleCatalog: RuleCatalog, rows: ConfigurationRows, owners: readonly Owner[]) {
+    this.#ruleCatalog = ruleCatalog;
     this.#owners = owners;
     // Deepest attachment first, so a rule present through two folders reports the deepest one.
     this.#attachments = [...rows.attachments].sort((left, right) => right.folder.length - left.folder.length);
@@ -238,7 +238,7 @@ class ConfigurationResolver {
     this.unavailable = rows.attachments.flatMap((row): UnavailableReference[] => {
       const reference = { sourceKind: row.sourceKind, sourceId: row.sourceId, folder: row.folder };
       if (row.sourceKind === "pack") {
-        const pack = bundle.packs.get(row.sourceId);
+        const pack = ruleCatalog.packs.get(row.sourceId);
         if (pack === undefined) return [{ ...reference, reason: "missing" }];
         // A pack rule a library rule shadows is reported by its own id, at the pack's folder.
         return pack.rules
@@ -247,7 +247,7 @@ class ConfigurationResolver {
       }
       if (row.sourceKind === "library_rule") return this.#library.has(row.sourceId) ? [] : [{ ...reference, reason: "missing" }];
       if (this.#libraryIds.has(row.sourceId)) return [{ ...reference, reason: "conflicts-with-library" }];
-      return bundle.documents.has(row.sourceId) ? [] : [{ ...reference, reason: "missing" }];
+      return ruleCatalog.documents.has(row.sourceId) ? [] : [{ ...reference, reason: "missing" }];
     });
   }
 
@@ -260,7 +260,7 @@ class ConfigurationResolver {
   }
 
   #bundled(id: string): { document: RuleDocument; fields: Pick<Presence, "revision" | "payloadHash"> } | undefined {
-    const document = this.#bundle.documents.get(id);
+    const document = this.#ruleCatalog.documents.get(id);
     if (document === undefined || this.#libraryIds.has(id)) return undefined;
     let fields = this.#bundledFields.get(id);
     if (fields === undefined) {
@@ -286,7 +286,7 @@ class ConfigurationResolver {
       });
     }
     for (const row of candidates.filter(candidate => candidate.sourceKind === "pack")) {
-      for (const packRule of this.#bundle.packs.get(row.sourceId)?.rules ?? []) {
+      for (const packRule of this.#ruleCatalog.packs.get(row.sourceId)?.rules ?? []) {
         const bundled = this.#bundled(packRule.id);
         if (bundled === undefined || present.has(packRule.id)) continue;
         present.set(packRule.id, {
@@ -357,13 +357,13 @@ class ConfigurationResolver {
       ?? (start === undefined ? { value: true, decider: ruleDefault } : { value: start.rule.on, decider: start.decider });
     const mode = this.#decide<RuleMode>(presence, path, setting => setting.mode)
       ?? (start === undefined ? { value: presence.document.rule.mode, decider: ruleDefault } : { value: start.rule.mode, decider: start.decider });
-    const pack = packId === null ? undefined : this.#bundle.packs.get(packId);
+    const pack = packId === null ? undefined : this.#ruleCatalog.packs.get(packId);
     const suppressions = this.#decide<RuleSuppressions>(presence, path, setting => setting.suppressions)
       ?? (start === undefined || pack === undefined
         ? { value: "honour", decider: ruleDefault }
         : { value: pack.honourSuppressionComments ? "honour" : "ignore", decider: start.decider });
     const { config, deciders } = this.#config(presence);
-    const configured = config === null ? undefined : configureBundledCodeRule(this.#bundle, presence.document.rule.id, config);
+    const configured = config === null ? undefined : configureBundledCodeRule(this.#ruleCatalog, presence.document.rule.id, config);
     const rule = configured?.ok === true ? configured.rule : presence.document.rule;
     const document = { kind: presence.document.kind, rule: { ...rule, mode: mode.value } } as RuleDocument;
     return {
@@ -399,16 +399,16 @@ function ownersOf(repositoryKey: RepositoryKey, checkoutPaths: readonly string[]
  */
 export function loadCheckoutRuleSet(
   db: RerailDatabase,
-  bundle: BundledCatalog,
+  ruleCatalog: RuleCatalog,
   checkout: CheckoutContext,
   status: RepositoryStatus,
   parentCheckoutPaths: readonly string[],
 ): CheckoutRuleSet {
   const ownerCheckoutPaths = [checkout.checkoutPath, ...parentCheckoutPaths];
-  const rows = readRows(db, bundle, checkout.repositoryKey, ownerCheckoutPaths);
-  const signature = `${signatureOf(bundle.digest, ownerCheckoutPaths, rows)}:${status.started ? "started" : "stopped"}:${status.setUp ? "set-up" : "not-set-up"}`;
+  const rows = readRows(db, ruleCatalog, checkout.repositoryKey, ownerCheckoutPaths);
+  const signature = `${signatureOf(ruleCatalog.digest, ownerCheckoutPaths, rows)}:${status.started ? "started" : "stopped"}:${status.setUp ? "set-up" : "not-set-up"}`;
   const active = status.started && status.setUp;
-  const resolver = new ConfigurationResolver(bundle, rows, ownersOf(checkout.repositoryKey, ownerCheckoutPaths));
+  const resolver = new ConfigurationResolver(ruleCatalog, rows, ownersOf(checkout.repositoryKey, ownerCheckoutPaths));
   const codeRules = new Map<string, readonly EffectiveRule[]>();
   const conversationRules = new Map<string, readonly EffectiveRule[]>();
   const memoised = (cache: Map<string, readonly EffectiveRule[]>, path: string, kind: RuleKind): readonly EffectiveRule[] => {
@@ -442,13 +442,13 @@ export interface RepositoryRulesView {
  */
 export function listRepositoryRules(
   db: RerailDatabase,
-  bundle: BundledCatalog,
+  ruleCatalog: RuleCatalog,
   repositoryKey: RepositoryKey,
   options: { readonly checkoutPath?: string; readonly parentCheckoutPaths?: readonly string[] } = {},
 ): RepositoryRulesView {
   const checkoutPaths = options.checkoutPath === undefined ? [] : [options.checkoutPath, ...(options.parentCheckoutPaths ?? [])];
-  const rows = readRows(db, bundle, repositoryKey, checkoutPaths);
-  const resolver = new ConfigurationResolver(bundle, rows, ownersOf(repositoryKey, checkoutPaths));
+  const rows = readRows(db, ruleCatalog, repositoryKey, checkoutPaths);
+  const resolver = new ConfigurationResolver(ruleCatalog, rows, ownersOf(repositoryKey, checkoutPaths));
   const folders = [...new Set(rows.attachments.map(row => row.folder))].sort(compareDeterministicStrings);
   const rules = folders.flatMap(folder => (["code", "conversation"] as const)
     .flatMap(kind => resolver.at(folder, kind))

@@ -191,11 +191,12 @@ pub(super) fn make_file(
                     ast: ast.clone(),
                     ..Candidates::default()
                 };
-                // The dialect's whole catalog: a Blade rule's PHP root kinds follow Blade's own.
                 let kind_count = language.map_or(0, GrammarDialect::kind_count);
                 for (slot, id) in candidates.ast.iter().enumerate() {
-                    let anchors = &candidate_grammar(&code_rules[id.0], id.1, &input).anchors;
-                    if let Some(kinds) = anchors.root_kinds() {
+                    // A clause over an embedded program dispatches on no kind of the file's own
+                    // tree.
+                    let grammar = candidate_grammar(&code_rules[id.0], id.1, &input);
+                    if let Some(kinds) = grammar.host_root_kinds() {
                         for &kind in kinds {
                             let kind = usize::from(kind);
                             // An ERROR root always overlaps a syntax-error region, so its
@@ -256,8 +257,8 @@ pub(super) fn candidate_dispatch(
     }
     let kind_count = language.map_or(0, GrammarDialect::kind_count);
     for (slot, id) in candidates.ast.iter().enumerate() {
-        let anchors = &candidate_grammar(&code_rules[id.0], id.1, input).anchors;
-        if let Some(kinds) = anchors.root_kinds() {
+        let grammar = candidate_grammar(&code_rules[id.0], id.1, input);
+        if let Some(kinds) = grammar.host_root_kinds() {
             for &kind in kinds {
                 let kind = usize::from(kind);
                 if kind >= kind_count {

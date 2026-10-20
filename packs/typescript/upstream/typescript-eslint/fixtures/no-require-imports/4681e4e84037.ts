@@ -1,0 +1,1 @@
+trick(require('foo'));

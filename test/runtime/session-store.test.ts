@@ -13,7 +13,7 @@ import {
   defaultRerailDatabasePath,
   openRerailDatabase,
   resetRepositoryHistory,
-  loadBundledCatalog,
+  loadRuleCatalog,
   addAttachment,
   removeAttachment,
   ruleConfigurationSignature,
@@ -281,7 +281,7 @@ describe("SQLite session persistence", () => {
     await handlers.get("before_agent_start")?.({ type: "before_agent_start", prompt: "hello" }, context);
     expect(reader.hud("omp-live")).toEqual({ activeRuleCount: 1, steeringCount: 0 });
     const configuration = openRerailDatabase(databasePath);
-    upsertLibraryRule(configuration, loadBundledCatalog(), MOCK_CODE_RULES[0]!, "code");
+    upsertLibraryRule(configuration, loadRuleCatalog(), MOCK_CODE_RULES[0]!, "code");
     addAttachment(configuration, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: MOCK_CODE_RULES[0]!.id });
     configuration.$client.close();
     expect(reader.hud("omp-live").activeRuleCount).toBeNull();
@@ -529,7 +529,7 @@ describe("SQLite session persistence", () => {
     const database = openRerailDatabase(defaultRerailDatabasePath());
     closeAfterTest({ close: () => database.$client.close() });
     const ownerCheckoutPaths = [realpathSync(root)];
-    const signature = () => ruleConfigurationSignature(database, loadBundledCatalog(), repositoryKey, ownerCheckoutPaths);
+    const signature = () => ruleConfigurationSignature(database, loadRuleCatalog(), repositoryKey, ownerCheckoutPaths);
     store.openSession(session);
     store.startHudTracking(session, true);
     const coverage = { repositoryId: repositoryKey, ownerCheckoutPaths, activeRuleCount: 3, ruleSignature: signature() };
@@ -573,7 +573,7 @@ describe("SQLite session persistence", () => {
       expect(baseline).not.toBeNull();
       const database = openRerailDatabase(path);
       try {
-        upsertLibraryRule(database, loadBundledCatalog(), { ...MOCK_CONVERSATION_RULES[0]!, id: "late-source" }, "conversation");
+        upsertLibraryRule(database, loadRuleCatalog(), { ...MOCK_CONVERSATION_RULES[0]!, id: "late-source" }, "conversation");
         addAttachment(database, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: "late-source" });
       } finally {
         database.$client.close();
@@ -680,7 +680,7 @@ describe("resetRepositoryHistory", () => {
       other.openSession({ host: "codex", sessionId: "elsewhere", cwd: join(root, "beta") }, 70);
       other.append({ sessionId: "elsewhere", eventId: "kept", kind: "user-prompt", observedAt: 75, payload: {} });
       other.closeSession("elsewhere", 80);
-      upsertLibraryRule(rules, loadBundledCatalog(), MOCK_CONVERSATION_RULES[0], "conversation");
+      upsertLibraryRule(rules, loadRuleCatalog(), MOCK_CONVERSATION_RULES[0], "conversation");
       preferences.upsert({ repository: "", host: "", presence: "silent" });
       const inode = (await stat(path)).ino;
 

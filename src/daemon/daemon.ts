@@ -19,6 +19,7 @@ import { createRerailMcpHandler } from "../api/mcp.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
@@ -519,6 +520,13 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
       ? `native kernel: ok (version ${health.native.kernelVersion})\n`
       : `native kernel: unavailable: ${health.native.error}\n`,
   );
+  const catalog = loadRuleCatalog();
+  const packs = [...catalog.packs.values()].map(pack => `${pack.id}@${pack.version ?? "unversioned"}`);
+  process.stdout.write(`rule packs: ${packs.length === 0 ? "none installed" : packs.join(", ")}\n`);
+  // A pack left out is otherwise only visible to someone who asks (`rerail packs list`, `GET /api/rule-packs`).
+  for (const skipped of catalog.skipped) {
+    process.stdout.write(`rule pack left out: ${skipped.packageName ?? skipped.path}${skipped.version === null ? "" : `@${skipped.version}`}: ${skipped.reason}\n`);
+  }
   const shutdown = (): void => {
     daemon.close().then(
       () => {

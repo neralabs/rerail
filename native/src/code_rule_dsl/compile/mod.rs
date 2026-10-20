@@ -7,6 +7,7 @@ mod compare;
 pub(crate) mod config;
 mod define;
 mod dialect;
+pub(crate) mod documents;
 mod evidence;
 #[cfg(test)]
 mod examples_tests;
@@ -43,7 +44,8 @@ pub(super) use ast_rule::compile_ast_rule;
 use ast_rule::validate_ast_rule;
 use compare::{binding_site_index, bound_elsewhere, compare_sites, frame_scope};
 use define::{CLAUSE_KINDS, Defines, collect_defines, is_define};
-use dialect::language_capability;
+use dialect::{embedded_dialects, language_capability};
+use documents::Side;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use napi::Result;
 use regex::Regex;
@@ -598,6 +600,7 @@ fn compile_query_as(
                     "when",
                     "file",
                     "transform",
+                    "embedded",
                 ],
                 &format!("{path}/ast"),
             )?;
@@ -614,9 +617,39 @@ fn compile_query_as(
             let rule = ast
                 .get("rule")
                 .ok_or_else(|| invalid(format!("{path}/ast/rule is required")))?;
-            let (grammars, grammar) = language_capability(language_name, capabilities)?;
+            let (host_grammars, grammar) = language_capability(language_name, capabilities)?;
             use super::language::adapter::{Adapter, SyntaxFeature, SyntaxRules, with_adapter};
-            let family = code_rule_language.family();
+            // The documents a file of the language is (`embed`): its own tree, and the program it
+            // embeds, if its language embeds one.
+            let embedding = Embedding::of(&host_grammars);
+            // A clause over the embedded program (`ast.embedded`) compiles for each dialect the
+            // program may be in, with that dialect's family.
+            let side = match ast.get("embedded") {
+                None => Side::Host,
+                Some(value) => {
+                    let at = format!("{path}/ast/embedded");
+                    let id = value
+                        .as_str()
+                        .ok_or_else(|| invalid(format!("{at} must be a string")))?;
+                    if embedding
+                        .as_ref()
+                        .is_none_or(|embedding| embedding.via.id() != id)
+                    {
+                        return Err(invalid(format!(
+                            "{at}: {language_name} embeds no program via `{id}`"
+                        )));
+                    }
+                    Side::Guest
+                }
+            };
+            let grammars = match (side, &embedding) {
+                (Side::Guest, Some(embedding)) => embedding.guests.clone(),
+                _ => host_grammars.clone(),
+            };
+            let family = match side {
+                Side::Host => code_rule_language.family(),
+                Side::Guest => super::language::Family::of(grammars[0].1),
+            };
             let (options, python) = match ast.get("languageOptions") {
                 None => (None, None),
                 Some(value) => {
@@ -707,15 +740,33 @@ fn compile_query_as(
                 validate_ast_rule(constraint, &constraint_path, limits, &util_ids)?;
             }
             reject_util_cycles(&utils)?;
+            // Which document each rule reads, and each utility from where it is reached.
+            let documents::Sides { reached, crosses } = {
+                let roots = std::iter::once((rule, rule_path.clone()))
+                    .chain(constraints.iter().map(|(name, constraint)| {
+                        (*constraint, format!("{constraints_path}/{name}"))
+                    }))
+                    .collect::<Vec<_>>();
+                documents::check_sides(
+                    &roots,
+                    &utils,
+                    &util_ids,
+                    side,
+                    language_name,
+                    embedding.is_some(),
+                )?
+            };
+            // Every dialect a rule of the query may be compiled for, both documents' alike.
+            let all_dialects = grammars
+                .iter()
+                .chain(embedding.iter().flat_map(Embedding::dialects))
+                .map(|&(_, dialect)| dialect)
+                .collect::<Vec<_>>();
             let transform_path = format!("{path}/ast/transform");
             let transform = ast
                 .get("transform")
                 .map(|value| {
-                    let reading = Reading::new(
-                        code_rule_language.primary(),
-                        options.clone(),
-                        python.clone(),
-                    );
+                    let reading = Reading::new(grammars[0].1, options.clone(), python.clone());
                     transform::compile_transform(value, &transform_path, limits, &reading)
                         .map(Arc::new)
                 })
@@ -723,10 +774,7 @@ fn compile_query_as(
             // A transform variable needs a name no capture of the query uses; said before any
             // use of the name is checked as a transform variable's.
             if let Some(transform) = &transform {
-                let languages = grammars
-                    .iter()
-                    .map(|(_, language)| *language)
-                    .collect::<Vec<_>>();
+                let languages = all_dialects.clone();
                 let mut declared = Vec::new();
                 declared_captures(rule, &rule_path, &languages, &mut declared);
                 for util in utils.values().filter(|util| util.params.is_empty()) {
@@ -770,11 +818,48 @@ fn compile_query_as(
             let origins = util_origins(&utils, language_name)?;
             for (dialect, language) in &grammars {
                 let mut gaps = Vec::new();
-                let table = Arc::new(UtilTable::new(
-                    utils.keys().cloned().collect(),
-                    utils.values().map(|util| !util.params.is_empty()).collect(),
-                    origins.iter().cloned().map(Some).collect(),
-                ));
+                let new_table = || {
+                    Arc::new(UtilTable::new(
+                        utils.keys().cloned().collect(),
+                        utils.values().map(|util| !util.params.is_empty()).collect(),
+                        origins.iter().cloned().map(Some).collect(),
+                    ))
+                };
+                let table = new_table();
+                // The other document's tables, by dialect (`embed`): the program's of a host
+                // clause, for its `embedded` rules; the host's of a clause over the program, for
+                // its `host` rules.
+                let other_side = match side {
+                    Side::Host => Side::Guest,
+                    Side::Guest => Side::Host,
+                };
+                let others = embedding.as_ref().map_or_else(Vec::new, |embedding| {
+                    match side {
+                        Side::Host => embedding.guests.clone(),
+                        Side::Guest => vec![embedding.host],
+                    }
+                    .into_iter()
+                    .map(|(_, dialect)| (dialect, new_table()))
+                    .collect::<Vec<_>>()
+                });
+                let weak = |tables: &[(GrammarDialect, Arc<UtilTable>)]| {
+                    tables
+                        .iter()
+                        .map(|(dialect, table)| (*dialect, Arc::downgrade(table)))
+                        .collect::<Vec<_>>()
+                };
+                let own = [(*language, Arc::clone(&table))];
+                let documents = embedding.as_ref().map(|embedding| {
+                    let (host, guests) = match side {
+                        Side::Host => (weak(&own), weak(&others)),
+                        Side::Guest => (weak(&others), weak(&own)),
+                    };
+                    documents::DocumentScopes {
+                        via: embedding.via,
+                        host: host.into_iter().next().expect("one host dialect"),
+                        guests,
+                    }
+                });
                 let scope = UtilScope {
                     table: Arc::downgrade(&table),
                     ids: &util_ids,
@@ -784,27 +869,71 @@ fn compile_query_as(
                     conflicts: Some(&conflicts),
                     captures: Default::default(),
                     calls: Some(&calls),
+                    documents: documents.as_ref(),
+                    side,
                 };
-                let compile_utils = |gaps: &mut Vec<String>| {
+                let other_scopes = others
+                    .iter()
+                    .map(|(dialect, table)| (*dialect, scope.on(Arc::downgrade(table), other_side)))
+                    .collect::<Vec<_>>();
+                // A utility compiles in the tables of the documents it is reached from, and one
+                // reached from none in the clause's own (so its errors are reported). Where the
+                // language embeds a program, one reached from none may be written for either
+                // document: its gaps and refusals in this one are none of the query's.
+                let compile_utils = |scope: &UtilScope,
+                                     dialect: GrammarDialect,
+                                     gaps: &mut Vec<String>| {
                     utils
-                        .values()
-                        .map(|util| {
-                            compile_ast_rule(util.rule, *language, &util.rule_path, gaps, &scope)
+                        .iter()
+                        .map(|(id, util)| match reached.get(id) {
+                            Some(sides) if sides.contains(&scope.side) => {
+                                compile_ast_rule(util.rule, dialect, &util.rule_path, gaps, scope)
+                            }
+                            None if scope.side == side && embedding.is_none() => {
+                                compile_ast_rule(util.rule, dialect, &util.rule_path, gaps, scope)
+                            }
+                            None if scope.side == side => Ok(compile_ast_rule(
+                                util.rule,
+                                dialect,
+                                &util.rule_path,
+                                &mut Vec::new(),
+                                scope,
+                            )
+                            .unwrap_or(AstMatcher::Never)),
+                            _ => Ok(AstMatcher::Never),
                         })
+                        .collect::<Result<Vec<_>>>()
+                };
+                let compile_others = || {
+                    other_scopes
+                        .iter()
+                        .map(|(dialect, scope)| compile_utils(scope, *dialect, &mut Vec::new()))
                         .collect::<Result<Vec<_>>>()
                 };
                 // A utility's terms are ordered by what the utilities they call bind, and its
                 // `parse` exports what they export, so utilities that met one not compiled yet are
                 // compiled again against this first compilation.
                 let mut first_gaps = Vec::new();
-                let mut compiled_utils = compile_utils(&mut first_gaps)?;
-                if table.was_unfilled() {
+                let mut compiled_utils = compile_utils(&scope, *language, &mut first_gaps)?;
+                let mut compiled_others = compile_others()?;
+                if table.was_unfilled() || others.iter().any(|(_, table)| table.was_unfilled()) {
                     if table.draft.set(compiled_utils).is_err() {
                         unreachable!("a fresh table is drafted once");
                     }
-                    compiled_utils = compile_utils(&mut gaps)?;
+                    for ((_, table), compiled) in others.iter().zip(compiled_others) {
+                        if table.draft.set(compiled).is_err() {
+                            unreachable!("a fresh table is drafted once");
+                        }
+                    }
+                    compiled_utils = compile_utils(&scope, *language, &mut gaps)?;
+                    compiled_others = compile_others()?;
                 } else {
                     gaps.extend(first_gaps);
+                }
+                for ((_, table), compiled) in others.iter().zip(compiled_others) {
+                    if table.rules.set(compiled).is_err() {
+                        unreachable!("a fresh table is filled once");
+                    }
                 }
                 // A parameterized utility's captures are its frame's; its calls report what returns.
                 for (util, def) in compiled_utils.iter().zip(utils.values()) {
@@ -858,6 +987,11 @@ fn compile_query_as(
                         .flatten();
                     matchers.push(GrammarMatcher {
                         language: *language,
+                        document: (side == Side::Guest)
+                            .then(|| embedding.as_ref().map(|embedding| embedding.via))
+                            .flatten(),
+                        other_utils: others.iter().map(|(_, table)| Arc::clone(table)).collect(),
+                        crosses,
                         sound_under_errors: sound_under_errors(&matcher),
                         three_valued,
                         matcher,
@@ -957,9 +1091,9 @@ fn compile_query_as(
             }
             // A comparison reads two single-node captures that can be bound where it runs.
             let pattern_names = |pattern: &Value| -> BTreeSet<String> {
-                grammars
+                all_dialects
                     .iter()
-                    .find_map(|(_, language)| {
+                    .filter_map(|language| {
                         let source = match pattern {
                             Value::String(source) => PatternSource::Plain(source),
                             other => PatternSource::Contextual {
@@ -973,15 +1107,16 @@ fn compile_query_as(
                                     .unwrap_or_default(),
                             },
                         };
-                        rule_pattern(source, *language).ok().map(|(compiled, _)| {
+                        rule_pattern(source, *language).ok().map(|compiled| {
                             compiled
                                 .defined_vars()
                                 .into_iter()
                                 .map(str::to_owned)
-                                .collect()
+                                .collect::<Vec<_>>()
                         })
                     })
-                    .unwrap_or_default()
+                    .flatten()
+                    .collect()
             };
             let mut sites = Vec::new();
             compare_sites(
@@ -1318,7 +1453,7 @@ fn declared_captures(
                                         .unwrap_or_default(),
                                 },
                             };
-                            rule_pattern(source, *language).ok().map(|(compiled, _)| {
+                            rule_pattern(source, *language).ok().map(|compiled| {
                                 compiled
                                     .defined_vars()
                                     .into_iter()
@@ -1394,6 +1529,35 @@ fn util_origins(utils: &BTreeMap<String, UtilDef>, language: &str) -> Result<Vec
 /// Refuse predicates a code-rule language does not support before any dialect reaches a
 /// family-specific compiler: `refused` ones as invalid, `not-supported-yet` ones as
 /// `language-not-supported`.
+/// How the files of an ast query's language embed a program (`embed`): the embedding, and the
+/// host's and the program's dialects, each keyed by its label.
+pub(super) struct Embedding {
+    pub(super) via: super::language::Via,
+    pub(super) host: (&'static str, GrammarDialect),
+    pub(super) guests: Vec<(&'static str, GrammarDialect)>,
+}
+
+impl Embedding {
+    /// The embedding of a language of `dialects`, if it embeds a program: a language that does
+    /// embeds through one `via`, from one dialect.
+    pub(super) fn of(dialects: &[(&'static str, GrammarDialect)]) -> Option<Self> {
+        let &[host] = dialects else {
+            return None;
+        };
+        let via = host.1.embeds().first()?.0;
+        Some(Self {
+            via,
+            host,
+            guests: embedded_dialects(dialects, via)?,
+        })
+    }
+
+    /// Both documents' dialects.
+    fn dialects(&self) -> impl Iterator<Item = &(&'static str, GrammarDialect)> {
+        std::iter::once(&self.host).chain(&self.guests)
+    }
+}
+
 pub(super) fn refuse_unavailable_semantics(
     value: &Value,
     path: &str,

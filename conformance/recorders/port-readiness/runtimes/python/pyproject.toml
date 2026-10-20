@@ -1,0 +1,9 @@
+[project]
+name = "nera-rule-validation-python-toolkit"
+version = "0"
+description = "The CPython (reference implementation) and libcst (independent parser) the validation gates read Python with."
+requires-python = "==3.14.*"
+dependencies = ["libcst==1.9.0"]
+
+[tool.uv]
+package = false

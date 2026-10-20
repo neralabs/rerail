@@ -1,5 +1,5 @@
 /**
- * ruff-b030-except-with-non-exception-classes (packs/python/, candidate) must not flag every `except T as name`
+ * ruff-b030-except-with-non-exception-classes (packs/python/) must not flag every `except T as name`
  * (NER-1816). tree-sitter-python wraps `T as name` in an as_pattern node, which sits right after `except`; the port
  * treated that as_pattern as the handler type and reported it as a non-class expression, steering agents to rewrite
  * working error handling. Ruff 0.16.9's B030 reports only handler types that are not a name, attribute, subscript or
@@ -13,13 +13,13 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../../src/engine/native/native.js";
-import { readRuleDocument } from "../../../../src/engine/catalog/bundled-rule-documents.js";
+import { readRuleDocument } from "../../../../src/engine/catalog/rule-documents.js";
 import { repositoryPath } from "../../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));
 const capabilities = await readFile(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
-const RULE_PATH = repositoryPath("packs", "python", "candidates", "rules", "ruff-b030-except-with-non-exception-classes.json");
+const RULE_PATH = repositoryPath("packs", "python", "rules", "ruff-b030-except-with-non-exception-classes.json");
 
 const evaluationSchema = z.object({
   violations: z.array(z.object({ path: z.string(), message: z.string(), span: z.object({ startLine: z.number().int().nonnegative() }) })).default([]),

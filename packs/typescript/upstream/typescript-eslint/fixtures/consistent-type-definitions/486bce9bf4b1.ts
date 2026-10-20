@@ -1,0 +1,1 @@
+interface A extends B<T1>, C<T2> { x: number; };

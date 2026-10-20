@@ -8,8 +8,9 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
   languageFor,
-  loadBundledRules,
   loadNativeBinding,
+  loadPackRuleDocuments,
+  PACKAGE_ROOT,
   resolveNativeBindingPath,
   type NativeBinding,
   type NativeCompiledCodeRuleDsl,
@@ -134,7 +135,7 @@ function capabilities(): string {
   return JSON.stringify({ ...bundled, limits: { maxGraphDepth: 16, ...bundled.limits } });
 }
 
-/** `bundled` is every code rule a project can add (the packs core ships; core has no rules of its own); semantic kinds read `fixtures/host/benchmark/<kind>`. */
+/** `bundled` is the complexity pack's code rules (core shipped them until it loaded installed packs); semantic kinds read `fixtures/host/benchmark/<kind>`. */
 function catalog(kind: CatalogKind): { capabilities: string; documents: RuleDocument[] } {
   if (isSynthetic(kind)) {
     const { clauses } = synthetic[kind];
@@ -146,7 +147,7 @@ function catalog(kind: CatalogKind): { capabilities: string; documents: RuleDocu
     };
   }
   if (kind === "bundled") {
-    const documents = loadBundledRules().flatMap(document => document.kind === "code" ? [document.rule] : []).map(rule => {
+    const documents = loadPackRuleDocuments([resolve(PACKAGE_ROOT, "packs", "complexity")]).flatMap(document => document.kind === "code" ? [document.rule] : []).map(rule => {
       const source = JSON.stringify(rule);
       return { path: `${rule.id}.json`, source, clauses: clausesSchema.parse(rule).clauses };
     });

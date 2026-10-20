@@ -1,0 +1,1 @@
+interface T { x: number; }

@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 import {
   NativeSemanticEmbedder,
   SemanticWorkspace,
-  loadBundledCatalog,
+  loadRuleCatalog,
   defaultRerailDatabasePath,
   openRerailDatabase,
   addAttachment,
@@ -99,7 +99,7 @@ describe("installed OMP extension in standalone host", () => {
     // In the library and the repository is set up, but the rule is not added anywhere yet.
     const repositoryKey = setUpTestRepository(cwd);
     const store = openRerailDatabase(defaultRerailDatabasePath());
-    upsertLibraryRule(store, loadBundledCatalog(), checkoutRule("db:checkout"), "conversation");
+    upsertLibraryRule(store, loadRuleCatalog(), checkoutRule("db:checkout"), "conversation");
     let host: OmpHost | undefined;
     try {
       host = await OmpHost.start(cwd, [

@@ -6,14 +6,14 @@
 import { z } from "zod";
 
 /** The questions set-up asks; each is also the step a run that stops there reports. */
-export type SetupQuestionId = "sessions" | "read-repo" | "confirm-packs" | "no-repo";
+export type SetupQuestionId = "sessions" | "read-repo" | "confirm-packs" | "pick-packs" | "no-repo";
 
 /** `done`: set-up finished (started, picked packs, skipped, or already on). `stopped`: set up here and stopped. */
 export type SetupStepName = SetupQuestionId | "done" | "stopped" | "error";
 
 export interface SetupOptionInput {
   /** Append `[flag, value]` to the option's `next.args`. */
-  readonly flag: "--repo" | "--agents";
+  readonly flag: "--repo" | "--agents" | "--packs";
   /** What to ask the person for the value. */
   readonly prompt: string;
   /** An example, or the values it takes. */
@@ -21,7 +21,7 @@ export interface SetupOptionInput {
 }
 
 export interface SetupOption {
-  /** A key from `SESSIONS_ANSWERS`, `READ_REPO_ANSWERS`, `CONFIRM_PACKS_ANSWERS` or `NO_REPO_ANSWERS`, in the question's order. */
+  /** A key from `SESSIONS_ANSWERS`, `READ_REPO_ANSWERS`, `CONFIRM_PACKS_ANSWERS`, `PICK_PACKS_ANSWERS` or `NO_REPO_ANSWERS`, in the question's order. */
   readonly answer: string;
   readonly label: string;
   /** The hint shown beside the label; null when there is none. */
@@ -52,15 +52,15 @@ const setupOptionSchema = z.object({
   label: z.string(),
   detail: z.string().nullable(),
   next: z.object({ args: z.array(z.string()) }),
-  input: z.object({ flag: z.enum(["--repo", "--agents"]), prompt: z.string(), hint: z.string() }).nullable(),
+  input: z.object({ flag: z.enum(["--repo", "--agents", "--packs"]), prompt: z.string(), hint: z.string() }).nullable(),
 });
 
 /** Validates what `rerail setup --json` / `rerail start --json` printed, for callers that run the CLI. */
 export const setupStepSchema: z.ZodType<SetupStep> = z.object({
-  step: z.enum(["sessions", "read-repo", "confirm-packs", "no-repo", "done", "stopped", "error"]),
+  step: z.enum(["sessions", "read-repo", "confirm-packs", "pick-packs", "no-repo", "done", "stopped", "error"]),
   screen: z.string(),
   question: z.object({
-    id: z.enum(["sessions", "read-repo", "confirm-packs", "no-repo"]),
+    id: z.enum(["sessions", "read-repo", "confirm-packs", "pick-packs", "no-repo"]),
     prompt: z.string(),
     options: z.array(setupOptionSchema),
   }).nullable(),

@@ -10,7 +10,8 @@ Allow about 30 minutes; most of it is the native build.
 ## Before you start
 
 - The pack is merged on `main`, added at `0.1.0` with a `patch` changeset (see "Versioning and release" in
-  [pack-format.md](pack-format.md)).
+  [pack-format.md](pack-format.md)), and listed in `src/engine/catalog/pack-list.generated.ts` (`npm run
+  generate:packs`; check 7 fails a pack that is not), so set-up fetches it.
 - `npm whoami` prints your account, a member of the `neralabs` org with publish rights. If not, run `npm login`. It
   must be an interactive login with 2FA, because a token that bypasses 2FA cannot set up a trusted publisher.
 - `gh auth status` shows a login with write access to `neralabs/rerail`. The publish script creates the release tag.
@@ -70,6 +71,20 @@ git ls-remote --tags origin "refs/tags/@neralabs/rerail-pack-<id>@*"
   first version goes straight to `latest`. Later versions go to `next` until they're promoted.
 - `npm view` can keep returning 404 for several minutes after a first publish. Use `npm dist-tag ls` instead, which
   sees the package straight away.
+
+Whoever can read core must be able to read every pack, or set-up fails to fetch it for them. Give the new package
+the teams core has, with the same permission (today `developers`, read-write, as on every pack), and compare the two
+lists:
+
+```sh
+npm access grant read-write neralabs:developers @neralabs/rerail-pack-<id>
+npm access list collaborators @neralabs/rerail
+npm access list collaborators @neralabs/rerail-pack-<id>
+```
+
+CI's **Rule packs installed from npm** job reads the packs with the repository secret `NPM_PACKS_READ_TOKEN`, a
+read-only granular token. If that token names its packages one by one rather than the whole `@neralabs` scope, add the
+new package to it on npmjs.com.
 
 ## 5. Set up the trusted publisher
 

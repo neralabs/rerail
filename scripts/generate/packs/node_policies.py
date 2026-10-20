@@ -14,9 +14,10 @@ Data read from the pinned tools (through `node`):
 - eslint-plugin-n 18.4.1 `lib/rules/no-deprecated-api.js` rawModules and globals (the deprecation trace map);
 - globals 17.13.0 `node` (Node's globals).
 
-Writes (every other policy of the pack is hand-written: packs/node/rules/n-no-process-exit.json):
-- packs/node/rules/<id>.json: every ported rule but n-no-process-exit;
-- packs/node/candidates/rules/<id>.json: n-no-deprecated-api, n-hashbang;
+Writes (every other policy of the pack is hand-written: packs/node/candidates/rules/n-no-process-exit.json):
+- packs/node/candidates/rules/<id>.json: every ported rule but n-no-process-exit. They are candidates until
+  eslint-plugin-n is gated (NER-1898); a port that passes the port readiness gates joins SHIPPED and is written to
+  packs/node/rules/<id>.json instead, shipped, its candidates/rules copy removed;
 - packs/node/candidates/probes/rules/<id>.json: the seven probes.
 The pack manifests, recordings and the probes' hand-labelled expectations are not written here.
 
@@ -48,6 +49,9 @@ PINS = {"eslint-plugin-n": "18.4.1", "globals": "17.13.0"}
 # set-up's `oxlintRuleOfPort` maps it).
 OXLINT_NODE_RULES = {"callback-return", "exports-style", "global-require", "handle-callback-err", "no-exports-assign",
                      "no-mixed-requires", "no-new-require", "no-path-concat", "no-process-env", "no-sync", "no-top-level-await"}
+# The ports that passed the port readiness gates (none until NER-1898), written to packs/node/rules/; every other port is written
+# to packs/node/candidates/rules/. Each is removed from the other directory, so promoting a port moves its document.
+SHIPPED = set()
 
 INCLUDE = ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
 
@@ -704,11 +708,13 @@ def probe_docs(builtins, globals_node):
 
 # ---- main ------------------------------------------------------------------------------------------------------------
 
-def settle(relative, doc, shipped):
-    """Carries suppress.biome over from the committed document and sets the revision: the committed one when nothing
-    else changed, one more for a shipped document that changed."""
-    path = os.path.join(REPOSITORY, relative, f"{doc['id']}.json")
-    if not os.path.exists(path):
+def settle(relative, doc, shipped, other=None):
+    """Carries suppress.biome over from the committed document (under `relative`, else under `other` for a port that
+    moves) and sets the revision: the committed one when nothing else changed, one more for a shipped document that
+    changed."""
+    paths = [os.path.join(REPOSITORY, directory, f"{doc['id']}.json") for directory in (relative, other) if directory]
+    path = next((path for path in paths if os.path.exists(path)), None)
+    if path is None:
         return
     with open(path) as handle:
         committed = json.load(handle)
@@ -722,13 +728,24 @@ def settle(relative, doc, shipped):
         doc["revision"] += 1
 
 
-def write(root, relative, doc, compact=False, shipped=False):
-    settle(relative, doc, shipped)
+def write(root, relative, doc, compact=False, shipped=False, other=None):
+    settle(relative, doc, shipped, other)
     path = os.path.join(root, relative, f"{doc['id']}.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     text = json.dumps(doc, separators=(",", ":")) if compact else json.dumps(doc, indent=2)
     with open(path, "w") as handle:
         handle.write(text + "\n")
+    if other and os.path.exists(os.path.join(root, other, f"{doc['id']}.json")):
+        os.remove(os.path.join(root, other, f"{doc['id']}.json"))
+
+
+def write_port(root, doc, compact=False):
+    """Writes a port to packs/node/rules when SHIPPED lists it, else to packs/node/candidates/rules."""
+    rules, candidates = os.path.join(PACK, "rules"), os.path.join(PACK, "candidates", "rules")
+    if doc["id"] in SHIPPED:
+        write(root, rules, doc, compact, shipped=True, other=candidates)
+    else:
+        write(root, candidates, doc, compact, other=rules)
 
 
 def main():
@@ -738,9 +755,9 @@ def main():
     args = parser.parse_args()
     builtins, globals_node, trace = load_data(os.path.abspath(args.tools or nearest_tools()))
     for doc in syntax_docs() + prefer_global_docs() + prefer_promises_docs() + [no_path_concat_doc(), prefer_node_protocol_doc(builtins)]:
-        write(args.root, os.path.join(PACK, "rules"), doc, shipped=True)
-    write(args.root, os.path.join(PACK, "candidates", "rules"), no_deprecated_api_doc(trace), compact=True)
-    write(args.root, os.path.join(PACK, "candidates", "rules"), hashbang_doc())
+        write_port(args.root, doc)
+    write_port(args.root, no_deprecated_api_doc(trace), compact=True)
+    write_port(args.root, hashbang_doc())
     for doc in probe_docs(builtins, globals_node):
         write(args.root, os.path.join(PACK, "candidates", "probes", "rules"), doc)
 

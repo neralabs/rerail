@@ -1,0 +1,11 @@
+
+function f() {
+  var x;
+  function a() {
+    x = 42;
+  }
+  function b() {
+    alert(x);
+  }
+}
+      

@@ -9,7 +9,7 @@
  * - ruff-f722-forward-annotation-syntax-error: Ruff reads a jaxtyping shape (`Float[Array, "b n"]`) as a forward
  *   annotation; jaxtyping parses it with its own grammar.
  *
- * Each case is one file; the test asserts exactly which lines the shipped rule reports. The divergences are declared in
+ * Each case is one file; the test asserts exactly which lines the candidate rule reports. The divergences are declared in
  * each rule's description and, where the pinned corpus has one, in packs/python/divergences.json.
  */
 import { readFile } from "node:fs/promises";
@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../../src/engine/native/native.js";
-import { loadBundledRules } from "../../../../src/engine/catalog/bundled-rule-documents.js";
+import { loadPackRuleDocuments } from "../../../../src/engine/catalog/rule-documents.js";
 import { repositoryPath } from "../../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_rule_dsl/", import.meta.url));
@@ -32,8 +32,10 @@ const evaluationSchema = z.object({
 
 function compile(ruleId: string): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  const document = loadBundledRules([repositoryPath("packs", "python")]).find(candidate => candidate.rule.id === ruleId);
-  if (document === undefined) throw new Error(`${ruleId} is not in packs/python`);
+  // The three ports fail the port readiness gates (B406 differs from Bandit on a Django file, B610 names fixture words, F722
+  // fails compact), so they are candidates until they pass.
+  const document = loadPackRuleDocuments([repositoryPath("packs", "python", "candidates")]).find(candidate => candidate.rule.id === ruleId);
+  if (document === undefined) throw new Error(`${ruleId} is not in packs/python/candidates`);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }
 

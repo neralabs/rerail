@@ -13,9 +13,10 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Real-session jobs call hosted models with repository secrets. GitHub withholds secrets from fork and
-# Dependabot pull requests, so those jobs run on pushes and same-repository pull requests only; there a
-# missing secret or variable is a configuration error and fails the job.
+# Real-session jobs call hosted models with repository secrets, and the installed-packs job reads the restricted
+# rule packs from npm with one. GitHub withholds secrets from fork and Dependabot pull requests, so those jobs run on
+# pushes and same-repository pull requests only; there a missing secret or variable is a configuration error and
+# fails the job.
 #
 # The Version packs pull request (changeset-release/main, from version-packs.yml) changes only pack versions,
 # changelogs and package-lock.json, and is rewritten on every push to main. It runs the licence and lint jobs only:
@@ -77,7 +78,13 @@ jobs:
   # Pull requests that touch none of the engine's inputs skip the Rust jobs. The engine's tests also
   # read conformance/, fixtures/, the packs' rules and the language registry (languages/ and its
   # generated TS module); package.json holds the cargo commands, .gitattributes the LFS objects the
-  # engine embeds. Pushes to main run everything (the filter step is skipped and the output is empty).
+  # engine embeds. Pushes to main always run the Rust jobs.
+  #
+  # Port readiness is filtered on pushes to main as well, against the push's previous head (main takes squash merges
+  # only and no force pushes, so a push is one commit), but only when CI finished green on that head. Otherwise (it
+  # failed, so a shipped rule may still be failing; it was cancelled while queued, so its change was never judged; or
+  # nothing can be found) the push runs port readiness whatever it touches, so main cannot read green past either. A
+  # checkout, lookup or filter that fails on a push runs everything too.
   changes:
     name: Detect engine changes
     runs-on: ubuntu-24.04
@@ -85,11 +92,40 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
     outputs:
-      rust: ${{ steps.filter.outputs.rust }}
+      rust: ${{ github.event_name == 'pull_request' && steps.filter.outputs.rust || 'true' }}
+      port-readiness: ${{ (github.event_name != 'push' || steps.previous.outputs.green == 'true') && steps.filter.outcome == 'success' && steps.filter.outputs.port-readiness || 'true' }}
     steps:
+      # The concurrency group lets a push run start only once the previous one finished or was replaced while queued,
+      # so the previous head's run has its conclusion by now.
+      - id: previous
+        name: Check CI finished green on the previous head
+        if: github.event_name == 'push'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          conclusion="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$BEFORE&event=push&per_page=1" --jq '.workflow_runs[0].conclusion // ""')"
+          echo "CI on $BEFORE: ${conclusion:-no finished run}"
+          if [ "$conclusion" = "success" ]; then echo "green=true" >> "$GITHUB_OUTPUT"; else echo "green=false" >> "$GITHUB_OUTPUT"; fi
+
+      # paths-filter lists a pull request's files through the API but diffs a push with git, which needs a checkout;
+      # depth 2 holds the push's previous head. A failed checkout fails the filter below, which then runs everything.
+      - name: Checkout repository
+        if: github.event_name == 'push'
+        continue-on-error: ${{ github.event_name == 'push' }}
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      # No `base`: on a push to the default branch paths-filter compares with the payload's `before` (an all-zeros
+      # `before` lists every file as added).
       - id: filter
-        if: github.event_name == 'pull_request'
+        continue-on-error: ${{ github.event_name == 'push' }}
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
@@ -108,6 +144,21 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.gitattributes'
               - '.github/actions/lfs/**'
+            # A rule's verdict depends on its document, the pack's recordings, the gate code and the engine.
+            port-readiness:
+              - 'packs/**'
+              - 'conformance/**'
+              - 'native/**'
+              - 'languages/**'
+              - 'src/engine/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/port-readiness.yml'
+              - '.github/actions/**'
 
   # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
   # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts.
@@ -242,6 +293,25 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # Every rule a pack ships must pass the port readiness gates; candidates are only reported (docs/port-readiness.md).
+  # They run when a pull request or a push to main touches a gate input (the changes job's port-readiness filter, and
+  # its accepted gaps); the nightly judges every rule regardless.
+  port-readiness:
+    name: Port readiness
+    needs: [changes, build]
+    if: needs.changes.outputs.port-readiness != 'false'
+    # The report job posts the results as a pull request comment; the gates read the recordings' attestations.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      attestations: read
+    uses: ./.github/workflows/port-readiness.yml
+    with:
+      base: ${{ github.event.pull_request.base.sha || github.event.before }}
+      # A pull request judges only the tool-packs of the packs it touches; a push to main judges every one.
+      select: ${{ github.event_name == 'pull_request' }}
+
   unit:
     name: Unit tests (${{ matrix.shard }}/2)
     needs: build
@@ -292,6 +362,56 @@ jobs:
 
       - name: Integration tests
         run: npm run test:integration:built
+
+  # Rule packs installed from npm, against the registry: set-up on a project outside this repository, and
+  # `rerail packs` upgrading, downgrading and removing a published pack (integration/installed-packs.test.ts).
+  # NPM_PACKS_READ_TOKEN is a read-only granular token for the restricted @neralabs packs. Only the steps that check it
+  # and read the packs get it; `npm ci` and the build run without it.
+  installed-packs:
+    name: Rule packs installed from npm
+    needs: build
+    if: >-
+      ${{
+        github.event_name != 'pull_request' ||
+        (
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.actor != 'dependabot[bot]' &&
+          github.head_ref != 'changeset-release/main'
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Require the npm read token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::Reading the restricted rule packs needs the repository secret NPM_PACKS_READ_TOKEN"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      # The file names the variable, not the token: npm reads NODE_AUTH_TOKEN from the step that runs it.
+      - name: Authenticate npm to read the packs
+        run: printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+
+      - name: Rule packs from npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+          RERAIL_INSTALLED_PACKS_NPM: "1"
+        run: npx vitest run integration/installed-packs.test.ts
 
   tools:
     name: Scripts, reference examples, conformance, and rule playground
