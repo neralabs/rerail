@@ -1755,6 +1755,67 @@ fn production_contract_phase_four_sql_results_equal_semantic_oracles() {
 }
 
 #[test]
+fn production_contract_phase_five_generated_document_maps_are_required() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-generated-document-map")
+        .expect("the generated-document contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("the generated-document policy compiles");
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("the generated-document policy lowers");
+    assert!(
+        plan.shape()
+            .contains(&super::relational::SqlShape::MapDocument),
+        "generated results must cross the typed document-map relation"
+    );
+    let spans = case.workspace.document_maps[0]
+        .spans
+        .iter()
+        .map(|span| {
+            (
+                span.source_start,
+                span.source_end,
+                span.generated_start,
+                span.generated_end,
+            )
+        })
+        .collect::<Vec<_>>();
+    let outcome = super::policy_lowering_tests::sql_outcome_with_document_maps(
+        &compiled,
+        &case.workspace.files[0].source,
+        &spans,
+    )
+    .expect("the complete document map executes");
+    assert_eq!(outcome.ranges, [(0, 13)], "mapped source span");
+    assert!(outcome.errors.is_empty(), "complete map has no failure");
+    assert_eq!(
+        super::policy_lowering_tests::sql_outcome_with_document_maps(
+            &compiled,
+            &case.workspace.files[0].source,
+            &[],
+        )
+        .err()
+        .expect("a generated document without a map fails closed"),
+        "document-map-missing"
+    );
+    assert_eq!(
+        super::policy_lowering_tests::sql_outcome_with_document_maps(
+            &compiled,
+            &case.workspace.files[0].source,
+            &[(0, 13, 0, 20), (5, 13, 10, 20)],
+        )
+        .err()
+        .expect("overlapping map rows are rejected"),
+        "document-map-overlap"
+    );
+}
+
+#[test]
 fn production_contract_phase_five_parsed_documents_equal_oracles() {
     for name in [
         "semantic-parse-literal",

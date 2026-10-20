@@ -1371,6 +1371,14 @@ fn sql_outcome_with_failure(
     }
 }
 
+pub(super) fn sql_outcome_with_document_maps(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    source: &str,
+    _maps: &[(usize, usize, usize, usize)],
+) -> Result<SqlOutcome, String> {
+    Ok(sql_outcome(compiled, source))
+}
+
 pub(super) fn sql_ranges(
     compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
     source: &str,
