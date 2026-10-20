@@ -1,5 +1,5 @@
 use super::relational::{SqlCatalogPlan, SqlShape, TerminalKind};
-use super::relational_ir::{normalized_binding_compatibility, qualified_row_columns};
+use super::relational_ir::qualified_row_columns;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::model::Anchor;
@@ -323,7 +323,7 @@ fn compiled_ordered_any_preserves_branch_identity_in_exact_sql() {
 }
 
 #[test]
-fn compiled_not_uses_completion_guarded_relational_antijoin() {
+fn compiled_capture_free_not_uses_completion_guarded_relational_antijoin() {
     let compiled = code_rule(json!({ "not": { "regex": "^x" } }));
     let plan =
         SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("negation lowers into SQL");
@@ -341,7 +341,7 @@ fn compiled_not_uses_completion_guarded_relational_antijoin() {
             SqlShape::OrderBy,
         ]
     );
-    let compatible = normalized_binding_compatibility("universe", "excluded");
+    let compatible = "1 = 1";
     let verdict = format!(
         "CASE WHEN EXISTS (SELECT 1 FROM clause_0_term_1 excluded WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node AND excluded.verdict IS NULL AND {compatible}) THEN NULL ELSE 1 END"
     );
@@ -354,6 +354,7 @@ fn compiled_not_uses_completion_guarded_relational_antijoin() {
         )
     );
     assert!(plan.sql().contains("batch.complete = 1"));
+    assert!(!cte(plan.sql(), "clause_0_relation_2 AS").contains("json_each"));
     assert_eq!(
         execute_boolean_sql(
             &plan,

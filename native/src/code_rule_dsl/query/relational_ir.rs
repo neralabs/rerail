@@ -2134,11 +2134,6 @@ impl SqlRenderer {
     }
 }
 
-#[cfg(test)]
-pub(super) fn normalized_binding_compatibility(left: &str, right: &str) -> String {
-    SqlRenderer::binding_compatibility(left, right)
-}
-
 fn qualified_row_columns_with_verdict(alias: &str, verdict: &str) -> String {
     ROW_COLUMNS
         .split(", ")
