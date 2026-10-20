@@ -41,6 +41,13 @@ pub(in crate::code_rule_dsl) enum ProducerKind {
     ValueFact,
     SemanticFact,
     ParseFact,
+    FileFact,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::code_rule_dsl) struct FileFactDescriptor {
+    pub(in crate::code_rule_dsl) regex: regex::Regex,
+    pub(in crate::code_rule_dsl) path: bool,
 }
 
 /// A bounded parsed-document request. It owns grammar and host selection only. Nested user rules
@@ -251,6 +258,8 @@ pub(in crate::code_rule_dsl) struct PackedDemand {
     semantic_facts: Vec<Option<SemanticFactDescriptor>>,
     parse_facts: Vec<Option<ParseFactDescriptor>>,
     document_maps: Vec<DocumentMapSpan>,
+    file_facts: Vec<Option<FileFactDescriptor>>,
+    file_paths: Vec<String>,
     files: Vec<TapeDoc>,
     anchors: Vec<Vec<Vec<u32>>>,
     task_grid: Vec<Vec<bool>>,
@@ -279,6 +288,10 @@ impl PackedDemand {
         let value_facts = vec![None; programs.len()];
         let semantic_facts = vec![None; programs.len()];
         let parse_facts = vec![None; programs.len()];
+        let file_facts = vec![None; programs.len()];
+        let file_paths = (0..files.len())
+            .map(|file| format!("file:{file}"))
+            .collect();
         Ok(Self {
             backend,
             programs,
@@ -287,6 +300,8 @@ impl PackedDemand {
             semantic_facts,
             parse_facts,
             document_maps: Vec::new(),
+            file_facts,
+            file_paths,
             files,
             anchors,
             task_grid,
@@ -373,6 +388,24 @@ impl PackedDemand {
             return Err(PackedError::InvalidAnchor);
         }
         self.parse_facts = parse_facts;
+        Ok(self)
+    }
+
+    pub(in crate::code_rule_dsl) fn with_file_facts(
+        mut self,
+        file_facts: Vec<Option<FileFactDescriptor>>,
+        file_paths: Vec<String>,
+    ) -> Result<Self, PackedError> {
+        if file_facts.len() != self.programs.len()
+            || file_paths.len() != self.files.len()
+            || file_facts.iter().enumerate().any(|(producer, descriptor)| {
+                descriptor.is_some() != (self.producer_kinds[producer] == ProducerKind::FileFact)
+            })
+        {
+            return Err(PackedError::InvalidAnchor);
+        }
+        self.file_facts = file_facts;
+        self.file_paths = file_paths;
         Ok(self)
     }
 
@@ -464,6 +497,45 @@ impl PackedDemand {
                         false,
                         None,
                         Some(code.clone()),
+                    ));
+                    continue;
+                }
+                if self.producer_kinds[program] == ProducerKind::FileFact {
+                    let descriptor = self.file_facts[program]
+                        .as_ref()
+                        .expect("a verified file producer has its descriptor");
+                    let haystack = if descriptor.path {
+                        self.file_paths[file].as_str()
+                    } else {
+                        std::str::from_utf8(self.files[file].transducer_source())
+                            .unwrap_or_default()
+                    };
+                    if let Some(found) = descriptor.regex.find(haystack) {
+                        let root = self.anchors[file][program].first().copied().unwrap_or(0);
+                        let span = if descriptor.path {
+                            self.files[file].transducer_span(root)
+                        } else {
+                            found.range()
+                        };
+                        rows.push(PackedRow::terminal_match(TerminalMatchData {
+                            batch: token,
+                            file,
+                            producer: program,
+                            match_index: 0,
+                            task_index: 0,
+                            start_ordinal: root,
+                            node: root,
+                            span,
+                            output_label: Some("file-regex".to_owned()),
+                        }));
+                    }
+                    rows.push(PackedRow::producer_status(
+                        token,
+                        file,
+                        program,
+                        true,
+                        Some(true),
+                        None,
                     ));
                     continue;
                 }

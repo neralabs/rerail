@@ -1223,6 +1223,15 @@ fn sql_outcome_with_failure(
         )
     })
     .and_then(|demand| {
+        demand.with_file_facts(
+            plan.terminals()
+                .iter()
+                .map(|terminal| terminal.file_fact())
+                .collect(),
+            vec!["test_contract.py".to_owned()],
+        )
+    })
+    .and_then(|demand| {
         demand.with_parse_facts(
             plan.terminals()
                 .iter()

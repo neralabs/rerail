@@ -28,6 +28,7 @@ type ClauseId = (usize, usize);
 pub(super) struct PackedFileInput {
     pub(super) tape: TapeDoc,
     pub(super) language: GrammarDialect,
+    pub(super) path: String,
     pub(super) tasks: BTreeMap<ClauseId, Vec<u32>>,
     pub(super) document_maps: Vec<DocumentMapSpan>,
 }
@@ -91,6 +92,7 @@ impl SqlPlans {
         let mut anchors = Vec::with_capacity(files.len());
         let mut task_grid = Vec::with_capacity(files.len());
         let mut document_maps = Vec::new();
+        let mut file_paths = Vec::new();
         for file in files {
             let mut file_anchors = Vec::with_capacity(programs.len());
             let mut file_tasks = Vec::with_capacity(programs.len());
@@ -117,6 +119,7 @@ impl SqlPlans {
                 file_anchors.push(roots);
             }
             document_maps.extend(file.document_maps);
+            file_paths.push(file.path);
             tapes.push(file.tape);
             anchors.push(file_anchors);
             task_grid.push(file_tasks);
@@ -136,6 +139,11 @@ impl SqlPlans {
             .iter()
             .map(relational::TerminalPlan::semantic_fact)
             .collect();
+        let file_facts = plan
+            .terminals()
+            .iter()
+            .map(relational::TerminalPlan::file_fact)
+            .collect();
         let parse_facts = plan
             .terminals()
             .iter()
@@ -153,6 +161,7 @@ impl SqlPlans {
         .and_then(|demand| demand.with_value_facts(value_facts))
         .and_then(|demand| demand.with_semantic_facts(semantic_facts))
         .and_then(|demand| demand.with_parse_facts(parse_facts))
+        .and_then(|demand| demand.with_file_facts(file_facts, file_paths))
         .and_then(|demand| demand.with_document_maps(document_maps, plan.requires_document_maps()))
         .map_err(|error| format!("packed batch verification failed: {error:?}"))?;
         drive_sql(demand, plan.sql()).map_err(|error| error.to_string())

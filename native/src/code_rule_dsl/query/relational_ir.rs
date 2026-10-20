@@ -16,6 +16,7 @@ pub(super) enum TerminalKind {
     Parse,
     CallSeed,
     Transform,
+    File,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -62,7 +63,7 @@ pub(super) enum SqlOperation {
     CrossFileJoin,
 }
 
-const ALL_TERMINAL_KINDS: [TerminalKind; 12] = [
+const ALL_TERMINAL_KINDS: [TerminalKind; 13] = [
     TerminalKind::Universe,
     TerminalKind::Pattern,
     TerminalKind::Kind,
@@ -75,6 +76,7 @@ const ALL_TERMINAL_KINDS: [TerminalKind; 12] = [
     TerminalKind::Parse,
     TerminalKind::CallSeed,
     TerminalKind::Transform,
+    TerminalKind::File,
 ];
 
 const ALL_SQL_OPERATIONS: [SqlOperation; 25] = [

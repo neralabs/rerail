@@ -8,11 +8,11 @@ use crate::code_rule_dsl::language::{GrammarDialect, label};
 use crate::code_rule_dsl::matcher::{
     AstMatcher, MAX_UTIL_DEPTH, Semantic, StopBy, UtilCall, UtilRef,
 };
-use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Query};
+use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Query, RegexSource};
 use crate::code_rule_dsl::packed::Program;
 use crate::code_rule_dsl::transducer::sql_backend::{
-    ParseFactDescriptor, ProducerKind, SemanticFactDescriptor, SemanticFactSource,
-    ValueFactDescriptor,
+    FileFactDescriptor, ParseFactDescriptor, ProducerKind, SemanticFactDescriptor,
+    SemanticFactSource, ValueFactDescriptor,
 };
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::matcher::Matcher;
@@ -34,6 +34,7 @@ pub(super) struct TerminalPlan {
     value_fact: Option<ValueFactDescriptor>,
     semantic_fact: Option<SemanticFactDescriptor>,
     parse_fact: Option<ParseFactDescriptor>,
+    file_fact: Option<FileFactDescriptor>,
 }
 
 impl TerminalPlan {
@@ -75,6 +76,7 @@ impl TerminalPlan {
             TerminalKind::Value => ProducerKind::ValueFact,
             TerminalKind::Fact => ProducerKind::SemanticFact,
             TerminalKind::Parse => ProducerKind::ParseFact,
+            TerminalKind::File => ProducerKind::FileFact,
             _ => ProducerKind::Terminal,
         }
     }
@@ -89,6 +91,10 @@ impl TerminalPlan {
 
     pub(super) fn parse_fact(&self) -> Option<ParseFactDescriptor> {
         self.parse_fact.clone()
+    }
+
+    pub(super) fn file_fact(&self) -> Option<FileFactDescriptor> {
+        self.file_fact.clone()
     }
 }
 
@@ -116,6 +122,20 @@ impl SqlCatalogPlan {
         for (rule_index, code_rule) in code_rules.iter().enumerate() {
             for (clause_index, clause) in code_rule.clauses.iter().enumerate() {
                 let clause_at = format!("{}/{}", code_rule.id, clause.id);
+                if let ClauseKind::Forbid(Query::Regex { regex, source }) = &clause.kind {
+                    builder.current_clause = (rule_index, clause_index);
+                    builder.current_result_limit =
+                        u32::try_from(code_rule.capabilities.limits.max_witnesses)
+                            .unwrap_or(u32::MAX);
+                    builder.current_max_work = code_rule.capabilities.limits.max_visited_nodes;
+                    let id = builder.file_terminal(regex, *source);
+                    let mut ir = RelationalIr::empty();
+                    ir.terminal_spec(TerminalKind::File, format!("terminal:{id}"));
+                    ir.operation(SqlOperation::ScanTerminal);
+                    builder.clause_terminal_ids.push(vec![id]);
+                    builder.clause_irs.push(ir);
+                    continue;
+                }
                 let ClauseKind::Forbid(Query::Ast { matchers, calls }) = &clause.kind else {
                     builder
                         .unsupported
@@ -263,6 +283,7 @@ enum TerminalIdentity {
     Value(GrammarDialect, bool, Vec<u16>, String),
     Fact(GrammarDialect, String),
     Parse(GrammarDialect, String),
+    File(RegexSource, String),
 }
 
 type UtilityGraph = BTreeMap<usize, (UtilRef, AstMatcher, Vec<usize>)>;
@@ -1529,6 +1550,31 @@ impl Builder {
             value_fact: Some(descriptor),
             semantic_fact: None,
             parse_fact: None,
+            file_fact: None,
+        });
+        self.terminal_ids.insert(identity, id);
+        id
+    }
+
+    fn file_terminal(&mut self, regex: &regex::Regex, source: RegexSource) -> usize {
+        let identity = TerminalIdentity::File(source, regex.as_str().to_owned());
+        if let Some(id) = self.terminal_ids.get(&identity).copied() {
+            return id;
+        }
+        let id = self.terminals.len();
+        self.terminals.push(TerminalPlan {
+            kind: TerminalKind::File,
+            language: GrammarDialect::Python,
+            program: Program::compile_universe().expect("the file fact shell is verified"),
+            clauses: vec![self.current_clause],
+            result_limit: 1,
+            value_fact: None,
+            semantic_fact: None,
+            parse_fact: None,
+            file_fact: Some(FileFactDescriptor {
+                regex: regex.clone(),
+                path: source == RegexSource::Path,
+            }),
         });
         self.terminal_ids.insert(identity, id);
         id
@@ -1551,6 +1597,7 @@ impl Builder {
             value_fact: None,
             semantic_fact: None,
             parse_fact: Some(descriptor),
+            file_fact: None,
         });
         self.terminal_ids.insert(identity, id);
         id
@@ -1579,6 +1626,7 @@ impl Builder {
                 call_through,
             }),
             parse_fact: None,
+            file_fact: None,
         });
         self.terminal_ids.insert(identity, id);
         id
@@ -1609,6 +1657,7 @@ impl Builder {
             value_fact: None,
             semantic_fact: None,
             parse_fact: None,
+            file_fact: None,
         });
         self.terminal_ids.insert(identity, id);
         id

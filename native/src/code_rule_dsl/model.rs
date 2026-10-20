@@ -401,7 +401,7 @@ pub(super) struct AstRelation {
     pub(super) domain: Option<CodeRuleScope>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum RegexSource {
     Content,
     Path,

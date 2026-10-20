@@ -271,7 +271,8 @@ fn result_schema(kind: super::relational::TerminalKind) -> Vec<String> {
         | TerminalKind::Text
         | TerminalKind::Equality
         | TerminalKind::CallSeed
-        | TerminalKind::Transform => &["producer_status", "terminal_match"],
+        | TerminalKind::Transform
+        | TerminalKind::File => &["producer_status", "terminal_match"],
     };
     rows.iter().map(|row| (*row).to_owned()).collect()
 }
