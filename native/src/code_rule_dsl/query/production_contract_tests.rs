@@ -1966,11 +1966,66 @@ fn production_contract_phase_six_cross_file_clauses_equal_oracles() {
             .into_iter()
             .map(|(path, source)| (path.to_owned(), source.to_owned()))
             .collect::<Vec<_>>();
-        let (ranges, errors) =
+        let (ranges, errors, _) =
             super::policy_lowering_tests::sql_workspace_ranges(&compiled, &files);
         assert_eq!(ranges, expected, "{name}: SQL ranges");
         assert!(errors.is_empty(), "{name}: SQL failures: {errors:?}");
     }
+}
+
+#[test]
+fn production_contract_phase_six_rejects_files_before_terminal_demand() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "clause-file-condition")
+        .expect("file-condition contract");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("file-condition policy compiles");
+    let files = case
+        .workspace
+        .files
+        .iter()
+        .map(|file| (file.path.clone(), file.source.clone()))
+        .collect::<Vec<_>>();
+    let (ranges, errors, statuses) =
+        super::policy_lowering_tests::sql_workspace_ranges(&compiled, &files);
+    assert_eq!(ranges, [(0, 0, 7)]);
+    assert!(errors.is_empty());
+    assert!(
+        !statuses.is_empty(),
+        "the accepted file creates terminal tasks"
+    );
+    assert!(
+        statuses.iter().all(|(file, _)| *file == 0),
+        "rejected files create no producer completion because they create no terminal tasks"
+    );
+}
+
+#[test]
+fn production_contract_phase_six_preserves_syntax_error_unknown() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "clause-syntax-error-unknown")
+        .expect("syntax-error contract");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("syntax-error policy compiles");
+    let files = case
+        .workspace
+        .files
+        .iter()
+        .map(|file| (file.path.clone(), file.source.clone()))
+        .collect::<Vec<_>>();
+    let (ranges, errors, _) = super::policy_lowering_tests::sql_workspace_ranges(&compiled, &files);
+    assert!(ranges.is_empty(), "unknown cannot prove a violation");
+    assert_eq!(errors, ["source-partial"]);
 }
 
 #[test]

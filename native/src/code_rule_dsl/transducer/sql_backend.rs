@@ -263,6 +263,7 @@ pub(in crate::code_rule_dsl) struct PackedDemand {
     files: Vec<TapeDoc>,
     anchors: Vec<Vec<Vec<u32>>>,
     task_grid: Vec<Vec<bool>>,
+    sound_under_errors: Vec<bool>,
     result_limits: Vec<u32>,
     failure_injections: HashMap<usize, String>,
 }
@@ -284,6 +285,7 @@ impl PackedDemand {
         {
             return Err(PackedError::InvalidAnchor);
         }
+        let sound_under_errors = vec![true; programs.len()];
         let producer_kinds = vec![ProducerKind::Terminal; programs.len()];
         let value_facts = vec![None; programs.len()];
         let semantic_facts = vec![None; programs.len()];
@@ -304,10 +306,22 @@ impl PackedDemand {
             file_paths,
             files,
             anchors,
+            sound_under_errors,
             task_grid,
             result_limits,
             failure_injections: HashMap::new(),
         })
+    }
+
+    pub(in crate::code_rule_dsl) fn with_sound_under_errors(
+        mut self,
+        sound_under_errors: Vec<bool>,
+    ) -> Result<Self, PackedError> {
+        if sound_under_errors.len() != self.programs.len() {
+            return Err(PackedError::InvalidAnchor);
+        }
+        self.sound_under_errors = sound_under_errors;
+        Ok(self)
     }
 
     pub(in crate::code_rule_dsl) fn with_producer_kinds(
@@ -486,6 +500,19 @@ impl PackedDemand {
         for file in 0..execution.file_count() {
             for program in 0..execution.program_count() {
                 if !self.task_grid[file][program] {
+                    continue;
+                }
+                if !self.sound_under_errors[program]
+                    && !self.files[file].syntax_error_ranges().is_empty()
+                {
+                    rows.push(PackedRow::producer_status(
+                        token,
+                        file,
+                        program,
+                        false,
+                        None,
+                        Some("source-partial".to_owned()),
+                    ));
                     continue;
                 }
                 if let Some(code) = self.failure_injections.get(&program) {

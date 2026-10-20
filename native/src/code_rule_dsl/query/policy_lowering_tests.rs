@@ -1,4 +1,4 @@
-use super::relational::{SqlCatalogPlan, SqlShape, TerminalKind};
+use super::relational::{SqlCatalogPlan, SqlShape, TerminalKind, TerminalPlan};
 use super::relational_ir::qualified_row_columns;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -1088,7 +1088,7 @@ pub(super) struct SqlOutcome {
 pub(super) fn sql_workspace_ranges(
     compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
     files: &[(String, String)],
-) -> (Vec<(usize, usize, usize)>, Vec<String>) {
+) -> (Vec<(usize, usize, usize)>, Vec<String>, Vec<(usize, usize)>) {
     let plan =
         SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("workspace SQL lowering");
     let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
@@ -1131,12 +1131,28 @@ pub(super) fn sql_workspace_ranges(
             .collect(),
         tapes,
         anchors,
-        vec![vec![true; plan.terminals().len()]; files.len()],
+        files
+            .iter()
+            .map(|(path, source)| {
+                plan.terminals()
+                    .iter()
+                    .map(|terminal| terminal.applies_to_file(path, source))
+                    .collect()
+            })
+            .collect(),
         plan.terminals()
             .iter()
             .map(|terminal| terminal.result_limit())
             .collect(),
     )
+    .and_then(|demand| {
+        demand.with_sound_under_errors(
+            plan.terminals()
+                .iter()
+                .map(TerminalPlan::sound_under_errors)
+                .collect(),
+        )
+    })
     .and_then(|demand| demand.with_producer_kinds(producer_kinds))
     .and_then(|demand| {
         demand.with_value_facts(
@@ -1225,7 +1241,13 @@ pub(super) fn sql_workspace_ranges(
         .collect::<Vec<_>>();
     ranges.sort_unstable();
     errors.sort();
-    (ranges, errors)
+    let mut statuses = registry
+        .query_producer_status_rows(token)
+        .into_iter()
+        .map(|row| (row.file as usize, row.producer as usize))
+        .collect::<Vec<_>>();
+    statuses.sort_unstable();
+    (ranges, errors, statuses)
 }
 
 pub(super) fn sql_outcome(
@@ -1350,6 +1372,14 @@ fn sql_outcome_with_failure(
             .map(|terminal| terminal.result_limit())
             .collect(),
     )
+    .and_then(|demand| {
+        demand.with_sound_under_errors(
+            plan.terminals()
+                .iter()
+                .map(TerminalPlan::sound_under_errors)
+                .collect(),
+        )
+    })
     .and_then(|demand| demand.with_producer_kinds(producer_kinds))
     .and_then(|demand| {
         demand.with_value_facts(

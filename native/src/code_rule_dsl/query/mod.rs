@@ -107,6 +107,10 @@ impl SqlPlans {
                 roots.sort_unstable();
                 roots.dedup();
                 let demanded = terminal.dialect() == file.language
+                    && terminal.applies_to_file(
+                        &file.path,
+                        std::str::from_utf8(file.tape.transducer_source()).unwrap_or_default(),
+                    )
                     && terminal
                         .clauses()
                         .iter()
@@ -114,6 +118,8 @@ impl SqlPlans {
                 if demanded && terminal.producer_kind() == ProducerKind::Navigation {
                     roots.clear();
                     roots.push(0);
+                } else if terminal.producer_kind() == ProducerKind::FileFact {
+                    roots.clear();
                 }
                 file_tasks.push(demanded);
                 file_anchors.push(roots);
@@ -157,6 +163,14 @@ impl SqlPlans {
             task_grid,
             result_limits,
         )
+        .and_then(|demand| {
+            demand.with_sound_under_errors(
+                plan.terminals()
+                    .iter()
+                    .map(relational::TerminalPlan::sound_under_errors)
+                    .collect(),
+            )
+        })
         .and_then(|demand| demand.with_producer_kinds(producer_kinds))
         .and_then(|demand| demand.with_value_facts(value_facts))
         .and_then(|demand| demand.with_semantic_facts(semantic_facts))

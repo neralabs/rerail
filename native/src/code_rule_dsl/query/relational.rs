@@ -37,6 +37,11 @@ pub(super) struct TerminalPlan {
     semantic_fact: Option<SemanticFactDescriptor>,
     parse_fact: Option<ParseFactDescriptor>,
     file_fact: Option<FileFactDescriptor>,
+    sound_under_errors: bool,
+    file_conditions: Vec<(
+        Option<Arc<crate::code_rule_dsl::language::FileCondition>>,
+        Option<Arc<crate::code_rule_dsl::matcher::RequiredText>>,
+    )>,
 }
 
 impl TerminalPlan {
@@ -97,6 +102,22 @@ impl TerminalPlan {
 
     pub(super) fn file_fact(&self) -> Option<FileFactDescriptor> {
         self.file_fact.clone()
+    }
+
+    pub(super) const fn sound_under_errors(&self) -> bool {
+        self.sound_under_errors
+    }
+
+    pub(super) fn applies_to_file(&self, path: &str, source: &str) -> bool {
+        self.file_conditions.is_empty()
+            || self.file_conditions.iter().any(|(condition, required)| {
+                condition
+                    .as_ref()
+                    .is_none_or(|condition| condition.holds(path, None))
+                    && required.as_ref().is_none_or(|required| {
+                        required.holds_with(source, &mut |text, literal| text.contains(literal))
+                    })
+            })
     }
 }
 
@@ -217,6 +238,12 @@ impl SqlCatalogPlan {
                     ir.terminal_spec(TerminalKind::File, format!("terminal:{id}"));
                     ir.operation(SqlOperation::ScanTerminal);
                     builder.clause_terminal_ids.push(vec![id]);
+                    builder.clause_irs.push(ir);
+                    continue;
+                }
+                if let ClauseKind::Forbid(query @ Query::Ast { .. }) = &clause.kind {
+                    let (terminals, ir) = builder.lower_clause_query(query, &clause_at);
+                    builder.clause_terminal_ids.push(terminals);
                     builder.clause_irs.push(ir);
                     continue;
                 }
@@ -1634,6 +1661,8 @@ impl Builder {
             semantic_fact: None,
             parse_fact: None,
             file_fact: None,
+            sound_under_errors: true,
+            file_conditions: Vec::new(),
         });
         self.terminal_ids.insert(identity, id);
         id
@@ -1672,13 +1701,21 @@ impl Builder {
                 let mut relations = Vec::new();
                 for matcher in matchers.iter().filter(|matcher| matcher.applies) {
                     let mut ir = RelationalIr::empty();
+                    let mut matcher_terminals = Vec::new();
                     self.lower_matcher(
                         &matcher.matcher,
                         matcher.language,
                         at,
-                        &mut terminals,
+                        &mut matcher_terminals,
                         &mut ir,
                     );
+                    for producer in &matcher_terminals {
+                        self.terminals[*producer].sound_under_errors = false;
+                        self.terminals[*producer]
+                            .file_conditions
+                            .push((matcher.file.clone(), matcher.text.clone()));
+                    }
+                    terminals.extend(matcher_terminals);
                     relations.push(ir);
                 }
                 let ir = if relations.is_empty() {
@@ -1730,6 +1767,8 @@ impl Builder {
                 regex: regex.clone(),
                 path: source == RegexSource::Path,
             }),
+            sound_under_errors: true,
+            file_conditions: Vec::new(),
         });
         self.terminal_ids.insert(identity, id);
         id
@@ -1753,6 +1792,8 @@ impl Builder {
             semantic_fact: None,
             parse_fact: Some(descriptor),
             file_fact: None,
+            sound_under_errors: true,
+            file_conditions: Vec::new(),
         });
         self.terminal_ids.insert(identity, id);
         id
@@ -1782,6 +1823,8 @@ impl Builder {
             }),
             parse_fact: None,
             file_fact: None,
+            sound_under_errors: true,
+            file_conditions: Vec::new(),
         });
         self.terminal_ids.insert(identity, id);
         id
@@ -1813,6 +1856,8 @@ impl Builder {
             semantic_fact: None,
             parse_fact: None,
             file_fact: None,
+            sound_under_errors: true,
+            file_conditions: Vec::new(),
         });
         self.terminal_ids.insert(identity, id);
         id
@@ -1839,14 +1884,15 @@ impl Builder {
             let failure_union = if producers.is_empty() {
                 String::new()
             } else {
+                let producer_list = producers.join(", ");
                 format!(
-                    "\n  UNION ALL\n  SELECT {failure_projection}, json('[]') AS bindings, '' AS choice_order, {ordinal} AS clause_ordinal\n  FROM producer_status failed\n  WHERE failed.producer_id IN ({}) AND failed.complete <> 1",
-                    producers.join(", ")
+                    "\n  UNION ALL\n  SELECT {failure_projection}, json('[]') AS bindings, '' AS choice_order, {ordinal} AS clause_ordinal\n  FROM producer_status failed\n  WHERE failed.producer_id IN ({producer_list}) AND failed.complete <> 1\n    AND failed.producer_id = (SELECT min(same.producer_id) FROM producer_status same WHERE same.file_index = failed.file_index AND same.error_code = failed.error_code AND same.complete <> 1 AND same.producer_id IN ({producer_list}))"
                 )
             };
             writeln!(
                 clauses,
-                ",\n{relations},\nclause_{ordinal} AS (\n  SELECT {projection}, result.bindings, result.choice_order, {ordinal} AS clause_ordinal FROM {result} result\n  CROSS JOIN batch_status batch\n  WHERE batch.complete = 1\n    AND NOT EXISTS (\n      SELECT 1 FROM producer_status undecided\n      WHERE undecided.complete <> 1 OR undecided.verdict IS NULL\n    ){failure_union}\n)"
+                ",\n{relations},\nclause_{ordinal} AS (\n  SELECT {projection}, result.bindings, result.choice_order, {ordinal} AS clause_ordinal FROM {result} result\n  CROSS JOIN batch_status batch\n  WHERE batch.complete = 1\n    AND NOT EXISTS (\n      SELECT 1 FROM producer_status undecided\n      WHERE undecided.producer_id IN ({}) AND (undecided.complete <> 1 OR undecided.verdict IS NULL)\n    ){failure_union}\n)",
+                producers.join(", ")
             )
             .expect("write SQL");
         }
