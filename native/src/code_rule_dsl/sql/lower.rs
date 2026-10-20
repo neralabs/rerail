@@ -64,7 +64,11 @@ pub(super) struct ProgramBuilder {
     /// Each rule lowered as a stage, by its address and dialect: a stage is context-free, so a
     /// rule reached again (a utility many terms or utilities share) is lowered once, not once per
     /// path to it.
-    stage_rules: HashMap<(usize, String), usize>,
+    stage_rules: HashMap<(usize, String), NodeSet>,
+    /// The rules `stage` derives (an `any` with a `not` branch read as its dual `all`), kept for
+    /// the program's life: their addresses key `stage_rules` and `leaves`, so none is freed and
+    /// its address reused by another rule while the program is lowered.
+    derived: Vec<Box<AstMatcher>>,
     regexes: HashMap<(String, String), usize>,
     fresh_patterns: HashMap<usize, usize>,
     /// Leaf fact terminals by the leaf's address and the captures their keys carry: lowering a
@@ -944,8 +948,11 @@ impl<'p> Lowerer<'p> {
 
     /// The per-batch set of the nodes `rule` matches in a fresh environment: a stage lowered,
     /// emitted and keyed by its SQL. A capture-free `not R` that cannot be unknown is `R`'s set
-    /// complemented: a negation holds at most nodes of the batch, `R` at few. Not one that
-    /// reaches back into the following cycle being lowered: the matcher matches it with the
+    /// complemented: a negation holds at most nodes of the batch, `R` at few. So is an `any` with
+    /// a `not` branch, by De Morgan: `any[not R, X…]` is `not all[R, not X…]`, a set bounded by
+    /// `R`'s kinds (the stop rule `any[not any[block, argument_list, …], decorator, …]` of a
+    /// depth walk otherwise runs one anti-join per kind over every node of the batch). Not one
+    /// that reaches back into the following cycle being lowered: the matcher matches it with the
     /// binding sub-rules in progress, which a per-batch stage does not know.
     fn stage(&mut self, rule: &AstMatcher) -> Result<NodeSet, Unsupported> {
         if let Some(following) = &self.following
@@ -960,18 +967,35 @@ impl<'p> Lowerer<'p> {
             return Ok(self.stage(inner)?.complemented());
         }
         let address = (std::ptr::from_ref(rule) as usize, self.stage_key());
-        let stage = match self.program.stage_rules.get(&address) {
-            Some(&stage) => stage,
-            None => {
-                let stage = self.stage_of(rule)?;
-                self.program.stage_rules.insert(address, stage);
-                stage
+        if let Some(&set) = self.program.stage_rules.get(&address) {
+            return Ok(set);
+        }
+        let set = match rule {
+            AstMatcher::Any(items)
+                if items.iter().any(|item| matches!(item, AstMatcher::Not(_)))
+                    && capture_free(rule)
+                    && !(self.three && reads_values(rule, &mut BTreeSet::new())) =>
+            {
+                let dual = Box::new(AstMatcher::All(
+                    items
+                        .iter()
+                        .map(|item| match item {
+                            AstMatcher::Not(inner) => (**inner).clone(),
+                            other => AstMatcher::Not(Box::new(other.clone())),
+                        })
+                        .collect(),
+                ));
+                let set = self.stage(&dual)?.complemented();
+                self.program.derived.push(dual);
+                set
             }
+            _ => NodeSet {
+                stage: self.stage_of(rule)?,
+                complement: false,
+            },
         };
-        Ok(NodeSet {
-            stage,
-            complement: false,
-        })
+        self.program.stage_rules.insert(address, set);
+        Ok(set)
     }
 
     fn stage_of(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
