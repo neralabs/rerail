@@ -565,20 +565,19 @@ fn production_contract_phase_four_resolves_matches_authored_sql() {
 }
 
 #[test]
-fn production_contract_phase_four_common_semantic_gates_match_authored_sql() {
+fn production_contract_phase_four_layout_matches_authored_semantic_gate_sql() {
     let expected = authored_sql_goldens();
-    for name in ["semantic-layout"] {
-        let case = cases()
-            .into_iter()
-            .find(|case| case.name == name)
-            .expect("the semantic-gate contract exists");
-        let actual = actual_implementation_golden(&case);
-        assert_eq!(
-            exact_sql(&actual.normalized_sql),
-            exact_sql(&expected[&case.name]),
-            "{name} must use the authored common semantic-gate SQL contract"
-        );
-    }
+    let name = "semantic-layout";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the layout contract exists");
+    let actual = actual_implementation_golden(&case);
+    assert_eq!(
+        exact_sql(&actual.normalized_sql),
+        exact_sql(&expected[&case.name]),
+        "layout must use the authored common semantic-gate SQL contract"
+    );
 }
 
 #[test]

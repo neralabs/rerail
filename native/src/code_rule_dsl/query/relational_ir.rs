@@ -927,13 +927,9 @@ impl SqlRenderer {
         if let [source, RelationNode::Semantic { spec }] = inputs
             && spec.rules.is_empty()
             && spec.argument_labels.is_empty()
-            && let RelationNode::Apply {
-                operation: SqlOperation::ScanTerminal,
-                inputs: terminal_inputs,
-            } = source
-            && let [RelationNode::Producer(producer)] = terminal_inputs.as_slice()
+            && let Some(source_producer) = Self::terminal_producer(source)?
         {
-            return self.render_simple_semantic_gate(producer.producer_id()?, spec.producer);
+            return self.render_simple_semantic_gate(source_producer, spec.producer);
         }
         let relations = inputs
             .iter()
@@ -1062,6 +1058,30 @@ impl SqlRenderer {
         sql.push_str("\n)");
         self.ctes.push(sql);
         Ok(name)
+    }
+
+    fn terminal_producer(node: &RelationNode) -> Result<Option<usize>, String> {
+        let RelationNode::Apply { operation, inputs } = node else {
+            return Ok(None);
+        };
+        if *operation == SqlOperation::ScanTerminal {
+            let [RelationNode::Producer(producer)] = inputs.as_slice() else {
+                return Ok(None);
+            };
+            return producer.producer_id().map(Some);
+        }
+        if matches!(
+            operation,
+            SqlOperation::ScanCapture
+                | SqlOperation::CaseTruth
+                | SqlOperation::WindowRank
+                | SqlOperation::Projection
+                | SqlOperation::OrderBy
+        ) && let [input] = inputs.as_slice()
+        {
+            return Self::terminal_producer(input);
+        }
+        Ok(None)
     }
 
     fn render_simple_semantic_gate(
