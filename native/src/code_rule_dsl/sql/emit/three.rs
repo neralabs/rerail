@@ -25,6 +25,9 @@ impl Emitter<'_> {
             Op::AllOpen(terms) => self.all_open(terms, input),
             Op::AnyOpen(branches) => self.any_open(branches, input),
             Op::Not(inner) => {
+                if let Op::Not(rule) = &**inner {
+                    return Some(self.holds_at(rule, input));
+                }
                 let out = self.op(inner, input);
                 self.frame(
                     "x",
@@ -40,14 +43,16 @@ impl Emitter<'_> {
                 sub,
                 binds,
                 strict,
-            } => self.search(*walk, sub, *binds, *strict, input),
+                kinds,
+            } => self.search(*walk, kinds.as_deref(), sub, *binds, *strict, input),
             Op::Count {
                 walk,
                 sub,
                 min,
                 max,
                 bind,
-            } => self.count_open(*walk, sub, *min, *max, *bind, input),
+                kinds,
+            } => self.count_open(*walk, kinds.as_deref(), sub, *min, *max, *bind, input),
             Op::NthChild {
                 step,
                 offset,
@@ -236,8 +241,16 @@ impl Emitter<'_> {
     /// `relation::Search` over a walk: a strict search ends at its first candidate that is true
     /// or unknown, or at an unknown stop; any other is true where a candidate is (the first one
     /// binds) and otherwise unknown where a candidate or a stop was.
-    fn search(&mut self, walk: Walk, sub: &Op, binds: bool, strict: bool, input: &str) -> String {
-        let candidates = self.candidates(walk, input);
+    fn search(
+        &mut self,
+        walk: Walk,
+        kinds: Option<&[u16]>,
+        sub: &Op,
+        binds: bool,
+        strict: bool,
+        input: &str,
+    ) -> String {
+        let candidates = self.candidates(walk, self.narrowed(walk, kinds), input);
         // A non-strict search passes over unknown candidates: only a true one ends it.
         self.first_match(&candidates, walk, !strict);
         let matched = self.op(sub, &candidates);
@@ -302,13 +315,14 @@ impl Emitter<'_> {
         self.frame_with("x", &with, &select, reads)
     }
 
-    /// The unknown stops of a walk whose stop rule may be unknown: `(pk, e)`, `e` the order key
-    /// of the event among the candidates' (`2 * ord`). A walk along a link ends at its unknown
-    /// stop, after every candidate; `has` passes over the stop's subtree and reads the unknown
-    /// after testing the next node it visits (`has_until`); `has` with a field reads the field
-    /// child's stop only; `inside` with a field ends at its unknown stop whether or not it tests
-    /// it. `None` where the walk has no such stop.
-    fn opened(&mut self, walk: Walk, input: &str, candidates: &str) -> Option<String> {
+    /// The kinds a three-valued walk's candidates may be narrowed to: none where the walk has an
+    /// unknown stop (`opened`), whose events are placed among every candidate the walk visits.
+    fn narrowed<'k>(&self, walk: Walk, kinds: Option<&'k [u16]>) -> Option<&'k [u16]> {
+        kinds.filter(|_| self.open_stop(walk).is_none())
+    }
+
+    /// The stop-rule stage of `walk` whose verdict may be unknown, where it has one.
+    fn open_stop(&self, walk: Walk) -> Option<usize> {
         let (Walk::Has(Stop::Rule(stage))
         | Walk::Inside(Stop::Rule(stage))
         | Walk::Precedes(Stop::Rule(stage))
@@ -318,9 +332,17 @@ impl Emitter<'_> {
         else {
             return None;
         };
-        if !self.open.contains(&stage) {
-            return None;
-        }
+        self.open.contains(&stage).then_some(stage)
+    }
+
+    /// The unknown stops of a walk whose stop rule may be unknown: `(pk, e)`, `e` the order key
+    /// of the event among the candidates' (`2 * ord`). A walk along a link ends at its unknown
+    /// stop, after every candidate; `has` passes over the stop's subtree and reads the unknown
+    /// after testing the next node it visits (`has_until`); `has` with a field reads the field
+    /// child's stop only; `inside` with a field ends at its unknown stop whether or not it tests
+    /// it. `None` where the walk has no such stop.
+    fn opened(&mut self, walk: Walk, input: &str, candidates: &str) -> Option<String> {
+        let stage = self.open_stop(walk)?;
         let table = stage_table(stage);
         let unknown = |alias: &str| {
             format!(
@@ -374,16 +396,18 @@ impl Emitter<'_> {
     /// `Count::holds`: the true count lies in `t..=t + u` (`t` true, `u` unknown candidates),
     /// unbounded above where an unknown stop ended the walk. True where every value in it holds
     /// (and, with `as`, where it is exact), false where none does, unknown otherwise.
+    #[allow(clippy::too_many_arguments)]
     fn count_open(
         &mut self,
         walk: Walk,
+        kinds: Option<&[u16]>,
         sub: &Op,
         min: usize,
         max: Option<usize>,
         bind: Option<(usize, i64)>,
         input: &str,
     ) -> String {
-        let candidates = self.candidates(walk, input);
+        let candidates = self.candidates(walk, self.narrowed(walk, kinds), input);
         let matched = self.op(sub, &candidates);
         let opened = self.opened(walk, input, &candidates);
         let open = opened.map_or("0".to_owned(), |opened| {
