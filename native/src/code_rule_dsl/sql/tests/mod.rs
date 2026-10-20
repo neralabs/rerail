@@ -111,8 +111,9 @@ fn a_sample_clause_set_runs_a_bounded_number_of_statements_per_batch() {
     let (stages, clauses) = program.statement_count();
     eprintln!("sample clause set: {stages} stage statements, {clauses} clause statements");
     // `count` groups into a table keyed by row (`Emitter::grouped`). No rule walks over a frame
-    // that repeats a key (the nested `has` walks children, one row each): nothing is keyed.
-    assert_eq!((stages, clauses), (6, 66));
+    // that repeats a key (the nested `has` walks children, one row each): nothing is keyed. A
+    // walk's sub-rule does not re-test the kind its candidates were read by (`on_candidates`).
+    assert_eq!((stages, clauses), (6, 60));
 }
 
 /// Terminals run once per statement over their whole input set, never once per row: a fresh

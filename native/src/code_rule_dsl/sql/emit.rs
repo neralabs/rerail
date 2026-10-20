@@ -751,6 +751,33 @@ impl<'s> Emitter<'s> {
         out
     }
 
+    /// `op` on a tree walk's `candidates`, which hold only `need`'s kinds (`tree_candidates`): a
+    /// leading kind test those kinds pass is not run again (a walk to `kind: call` would
+    /// otherwise copy every candidate row once more to re-test its kind).
+    fn on_candidates(&mut self, op: &Op, walk: Walk, candidates: &str, need: &Need) -> String {
+        let tree = !matches!(walk, Walk::Slot(_) | Walk::Related(_));
+        let implied = |kinds: &[u16]| {
+            tree && need
+                .kinds
+                .as_deref()
+                .is_some_and(|need| need.iter().all(|kind| kinds.contains(kind)))
+        };
+        match op {
+            Op::Kinds(kinds) if implied(kinds) => candidates.to_owned(),
+            Op::All(items) if matches!(items.first(), Some(Op::Kinds(kinds)) if implied(kinds)) => {
+                let mut current = candidates.to_owned();
+                for item in &items[1..] {
+                    current = self.op(item, &current);
+                }
+                let changed = self.touched(op);
+                self.inherit(candidates, &current, &changed);
+                self.same_space(candidates, &current);
+                current
+            }
+            _ => self.op(op, candidates),
+        }
+    }
+
     fn apply(&mut self, op: &Op, input: &str) -> String {
         if self.three
             && let Some(out) = self.op3(op, input)
@@ -853,7 +880,7 @@ impl<'s> Emitter<'s> {
             } => {
                 let candidates = self.candidates(*walk, need, input);
                 self.first_match(&candidates, *walk, false);
-                let matched = self.op(sub, &candidates);
+                let matched = self.on_candidates(sub, *walk, &candidates, need);
                 self.first_matched(&candidates, &matched);
                 if *binds {
                     // `ord` is the walk order (negated ids for descending walks): its minimum
