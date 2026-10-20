@@ -705,7 +705,8 @@ The catalog fixture contains only ordered terminal-catalog data.
 The SQL fixture is the only owner of authored SQL statements.
 This separation prevents two fixtures from assigning different meanings to one SQL contract.
 
-Commit `cd4dbb1d` is the active TDD-red commit for the incomplete Phase 2 and Phase 3 SQL boundaries.
+Commit `cd4dbb1d` is the aggregate TDD-red commit for incomplete Phase 2 and Phase 3 SQL boundaries.
+Commit `0601812d` is the active focused red commit for nested Phase 2 truth composition.
 Do not use compiler output to create the authored SQL or catalog data.
 Reconcile each relational family from the policy semantics and the packed-row schema.
 
