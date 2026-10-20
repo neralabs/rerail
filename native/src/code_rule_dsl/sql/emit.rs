@@ -41,10 +41,10 @@ pub(super) const ROOTS: &str = "/*ROOTS*/";
 pub(super) const NAMESPACE: &str = "/*NS*/";
 /// Before an operator's temporary table (`Emitter::name`: a prefix of letters, then digits):
 /// the driver allocates each that is a frame a register, a frame name shared across clauses and
-/// reused once the temporary is dead (`exec::registers`); one that stays a B-tree is a B-tree
-/// register, shared across clauses by its declaration (`exec::btree_registers`). A recursion's
-/// B-trees (a unit's demand and answer, a component's reads) are temporaries too, prefixed `u`,
-/// which no operator's temporary is.
+/// reused once the temporary is dead (`exec::registers`); one that is a recursion table (`rec`)
+/// is a register too, shared across clauses by its declaration (`exec::rec_registers`). A
+/// recursion's tables (a unit's demand and answer, a component's reads) are temporaries too,
+/// prefixed `u`, which no operator's temporary is.
 pub(super) const TEMP: &str = "/*T*/";
 /// Where the driver substitutes the prefix of a `violation.each` enumeration's tables: `x`, the
 /// ranges reported per root `(file, root, start, end)`; `a`, the roots still enumerated; `r`, the
@@ -537,7 +537,12 @@ struct Emitter<'s> {
 
 /// `kinds` sorted, each once (`Emitter::kinds`).
 fn sorted(kinds: &[u16]) -> Rc<[u16]> {
-    kinds.iter().copied().collect::<BTreeSet<u16>>().into_iter().collect()
+    kinds
+        .iter()
+        .copied()
+        .collect::<BTreeSet<u16>>()
+        .into_iter()
+        .collect()
 }
 
 /// `An+B` at a 1-based position `index`, as `nth_child::Position::holds` computes it.
@@ -976,7 +981,8 @@ impl<'s> Emitter<'s> {
         // One row per root: a file's roots are either all its nodes or the selected ones.
         self.keyed_by(&root, vec![BTreeSet::new()]);
         // Every slot unbound, every node of the clause's kinds.
-        self.nulls.insert(root.clone(), Rc::new(held.iter().copied().collect()));
+        self.nulls
+            .insert(root.clone(), Rc::new(held.iter().copied().collect()));
         if let Some(kinds) = &statement.kinds {
             self.kinds.insert(root.clone(), sorted(kinds));
         }
@@ -1054,7 +1060,11 @@ impl<'s> Emitter<'s> {
             return;
         };
         let kinds = match self.kinds.get(to) {
-            Some(own) => own.iter().filter(|kind| known.contains(kind)).copied().collect(),
+            Some(own) => own
+                .iter()
+                .filter(|kind| known.contains(kind))
+                .copied()
+                .collect(),
             None => Rc::clone(known),
         };
         self.kinds.insert(to.to_owned(), kinds);
@@ -1076,6 +1086,20 @@ impl<'s> Emitter<'s> {
     /// The slots `frame` holds unbound in every row (`nulls`).
     pub(super) fn nulls_of(&self, frame: &str) -> Rc<BTreeSet<SlotId>> {
         self.nulls.get(frame).map_or_else(Rc::default, Rc::clone)
+    }
+
+    /// The rows of `input` at whose node the input-set terminal `table` (`text_match`,
+    /// `program_match`) holds for term `term`: the frame's distinct keys go to it in one call.
+    fn input_set(&mut self, table: &str, term: usize, input: &str) -> String {
+        self.frame(
+            "x",
+            &format!(
+                "SELECT {} FROM {input} f WHERE (f.file * 4294967296 + f.node) IN \
+                 (SELECT ek FROM {table} WHERE term = {term} AND ek IN (SELECT file * 4294967296 + node FROM {input}))",
+                self.cols_reading("f", input)
+            ),
+            Reads::join(&[input]),
+        )
     }
 
     /// `op` on `input` (`Emitter::op`), in the output frame's layout.
@@ -1114,15 +1138,8 @@ impl<'s> Emitter<'s> {
                 self.kinds.insert(out.clone(), passed);
                 out
             }
-            Op::Regex(term) => self.frame(
-                "x",
-                &format!(
-                    "SELECT {} FROM {input} f WHERE (f.file * 4294967296 + f.node) IN \
-                     (SELECT ek FROM text_match WHERE term = {term} AND ek IN (SELECT file * 4294967296 + node FROM {input}))",
-                    self.cols_reading("f", input)
-                ),
-                Reads::join(&[input]),
-            ),
+            Op::Regex(term) => self.input_set("text_match", *term, input),
+            Op::Program(term) => self.input_set("program_match", *term, input),
             Op::Pattern {
                 term,
                 env,
@@ -1542,10 +1559,9 @@ impl<'s> Emitter<'s> {
         // (`lineage`). Without an origin slot to name the key, it counts as the statement's own,
         // which only starts the check at more keys.
         let (reads, source) = match (self.evaluating.last(), self.origin) {
-            (Some(&from), Some(origin)) if units[from].scc == scc => (
-                reads_table(units[from].scc),
-                format!("{from}, f.s{origin}"),
-            ),
+            (Some(&from), Some(origin)) if units[from].scc == scc => {
+                (reads_table(units[from].scc), format!("{from}, f.s{origin}"))
+            }
             (Some(&from), Some(origin)) => {
                 (cross_table(units[from].scc), format!("{from}, f.s{origin}"))
             }
@@ -1683,7 +1699,9 @@ impl<'s> Emitter<'s> {
             );
             for reads in std::iter::once(&reads).chain(&crossing) {
                 self.push(
-                    format!("DELETE FROM {reads} WHERE su = {unit} AND s IN (SELECT k FROM {keys})"),
+                    format!(
+                        "DELETE FROM {reads} WHERE su = {unit} AND s IN (SELECT k FROM {keys})"
+                    ),
                     Reads::join(&[reads, &keys]).writes(Writes::Delete(reads.clone())),
                 );
             }

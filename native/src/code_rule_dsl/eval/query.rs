@@ -547,7 +547,7 @@ impl SqlFiles {
                         crate::code_rule_dsl::sql::FileContext {
                             path: Some(file.path.clone()),
                             module: file.module.clone(),
-                            scopes: Vec::new(),
+                            scopes: Default::default(),
                             calls: crate::code_rule_dsl::calls::FileCallsSlot::evaluation_calls(
                                 &file.path,
                             ),

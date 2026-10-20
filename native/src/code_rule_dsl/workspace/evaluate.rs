@@ -323,7 +323,8 @@ fn sql_batch(
     sql: &SqlEngine,
     grouped: bool,
     read: &(impl Fn(&str, &mut FileState, &mut Grammars) -> Result<u64> + Sync),
-    finish: &(impl Fn(
+    finish: &(
+         impl Fn(
         &mut FileState,
         &mut Grammars,
         &MatchBudget,
@@ -332,7 +333,8 @@ fn sql_batch(
         Metrics,
         u64,
     ) -> Result<Metrics>
-          + Sync),
+         + Sync
+     ),
 ) -> Evaluated {
     let closed = context.closed;
     #[cfg(feature = "code-rule-profile")]
@@ -416,12 +418,13 @@ fn sql_batch(
         let context = FileContext {
             path: Some(file.input.path.clone()),
             module: file.input.module.clone(),
-            scopes: file
-                .scopes
-                .as_ref()
-                .filter(|(revision, _)| *revision == file.source_revision)
-                .map(|(_, tables)| tables.clone())
-                .unwrap_or_default(),
+            scopes: Arc::new(parking_lot::Mutex::new(
+                file.scopes
+                    .as_ref()
+                    .filter(|(revision, _)| *revision == file.source_revision)
+                    .map(|(_, tables)| tables.clone())
+                    .unwrap_or_default(),
+            )),
             calls: CrossFileScheduler::calls(crossfile.as_ref()),
             kinds: ast.kinds.take(),
         };

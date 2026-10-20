@@ -2069,7 +2069,8 @@ pub(super) fn inner_scans(plan: &[(i64, i64, String)]) -> Vec<String> {
                 if codes.is_empty() {
                     number.trim().parse::<i64>().unwrap_or(0) != 0
                 } else if codes.starts_with('@') {
-                    // A frame's lookup on its constrained columns (`frames`).
+                    // A frame's or a recursion table's lookup on its constrained columns
+                    // (`frames`, `rec`).
                     true
                 } else {
                     // `b=`: a `nearest` walk's lookup of one input row's listed rows.
@@ -2169,4 +2170,153 @@ fn emitted_joins_never_scan_a_whole_table_on_the_inner_side() {
         "{} inner scan shapes",
         offenders.len()
     );
+}
+
+/// Transducer pushdown (`sql::pushdown`): every generated clause the SQL engine lowers is
+/// evaluated with pushdown and without it, where each pushed-down sub-rule runs as its SQL
+/// lowering (its definition), over the fixtures: the outputs must be identical. It reports, per
+/// operator a compiled program holds, how many compared cases compiled one, and requires every
+/// operator pushdown compiles to be covered. `RERAIL_SQL_PUSHDOWN_CASES` (default 5000) sets how
+/// many cases are compared.
+#[test]
+fn pushed_down_programs_agree_with_their_sql_lowering() {
+    use crate::code_rule_dsl::sql::pushdown::{EAGER, OVERRIDE, SHAPES};
+    let seed = env_number("RERAIL_SQL_DIFF_SEED", 0x5e7_c0de);
+    let wanted = env_number("RERAIL_SQL_PUSHDOWN_CASES", 5000) as usize;
+    let started = Instant::now();
+    let vocabularies: Vec<Vocabulary> = FIXTURES
+        .iter()
+        .map(|(label, paths)| Vocabulary::of(label, paths))
+        .collect();
+    let inputs: Vec<Value> = vocabularies
+        .iter()
+        .map(|vocabulary| {
+            let files: Vec<(&str, &str, &str)> = vocabulary
+                .files
+                .iter()
+                .map(|(path, source)| (vocabulary.label, path.as_str(), source.as_str()))
+                .collect();
+            snapshot(&files)
+        })
+        .collect();
+    let mut capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
+    capabilities["limits"]["maxWitnesses"] = json!(1_000_000);
+    capabilities["limits"]["maxVisitedNodes"] = json!(1_000_000_000);
+    let mut generators: Vec<Generator<'_>> = vocabularies
+        .iter()
+        .enumerate()
+        .map(|(index, vocabulary)| Generator {
+            rng: Rng(seed ^ (index as u64).wrapping_mul(0x2545_f491_4f6c_dd1d)),
+            vocabulary,
+            calls: Vec::new(),
+            plain: Vec::new(),
+            params: None,
+            counted: false,
+            three: false,
+            recursive: false,
+        })
+        .collect();
+    let (mut compared, mut generated, mut pushed) = (0usize, 0usize, 0usize);
+    let mut operators = std::collections::BTreeMap::<String, usize>::new();
+    let mut differences = Vec::new();
+    while compared < wanted {
+        let batch: Vec<(usize, Value, Value)> = (0..256)
+            .map(|index| {
+                let language = (generated + index) % generators.len();
+                let (ast, violation) = generators[language].case();
+                (language, ast, violation)
+            })
+            .collect();
+        generated += batch.len();
+        let outcomes: Vec<_> = batch
+            .par_iter()
+            .map(|(language, ast, violation)| {
+                let document = clause_document(
+                    json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": violation }),
+                );
+                let compiled: CompiledCodeRuleDsl =
+                    compile_document_with(document, &capabilities).ok()?;
+                let evaluate = |pushdown: bool| {
+                    // Every capture-free rule pushed down (`EAGER`), whatever its weight: the
+                    // most programs compared with their lowering.
+                    OVERRIDE.set(Some(pushdown));
+                    EAGER.set(pushdown);
+                    SHAPES.take();
+                    let output = compiled
+                        .evaluate(
+                            inputs[*language].to_string(),
+                            "report".to_owned(),
+                            Some("sql".to_owned()),
+                        )
+                        .map_err(|error| error.reason);
+                    OVERRIDE.set(None);
+                    EAGER.set(false);
+                    (output, SHAPES.take())
+                };
+                let (lowered, _) = evaluate(false);
+                if lowered
+                    .as_ref()
+                    .is_err_and(|reason| reason.contains("Unsupported("))
+                {
+                    return None;
+                }
+                let (programs, shapes) = evaluate(true);
+                Some((lowered, programs, shapes))
+            })
+            .collect();
+        for ((_, ast, _), outcome) in batch.iter().zip(outcomes) {
+            let Some((lowered, programs, shapes)) = outcome else {
+                continue;
+            };
+            if compared >= wanted {
+                break;
+            }
+            compared += 1;
+            pushed += usize::from(!shapes.is_empty());
+            for operator in shapes.into_keys() {
+                *operators.entry(operator).or_default() += 1;
+            }
+            if lowered != programs {
+                differences.push((ast.clone(), lowered, programs));
+            }
+        }
+    }
+    eprintln!(
+        "pushdown differential: seed {seed:#x}, {compared} cases compared ({generated} generated), {pushed} compiled a program, {} differences, {:.1}s",
+        differences.len(),
+        started.elapsed().as_secs_f64()
+    );
+    eprintln!("cases per pushed-down operator: {operators:?}");
+    for (ast, lowered, programs) in differences.iter().take(5) {
+        let cut = |text: &str| text.chars().take(1500).collect::<String>();
+        eprintln!(
+            "difference:\n  rule: {ast}\n  lowered: {}\n  programs: {}",
+            cut(&format!("{lowered:?}")),
+            cut(&format!("{programs:?}"))
+        );
+    }
+    assert!(differences.is_empty(), "{} differences", differences.len());
+    let missing: Vec<&str> = [
+        "all",
+        "any",
+        "not",
+        "kind",
+        "regex",
+        "has.nb",
+        "has.end",
+        "inside.nb",
+        "inside.end",
+        "fieldHas.nb",
+        "fieldHas.end",
+        "fieldInside.nb",
+        "fieldInside.end",
+        "count:has.nb",
+        "count:has.end",
+        "count:inside.nb",
+        "count:inside.end",
+    ]
+    .into_iter()
+    .filter(|operator| !operators.contains_key(*operator))
+    .collect();
+    assert!(missing.is_empty(), "no case compiled {missing:?}");
 }

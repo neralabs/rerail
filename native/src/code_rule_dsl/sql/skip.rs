@@ -5,12 +5,12 @@
 //! leaves its output as empty as running it would, and the skip carries on to what reads it.
 //!
 //! The counts are exact. A frame's rows are its buffers' length (`frames::FrameStore::rows`):
-//! every insert and clear goes through them. A table that stays a B-tree (one some statement
-//! updates or deletes from by a condition) is written only by statements that record how
-//! (`emit::Writes`): an `INSERT` adds the rows `sqlite3_changes()` reports, a `DELETE` with a
-//! condition removes them, an emptying `DELETE` sets 0, and an `UPDATE` changes no count. Tables
-//! the session does not count (`node`, the terminals, `runs`, `roots`) are never a rule's input:
-//! a statement that reads only them always runs.
+//! every insert and clear goes through them. A recursion table (`rec`, one some statement
+//! updates or deletes from by a condition) or a B-tree (an enumeration's) is written only by
+//! statements that record how (`emit::Writes`): an `INSERT` adds the rows `sqlite3_changes()`
+//! reports, a `DELETE` with a condition removes them, emptying it sets 0, and an `UPDATE`
+//! changes no count. Tables the session does not count (`node`, the terminals, `runs`,
+//! `roots`) are never a rule's input: a statement that reads only them always runs.
 //!
 //! Beyond single statements (`exec::Runner`):
 //! - **Clause and stage runs.** Every other statement of a clause or stage reads, through its
@@ -49,7 +49,7 @@ pub(super) static MODE: LazyLock<Mode> =
 /// The rows of every counted table as the batch's statements left them, and each recursion
 /// block's mark: its units' demand rows when its last run ended.
 pub(super) struct Counts {
-    /// A B-tree's rows, by counted table (a frame's entry is unused).
+    /// A recursion table's or a B-tree's rows, by counted table (a frame's entry is unused).
     rows: Vec<i64>,
     /// Each counted table's name, and whether it is a frame of `store`.
     tables: Vec<(String, bool)>,
@@ -92,7 +92,8 @@ impl Counts {
         }
     }
 
-    /// Every B-tree empty and every block unrun: a batch that failed leaves no row.
+    /// Every recursion table and B-tree empty and every block unrun: a batch that failed leaves
+    /// no row.
     pub(super) fn reset(&mut self) {
         self.rows.fill(0);
         self.marks.fill(0);

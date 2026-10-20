@@ -214,6 +214,8 @@ fn rule_stop_walks_read_the_stop_set_without_recursion() {
 #[test]
 fn descendant_walks_with_kinds_list_the_whole_input_in_one_pass() {
     use crate::code_rule_dsl::test_support::grammar_matchers;
+    // The SQL lowering of the walks, which pushdown would make programs.
+    let _lowering = crate::code_rule_dsl::sql::pushdown::SqlLowering::hold();
     let sources = [
         "function f(a) { if (a) { return g(a.b(1), [b, c]); } return h(u1, (d)); }\nlet k = f(u2) + m.n(n);\n",
         "class C { m() { x.y([1], { z: w(2) }); } }\nq.r(s.t(u3));\n",

@@ -272,12 +272,13 @@ export const engineReportSchema = z.union([
       skippedClears: z.number().optional(),
       profile: statementProfileSchema.optional(),
     }).passthrough(),
-    /** The program as sessions run it (`sql/exec.rs` `Plan`): steps, their distinct texts and those texts' bytes, frame and B-tree names; and as it is stored (`sql/shapes.rs`): distinct stage and clause shapes, distinct text skeletons, and the bytes those are stored in. */
+    /** The program as sessions run it (`sql/exec.rs` `Plan`): steps, their distinct texts and those texts' bytes, frame, recursion table and B-tree names; and as it is stored (`sql/shapes.rs`): distinct stage and clause shapes, distinct text skeletons, and the bytes those are stored in. */
     program: z.object({
       steps: z.number(),
       texts: z.number(),
       bytes: z.number(),
       frames: z.number(),
+      recursionTables: z.number().optional(),
       btrees: z.number(),
       shapes: z.number().optional(),
       skeletons: z.number().optional(),

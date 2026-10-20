@@ -1,9 +1,10 @@
 //! Native terminals behind virtual tables, each evaluated once per statement over its whole input
-//! set (`pattern`, `text_match`, `fact`). SQL never calls one per row.
+//! set (`pattern`, `text_match`, `program_match`, `fact`). SQL never calls one per row.
 
 mod fact;
 mod leaves;
 mod pattern;
+mod program;
 mod text;
 
 use super::plan::SlotKind;
@@ -11,13 +12,15 @@ use crate::code_rule_dsl::language::GrammarDialect;
 use ast_grep_core::matcher::{Pattern, PatternNode};
 use ast_grep_core::meta_var::MetaVariable;
 pub(super) use fact::{
-    BatchScopes, Binder, FACT_COLUMNS, FactTable, FactTerm, Leaf, Verdicts, take_fact_time,
+    BatchScopes, Binder, FACT_COLUMNS, FactMemo, FactTable, FactTerm, Leaf, Verdicts,
+    take_fact_time,
 };
 pub(super) use leaves::{
     BindingSites, BindsCandidates, BindsOthers, Exported, FormatPart, FormatSides, Occurrences,
     Parsed,
 };
 pub(super) use pattern::{PatternRow, PatternTable, fresh_match};
+pub(super) use program::{ProgramTable, ProgramTerm};
 use regex::Regex;
 pub(super) use text::TextTable;
 
@@ -29,6 +32,8 @@ pub(super) const PATTERN_COLUMNS: usize = 1024;
 pub(super) enum Terminal {
     Pattern(PatternTerm),
     Regex(Regex),
+    /// A pushed-down sub-rule's transducer program (`program`).
+    Program(ProgramTerm),
     /// An input-set terminal's three-valued verdicts (`fact`).
     Fact(FactTerm),
 }
