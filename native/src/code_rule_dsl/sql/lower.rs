@@ -30,6 +30,19 @@ pub(super) const INTERNAL: usize = usize::MAX;
 /// loop records each recursive reference's read from (`emit::Emitter::recur`).
 pub(super) const ORIGIN: &str = "\0origin";
 
+/// The internal slot holding, in the body of a unit keyed by its following context
+/// (`plan::Unit::following`), the context its key carries.
+const FOLLOWING: &str = "\0following";
+
+/// While a unit of a following cycle (`recursion::Cycle::following`) is lowered: the cycle's
+/// members, and the slot holding the following context where the lowering is, the unit's own
+/// (`FOLLOWING`) or that of the guarded sub-rule it lies in (`Op::Follow`'s `out`).
+#[derive(Clone)]
+struct Following {
+    keys: std::rc::Rc<HashSet<UtilKey>>,
+    slot: SlotId,
+}
+
 /// A per-batch shared stage: a rule matched in a fresh environment at every node of its root kinds
 /// in the files of its dialect, computed once per batch into `stage_<index>`. Stop rules and
 /// context-free utilities are stages; equal ones (equal SQL) are one, keyed by digest. The last
@@ -137,6 +150,11 @@ struct Lowerer<'p> {
     shared: HashSet<UtilKey>,
     /// The root-kinds analysis of the relations' sub-rules, made on first use (`walk_kinds`).
     kinds: Option<RootKinds>,
+    /// Where a unit of a following cycle is being lowered: its cycle and current context.
+    following: Option<Following>,
+    /// Each guarded binding sub-rule's number in the statement (`Op::Follow::rule`), by its
+    /// address: one per matcher, as the matcher's `FOLLOWING` keys it.
+    follow_rules: HashMap<usize, usize>,
 }
 
 fn unsupported<T>(operator: &str) -> Result<T, Unsupported> {
@@ -272,7 +290,10 @@ fn referred(op: &Op, out: &mut Vec<usize>) {
         Op::All(items) | Op::Any(items) | Op::Seq(items) => {
             items.iter().for_each(|item| referred(item, out));
         }
-        Op::Every { sub, .. } | Op::Parse { body: sub, .. } | Op::Host { rule: sub, .. } => {
+        Op::Every { sub, .. }
+        | Op::Parse { body: sub, .. }
+        | Op::Host { rule: sub, .. }
+        | Op::Follow { sub, .. } => {
             referred(sub, out);
         }
         Op::AllOpen(terms) => terms.iter().for_each(|term| referred(&term.op, out)),
@@ -403,6 +424,8 @@ impl<'p> Lowerer<'p> {
             tree: None,
             shared: HashSet::new(),
             kinds: None,
+            following: None,
+            follow_rules: HashMap::new(),
         }
     }
 
@@ -513,7 +536,28 @@ impl<'p> Lowerer<'p> {
         (!leaky).then(|| Cycle {
             keys: vec![key],
             refused: None,
+            following: false,
         })
+    }
+
+    /// The following context a reference to a unit of `cycle` passes: the current one, where the
+    /// reference lies in a unit of that cycle and the cycle is keyed by its context; none
+    /// elsewhere. A cycle's guarded sub-rules lie in its members' rules, so no reference from
+    /// outside it holds a pair it can meet again: entering it, its context starts empty.
+    fn context(&self, cycle: &Cycle) -> Option<SlotId> {
+        self.following
+            .as_ref()
+            .filter(|following| cycle.following && following.keys.contains(&cycle.keys[0]))
+            .map(|following| following.slot)
+    }
+
+    /// The number of a guarded binding sub-rule (`Op::Follow::rule`).
+    fn follow_rule(&mut self, rule: &AstMatcher) -> usize {
+        let next = self.follow_rules.len();
+        *self
+            .follow_rules
+            .entry(std::ptr::from_ref(rule) as usize)
+            .or_insert(next)
     }
 
     /// The unit of `util`, a member of `cycle` running in `scope` (a call's runs in a frame of its
@@ -580,11 +624,15 @@ impl<'p> Lowerer<'p> {
             }
         }
         self.slot(INTERNAL, ORIGIN, SlotKind::Node);
+        let following = cycle
+            .following
+            .then(|| self.slot(INTERNAL, FOLLOWING, SlotKind::Count));
         let id = self.units.len();
         self.units.push(Unit {
             key: key.clone(),
             body: Op::Never,
             scc: 0,
+            following,
         });
         self.unit_utils.push(util.clone());
         self.unit_index.insert(identity, (id, own));
@@ -595,9 +643,19 @@ impl<'p> Lowerer<'p> {
             .filter(|key| self.program.in_progress.insert(*key))
             .collect();
         let bound: Bound = key.iter().copied().collect();
+        // The body starts from the context its key carries; the lowering it interrupts (a unit
+        // is lowered at its first reference) resumes with its own.
+        let outer = std::mem::replace(
+            &mut self.following,
+            following.map(|slot| Following {
+                keys: std::rc::Rc::new(cycle.keys.iter().copied().collect()),
+                slot,
+            }),
+        );
         let lowered = self.with_exclude(exclude, |lowerer| {
             util.with_target(|rule| lowerer.lower(rule, own, &bound))
         });
+        self.following = outer;
         for key in entered {
             self.program.in_progress.remove(&key);
         }
@@ -794,7 +852,14 @@ impl<'p> Lowerer<'p> {
     }
 
     /// A stage for `rule`, matched in a fresh environment: lowered, emitted and keyed by its SQL.
+    /// Not one that reaches back into the following cycle being lowered: the matcher matches it
+    /// with the binding sub-rules in progress, which a per-batch stage does not know.
     fn stage(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
+        if let Some(following) = &self.following
+            && recursion::reaches(rule, &following.keys)
+        {
+            return unsupported("per-batch stage reaching back into a following recursion");
+        }
         let address = (std::ptr::from_ref(rule) as usize, self.stage_key());
         if let Some(&stage) = self.program.stage_rules.get(&address) {
             return Ok(stage);
@@ -1134,7 +1199,15 @@ impl<'p> Lowerer<'p> {
                     let (unit, _) = self.unit(&cycle, util, None, scope, exclude)?;
                     let mut out = bound.clone();
                     out.extend(self.units[unit].key.iter().copied());
-                    return Ok((Op::Recur { unit, slots: None }, out));
+                    let context = self.context(&cycle);
+                    return Ok((
+                        Op::Recur {
+                            unit,
+                            slots: None,
+                            context,
+                        },
+                        out,
+                    ));
                 }
                 // A `matches` evaluates its utility on the frame's nodes only (demand-driven, as
                 // the matcher's memo): inlined, or a unit where two or more references reach it.
@@ -1145,7 +1218,14 @@ impl<'p> Lowerer<'p> {
                     let (unit, _) = self.unit(&cycle, util, None, scope, exclude)?;
                     let mut out = bound.clone();
                     out.extend(self.units[unit].key.iter().copied());
-                    return Ok((Op::Recur { unit, slots: None }, out));
+                    return Ok((
+                        Op::Recur {
+                            unit,
+                            slots: None,
+                            context: None,
+                        },
+                        out,
+                    ));
                 }
                 util.with_target(|rule| self.lower(rule, scope, bound))
                     .expect("a filled utility")
@@ -1202,6 +1282,7 @@ impl<'p> Lowerer<'p> {
                             Op::Recur {
                                 unit,
                                 slots: Some(slots),
+                                context: self.context(&cycle),
                             },
                             None,
                         )

@@ -547,9 +547,115 @@ fn a_loop_only_a_cut_candidate_reaches_is_not_checked() {
     let found = agreed("python", ast.clone(), None, source);
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].starts_with("def main"), "{found:?}");
-    // Where `main` calls `a` first, the matcher evaluates the loop.
+    // Where `main` calls `a` first, the matcher evaluates the loop, and leaves it where it comes
+    // back to `a`'s site under the site's rule (`binding::FOLLOWING`): `a(1)` reaches nothing.
     let first = source.replace("    h()\n    a(1)\n", "    a(1)\n    h()\n");
-    let reason = refused("python", ast, &first);
+    let found = agreed("python", ast, None, &first);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].starts_with("def main"), "{found:?}");
+}
+
+/// `_compile_server_ref.py`'s shape (serverplan_state_tripwires' `ctx-reach`/`ctx-edge`):
+/// `lower_scalar_server_ref` and `lower_scalar_source` call each other, through the site of the
+/// binding each call resolves to, and only `resolve_ref` reads the context's materialized state.
+/// The matcher leaves the loop where a call comes back to a site whose rule it is matching
+/// (`binding::FOLLOWING`), and each function reaches `resolve_ref` another way; the set
+/// evaluation keys each `reach` by the sites it is following and agrees. Both as a shared
+/// utility and as a parameterized call (whose frame is keyed by its parameters).
+#[test]
+fn mutual_recursion_through_a_binding_site_follows_as_the_matcher() {
+    let source = "\
+def lower_scalar_server_ref(value, ctx):\n    if isinstance(value, Seed):\n        return lower_scalar_source(value, ctx)\n    return resolve_ref(value, ctx)\n\n\
+def lower_scalar_source(value, ctx):\n    if is_ref(value):\n        return lower_scalar_server_ref(value, ctx)\n    return value\n\n\
+def resolve_ref(value, ctx):\n    return getattr(ctx, \"materialized_pipeline\", None)\n\n\
+def lower_row_cell(ref, ctx):\n    return lower_scalar_server_ref(ref, ctx)\n\n\
+def unrelated(value):\n    return is_ref(value)\n";
+    let sink = json!({ "kind": "call", "regex": "^getattr\\(\\s*ctx" });
+    let edge = |reach: Value| {
+        json!({ "kind": "call", "has": { "field": "function", "kind": "identifier",
+            "resolves": { "binding": { "site": { "all": [
+                { "kind": "function_definition" },
+                { "matches": reach },
+            ] } } } } })
+    };
+    let body = json!({ "kind": "function_definition", "any": [
+        { "has": { "stopBy": "end", "matches": "sink" } },
+        { "all": [
+            { "not": { "has": { "stopBy": "end", "matches": "sink" } } },
+            { "has": { "stopBy": "end", "kind": "call", "matches": "edge" } },
+        ] },
+    ] });
+    let rule = |reach: Value| {
+        json!({ "kind": "function_definition", "pattern": "$F",
+            "not": { "has": { "stopBy": "end", "matches": "sink" } }, "matches": reach })
+    };
+    let shared = json!({
+        "rule": rule(json!("reach")),
+        "utils": { "sink": sink, "reach": body, "edge": edge(json!("reach")) },
+    });
+    let called = json!({
+        "rule": rule(json!({ "reach": { "Z": "$Z" } })),
+        "utils": {
+            "sink": sink,
+            "reach": { "params": ["Z"], "rule": body },
+            "edge": edge(json!({ "reach": { "Z": "$Z" } })),
+        },
+    });
+    for ast in [shared, called] {
+        let found = agreed("python", ast.clone(), None, source);
+        let names: Vec<&str> = found
+            .iter()
+            .map(|found| found.split(['(', ' ']).nth(1).expect("a def"))
+            .collect();
+        assert_eq!(
+            names,
+            ["lower_row_cell", "lower_scalar_server_ref", "lower_scalar_source"],
+            "{ast}"
+        );
+    }
+}
+
+/// The guard changes which candidate binds first, where a least fixpoint would not. `b()`'s
+/// site is `b`, entered under `edge`'s site rule; in `b`, `a()` comes first, but `a` reaches the
+/// sink only through `b()`, whose site the matcher is matching: `a` fails there, and `d()` binds
+/// `$C`. A least fixpoint over the call graph, which knows no context, has `a` reach the sink
+/// and binds `a`.
+#[test]
+fn the_following_guard_decides_which_candidate_binds_first() {
+    let ast = json!({
+        "rule": { "kind": "call", "regex": "^b\\(\\)$", "matches": "edge" },
+        "utils": {
+            "reach": { "params": ["C"], "rule": { "kind": "function_definition", "any": [
+                { "has": { "stopBy": "end", "kind": "call", "regex": "^sink\\(" } },
+                { "has": { "stopBy": "end", "kind": "call", "pattern": "$C($$$)", "matches": "edge" } },
+            ] } },
+            "edge": { "kind": "call", "has": { "field": "function", "kind": "identifier",
+                "resolves": { "binding": { "site": { "matches": { "reach": { "C": "$D" } } } } } } },
+        },
+    });
+    let source = "def a():\n    b()\n\ndef b():\n    a()\n    d()\n\ndef d():\n    sink()\n\ndef main():\n    b()\n";
+    assert_eq!(agreed("python", ast, None, source), ["b() D=d", "b() D=d"]);
+}
+
+/// A loop that passes no binding sub-rule keeps its following context: its keys repeat, and it
+/// is refused, as before, where a guarded loop in the same cycle is not.
+#[test]
+fn a_loop_outside_the_guarded_sub_rules_is_still_refused() {
+    let ast = json!({
+        "rule": { "kind": "call", "matches": "edge" },
+        "utils": {
+            "reach": { "kind": "function_definition", "any": [
+                { "has": { "stopBy": "end", "kind": "call", "matches": "edge" } },
+                { "has": { "stopBy": "end", "kind": "call", "regex": "^sink\\(" } },
+            ] },
+            "edge": { "kind": "call", "any": [
+                { "has": { "field": "function", "kind": "identifier",
+                    "resolves": { "binding": { "site": { "matches": "reach" } } } } },
+                { "inside": { "stopBy": "end", "kind": "function_definition", "matches": "reach" } },
+            ] },
+        },
+    });
+    let reason = refused("python", ast, "def f():\n    g()\n");
     assert!(
         reason.contains("Unsupported(recursion whose reads loop back)"),
         "{reason}"

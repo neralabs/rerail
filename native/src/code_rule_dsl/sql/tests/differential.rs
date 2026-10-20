@@ -1631,12 +1631,158 @@ fn generated_rules_agree_with_the_native_matcher() {
         .iter()
         .any(|refusal| reason.contains(refusal))
     };
-    assert!(
-        differences.is_empty() && unsupported.iter().all(|(_, reason)| refused(reason)),
-        "{} differences, {} unsupported",
-        differences.len(),
-        unsupported.len()
+    // The recursions through a binding's nodes, which the generator above does not reach: every
+    // one is in scope, so none may be refused.
+    let following_rules = following_cases(seed);
+    let following = following_rules
+        .par_iter()
+        .map(|(language, ast, violation)| {
+            let at = FIXTURES
+                .iter()
+                .position(|(label, _)| label == language)
+                .expect("a fixture language");
+            (ast, run_case(ast, violation, &inputs[at], &capabilities))
+        })
+        .collect::<Vec<_>>();
+    let mut following_failures = Vec::new();
+    let (mut following_compared, mut following_found) = (0usize, 0usize);
+    for (ast, outcome) in following {
+        match outcome {
+            Outcome::Same { found, .. } => {
+                following_compared += 1;
+                following_found += found;
+            }
+            Outcome::Rejected | Outcome::NativeLimit => {}
+            Outcome::Unsupported(reason) => following_failures.push(format!("{reason}\n  {ast}")),
+            Outcome::Differs { native, sql } => following_failures.push(format!(
+                "difference:\n  rule: {ast}\n  native: {}\n  sql: {}",
+                native.chars().take(1500).collect::<String>(),
+                sql.chars().take(1500).collect::<String>()
+            )),
+        }
+    }
+    eprintln!(
+        "following: {following_compared} recursions through a binding's nodes agree ({following_found} violations), {} do not",
+        following_failures.len()
     );
+    for failure in following_failures.iter().take(5) {
+        eprintln!("following: {failure}");
+    }
+    assert!(
+        differences.is_empty()
+            && unsupported.iter().all(|(_, reason)| refused(reason))
+            && following_failures.is_empty(),
+        "{} differences, {} unsupported, {} recursions through a binding's nodes not agreeing",
+        differences.len(),
+        unsupported.len(),
+        following_failures.len()
+    );
+}
+
+/// Recursions through a binding's site or value (`resolves.binding`), which the matcher leaves
+/// where they come back to a binding node whose sub-rule it is matching (`binding::FOLLOWING`):
+/// a declaration's own name resolves to it, so most of these come back at once. A shared
+/// utility, a pair of them, or a parameterized call; a leaf before or after the recursion; the
+/// clause matching or negating it. Drawn from a generator of their own, so the cases above stay
+/// as their seed names them.
+fn following_cases(seed: u64) -> Vec<(&'static str, Value, Value)> {
+    const CASES: usize = 64;
+    let mut rng = Rng(seed ^ 0xf011_0e1d_0000_0001);
+    let violation = json!({ "anchor": "witness.span", "code": "X", "message": "x" });
+    (0..CASES)
+        .map(|index| {
+            let (language, roots, leaves): (&str, &[&str], &[Value]) = if index % 2 == 0 {
+                (
+                    "typescript",
+                    &[
+                        "variable_declarator",
+                        "lexical_declaration",
+                        "function_declaration",
+                        "class_declaration",
+                        "statement_block",
+                        "identifier",
+                    ],
+                    &[
+                        json!({ "kind": "number" }),
+                        json!({ "kind": "string" }),
+                        json!({ "kind": "arrow_function" }),
+                        json!({ "kind": "call_expression", "pattern": "$X" }),
+                        json!({ "has": { "stopBy": "end", "kind": "number", "pattern": "$X" } }),
+                    ],
+                )
+            } else {
+                (
+                    "python",
+                    &[
+                        "function_definition",
+                        "class_definition",
+                        "assignment",
+                        "call",
+                        "block",
+                        "identifier",
+                    ],
+                    &[
+                        json!({ "kind": "integer" }),
+                        json!({ "kind": "string" }),
+                        json!({ "kind": "return_statement" }),
+                        json!({ "kind": "call", "regex": "^print", "pattern": "$X" }),
+                        json!({ "has": { "stopBy": "end", "kind": "integer", "pattern": "$X" } }),
+                    ],
+                )
+            };
+            let root = *rng.pick(roots);
+            let leaf = rng.pick(leaves).clone();
+            let node = *rng.pick(&["site", "site", "value"]);
+            let parameterized = rng.chance(30);
+            let mutual = !parameterized && rng.chance(40);
+            let reference = |name: &str| {
+                if parameterized {
+                    json!({ name: { "P": "$P" } })
+                } else {
+                    json!(name)
+                }
+            };
+            let step = |target: Value| {
+                json!({ "kind": "identifier", "resolves": { "binding": { node: { "matches": target } } } })
+            };
+            let walk = if mutual {
+                json!({ "has": { "stopBy": "end", "matches": "hop" } })
+            } else {
+                let mut walk = step(reference("known"));
+                if rng.chance(30) {
+                    walk["pattern"] = json!("$Y");
+                }
+                json!({ "has": { "stopBy": "end", "all": [walk] } })
+            };
+            let branches = if rng.chance(50) {
+                vec![leaf, walk]
+            } else {
+                vec![walk, leaf]
+            };
+            let body = json!({ "any": branches });
+            let mut utils = Map::new();
+            if parameterized {
+                utils.insert("known".into(), json!({ "params": ["P"], "rule": body }));
+            } else {
+                utils.insert("known".into(), body);
+            }
+            if mutual {
+                utils.insert("hop".into(), step(json!("known")));
+            }
+            let called = if parameterized {
+                json!({ "known": { "P": "$X" } })
+            } else {
+                json!("known")
+            };
+            let rule = if rng.chance(25) {
+                json!({ "kind": root, "not": { "matches": called } })
+            } else {
+                json!({ "kind": root, "matches": called })
+            };
+            let ast = json!({ "language": language, "rule": rule, "utils": utils });
+            (language, ast, violation.clone())
+        })
+        .collect()
 }
 
 /// The replayed cases, one at a time on the differential's inputs: each one's native and SQL

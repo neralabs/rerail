@@ -5,6 +5,7 @@
 //! matcher's order of the steps, the first that is not true deciding.
 
 use super::{Bound, INTERNAL, Lowerer, unsupported};
+use crate::code_rule_dsl::sql::recursion;
 use crate::code_rule_dsl::matcher::{
     AstMatcher, BindingFilter, BindingTest, Binds, CaptureAnalysis, FormatArgs, ParseTest,
     Semantic, may_bind,
@@ -165,7 +166,9 @@ impl Lowerer<'_> {
     }
 
     /// The sub-rules of a binding's nodes, held in `slots` (`binding::match_binding_nodes`):
-    /// each at its node in order, sharing the environment.
+    /// each at its node in order, sharing the environment. In a unit of a following cycle, a
+    /// sub-rule that reaches the cycle again is guarded as the matcher's `FOLLOWING` guards it
+    /// (`Op::Follow`); where it reaches none, no pair it adds can be met again.
     fn binding_nodes(
         &mut self,
         rules: [&Option<AstMatcher>; 3],
@@ -178,7 +181,31 @@ impl Lowerer<'_> {
             let Some(rule) = rule else {
                 continue;
             };
-            let (sub, out) = self.lower(rule, scope, current)?;
+            let guarded = self
+                .following
+                .as_ref()
+                .filter(|following| recursion::reaches(rule, &following.keys))
+                .map(|following| following.slot);
+            let (sub, out) = match guarded {
+                Some(base) => {
+                    let number = self.follow_rule(rule);
+                    let added = self.internal("follow", SlotKind::Count);
+                    self.following.as_mut().expect("following").slot = added;
+                    let lowered = self.lower(rule, scope, current);
+                    self.following.as_mut().expect("following").slot = base;
+                    let (sub, out) = lowered?;
+                    (
+                        Op::Follow {
+                            rule: number,
+                            base,
+                            out: added,
+                            sub: Box::new(sub),
+                        },
+                        out,
+                    )
+                }
+                None => self.lower(rule, scope, current)?,
+            };
             *current = out;
             items.push(self.search_over(Walk::Slot(slot), sub, may_bind(rule)));
         }

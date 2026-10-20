@@ -14,6 +14,7 @@
 //! insert them by seeking.
 
 mod each;
+mod following;
 mod keyed;
 mod leaves;
 mod lineage;
@@ -917,7 +918,17 @@ impl<'s> Emitter<'s> {
             Op::Unknowable { .. } | Op::AllOpen(_) | Op::AnyOpen(_) | Op::Search { .. } => {
                 unreachable!("three-valued operators lower under `Unknowable`, at the root only")
             }
-            Op::Recur { unit, slots } => self.recur(*unit, slots.as_deref(), input),
+            Op::Recur {
+                unit,
+                slots,
+                context,
+            } => self.recur(*unit, slots.as_deref(), *context, input),
+            Op::Follow {
+                rule,
+                base,
+                out,
+                sub,
+            } => self.follow(*rule, *base, *out, sub, input),
             // The root is bound only where some range is reported for it: elsewhere `Excluded`
             // drops nothing whatever the root, so leaving it unbound keeps the roots out of the
             // distinct keys of the sub-rules (`keyed`) and recursive units, which would otherwise
@@ -991,23 +1002,31 @@ impl<'s> Emitter<'s> {
 
     /// Creates `unit`'s demand and answer tables where they do not exist yet. A demanded key is
     /// `dirty` until its body is evaluated, and again when a key it read changed its answer. A
-    /// three-valued unit's answer holds its verdict too, `unk`: the key matched or is unknown.
+    /// three-valued unit's answer holds its verdict too, `unk`: the key matched or is unknown. A
+    /// unit keyed by its following context (`Unit::following`) demands it too, in `cf`.
     fn unit_tables(&mut self, unit: usize) {
         let width = self.key_columns(&self.units[unit].key).len();
         let columns: String = (0..width).map(|index| format!(", c{index}")).collect();
+        let context = if self.units[unit].following.is_some() {
+            ", cf"
+        } else {
+            ""
+        };
         let demand = demand_table(unit);
         let answer = answer_table(unit);
         let unk = if self.three { ", unk" } else { "" };
         self.push(
             format!(
-                "CREATE TEMP TABLE IF NOT EXISTS {demand}(id INTEGER PRIMARY KEY, file, node{columns}, dirty INTEGER DEFAULT 1)"
+                "CREATE TEMP TABLE IF NOT EXISTS {demand}(id INTEGER PRIMARY KEY, file, node{columns}{context}, dirty INTEGER DEFAULT 1)"
             ),
             Effect::default(),
         );
         // The whole key: a reference finds its row by `(file, node)` and every key column, and a
         // node can be demanded under many bindings.
         self.push(
-            format!("CREATE INDEX IF NOT EXISTS {demand}_at ON {demand}(file, node{columns})"),
+            format!(
+                "CREATE INDEX IF NOT EXISTS {demand}_at ON {demand}(file, node{columns}{context})"
+            ),
             Effect::default(),
         );
         // The dirty keys, which every pass reads and the loop's guard counts before it runs.
@@ -1024,11 +1043,18 @@ impl<'s> Emitter<'s> {
     }
 
     /// A recursive unit's answers at the keys of `input`'s rows (`site`: the frame's slots for the
-    /// unit's key; `None`, the key's own): the keys are demanded, the loop of the unit's component
-    /// runs where the unit is not being evaluated already, and each row whose key matched takes
-    /// the key's answer. Rows whose key did not match are dropped. Three-valued, a row whose key
-    /// is unknown is unknown (its answer's bindings are the key's, so the row's own).
-    fn recur(&mut self, unit: usize, site: Option<&[SlotId]>, input: &str) -> String {
+    /// unit's key; `None`, the key's own; `context`: the slot of the following context passed,
+    /// none where NULL): the keys are demanded, the loop of the unit's component runs where the
+    /// unit is not being evaluated already, and each row whose key matched takes the key's
+    /// answer. Rows whose key did not match are dropped. Three-valued, a row whose key is unknown
+    /// is unknown (its answer's bindings are the key's, so the row's own).
+    fn recur(
+        &mut self,
+        unit: usize,
+        site: Option<&[SlotId]>,
+        context: Option<SlotId>,
+        input: &str,
+    ) -> String {
         let units = self.units;
         let key = &units[unit].key;
         let unit_columns = self.key_columns(key);
@@ -1039,18 +1065,24 @@ impl<'s> Emitter<'s> {
         self.unit_tables(unit);
         let demand = demand_table(unit);
         let answer = answer_table(unit);
-        let matched: String = site_columns
+        let mut matched: String = site_columns
             .iter()
             .enumerate()
             .map(|(index, column)| format!(" AND d.c{index} IS f.{column}"))
             .collect();
-        let columns: String = (0..site_columns.len())
+        let mut columns: String = (0..site_columns.len())
             .map(|index| format!(", c{index}"))
             .collect();
-        let values: String = site_columns
+        let mut values: String = site_columns
             .iter()
             .map(|column| format!(", f.{column}"))
             .collect();
+        if units[unit].following.is_some() {
+            let passed = context.map_or_else(|| "NULL".to_owned(), |slot| format!("f.s{slot}"));
+            write!(matched, " AND d.cf IS {passed}").expect("write to a string");
+            columns.push_str(", cf");
+            write!(values, ", {passed}").expect("write to a string");
+        }
         self.insert(
             &demand,
             format!(
@@ -1158,6 +1190,7 @@ impl<'s> Emitter<'s> {
         for &unit in &members {
             let key = &units[unit].key;
             let key_columns = self.key_columns(key);
+            let following = units[unit].following.map(|slot| format!("s{slot}"));
             let demand = demand_table(unit);
             let answer = answer_table(unit);
             let mut select = String::from("d.id, d.file, d.node");
@@ -1165,6 +1198,7 @@ impl<'s> Emitter<'s> {
                 let value = match key_columns.iter().position(|key| key == column) {
                     Some(index) => format!("d.c{index}"),
                     None if Some(column) == origin.as_ref() => "d.id".to_owned(),
+                    None if Some(column) == following.as_ref() => "d.cf".to_owned(),
                     None => "NULL".to_owned(),
                 };
                 write!(select, ", {value}").expect("write to a string");
@@ -1175,8 +1209,11 @@ impl<'s> Emitter<'s> {
                 &format!("SELECT {select} FROM {demand} d WHERE d.dirty = 1"),
                 Reads::join(&[&demand]),
             );
-            // One row per demanded key, and one per demand row (its origin).
-            let mut sets = vec![key.iter().copied().collect::<BTreeSet<SlotId>>()];
+            // One row per demanded key (its following context with it), and one per demand row
+            // (its origin).
+            let mut demanded: BTreeSet<SlotId> = key.iter().copied().collect();
+            demanded.extend(units[unit].following);
+            let mut sets = vec![demanded];
             sets.extend(self.origin.map(|origin| BTreeSet::from([origin])));
             self.keyed_by(&keys, sets);
             self.push(
