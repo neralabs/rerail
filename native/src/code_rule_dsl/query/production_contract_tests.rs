@@ -689,6 +689,23 @@ fn production_contract_phase_four_every_redefinition_rejects_non_true_candidates
 }
 
 #[test]
+fn production_contract_phase_four_arguments_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["semantic-arguments-bind", "semantic-arguments-filter"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the argument contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored argument-binding SQL contract"
+        );
+    }
+}
+
+#[test]
 fn production_contract_phases_two_to_four_match_authored_sql_statements() {
     let expected = authored_sql_goldens();
     let expected_names = PHASE_TWO_CASES
