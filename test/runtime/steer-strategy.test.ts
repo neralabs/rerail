@@ -2,11 +2,15 @@ import { createHash } from "node:crypto";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { AdapterDelivery, RerailHost, SteerStrategy } from "../../src/engine/adapter-contract.js";
-import { SqliteAuditControlStore } from "../../src/engine/audit/audit-control.js";
-import { NativeCodeRuleEnforcer } from "../../src/engine/code-rule/code-rule-enforcer.js";
-import { codeRuleSchema } from "../../src/engine/code-rule/code-rule-schema.js";
-import type { CodeRuleAuditor } from "../../src/engine/code-rule/code-rule.js";
+import {
+  codeRuleSchema,
+  NativeCodeRuleEnforcer,
+  SqliteAuditControlStore,
+  type AdapterDelivery,
+  type CodeRuleAuditor,
+  type RerailHost,
+  type SteerStrategy,
+} from "../../src/engine/index.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "../../src/runtime/runtime.js";
 import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { testCodeRuleCatalog } from "../support/repository-rules.js";
