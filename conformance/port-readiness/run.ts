@@ -9,7 +9,7 @@ import { loadAsBundled, loadsGate } from "./checks/loads.js";
 import { packConformance, passesConformanceChecks } from "./checks/passes-conformance.js";
 import { notOverfitGate, type ClassifiedLiteral } from "./checks/not-overfit.js";
 import { canonicalJson, compactGate, NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, type SizeMetrics } from "./checks/compact.js";
-import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, provenGaps, realCodeGapCheck, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
+import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, outsideInScope, provenGaps, realCodeGapCheck, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
 import { buildCorpus, buildRerailCorpora, corpusCompleteCheck, CORPUS_TASKS, readRerailCorpora, wantedPlaces, type CorpusFile, type CorpusTask } from "./corpus.js";
 import { engineKey, loadEngine, policyFamilies, type Engine, type EngineIdentity } from "./engine.js";
 import { byText, readGoldens, SYSTEMATIC_FILES, type Goldens } from "./goldens.js";
@@ -77,7 +77,8 @@ export interface RuleReport {
     loads: GateReport;
     "not-overfit": GateReport & { flagged: Pick<ClassifiedLiteral, "token" | "pointer" | "text">[]; words: Record<string, number>; uncheckedRegexes: string[] };
     compact: GateReport & { metrics: SizeMetrics | null };
-    "matches-upstream-tests": GateReport & { totals: MatchesUpstreamTestsResult["totals"] | null; compared?: MatchesUpstreamTestsResult["compared"]; cases: Record<string, number>; differences: CaseResult[]; goldens: { count: number; differing: Sample<GoldenResult>; engineGaps: Sample<GoldenResult> } };
+    /** `outOfScope`: the cases not scored because their file type is outside the tool-pack's rerail.in_scope, when there are any. */
+    "matches-upstream-tests": GateReport & { totals: MatchesUpstreamTestsResult["totals"] | null; compared?: MatchesUpstreamTestsResult["compared"]; cases: Record<string, number>; differences: CaseResult[]; outOfScope?: CaseResult[]; goldens: { count: number; differing: Sample<GoldenResult>; engineGaps: Sample<GoldenResult> } };
     /** Judged when the tool-pack's report is assembled, from the pack's conformance check; never cached. */
     "passes-conformance": GateReport;
   };
@@ -389,6 +390,7 @@ async function evaluateRule(
       compared: result.compared,
       cases: countBy(result.cases, (testCase) => testCase.status),
       differences: result.cases.filter((testCase) => testCase.status === "mismatch" || testCase.status === "excused"),
+      ...(result.cases.some(outsideInScope) ? { outOfScope: result.cases.filter(outsideInScope) } : {}),
       goldens: {
         count: onGoldens.results.length,
         differing: sample(onGoldens.results.filter((golden) => golden.status === "mismatch")),

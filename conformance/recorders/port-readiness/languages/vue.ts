@@ -24,6 +24,38 @@ export interface SfcCompiler {
 /** The path a `<script lang>` block is read at: TypeScript for `ts` and `tsx`, JSX for `jsx` and `tsx`, JavaScript otherwise. */
 const SCRIPT_PATHS: Record<string, string> = { ts: "script.ts", tsx: "script.tsx", jsx: "script.jsx" };
 
+/** A module-level declaration of vue-eslint-parser's bundle, as the text of its initializer up to the line closing it. */
+function declaration(parserSource: string, opening: string, closing: string): string {
+  const start = parserSource.indexOf(opening);
+  const end = start === -1 ? -1 : parserSource.indexOf(closing, start);
+  if (end === -1) throw new Error(`vue-eslint-parser's bundle declares no \`${opening.trim()}\`: the Vue vocabulary must be read again for this version`);
+  return parserSource.slice(start + opening.length, end + closing.length);
+}
+
+/**
+ * The words the Vue template language defines, as vue-eslint-parser (the parser upstream lints templates with, from the
+ * tool's pinned runtime) reads them, which are syntax wherever a rule spells them: its directive syntax
+ * (`DIRECTIVE_NAME`, the `v-` prefix and the `.`, `:`, `@` and `#` shorthands), the built-in directive names it
+ * knows (`BUILTIN_DIRECTIVES`), and the names of the HTML character references its tokenizer (`entitySets`, the HTML
+ * standard's table) decodes to whitespace alone (`&nbsp;`, `&Tab;`, `&NewLine;`), whitespace as
+ * `String.prototype.trim` strips it. Only those: a rule spells a reference name where upstream sees the decoded text
+ * and trims it (no-child-content's whitespace-only children), and the table's other names are English words (`check`,
+ * `star`, `copy`, `and`) that would explain a fixture's word in every rule of the tool-pack. None of the three is
+ * exported, so they are read from the bundle's source, and a version that declares them otherwise fails the recording.
+ */
+export function templateVocabulary(parserSource: string): string[] {
+  const directiveName = declaration(parserSource, "const DIRECTIVE_NAME = /", "/u;").slice(0, -"/u;".length);
+  const builtins = JSON.parse(declaration(parserSource, "const BUILTIN_DIRECTIVES = new Set(", "\n]").trim()) as string[];
+  const entitySets = JSON.parse(declaration(parserSource, "const entitySets = ", "\n]")) as { entities: Record<string, number[]> }[];
+  return [
+    ...(directiveName.match(/[A-Za-z]\w*/gu) ?? []),
+    ...builtins.flatMap((name) => name.split("-")),
+    ...entitySets.flatMap((set) => Object.entries(set.entities)
+      .filter(([, codePoints]) => String.fromCodePoint(...codePoints).trim() === "")
+      .map(([name]) => name.replace(/;$/u, ""))),
+  ];
+}
+
 /**
  * Independent parsers' verdicts on a file of a tool-pack that lints Vue single-file components. Every file gets the
  * same parsers, as a recording requires: the ECMAScript parsers of `parserVerdicts`, each named with the component

@@ -39,6 +39,8 @@ interface Facts {
   defaultSelected: string[];
   regexes: Record<string, { pattern: string; flags: number }[]>;
   keywords: string[];
+  /** The postgres dialect's sets of names by label, which code reads at run time (`dialect.sets("bare_functions")`). */
+  dialectSets: Record<string, string[]>;
 }
 interface CaseEntry {
   case: string;
@@ -73,8 +75,9 @@ export async function createSqlfluffAdapter(pack: PackManifest, names: string[],
   const upstream = await checkoutUpstream(cacheRoot, pack.upstream, pack.upstream.version, PACKAGE, SPARSE_PATHS, runner);
   const runtime = await uvRuntime(pack.upstream.runtime, cacheRoot, runner);
   const python = await createPythonToolkit(cacheRoot, runner);
+  // -B: the driver's process pool imports it as a module, which would otherwise write __pycache__/ beside it.
   const ask = async <T>(request: object): Promise<T> =>
-    JSON.parse(await runChecked(runner, [runtime.python, "-I", DRIVER], { input: JSON.stringify(request), cwd: cacheRoot })) as T;
+    JSON.parse(await runChecked(runner, [runtime.python, "-I", "-B", DRIVER], { input: JSON.stringify(request), cwd: cacheRoot })) as T;
   const codes = names.map((name) => name.toUpperCase());
   const facts = await ask<Facts>({ op: "facts", codes });
   const cases = await ask<Cases>({ op: "cases", checkout: upstream.directory, codes: codes.filter((code) => facts.rules[code] !== undefined) });
@@ -109,6 +112,8 @@ export async function createSqlfluffAdapter(pack: PackManifest, names: string[],
     const regex = pythonRegex(pattern, flags);
     return regex === undefined ? [] : [regex];
   });
+  /** The members of each dialect set that code names by its label: the names that code checks against. */
+  const setMembers = (names: string[]) => names.flatMap((label) => (Object.hasOwn(facts.dialectSets, label) ? facts.dialectSets[label]! : []));
 
   // Each case's SQL is upstream test text that is no file of its own: recorded inline, like a RuleTester case's code.
   const fixtureTexts = [...new Set(cases.texts)];
@@ -140,7 +145,7 @@ export async function createSqlfluffAdapter(pack: PackManifest, names: string[],
     identity: {
       runtime: `sqlfluff ${facts.version}, CPython ${facts.python}, as \`dialect: postgres\`, \`templater: raw\` with the port's rule configuration (PG01 and PG02 \`force_enable = True\`, every other rule at its defaults)`,
       positions: "line and character column of each finding's start, as SQLFluff reports them (it reports no end)",
-      parsers: `libpg_query (pglast, in ${pack.upstream.runtime})`,
+      parsers: `libpg_query (pglast, in ${pack.upstream.runtime}), on the SQL psql sends for the file: meta-commands, variables and COPY data read as psql reads them`,
     },
     packChecks: [
       ...upstream.checks,
@@ -166,8 +171,9 @@ export async function createSqlfluffAdapter(pack: PackManifest, names: string[],
     implementationNames(name: string): Set<string> {
       const fact = facts.rules[name.toUpperCase()];
       if (fact === undefined) return new Set();
+      const names = literals.get(fromCheckout(fact.file))?.names ?? [];
       return new Set([
-        ...foldedNames(literals.get(fromCheckout(fact.file))?.names ?? []),
+        ...foldedNames([...names, ...setMembers(names)]),
         fact.name, ...fact.name.split("."), ...fact.groups, ...fact.aliases, ...fact.configKeywords,
         ...regexesOf(fact.module).flatMap((regex) => regex.source.match(/[A-Za-z_]\w*/gu) ?? []),
       ]);
@@ -177,7 +183,8 @@ export async function createSqlfluffAdapter(pack: PackManifest, names: string[],
       if (fact === undefined) return new Set();
       const file = fromCheckout(fact.file);
       const shared = new Set([...importsOf(file), ...packageInits(file).flatMap(importsOf)]);
-      return new Set(foldedNames([...shared].filter((path) => path !== file).flatMap((path) => literals.get(path)?.names ?? [])));
+      const names = [...shared].filter((path) => path !== file).flatMap((path) => literals.get(path)?.names ?? []);
+      return new Set(foldedNames([...names, ...setMembers(names)]));
     },
     implementationRegexes(name: string) {
       const fact = facts.rules[name.toUpperCase()];

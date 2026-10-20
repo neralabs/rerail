@@ -2414,6 +2414,18 @@
   },
   {
    "rule": "precedence_bits",
+   "path": "tokio-stream/src/stream_map.rs",
+   "line": 799,
+   "column": 18
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "tokio/src/util/rand.rs",
+   "line": 83,
+   "column": 14
+  },
+  {
+   "rule": "precedence_bits",
    "path": "tokio/src/util/rand.rs",
    "line": 83,
    "column": 14

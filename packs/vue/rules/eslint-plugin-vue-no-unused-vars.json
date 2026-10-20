@@ -1,0 +1,545 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue-no-unused-vars",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-unused-vars` with default options (no ignorePattern): a template variable that nothing reads: a v-for alias or a slot parameter (`v-slot`, `#name`, Vue 2 `slot-scope`/`scope`). Reads the script-block program (`ast.embedded`): the parameters of the arrow that stands for a v-for (`expression_statement > sequence_expression > arrow_function`) or a slot (`expression_statement > arrow_function`) inside the template block, resolved by the engine's per-binding occurrences (a reference that is neither the definition nor the bare `Tag;` read the view writes for a component tag, which vue-eslint-parser does not make a reference). A Vue 2 filter's name is no reference either: vue-eslint-parser 10.4.1 splits an interpolation's or a `v-bind`'s expression at its top-level `|` into the expression and its filters (`{{ value | x }}`, `:a=\"v | f(y)\"`) and references a filter's arguments, not its name (filter-callee: the right operand, or the callee of a call that is the right operand, of a chain of `|` that is the whole parenthesized statement whose host is an interpolation or a `v-bind`). A variable that is unreferenced is still exempt when a descendant element's raw tag name is the variable's (upstream's isUsedAsComponentTag: through `host`, the start tag of any element below the one whose `v-for` or slot directive declares the variable, a native tag included, compared by its tag name; a dotted tag's raw name is never an identifier). Parameters before a referenced one in the same arrow are exempt (after-used) unless destructured (an object-pattern property or an array-pattern element; a rest element of an object pattern is not). A v-for alias that a v-if/v-else-if condition of the same element reads (the v-for statement's host element holds that directive) is used (upstream resolves that condition in the element's scope; Vue 3 compiles it outside the v-for). Reported at the parameter identifier.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "utils": {
+            "view-arrow": {
+              "kind": "arrow_function",
+              "any": [
+                {
+                  "inside": {
+                    "kind": "expression_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "sequence_expression",
+                    "inside": {
+                      "kind": "expression_statement"
+                    }
+                  }
+                }
+              ],
+              "inside": {
+                "stopBy": "end",
+                "kind": "statement_block",
+                "host": {
+                  "kind": "template_element"
+                }
+              }
+            },
+            "view-param": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier_pattern"
+                    }
+                  ]
+                },
+                {
+                  "binds": {
+                    "form": "parameter"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "formal_parameters",
+                    "inside": {
+                      "matches": "view-arrow"
+                    }
+                  }
+                }
+              ]
+            },
+            "param-destructured": {
+              "any": [
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "pair_pattern"
+                      },
+                      {
+                        "kind": "array_pattern"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "cond-used-q": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "formal_parameters",
+                "inside": {
+                  "kind": "arrow_function",
+                  "inside": {
+                    "kind": "sequence_expression",
+                    "inside": {
+                      "kind": "expression_statement",
+                      "host": {
+                        "any": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "directive_attribute",
+                              "regex": "^v-(?:else-)?if(?:[.:=\\s]|$)"
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "kind": "start_tag"
+                                },
+                                {
+                                  "kind": "self_closing_tag"
+                                }
+                              ],
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "directive_attribute",
+                                "regex": "^v-(?:else-)?if(?:[.:=\\s]|$)"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "statement_block",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "if_statement",
+                          "has": {
+                            "field": "condition",
+                            "has": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "kind": "shorthand_property_identifier"
+                                }
+                              ],
+                              "pattern": "$QR",
+                              "compare": {
+                                "left": "Q",
+                                "op": "eq",
+                                "right": "QR"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "cond-used-name": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "formal_parameters",
+                "inside": {
+                  "kind": "arrow_function",
+                  "inside": {
+                    "kind": "sequence_expression",
+                    "inside": {
+                      "kind": "expression_statement",
+                      "host": {
+                        "any": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "directive_attribute",
+                              "regex": "^v-(?:else-)?if(?:[.:=\\s]|$)"
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "kind": "start_tag"
+                                },
+                                {
+                                  "kind": "self_closing_tag"
+                                }
+                              ],
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "directive_attribute",
+                                "regex": "^v-(?:else-)?if(?:[.:=\\s]|$)"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "statement_block",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "if_statement",
+                          "has": {
+                            "field": "condition",
+                            "has": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "kind": "shorthand_property_identifier"
+                                }
+                              ],
+                              "pattern": "$NAMER",
+                              "compare": {
+                                "left": "NAME",
+                                "op": "eq",
+                                "right": "NAMER"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "param-used": {
+              "pattern": "$Q",
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier_pattern"
+                    }
+                  ]
+                },
+                {
+                  "binds": {
+                    "form": "parameter"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "binds": {
+                        "occurrence": {
+                          "matches": "real-ref"
+                        }
+                      }
+                    },
+                    {
+                      "matches": "cond-used-q"
+                    }
+                  ]
+                }
+              ]
+            },
+            "after-used": {
+              "any": [
+                {
+                  "precedes": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "matches": "param-used"
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "param-used"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "formal_parameters"
+                    },
+                    "not": {
+                      "kind": "formal_parameters"
+                    },
+                    "precedes": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "matches": "param-used"
+                        },
+                        {
+                          "has": {
+                            "stopBy": "end",
+                            "matches": "param-used"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "tag-read": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "expression_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "member_expression"
+                      }
+                    },
+                    "kind": "expression_statement"
+                  }
+                }
+              ]
+            },
+            "real-ref": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier"
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "binds": {
+                      "form": "parameter"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "tag-read"
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "filter-callee"
+                  }
+                }
+              ]
+            },
+            "filter-pipe": {
+              "pattern": "$_ | $_",
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "pattern": "$_ | $_"
+                  }
+                },
+                "kind": "parenthesized_expression",
+                "host": {
+                  "any": [
+                    {
+                      "kind": "interpolation"
+                    },
+                    {
+                      "kind": "directive_attribute",
+                      "regex": "^(?:v-bind(?:[:.=\\s]|$)|[:.])"
+                    }
+                  ]
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "expression_statement"
+                }
+              }
+            },
+            "filter-callee": {
+              "kind": "identifier",
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "right",
+                    "matches": "filter-pipe"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "kind": "call_expression",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "right",
+                      "matches": "filter-pipe"
+                    }
+                  }
+                }
+              ]
+            },
+            "tag-used-host": {
+              "host": {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "directive_attribute",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "start_tag"
+                      },
+                      {
+                        "kind": "self_closing_tag"
+                      }
+                    ],
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "element"
+                        },
+                        {
+                          "kind": "template_element"
+                        }
+                      ],
+                      "has": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "element"
+                          },
+                          {
+                            "kind": "template_element"
+                          }
+                        ],
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "start_tag"
+                            },
+                            {
+                              "kind": "self_closing_tag"
+                            }
+                          ],
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "tag_name",
+                            "pattern": "$TN",
+                            "compare": {
+                              "left": "NAME",
+                              "op": "eq",
+                              "right": "TN"
+                            }
+                          },
+                          "not": {
+                            "regex": "^<[^\\s/>.]+\\."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "pattern": "$NAME",
+            "all": [
+              {
+                "matches": "view-param"
+              },
+              {
+                "binds": {
+                  "form": "parameter"
+                }
+              },
+              {
+                "not": {
+                  "binds": {
+                    "occurrence": {
+                      "matches": "real-ref"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "matches": "cond-used-name"
+                }
+              },
+              {
+                "not": {
+                  "matches": "tag-used-host"
+                }
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "not": {
+                        "matches": "param-destructured"
+                      }
+                    },
+                    {
+                      "matches": "after-used"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-unused-vars",
+        "message": "'$NAME' is defined but never used.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-unused-vars"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

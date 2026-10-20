@@ -9,7 +9,7 @@ import type { Check, KnownGap, PackAdapter, ParserVerdict, RealCodeGap, Span, Sp
 /** How matches-upstream-tests judges, recorded in every report so a reader knows what "identical" and "excused" meant on that run. */
 export const MATCHES_UPSTREAM_TESTS_METHOD = {
   expected: "the upstream source linter's own output on each of its own test files, configured as upstream recommends (the rule on for the languages the document covers, with the options of the first approved configuration that turns it on)",
-  unreachable: "upstream findings in a file the document cannot apply to (outside its scope, or a file type the engine has no dialect for) are differences",
+  unreachable: "upstream findings in a file the document cannot apply to (outside its scope, or a file type the engine has no dialect for) are differences; a case of a file type outside the tool-pack's rerail.in_scope (gates.yaml's narrowing, which loads holds every port to) is not scored, and the report counts and lists it, since the port claims nothing there",
   identical: "the same findings in both directions (nothing missing, nothing extra), compared on every position upstream reports for the rule (start and end, in upstream's coordinates); messages are not compared",
   positions: "an end part upstream does not report on every finding of the rule is compared on neither side, for any of the rule's findings, and the report lists every rule compared without one; for an ESLint rule, one finding on its own tests without an end is enough to compare all of its findings on their starts alone",
   evaluation: "stateless CompiledCodeRuleDsl.evaluate in report mode, one file per snapshot, with no wall-clock budget; production evaluates through the workspace path with a 500 ms per-file budget",
@@ -212,6 +212,14 @@ export async function provenGaps(
   return { proven, problems, kinds };
 }
 
+/** The reason a case of a file type outside gates.yaml's `rerail.in_scope` is not scored, followed by its type. */
+export const OUT_OF_SCOPE_REASON = "outside the tool-pack's rerail.in_scope";
+
+/** Whether a case went unscored because its file type is outside the tool-pack's `rerail.in_scope`. */
+export function outsideInScope(result: Pick<CaseResult, "status" | "reason">): boolean {
+  return result.status === "not-scored" && result.reason.startsWith(OUT_OF_SCOPE_REASON);
+}
+
 /**
  * matches-upstream-tests: run the rule on every upstream test file upstream lints under the shipped configuration, and
  * require the same findings as upstream's own output, span for span (start and end, in upstream's coordinates, less
@@ -248,6 +256,13 @@ export function matchesUpstreamTestsGate(
     if (testCase.markup !== null
       && (unmatched(testCase.expected, testCase.markup, spanKey).length > 0 || unmatched(testCase.markup, testCase.expected, spanKey).length > 0)) {
       markupDisagreements.push(`${testCase.fixture}: upstream's output differs from its own test markup`);
+    }
+    // A file type gates.yaml's rerail.in_scope leaves out is one the tool-pack's ports deliberately do not cover, as
+    // loads' in-scope check and matches-real-code's eligibility read it: the case measures nothing the port claims.
+    const type = extname(readPath(testCase)).toLowerCase();
+    if (adapter.inScopeTypes !== undefined && !adapter.inScopeTypes.includes(type)) {
+      results.push(notScored(`${OUT_OF_SCOPE_REASON} (${type || "no extension"})`));
+      continue;
     }
     const language = engine.rerail.dialectForPath(readPath(testCase));
     const unreachable = language === undefined
@@ -308,14 +323,16 @@ export function matchesUpstreamTestsGate(
   }
 
   const mismatches = results.filter((result) => result.status === "mismatch");
+  const outOfScope = results.filter(outsideInScope).length;
+  const outOfScopeNote = outOfScope === 0 ? "" : `; ${outOfScope} case(s) outside the tool-pack's rerail.in_scope not scored`;
   return {
     checks: [
       {
         id: "identical-results",
         ok: mismatches.length === 0,
         detail: mismatches.length === 0
-          ? `identical on ${totals.scoredCases - results.filter((result) => result.status === "excused").length} scored file(s)${gapNote(results)}${positionsNote}`
-          : `${mismatches.length} upstream test file(s) differ, e.g. ${mismatches[0]!.fixture}: ${mismatches[0]!.reason}${positionsNote}`,
+          ? `identical on ${totals.scoredCases - results.filter((result) => result.status === "excused").length} scored file(s)${gapNote(results)}${positionsNote}${outOfScopeNote}`
+          : `${mismatches.length} upstream test file(s) differ, e.g. ${mismatches[0]!.fixture}: ${mismatches[0]!.reason}${positionsNote}${outOfScopeNote}`,
       },
       {
         id: "fires",

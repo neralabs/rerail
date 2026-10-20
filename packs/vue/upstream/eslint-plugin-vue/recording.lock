@@ -22,16 +22,16 @@
   },
   "files": {
     "recording.json": {
-      "sha256": "b277463726615007292784689473229c14eddde6118a24fbd46900437af46229",
-      "size": 2430140,
+      "sha256": "4c8c0f0e7df2f0388446939a141f45a4351da8ef0cb1d3c90ff2a78ba6ae183d",
+      "size": 2431641,
       "format": "rerail.port-readiness-recording/v2",
-      "asset": "vue-eslint-plugin-vue-recording-b277463726615007292784689473229c14eddde6118a24fbd46900437af46229.json.gz"
+      "asset": "vue-eslint-plugin-vue-recording-4c8c0f0e7df2f0388446939a141f45a4351da8ef0cb1d3c90ff2a78ba6ae183d.json.gz"
     },
     "corpus.json": {
-      "sha256": "60cfd047b7410c370165ce2959953e97a7ebef248712f721e7e23fe7159e361a",
-      "size": 587897,
+      "sha256": "778be77fe4fd81efb90576e058b6b60780915c8ea705bead8084f48da2c7d80a",
+      "size": 67301,
       "format": "rerail.port-readiness-corpus/v2",
-      "asset": "vue-eslint-plugin-vue-corpus-60cfd047b7410c370165ce2959953e97a7ebef248712f721e7e23fe7159e361a.json.gz"
+      "asset": "vue-eslint-plugin-vue-corpus-778be77fe4fd81efb90576e058b6b60780915c8ea705bead8084f48da2c7d80a.json.gz"
     }
   }
 }

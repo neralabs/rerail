@@ -3,7 +3,7 @@
   "id": "sql",
   "name": "SQL",
   "category": "language",
-  "covers": "No rules yet: its 22 SQLFluff 4.4.0 ports are candidates until they pass the port readiness gates.",
+  "covers": "19 SQLFluff 4.4.0 rules ported to Rerail, 17 of them on and 2 off until turned on, each scored against SQLFluff's own recorded findings on its tests; 3 more ports are candidates until they pass the port readiness gates.",
   "reason": "matches SQL",
   "match": {
     "any": [
@@ -15,5 +15,122 @@
       }
     ]
   },
-  "rules": []
+  "rules": [
+    {
+      "id": "sqlfluff-al04-aliasing-unique-table",
+      "document": "rules/sqlfluff-al04-aliasing-unique-table.json",
+      "title": "SQLFluff AL04: Aliasing unique table",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-al08-aliasing-unique-column",
+      "document": "rules/sqlfluff-al08-aliasing-unique-column.json",
+      "title": "SQLFluff AL08: Aliasing unique column",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-al09-aliasing-self-alias-column",
+      "document": "rules/sqlfluff-al09-aliasing-self-alias-column.json",
+      "title": "SQLFluff AL09: Aliasing self alias column",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-am01-ambiguous-distinct",
+      "document": "rules/sqlfluff-am01-ambiguous-distinct.json",
+      "title": "SQLFluff AM01: Ambiguous distinct",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-am05-ambiguous-join",
+      "document": "rules/sqlfluff-am05-ambiguous-join.json",
+      "title": "SQLFluff AM05: Ambiguous join",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-am09-ambiguous-order-by-limit",
+      "document": "rules/sqlfluff-am09-ambiguous-order-by-limit.json",
+      "title": "SQLFluff AM09: Ambiguous order by limit",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-cv02-convention-coalesce",
+      "document": "rules/sqlfluff-cv02-convention-coalesce.json",
+      "title": "SQLFluff CV02: Convention coalesce",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-cv04-convention-count-rows",
+      "document": "rules/sqlfluff-cv04-convention-count-rows.json",
+      "title": "SQLFluff CV04: Convention count rows",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-cv05-convention-is-null",
+      "document": "rules/sqlfluff-cv05-convention-is-null.json",
+      "title": "SQLFluff CV05: Convention is null",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-cv08-convention-left-join",
+      "document": "rules/sqlfluff-cv08-convention-left-join.json",
+      "title": "SQLFluff CV08: Convention left join",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-pg01-postgres-excessive-locks",
+      "document": "rules/sqlfluff-pg01-postgres-excessive-locks.json",
+      "title": "SQLFluff PG01: Postgres excessive locks",
+      "group": "SQLFluff",
+      "on": false
+    },
+    {
+      "id": "sqlfluff-pg02-postgres-not-valid-foreign-key",
+      "document": "rules/sqlfluff-pg02-postgres-not-valid-foreign-key.json",
+      "title": "SQLFluff PG02: Postgres not valid foreign key",
+      "group": "SQLFluff",
+      "on": false
+    },
+    {
+      "id": "sqlfluff-rf04-references-keywords",
+      "document": "rules/sqlfluff-rf04-references-keywords.json",
+      "title": "SQLFluff RF04: References keywords",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-rf05-references-special-chars",
+      "document": "rules/sqlfluff-rf05-references-special-chars.json",
+      "title": "SQLFluff RF05: References special chars",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-rf06-references-quoting",
+      "document": "rules/sqlfluff-rf06-references-quoting.json",
+      "title": "SQLFluff RF06: References quoting",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-st01-structure-else-null",
+      "document": "rules/sqlfluff-st01-structure-else-null.json",
+      "title": "SQLFluff ST01: Structure else null",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-st02-structure-simple-case",
+      "document": "rules/sqlfluff-st02-structure-simple-case.json",
+      "title": "SQLFluff ST02: Structure simple case",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-st08-structure-distinct",
+      "document": "rules/sqlfluff-st08-structure-distinct.json",
+      "title": "SQLFluff ST08: Structure distinct",
+      "group": "SQLFluff"
+    },
+    {
+      "id": "sqlfluff-st10-structure-constant-expression",
+      "document": "rules/sqlfluff-st10-structure-constant-expression.json",
+      "title": "SQLFluff ST10: Structure constant expression",
+      "group": "SQLFluff"
+    }
+  ]
 }

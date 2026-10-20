@@ -3,7 +3,7 @@
   "id": "vue",
   "name": "Vue",
   "category": "framework",
-  "covers": "1 eslint-plugin-vue 10.11.1 rule ported to Rerail, off until turned on, scored against eslint-plugin-vue's own recorded findings on its rule tests; 23 more ports are candidates until they pass the port readiness gates.",
+  "covers": "18 eslint-plugin-vue 10.11.1 rules ported to Rerail, 17 of them on and 1 off until turned on, each scored against eslint-plugin-vue's own recorded findings on its rule tests; 6 more ports are candidates until they pass the port readiness gates.",
   "reason": "matches Vue single-file components",
   "match": {
     "any": [
@@ -18,11 +18,137 @@
   "honourSuppressionComments": true,
   "rules": [
     {
+      "id": "eslint-plugin-vue-attribute-hyphenation",
+      "document": "rules/eslint-plugin-vue-attribute-hyphenation.json",
+      "title": "eslint-plugin-vue attribute-hyphenation: Enforce attribute naming style on custom components in template",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-async-in-computed-properties",
+      "document": "rules/eslint-plugin-vue-no-async-in-computed-properties.json",
+      "title": "eslint-plugin-vue no-async-in-computed-properties: Disallow asynchronous actions in computed properties",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-child-content",
+      "document": "rules/eslint-plugin-vue-no-child-content.json",
+      "title": "eslint-plugin-vue no-child-content: Disallow element's child contents which would be overwritten by a directive like `v-html` or `v-text`",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-deprecated-v-on-native-modifier",
+      "document": "rules/eslint-plugin-vue-no-deprecated-v-on-native-modifier.json",
+      "title": "eslint-plugin-vue no-deprecated-v-on-native-modifier: Disallow using deprecated `.native` modifiers (in Vue.js 3.0.0+)",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-duplicate-attributes",
+      "document": "rules/eslint-plugin-vue-no-duplicate-attributes.json",
+      "title": "eslint-plugin-vue no-duplicate-attributes: Disallow duplication of attributes",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-export-in-script-setup",
+      "document": "rules/eslint-plugin-vue-no-export-in-script-setup.json",
+      "title": "eslint-plugin-vue no-export-in-script-setup: Disallow `export` in `<script setup>`",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-mutating-props",
+      "document": "rules/eslint-plugin-vue-no-mutating-props.json",
+      "title": "eslint-plugin-vue no-mutating-props: Disallow mutation of component props",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-ref-as-operand",
+      "document": "rules/eslint-plugin-vue-no-ref-as-operand.json",
+      "title": "eslint-plugin-vue no-ref-as-operand: Disallow use of value wrapped by `ref()` (Composition API) as an operand",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
       "id": "eslint-plugin-vue-no-setup-props-reactivity-loss",
       "document": "rules/eslint-plugin-vue-no-setup-props-reactivity-loss.json",
       "title": "eslint-plugin-vue no-setup-props-reactivity-loss: Disallow usages that lose the reactivity of `props` passed to `setup`",
       "group": "eslint-plugin-vue",
       "on": false
+    },
+    {
+      "id": "eslint-plugin-vue-no-side-effects-in-computed-properties",
+      "document": "rules/eslint-plugin-vue-no-side-effects-in-computed-properties.json",
+      "title": "eslint-plugin-vue no-side-effects-in-computed-properties: Disallow side effects in computed properties",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-template-shadow",
+      "document": "rules/eslint-plugin-vue-no-template-shadow.json",
+      "title": "eslint-plugin-vue no-template-shadow: Disallow variable declarations from shadowing variables declared in the outer scope",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-unused-vars",
+      "document": "rules/eslint-plugin-vue-no-unused-vars.json",
+      "title": "eslint-plugin-vue no-unused-vars: Disallow unused variable definitions of v-for directives or scope attributes",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-use-v-if-with-v-for",
+      "document": "rules/eslint-plugin-vue-no-use-v-if-with-v-for.json",
+      "title": "eslint-plugin-vue no-use-v-if-with-v-for: Disallow using `v-if` on the same element as `v-for`",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-v-html",
+      "document": "rules/eslint-plugin-vue-no-v-html.json",
+      "title": "eslint-plugin-vue no-v-html: Disallow use of v-html to prevent XSS attack",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-v-text-v-html-on-component",
+      "document": "rules/eslint-plugin-vue-no-v-text-v-html-on-component.json",
+      "title": "eslint-plugin-vue no-v-text-v-html-on-component: Disallow v-text / v-html on component",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-watch-after-await",
+      "document": "rules/eslint-plugin-vue-no-watch-after-await.json",
+      "title": "eslint-plugin-vue no-watch-after-await: Disallow asynchronously registered `watch`",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-require-v-for-key",
+      "document": "rules/eslint-plugin-vue-require-v-for-key.json",
+      "title": "eslint-plugin-vue require-v-for-key: Require `v-bind:key` with `v-for` directives",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-v-on-event-hyphenation",
+      "document": "rules/eslint-plugin-vue-v-on-event-hyphenation.json",
+      "title": "eslint-plugin-vue v-on-event-hyphenation: Enforce v-on event naming style on custom components in template",
+      "group": "eslint-plugin-vue",
+      "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-valid-v-for",
+      "document": "rules/eslint-plugin-vue-valid-v-for.json",
+      "title": "eslint-plugin-vue valid-v-for: Enforce valid `v-for` directives",
+      "group": "eslint-plugin-vue",
+      "on": true
     }
   ]
 }

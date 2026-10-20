@@ -6,12 +6,12 @@ import { basename, dirname, join, posix, relative, resolve, sep } from "node:pat
 
 import { PACKAGE_ROOT } from "../../../../src/engine/index.js";
 import type { CorpusFile } from "../../../port-readiness/corpus.js";
-import { readRerailCorpora, rerailCorpusId, type RerailCorpus } from "../../../port-readiness/corpus.js";
+import { checkoutPinned, readRerailCorpora, rerailCorpusId, type RerailCorpus } from "../../../port-readiness/corpus.js";
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
 import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
 import { clippySpan, rustcSpan, type RustcSpan } from "../../../port-readiness/span-units/clippy.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, ParserVerdict, Span, SpanParts, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../port-readiness/types.js";
-import { closingIndex, lexRust, rustLiterals, rustRegex, withoutTestItems, type RustLiterals } from "../languages/rust.js";
+import { closingIndex, lexRust, rustLiterals, rustRegex, splitTopLevel, withoutTestItems, type RustLiterals, type RustToken } from "../languages/rust.js";
 import { checkoutUpstream, filesUnder, rustupRuntime } from "../runtimes.js";
 import { useTarget } from "./ruff.js";
 
@@ -66,6 +66,27 @@ const RUST_KEYWORDS = [
   "macro_rules", "raw", "safe", "union",
 ];
 
+/**
+ * Names the Rust language itself defines besides its keywords, which not-overfit takes as the language's as it takes
+ * Python's soft keywords (python_toolkit.py): a rule that spells `usize` or `cfg_attr` names Rust, not upstream's test
+ * text. They are the pinned release's Rust Reference (https://doc.rust-lang.org/1.99.0/reference/), as the toolchain
+ * ships no list of them (rustc's `sym` table is in rustc-dev, not in the clippy component the runtime pins):
+ * - the primitive types: `bool` (types/boolean.html), the integer and floating-point types (types/numeric.html), `char`
+ *   and `str` (types/textual.html), and the unstable `f16` and `f128` primitives of the release's standard library
+ *   (https://doc.rust-lang.org/1.99.0/std/primitive.f16.html, primitive.f128.html);
+ * - the built-in attributes of conditional compilation (`cfg`, `cfg_attr`) and of lint checks (`allow`, `expect`,
+ *   `warn`, `deny`, `forbid`), from the built-in attributes index (attributes.html#built-in-attributes-index);
+ * - the configuration predicate operators `all`, `any` and `not` (conditional-compilation.html).
+ * The rest of the attribute index stays out: `test`, `path`, `inline` or `doc` are as often a program's own names, so
+ * taking them as Rust's would explain test words the language does not.
+ */
+const RUST_VOCABULARY = [
+  "bool", "char", "str",
+  "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f16", "f32", "f64", "f128",
+  "cfg", "cfg_attr", "allow", "expect", "warn", "deny", "forbid",
+  "all", "any", "not",
+];
+
 /** Clippy reports a primary span with both ends; the recording keeps them. */
 const CLIPPY_SPAN_PARTS: SpanParts = { endLine: true, endCol: true };
 
@@ -79,11 +100,17 @@ interface RustcDiagnostic {
 
 interface CargoMessage {
   reason: string;
+  package_id?: string;
   manifest_path?: string;
   filenames?: string[];
   message?: RustcDiagnostic;
-  target?: { name: string; kind: string[]; crate_types: string[] };
+  target?: { name: string; kind: string[]; crate_types: string[]; src_path: string };
   linked_paths?: string[];
+  /** compiler-artifact: the features the unit was compiled with, and its profile. */
+  features?: string[];
+  profile?: { test: boolean; debug_assertions: boolean };
+  /** build-script-executed: the `--cfg` options the package's build script sets on its units. */
+  cfgs?: string[];
 }
 
 interface DeclaredLint {
@@ -235,6 +262,43 @@ function depInfoSources(artifact: string, root: string): string[] {
 function relativeTo(file: string, root: string): string | undefined {
   const path = relative(root, resolve(root, file)).split(sep).join("/");
   return path === "" || path.startsWith("../") || posix.isAbsolute(path) ? undefined : path;
+}
+
+/** A unit's configuration options, each `name` or `name="value"` as `--print cfg` writes them. */
+export type CfgOptions = ReadonlySet<string>;
+
+/**
+ * The predicates of a file's leading inner `#![cfg(…)]` attributes (the inner attributes before its first item), each
+ * as its tokens: when one is false, rustc drops everything the file holds before any lint runs.
+ */
+export function innerCfgPredicates(source: string): RustToken[][] {
+  const tokens = lexRust(source);
+  const predicates: RustToken[][] = [];
+  let index = 0;
+  while (tokens[index]?.text === "#" && tokens[index + 1]?.text === "!" && tokens[index + 2]?.text === "[") {
+    const close = closingIndex(tokens, index + 2);
+    const inner = tokens.slice(index + 3, close);
+    if (inner[0]?.kind === "ident" && inner[0].text === "cfg" && inner[1]?.text === "(" && closingIndex(inner, 1) === inner.length - 1) predicates.push(inner.slice(2, -1));
+    index = close + 1;
+  }
+  return predicates;
+}
+
+/**
+ * Whether a configuration predicate holds under `options`, as the pinned release's Rust Reference defines one
+ * (https://doc.rust-lang.org/1.99.0/reference/conditional-compilation.html): an option `name` or `name = "value"`,
+ * `all(…)`, `any(…)`, `not(…)`, `true` or `false`; undefined for tokens that are none of them.
+ */
+export function cfgHolds(tokens: readonly RustToken[], options: CfgOptions): boolean | undefined {
+  const [head, ...rest] = tokens;
+  if (head?.kind !== "ident") return undefined;
+  if (rest.length === 0) return head.text === "true" ? true : head.text === "false" ? false : options.has(head.text);
+  if (rest.length === 2 && rest[0]!.text === "=" && rest[1]!.kind === "string") return options.has(`${head.text}="${rest[1]!.value}"`);
+  if (!["all", "any", "not"].includes(head.text) || rest[0]?.text !== "(" || closingIndex(rest, 0) !== rest.length - 1) return undefined;
+  const operands = splitTopLevel(rest.slice(1, -1), ",").map((operand) => cfgHolds(operand, options));
+  if (operands.some((value) => value === undefined)) return undefined;
+  if (head.text === "not") return operands.length === 1 ? !operands[0] : undefined;
+  return head.text === "all" ? operands.every(Boolean) : operands.some(Boolean);
 }
 
 export async function createClippyAdapter(pack: PackManifest, names: string[], cacheRoot: string, runner: CommandRunner): Promise<PackAdapter> {
@@ -445,8 +509,30 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
     const corpora = await readRerailCorpora(PACKAGE_ROOT, pack.rerail.pack);
     const parserName = `rustc ${runtime.pin.channel} -Zparse-crate-root-only`;
 
-    /** `cargo clippy` over one pinned corpus at its commit, as packs/rust/upstream/common.py's run_corpus runs it. */
-    const lintCorpusCrate = async (corpus: RerailCorpus, root: string): Promise<{ read: Set<string>; findings: Map<string, Map<string, Span[]>>; failures: string[] }> => {
+    // The configuration options every corpus unit compiles under before its own (features, test profile, debug
+    // assertions, its build script's cfgs): the host's, as the driver prints them, and `clippy`, which clippy-driver
+    // sets while it compiles but does not print, so a probe that compiles only with it set must compile.
+    let hostOptions: Promise<Set<string>> | undefined;
+    const unitBaseOptions = (): Promise<Set<string>> => (hostOptions ??= (async () => {
+      const printed = await runChecked(runner, [runtime.driver, "--print", "cfg"], { cwd: tmpdir(), env: runtime.env });
+      const options = new Set(printed.split("\n").map((line) => line.trim()).filter((line) => line !== "" && line !== "debug_assertions"));
+      const out = realpathSync(await mkdtemp(join(tmpdir(), "rerail-clippy-cfg-")));
+      try {
+        const probe = await runner.run([runtime.driver, "-", "--crate-type=lib", "--crate-name=cfg_probe", "--emit=metadata", "--out-dir", out], {
+          cwd: out, env: runtime.env, input: "#[cfg(not(clippy))]\ncompile_error!(\"no cfg clippy\");\n",
+        });
+        if (probe.exitCode !== 0) throw new Error(`clippy-driver does not set cfg clippy:\n${probe.stderr}`);
+      } finally {
+        await rm(out, { recursive: true, force: true });
+      }
+      return options.add("clippy");
+    })());
+
+    /**
+     * `cargo clippy` over one pinned corpus at its commit, as packs/rust/upstream/common.py's run_corpus runs it: the
+     * files some unit read (its dep-info), each with why Clippy compiled none of it when it did not, and the findings.
+     */
+    const lintCorpusCrate = async (corpus: RerailCorpus, root: string): Promise<{ read: Map<string, string | null>; findings: Map<string, Map<string, Span[]>>; failures: string[] }> => {
       const env: NodeJS.ProcessEnv = { ...runtime.env, CARGO_TARGET_DIR: resolve(cacheRoot, "clippy", "corpus", corpus.name, corpus.commit), CARGO_TERM_COLOR: "never" };
       const tracked = (await runChecked(runner, ["git", "-C", root, "ls-files", "--", "Cargo.lock"])).trim() !== "";
       if (!tracked) {
@@ -464,15 +550,30 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
       };
       const packageDirectories = metadata.packages.map((entry) => ({ directory: relativeTo(dirname(entry.manifest_path), root) ?? "", edition: entry.edition })).sort((a, b) => b.directory.length - a.directory.length);
       const run = await runner.run(["cargo", toolchain, "clippy", "--keep-going", "--locked", "--workspace", "--all-targets", "--all-features", "--message-format=json", "--", ...recordFlags], { cwd: root, env });
-      const readFiles = new Set<string>();
+      // Each file some unit read, with the configuration options of every unit that read it, and each unit's root.
+      const readers = new Map<string, CfgOptions[]>();
+      const crateRoots = new Set<string>();
+      const scriptOptions = new Map<string, string[]>();
+      const baseOptions = await unitBaseOptions();
       const findings = new Map<string, Map<string, Span[]>>(ported.map((name) => [name, new Map()]));
       const seen = new Set<string>();
       const failures = new Set<string>();
       for (const line of run.stdout.split("\n").filter((text) => text.startsWith("{"))) {
         const message = JSON.parse(line) as CargoMessage;
+        // A build script runs before the units of its package compile, and its cfgs are set on each of them.
+        if (message.reason === "build-script-executed" && message.package_id !== undefined) scriptOptions.set(message.package_id, message.cfgs ?? []);
         if (message.manifest_path === undefined || relativeTo(message.manifest_path, root) === undefined) continue;
         if (message.reason === "compiler-artifact") {
-          for (const artifact of message.filenames ?? []) for (const path of depInfoSources(artifact, root)) readFiles.add(path);
+          const options = new Set([
+            ...baseOptions,
+            ...(message.features ?? []).map((feature) => `feature="${feature}"`),
+            ...(message.profile?.test === true ? ["test"] : []),
+            ...(message.profile?.debug_assertions === true ? ["debug_assertions"] : []),
+            ...(message.package_id === undefined ? [] : scriptOptions.get(message.package_id) ?? []),
+          ]);
+          for (const artifact of message.filenames ?? []) for (const path of depInfoSources(artifact, root)) readers.set(path, [...(readers.get(path) ?? []), options]);
+          const crateRoot = message.target === undefined ? undefined : relativeTo(message.target.src_path, root);
+          if (crateRoot !== undefined) crateRoots.add(crateRoot);
           continue;
         }
         if (message.reason !== "compiler-message" || message.message === undefined) continue;
@@ -491,11 +592,27 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
         byFile.set(path, [...(byFile.get(path) ?? []), rustcSpan(span, CLIPPY_SPAN_PARTS)]);
       }
       if (run.exitCode !== 0 && failures.size === 0) throw new Error(`cargo clippy failed on ${corpus.name} with status ${run.exitCode} and no compile error:\n${run.stderr.split("\n").slice(-20).join("\n")}`);
-      for (const path of readFiles) {
+      const read = new Map<string, string | null>();
+      for (const [path, units] of readers) {
+        const file = join(root, path);
+        if (!existsSync(file)) continue;
+        const source = await readFile(file, "utf8");
         const owner = packageDirectories.find(({ directory }) => directory === "" || path.startsWith(`${directory}/`));
-        if (owner !== undefined && existsSync(join(root, path))) corpusEditions.set(`${path}\0${sha256(await readFile(join(root, path), "utf8"))}`, owner.edition);
+        if (owner !== undefined) corpusEditions.set(`${path}\0${sha256(source)}`, owner.edition);
+        // A module file is read and dropped whole in a unit where one of its leading `#![cfg(…)]` is false: rustc
+        // strips the module, its inner attributes with it, before any lint runs. When that holds in every unit that
+        // read it, Clippy's silence on it is no answer. A crate root keeps its crate attributes, which Clippy still
+        // lints (`#![allow]` before a false `#![cfg]`), so it is not dropped; nor is a file whose predicate this cannot
+        // evaluate.
+        const predicates = innerCfgPredicates(source);
+        const dropped = !crateRoots.has(path) && predicates.length > 0 && units.every((options) => predicates.some((predicate) => cfgHolds(predicate, options) === false));
+        const attributes = predicates.map((predicate) => `\`#![cfg(${predicate.map((token) => token.text).join("")})]\``).join(", ");
+        read.set(path, dropped
+          ? `Clippy compiled none of it: of its ${attributes}, one is false in each of the ${units.length} unit(s) \`cargo clippy --workspace --all-targets --all-features\` read it in, so rustc dropped its contents before any lint ran`
+          : null);
+        if (dropped && ported.some((name) => findings.get(name)?.has(path))) throw new Error(`${corpus.name}: Clippy reports on ${path}, which every unit that read it dropped by its #![cfg]`);
       }
-      return { read: readFiles, findings, failures: [...failures].sort(byText) };
+      return { read, findings, failures: [...failures].sort(byText) };
     };
 
     return {
@@ -506,7 +623,7 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
         runtime: `${runtime.clippy}, from the rustup toolchain ${runtime.pin.channel} (\`${runtime.rustc}\`)`,
         invocation: "clippy-driver on each UI test as tests/compile-test.rs (ui_test 0.30.7) runs it: edition 2024 unless //@edition, //@compile-flags, //@aux-build crates and clippy_test_deps passed with --extern, ui_test's crate type, --emit=metadata -Aunused -Ainternal_features -Zui-testing -Zdeduplicate-diagnostics=no, RUSTC_BOOTSTRAP=1, without -Dwarnings",
         configuration: `Clippy's default lint levels, with -W clippy::<lint> for every ported lint; CLIPPY_CONF_DIR=tests (${DEFAULT_CONF}); a tests/ui-toml test with another clippy.toml is skipped`,
-        corpus: `cargo ${toolchain} clippy --keep-going --locked --workspace --all-targets --all-features --message-format=json -- -W clippy::<lint>… in each pinned corpus (RUSTFLAGS unset); a corpus that commits no Cargo.lock is resolved with cargo generate-lockfile --publish-time <its commit's time>; a file no compiled unit read (dep-info) is excluded`,
+        corpus: `cargo ${toolchain} clippy --keep-going --locked --workspace --all-targets --all-features --message-format=json -- -W clippy::<lint>… in each pinned corpus (RUSTFLAGS unset); a corpus that commits no Cargo.lock is resolved with cargo generate-lockfile --publish-time <its commit's time>; a file no compiled unit read (dep-info) is excluded, and so is one whose leading #![cfg(…)] is false in every unit that read it (the unit's host, feature, test, debug_assertions, build-script and clippy options)`,
         positions: "the primary span of each diagnostic: rustc's 1-based lines and character columns, start and end",
         parsers: `${parserName} (rustc's parser alone: syntax errors, no grammar checks), in the test's or the corpus crate's edition`,
       },
@@ -532,7 +649,7 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
       fixtureWords: () => fixtureWords,
       fixtureTexts: () => fixtureTexts,
       fixtureTextSources: () => fixtureTextSources,
-      keywords: new Set(RUST_KEYWORDS),
+      keywords: new Set([...RUST_KEYWORDS, ...RUST_VOCABULARY]),
       // rustc and Clippy give no word inside a comment a meaning (lints are configured by attributes and clippy.toml).
       commentVocabulary: new Set(),
       inScopeSamples: ["src/example.rs"],
@@ -565,12 +682,16 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
           const task = rerailCorpusId(corpus);
           const mine = files.filter((file) => file.task === task);
           if (mine.length === 0) continue;
-          const root = resolve(cacheRoot, "corpus", "rerail", corpus.name, corpus.commit);
+          // The gates fetch only the files goldens name; cargo builds the whole workspace, so it gets the corpus whole.
+          const root = await checkoutPinned(corpus.repository, corpus.commit, resolve(cacheRoot, "clippy", "checkout", corpus.name, corpus.commit), ["/*"], runner);
           const result = await lintCorpusCrate(corpus, root);
           for (const file of mine) {
-            answers.set(`${task}\0${file.path}`, result.read.has(file.path)
-              ? { file, excluded: null, findings: new Map(ruleNames.map((name) => [name, result.findings.get(name)?.get(file.path) ?? []])) }
-              : { file, excluded: "no unit `cargo clippy --workspace --all-targets --all-features` compiled reads it (its dep-info): Clippy lints a file only as part of a crate", findings: new Map() });
+            const dropped = result.read.get(file.path);
+            answers.set(`${task}\0${file.path}`, dropped === undefined
+              ? { file, excluded: "no unit `cargo clippy --workspace --all-targets --all-features` compiled reads it (its dep-info): Clippy lints a file only as part of a crate", findings: new Map() }
+              : dropped !== null
+                ? { file, excluded: dropped, findings: new Map() }
+                : { file, excluded: null, findings: new Map(ruleNames.map((name) => [name, result.findings.get(name)?.get(file.path) ?? []])) });
           }
         }
         return files.map((file) => answers.get(`${file.task}\0${file.path}`)

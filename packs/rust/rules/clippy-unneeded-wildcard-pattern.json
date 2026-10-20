@@ -1,0 +1,18 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-unneeded-wildcard-pattern",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's unneeded_wildcard_pattern: reports the run of wildcard elements of a tuple or tuple-struct pattern adjacent to its rest pattern, and the trailing wildcard fields of a struct pattern before its rest, spanning them with their separators up to (or from) the rest pattern as Clippy does; elements nested more than two brackets deep and macro-expanded code are not modelled.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {"id": "wildcards-before-rest", "forbid": {"ast": {"language": "rust", "rule": {"any": [{"kind": "tuple_pattern"}, {"kind": "tuple_struct_pattern"}], "regex": "(?s)^[^(]*\\((?:(?:[^()\\[\\]{}\"',]|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)'|[(\\[{](?:[^()\\[\\]{}\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)'|[(\\[{](?:[^()\\[\\]{}\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)')*[)\\]}])*[)\\]}])*,)*?\\s*(?P<W>(?:_\\s*,\\s*)+)\\.\\.\\s*[,)]"}}}, "violation": {"suppress": {"clippy": {"lints": ["clippy::unneeded_wildcard_pattern", "clippy::all", "clippy::complexity", "warnings"]}}, "anchor": "capture.W", "code": "unneeded_wildcard_pattern", "message": "Clippy unneeded_wildcard_pattern: wildcard pattern is redundant"}},
+    {"id": "wildcards-after-rest", "forbid": {"ast": {"language": "rust", "rule": {"any": [{"kind": "tuple_pattern"}, {"kind": "tuple_struct_pattern"}], "regex": "(?s)^[^(]*\\((?:(?:[^()\\[\\]{}\"',]|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)'|[(\\[{](?:[^()\\[\\]{}\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)'|[(\\[{](?:[^()\\[\\]{}\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)')*[)\\]}])*[)\\]}])*,)*?\\s*\\.\\.(?P<W>(?:\\s*,\\s*_)+)\\s*[,)]"}}}, "violation": {"suppress": {"clippy": {"lints": ["clippy::unneeded_wildcard_pattern", "clippy::all", "clippy::complexity", "warnings"]}}, "anchor": "capture.W", "code": "unneeded_wildcard_pattern", "message": "Clippy unneeded_wildcard_pattern: wildcard pattern is redundant"}},
+    {"id": "struct-wildcard-fields-before-rest", "forbid": {"ast": {"language": "rust", "rule": {"kind": "struct_pattern", "regex": "(?s)^[^{]*\\{(?:(?:[^()\\[\\]{}\"',]|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)'|[(\\[{](?:[^()\\[\\]{}\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)'|[(\\[{](?:[^()\\[\\]{}\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)')*[)\\]}])*[)\\]}])*,)*?\\s*(?P<W>(?:[\\w#]+\\s*:\\s*_\\s*,\\s*)+)\\.\\.\\s*\\}"}}}, "violation": {"suppress": {"clippy": {"lints": ["clippy::unneeded_wildcard_pattern", "clippy::all", "clippy::complexity", "warnings"]}}, "anchor": "capture.W", "code": "unneeded_wildcard_pattern", "message": "Clippy unneeded_wildcard_pattern: wildcard pattern is redundant"}}
+  ]
+}
