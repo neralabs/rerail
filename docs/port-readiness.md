@@ -291,8 +291,9 @@ its `fixtures/` or its `goldens.tsv`, or the upstream rules of its tool that the
 nothing. A tool-pack whose `gates.yaml` is gone at the head is not recorded; a manifest that does not parse records
 every tool-pack of its pack, and a diff git cannot read every tool-pack, each with a warning. When the label selects
 nothing, no leg runs, and `authorize`, which removed the label, says why in a comment on the pull request; the run's
-summary has what was selected and why either way. A dispatch records what its `pack` and `tool` name, every tool-pack
-when both are empty, whatever the pull request changes, so it is how a maintainer records a tool-pack anyway.
+summary has what was selected and why either way, and both set each path and rule name the pull request chose as a
+code span. A dispatch records what its `pack` and `tool` name, every tool-pack when both are empty, whatever the pull
+request changes, so it is how a maintainer records a tool-pack anyway.
 
 A label records with `main`'s recorder, runtimes and `TOOL_PACKS`, so it cannot record a pull request's change to any
 of them. A pull request that changes the runtimes (`conformance/recorders/port-readiness/runtimes/`) or the rest of

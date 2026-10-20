@@ -50,12 +50,22 @@ const plural = (count) => `${count} tool-pack${count === 1 ? "" : "s"}`;
  * Text the pull request chose (a path, an upstream rule name, a parse error quoting its file), with control characters
  * escaped and the second character of every `::` and `##[`: a file or rule named with a newline must not start a
  * workflow command on stdout or a Markdown block in the comment, nor a `##[<command>]` make one anywhere in a line, as
- * the runner reads it (`##[set-output name=legs;]x`).
+ * the runner reads it (`##[set-output name=legs;]x`). It is set as a code span, fenced longer than any run of backticks
+ * it holds, so in the comment it cannot mention anyone, link, embed an image or open HTML either.
  */
-const shown = (text) => text
-  .replace(/[\u0000-\u001f\u007f]/gu, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
-  .replace(/::/gu, ":\\u003a")
-  .replace(/##\[/gu, "#\\u0023[");
+const shown = (text) => {
+  // A span is never empty: an empty text is a space.
+  const escaped = text
+    .replace(/[\u0000-\u001f\u007f]/gu, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
+    .replace(/::/gu, ":\\u003a")
+    .replace(/##\[/gu, "#\\u0023[") || " ";
+  const fence = "`".repeat(Math.max(0, ...[...escaped.matchAll(/`+/gu)].map(([run]) => run.length)) + 1);
+  // A space each side keeps a backtick at either end off the fence. CommonMark takes one space off each side of a span
+  // that starts and ends with one and is not all spaces, so a text like that gets them too.
+  const pad = escaped.startsWith("`") || escaped.endsWith("`")
+    || (escaped.startsWith(" ") && escaped.endsWith(" ") && /[^ ]/u.test(escaped)) ? " " : "";
+  return `${fence}${pad}${escaped}${pad}${fence}`;
+};
 
 /** main's TOOL_PACKS: a JSON list of `{"pack", "tool"}`. Anything else throws: it is the whole of what may record. */
 export function parseToolPacks(text) {

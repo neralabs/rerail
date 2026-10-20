@@ -35,6 +35,31 @@ const BANDIT = "python/bandit";
 const ESLINT = "javascript/eslint";
 const names = (planned: Pick<RecordPlan, "legs">): string[] => planned.legs.map(({ pack, tool }) => `${pack}/${tool}`);
 
+/**
+ * A Markdown text's code spans as CommonMark pairs backticks (a run opens one, the next run exactly as long closes it,
+ * and one space comes off each side of a text that starts and ends with one and is not all spaces), and the text
+ * outside them.
+ */
+function codeSpans(markdown: string): { spans: string[]; outside: string } {
+  const spans: string[] = [];
+  let outside = "";
+  let from = 0;
+  const runs = /`+/gu;
+  for (let open = runs.exec(markdown); open !== null; open = runs.exec(markdown)) {
+    let close = runs.exec(markdown);
+    while (close !== null && close[0].length !== open[0].length) close = runs.exec(markdown);
+    if (close === null) {
+      runs.lastIndex = open.index + open[0].length;
+      continue;
+    }
+    const text = markdown.slice(open.index + open[0].length, close.index);
+    spans.push(text.startsWith(" ") && text.endsWith(" ") && /[^ ]/u.test(text) ? text.slice(1, -1) : text);
+    outside += markdown.slice(from, open.index);
+    from = close.index + close[0].length;
+  }
+  return { spans, outside: outside + markdown.slice(from) };
+}
+
 const UPSTREAM_MD = [
   "# Ruff",
   "",
@@ -102,7 +127,7 @@ describe("the tool-packs a label records", () => {
   it("diffs the head against its merge base with the base, not against the base's tip", () => {
     const planned = planFor({ "packs/python/upstream/ruff/goldens.tsv": "task\tpath\npr-task\tapp.py\n" });
     assert.deepEqual(names(planned), [RUFF]);
-    assert.deepEqual(planned.lines, ["python/ruff: packs/python/upstream/ruff/goldens.tsv changed"]);
+    assert.deepEqual(planned.lines, ["python/ruff: `packs/python/upstream/ruff/goldens.tsv` changed"]);
     assert.deepEqual(planned.warnings, []);
   });
 
@@ -113,7 +138,7 @@ describe("the tool-packs a label records", () => {
   it("a file under a tool-pack's fixtures/ selects it", () => {
     const planned = planFor({ "packs/python/upstream/ruff/fixtures/pyflakes/F401_1.py": "import sys\n", "packs/python/upstream/ruff/fixtures/pyflakes/F401_2.py": "import re\n" });
     assert.deepEqual(names(planned), [RUFF]);
-    assert.deepEqual(planned.lines, ["python/ruff: packs/python/upstream/ruff/fixtures/pyflakes/F401_1.py changed (and 1 more)"]);
+    assert.deepEqual(planned.lines, ["python/ruff: `packs/python/upstream/ruff/fixtures/pyflakes/F401_1.py` changed (and 1 more)"]);
   });
 
   it("a tool-pack's other files select nothing: the recorder does not read them", () => {
@@ -136,11 +161,11 @@ describe("the tool-packs a label records", () => {
   it("an upstream rule of a tool in either conformance manifest selects that tool-pack alone", () => {
     const pack = planFor({ "packs/python/conformance.json": manifest([...PACK_RULES, { id: "ruff-f841", tool: "ruff", rule: "F841" }], [CORPUS]) });
     assert.deepEqual(names(pack), [RUFF]);
-    assert.deepEqual(pack.lines, ["python/ruff: the ruff rules packs/python/conformance.json and candidates/conformance.json name changed (added F841)"]);
+    assert.deepEqual(pack.lines, ["python/ruff: the ruff rules packs/python/conformance.json and candidates/conformance.json name changed (added `F841`)"]);
     const candidates = planFor({ "packs/python/candidates/conformance.json": manifest([...CANDIDATE_RULES, { id: "bandit-b301", tool: "bandit", rule: "B301" }]) });
     assert.deepEqual(names(candidates), [BANDIT]);
     const dropped = planFor({ "packs/python/conformance.json": manifest([PACK_RULES[1]!], [CORPUS]) });
-    assert.deepEqual(dropped.lines, ["python/ruff: the ruff rules packs/python/conformance.json and candidates/conformance.json name changed (removed F401)"]);
+    assert.deepEqual(dropped.lines, ["python/ruff: the ruff rules packs/python/conformance.json and candidates/conformance.json name changed (removed `F401`)"]);
   });
 
   it("a rule promoted from candidates/ to the pack's manifest selects nothing: the recorder reads both", () => {
@@ -167,7 +192,7 @@ describe("the tool-packs a label records", () => {
     const planned = planFor({ "packs/python/conformance.json": "{ not json\n" });
     assert.deepEqual(names(planned), [RUFF, BANDIT]);
     assert.equal(planned.warnings.length, 1);
-    assert.match(planned.warnings[0]!, /^packs\/python\/conformance\.json does not parse at [0-9a-f]{10}, so every tool-pack of python is recorded: /u);
+    assert.match(planned.warnings[0]!, /^packs\/python\/conformance\.json does not parse at [0-9a-f]{10}, so every tool-pack of python is recorded: `[^`]+`$/u);
   });
 
   it("corpus-tasks.json selects every tool-pack", () => {
@@ -178,7 +203,10 @@ describe("the tool-packs a label records", () => {
     const planned = labelPlan(TOOL_PACKS, MAIN, "f".repeat(40), root);
     assert.deepEqual(names(planned), [RUFF, BANDIT, ESLINT]);
     assert.equal(planned.warnings.length, 1);
-    assert.match(planned.warnings[0]!, new RegExp(`^git could not compare ${MAIN} with ${"f".repeat(40)}, so every tool-pack is recorded: `, "u"));
+    assert.match(planned.warnings[0]!, new RegExp(`^git could not compare \`${MAIN}\` with \`${"f".repeat(40)}\`, so every tool-pack is recorded: \`[^\`]+\`$`, "u"));
+    // A commit that is not given at all is still a span: a space, since a span cannot be empty.
+    const unnamed = labelPlan(TOOL_PACKS, "", MAIN, root);
+    assert.match(unnamed.warnings[0]!, new RegExp(`^git could not compare \` \` with \`${MAIN}\`, so every tool-pack is recorded: \`[^\`]+\`$`, "u"));
   });
 
   it("a tool-pack whose gates.yaml is gone at the head is not recorded", () => {
@@ -192,7 +220,7 @@ describe("the tool-packs a label records", () => {
     const planned = planFor({ "packs/node/upstream/eslint-plugin-n/gates.yaml": "adapter: eslint\n", "packs/node/upstream/eslint-plugin-n/goldens.tsv": "task\tpath\n" });
     assert.deepEqual(planned.legs, []);
     assert.equal(planned.warnings.length, 1);
-    assert.match(planned.warnings[0]!, /^packs\/node\/upstream\/eslint-plugin-n\/gates\.yaml is not a tool-pack main's port-readiness-record\.yml records \(TOOL_PACKS\): .*lands on main first/u);
+    assert.match(planned.warnings[0]!, /^`packs\/node\/upstream\/eslint-plugin-n\/gates\.yaml` is not a tool-pack main's port-readiness-record\.yml records \(TOOL_PACKS\): .*lands on main first/u);
   });
 
   it("a change to the recorder's runtimes, or to its other code, records nothing here, with a warning", () => {
@@ -202,24 +230,24 @@ describe("the tool-packs a label records", () => {
     });
     assert.deepEqual(planned.legs, []);
     assert.equal(planned.warnings.length, 2);
-    assert.match(planned.warnings[0]!, /^conformance\/recorders\/port-readiness\/runtimes\/ruff-0\.16\.9\/pyproject\.toml changed: a label records with main's runtimes, so a runtime change lands on main first, and main is then recorded$/u);
-    assert.match(planned.warnings[1]!, /^conformance\/recorders\/port-readiness\/record\.ts changed: a label records with main's recorder/u);
+    assert.match(planned.warnings[0]!, /^`conformance\/recorders\/port-readiness\/runtimes\/ruff-0\.16\.9\/pyproject\.toml` changed: a label records with main's runtimes, so a runtime change lands on main first, and main is then recorded$/u);
+    assert.match(planned.warnings[1]!, /^`conformance\/recorders\/port-readiness\/record\.ts` changed: a label records with main's recorder/u);
   });
 
   // A file the pull request names with a newline is a line of its own on stdout, where `::` starts a workflow command.
   it.skipIf(process.platform === "win32")("a path with a control character selects as any other, and is printed escaped", () => {
     const planned = planFor({ "packs/python/upstream/ruff/fixtures/a\n::error::b.py": "x\n", "conformance/recorders/port-readiness/runtimes/x\r\n::error::y": "z\n" });
     assert.deepEqual(names(planned), [RUFF]);
-    assert.deepEqual(planned.lines, ["python/ruff: packs/python/upstream/ruff/fixtures/a\\u000a:\\u003aerror:\\u003ab.py changed"]);
-    assert.deepEqual(planned.warnings.map((warning) => warning.split(" changed:")[0]), ["conformance/recorders/port-readiness/runtimes/x\\u000d\\u000a:\\u003aerror:\\u003ay"]);
+    assert.deepEqual(planned.lines, ["python/ruff: `packs/python/upstream/ruff/fixtures/a\\u000a:\\u003aerror:\\u003ab.py` changed"]);
+    assert.deepEqual(planned.warnings.map((warning) => warning.split(" changed:")[0]), ["`conformance/recorders/port-readiness/runtimes/x\\u000d\\u000a:\\u003aerror:\\u003ay`"]);
   });
 
   // So is an upstream rule name a manifest at the head gives: the reason quotes it.
   it("a rule name with a control character selects as any other, and is printed escaped", () => {
     const planned = planFor({ "packs/python/conformance.json": manifest([...PACK_RULES, { id: "ruff-f841", tool: "ruff", rule: "F841\n::error title=x::y" }], [CORPUS]) });
     assert.deepEqual(names(planned), [RUFF]);
-    assert.deepEqual(planned.lines, ["python/ruff: the ruff rules packs/python/conformance.json and candidates/conformance.json name changed (added F841\\u000a:\\u003aerror title=x:\\u003ay)"]);
-    assert.match(commentBody(planned), /^- `python\/ruff`: .*\(added F841\\u000a:\\u003aerror title=x:\\u003ay\)$/mu);
+    assert.deepEqual(planned.lines, ["python/ruff: the ruff rules packs/python/conformance.json and candidates/conformance.json name changed (added `F841\\u000a:\\u003aerror title=x:\\u003ay`)"]);
+    assert.match(commentBody(planned), /^- `python\/ruff`: .*\(added `F841\\u000a:\\u003aerror title=x:\\u003ay`\)$/mu);
   });
 
   // The runner takes `::` at a line's start for a workflow command, and the legacy `##[` anywhere in it
@@ -231,10 +259,10 @@ describe("the tool-packs a label records", () => {
       "conformance/recorders/port-readiness/runtimes/::warning::x/##[set-output name=legs;]y": "z\n",
     });
     assert.deepEqual(names(planned), [RUFF]);
-    assert.deepEqual(planned.lines, ["python/ruff: packs/python/upstream/ruff/fixtures/#\\u0023[set-output name=legs;]x:\\u003awarning:\\u003ay.py changed"]);
+    assert.deepEqual(planned.lines, ["python/ruff: `packs/python/upstream/ruff/fixtures/#\\u0023[set-output name=legs;]x:\\u003awarning:\\u003ay.py` changed"]);
     assert.deepEqual(planned.warnings.map((warning) => warning.split(/ changed:| is not a tool-pack/u)[0]), [
-      "packs/#\\u0023[set-output name=legs;]x/upstream/:\\u003awarning:\\u003ay/gates.yaml",
-      "conformance/recorders/port-readiness/runtimes/:\\u003awarning:\\u003ax/#\\u0023[set-output name=legs;]y",
+      "`packs/#\\u0023[set-output name=legs;]x/upstream/:\\u003awarning:\\u003ay/gates.yaml`",
+      "`conformance/recorders/port-readiness/runtimes/:\\u003awarning:\\u003ax/#\\u0023[set-output name=legs;]y`",
     ]);
     for (const text of [...planned.lines, ...planned.warnings, commentBody(planned)]) assert.doesNotMatch(text, /::|##\[/u);
   });
@@ -247,8 +275,8 @@ describe("the tool-packs a label records", () => {
     });
     assert.deepEqual(names(planned), [RUFF, BANDIT]);
     assert.deepEqual(planned.lines.map((line) => /\(added (.*)\)$/u.exec(line)?.[1]), [
-      "\\u000a:\\u003awarning:\\u003ax, \\u000d\\u000a#\\u0023[set-output name=legs;]x",
-      "#\\u0023[set-output name=legs;]x, :\\u003awarning:\\u003ax, B1 #\\u0023[set-output name=legs;]x, B2 :\\u003awarning:\\u003ax",
+      "`\\u000a:\\u003awarning:\\u003ax`, `\\u000d\\u000a#\\u0023[set-output name=legs;]x`",
+      "`#\\u0023[set-output name=legs;]x`, `:\\u003awarning:\\u003ax`, `B1 #\\u0023[set-output name=legs;]x`, `B2 :\\u003awarning:\\u003ax`",
     ]);
     for (const text of [...planned.lines, commentBody(planned)]) assert.doesNotMatch(text, /::|##\[/u);
     // A manifest that does not parse at the head is quoted in the warning: so is what it holds.
@@ -258,6 +286,38 @@ describe("the tool-packs a label records", () => {
       assert.match(unparsed.warnings[0]!, /#\\u0023\[|:\\u003a/u);
       for (const shown of [...unparsed.warnings, commentBody(unparsed)]) assert.doesNotMatch(shown, /::|##\[/u);
     }
+  });
+
+  // The comment goes on the pull request and to the job's summary as Markdown: what the pull request chose is a code
+  // span there, so it cannot mention anyone, reference an issue, link, embed an image or open an HTML comment. A path
+  // cannot hold `//`, so its links have one slash, which a browser reads as two.
+  it.skipIf(process.platform === "win32")("a path or rule name with a mention, a reference, a link, an image or `<!--` is in the comment only as a code span", () => {
+    const path = "packs/python/upstream/ruff/fixtures/@someone #12 [x](https:/evil.example) ![i](https:/evil.example/i.png) <!--.py";
+    const rule = "@someone #12 [x](https://evil.example) ![i](https://evil.example/i.png) <!--";
+    const planned = planFor({ [path]: "x\n", "packs/python/conformance.json": manifest([...PACK_RULES, { id: "bandit-x", tool: "bandit", rule }], [CORPUS]) });
+    assert.deepEqual(names(planned), [RUFF, BANDIT]);
+    const comment = commentBody(planned);
+    const lines = comment.split("\n");
+    assert.ok(lines.includes(`- \`python/ruff\`: \`${path}\` changed`), comment);
+    assert.ok(lines.includes(`- \`python/bandit\`: the bandit rules packs/python/conformance.json and candidates/conformance.json name changed (added \`${rule}\`)`), comment);
+    const { spans, outside } = codeSpans(comment);
+    assert.ok(spans.includes(path) && spans.includes(rule), spans.join("\n"));
+    for (const token of ["@someone", "#12", "](", "![", "<!--", "evil.example"]) assert.ok(!outside.includes(token), `${token} outside a code span:\n${outside}`);
+  });
+
+  // A backtick in what the pull request chose must not close its span early, nor one at either end join the fence.
+  it("a path or rule name with backticks is fenced longer than any run of them, and padded where one meets the fence", () => {
+    const runtime = "conformance/recorders/port-readiness/runtimes/x``y`";
+    const planned = planFor({
+      "packs/python/conformance.json": manifest([...PACK_RULES, ...["a`b``c", "`x", " y "].map((rule, index) => ({ id: `bandit-x${index}`, tool: "bandit", rule }))], [CORPUS]),
+      [runtime]: "z\n",
+    });
+    assert.deepEqual(names(planned), [BANDIT]);
+    assert.deepEqual(planned.lines, ["python/bandit: the bandit rules packs/python/conformance.json and candidates/conformance.json name changed (added `  y  `, `` `x ``, ```a`b``c```)"]);
+    assert.deepEqual(planned.warnings.map((warning) => warning.split(" changed:")[0]), ["``` conformance/recorders/port-readiness/runtimes/x``y` ```"]);
+    // Read back as CommonMark reads the comment, each span is the text the pull request chose, whole.
+    const { spans } = codeSpans(commentBody(planned));
+    for (const text of [" y ", "`x", "a`b``c", runtime]) assert.ok(spans.includes(text), `${text} is no span of the comment:\n${spans.join("\n")}`);
   });
 
   // git ls-tree prints `<mode> <type> <object>\t<path>`, and the path may hold a tab of its own: the recorder reads
@@ -312,10 +372,10 @@ describe("the command", () => {
     const { status, stdout, output, comment } = run("--event", "pull_request_target", "--base", MAIN, "--head", head);
     assert.equal(status, 0, stdout);
     assert.equal(output, 'legs=[{"pack":"python","tool":"ruff"},{"pack":"python","tool":"bandit"}]\n');
-    assert.match(stdout, /^python\/ruff: packs\/python\/upstream\/ruff\/goldens\.tsv changed \(and 1 more\)$/mu);
+    assert.match(stdout, /^python\/ruff: `packs\/python\/upstream\/ruff\/goldens\.tsv` changed \(and 1 more\)$/mu);
     assert.match(stdout, /^python\/bandit: the "Not copied" lines/mu);
     assert.match(comment, /records the 2 tool-packs whose recorder inputs this pull request changes/u);
-    assert.match(comment, /^- `python\/ruff`: packs\/python\/upstream\/ruff\/goldens\.tsv changed \(and 1 more\)$/mu);
+    assert.match(comment, /^- `python\/ruff`: `packs\/python\/upstream\/ruff\/goldens\.tsv` changed \(and 1 more\)$/mu);
   });
 
   it("writes `legs=[]` and a comment saying why nothing is recorded, with the warnings", () => {
@@ -324,10 +384,10 @@ describe("the command", () => {
     assert.equal(status, 0, stdout);
     assert.equal(output, "legs=[]\n");
     assert.match(stdout, /^No tool-pack's recorder inputs changed: nothing to record\.$/mu);
-    assert.match(stdout, /^::warning title=Port readiness recording::conformance\/recorders\/port-readiness\/runtimes\/ruff-0\.16\.9\/pyproject\.toml changed: /mu);
+    assert.match(stdout, /^::warning title=Port readiness recording::`conformance\/recorders\/port-readiness\/runtimes\/ruff-0\.16\.9\/pyproject\.toml` changed: /mu);
     assert.match(comment, /nothing to record at `[0-9a-f]{10}`/u);
     assert.match(comment, /`gates\.yaml`, a file under its `fixtures\/`, or its `goldens\.tsv`/u);
-    assert.match(comment, /^- conformance\/recorders\/port-readiness\/runtimes\/ruff-0\.16\.9\/pyproject\.toml changed: a label records with main's runtimes/mu);
+    assert.match(comment, /^- `conformance\/recorders\/port-readiness\/runtimes\/ruff-0\.16\.9\/pyproject\.toml` changed: a label records with main's runtimes/mu);
     assert.match(comment, /To record a tool-pack anyway, run `port-readiness-record\.yml` from `main` by hand/u);
   });
 
@@ -338,7 +398,7 @@ describe("the command", () => {
     assert.equal(output, 'legs=[{"pack":"python","tool":"ruff"}]\n');
     assert.doesNotMatch(stdout, /^::error/mu);
     assert.doesNotMatch(comment, /^::error/mu);
-    assert.match(stdout, /^python\/ruff: .*\(added F841\\u000d\\u000a:\\u003aerror title=x:\\u003ay\)$/mu);
+    assert.match(stdout, /^python\/ruff: .*\(added `F841\\u000d\\u000a:\\u003aerror title=x:\\u003ay`\)$/mu);
   });
 
   // As authorize runs it: its own workflow commands go to --annotations, for the step to print once commands resume.
@@ -352,22 +412,22 @@ describe("the command", () => {
     const { status, stdout, output, comment } = run("--event", "pull_request_target", "--base", MAIN, "--head", head, "--annotations", annotations);
     assert.equal(status, 0, stdout);
     assert.equal(output, 'legs=[{"pack":"python","tool":"bandit"}]\n');
-    assert.match(stdout, /^python\/bandit: .*\(added #\\u0023\[set-output name=legs;\]x, :\\u003awarning:\\u003ax, /mu);
+    assert.match(stdout, /^python\/bandit: .*\(added `#\\u0023\[set-output name=legs;\]x`, `:\\u003awarning:\\u003ax`, /mu);
     assert.doesNotMatch(stdout, /::|##\[/u);
     assert.doesNotMatch(comment, /::|##\[/u);
     // The comment, which goes to the job's summary, has the warnings when a tool-pack is selected too.
-    assert.match(comment, /^Warnings:\n\n- conformance\/recorders\/port-readiness\/runtimes\/#\\u0023\[set-output name=legs;\]x changed: /mu);
+    assert.match(comment, /^Warnings:\n\n- `conformance\/recorders\/port-readiness\/runtimes\/#\\u0023\[set-output name=legs;\]x` changed: /mu);
     const commands = readFileSync(annotations, "utf8").split("\n").filter((line) => line !== "");
     assert.equal(commands.length, 1);
     const prefix = "::warning title=Port readiness recording::";
-    assert.ok(commands[0]!.startsWith(`${prefix}conformance/recorders/port-readiness/runtimes/#\\u0023[set-output name=legs;]x changed: `), commands[0]!);
+    assert.ok(commands[0]!.startsWith(`${prefix}\`conformance/recorders/port-readiness/runtimes/#\\u0023[set-output name=legs;]x\` changed: `), commands[0]!);
     assert.doesNotMatch(commands[0]!.slice(prefix.length), /::|##\[/u);
   });
 
   it("records every tool-pack when git cannot compare, with a warning", () => {
     const { status, stdout, output } = run("--event", "pull_request_target", "--base", "no-such-commit", "--head", MAIN);
     assert.equal(status, 0, stdout);
-    assert.match(stdout, /^::warning title=Port readiness recording::git could not compare no-such-commit with [0-9a-f]{40}, so every tool-pack is recorded: /mu);
+    assert.match(stdout, /^::warning title=Port readiness recording::git could not compare `no-such-commit` with `[0-9a-f]{40}`, so every tool-pack is recorded: `[^`]+`$/mu);
     assert.equal(output, `legs=${JSON.stringify(TOOL_PACKS)}\n`);
   });
 
