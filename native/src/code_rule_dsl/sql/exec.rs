@@ -76,6 +76,10 @@ pub(in crate::code_rule_dsl) struct FileContext {
         Arc<crate::code_rule_dsl::calls::CallsView>,
         Arc<crate::code_rule_dsl::calls::summary::Summary>,
     )>,
+    /// The kind postings of the anchor index the native step built over the file's tape, where
+    /// it built one (`FileAnchorIndex::into_kind_postings`): the `node` table's, so the file's
+    /// nodes are not sorted by kind again (`NodeFacts`).
+    pub(in crate::code_rule_dsl) kinds: Option<Arc<crate::code_rule_dsl::matcher::KindPostings>>,
 }
 
 /// The terminals and stages of the clauses a batch runs.
@@ -113,10 +117,10 @@ impl Batch {
     pub(super) fn of(docs: Vec<(TapeDoc, FileContext)>, program: Arc<Program>) -> Arc<Self> {
         let files = docs
             .into_iter()
-            .map(|(doc, context)| {
+            .map(|(doc, mut context)| {
                 let dialect = *doc.get_lang();
                 let root = AstGrep::doc(doc);
-                let facts = NodeFacts::of(&root);
+                let facts = NodeFacts::of(&root, context.kinds.take());
                 BatchFile {
                     root,
                     dialect,

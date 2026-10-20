@@ -535,7 +535,10 @@ impl SqlFiles {
                 Ok((doc, lines)) => {
                     // As the workspace narrows a clause's roots: none where the file lacks the
                     // matcher's required text, else the anchor index's selection.
-                    let roots = sql_roots(grammar, &doc, &file.source);
+                    let (roots, kinds) = match sql_roots(grammar, &doc, &file.source) {
+                        Some((roots, kinds)) => (Some(roots), Some(kinds)),
+                        None => (None, None),
+                    };
                     inputs.push((
                         doc,
                         roots.map(|roots| (statement, roots)),
@@ -548,6 +551,7 @@ impl SqlFiles {
                             calls: crate::code_rule_dsl::calls::FileCallsSlot::evaluation_calls(
                                 &file.path,
                             ),
+                            kinds,
                         },
                     ));
                     Ok((inputs.len() - 1, lines))
@@ -582,12 +586,16 @@ impl SqlFiles {
 
 /// The roots the SQL engine runs `grammar` on in `doc`: `None` where the file lacks the text the
 /// matcher requires (it matches no root), else every root of its kinds (`Some(None)`) or the ones
-/// its anchor index selects. Both are sound narrowings: the workspace's native path runs on them.
+/// its anchor index selects, with the index's kind postings for the batch's `node` table. Both
+/// are sound narrowings: the workspace's native path runs on them.
 fn sql_roots(
     grammar: &GrammarMatcher,
     doc: &crate::code_rule_dsl::tape::TapeDoc,
     source: &str,
-) -> Option<Option<Arc<[u32]>>> {
+) -> Option<(
+    Option<Arc<[u32]>>,
+    Arc<crate::code_rule_dsl::matcher::KindPostings>,
+)> {
     use crate::code_rule_dsl::budget::matcher_budget_exhausted;
     use crate::code_rule_dsl::matcher::{FileAnchorIndex, Selection};
     let mut found = |text: &str, literal: &str| {
@@ -607,16 +615,17 @@ fn sql_roots(
         usize::MAX,
         matcher_budget_exhausted,
     );
-    match index.select(&grammar.anchors) {
-        Selection::All => Some(None),
-        Selection::Roots(roots) if roots.is_empty() => None,
-        Selection::Roots(roots) => Some(Some(
+    let roots = match index.select(&grammar.anchors) {
+        Selection::All => None,
+        Selection::Roots(roots) if roots.is_empty() => return None,
+        Selection::Roots(roots) => Some(
             roots
                 .iter()
                 .map(|&ordinal| index.node(ordinal).node_id() as u32)
                 .collect(),
-        )),
-    }
+        ),
+    };
+    Some((roots, Arc::new(index.into_kind_postings())))
 }
 
 /// What one file contributes to a regex or AST query.

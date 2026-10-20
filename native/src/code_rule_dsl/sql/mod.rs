@@ -31,7 +31,11 @@ pub(super) use exec::{StatementProfile, profiled};
 #[cfg(test)]
 pub(super) use exec::{compile, compile_each};
 #[cfg(test)]
+pub(super) use nodes::POSTINGS_TIME;
+#[cfg(test)]
 pub(super) use shapes::VERIFY as VERIFY_SHAPES;
+#[cfg(test)]
+pub(super) use timing::Started;
 pub(super) use timing::{Timing, timed};
 
 /// Files per batch where the caller sets none: the workspace's default, and every batch of a

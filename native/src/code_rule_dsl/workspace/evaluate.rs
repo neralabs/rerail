@@ -23,7 +23,7 @@ use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
-    FileAnchorIndex, FileScopeSlot, GrammarMatcher, Selection, UtilLimit,
+    FileAnchorIndex, FileScopeSlot, GrammarMatcher, KindPostings, Selection, UtilLimit,
 };
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledCodeRule, FILE_BUDGET_EXCEEDED, FileInput, INPUT_LIMIT, Metrics, Query,
@@ -306,12 +306,12 @@ fn restore_consumer_budget(previous: Option<Option<u64>>) {
 }
 
 /// A job of a SQL batch between its steps before the batch's matching and those after.
-struct Started {
+struct Started<'c> {
     budget: SuspendedBudget,
     transient: bool,
     storage_read_nanoseconds: u64,
     pass: FilePass,
-    ast: Option<SqlFile>,
+    ast: Option<SqlFile<'c>>,
 }
 
 /// Evaluates a batch of jobs with their AST clauses matched on the SQL engine: each file's native
@@ -385,7 +385,7 @@ fn sql_batch(
     let mut run_of = HashMap::new();
     // Per clause run of a file: its job, slot, run and position in the run.
     let mut wanted = Vec::new();
-    for (job, (_, file, _, crossfile, start)) in started.iter().enumerate() {
+    for (job, (_, file, _, crossfile, start)) in started.iter_mut().enumerate() {
         let Ok(Started { ast: Some(ast), .. }) = start else {
             continue;
         };
@@ -403,6 +403,7 @@ fn sql_batch(
                 .map(|(_, tables)| tables.clone())
                 .unwrap_or_default(),
             calls: CrossFileScheduler::calls(crossfile.as_ref()),
+            kinds: ast.kinds.take(),
         };
         docs.push((ast.doc.restored.clone(), context));
         for (slot, planned) in ast.runs.iter().enumerate() {
@@ -1005,6 +1006,22 @@ fn settle_ast_file(
     }
 }
 
+/// The native dispatch's per-file preparation (`clause_grammars`, `anchor_index` and each running
+/// clause's `select_roots` in `evaluate_ast_file`), summed over the workers: the native
+/// counterpart of the SQL pipeline's `plan` (`SqlFile::plan`), read by
+/// `sql::tests::per_file_plan_against_native`.
+#[cfg(test)]
+pub(super) static NATIVE_PLAN: std::sync::Mutex<crate::code_rule_dsl::sql::Timing> =
+    std::sync::Mutex::new(crate::code_rule_dsl::sql::Timing::ZERO);
+
+#[cfg(test)]
+fn add_native_plan(started: crate::code_rule_dsl::sql::Started) {
+    NATIVE_PLAN
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .add(started.elapsed());
+}
+
 /// The document the clauses were read on, `None` where none was restored.
 fn evaluate_ast_file(
     file: &mut FileState,
@@ -1020,14 +1037,23 @@ fn evaluate_ast_file(
     };
     let nodes = doc.nodes;
     let settled = {
+        #[cfg(test)]
+        let prepared = crate::code_rule_dsl::sql::Started::now();
         let (grammars, runs) = clause_grammars(file, code_rules);
         let index = anchor_index(&doc, &grammars, &runs, metrics);
+        #[cfg(test)]
+        add_native_plan(prepared);
         // A clause's anchor selection is its own work: it runs under the clause's allowance.
         let select = |slot: usize| -> Option<Arc<[u32]>> {
             if !runs[slot] {
                 return Some(Arc::from([]));
             }
-            select_roots(&index, grammars[slot])
+            #[cfg(test)]
+            let prepared = crate::code_rule_dsl::sql::Started::now();
+            let roots = select_roots(&index, grammars[slot]);
+            #[cfg(test)]
+            add_native_plan(prepared);
+            roots
         };
         let mut util_work = file
             .candidates
@@ -1078,29 +1104,32 @@ fn evaluate_ast_file(
 /// A clause's statement in the SQL program and its selected roots (`None`: every root).
 type PlannedRun = (usize, Option<Arc<[u32]>>);
 
-/// A file's AST clauses on the SQL engine: its document, which candidates run (`runs` of
-/// `clause_grammars`), the statement and roots of each that the engine matches, and, after the
-/// batch, their matches.
-struct SqlFile {
+/// A file's AST clauses on the SQL engine: its document, its candidates' grammar matchers and
+/// which of them run (`clause_grammars`), the statement and roots of each that the engine
+/// matches, its anchor index's kind postings for the batch's `node` table, and, after the batch,
+/// their matches.
+struct SqlFile<'c> {
     doc: AstDoc,
+    grammars: Vec<&'c GrammarMatcher>,
     gate: Vec<bool>,
     runs: Vec<Option<PlannedRun>>,
+    kinds: Option<Arc<KindPostings>>,
     matches: Vec<Vec<SqlMatch>>,
 }
 
-impl SqlFile {
+impl<'c> SqlFile<'c> {
     /// What the batch matches for the file: the anchor index and each running clause's selected
     /// roots, as the native dispatch computes them (`evaluate_ast_file`). A clause the engine
     /// refuses fails where it would run.
     fn plan(
         file: &mut FileState,
-        code_rules: &[Arc<CompiledCodeRule>],
+        code_rules: &'c [Arc<CompiledCodeRule>],
         doc: AstDoc,
         metrics: &mut Metrics,
         sql: &SqlEngine,
     ) -> Self {
         let (grammars, gate) = clause_grammars(file, code_rules);
-        let runs = {
+        let (runs, kinds) = {
             let index = anchor_index(&doc, &grammars, &gate, metrics);
             let mut runs = Vec::with_capacity(gate.len());
             for (slot, &id) in file.candidates.ast.iter().enumerate() {
@@ -1123,13 +1152,20 @@ impl SqlFile {
                     runs.push(Some((statement, roots)));
                 }
             }
-            runs
+            // The batch reads the file's nodes by kind only where one of its clauses runs.
+            let kinds = runs
+                .iter()
+                .any(Option::is_some)
+                .then(|| Arc::new(index.into_kind_postings()));
+            (runs, kinds)
         };
         let matches = runs.iter().map(|_| Vec::new()).collect();
         Self {
             doc,
+            grammars,
             gate,
             runs,
+            kinds,
             matches,
         }
     }
@@ -1143,9 +1179,12 @@ impl SqlFile {
         pass: &mut FilePass,
     ) -> Result<tape::TapeDoc> {
         let Self {
-            doc, gate, matches, ..
+            doc,
+            grammars,
+            gate,
+            matches,
+            ..
         } = self;
-        let (grammars, _) = clause_grammars(file, code_rules);
         let nodes = doc.nodes;
         let mut util_work = file
             .candidates
