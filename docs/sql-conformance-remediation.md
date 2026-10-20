@@ -722,8 +722,10 @@ Commit `5e7178b3` is its TDD-green implementation.
 Phases 1 through 5 are complete.
 Parsed literals, relational host predicates, and exported parsed captures execute through bounded
 parse-fact descriptors and SQL composition. Generated results cross typed document-map rows in SQL.
-Missing maps, invalid spans, and overlaps fail closed before registration. Mapped source identities,
-paths, and spans equal the committed oracles. Parse-capacity failure is atomic.
+Missing maps, invalid spans, and overlaps fail closed before registration. Source and generated
+identities are distinct. Mapped source identities, paths, and spans equal the committed oracles.
+Parse-capacity failure is atomic. Generated PHP production is outside this remediation phase; the
+mapping contract operates on typed generated-document identities and coordinates.
 
 All four Phase 5 authored SQL statements and all four ordered terminal catalogs pass exact,
 behavioral, repeated, and concurrent compilation checks.
