@@ -821,6 +821,28 @@ fn production_contract_phase_four_failure_matches_authored_sql() {
 }
 
 #[test]
+fn production_contract_phase_two_all_relations_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in [
+        "all-two-positive",
+        "all-capture-threading",
+        "all-three-valued-false-after-unknown",
+        "all-three-valued-withheld-capture",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the ordered conjunction contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored three-valued conjunction SQL contract"
+        );
+    }
+}
+
+#[test]
 fn production_contract_phase_two_node_values_match_authored_sql() {
     let expected = authored_sql_goldens();
     for name in ["node-value-positive", "node-value-unknown"] {
