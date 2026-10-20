@@ -8,7 +8,8 @@ Install [Git LFS](https://git-lfs.com) before you clone, and run `git lfs instal
 (`model/model.safetensors`) and the engine's Unicode names table (`native/src/code_rule_dsl/value/names/names.bin`,
 compiled into the engine) are stored in LFS (`.gitattributes`); without it a checkout holds pointer files, and neither
 the engine build nor the model works. In a checkout made without it, run `git lfs pull`. Then `npm ci` and
-`npm run build`.
+`npm run build`. Outside Windows, `npm test` also runs some of the workflows' steps, which need `bash` and `jq` on
+PATH.
 
 Generated files are listed, with the command that rewrites each, in
 [scripts/generate/README.md](scripts/generate/README.md); edit the generator, not its output.

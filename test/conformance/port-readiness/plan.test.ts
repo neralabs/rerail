@@ -1,11 +1,11 @@
 // conformance/port-readiness/plan.mjs: the legs port-readiness.yml runs, every one or the ones a change selects.
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { afterAll, describe, it } from "vitest";
+import { afterAll, beforeAll, describe, it } from "vitest";
 import { parse } from "yaml";
 
 import { changedPaths, gatedToolPacks, legsOf, plan, REPORT_ONLY, ROOT, ROOTS, SHARDS, writeOutputs, type Leg } from "../../../conformance/port-readiness/plan.mjs";
@@ -88,7 +88,7 @@ describe("every leg", () => {
 
 // port-readiness-record.yml's publish job, read the way the runner reads it.
 describe("the record workflow", () => {
-  const publish = (): { name: string; if?: string; run?: string; env?: Record<string, string> }[] => workflow("port-readiness-record.yml").jobs.publish.steps;
+  const publish = (): { name: string; if?: string; uses?: string; run?: string; env?: Record<string, string> }[] => workflow("port-readiness-record.yml").jobs.publish.steps;
   const push = () => publish().find((step) => step.name === "Push the commit")!;
 
   // A run with no pull request opens none from the branch it pushes; a person does, from the link in the run's summary.
@@ -129,6 +129,110 @@ describe("the record workflow", () => {
     assert.ok(summary?.run !== undefined, "no step writes the summary of a run with no pull request to comment on");
     assert.match(summary.run, /cat "\$RUNNER_TEMP\/comment\.md" >> "\$GITHUB_STEP_SUMMARY"/u);
     assert.match(summary.run, /\/changes\.md"/u);
+  });
+
+  // download-artifact puts each artifact a pattern matches in a directory named for it, except when the pattern
+  // matches only one: then that one's files land in legs/ itself (run 39431200428, a dispatch for python/ruff alone).
+  // Every step that reads a leg reads legs/port-readiness-recording-<pack>-<tool>/, so the steps between the download
+  // and the first of them must leave each leg's files there, whatever the number of legs. They run here as the runner
+  // runs them, on each layout the download leaves, followed by the lines of every later step that find a leg's files.
+  describe.skipIf(process.platform === "win32")("finds every leg's recording, whatever the number of legs", () => {
+    const UPLOAD = ["assets/recording.json.gz", "assets/corpus.json.gz", "changed.list", "changed.tar", "changes.md", "recording.lock"];
+    const artifact = ({ pack, tool }: { pack: string; tool: string }): string => `port-readiness-recording-${pack}-${tool}`;
+    const RUFF = { pack: "python", tool: "ruff" };
+    const BANDIT = { pack: "python", tool: "bandit" };
+
+    // The steps run in bash and read LEGS with jq, as on the runner. Without one of them every case would fail on a
+    // layout diff that never names it, so name it here instead.
+    beforeAll(() => {
+      for (const tool of ["bash", "jq"]) {
+        assert.equal(spawnSync(tool, ["--version"], { stdio: "ignore" }).status, 0, `these tests run the publish job's steps, which need ${tool} on PATH`);
+      }
+    });
+
+    /** What a leg's "Collect what the recorder wrote" uploads, written at `at`; each file names its leg. */
+    function upload(at: string, leg: { pack: string; tool: string }): void {
+      for (const file of UPLOAD) write(at, file, `${leg.pack}/${leg.tool}: ${file}\n`);
+    }
+
+    function bash(script: string, env: NodeJS.ProcessEnv, cwd: string): string {
+      const result = spawnSync("bash", ["-e", "-c", script], { cwd, env, encoding: "utf8" });
+      assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+      return result.stdout;
+    }
+
+    /**
+     * Runs publish on `legs/` as `lay` leaves it, checks the steps say what they did with it (`said`), and checks
+     * every later step finds each leg's files in its directory.
+     */
+    function publishOn(legs: { pack: string; tool: string }[], lay: (directory: string) => void, said: RegExp): void {
+      const root = tempRoot();
+      const workspace = join(root, "workspace");
+      mkdirSync(workspace);
+      const runnerTemp = join(root, "runner-temp");
+      const directory = join(runnerTemp, "legs");
+      mkdirSync(directory, { recursive: true });
+      lay(directory);
+      // Only what the steps read, and a home of their own, so no step run here reaches the developer's credentials.
+      const home = join(root, "home");
+      mkdirSync(home);
+      const env = { PATH: process.env.PATH, HOME: home, RUNNER_TEMP: runnerTemp, LEGS: JSON.stringify(legs) };
+
+      const steps = publish();
+      const download = steps.findIndex((step) => step.uses?.startsWith("actions/download-artifact@") === true);
+      const check = steps.findIndex((step) => step.name === "Check the recordings and build the commit");
+      assert.ok(download >= 0 && check > download, "publish checks the legs' recordings after it downloads them");
+      let output = "";
+      for (const step of steps.slice(download + 1, check)) if (step.run !== undefined) output += bash(step.run, env, workspace);
+      assert.match(output, said, "the steps between the download and the check say what they did with legs/");
+
+      // The lines that find a leg's files: the check's lock, the way it reads it, and each summary step's changes.md.
+      const line = (run: string, pattern: RegExp, what: string): string => {
+        const found = pattern.exec(run)?.[0];
+        assert.ok(found !== undefined, `the check has no line for ${what}`);
+        return found.trim();
+      };
+      const run = steps[check]!.run!;
+      const changes = steps.slice(check + 1).flatMap((step) => (step.run ?? "").match(/^\s*changes="\$RUNNER_TEMP\/legs\/[^"\n]*"$/gmu) ?? []);
+      assert.equal(changes.length, 2, "both summary steps read each leg's changes.md");
+      const lookup = [
+        "set -euo pipefail",
+        line(run, /^\s*fail\(\) \{.*\}$/mu, "failing"),
+        "while IFS=' ' read -r pack tool; do",
+        'label="$pack/$tool"',
+        line(run, /^\s*dir="\$RUNNER_TEMP\/legs\/[^"\n]*"$/mu, "the leg's directory"),
+        line(run, /^\s*lock="\$dir\/recording\.lock"$/mu, "the leg's lock"),
+        line(run, /^\s*\[ -f "\$lock" \] && \[ ! -L "\$lock" \] \|\| fail .*$/mu, "a missing lock"),
+        ...changes.map((found) => `(${found.trim()}; printf '%s\\n' "$changes")`),
+        `done < <(jq -r '.[] | "\\(.pack) \\(.tool)"' <<< "$LEGS")`,
+      ].join("\n");
+      const read = bash(lookup, env, workspace).trim().split("\n");
+
+      assert.deepEqual(readdirSync(directory).sort(), legs.map(artifact).sort());
+      for (const leg of legs) {
+        for (const file of UPLOAD) assert.equal(readFileSync(join(directory, artifact(leg), file), "utf8"), `${leg.pack}/${leg.tool}: ${file}\n`);
+      }
+      assert.deepEqual(read, legs.flatMap((leg) => changes.map(() => join(directory, artifact(leg), "changes.md"))));
+    }
+
+    it("one leg: download-artifact leaves its files in legs/ itself", () => {
+      publishOn([RUFF], (directory) => upload(directory, RUFF), /: moved them to legs\/port-readiness-recording-python-ruff$/mu);
+    });
+
+    it("one leg already in a directory named for its artifact", () => {
+      publishOn([RUFF], (directory) => upload(join(directory, artifact(RUFF)), RUFF), /^legs\/port-readiness-recording-python-ruff is already there: left alone$/mu);
+    });
+
+    it("several legs: download-artifact puts each in a directory named for its artifact", () => {
+      publishOn(
+        [BANDIT, RUFF],
+        (directory) => {
+          upload(join(directory, artifact(BANDIT)), BANDIT);
+          upload(join(directory, artifact(RUFF)), RUFF);
+        },
+        /^2 legs: left alone/mu,
+      );
+    });
   });
 });
 

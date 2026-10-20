@@ -443,12 +443,33 @@ jobs:
           ref: ${{ needs.authorize.outputs.base-sha }}
           fetch-depth: 0
 
-      # Outside the checkout, each leg in a directory of its own named for its artifact.
+      # Outside the checkout. download-artifact puts each artifact the pattern matches in a directory named for it,
+      # except when the pattern matches only one: then it puts that one's files in legs/ itself (run 39431200428).
       - name: Take every leg's recording
         uses: actions/download-artifact@v8
         with:
           pattern: port-readiness-recording-*
           path: ${{ runner.temp }}/legs
+
+      # Every step below reads a leg's files from legs/port-readiness-recording-<pack>-<tool>/, whatever the number of
+      # legs. A lone leg whose directory is not there, with files in legs/ itself, is that leg's: legs/ is renamed to
+      # its directory inside a new legs/, so no file in it is read, copied or followed. Any other layout is left alone,
+      # with a line saying why, and the check below fails on a leg whose lock is not in its directory.
+      - name: Give a lone leg's recording its directory
+        run: |
+          set -euo pipefail
+          legs="$RUNNER_TEMP/legs"
+          count="$(jq length <<< "$LEGS")"
+          [ "$count" -eq 1 ] || { echo "$count legs: left alone, as download-artifact gives each its directory"; exit 0; }
+          name="$(jq -r '.[0] | "port-readiness-recording-\(.pack)-\(.tool)"' <<< "$LEGS")"
+          [ ! -e "$legs/$name" ] && [ ! -L "$legs/$name" ] || { echo "legs/$name is already there: left alone"; exit 0; }
+          [ -d "$legs" ] && [ -n "$(find "$legs" -mindepth 1 -maxdepth 1 -print -quit)" ] || { echo "legs/ is missing or empty: left alone"; exit 0; }
+          moving="$(mktemp -d "$RUNNER_TEMP/legs.XXXXXX")"
+          mv -- "$legs" "$moving/leg"
+          mkdir -- "$legs"
+          mv -- "$moving/leg" "$legs/$name"
+          rmdir -- "$moving"
+          echo "the only leg's files were in legs/ itself: moved them to legs/$name"
 
       # Every leg's lock must be the recorder's, for its tool-pack, naming the release authorize chose and two assets
       # named for their own sha256, which the files must decompress to. Every file to commit must be the lock, a new
