@@ -584,18 +584,21 @@ impl SqlFiles {
     }
 }
 
+/// A file's roots for the SQL engine (`None`: every root of the matcher's kinds), with its anchor
+/// index's kind postings for the batch's `node` table.
+type SqlRoots = (
+    Option<Arc<[u32]>>,
+    Arc<crate::code_rule_dsl::matcher::KindPostings>,
+);
+
 /// The roots the SQL engine runs `grammar` on in `doc`: `None` where the file lacks the text the
-/// matcher requires (it matches no root), else every root of its kinds (`Some(None)`) or the ones
-/// its anchor index selects, with the index's kind postings for the batch's `node` table. Both
-/// are sound narrowings: the workspace's native path runs on them.
+/// matcher requires (it matches no root), else every root of its kinds or the ones its anchor
+/// index selects. Both are sound narrowings: the workspace's native path runs on them.
 fn sql_roots(
     grammar: &GrammarMatcher,
     doc: &crate::code_rule_dsl::tape::TapeDoc,
     source: &str,
-) -> Option<(
-    Option<Arc<[u32]>>,
-    Arc<crate::code_rule_dsl::matcher::KindPostings>,
-)> {
+) -> Option<SqlRoots> {
     use crate::code_rule_dsl::budget::matcher_budget_exhausted;
     use crate::code_rule_dsl::matcher::{FileAnchorIndex, Selection};
     let mut found = |text: &str, literal: &str| {
