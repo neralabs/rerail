@@ -15,7 +15,7 @@ import {
   commentVocabulary, keywords, literalNames, literalRegexes, parserVerdicts, sourceWords, words,
   type BabelParser, type DocumentationNode, type TypeScript,
 } from "../languages/ecmascript.js";
-import { componentParserVerdicts, type SfcCompiler } from "../languages/vue.js";
+import { componentParserVerdicts, templateVocabulary, type SfcCompiler } from "../languages/vue.js";
 import { checkoutUpstream, filesUnder, npmRuntime, treeDigest } from "../runtimes.js";
 import type { MessagePosition } from "./eslint-upstream.js";
 
@@ -723,7 +723,11 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
     fixtureTexts: () => fixtureTexts,
     fixtureTextSources: () => fixtureTextSources,
 
-    keywords: keywords(runtimeTs),
+    // A tool-pack that lints Vue components reads its rules' words in the Vue template language too: its directive
+    // syntax, built-in directives and character reference names, as the vue-eslint-parser upstream lints with reads them.
+    keywords: setup.vue === undefined
+      ? keywords(runtimeTs)
+      : new Set([...keywords(runtimeTs), ...templateVocabulary(readFileSync(require.resolve("vue-eslint-parser"), "utf8"))]),
     // TypeScript's JSDoc tags and pragmas, ESLint's directive comments (`eslint-disable-next-line`, `global`) and the
     // values its directives take (`/* global a:off */`, `/* eslint semi: "warn" */`).
     commentVocabulary: new Set([

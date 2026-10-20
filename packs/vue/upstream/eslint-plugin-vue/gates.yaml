@@ -1,5 +1,7 @@
 adapter: eslint
 # eslint-plugin-vue's documents in rerail's vue pack (NER-1939).
+# goldens.tsv is not imported from NRV, which pins no Vue tool: it is the files where a rule and eslint-plugin-vue
+# differed when rerail still ran Gate 6 itself (#141, before #85 moved Gate 6 to NRV). Finding new ones needs an NRV pin.
 rerail:
   pack: vue
   project: eslint-plugin-vue
@@ -42,7 +44,8 @@ known_gaps: []
 #   parserOptions.parser picks for the file's extension (espree when none); that case is read in that script's file
 #   type, and a script case at a .vue name (a script-rule case linted by espree as test.vue, which the plugin's rules
 #   take for a component's script by that name) is read at its own path in that file type (`parsedAs`). The vue pack's
-#   ports cover .vue components, so upstream findings on a script case are differences the port cannot close.
+#   ports cover .vue components (`rerail.in_scope`), so matches-upstream-tests does not score a script case: it is
+#   reported as outside the tool-pack's rerail.in_scope, as loads holds the ports to .vue alone.
 # - Independent parsers: @vue/compiler-sfc 3.5.43 (runtimes/vue-parsers) splits a .vue file; its parse errors are
 #   syntax errors, its checks of the component grammar errors, and TypeScript and Babel read its script blocks in their
 #   lang. Other files are read by TypeScript and Babel alone.

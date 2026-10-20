@@ -96,7 +96,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/require-v-for-key"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-require-v-for-key.json",
+      "policy": "rules/eslint-plugin-vue-require-v-for-key.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -109,7 +109,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-use-v-if-with-v-for"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-use-v-if-with-v-for.json",
+      "policy": "rules/eslint-plugin-vue-no-use-v-if-with-v-for.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -123,7 +123,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-duplicate-attributes"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-duplicate-attributes.json",
+      "policy": "rules/eslint-plugin-vue-no-duplicate-attributes.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -137,7 +137,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-v-html"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-v-html.json",
+      "policy": "rules/eslint-plugin-vue-no-v-html.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -150,7 +150,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-child-content"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-child-content.json",
+      "policy": "rules/eslint-plugin-vue-no-child-content.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -163,7 +163,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-deprecated-v-on-native-modifier"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-deprecated-v-on-native-modifier.json",
+      "policy": "rules/eslint-plugin-vue-no-deprecated-v-on-native-modifier.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -176,7 +176,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/valid-v-for"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-valid-v-for.json",
+      "policy": "rules/eslint-plugin-vue-valid-v-for.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -190,7 +190,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-v-text-v-html-on-component"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-v-text-v-html-on-component.json",
+      "policy": "rules/eslint-plugin-vue-no-v-text-v-html-on-component.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -203,7 +203,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/v-on-event-hyphenation"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-v-on-event-hyphenation.json",
+      "policy": "rules/eslint-plugin-vue-v-on-event-hyphenation.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -216,7 +216,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/attribute-hyphenation"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-attribute-hyphenation.json",
+      "policy": "rules/eslint-plugin-vue-attribute-hyphenation.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -243,7 +243,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-unused-vars"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-unused-vars.json",
+      "policy": "rules/eslint-plugin-vue-no-unused-vars.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -258,7 +258,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-template-shadow"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-template-shadow.json",
+      "policy": "rules/eslint-plugin-vue-no-template-shadow.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -288,7 +288,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-ref-as-operand"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-ref-as-operand.json",
+      "policy": "rules/eslint-plugin-vue-no-ref-as-operand.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -304,7 +304,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-mutating-props"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-mutating-props.json",
+      "policy": "rules/eslint-plugin-vue-no-mutating-props.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -349,7 +349,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-async-in-computed-properties"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-async-in-computed-properties.json",
+      "policy": "rules/eslint-plugin-vue-no-async-in-computed-properties.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -364,7 +364,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-side-effects-in-computed-properties"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-side-effects-in-computed-properties.json",
+      "policy": "rules/eslint-plugin-vue-no-side-effects-in-computed-properties.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -379,7 +379,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-export-in-script-setup"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-export-in-script-setup.json",
+      "policy": "rules/eslint-plugin-vue-no-export-in-script-setup.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -406,7 +406,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-watch-after-await"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-watch-after-await.json",
+      "policy": "rules/eslint-plugin-vue-no-watch-after-await.json",
       "capabilities": [
         "syntax",
         "scope",

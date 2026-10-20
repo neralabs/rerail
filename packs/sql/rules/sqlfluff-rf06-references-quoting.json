@@ -1,0 +1,63 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-rf06-references-quoting",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of SQLFluff 4.4.0's RF06 (references.quoting) with its defaults (prefer_quoted_identifiers and prefer_quoted_keywords false, case_sensitive true), under SQLFluff's postgres dialect, the reading the engine gives every .sql file: report a double-quoted identifier that would mean the same unquoted, because its name has no upper-case letter (PostgreSQL folds unquoted names to lower case), matches the postgres dialect's naked-identifier template [\\p{L}_][\\p{L}\\p{N}_$]* and is none of the dialect's reserved words (its anti-template, embedded here). PostgreSQL lexes every double-quoted token as a quoted identifier; the engine reads one as an identifier, or as a literal where its grammar takes a name as a string (a column list, an index or extension name). A routine body (dollar-quoted, a string to SQLFluff) is not read.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-ansi-quoted-identifier",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "regex": "^\"[\\p{L}_--\\p{Lu}--\\p{Lt}][\\p{L}\\p{N}_$--\\p{Lu}--\\p{Lt}]*\"$",
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "literal"
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "regex": "(?i)^\"(?:ALL|ANALYSE|ANALYZE|AND|ANY|ARRAY|AS|ASC|ASYMMETRIC|AUTHORIZATION|BINARY|BOTH|CASE|CAST|CHECK|COLLATE|COLUMN|COMMUTATOR|CONCURRENTLY|CONNECT|CONSTRAINT|CREATE|CROSS|CURRENT_CATALOG|CURRENT_DATE|CURRENT_ROLE|CURRENT_SCHEMA|CURRENT_TIME|CURRENT_TIMESTAMP|DEFAULT|DEFERRABLE|DESC|DISTINCT|DO|ELSE|END|EXCEPT|FALSE|FETCH|FOR|FOREIGN|FREEZE|FROM|FULL|GRANT|GROUP|HASHES|HAVING|ILIKE|IN|INITIALLY|INNER|INTERSECT|INTO|IS|ISNULL|JOIN|LATERAL|LEADING|LEFT|LIKE|LIMIT|LOCALTIME|LOCALTIMESTAMP|MERGES|NATURAL|NEGATOR|NOT|NOTNULL|NULL|OFFSET|ON|ONLY|OR|ORDER|OUTER|OVERLAPS|PLACING|PRIMARY|REFERENCES|RETURNING|RIGHT|RIGHTARG|SELECT|SESSION_USER|SIMILAR|SOME|SYMMETRIC|TABLESAMPLE|THEN|TO|TRAILING|TRUE|UNION|UNIQUE|USING|VARIADIC|VERBOSE|WHEN|WHERE|WINDOW|WITH)\"$"
+                },
+                {
+                  "inside": {
+                    "kind": "function_body",
+                    "stopBy": "end"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "RF06",
+        "message": "Unnecessary quoted identifier; use the unquoted form.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "RF06",
+              "L059",
+              "all",
+              "references",
+              "references.quoting"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

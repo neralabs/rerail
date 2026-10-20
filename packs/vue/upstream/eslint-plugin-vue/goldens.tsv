@@ -1,4 +1,4 @@
-# matches-upstream-tests goldens: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256. Written by npm run port-readiness -- --write, sorted; a golden is never removed.
+# matches-upstream-tests goldens, imported from NRV and reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.
 eslint-plugin-vue-attribute-hyphenation
 	rerail:hoppscotch
 		packages/hoppscotch-sh-admin/src/components/onboarding/AuthSetup.vue	39eaa1c069cd8cf5d1cac92721651fc08af9bc07cba9507d804a57b2739e1f3f

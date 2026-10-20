@@ -1,0 +1,50 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-partial-pub-fields",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's partial_pub_fields: in a struct whose first field is `pub` (exactly: `pub(crate)` and other restricted visibilities are not), reports the first field that is not, and in one whose first field is not `pub`, the first field that is, at the field's visibility (a zero-width point at the field's start when it has none).",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": { "language": "rust", "utils": {
+        "pub-field": { "has": { "kind": "visibility_modifier", "regex": "^pub$" } },
+        "later-field": { "kind": "field_declaration", "inside": { "kind": "field_declaration_list", "inside": { "kind": "struct_item" } }, "follows": { "stopBy": "end", "kind": "field_declaration" } },
+        "first-pub-after-private": { "matches": "later-field", "all": [{ "matches": "pub-field" }, { "not": { "follows": { "stopBy": "end", "kind": "field_declaration", "matches": "pub-field" } } }] },
+        "first-private-after-pub": { "matches": "later-field", "all": [{ "not": { "matches": "pub-field" } }, { "not": { "follows": { "stopBy": "end", "kind": "field_declaration", "not": { "matches": "pub-field" } } } }] },
+        "skipped": { "any": [{ "kind": "attribute_item" }, { "kind": "line_comment" }, { "kind": "block_comment" }] },
+        "tuple-field": {
+          "inside": { "kind": "ordered_field_declaration_list", "inside": { "kind": "struct_item" } },
+          "follows": { "stopBy": { "not": { "any": [{ "matches": "skipped" }, { "kind": "visibility_modifier" }] } }, "regex": "^[(,]$" },
+          "not": { "any": [{ "matches": "skipped" }, { "kind": "visibility_modifier" }, { "regex": "^[(),]$" }] }
+        },
+        "tuple-vis": { "follows": { "stopBy": { "not": { "matches": "skipped" } }, "kind": "visibility_modifier" } },
+        "tuple-pub": { "follows": { "stopBy": { "not": { "matches": "skipped" } }, "kind": "visibility_modifier", "regex": "^pub$" } },
+        "tuple-first-private-after-pub": { "all": [
+          { "matches": "tuple-field" },
+          { "not": { "matches": "tuple-pub" } },
+          { "follows": { "stopBy": "end", "regex": "^,$" } },
+          { "not": { "follows": { "stopBy": "end", "matches": "tuple-field", "not": { "matches": "tuple-pub" } } } }
+        ] }
+      } }
+    },
+    {
+      "id": "field-visibility",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "visibility_modifier", "any": [
+        { "inside": { "stopBy": "neighbor", "any": [{ "matches": "first-pub-after-private" }, { "matches": "first-private-after-pub" }] } },
+        { "regex": "^pub$", "inside": { "kind": "ordered_field_declaration_list", "inside": { "kind": "struct_item" } }, "follows": { "stopBy": "end", "regex": "^,$" }, "not": { "follows": { "stopBy": "end", "kind": "visibility_modifier", "regex": "^pub$" } } },
+        { "precedes": { "stopBy": { "not": { "matches": "skipped" } }, "matches": "tuple-first-private-after-pub" } }
+      ] } } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "partial_pub_fields", "message": "Clippy partial_pub_fields: mixed usage of pub and non-pub fields" }
+    },
+    {
+      "id": "inherited-visibility-after-pub",
+      "forbid": { "ast": { "language": "rust", "rule": { "any": [
+        { "matches": "first-private-after-pub", "not": { "has": { "kind": "visibility_modifier" } } },
+        { "matches": "tuple-first-private-after-pub", "not": { "matches": "tuple-vis" } }
+      ] } } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.start", "code": "partial_pub_fields", "message": "Clippy partial_pub_fields: mixed usage of pub and non-pub fields" }
+    }
+  ]
+}
