@@ -66,8 +66,10 @@ interface ReleaseAsset {
 }
 
 /**
- * The lock names a recording the release does not hold: never uploaded, or a release that does not exist. Not a
- * download, API or attestation failure, which are thrown as plain errors.
+ * The lock names a recording the release does not hold: the release exists and has no asset of that name, because the
+ * recording was never uploaded. Not a release the lookup cannot find (a missing tag, a repository the token cannot read,
+ * a wrong repository: GitHub answers 404 to all three), nor a download, API or attestation failure, which are thrown
+ * as plain errors.
  */
 export class MissingRecordingError extends Error {
   constructor(release: string, repository: string, asset: string) {
@@ -76,8 +78,8 @@ export class MissingRecordingError extends Error {
   }
 }
 
-/** GET a GitHub API url as JSON; null when it answers 404. */
-async function githubJson<T>(url: string, token: string | undefined): Promise<T | null> {
+/** GET a GitHub API url as JSON; any answer outside 2xx, 404 included, is an error. */
+async function githubJson<T>(url: string, token: string | undefined): Promise<T> {
   const response = await fetch(url, {
     headers: {
       accept: "application/vnd.github+json",
@@ -85,7 +87,6 @@ async function githubJson<T>(url: string, token: string | undefined): Promise<T 
       ...(token === undefined || token === "" ? {} : { authorization: `Bearer ${token}` }),
     },
   });
-  if (response.status === 404) return null;
   if (!response.ok) throw new Error(`GET ${url} answered ${response.status} ${response.statusText}`);
   return (await response.json()) as T;
 }
@@ -97,8 +98,15 @@ async function githubJson<T>(url: string, token: string | undefined): Promise<T 
  */
 async function downloadAsset(asset: LockedFile, lock: RecordingLock, options: FetchOptions): Promise<Buffer> {
   const repository = options.repository ?? DEFAULT_REPOSITORY;
-  const release = await githubJson<{ assets?: ReleaseAsset[] }>(`https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(lock.release)}`, options.token);
-  const found = (release?.assets ?? []).find((entry) => entry.name === asset.asset);
+  const url = `https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(lock.release)}`;
+  let release: { assets?: ReleaseAsset[] };
+  try {
+    release = await githubJson<{ assets?: ReleaseAsset[] }>(url, options.token);
+  } catch (error) {
+    // A 404 here is not a missing recording: the release itself is not found, or the token cannot read the repository.
+    throw new Error(`the release ${lock.release} of ${repository} cannot be read (a missing tag, a repository this token cannot read, or the wrong repository): ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const found = (release.assets ?? []).find((entry) => entry.name === asset.asset);
   if (found === undefined) throw new MissingRecordingError(lock.release, repository, asset.asset);
   const response = await fetch(found.url, {
     headers: {

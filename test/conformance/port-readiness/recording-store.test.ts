@@ -162,17 +162,30 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test("only a release that lacks the asset, or does not exist, is a missing recording; an API error is not", async () => {
+test("only a release that lacks the asset is a missing recording; an API error is not", async () => {
   const { root, cacheRoot, cleanup } = toolPack(TEXTS);
   try {
     const answering = (status: number, body: unknown) => vi.stubGlobal("fetch", async () => new Response(JSON.stringify(body), { status }));
     answering(200, { assets: [{ name: "another-asset.json.gz", url: "https://api.github.com/assets/1", size: 1 }] });
     await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit"), MissingRecordingError);
-    answering(404, { message: "Not Found" });
-    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit"), MissingRecordingError);
     answering(502, { message: "Bad Gateway" });
     await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit"), (error: unknown) =>
       error instanceof Error && !(error instanceof MissingRecordingError) && /answered 502/u.test(error.message));
+  } finally {
+    cleanup();
+  }
+});
+
+test("a release lookup that answers 404 is a plain error, not a missing recording", async () => {
+  const { root, cacheRoot, cleanup } = toolPack(TEXTS);
+  try {
+    // GitHub answers 404 for a tag with no release, a repository the token cannot read, and a wrong repository: none
+    // is a recording a gate leg should record itself.
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ message: "Not Found" }), { status: 404 }));
+    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { repository: "someone/elsewhere" }), (error: unknown) =>
+      error instanceof Error && !(error instanceof MissingRecordingError)
+      && /release \S+ of someone\/elsewhere cannot be read .*answered 404/u.test(error.message));
+    assert.equal(existsSync(join(cacheRoot, "recordings")), false);
   } finally {
     cleanup();
   }

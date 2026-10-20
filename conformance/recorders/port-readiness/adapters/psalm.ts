@@ -48,7 +48,8 @@ interface ProviderCase {
   ignored_issues: string[];
   php_version: string | null;
 }
-interface TestClass { path: string; unusedVariables: boolean; cases: ProviderCase[] }
+/** A test class as psalm_driver.php reads it: its cases, and the provider items (or whole providers) it cannot evaluate, with why. */
+interface TestClass { path: string; unusedVariables: boolean; cases: ProviderCase[]; left: { provider: "valid" | "invalid"; item: string | null; reason: string }[] }
 interface IssueFact { file: string; deprecation: string | null; recommended: boolean }
 interface Facts {
   version: string;
@@ -182,6 +183,10 @@ export async function createPsalmAdapter(pack: PackManifest, names: string[], ca
   }));
   const owned = [...new Set(testOf.values())].sort((a, b) => (a.path < b.path ? -1 : 1));
   const caseList = owned.flatMap((test) => test.cases.map((testCase) => ({ test, testCase, fixture: `${test.path}#${testCase.provider}/${testCase.name}` })));
+  // What the reading leaves out of the ported issues' tests, for which no case is recorded, and of the rest of upstream's
+  // tests, whose cases not-overfit reads.
+  const unread = owned.flatMap((test) => test.left.map((entry) => `${test.path}#${entry.provider}${entry.item === null ? "" : `/${entry.item}`} (${entry.reason})`));
+  const unreadElsewhere = facts.tests.filter((test) => !owned.includes(test)).reduce((count, test) => count + test.left.length, 0);
 
   // Every case once as the tests configure Psalm and once as upstream recommends.
   const runs = await pooled(caseList, availableParallelism(), async ({ test, testCase }) => {
@@ -314,6 +319,13 @@ export async function createPsalmAdapter(pack: PackManifest, names: string[], ca
         detail: disagreements.length === 0
           ? `configured as its tests configure it, Psalm raises each invalid case's expected error and no error on a valid case (${caseList.filter(({ testCase }) => !skippedByTest(testCase)).length} case(s); \`SKIPPED-\` cases, which the tests skip as known bugs, left out)`
           : `${disagreements.length} case(s) differ from upstream's tests: ${disagreements.slice(0, 3).join("; ")}`,
+      },
+      {
+        // Informational, so it never fails a rule: the report shows what the reading leaves out, and a re-record whose
+        // reading shrank changes the count.
+        id: "upstream-tests-read",
+        ok: true,
+        detail: `${caseList.length} case(s) of the ported issues' tests read statically; ${unread.length} provider item(s) cannot be evaluated, and no case is recorded for them${unread.length === 0 ? "" : `: ${unread.slice(0, 5).join("; ")}${unread.length > 5 ? "; …" : ""}`}; ${unreadElsewhere} more in upstream's other tests`,
       },
     ],
     licenseText: upstreamLicenseText(upstream.directory),

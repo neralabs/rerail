@@ -21,10 +21,10 @@
   },
   "files": {
     "recording.json": {
-      "sha256": "78d63f69051363092cbf2933fbf0d060a743ca1b9e3ebab5b6fb21bc3b480632",
-      "size": 3597637,
+      "sha256": "688810716643fbe2cd5019cab82c563e5d4638d4a476e738b00ed73fc26aa47e",
+      "size": 3597887,
       "format": "rerail.port-readiness-recording/v2",
-      "asset": "php-psalm-recording-78d63f69051363092cbf2933fbf0d060a743ca1b9e3ebab5b6fb21bc3b480632.json.gz"
+      "asset": "php-psalm-recording-688810716643fbe2cd5019cab82c563e5d4638d4a476e738b00ed73fc26aa47e.json.gz"
     },
     "corpus.json": {
       "sha256": "acdcf29c843326ae1af92022012074ecb5bfa48b6e53f5e00fa00672b804fb11",

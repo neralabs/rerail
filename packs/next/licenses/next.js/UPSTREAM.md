@@ -219,6 +219,6 @@ Paths are relative to the pack directory, `packs/next/`.
 > `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
 > table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
 > It carries excerpts of this upstream's tests (`test/unit/eslint-plugin-next/*.test.ts`: the `code` of each RuleTester
-> case), redistributed under the licence above, together with Rerail's Apache-2.0; the LICENSE beside this file is this
+> case), redistributed under the licence above, together with Rerail's Apache-2.0; `LICENSE` beside this file is this
 > upstream's own, at the pinned commit.
 

@@ -21,7 +21,7 @@ import { diffRecordings, type RecordedPair, type RecordingChanges, type UnreadRe
 import {
   buildRecordingLock, DEFAULT_RELEASE, gzipRecording, readCachedRecording, RECORDING_LOCK, recordingLockSchema, recordingLockText, writeCachedRecording, type RecordingLock,
 } from "../../port-readiness/recording/store.js";
-import { rebuildFixtureTexts, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "../../port-readiness/recorded-adapter.js";
+import { licenseFiles, rebuildFixtureTexts, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "../../port-readiness/recorded-adapter.js";
 import type { PackAdapter, PackManifest, Span, UpstreamCase } from "../../port-readiness/types.js";
 import { createBanditAdapter } from "./adapters/bandit.js";
 import { createBladeParserAdapter } from "./adapters/blade-parser.js";
@@ -669,13 +669,17 @@ const NOTE_WIDTH = 120;
 
 /**
  * The note that lists the recording in UPSTREAM.md when it holds upstream test text inline, as a Markdown blockquote
- * wrapped to NOTE_WIDTH: recording.json is then partly upstream's material (excerpts), like a copied fixture.
+ * wrapped to NOTE_WIDTH: recording.json is then partly upstream's material (excerpts), like a copied fixture. It names
+ * the licence files kept beside UPSTREAM.md (recorded-adapter.ts's licenseFiles), as they are named.
  */
-export function recordingNote(source: string): string[] {
+export function recordingNote(source: string, licenses: string[]): string[] {
+  if (licenses.length === 0) throw new Error("UPSTREAM.md has no licence file beside it for the recording note to name");
+  const named = licenses.map((name) => `\`${name}\``);
+  const kept = named.length === 1 ? `${named[0]!} beside this file is` : `${named.slice(0, -1).join(", ")} and ${named.at(-1)!} beside this file are`;
   const text = `${RECORDING_NOTE_START.slice(2)}, and no file of this pack, so it is recorded here rather than in the table above: `
     + `the tool-pack's \`${RECORDING_LOCK}\` names it and a GitHub release holds the bytes (docs/port-readiness.md). It carries `
     + `excerpts of this upstream's tests (${source}), redistributed under the licence above, together with Rerail's Apache-2.0; `
-    + "the LICENSE beside this file is this upstream's own, at the pinned commit.";
+    + `${kept} this upstream's own, at the pinned commit.`;
   const lines: string[] = [];
   let line = ">";
   for (const word of text.split(" ")) {
@@ -694,14 +698,14 @@ export function recordingNote(source: string): string[] {
  * earlier note is replaced, and left as it is when it already says the same in other line breaks; without one, the
  * note goes after the table.
  */
-export function withRecordingNote(text: string, source: string): string {
+export function withRecordingNote(text: string, source: string, licenses: string[]): string {
   const lines = text.split("\n");
   const isRow = (line: string) => line.startsWith("| `upstream/");
   const first = lines.findIndex(isRow);
   if (first < 0) throw new Error("UPSTREAM.md has no file table to list the recording under");
   let last = first;
   while (last + 1 < lines.length && isRow(lines[last + 1]!)) last += 1;
-  const note = recordingNote(source);
+  const note = recordingNote(source, licenses);
   const at = lines.findIndex((line) => line.startsWith(RECORDING_NOTE_START));
   if (at < 0) return [...lines.slice(0, last + 1), "", ...note, ...lines.slice(last + 1)].join("\n");
   let end = at;
@@ -762,7 +766,7 @@ export async function writeRecording(root: string, pack: string, tool: string, r
     const upstreamMd = join(root, "packs", pack, "licenses", manifest.rerail.project, "UPSTREAM.md");
     let text = await readFile(upstreamMd, "utf8");
     if (diff.missing.length > 0) text = withUpstreamRows(text, tool, diff.missing, CASE_LAYOUTS[manifest.adapter]);
-    if (inline > 0) text = withRecordingNote(text, inlineTextsSource(manifest));
+    if (inline > 0) text = withRecordingNote(text, inlineTextsSource(manifest), licenseFiles(dirname(upstreamMd)));
     await writeFile(upstreamMd, text);
   }
   return { ...diff, lock, assets, changes: diffRecordings(pack, tool, before, { recording: recorded.recording, corpus: recorded.corpus }) };

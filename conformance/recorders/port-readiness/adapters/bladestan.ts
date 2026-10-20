@@ -90,8 +90,11 @@ export async function createBladestanAdapter(pack: PackManifest, names: string[]
 
   /**
    * The driver's answer, run in a scratch directory of its own (the test application and TMPDIR live there) that
-   * `prepare` may fill first. Every path under it is stripped from the answer: the recording must read the same on
-   * every machine. `register_argc_argv` is the CLI's default, set explicitly since php.ini files differ on it and
+   * `prepare` may fill first. Every machine's path is stripped from the answer, the longest first: the scratch
+   * directory, upstream's checkout, the runtime and anything else under the cache root, each as given and resolved. The
+   * recording must read the same on every machine, so a template's or test file's path in the answer is relative to the
+   * checkout, the package's and the phar's to the runtime, and a message (a crash, a Laravel `(View: …)` suffix) names
+   * no cache root. `register_argc_argv` is the CLI's default, set explicitly since php.ini files differ on it and
    * PHPStan reads it (DefinedVariableRule's $argc and $argv).
    */
   async function ask<T>(request: (directory: string) => object, prepare: (directory: string) => Promise<void> = async () => {}): Promise<T> {
@@ -102,7 +105,9 @@ export async function createBladestanAdapter(pack: PackManifest, names: string[]
       await prepare(directory);
       const command = [runtime.php, ...PHP_INI, "-d", "register_argc_argv=1", DRIVER, runtime.directory];
       const output = await runChecked(runner, command, { input: JSON.stringify(request(directory)), cwd: directory, env: { ...process.env, TMPDIR: join(directory, "tmp") } });
-      return JSON.parse(output.replaceAll(`${directory}/`, "")) as T;
+      const machinePaths = [...new Set([directory, upstream.directory, runtime.directory, cacheRoot].flatMap((path) => [resolve(path), realpathSync(path)]))]
+        .sort((a, b) => b.length - a.length);
+      return JSON.parse(machinePaths.reduce((text, path) => text.replaceAll(`${path}/`, ""), output)) as T;
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -112,8 +117,8 @@ export async function createBladestanAdapter(pack: PackManifest, names: string[]
   const ruleClasses = [...new Set(ported.map((name) => PORTED[name]!.rule))].sort();
   const levels = await ask<Record<string, number | null>>(() => ({ op: "levels", rules: ruleClasses }));
   const facts = await ask<Facts>(() => ({ op: "facts", checkout: upstream.directory, rules: ruleClasses, packages: PACKAGES }));
-  const checkoutReal = realpathSync(upstream.directory);
-  const templatePath = (path: string) => relative(checkoutReal, path).split(sep).join("/");
+  // The driver's paths are machine-free (ask): the runtime's are resolved against it again where a file is read.
+  const installedPackage = resolve(runtime.directory, facts.package);
 
   // BladeRuleTest's inputs (the templates, the fixtures rendering them, the classes they use): the test words and
   // texts not-overfit reads.
@@ -135,12 +140,12 @@ export async function createBladestanAdapter(pack: PackManifest, names: string[]
     const expected = test.expected.map((error) => `${error.line}: ${error.message}`).sort();
     const missing = expected.filter((entry, index) => expected.indexOf(entry) === index && expected.filter((other) => other === entry).length > reported.filter((other) => other === entry).length);
     const extra = reported.filter((entry, index) => reported.indexOf(entry) === index && reported.filter((other) => other === entry).length > expected.filter((other) => other === entry).length);
-    if (missing.length > 0 || extra.length > 0) disagreements.push(`${templatePath(test.file)}: ${[...missing.map((entry) => `expects ${entry}`), ...extra.map((entry) => `reports ${entry}`)].slice(0, 2).join(", ")}`);
+    if (missing.length > 0 || extra.length > 0) disagreements.push(`${test.file}: ${[...missing.map((entry) => `expects ${entry}`), ...extra.map((entry) => `reports ${entry}`)].slice(0, 2).join(", ")}`);
   }
 
   // not-overfit reads upstream's code: Bladestan's from the pinned checkout, which the tool-pack checks show is the code
   // that runs, and PHPStan's rules from the phar the runtime runs.
-  const pharFile = (source: string) => `phar://${facts.phar}/${source}`;
+  const pharFile = (source: string) => `phar://${resolve(runtime.directory, facts.phar)}/${source}`;
   const pharSources = new Set(facts.pharSources);
   const literalsOf = new Map<string, PhpLiterals>();
   const readLiterals = async (files: string[]) => {
@@ -184,7 +189,7 @@ export async function createBladestanAdapter(pack: PackManifest, names: string[]
 
   // The templates, and the case of each: what Bladestan placed at the template itself when it rendered it alone.
   const templates = facts.templates.map((rendered) => {
-    const fixture = templatePath(rendered.path);
+    const fixture = rendered.path;
     const placed = (rendered.errors ?? []).filter((error) => error.template === null);
     const skipped = rendered.view === null
       ? "no view name addresses it: its name holds a dot besides .blade.php"
@@ -205,7 +210,7 @@ export async function createBladestanAdapter(pack: PackManifest, names: string[]
       name,
       implementation: ["src/Rules/BladeRule.php", `${PHAR}/${facts.rules[ported.rule]!.file}`],
       // The templates upstream's own test reports the ported finding at.
-      tests: [...new Set(facts.tests.flatMap((test) => test.errors.filter((error) => error.template !== null && isPorted(name, error)).map((error) => templatePath(error.template!))))].sort(),
+      tests: [...new Set(facts.tests.flatMap((test) => test.errors.filter((error) => error.template !== null && isPorted(name, error)).map((error) => error.template!)))].sort(),
       // PHPStan deprecates rules by removing them in a major release; none of these carries a deprecation.
       deprecation: null,
       // A PHPStan level is a configuration file; the ported rules take no option there.
@@ -232,7 +237,7 @@ export async function createBladestanAdapter(pack: PackManifest, names: string[]
       },
       {
         id: "runtime-matches-checkout",
-        ok: treeDigest(facts.package, (path) => RUNNING_CODE.test(relative(facts.package, path).split(sep).join("/"))) === treeDigest(upstream.directory, (path) => RUNNING_CODE.test(fromCheckout(path))),
+        ok: treeDigest(installedPackage, (path) => RUNNING_CODE.test(relative(installedPackage, path).split(sep).join("/"))) === treeDigest(upstream.directory, (path) => RUNNING_CODE.test(fromCheckout(path))),
         detail: "the installed package's src/, config/ and bootstrap.php and those at the pinned commit have the same files and content",
       },
       {

@@ -4,7 +4,7 @@
 // for `tests` and `references`, which read upstream's sources statically; `facts` loads the pinned PHPStan's own phar.
 //
 // One JSON request on stdin, one JSON response on stdout:
-// - {"op": "tests", "tests": [<RuleTestCase file>, ...]}: per test file, every test method whose
+// - {"op": "tests", "tests": [<RuleTestCase file>, ...]}: per test file, `methods`: every test method whose
 //   `$this->analyse([files], [errors])` call is made of constant expressions, read statically with nikic/php-parser:
 //     method      the test method's name
 //     files       the analysed files, as absolute paths (`__DIR__ . '/data/x.php'`, resolved)
@@ -16,6 +16,8 @@
 //   `if` statements on PHP_VERSION_ID or PHP_INT_SIZE are taken as this PHP takes them, and a method that skips itself
 //   on this PHP (#[RequiresPhp], markTestSkipped) is left out, as is one that builds its expectations at run time (a
 //   data provider, a loop) or analyses through a helper. This is packs/php/upstream/phpstan/read_tests.php's reading.
+//   And `left`: every test method left out, with why (`skipped` when it skips itself on this PHP, as upstream's own
+//   run does, rather than a method this reading cannot evaluate), so a reading that shrinks says so.
 // - {"op": "references", "files": [...]}: per file, the classes its code names (imports, types, `new`, static calls,
 //   attributes), fully qualified: what a rule class delegates to.
 // - {"op": "facts", "phar": <phpstan.phar>, "package": <installed package directory>, "scratch": <directory>,
@@ -39,7 +41,10 @@ final class Skipped extends Exception
 {
 }
 
-/** The test methods of one RuleTestCase whose analyse() calls read statically (read_tests.php). */
+/**
+ * The test methods of one RuleTestCase whose analyse() calls read statically (read_tests.php), and every other test
+ * method with why it is left out.
+ */
 function test_methods(string $path): array
 {
     $path = realpath($path);
@@ -75,9 +80,18 @@ function test_methods(string $path): array
         }
     }
     $methods = [];
+    $left = [];
+    // Why a method is left out; `skipped` when it skips itself on this PHP. A message never names this driver's path.
+    $leave = static function (string $method, bool $skipped, string $reason) use (&$left): void {
+        $left[] = ['method' => $method, 'skipped' => $skipped, 'reason' => str_replace(__DIR__ . '/', '', $reason)];
+    };
     foreach ($finder->findInstanceOf($statements, Stmt\ClassMethod::class) as $method) {
         $name = $method->name->toString();
-        if (!str_starts_with($name, 'test') || $method->params !== []) {
+        if (!str_starts_with($name, 'test')) {
+            continue;
+        }
+        if ($method->params !== []) {
+            $leave($name, false, 'takes its expectations from a data provider');
             continue;
         }
         $requires = null;
@@ -91,6 +105,7 @@ function test_methods(string $path): array
         if ($requires !== null) {
             [$operator, $version] = sscanf($requires, '%[<>=!] %s');
             if (!version_compare(PHP_VERSION, $version, $operator)) {
+                $leave($name, true, "requires PHP {$requires}");
                 continue;
             }
         }
@@ -149,12 +164,20 @@ function test_methods(string $path): array
         };
         try {
             $run($method->stmts ?? []);
-        } catch (Throwable) {
+        } catch (Skipped) {
+            $leave($name, true, 'calls markTestSkipped() on this PHP');
+            continue;
+        } catch (Throwable $error) {
+            $leave($name, false, $error->getMessage());
+            continue;
+        }
+        if ($found === []) {
+            $leave($name, false, 'makes no $this->analyse() call of its own (a helper analyses, or nothing does)');
             continue;
         }
         array_push($methods, ...$found);
     }
-    return $methods;
+    return ['methods' => $methods, 'left' => $left];
 }
 
 /** The fully qualified classes a file's code names, sorted. */

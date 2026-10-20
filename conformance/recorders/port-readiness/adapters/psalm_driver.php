@@ -9,9 +9,10 @@
 //   `psalm --init` writes for a project whose source is src/ and in which Psalm finds no issue
 //   (Config\Creator::getContents at level 1, read by Config in a scratch project of that shape, `scratch`); every case of
 //   every test class at the pinned checkout (tests/**/*.php), read statically from its
-//   providerValidCodeParse() and providerInvalidCodeParse() as upstream/psalm/read_tests.php reads them; the test
-//   classes that turn on unused variable detection (`reportUnusedVariables()` in their setUp, as UnusedVariableTest
-//   does); the installed version and declared license.
+//   providerValidCodeParse() and providerInvalidCodeParse() as upstream/psalm/read_tests.php reads them, with every
+//   item or provider the reading cannot evaluate and why (`left`); the test classes that turn on unused variable
+//   detection (`reportUnusedVariables()` in their setUp, as UnusedVariableTest does); the installed version and
+//   declared license.
 //
 // Psalm itself runs as its command line (vendor/bin/psalm), which the adapter calls: this driver reads only the
 // installed Composer metadata, the issue classes, Config and Config\Creator, and the tests' source.
@@ -52,10 +53,13 @@ function php_files(string $directory): array
 /**
  * The cases a test class's providerValidCodeParse() and providerInvalidCodeParse() return, read statically: only items
  * whose key and value are constant expressions (DIRECTORY_SEPARATOR is "/"), as upstream/psalm/read_tests.php reads them.
+ * Every other item, and a provider that returns no array literal, is `left`, with why: [provider, item, reason], the
+ * item named by its key where that reads, else by its position (`#<n>`), and null for a whole provider.
  */
 function provider_cases(array $statements, ConstExprEvaluator $evaluator): array
 {
     $cases = [];
+    $left = [];
     foreach ((new NodeFinder())->findInstanceOf($statements, Stmt\ClassMethod::class) as $method) {
         $provider = match ($method->name->toString()) {
             'providerValidCodeParse' => 'valid',
@@ -63,16 +67,42 @@ function provider_cases(array $statements, ConstExprEvaluator $evaluator): array
             default => null,
         };
         if ($provider === null) continue;
+        $returned = false;
         foreach ($method->stmts ?? [] as $statement) {
             if (!$statement instanceof Stmt\Return_ || !$statement->expr instanceof Expr\Array_) continue;
-            foreach ($statement->expr->items as $item) {
+            $returned = true;
+            foreach ($statement->expr->items as $index => $item) {
+                $leave = static function (string $reason) use (&$left, $provider, $item, $index, $evaluator): void {
+                    try {
+                        $name = $item->key === null ? null : $evaluator->evaluateDirectly($item->key);
+                    } catch (Throwable) {
+                        $name = null;
+                    }
+                    $left[] = ['provider' => $provider, 'item' => is_string($name) ? $name : "#{$index}", 'reason' => str_replace(__DIR__ . '/', '', $reason)];
+                };
+                if ($item->unpack) {
+                    $leave('spreads another array into the provider');
+                    continue;
+                }
+                if ($item->key === null) {
+                    $leave('has no key');
+                    continue;
+                }
                 try {
                     $name = $evaluator->evaluateDirectly($item->key);
                     $case = $evaluator->evaluateDirectly($item->value);
-                } catch (Throwable) {
+                } catch (Throwable $error) {
+                    $leave($error->getMessage());
                     continue;
                 }
-                if (!is_string($name) || !is_array($case) || !is_string($case['code'] ?? null)) continue;
+                if (!is_string($name)) {
+                    $leave('has a key that is no string');
+                    continue;
+                }
+                if (!is_array($case) || !is_string($case['code'] ?? null)) {
+                    $leave('is no array with a string `code`');
+                    continue;
+                }
                 $cases[] = [
                     'provider' => $provider,
                     'name' => $name,
@@ -83,8 +113,11 @@ function provider_cases(array $statements, ConstExprEvaluator $evaluator): array
                 ];
             }
         }
+        if (!$returned) {
+            $left[] = ['provider' => $provider, 'item' => null, 'reason' => 'returns no array literal (it yields, or builds the array at run time)'];
+        }
     }
-    return $cases;
+    return ['cases' => $cases, 'left' => $left];
 }
 
 function facts(array $request): array
@@ -118,19 +151,20 @@ function facts(array $request): array
     $parser = (new ParserFactory())->createForNewestSupportedVersion();
     $evaluator = new ConstExprEvaluator(static function (Expr $expr): mixed {
         if ($expr instanceof Expr\ConstFetch && $expr->name->toString() === 'DIRECTORY_SEPARATOR') return '/';
-        throw new RuntimeException('not constant');
+        throw new RuntimeException("Expression of type {$expr->getType()} cannot be evaluated");
     });
     $tests = [];
     foreach (php_files("{$checkout}/tests") as $path) {
         $statements = $parser->parse(file_get_contents($path)) ?? [];
-        $cases = provider_cases($statements, $evaluator);
-        if ($cases === []) continue;
+        ['cases' => $cases, 'left' => $left] = provider_cases($statements, $evaluator);
+        if ($cases === [] && $left === []) continue;
         $setUp = array_filter((new NodeFinder())->findInstanceOf($statements, Stmt\ClassMethod::class), static fn (Stmt\ClassMethod $method): bool => $method->name->toLowerString() === 'setup');
         $unused = array_filter((new NodeFinder())->findInstanceOf($setUp, Expr\MethodCall::class), static fn (Expr\MethodCall $call): bool => $call->name instanceof PhpParser\Node\Identifier && $call->name->toString() === 'reportUnusedVariables');
         $tests[] = [
             'path' => substr($path, strlen($checkout) + 1),
             'unusedVariables' => $unused !== [],
             'cases' => $cases,
+            'left' => $left,
         ];
     }
 

@@ -109,12 +109,15 @@ jobs:
           built: "true"
 
       # Each recording is cached by its own sha256, which is what its tool-pack's recording.lock names, so a commit
-      # that did not re-record hits the cache and downloads nothing.
-      - name: Restore the recordings this commit names
-        uses: actions/cache@v6
+      # that did not re-record hits the cache and downloads nothing. The fetch takes a cached recording without checking
+      # its attestation again, so only what it fetched and verified is saved, by the step after it: a recording this leg
+      # makes itself (below) is never saved, or a later push with the same lock would judge against it unattested.
+      - id: recordings
+        name: Restore the recordings this commit names
+        uses: actions/cache/restore@v6
         with:
           path: .rerail/port-readiness/recordings
-          key: port-readiness-recordings-${{ matrix.pack }}-${{ matrix.tool }}-${{ hashFiles(format('packs/{0}/upstream/{1}/recording.lock', matrix.pack, matrix.tool)) }}
+          key: port-readiness-fetched-recordings-${{ matrix.pack }}-${{ matrix.tool }}-${{ hashFiles(format('packs/{0}/upstream/{1}/recording.lock', matrix.pack, matrix.tool)) }}
 
       # The recordings are not in the tree (docs/port-readiness.md): this downloads the two a shard's own tool-pack needs
       # from the release, and nothing else, and fails when the sha256 is not the one the lock names, or when
@@ -135,6 +138,15 @@ jobs:
             exit 0
           fi
           exit "$status"
+
+      # Only after a fetch that found both recordings: each is then in the cache because the release held it and
+      # port-readiness-record.yml's attestation verified, or because an earlier save put it there the same way.
+      - name: Save the fetched recordings
+        if: steps.fetch.outputs.missing != 'true' && steps.recordings.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .rerail/port-readiness/recordings
+          key: ${{ steps.recordings.outputs.cache-primary-key }}
 
       # What a recording made here is compared with: a pull request's base (its merge commit's first parent), or a push's
       # previous head; a nightly, and a push that created the branch, have none. The checkout keeps no credentials, so it
@@ -219,16 +231,20 @@ jobs:
       # It records into the release the committed lock names, so the lock it writes is the committed one when upstream
       # answers the same. No maintainer's recording run posts a per-rule summary for this commit, so the leg writes one
       # into its job summary and its report artifact: against the recording the base's lock names, put in the commit's
-      # lock's place while the recorder runs, or as a first recording when the base has no lock.
+      # lock's place while the recorder runs, or as a first recording when the base has no lock. The recorder runs
+      # upstream's code and the Composer packages it resolves, so it gets no token: only the base lock's fetch is given
+      # one, and the script keeps it in an unexported variable.
       - name: Record this tool-pack
         if: steps.fetch.outputs.missing == 'true'
         env:
           PACK: ${{ matrix.pack }}
           TOOL: ${{ matrix.tool }}
           BASE_SHA: ${{ steps.base.outputs.sha }}
-          GITHUB_TOKEN: ${{ github.token }}
+          TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          token="$TOKEN"
+          unset TOKEN
           echo "::notice::the release holds no recording for $PACK/$TOOL's recording.lock: recording it from this commit"
           lock="packs/$PACK/upstream/$TOOL/recording.lock"
           release="$(jq -r .release "$lock")"
@@ -237,10 +253,11 @@ jobs:
               rm "$lock"
             elif ! cmp -s "$RUNNER_TEMP/base-recording.lock" "$lock"; then
               cp "$RUNNER_TEMP/base-recording.lock" "$lock"
-              npm run port-readiness -- fetch --pack "$PACK" --tool "$TOOL" ||
+              GITHUB_TOKEN="$token" npm run port-readiness -- fetch --pack "$PACK" --tool "$TOOL" ||
                 echo "::warning::could not fetch the recording $BASE_SHA's lock names: the summary does not compare with it"
             fi
           fi
+          unset token
           changes="$RUNNER_TEMP/gates/recording-$PACK--$TOOL.md"
           npm run port-readiness:record -- --pack "$PACK" --tool "$TOOL" --release "$release" --changes "$changes"
           cat "$changes" >> "$GITHUB_STEP_SUMMARY"

@@ -177,7 +177,7 @@ export async function createPhpcsAdapter(pack: PackManifest, names: string[], ca
       },
       {
         id: "runtime-matches-checkout",
-        ok: treeDigest(join(facts.package, "src"), (path) => !TESTS_DIRECTORY.test(path)) === treeDigest(join(upstream.directory, "src"), (path) => !TESTS_DIRECTORY.test(relative(join(upstream.directory, "src"), path))),
+        ok: treeDigest(join(facts.package, "src"), (path) => !TESTS_DIRECTORY.test(relative(join(facts.package, "src"), path))) === treeDigest(join(upstream.directory, "src"), (path) => !TESTS_DIRECTORY.test(relative(join(upstream.directory, "src"), path))),
         detail: "the installed package's src/ and src/ at the pinned commit have the same files and content, less the unit tests the release leaves out",
       },
       {

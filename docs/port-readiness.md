@@ -241,18 +241,23 @@ npm run port-readiness -- fetch --pack python --tool ruff   # download what this
 
 Each gate leg fetches its own tool-pack and nothing else, and a job that runs no gate fetches nothing. A recording is
 cached by its own digest, so a re-run on the same commit downloads nothing, and a download whose sha256 is not the
-one the lock names is not taken.
+one the lock names is not taken. A cached recording is read without checking its attestation again, so CI's
+recordings cache is saved only after a fetch that found both recordings, and never by a leg that recorded them itself:
+a later push with the same lock asks the release again rather than reading what an earlier push's recorder made.
 
 **A leg records what the release does not hold.** When the lock names a recording the release does not have (the
-fetch exits 3), the leg records the tool-pack itself: it installs the pinned runtimes, runs `port-readiness:record`
-with this commit's recorder and the release the lock names, and fails unless the recorder wrote exactly the lock, case
-sources and `UPSTREAM.md` the commit has. The lock names no recorder version, so a release of rerail leaves it as it
-was. Any other fetch failure (the releases API, a download, a digest, an attestation) fails the leg: only a recording
-that was never uploaded is recorded instead. A new tool-pack, a new port or a pin bump therefore goes green on its own
-pull request, with nobody to start a recording: the commit's lock is checked against upstream run in CI, and what
-records the answers (the recorder, its adapters and runtimes) is in the pull request's diff, as the gate code that
-judges them is. A lock pointed at a recording of the pull request's own making fails the same way, since CI's
-recording does not match it. The attested release stays the fast path: a leg that fetches records nothing.
+release exists and has no asset of that name; the fetch exits 3), the leg records the tool-pack itself: it installs the
+pinned runtimes, runs `port-readiness:record` with this commit's recorder and the release the lock names, and fails
+unless the recorder wrote exactly the lock, case sources and `UPSTREAM.md` the commit has. The lock names no recorder
+version, so a release of rerail leaves it as it was. Any other fetch failure (a release the lookup cannot find, which
+GitHub answers alike for a missing tag, a repository the token cannot read and a wrong repository; any other releases
+API error, a download, a digest, an attestation) fails the leg: only a recording that was never uploaded is recorded
+instead. The recorder runs upstream's code and the Composer packages it resolves, so it runs without the job's token. A
+new tool-pack, a new port or a pin bump therefore goes green on its own pull request, with nobody to start a recording:
+the commit's lock is checked against upstream run in CI, and what records the answers (the recorder, its adapters and
+runtimes) is in the pull request's diff, as the gate code that judges them is. A lock pointed at a recording of the pull
+request's own making fails the same way, since CI's recording does not match it. The attested release stays the fast
+path: a leg that fetches records nothing.
 
 A fork's pull request records against the upstream its base pins, as `port-readiness-record.yml` does: the leg
 refuses a fork's change to `gates.yaml`'s repository, commit, runtime or tests (only `popularity`, `known_gaps`,

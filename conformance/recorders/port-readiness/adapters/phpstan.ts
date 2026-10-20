@@ -59,6 +59,8 @@ const RULES: Record<string, { class: string; test: string; message: RegExp }> = 
 };
 
 interface TestMethod { method: string; files: string[]; errors: [string, number][]; properties: Record<string, unknown>; required: string[] }
+/** A test file as phpstan_driver.php reads it: its methods' analyse() calls, and the test methods it leaves out, with why. */
+interface TestReading { methods: TestMethod[]; left: { method: string; skipped: boolean; reason: string }[] }
 interface Level { rules: string[]; parameters: Record<string, unknown> }
 interface Facts { name: string; version: string; reference: string; license: string; php: string; files: string[]; levels: Record<string, Level> }
 interface PhpstanError { message: string; line: number; identifier?: string }
@@ -103,8 +105,8 @@ export async function createPhpstanAdapter(pack: PackManifest, names: string[], 
   const ported = names.filter((name) => RULES[name] !== undefined).sort();
   const testFiles = [...new Set(ported.map((name) => RULES[name]!.test))].sort();
   const testPath = (test: string) => join(upstream.directory, TESTS, test);
-  const methods = testFiles.length === 0 ? {} : await ask<Record<string, TestMethod[]>>({ op: "tests", tests: testFiles.map(testPath) }, parserAutoload);
-  const methodsOf = (test: string) => methods[testPath(test)] ?? [];
+  const readings = testFiles.length === 0 ? {} : await ask<Record<string, TestReading>>({ op: "tests", tests: testFiles.map(testPath) }, parserAutoload);
+  const methodsOf = (test: string) => readings[testPath(test)]?.methods ?? [];
   const options = [...new Set(testFiles.flatMap((test) => methodsOf(test).flatMap((method) => Object.keys(method.properties))))].sort();
 
   const scratch = await mkdtemp(resolve(cacheRoot, "tmp", "phpstan-facts-"));
@@ -224,8 +226,9 @@ export async function createPhpstanAdapter(pack: PackManifest, names: string[], 
     return Object.fromEntries(set.map((option) => [option, facts.levels[level]!.parameters[option] ?? null]));
   };
 
+  // A rule no level registers is absent upstream, as its cases are skipped: it has no answer on the corpus either.
   const rule = (name: string): UpstreamRule | undefined => {
-    if (!ported.includes(name) || !existsSync(ruleFile(name))) return undefined;
+    if (!ported.includes(name) || !existsSync(ruleFile(name)) || !levelOf.has(name)) return undefined;
     const config = recommendedBy.get(name);
     const configured = config === undefined ? {} : optionsOf(name, config);
     return {
@@ -241,6 +244,16 @@ export async function createPhpstanAdapter(pack: PackManifest, names: string[], 
   const srcFiles = filesUnder(join(upstream.directory, "src"), () => true).map((path) => relative(join(upstream.directory, "src"), path).split(sep).join("/")).sort();
   const pharFiles = [...facts.files].sort();
   const sameFiles = srcFiles.length === pharFiles.length && srcFiles.every((path, index) => path === pharFiles[index]);
+
+  // The test methods of the ported rules' tests the reading leaves out: those that skip themselves on this PHP, as
+  // upstream's own run does, and those it cannot evaluate, for which no case is recorded.
+  const left = testFiles.flatMap((test) => (readings[testPath(test)]?.left ?? []).map((entry) => ({
+    ...entry,
+    where: `${fromCheckout(testPath(test))}::${entry.method}`,
+    reason: strip(entry.reason, realpathSync(upstream.directory), upstream.directory),
+  })));
+  const unread = left.filter((entry) => !entry.skipped);
+  const readMethods = new Set(testFiles.flatMap((test) => methodsOf(test).map((method) => `${test}::${method.method}`))).size;
 
   return {
     identity: {
@@ -266,6 +279,13 @@ export async function createPhpstanAdapter(pack: PackManifest, names: string[], 
         id: "declared-license",
         ok: facts.license === pack.upstream.license,
         detail: `the installed package declares ${facts.license || "no license"}; the pack records ${pack.upstream.license}`,
+      },
+      {
+        // Informational, so it never fails a rule: the report shows what the reading leaves out, and a re-record whose
+        // reading shrank changes the count.
+        id: "upstream-tests-read",
+        ok: true,
+        detail: `${readMethods} test method(s) of the ported rules' tests read statically; ${left.length - unread.length} skip themselves on PHP ${facts.php}; ${unread.length} cannot be evaluated, and no case is recorded for them${unread.length === 0 ? "" : `: ${unread.slice(0, 5).map((entry) => `${entry.where} (${entry.reason})`).join("; ")}${unread.length > 5 ? "; …" : ""}`}`,
       },
     ],
     licenseText: upstreamLicenseText(upstream.directory),
