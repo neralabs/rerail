@@ -665,17 +665,18 @@ mod tests {
     }
 
     /// The SQL pipeline's per-file plan (`SqlFile::plan`) against the native dispatch's per-file
-    /// preparation it mirrors (`evaluate::NATIVE_PLAN`), thread CPU summed over the workers, per
-    /// unit of a loop record (`RERAIL_LOOP_RECORD`, its last round's SQL units, those of the
-    /// `RERAIL_PLAN_LINTERS` linters, comma-separated, where set) over the loop's subset: each
-    /// unit's rule as the loop builds it (the policy's clauses of the unit, and its definitions),
-    /// applied on a native and a SQL workspace. Run by hand:
-    /// `cargo test --profile loop --lib workspace::sql::tests::per_file_plan_against_native --
-    /// --ignored --nocapture`.
+    /// preparation it mirrors (`evaluate::NATIVE_PLAN`), thread CPU summed over the workers, and
+    /// the SQL batches' kind postings after it (`sql::POSTINGS_TIME`), per unit of a loop record
+    /// (`RERAIL_LOOP_RECORD`, its last round's SQL units, those of the `RERAIL_PLAN_LINTERS`
+    /// linters, comma-separated, where set) over the loop's subset: each unit's rule as the loop
+    /// builds it (the policy's clauses of the unit, and its definitions), applied on a native and
+    /// a SQL workspace. Run by hand: `cargo test --profile loop --features unbounded-work --lib
+    /// workspace::sql::tests::per_file_plan_against_native -- --ignored --nocapture`.
     #[test]
     #[ignore = "reads the data-layer benchmark's policies, corpus and loop record from outside the repository"]
     fn per_file_plan_against_native() {
         use super::super::evaluate::NATIVE_PLAN;
+        use crate::code_rule_dsl::sql::POSTINGS_TIME;
         let home = std::env::var("HOME").expect("HOME");
         let corpus = std::env::var("RERAIL_DATA_LAYER_CORPUS")
             .unwrap_or_else(|_| format!("{home}/rerail-bench/nera-data-layer-fce4dc72"));
@@ -773,10 +774,8 @@ mod tests {
                         file
                     })
                     .collect();
-                let native_before = *NATIVE_PLAN.lock().expect("the native plan");
-                let postings_before = *crate::code_rule_dsl::sql::POSTINGS_TIME
-                    .lock()
-                    .expect("postings");
+                let native_before = *NATIVE_PLAN.lock();
+                let postings_before = *POSTINGS_TIME.lock();
                 let mut task = WorkspaceApplyTask {
                     state: Arc::clone(&workspace.state),
                     closed: Arc::clone(&workspace.closed),
@@ -787,15 +786,10 @@ mod tests {
                 };
                 task.compute().expect("the apply");
                 plan[side] = if engine == "native" {
-                    NATIVE_PLAN
-                        .lock()
-                        .expect("the native plan")
-                        .since(native_before)
-                        .cpu_milliseconds()
+                    NATIVE_PLAN.lock().since(native_before).cpu_milliseconds()
                 } else {
-                    postings = crate::code_rule_dsl::sql::POSTINGS_TIME
+                    postings = POSTINGS_TIME
                         .lock()
-                        .expect("postings")
                         .since(postings_before)
                         .cpu_milliseconds();
                     let report: Value =

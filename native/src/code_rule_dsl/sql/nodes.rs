@@ -98,9 +98,11 @@ fn count_bytes(bytes: usize) {
     FACT_BYTES.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// The time the batches' files' kind postings took to build (`NodeFacts::postings_built`), summed
+/// over the workers: read by `workspace::sql::tests::per_file_plan_against_native`.
 #[cfg(test)]
-pub(in crate::code_rule_dsl) static POSTINGS_TIME: std::sync::Mutex<super::Timing> =
-    std::sync::Mutex::new(super::Timing::ZERO);
+pub(in crate::code_rule_dsl) static POSTINGS_TIME: parking_lot::Mutex<super::Timing> =
+    parking_lot::const_mutex(super::Timing::ZERO);
 
 /// A column a row derives from its node (`NodeFacts::derived`).
 fn derived<'r, D: Doc>(
@@ -258,10 +260,7 @@ impl NodeFacts {
             };
             #[cfg(test)]
             {
-                POSTINGS_TIME
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner())
-                    .add(started.elapsed());
+                POSTINGS_TIME.lock().add(started.elapsed());
                 if seed.is_some() {
                     assert_eq!(postings, self.postings(), "an anchor index's kind postings");
                 }

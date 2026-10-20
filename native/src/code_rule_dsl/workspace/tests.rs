@@ -2509,6 +2509,66 @@ fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
     }
 }
 
+/// A file no clause runs on (none finds the text its matcher requires) gets no anchor index on
+/// the SQL engine (`SqlFile::plan`), yet the index walk's visits count for the file's AST work
+/// budget as the native dispatch's do: past the node bound, both engines fail the clause alike.
+#[test]
+fn a_file_no_clause_runs_on_spends_the_index_walk_alike_on_both_engines() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let capabilities = json!({
+        "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
+            "languages": { "python": "tree-sitter-python@0.23" } },
+        "limits": { "maxAstPatternBytes": 16384, "maxRegexPatternBytes": 16384,
+            "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
+            "maxVisitedNodes": 1000, "maxWitnesses": 10000 }
+    });
+    let code_rule = json!({
+        "format": "rerail.policy/v1", "id": "node-bound", "revision": 1, "mode": "steer",
+        "scope": { "include": ["**/*"], "exclude": [] },
+        "clauses": [{
+            "id": "print", "violation": { "anchor": "witness.span", "code": "PRINT",
+                "message": "found print" },
+            "forbid": { "ast": { "language": "python",
+                "rule": { "pattern": "print($ARG)" } } }
+        }]
+    });
+    let compiled = CodeRuleDslRuntime::compile(
+        code_rule.to_string(),
+        "json".into(),
+        capabilities.to_string(),
+    )
+    .unwrap();
+    // ~10,000 nodes, past `maxVisitedNodes`, and no `print`.
+    let file = json!({
+        "path": "sample.py", "language": "python", "source": "f(0)\n".repeat(2_000)
+    });
+    let evaluations = ["native", "sql"].map(|engine| {
+        let mut workspace =
+            CodeRuleDslWorkspace::with_options(Some(super::api::WorkspaceOptions {
+                engine: Some(engine.to_owned()),
+                sql_batch_size: None,
+            }))
+            .unwrap();
+        workspace.add_code_rule(&compiled, None).unwrap();
+        let mut task = WorkspaceApplyTask {
+            state: Arc::clone(&workspace.state),
+            closed: Arc::clone(&workspace.closed),
+            request_json: json!({ "revision": 1, "files": [file.clone()], "removed": [] })
+                .to_string(),
+            request_buffer: None,
+            request_direct: None,
+        };
+        let response: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
+        workspace.close();
+        response["evaluation"].clone()
+    });
+    let [native, sql] = &evaluations;
+    assert_eq!(native["failures"][0]["code"], "budget-exceeded", "{native}");
+    assert_eq!(native["violations"], json!([]), "{native}");
+    assert_eq!(native["failures"], sql["failures"]);
+    assert_eq!(native["violations"], sql["violations"]);
+}
+
 #[test]
 fn workspace_visits_grow_with_the_file_by_max_visits_per_node() {
     // The file of `roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace`, whose

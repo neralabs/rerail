@@ -1006,20 +1006,27 @@ fn settle_ast_file(
     }
 }
 
+/// The nodes `anchor_index`'s walk would visit over `doc` (`FileAnchorIndex::build`): every node,
+/// up to one past the most a clause may visit; the first alone where the matcher budget is spent.
+fn unbuilt_index_visits(doc: &AstDoc) -> usize {
+    if matcher_budget_exhausted() {
+        1
+    } else {
+        doc.nodes.min(doc.max_nodes.saturating_add(1))
+    }
+}
+
 /// The native dispatch's per-file preparation (`clause_grammars`, `anchor_index` and each running
 /// clause's `select_roots` in `evaluate_ast_file`), summed over the workers: the native
 /// counterpart of the SQL pipeline's `plan` (`SqlFile::plan`), read by
 /// `sql::tests::per_file_plan_against_native`.
 #[cfg(test)]
-pub(super) static NATIVE_PLAN: std::sync::Mutex<crate::code_rule_dsl::sql::Timing> =
-    std::sync::Mutex::new(crate::code_rule_dsl::sql::Timing::ZERO);
+pub(super) static NATIVE_PLAN: parking_lot::Mutex<crate::code_rule_dsl::sql::Timing> =
+    parking_lot::const_mutex(crate::code_rule_dsl::sql::Timing::ZERO);
 
 #[cfg(test)]
 fn add_native_plan(started: crate::code_rule_dsl::sql::Started) {
-    NATIVE_PLAN
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .add(started.elapsed());
+    NATIVE_PLAN.lock().add(started.elapsed());
 }
 
 /// The document the clauses were read on, `None` where none was restored.
@@ -1129,7 +1136,13 @@ impl<'c> SqlFile<'c> {
         sql: &SqlEngine,
     ) -> Self {
         let (grammars, gate) = clause_grammars(file, code_rules);
-        let (runs, kinds) = {
+        let (runs, kinds) = if !gate.contains(&true) {
+            // No clause runs (each lacks the text its matcher requires, or failed before): nothing
+            // reads an anchor index, so none is built. Its walk's visits count for the file's AST
+            // work budget (`settle_ast_file`) as the native dispatch's do.
+            metrics.visited_nodes += unbuilt_index_visits(&doc);
+            (vec![None; gate.len()], None)
+        } else {
             let index = anchor_index(&doc, &grammars, &gate, metrics);
             let mut runs = Vec::with_capacity(gate.len());
             for (slot, &id) in file.candidates.ast.iter().enumerate() {
