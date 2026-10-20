@@ -203,7 +203,9 @@ jobs:
 
       # Without an attested recording the leg runs the pinned upstream itself, with the recorder and runtimes of this
       # commit, so what records a pull request's rules is in its diff like the gate code that judges them. uv installs the
-      # Python runtimes, the php action the PHP and Composer the php and blade runtimes need.
+      # Python runtimes, the php action the PHP and Composer the php and blade runtimes need. The runtimes are installed
+      # afresh, not restored from a cache: a Bladestan runtime restored from the previous run's cache recorded other
+      # answers than the same runtime installed fresh, which is what the lock was recorded with.
       - name: Set up uv to record this tool-pack
         if: steps.fetch.outputs.missing == 'true'
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
@@ -211,15 +213,6 @@ jobs:
       - name: Set up the pinned PHP and Composer to record this tool-pack
         if: steps.fetch.outputs.missing == 'true' && (matrix.pack == 'php' || matrix.pack == 'blade')
         uses: ./.github/actions/php
-
-      # The installed runtimes, keyed by their pins and the tool-pack's manifest; a cached runtime is trusted on the
-      # `.tree.sha256` written beside it after its install.
-      - name: Restore the recorder's runtimes
-        if: steps.fetch.outputs.missing == 'true'
-        uses: actions/cache@v6
-        with:
-          path: .rerail/port-readiness/runtimes
-          key: port-readiness-runtimes-${{ matrix.pack }}-${{ matrix.tool }}-${{ hashFiles('conformance/recorders/port-readiness/runtimes/**', format('packs/{0}/upstream/{1}/gates.yaml', matrix.pack, matrix.tool)) }}
 
       # The recorder writes both recordings into the cache the gates read, and the lock and case sources into the tree:
       # those must be what the commit already has, or the commit's lock names a recording its own recorder does not make.
@@ -255,7 +248,12 @@ jobs:
           changed="$(git status --porcelain --untracked-files=all -- "${written[@]}")"
           if [ -n "$changed" ]; then
             git --no-pager diff -- "${written[@]}" | sed -n '1,200p'
-            echo "::error::the recorder wrote files this commit does not have; record $PACK/$TOOL again and commit them:"
+            # What the recorder made, beside the report, so the difference from the committed lock can be read.
+            mkdir -p "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL"
+            jq -r '.files[].asset' "$lock" | while read -r asset; do
+              cp ".rerail/port-readiness/recordings/upload/$asset" "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL/"
+            done
+            echo "::error::the recorder wrote files this commit does not have; record $PACK/$TOOL again and commit them (the report artifact holds what it recorded):"
             echo "$changed"
             exit 1
           fi
