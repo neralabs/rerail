@@ -2121,6 +2121,26 @@ const PHASE_THREE_CASES: &[&str] = &[
 ];
 
 #[test]
+fn production_contract_phase_three_parameter_utilities_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in [
+        "utility-parameterized-call",
+        "utility-argument-frame-isolation",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the parameter utility contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored isolated utility-frame SQL contract"
+        );
+    }
+}
+
+#[test]
 fn production_contract_phase_three_recursive_utilities_match_authored_sql() {
     let expected = authored_sql_goldens();
     for name in ["utility-self-recursive", "utility-mutual-recursion"] {
