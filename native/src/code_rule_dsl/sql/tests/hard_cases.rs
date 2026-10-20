@@ -205,6 +205,98 @@ fn rule_stop_walks_read_the_stop_set_without_recursion() {
     assert!(statements > 0);
 }
 
+/// A descendant walk with kinds (`has` with `stopBy: end` or a rule stop) lists every input row's
+/// candidates in one native pass over the input's nodes, which each row reads back, not a lookup
+/// per candidate, and tests its shape there too where it is tests of one node each
+/// (`nearest::descendants`). It agrees with the matcher over nested inputs: with no stop, a stop
+/// set, its complement and an unknown stop (which leaves the walk open, so it reads every node it
+/// visits, not only its kinds), and with each shape.
+#[test]
+fn descendant_walks_with_kinds_list_the_whole_input_in_one_pass() {
+    use crate::code_rule_dsl::test_support::grammar_matchers;
+    let sources = [
+        "function f(a) { if (a) { return g(a.b(1), [b, c]); } return h(u1, (d)); }\nlet k = f(u2) + m.n(n);\n",
+        "class C { m() { x.y([1], { z: w(2) }); } }\nq.r(s.t(u3));\n",
+    ];
+    let stops = [
+        (json!("end"), true),
+        (json!({ "kind": "statement_block" }), true),
+        (json!({ "not": { "kind": "arguments" } }), true),
+        (
+            json!({ "kind": "call_expression", "testUnknown": "^u" }),
+            false,
+        ),
+    ];
+    let subs = [
+        json!({ "kind": "call_expression" }),
+        json!({ "any": [{ "kind": "identifier" }, { "kind": "member_expression" }] }),
+        json!({ "kind": "call_expression", "has": { "field": "function", "kind": "member_expression" } }),
+        // Two shape tests, in one constraint (`nearest::probe_of`).
+        json!({ "kind": "call_expression", "all": [
+            { "has": { "field": "function", "kind": "member_expression" } },
+            { "has": { "kind": "arguments", "has": { "kind": "array" } } },
+        ] }),
+        // An `any` of one test unites its kinds; one of two tests is the statement's (`EXISTS`).
+        json!({ "kind": "call_expression", "any": [
+            { "has": { "field": "function", "kind": "identifier" } },
+            { "has": { "field": "function", "kind": "member_expression" } },
+        ] }),
+        json!({ "kind": "call_expression", "any": [
+            { "has": { "field": "function", "kind": "identifier" } },
+            { "has": { "field": "arguments", "kind": "arguments" } },
+        ] }),
+        json!({ "kind": "call_expression", "has": { "kind": "arguments", "has": { "kind": "array" } } }),
+        json!({ "kind": "call_expression", "has": { "stopBy": "end", "kind": "array" } }),
+        json!({ "kind": "call_expression", "pattern": "$F($$$A)", "testUnknown": "^u" }),
+    ];
+    let roots = json!({ "any": [{ "kind": "program" }, { "kind": "statement_block" }, { "kind": "call_expression" }, { "kind": "arguments" }] });
+    for (stop, listed) in &stops {
+        for sub in &subs {
+            let mut has = sub.clone();
+            has["stopBy"] = stop.clone();
+            let mut rule = roots.clone();
+            rule["has"] = has;
+            let compiled = compile("typescript", json!({ "rule": rule }));
+            for source in sources {
+                let input = snapshot(&[("typescript", "a.ts", source)]);
+                assert_eq!(
+                    evaluate(&compiled, &input, "native"),
+                    evaluate(&compiled, &input, "sql"),
+                    "{stop} {sub} over {source:?}"
+                );
+            }
+            let grammars = grammar_matchers(&compiled);
+            let program = crate::code_rule_dsl::sql::compile(&[&grammars[0]]).expect("compiles");
+            let mut session = program.session().expect("a session");
+            let plans = session.plans().expect("plans");
+            let walks: Vec<&String> = plans
+                .iter()
+                .map(|(sql, _)| sql)
+                .filter(|sql| sql.contains("c.srcs IN ("))
+                .collect();
+            assert!(
+                !walks.is_empty() || !listed,
+                "{stop} {sub}: no filter over the input"
+            );
+            let united = sub["any"][0]["has"]["field"].is_string();
+            let mixed = sub["any"][1]["has"]["field"] == "arguments";
+            if *listed && united {
+                assert_eq!(
+                    walks
+                        .iter()
+                        .any(|sql| sql.contains("c.shape = 'F") && !sql.contains("EXISTS")),
+                    !mixed,
+                    "{stop} {sub}: {walks:?}"
+                );
+            }
+            assert!(
+                !plans.iter().any(|(sql, _)| sql.contains("nc.anc")),
+                "{stop} {sub}: a lookup per candidate"
+            );
+        }
+    }
+}
+
 #[test]
 fn blade_overlapping_siblings_scan_the_parents_children() {
     // A Blade tape's embedded PHP sits among the template's nodes; its sibling walks scan.
