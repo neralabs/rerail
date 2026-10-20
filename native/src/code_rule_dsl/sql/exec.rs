@@ -216,6 +216,8 @@ impl BatchSlot {
 const NODE_MODULE: Module<'static, NodeTable> = Module::eponymous_only_module();
 const PATTERN_MODULE: Module<'static, PatternTable> = Module::eponymous_only_module();
 const TEXT_MODULE: Module<'static, TextTable> = Module::eponymous_only_module();
+const PROGRAM_MODULE: Module<'static, super::terminals::ProgramTable> =
+    Module::eponymous_only_module();
 const FACT_MODULE: Module<'static, FactTable> = Module::eponymous_only_module();
 const NEAREST_MODULE: Module<'static, NearestTable> = Module::eponymous_only_module();
 
@@ -225,6 +227,7 @@ fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
     connection.create_module(c"node", &NODE_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"pattern", &PATTERN_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"text_match", &TEXT_MODULE, Some(Arc::clone(slot)))?;
+    connection.create_module(c"program_match", &PROGRAM_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"fact", &FACT_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"nearest", &NEAREST_MODULE, Some(Arc::clone(slot)))?;
     Ok(connection)

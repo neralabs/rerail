@@ -12,6 +12,7 @@ mod lower;
 mod nearest;
 mod nodes;
 mod plan;
+mod pushdown;
 mod rec;
 mod recursion;
 pub(super) mod select_when;
