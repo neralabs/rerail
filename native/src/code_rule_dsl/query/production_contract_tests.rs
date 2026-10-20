@@ -615,6 +615,22 @@ fn production_contract_phase_four_site_and_creation_targets_match_authored_sql()
 }
 
 #[test]
+fn production_contract_phase_four_occurrence_matches_authored_sql() {
+    let expected = authored_sql_goldens();
+    let name = "semantic-binding-occurrence";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the occurrence contract exists");
+    let actual = actual_implementation_golden(&case);
+    assert_eq!(
+        exact_sql(&actual.normalized_sql),
+        exact_sql(&expected[&case.name]),
+        "occurrence must use the authored ordered semantic-target SQL contract"
+    );
+}
+
+#[test]
 fn production_contract_phases_two_to_four_match_authored_sql_statements() {
     let expected = authored_sql_goldens();
     let expected_names = PHASE_TWO_CASES
