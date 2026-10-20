@@ -783,6 +783,22 @@ fn production_contract_phase_four_calls_match_authored_sql() {
 }
 
 #[test]
+fn production_contract_phase_four_failure_matches_authored_sql() {
+    let expected = authored_sql_goldens();
+    let name = "semantic-fact-producer-failure";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the semantic failure contract exists");
+    let actual = actual_implementation_golden(&case);
+    assert_eq!(
+        exact_sql(&actual.normalized_sql),
+        exact_sql(&expected[&case.name]),
+        "semantic failure must use the authored atomic failure SQL contract"
+    );
+}
+
+#[test]
 fn production_contract_phases_two_to_four_match_authored_sql_statements() {
     let expected = authored_sql_goldens();
     let expected_names = PHASE_TWO_CASES
