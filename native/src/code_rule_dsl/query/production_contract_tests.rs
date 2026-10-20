@@ -866,6 +866,63 @@ fn production_contract_phases_two_to_four_match_authored_sql_statements() {
 }
 
 #[test]
+fn production_contract_phases_two_and_three_have_complete_terminal_catalogs() {
+    let goldens = implementation_goldens();
+    let expected_names = PHASE_TWO_CASES
+        .iter()
+        .chain(PHASE_THREE_CASES)
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let authored = goldens
+        .cases
+        .into_iter()
+        .filter(|golden| expected_names.contains(golden.name.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        authored
+            .iter()
+            .map(|golden| golden.name.as_str())
+            .collect::<BTreeSet<_>>(),
+        expected_names,
+        "each Phase 2 and Phase 3 contract must own one terminal catalog"
+    );
+    let cases = cases()
+        .into_iter()
+        .map(|case| (case.name.clone(), case))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for golden in authored {
+        let case = &cases[&golden.name];
+        let actual = actual_implementation_golden(case).terminal_catalog;
+        assert_eq!(
+            actual, golden.terminal_catalog,
+            "{} exact catalog",
+            golden.name
+        );
+        assert_eq!(
+            actual_implementation_golden(case).terminal_catalog,
+            golden.terminal_catalog,
+            "{} repeated catalog compilation",
+            golden.name
+        );
+        std::thread::scope(|scope| {
+            let parallel = (0..2)
+                .map(|_| scope.spawn(|| actual_implementation_golden(case).terminal_catalog))
+                .collect::<Vec<_>>();
+            for catalog in parallel {
+                assert_eq!(
+                    catalog
+                        .join()
+                        .expect("parallel catalog compilation completes"),
+                    golden.terminal_catalog,
+                    "{} parallel catalog compilation",
+                    golden.name
+                );
+            }
+        });
+    }
+}
+
+#[test]
 fn production_contract_phase_four_has_complete_terminal_catalogs() {
     let goldens = implementation_goldens();
     let expected_names = PHASE_FOUR_CASES.iter().copied().collect::<BTreeSet<_>>();
