@@ -7,16 +7,16 @@ import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
 
-import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
-import { eslintSpan, eslintSpanParts, messageSpan } from "../../../port-readiness/span-units/eslint.js";
-import type { Check, EslintUpstream, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../port-readiness/types.js";
+import { runChecked, type CommandRunner } from "../../../../port-readiness/process.js";
+import { upstreamLicenseText } from "../../../../port-readiness/recorded-adapter.js";
+import { eslintSpan, eslintSpanParts, messageSpan } from "../../../../port-readiness/span-units/eslint.js";
+import type { Check, EslintUpstream, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../../port-readiness/types.js";
 import {
   commentVocabulary, keywords, literalNames, literalRegexes, parserVerdicts, sourceWords, words,
   type BabelParser, type DocumentationNode, type TypeScript,
-} from "../languages/ecmascript.js";
-import { componentParserVerdicts, templateVocabulary, type SfcCompiler } from "../languages/vue.js";
-import { checkoutUpstream, filesUnder, npmRuntime, treeDigest } from "../runtimes.js";
+} from "../../languages/ecmascript.js";
+import { componentParserVerdicts, templateVocabulary, type SfcCompiler } from "../../languages/vue.js";
+import { checkoutUpstream, filesUnder, npmRuntime, treeDigest } from "../../runtimes.js";
 import type { MessagePosition } from "./eslint-upstream.js";
 
 /**

@@ -27,7 +27,7 @@ import { createBanditAdapter } from "./adapters/bandit.js";
 import { createBladeParserAdapter } from "./adapters/blade-parser.js";
 import { createBladestanAdapter } from "./adapters/bladestan.js";
 import { createClippyAdapter } from "./adapters/clippy.js";
-import { createEslintAdapter } from "./adapters/eslint.js";
+import { createEslintAdapter } from "./adapters/eslint/eslint.js";
 import { createPhpcsAdapter } from "./adapters/phpcs.js";
 import { createPhpstanAdapter } from "./adapters/phpstan.js";
 import { createPsalmAdapter } from "./adapters/psalm.js";

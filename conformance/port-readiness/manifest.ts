@@ -201,7 +201,7 @@ const eslintSchema = z.strictObject({
 export type EslintUpstream = z.infer<typeof eslintSchema>;
 
 export const gatesManifestSchema = z.strictObject({
-  /** The live adapter that reads this upstream (recorders/port-readiness/adapters/<adapter>.ts). */
+  /** The live adapter that reads this upstream (recorders/port-readiness/adapters/<adapter>.ts, or <adapter>/<adapter>.ts). */
   adapter: z.enum(ADAPTERS),
   rerail: z.strictObject({
     /** The pack's id: the directory under packs/ this manifest sits in. */
