@@ -1823,6 +1823,29 @@ fn production_contract_phase_five_has_complete_authored_sql_and_catalogs() {
 }
 
 #[test]
+fn production_contract_phase_six_clauses_lower_completely() {
+    for name in [
+        "clause-forbid-content-regex",
+        "clause-forbid-path-regex",
+        "clause-select-when-exists",
+        "clause-select-when-absent",
+        "clause-require-each",
+        "clause-budget-maximum",
+        "clause-budget-distinct",
+        "clause-budget-group",
+        "clause-file-condition",
+        "clause-syntax-error-unknown",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the Phase 6 clause contract exists");
+        SqlCatalogPlan::compile(&[compiled_case(&case)])
+            .unwrap_or_else(|error| panic!("{name}: {}", error.unsupported().join("; ")));
+    }
+}
+
+#[test]
 fn production_contract_phase_five_authored_sql_equals_oracles() {
     let statements = phase_five_authored_sql_goldens();
     for name in [
