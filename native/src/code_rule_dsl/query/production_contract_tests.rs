@@ -499,6 +499,20 @@ fn production_contract_phase_two_sql_rows_equal_committed_oracle_rows() {
 }
 
 #[test]
+fn production_contract_phase_four_resolves_matches_authored_sql() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-resolves")
+        .expect("the resolution contract exists");
+    let expected = authored_sql_goldens();
+    let actual = actual_implementation_golden(&case);
+    assert_eq!(
+        actual.normalized_sql, expected[&case.name],
+        "resolution must use the authored semantic-gate SQL contract"
+    );
+}
+
+#[test]
 fn production_contract_phases_two_to_four_match_authored_sql_statements() {
     let expected = authored_sql_goldens();
     let expected_names = PHASE_TWO_CASES
