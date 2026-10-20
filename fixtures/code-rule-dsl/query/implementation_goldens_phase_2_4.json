@@ -820,6 +820,954 @@
           "completion_required": true
         }
       ]
+    },
+    {
+      "name": "node-value-positive",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6), kind_nodes AS (SELECT match.* FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1), accepted AS (SELECT kind_nodes.* FROM kind_nodes JOIN fact value ON value.producer_id = 1 AND value.file_index = kind_nodes.file_index AND value.node = kind_nodes.node JOIN producer_status status ON status.producer_id = value.producer_id AND status.file_index = value.file_index WHERE status.complete = 1 AND value.fact_kind = 1 AND value.verdict = 1 AND value.text_value = 'int:1') SELECT * FROM accepted ORDER BY file_index, node, producer_id, match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "kind",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "b398d240a0bea4e2bd2e5a2d7d39747154a71d4b969e93340202f717079c1eda",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-node-value-positive/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "value",
+          "dialect": "python",
+          "producer_kind": "valuefact",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "fact"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-node-value-positive/contract"
+          ],
+          "result_limit": 4294967295,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "node-value-unknown",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6), identifiers AS (SELECT match.* FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1), accepted AS (SELECT identifiers.* FROM identifiers JOIN fact value ON value.producer_id = 1 AND value.file_index = identifiers.file_index AND value.node = identifiers.node JOIN producer_status status ON status.producer_id = value.producer_id AND status.file_index = value.file_index WHERE status.complete = 1 AND value.fact_kind = 1 AND value.verdict = 1 AND value.text_value = 'int:1') SELECT * FROM accepted ORDER BY file_index, node, producer_id, match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "kind",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "63283d041c723bb52091402395fb04f3ede87993de9a75bf8db5d3373bd43efa",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-node-value-unknown/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "value",
+          "dialect": "python",
+          "producer_kind": "valuefact",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "fact"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-node-value-unknown/contract"
+          ],
+          "result_limit": 4294967295,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "all-two-positive",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), left_term AS (SELECT match.* FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1), right_term AS (SELECT match.* FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 1 AND status.complete = 1) SELECT left_term.* FROM left_term JOIN right_term USING (file_index, node) ORDER BY left_term.file_index, left_term.node, left_term.producer_id, left_term.match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "kind",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "63283d041c723bb52091402395fb04f3ede87993de9a75bf8db5d3373bd43efa",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-all-two-positive/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "regex",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "877cc67884062f5cf8f9bf01797d131fa81f470dd8749ab9ccb17ba09306abc9",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-all-two-positive/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "all-capture-threading",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), capture AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 4), patterned AS (SELECT match.*, json_group_array(json_object('label', capture.capture_label, 'node', capture.node, 'text', capture.source_text)) AS bindings FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) JOIN capture ON capture.producer_id = match.producer_id AND capture.file_index = match.file_index AND capture.match_index = match.match_index WHERE match.producer_id = 0 AND status.complete = 1 GROUP BY match.producer_id, match.file_index, match.match_index) SELECT * FROM patterned WHERE json_extract(bindings, '$[0].text') = json_extract(bindings, '$[0].text') ORDER BY file_index, node, producer_id, match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "pattern",
+          "dialect": "python",
+          "producer_kind": "pattern",
+          "program_digest": "b53573bfd16f8b0849662db16b393984b8672e74a828aea5c72a75e8ef69d43f",
+          "result_schema": [
+            "producer_status",
+            "terminal_match",
+            "capture"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-all-capture-threading/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "all-three-valued-false-after-unknown",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6), candidates AS (SELECT match.* FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1), truth AS (SELECT candidates.*, CASE WHEN rejected.node IS NULL THEN 0 WHEN value.verdict IS NULL THEN NULL ELSE value.verdict END AS relational_verdict FROM candidates LEFT JOIN fact value ON value.producer_id = 1 AND value.file_index = candidates.file_index AND value.node = candidates.node LEFT JOIN terminal_match rejected ON rejected.producer_id = 2 AND rejected.file_index = candidates.file_index AND rejected.node = candidates.node) SELECT * FROM truth WHERE relational_verdict = 1 ORDER BY file_index, node, producer_id, match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "kind",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "63283d041c723bb52091402395fb04f3ede87993de9a75bf8db5d3373bd43efa",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-all-three-valued-false-after-unknown/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "value",
+          "dialect": "python",
+          "producer_kind": "valuefact",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "fact"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-all-three-valued-false-after-unknown/contract"
+          ],
+          "result_limit": 4294967295,
+          "completion_required": true
+        },
+        {
+          "ordinal": 2,
+          "kind": "kind",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "d00199d5c41826b35de1624792bb8868ff8a72f6722dc97a0797213a43322728",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-all-three-valued-false-after-unknown/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "all-three-valued-withheld-capture",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), capture AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 4), fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6), patterned AS (SELECT match.*, capture.source_text AS captured_text FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) JOIN capture ON capture.producer_id = match.producer_id AND capture.file_index = match.file_index AND capture.match_index = match.match_index WHERE match.producer_id = 0 AND status.complete = 1 AND capture.capture_label = 'A'), truth AS (SELECT patterned.*, value.verdict AS relational_verdict FROM patterned JOIN fact value ON value.producer_id = 1 AND value.file_index = patterned.file_index AND value.node = patterned.node) SELECT * FROM truth WHERE relational_verdict = 1 AND captured_text IS NOT NULL ORDER BY file_index, node, producer_id, match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "pattern",
+          "dialect": "python",
+          "producer_kind": "pattern",
+          "program_digest": "7b68a805d2b82ed02202a17d9a5c3e13ba9984452405cfe91114692998341989",
+          "result_schema": [
+            "producer_status",
+            "terminal_match",
+            "capture"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-all-three-valued-withheld-capture/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "value",
+          "dialect": "python",
+          "producer_kind": "valuefact",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "fact"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-all-three-valued-withheld-capture/contract"
+          ],
+          "result_limit": 4294967295,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "any-first-branch",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), branches AS (SELECT match.*, 0 AS branch_order FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1 UNION ALL SELECT match.*, 1 AS branch_order FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 1 AND status.complete = 1), ranked AS (SELECT branches.*, row_number() OVER (PARTITION BY file_index, node ORDER BY branch_order, producer_id, match_index) AS branch_rank FROM branches) SELECT * FROM ranked WHERE branch_rank = 1 ORDER BY file_index, node, branch_order, producer_id, match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "pattern",
+          "dialect": "python",
+          "producer_kind": "pattern",
+          "program_digest": "58de3e13f11c052518f5ed1a5a5671950ba6ce677238e2105820eec66304a7d2",
+          "result_schema": [
+            "producer_status",
+            "terminal_match",
+            "capture"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-any-first-branch/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "pattern",
+          "dialect": "python",
+          "producer_kind": "pattern",
+          "program_digest": "8351f63585de62a39c03770bbd748873bec7cb5cded991ea9a414ccb2c1fdb3d",
+          "result_schema": [
+            "producer_status",
+            "terminal_match",
+            "capture"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-any-first-branch/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "any-unknown-binding-blocks-later",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6), branches AS (SELECT value.*, 0 AS branch_order, 1 AS unknown_blocks FROM fact value JOIN producer_status status USING (producer_id, file_index) WHERE value.producer_id = 1 AND value.fact_kind = 1 AND status.complete = 1 UNION ALL SELECT match.*, 1 AS branch_order, 0 AS unknown_blocks FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1), ranked AS (SELECT branches.*, row_number() OVER (PARTITION BY file_index, node ORDER BY CASE WHEN verdict = 1 OR (verdict IS NULL AND unknown_blocks = 1) THEN 0 WHEN verdict IS NULL THEN 1 ELSE 2 END, branch_order, producer_id, match_index) AS branch_rank FROM branches) SELECT * FROM ranked WHERE branch_rank = 1 AND verdict IS NOT 0 ORDER BY file_index, node, branch_order, producer_id, match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "pattern",
+          "dialect": "python",
+          "producer_kind": "pattern",
+          "program_digest": "7b68a805d2b82ed02202a17d9a5c3e13ba9984452405cfe91114692998341989",
+          "result_schema": [
+            "producer_status",
+            "terminal_match",
+            "capture"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-any-unknown-binding-blocks-later/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "value",
+          "dialect": "python",
+          "producer_kind": "valuefact",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "fact"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-any-unknown-binding-blocks-later/contract"
+          ],
+          "result_limit": 4294967295,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "any-unknown-without-binding",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6), branches AS (SELECT value.*, 0 AS branch_order, 0 AS unknown_blocks FROM fact value JOIN producer_status status USING (producer_id, file_index) WHERE value.producer_id = 1 AND value.fact_kind = 1 AND status.complete = 1 UNION ALL SELECT match.*, 1 AS branch_order, 0 AS unknown_blocks FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1), ranked AS (SELECT branches.*, row_number() OVER (PARTITION BY file_index, node ORDER BY CASE WHEN verdict = 1 THEN 0 WHEN verdict IS NULL THEN 1 ELSE 2 END, branch_order, producer_id, match_index) AS branch_rank FROM branches) SELECT * FROM ranked WHERE branch_rank = 1 AND verdict IS NOT 0 ORDER BY file_index, node, branch_order, producer_id, match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "kind",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "63283d041c723bb52091402395fb04f3ede87993de9a75bf8db5d3373bd43efa",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-any-unknown-without-binding/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "value",
+          "dialect": "python",
+          "producer_kind": "valuefact",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "fact"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-any-unknown-without-binding/contract"
+          ],
+          "result_limit": 4294967295,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "not-complete-positive",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), universe AS (SELECT match.* FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1), excluded AS (SELECT match.* FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 1 AND status.complete = 1) SELECT universe.* FROM universe WHERE NOT EXISTS (SELECT 1 FROM excluded WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node) ORDER BY universe.file_index, universe.node, universe.producer_id, universe.match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "universe",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-not-complete-positive/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "kind",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "63283d041c723bb52091402395fb04f3ede87993de9a75bf8db5d3373bd43efa",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-not-complete-positive/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "not-unknown",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6), universe AS (SELECT match.* FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1), excluded AS (SELECT value.* FROM fact value JOIN producer_status status USING (producer_id, file_index) WHERE value.producer_id = 2 AND value.fact_kind = 1 AND status.complete = 1) SELECT universe.* FROM universe WHERE NOT EXISTS (SELECT 1 FROM excluded WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node AND excluded.verdict = 1) AND NOT EXISTS (SELECT 1 FROM excluded WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node AND excluded.verdict IS NULL) ORDER BY universe.file_index, universe.node, universe.producer_id, universe.match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "universe",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-not-unknown/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "kind",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "63283d041c723bb52091402395fb04f3ede87993de9a75bf8db5d3373bd43efa",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-not-unknown/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 2,
+          "kind": "value",
+          "dialect": "python",
+          "producer_kind": "valuefact",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "fact"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-not-unknown/contract"
+          ],
+          "result_limit": 4294967295,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "nested-all-any-not",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), positive_branches AS (SELECT match.*, 0 AS branch_order FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1 UNION ALL SELECT match.*, 1 AS branch_order FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 1 AND status.complete = 1), positive AS (SELECT * FROM (SELECT positive_branches.*, row_number() OVER (PARTITION BY file_index, node ORDER BY branch_order, producer_id, match_index) AS branch_rank FROM positive_branches) WHERE branch_rank = 1), excluded AS (SELECT match.* FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 3 AND status.complete = 1) SELECT positive.* FROM positive WHERE NOT EXISTS (SELECT 1 FROM excluded WHERE excluded.file_index = positive.file_index AND excluded.node = positive.node) ORDER BY positive.file_index, positive.node, positive.branch_order, positive.producer_id, positive.match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "kind",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "63283d041c723bb52091402395fb04f3ede87993de9a75bf8db5d3373bd43efa",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-nested-all-any-not/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "regex",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "877cc67884062f5cf8f9bf01797d131fa81f470dd8749ab9ccb17ba09306abc9",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-nested-all-any-not/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 2,
+          "kind": "universe",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-nested-all-any-not/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 3,
+          "kind": "pattern",
+          "dialect": "python",
+          "producer_kind": "pattern",
+          "program_digest": "ffb0edf4351cba4ea43063aefa3617375f0579dc5112579437eacb269e1570e0",
+          "result_schema": [
+            "producer_status",
+            "terminal_match",
+            "capture"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-nested-all-any-not/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "disabled-when",
+      "normalized_sql": "WITH RECURSIVE packed AS MATERIALIZED ( SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence FROM rerail_matches WHERE batch = :batch ), batch_status AS MATERIALIZED ( SELECT * FROM packed WHERE row_kind = 1 ), producer_status AS MATERIALIZED ( SELECT * FROM packed WHERE row_kind = 2 ), terminal_match AS MATERIALIZED ( SELECT * FROM packed WHERE row_kind = 3 ), capture AS MATERIALIZED ( SELECT * FROM packed WHERE row_kind = 4 ), navigation AS MATERIALIZED ( SELECT * FROM packed WHERE row_kind = 5 ), fact AS MATERIALIZED ( SELECT * FROM packed WHERE row_kind = 6 ), document_map AS MATERIALIZED ( SELECT * FROM packed WHERE row_kind = 7 ), clause_0_empty_0 AS ( SELECT terminal_match.*, json('[]') AS bindings, '' AS choice_order FROM terminal_match WHERE 0 ), clause_0 AS ( SELECT result.batch, result.row_kind, result.producer_id, result.file_index, result.task_index, result.match_index, result.capture_index, result.capture_occurrence, result.capture_sequence_start, result.capture_sequence_count, result.node, result.related_node, result.axis_kind, result.axis_order, result.fact_kind, result.document_id, result.mapped_document_id, result.start_ordinal, result.output_label, result.capture_label, result.text_value, result.start_byte, result.end_byte, result.verdict, result.complete, result.work_used, result.error_code, result.field_id, result.related_named, result.source_text, result.structural_key, result.named_leaf, result.capture_kind, result.capture_named, result.equality_occurrence, result.bindings, result.choice_order, 0 AS clause_ordinal FROM clause_0_empty_0 result CROSS JOIN batch_status batch WHERE batch.complete = 1 AND NOT EXISTS ( SELECT 1 FROM producer_status undecided WHERE undecided.complete <> 1 OR undecided.verdict IS NULL ) ) SELECT * FROM (SELECT * FROM clause_0) ORDER BY clause_ordinal, file_index, node, choice_order, producer_id, match_index, capture_index",
+      "terminal_catalog": []
+    },
+    {
+      "name": "utility-simple",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), utility_body AS (SELECT match.* FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1), utility_call AS (SELECT body.* FROM utility_body body JOIN terminal_match root ON root.producer_id = 1 AND root.file_index = body.file_index AND root.node = body.node JOIN producer_status status ON status.producer_id = root.producer_id AND status.file_index = root.file_index AND status.complete = 1) SELECT * FROM utility_call ORDER BY file_index, node, producer_id, match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "kind",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "63283d041c723bb52091402395fb04f3ede87993de9a75bf8db5d3373bd43efa",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-simple/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "universe",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-simple/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "utility-nested",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), inner_utility AS (SELECT match.* FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1), outer_utility AS (SELECT inner_utility.* FROM inner_utility JOIN terminal_match root ON root.producer_id = 1 AND root.file_index = inner_utility.file_index AND root.node = inner_utility.node JOIN producer_status status ON status.producer_id = root.producer_id AND status.file_index = root.file_index AND status.complete = 1) SELECT * FROM outer_utility ORDER BY file_index, node, producer_id, match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "regex",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "877cc67884062f5cf8f9bf01797d131fa81f470dd8749ab9ccb17ba09306abc9",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-nested/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "universe",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-nested/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "utility-shared-component",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), shared_utility AS MATERIALIZED (SELECT match.* FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1), first_call AS (SELECT shared_utility.* FROM shared_utility JOIN terminal_match root ON root.producer_id = 1 AND root.file_index = shared_utility.file_index AND root.node = shared_utility.node), second_call AS (SELECT shared_utility.* FROM shared_utility JOIN terminal_match root ON root.producer_id = 1 AND root.file_index = shared_utility.file_index AND root.node = shared_utility.node) SELECT first_call.* FROM first_call JOIN second_call USING (file_index, node) ORDER BY first_call.file_index, first_call.node, first_call.producer_id, first_call.match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "pattern",
+          "dialect": "python",
+          "producer_kind": "pattern",
+          "program_digest": "7b68a805d2b82ed02202a17d9a5c3e13ba9984452405cfe91114692998341989",
+          "result_schema": [
+            "producer_status",
+            "terminal_match",
+            "capture"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-shared-component/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "universe",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-shared-component/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "utility-self-recursive",
+      "normalized_sql": "WITH RECURSIVE packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), navigation AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 5), roots AS (SELECT match.file_index, match.node, 1 AS depth FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 1 AND status.complete = 1), recursive_utility(file_index, node, depth) AS (SELECT file_index, node, depth FROM roots UNION SELECT recursive_utility.file_index, edge.related_node, recursive_utility.depth + 1 FROM recursive_utility JOIN navigation edge ON edge.producer_id = 2 AND edge.file_index = recursive_utility.file_index AND edge.node = recursive_utility.node WHERE recursive_utility.depth < 64), accepted AS (SELECT match.* FROM recursive_utility JOIN terminal_match match ON match.producer_id = 0 AND match.file_index = recursive_utility.file_index AND match.node = recursive_utility.node) SELECT DISTINCT * FROM accepted ORDER BY file_index, node, producer_id, match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "kind",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "63283d041c723bb52091402395fb04f3ede87993de9a75bf8db5d3373bd43efa",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-self-recursive/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "universe",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-self-recursive/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 2,
+          "kind": "navigation",
+          "dialect": "python",
+          "producer_kind": "navigation",
+          "program_digest": "337eda5029be5ef3e2f556110316307c10ac89ad672560b2f40d69d8e0ed6e13",
+          "result_schema": [
+            "producer_status",
+            "navigation"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-self-recursive/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "utility-mutual-recursion",
+      "normalized_sql": "WITH RECURSIVE packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), navigation AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 5), seeds AS (SELECT match.file_index, match.node, 0 AS component, 1 AS depth FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 1 AND status.complete = 1), utility_scc(file_index, node, component, depth) AS (SELECT * FROM seeds UNION SELECT utility_scc.file_index, edge.related_node, 1 - utility_scc.component, utility_scc.depth + 1 FROM utility_scc JOIN navigation edge ON edge.producer_id = 2 AND edge.file_index = utility_scc.file_index AND edge.node = utility_scc.node WHERE utility_scc.depth < 64), accepted AS (SELECT match.* FROM utility_scc JOIN terminal_match match ON match.producer_id = 0 AND match.file_index = utility_scc.file_index AND match.node = utility_scc.node) SELECT DISTINCT * FROM accepted ORDER BY file_index, node, producer_id, match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "kind",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "63283d041c723bb52091402395fb04f3ede87993de9a75bf8db5d3373bd43efa",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-mutual-recursion/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "universe",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-mutual-recursion/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 2,
+          "kind": "navigation",
+          "dialect": "python",
+          "producer_kind": "navigation",
+          "program_digest": "337eda5029be5ef3e2f556110316307c10ac89ad672560b2f40d69d8e0ed6e13",
+          "result_schema": [
+            "producer_status",
+            "navigation"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-mutual-recursion/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "utility-parameterized-call",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), capture AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 4), caller_frame AS (SELECT root.*, capture.capture_label, capture.node AS captured_node, capture.source_text FROM terminal_match root JOIN producer_status status USING (producer_id, file_index) LEFT JOIN capture ON capture.producer_id = root.producer_id AND capture.file_index = root.file_index AND capture.match_index = root.match_index WHERE root.producer_id = 1 AND status.complete = 1), utility_body AS (SELECT match.* FROM terminal_match match JOIN caller_frame frame ON frame.file_index = match.file_index AND frame.node = match.node WHERE match.producer_id = 0) SELECT DISTINCT utility_body.* FROM utility_body JOIN caller_frame frame USING (file_index, node) WHERE frame.captured_node IS NOT NULL AND frame.source_text IS NOT NULL ORDER BY utility_body.file_index, utility_body.node, utility_body.producer_id, utility_body.match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "pattern",
+          "dialect": "python",
+          "producer_kind": "pattern",
+          "program_digest": "b53573bfd16f8b0849662db16b393984b8672e74a828aea5c72a75e8ef69d43f",
+          "result_schema": [
+            "producer_status",
+            "terminal_match",
+            "capture"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-parameterized-call/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "universe",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-parameterized-call/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "utility-argument-frame-isolation",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), capture AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 4), first_frame AS (SELECT root.file_index, root.node, capture.node AS argument_node FROM terminal_match root JOIN capture ON capture.producer_id = root.producer_id AND capture.file_index = root.file_index AND capture.match_index = root.match_index JOIN producer_status status ON status.producer_id = root.producer_id AND status.file_index = root.file_index WHERE root.producer_id = 2 AND status.complete = 1 AND capture.capture_label = 'A'), first_result AS (SELECT body.* FROM terminal_match body JOIN first_frame frame USING (file_index, node) WHERE body.producer_id = 0), second_frame AS (SELECT root.file_index, root.node, capture.node AS argument_node FROM terminal_match root JOIN capture ON capture.producer_id = root.producer_id AND capture.file_index = root.file_index AND capture.match_index = root.match_index JOIN producer_status status ON status.producer_id = root.producer_id AND status.file_index = root.file_index WHERE root.producer_id = 2 AND status.complete = 1 AND capture.capture_label = 'B'), second_result AS (SELECT body.* FROM terminal_match body JOIN second_frame frame USING (file_index, node) WHERE body.producer_id = 1) SELECT first_result.* FROM first_result JOIN second_result USING (file_index, node) WHERE first_result.match_index <> second_result.match_index ORDER BY first_result.file_index, first_result.node, first_result.producer_id, first_result.match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "pattern",
+          "dialect": "python",
+          "producer_kind": "pattern",
+          "program_digest": "1cabd01b95eed74af50ad6067dbffc899b90b32948edcacfcb47583e000096db",
+          "result_schema": [
+            "producer_status",
+            "terminal_match",
+            "capture"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-argument-frame-isolation/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "pattern",
+          "dialect": "python",
+          "producer_kind": "pattern",
+          "program_digest": "d611726123e3a77f97fa7089ed6694edbe0d1b3cc2284ff18acc4d559d30b675",
+          "result_schema": [
+            "producer_status",
+            "terminal_match",
+            "capture"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-argument-frame-isolation/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 2,
+          "kind": "universe",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-argument-frame-isolation/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "utility-capture-return",
+      "normalized_sql": "WITH packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), capture AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 4), utility_result AS (SELECT body.*, returned.capture_label, returned.node AS captured_node, returned.source_text FROM terminal_match body JOIN producer_status status USING (producer_id, file_index) JOIN capture returned ON returned.producer_id = body.producer_id AND returned.file_index = body.file_index AND returned.match_index = body.match_index WHERE body.producer_id = 0 AND status.complete = 1), caller AS (SELECT root.* FROM terminal_match root JOIN producer_status status USING (producer_id, file_index) WHERE root.producer_id = 1 AND status.complete = 1) SELECT utility_result.* FROM utility_result JOIN caller USING (file_index, node) WHERE utility_result.capture_label = 'A' AND utility_result.captured_node IS NOT NULL ORDER BY utility_result.file_index, utility_result.node, utility_result.producer_id, utility_result.match_index",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "pattern",
+          "dialect": "python",
+          "producer_kind": "pattern",
+          "program_digest": "7b68a805d2b82ed02202a17d9a5c3e13ba9984452405cfe91114692998341989",
+          "result_schema": [
+            "producer_status",
+            "terminal_match",
+            "capture"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-capture-return/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "universe",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-capture-return/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "utility-depth-limit",
+      "normalized_sql": "WITH RECURSIVE packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), navigation AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 5), roots AS (SELECT match.file_index, match.node, 1 AS depth FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1), walk(file_index, node, depth) AS (SELECT * FROM roots UNION ALL SELECT walk.file_index, edge.related_node, walk.depth + 1 FROM walk JOIN navigation edge ON edge.producer_id = 1 AND edge.file_index = walk.file_index AND edge.node = walk.node WHERE walk.depth < 64), exceeded AS (SELECT file_index, node, 'utility-depth-limit' AS error_code FROM walk WHERE depth = 64) SELECT * FROM exceeded ORDER BY file_index, node",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "universe",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-depth-limit/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "navigation",
+          "dialect": "python",
+          "producer_kind": "navigation",
+          "program_digest": "337eda5029be5ef3e2f556110316307c10ac89ad672560b2f40d69d8e0ed6e13",
+          "result_schema": [
+            "producer_status",
+            "navigation"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-depth-limit/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
+    },
+    {
+      "name": "utility-work-limit",
+      "normalized_sql": "WITH RECURSIVE packed AS MATERIALIZED (SELECT * FROM rerail_matches WHERE batch = :batch), producer_status AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 2), terminal_match AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 3), navigation AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 5), roots AS (SELECT match.file_index, match.node, 1 AS work_used FROM terminal_match match JOIN producer_status status USING (producer_id, file_index) WHERE match.producer_id = 0 AND status.complete = 1), walk(file_index, node, work_used) AS (SELECT * FROM roots UNION ALL SELECT walk.file_index, edge.related_node, walk.work_used + 1 FROM walk JOIN navigation edge ON edge.producer_id = 1 AND edge.file_index = walk.file_index AND edge.node = walk.node WHERE walk.work_used < 2000000), exceeded AS (SELECT file_index, node, 'utility-work-limit' AS error_code FROM walk WHERE work_used = 2000000) SELECT * FROM exceeded ORDER BY file_index, node",
+      "terminal_catalog": [
+        {
+          "ordinal": 0,
+          "kind": "universe",
+          "dialect": "python",
+          "producer_kind": "terminal",
+          "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83",
+          "result_schema": [
+            "producer_status",
+            "terminal_match"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-work-limit/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        },
+        {
+          "ordinal": 1,
+          "kind": "navigation",
+          "dialect": "python",
+          "producer_kind": "navigation",
+          "program_digest": "337eda5029be5ef3e2f556110316307c10ac89ad672560b2f40d69d8e0ed6e13",
+          "result_schema": [
+            "producer_status",
+            "navigation"
+          ],
+          "owning_clause_ids": [
+            "sql-contract-utility-work-limit/contract"
+          ],
+          "result_limit": 10000,
+          "completion_required": true
+        }
+      ]
     }
   ]
 }
