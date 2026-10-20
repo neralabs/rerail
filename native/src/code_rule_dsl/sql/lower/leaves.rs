@@ -10,7 +10,7 @@ use crate::code_rule_dsl::matcher::{
     Semantic, may_bind,
 };
 use crate::code_rule_dsl::sql::plan::{
-    AllTerm, Export, Op, SlotId, SlotKind, Source, Unsupported, Walk,
+    AllTerm, Export, Need, Op, SlotId, SlotKind, Source, Unsupported, Walk,
 };
 use crate::code_rule_dsl::sql::terminals::{
     Binder, BindingSites, BindsCandidates, BindsOthers, Exported, FactTerm, FormatPart,
@@ -152,14 +152,14 @@ impl Lowerer<'_> {
                 sub: Box::new(sub),
                 binds,
                 strict,
-                kinds: None,
+                need: Need::default(),
             }
         } else {
             Op::Relation {
                 walk,
                 sub: Box::new(sub),
                 binds,
-                kinds: None,
+                need: Need::default(),
             }
         }
     }

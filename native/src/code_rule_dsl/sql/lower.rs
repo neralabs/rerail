@@ -8,8 +8,8 @@ mod three;
 
 use super::emit;
 use super::plan::{
-    CallReturn, CallSlot, MASK_BITS, Mask, NodeSet, OfRule, Op, Slot, SlotId, SlotKind, Source,
-    Statement, Stop, Unit, Unsupported, Walk, mask,
+    CallReturn, CallSlot, MASK_BITS, Mask, Need, NodeSet, OfRule, Op, Shape, Slot, SlotId,
+    SlotKind, Source, Statement, Stop, Unit, Unsupported, Walk, mask,
 };
 use super::recursion::{self, Cycle, Recursion, UtilKey, util_key};
 use super::terminals::{
@@ -135,7 +135,7 @@ struct Lowerer<'p> {
     /// The non-recursive utilities the rule being lowered reaches through two or more
     /// references (`recursion::repeated`): each is a unit, its body lowered once.
     shared: HashSet<UtilKey>,
-    /// The root-kinds analysis of the relations' sub-rules, made on first use (`walk_kinds`).
+    /// The root-kinds analysis of the relations' sub-rules, made on first use (`walk_need`).
     kinds: Option<RootKinds>,
 }
 
@@ -150,8 +150,9 @@ fn capture_free(rule: &AstMatcher) -> bool {
 }
 
 /// The kinds a node must have for a rule to match it: at a node of any other kind the rule is
-/// false, and three-valued not unknown either (`None` where any kind may). A relation's walk reads
-/// only its sub-rule's kinds (`Op::Relation::kinds`); a stage holds only its rule's.
+/// false, and three-valued not unknown either (`None` where any kind may), and a capture-free
+/// shape it must have (`shape`). A relation's walk reads only candidates its sub-rule needs
+/// (`plan::Need`); a stage holds only its rule's kinds.
 ///
 /// `all` is the intersection of its terms' kinds and `any` the union; `not { not { R } }` is
 /// `R`'s, and a utility or call its rule's. Three-valued, an `all` term a row can reach with a
@@ -165,6 +166,10 @@ pub(super) struct RootKinds {
     utilities: HashMap<usize, Option<BTreeSet<u16>>>,
     /// The utilities being analysed.
     visiting: HashSet<usize>,
+    /// Each utility's rule's shape (`RootKinds::shape`), by the rule's address.
+    shapes: HashMap<usize, Option<Shape>>,
+    /// The utilities whose shape is being analysed.
+    shaping: HashSet<usize>,
 }
 
 impl RootKinds {
@@ -174,7 +179,94 @@ impl RootKinds {
             captures: CaptureAnalysis::default(),
             utilities: HashMap::new(),
             visiting: HashSet::new(),
+            shapes: HashMap::new(),
+            shaping: HashSet::new(),
         }
+    }
+
+    /// What a walk's candidate must be for `rule` to hold, or be unknown, at it (`plan::Need`):
+    /// its kinds, and a shape where one says more than they do.
+    pub(super) fn need(&mut self, rule: &AstMatcher) -> Need {
+        let kinds = self.of(rule);
+        let shape = self.shape(rule).filter(Shape::structural);
+        Need {
+            kinds: kinds.map(|kinds| kinds.into_iter().collect()),
+            shape,
+        }
+    }
+
+    /// A capture-free test every node `rule` holds, or is unknown, at passes; `None` where none is
+    /// known. As `of`, with `has` (`stopBy: end`, or a child) as the kinds its rule needs below
+    /// the node: three-valued, such a `has` is unknown only where its rule is unknown at a node it
+    /// visits, which has those kinds.
+    fn shape(&mut self, rule: &AstMatcher) -> Option<Shape> {
+        let kinds = |kinds: BTreeSet<u16>| kinds.into_iter().collect::<Vec<u16>>();
+        match rule {
+            AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Never => {
+                self.of(rule).map(|own| Shape::Kinds(kinds(own)))
+            }
+            AstMatcher::Has(related, StopBy::End) => self
+                .of(related.rule())
+                .map(|own| Shape::Contains(kinds(own))),
+            AstMatcher::Has(related, StopBy::Neighbor) => {
+                self.of(related.rule()).map(|own| Shape::Child(kinds(own)))
+            }
+            AstMatcher::Any(items) => {
+                let mut shapes = Vec::with_capacity(items.len());
+                for item in items {
+                    shapes.push(self.shape(item)?);
+                }
+                Some(Shape::Any(shapes))
+            }
+            AstMatcher::All(items) => {
+                let mut shapes = Vec::new();
+                let mut held = BTreeSet::new();
+                for item in items {
+                    if self.three {
+                        let checked = !self.captures.mentions(item).is_disjoint(&held);
+                        if checked
+                            || (!item.binds_nothing() && reads_values(item, &mut BTreeSet::new()))
+                        {
+                            held.extend(self.captures.binds(item));
+                        }
+                        if checked {
+                            continue;
+                        }
+                    }
+                    shapes.extend(self.shape(item));
+                }
+                match shapes.len() {
+                    0 => None,
+                    1 => shapes.pop(),
+                    _ => Some(Shape::All(shapes)),
+                }
+            }
+            AstMatcher::Not(inner) => match &**inner {
+                AstMatcher::Not(rule) => self.shape(rule),
+                _ => None,
+            },
+            AstMatcher::Constrained(core) => self.shape(&core.rule),
+            AstMatcher::Util(util) => util.with_target(|rule| self.utility_shape(rule)).flatten(),
+            AstMatcher::Call(call) => call
+                .util
+                .with_target(|rule| self.utility_shape(rule))
+                .flatten(),
+            _ => None,
+        }
+    }
+
+    fn utility_shape(&mut self, rule: &AstMatcher) -> Option<Shape> {
+        let key = std::ptr::from_ref(rule) as usize;
+        if let Some(shape) = self.shapes.get(&key) {
+            return shape.clone();
+        }
+        if !self.shaping.insert(key) {
+            return None;
+        }
+        let shape = self.shape(rule);
+        self.shaping.remove(&key);
+        self.shapes.insert(key, shape.clone());
+        shape
     }
 
     pub(super) fn of(&mut self, rule: &AstMatcher) -> Option<BTreeSet<u16>> {
@@ -406,13 +498,12 @@ impl<'p> Lowerer<'p> {
         }
     }
 
-    /// The kinds a walk's candidates must have for `rule` to hold, or be unknown, at them.
-    fn walk_kinds(&mut self, rule: &AstMatcher) -> Option<Vec<u16>> {
+    /// What a walk's candidate must be for `rule` to hold, or be unknown, at it.
+    fn walk_need(&mut self, rule: &AstMatcher) -> Need {
         let three = self.three;
         self.kinds
             .get_or_insert_with(|| RootKinds::new(three))
-            .of(rule)
-            .map(|kinds| kinds.into_iter().collect())
+            .need(rule)
     }
 
     /// The statement of what was lowered: its root kinds, its operator and its units.
@@ -1034,7 +1125,7 @@ impl<'p> Lowerer<'p> {
                         walk,
                         sub: Box::new(sub),
                         binds,
-                        kinds: self.walk_kinds(related.rule()),
+                        need: self.walk_need(related.rule()),
                     },
                     out,
                 ))
@@ -1055,7 +1146,7 @@ impl<'p> Lowerer<'p> {
                         walk,
                         sub: Box::new(sub),
                         binds,
-                        kinds: self.walk_kinds(&relation.rule),
+                        need: self.walk_need(&relation.rule),
                     },
                     out,
                 ))
@@ -1130,7 +1221,7 @@ impl<'p> Lowerer<'p> {
                         min: count.min,
                         max: count.max,
                         bind,
-                        kinds: self.walk_kinds(related.rule()),
+                        need: self.walk_need(related.rule()),
                     },
                     out,
                 ))

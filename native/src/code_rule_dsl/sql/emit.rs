@@ -22,8 +22,8 @@ mod three;
 use super::lower::{INTERNAL, ORIGIN};
 use super::nearest;
 use super::plan::{
-    CallReturn, CallSlot, NodeSet, OfRule, Op, Slot, SlotId, SlotKind, Source, Statement, Stop,
-    Unit, Walk,
+    CallReturn, CallSlot, Need, NodeSet, OfRule, Op, Shape, Slot, SlotId, SlotKind, Source,
+    Statement, Stop, Unit, Walk,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
@@ -97,6 +97,57 @@ pub(super) fn in_set(set: NodeSet, file: &str, node: &str) -> String {
         if set.complement { "NOT " } else { "" },
         stage_table(set.stage)
     )
+}
+
+/// `shape` at node `node` of file `file` (SQL expressions), as an SQL condition read from the
+/// `node` table: a kind test by id, a descendant's or a child's from the kind postings within
+/// the node's subtree or among its children. `alias` numbers the nested tables.
+pub(super) fn shape_test(shape: &Shape, file: &str, node: &str, alias: &mut usize) -> String {
+    fn fresh(alias: &mut usize) -> String {
+        *alias += 1;
+        format!("sh{alias}")
+    }
+    let list_of = |kinds: &[u16]| list(kinds);
+    match shape {
+        // No node has none of no kinds: false, with no table read.
+        Shape::Kinds(own) | Shape::Contains(own) | Shape::Child(own) if own.is_empty() => {
+            "0".to_owned()
+        }
+        Shape::Kinds(own) => {
+            let n = fresh(alias);
+            format!(
+                "EXISTS (SELECT 1 FROM node {n} WHERE {n}.file = {file} AND {n}.id = {node} AND {n}.kind IN ({}))",
+                list_of(own)
+            )
+        }
+        Shape::Contains(below) => {
+            let (n, d) = (fresh(alias), fresh(alias));
+            format!(
+                "EXISTS (SELECT 1 FROM node {n} JOIN node {d} ON {d}.file = {n}.file AND {d}.id > {n}.id \
+                 AND {d}.id <= {n}.\"last\" AND {d}.kind IN ({}) WHERE {n}.file = {file} AND {n}.id = {node})",
+                list_of(below)
+            )
+        }
+        Shape::Child(below) => {
+            let d = fresh(alias);
+            format!(
+                "EXISTS (SELECT 1 FROM node {d} WHERE {d}.file = {file} AND {d}.parent = {node} AND {d}.kind IN ({}))",
+                list_of(below)
+            )
+        }
+        Shape::All(shapes) | Shape::Any(shapes) => {
+            let joiner = if matches!(shape, Shape::All(_)) {
+                " AND "
+            } else {
+                " OR "
+            };
+            let parts: Vec<String> = shapes
+                .iter()
+                .map(|part| shape_test(part, file, node, alias))
+                .collect();
+            format!("({})", parts.join(joiner))
+        }
+    }
 }
 
 /// The tables a statement reading `set` for its members only reads whose emptiness empties it
@@ -797,9 +848,9 @@ impl<'s> Emitter<'s> {
                 walk,
                 sub,
                 binds,
-                kinds,
+                need,
             } => {
-                let candidates = self.candidates(*walk, kinds.as_deref(), input);
+                let candidates = self.candidates(*walk, need, input);
                 self.first_match(&candidates, *walk, false);
                 let matched = self.op(sub, &candidates);
                 self.first_matched(&candidates, &matched);
@@ -834,9 +885,9 @@ impl<'s> Emitter<'s> {
                 min,
                 max,
                 bind,
-                kinds,
+                need,
             } => {
-                let candidates = self.candidates(*walk, kinds.as_deref(), input);
+                let candidates = self.candidates(*walk, need, input);
                 let matched = self.op(sub, &candidates);
                 let counts = self.grouped(
                     "n",
@@ -1350,21 +1401,22 @@ impl<'s> Emitter<'s> {
 
     /// A relation's candidates from each row of `input`: a frame table with a fresh `k` per
     /// candidate and the row's bindings, plus `pk` (the row's `k`) and `ord` (the walk order:
-    /// ids, negated for descending walks). With `kinds`, only the walk's nodes of those kinds
-    /// (the sub-rule's root kinds, `Op::Relation`), read from the kind postings before a
+    /// ids, negated for descending walks). Only those `need` admits (`plan::Need`): the walk reads
+    /// its kinds from the kind postings, and tests its shape on each candidate before the
     /// candidate's row is built. A k-space whose rows are all needed where their parent is
     /// (`lineage`); a first-match search says it stops at its first match.
-    pub(super) fn candidates(&mut self, walk: Walk, kinds: Option<&[u16]>, input: &str) -> String {
+    pub(super) fn candidates(&mut self, walk: Walk, need: &Need, input: &str) -> String {
         let candidates = match self.leaf_candidates(walk, input) {
             Some(candidates) => candidates,
-            None => self.tree_candidates(walk, kinds, input),
+            None => self.tree_candidates(walk, need, input),
         };
         self.open_space(&candidates, input, lineage::Derive::Probe);
         candidates
     }
 
     /// `candidates` of a walk over the tree.
-    fn tree_candidates(&mut self, walk: Walk, kinds: Option<&[u16]>, input: &str) -> String {
+    fn tree_candidates(&mut self, walk: Walk, need: &Need, input: &str) -> String {
+        let kinds = need.kinds.as_deref();
         // Mutant 15: a field relation walks as its plain relation.
         let walk = match walk {
             Walk::FieldHas(_, stop) if super::mutant(15) => Walk::Has(stop),
@@ -1515,6 +1567,14 @@ impl<'s> Emitter<'s> {
                 )
             }
             _ => source,
+        };
+        // The shape `need` tests on a candidate, past its kinds.
+        let source = match &need.shape {
+            Some(shape) => format!(
+                "SELECT * FROM ({source}) m WHERE {}",
+                shape_test(shape, "m.file", "m.node", &mut 0)
+            ),
+            None => source,
         };
         let order = if walk.descending() {
             "-c.node"
