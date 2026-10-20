@@ -87,6 +87,20 @@ pub(super) enum Derive {
     Keyed { input: String, columns: Vec<String> },
 }
 
+/// Whether the rows of a fresh frame's space can hold one node for several of the unit's keys
+/// (`Emitter::shared`), against its parent's.
+#[derive(Clone, Copy)]
+pub(super) enum Reach {
+    /// As its parent's rows: each row one of its parent's, or a descendant of its node, which no
+    /// row at another node reaches (a node has one parent).
+    Kept,
+    /// A walk that can lead rows at distinct nodes to one: up the tree, along its siblings, or to
+    /// the node a terminal relates.
+    Meets,
+    /// A row per key, which no other key's row shares (a keyed operator's pseudo-nodes).
+    Apart,
+}
+
 /// A k-space: the fresh frame `frame` and the frames that keep its rows.
 pub(super) struct Space {
     parent: Option<usize>,
@@ -94,6 +108,8 @@ pub(super) struct Space {
     member: usize,
     frame: String,
     derive: Derive,
+    /// Whether its rows may hold one node for several keys of the unit (`Reach`).
+    shared: bool,
     /// Its needed rows' table, once emitted: `None` inside where every row is needed.
     needed: Option<Option<String>>,
 }
@@ -129,7 +145,7 @@ impl Emitter<'_> {
 
     /// Records that `frame` numbers its rows afresh from `input`'s rows, as `derive` says, where
     /// `input` lies in a space of the unit body being emitted.
-    pub(super) fn open_space(&mut self, frame: &str, input: &str, derive: Derive) {
+    pub(super) fn open_space(&mut self, frame: &str, input: &str, derive: Derive, reach: Reach) {
         let (Some(&parent), Some(member)) = (self.space_of.get(input), self.members.last()) else {
             return;
         };
@@ -137,14 +153,30 @@ impl Emitter<'_> {
             return;
         }
         let member = member.id;
+        let shared = match reach {
+            Reach::Kept => self.spaces[parent].shared,
+            Reach::Meets => true,
+            Reach::Apart => false,
+        };
         self.space_of.insert(frame.to_owned(), self.spaces.len());
         self.spaces.push(Space {
             parent: Some(parent),
             member,
             frame: frame.to_owned(),
             derive,
+            shared,
             needed: None,
         });
+    }
+
+    /// Whether `frame`'s rows may hold one node for several keys of the unit whose body it lies
+    /// in: a walk that meets (`Reach::Meets`) lies between it and the keys. Where none does, a
+    /// row's node and the slots it binds are its key's alone, and keying it apart from the key
+    /// (`keyed`) merges no rows.
+    pub(super) fn shared(&self, frame: &str) -> bool {
+        self.space_of
+            .get(frame)
+            .is_some_and(|&space| self.spaces[space].shared)
     }
 
     /// Records that `candidates` (a `Probe` space) are a first-match search's over `walk`, which
@@ -183,6 +215,7 @@ impl Emitter<'_> {
             member: id,
             frame: keys.to_owned(),
             derive: Derive::Keys,
+            shared: false,
             needed: Some(None),
         });
         self.members.push(Member {
