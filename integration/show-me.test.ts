@@ -6,6 +6,7 @@ import { ingestEngineEvent, startEngineService } from "../src/runtime/index.js";
 import type { AdapterDelivery } from "../src/engine/index.js";
 import { runShowMeCommand, SHOW_ME_FILE, SHOW_ME_FIXED, SHOW_ME_MESSAGE, SHOW_ME_RULE_ID, SHOW_ME_VIOLATING } from "../src/cli/index.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
+import { awaitCodeRulesOpen } from "./support/code-rules-open.js";
 
 const originalRerailHome = process.env.RERAIL_HOME;
 let isolatedRerailHome: string;
@@ -51,6 +52,7 @@ describe("/rerail-show-me in a running session", () => {
     try {
       service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
       await ingestEngineEvent(socketPath, { kind: "session-start", eventId: "start", session: { host: "omp", sessionId, cwd: root } });
+      await awaitCodeRulesOpen(socketPath, { host: "omp", sessionId, cwd: root });
 
       expect(showMe(["--repo", root, "--json"])).toBe(0);
       const broken = [...await write(SHOW_ME_VIOLATING), ...await endTurn()];

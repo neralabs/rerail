@@ -116,9 +116,10 @@ describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS
     expect(existsSync(join(home, "packs"))).toBe(false);
 
     const confirm = await rerail(answerArgs(read.stdout, 1));
-    // JavaScript fits a TypeScript-only project and holds eslint-eqeqeq, which the lint config turns off. Packs
-    // published before `match` was required are named among those set-up could not use, not offered.
-    expect(confirm.stdout).toMatch(/@neralabs\/rerail-pack-javascript@\d+\.\d+\.\d+/u);
+    // A TypeScript project: the TypeScript pack fits its dependency, complexity its *.ts source, and JavaScript its
+    // source too, holding eslint-eqeqeq, which the lint config turns off. Every published pack loads.
+    for (const id of ["javascript", "typescript", "complexity"]) expect(confirm.stdout).toMatch(new RegExp(`@neralabs/rerail-pack-${id}@\\d+\\.\\d+\\.\\d+`, "u"));
+    expect(confirm.stdout).not.toContain("Rule packs set-up could not use");
     expect(confirm.stdout).toContain("eslint-eqeqeq starts off");
     expect(existsSync(join(home, "packs", "package.json"))).toBe(false);
 
@@ -128,10 +129,13 @@ describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS
     start[packs] = start[packs]!.replace(/javascript@[^,]+/u, `javascript@${JAVASCRIPT_VERSIONS[0]}`);
     const started = await rerail(start);
     expect(started.stdout).toContain("Rerail is on in shop.");
+    // Every other pack is installed at the version the answer carried.
+    const carried = Object.fromEntries(start[packs]!.split(",").map(spec => [`@neralabs/rerail-pack-${spec.slice(0, spec.lastIndexOf("@"))}`, spec.slice(spec.lastIndexOf("@") + 1)]));
+    expect(installed()).toEqual(carried);
     expect(installed()["@neralabs/rerail-pack-javascript"]).toBe(JAVASCRIPT_VERSIONS[0]);
 
     const listed = await daemonGet<{ packs: { id: string; version: string | null }[]; skipped: unknown[] }>("/api/rule-packs");
-    expect(listed.packs).toContainEqual(expect.objectContaining({ id: "javascript", version: JAVASCRIPT_VERSIONS[0] }));
+    expect(listed.packs.map(found => found.id).sort()).toEqual(["complexity", "javascript", "typescript"]);
     expect(listed.skipped).toEqual([]);
     const rerailRules = await daemonGet<{ rules: { rule: { id: string }; packId: string | null }[] }>("/api/rerail-rules");
     expect(rerailRules.rules.find(entry => entry.rule.id === "eslint-eqeqeq")?.packId).toBe("javascript");

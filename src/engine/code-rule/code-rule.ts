@@ -1328,6 +1328,17 @@ export interface CodeRuleResponse {
   failures: AuditFailure[];
 }
 
+/**
+ * The findings a generated-edit steer renders, kept apart from its text: a steer that arrives after the boundary that
+ * waited for its edit gave up is not delivered on its own, but folded with the others into the session's yield digest.
+ */
+export interface GeneratedEditFindings {
+  /** The violations rendered into the steer's content, their paths as the session sees them. */
+  readonly violations: readonly CodeRuleViolation[];
+  /** Where each of their rules comes from, as the content names it. */
+  readonly sourceOf: SteerSourceOf;
+}
+
 export interface SteerMetadata {
   revision: number;
   /** Source inputs whose newer revisions invalidate this result. */
@@ -1335,8 +1346,8 @@ export interface SteerMetadata {
   /** Rule ids rendered into the delivered content; absent for deliveries that carry no code-rule violations. */
   ruleIds?: readonly string[];
   background?: boolean;
-  /** Marks a steer produced by the generated edit settling at a native tool boundary. */
-  generatedEdit?: boolean;
+  /** Marks a steer produced by the session's generated edits settling, with the findings it renders. */
+  generatedEdit?: GeneratedEditFindings;
 }
 
 export interface RuleSteerDelivery {
@@ -1377,6 +1388,11 @@ export interface CodeRuleAuditor {
   updateSettings?(settings: Required<AuditSettings>): void;
   /** `path` is relative to the session folder and may lead out of it (`../`) into another checkout. */
   acceptsPath(path: string): boolean;
+  /**
+   * Whether `path` (as for `acceptsPath`) is left out because Git ignores it and the session follows `.gitignore`:
+   * a shell-write walk neither descends into such a folder (`directory`) nor observes such a file. Absent: nothing is.
+   */
+  ignoresPath?(path: string, directory: boolean): boolean;
   /**
    * The folder whose real path must contain an accepted `path`'s real path (its owning checkout); the session folder
    * when undefined or absent.

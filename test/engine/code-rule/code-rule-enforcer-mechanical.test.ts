@@ -166,8 +166,11 @@ async function writeAuditTree(root: string, git: boolean): Promise<void> {
   execFileSync("git", gitCommit, { cwd: root });
 }
 
-/** One log-only repository audit of `workspaceRoot`, whose catalog lives elsewhere: its status, sorted violation paths and sorted `path code` failures. */
-async function repositoryAudit(workspaceRoot: string): Promise<{ status: string | undefined; paths: string[]; failures: string[] }> {
+/**
+ * One log-only repository audit of `workspaceRoot`, whose catalog lives elsewhere, following `.gitignore` or not: its
+ * status, sorted violation paths and sorted `path code` failures.
+ */
+async function repositoryAudit(workspaceRoot: string, followGitignore = false): Promise<{ status: string | undefined; paths: string[]; failures: string[] }> {
   const home = await mkdtemp(join(tmpdir(), "rerail-scan-catalog-"));
   roots.push(home);
   const capabilitiesPath = join(home, "capabilities.json");
@@ -178,6 +181,7 @@ async function repositoryAudit(workspaceRoot: string): Promise<{ status: string 
     workspaceRoot,
     steerDelivery: { requestSteer: async () => undefined },
     audits: recorder,
+    followGitignore,
   });
   try {
     await enforcer.openWorkspace("audit-parity");
@@ -194,8 +198,8 @@ async function repositoryAudit(workspaceRoot: string): Promise<{ status: string 
 }
 
 /** The sorted violation paths of one repository audit of `workspaceRoot` that must complete without failures. */
-async function repositoryAuditPaths(workspaceRoot: string): Promise<string[]> {
-  const result = await repositoryAudit(workspaceRoot);
+async function repositoryAuditPaths(workspaceRoot: string, followGitignore = false): Promise<string[]> {
+  const result = await repositoryAudit(workspaceRoot, followGitignore);
   expect(result).toMatchObject({ status: "completed", failures: [] });
   return result.paths;
 }
@@ -610,7 +614,11 @@ describe("mechanical code rule regressions", () => {
         "repository-edit",
         "steer",
         expect.stringContaining("NEEDLE"),
-        expect.objectContaining({ revision: 1, generatedEdit: true }),
+        expect.objectContaining({
+          revision: 1,
+          // The findings travel with the text, for the yield digest should the steer miss its step.
+          generatedEdit: expect.objectContaining({ violations: [expect.objectContaining({ path: "api/a.py", ruleId: expect.any(String) })] }),
+        }),
       );
     } finally { await enforcer.close(); }
   });
@@ -1101,7 +1109,7 @@ describe("mechanical code rule regressions", () => {
     }
   });
 
-  it("evaluates the files the walk selects whether or not the workspace is a Git checkout", async () => {
+  it("evaluates the files the walk selects, leaving out what Git ignores only when following .gitignore", async () => {
     const plain = await mkdtemp(join(tmpdir(), "rerail-scan-plain-"));
     const checkout = await mkdtemp(join(tmpdir(), "rerail-scan-git-"));
     roots.push(plain, checkout);
@@ -1109,12 +1117,21 @@ describe("mechanical code rule regressions", () => {
     await writeAuditTree(checkout, true);
     const walked = await repositoryAuditPaths(plain);
     expect(walked).toEqual(["api/a.py", "api/gen/c.py", "api/nested/d.py", "api/nested/e.py", "api/skip/f.py", "api/tmp/b.py"]);
+    // Outside Git there is nothing to follow.
+    expect(await repositoryAuditPaths(plain, true)).toEqual(walked);
     // `api/nested` holds its own repository in the Git tree; only the lane's owner can make it a checkout apart.
     expect(await repositoryAuditPaths(checkout)).toEqual(walked);
+    // Following .gitignore leaves out the gitignored `api/gen/` and the file the nested `.gitignore` names; the
+    // tracked `api/tmp/b.py` and the `.rerailignore`d `api/skip/f.py` stay, as Git lists them.
+    expect(await repositoryAuditPaths(checkout, true)).toEqual(["api/a.py", "api/nested/d.py", "api/skip/f.py", "api/tmp/b.py"]);
     for (const workspace of ["tmp/ws", "out/ws"]) {
       expect(await repositoryAuditPaths(join(plain, workspace))).toEqual(["api/a.py"]);
+      expect(await repositoryAuditPaths(join(plain, workspace), true)).toEqual(["api/a.py"]);
       expect(await repositoryAuditPaths(join(checkout, workspace))).toEqual(["api/a.py"]);
     }
+    // A workspace in a folder the checkout around it ignores is ignored whole.
+    expect(await repositoryAuditPaths(join(checkout, "tmp/ws"), true)).toEqual(["api/a.py"]);
+    expect(await repositoryAuditPaths(join(checkout, "out/ws"), true)).toEqual([]);
   }, 60_000);
 
   it("audits a workspace root reached through a symlink as its target, with or without Git", async () => {

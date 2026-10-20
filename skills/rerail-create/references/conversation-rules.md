@@ -1,5 +1,8 @@
 # Writing a command rule
 
+Internal testing: conversation rules are not part of Rerail 0.1.0, which releases code rules only. Tell the person so in the
+read-back (SKILL.md, Write step 6).
+
 A conversation rule with a structural `match` checks each tool call the agent makes, before Rerail records it. Use one for a
 command the agent should never run, or should run only with care: force pushes, skipped hooks, publishing, deleting outside
 scratch folders. Rerail's test suite runs every example on this page through the engine.
@@ -86,5 +89,6 @@ that, and accept the rare miss.
 
 A conversation rule can also match what the person or the agent says, by similarity to a `reference` sentence. Its source is
 `user-input` or `assistant-text`, it has a `match` of `{ "operator": "gte", "threshold": 0.8 }`, and it has no structural
-condition. Similarity is loose: it fires on neighbouring phrasings and misses the one that matters. Prefer a structural rule. When
-nothing structural fits, set such a rule to Log, and say "Not sure" in the read-back.
+condition. These cosine rules are in internal testing too. Similarity is loose: it fires on neighbouring phrasings and misses
+the one that matters. Prefer a structural rule. When nothing structural fits, set such a rule to Log, and say "Not sure" in the
+read-back.

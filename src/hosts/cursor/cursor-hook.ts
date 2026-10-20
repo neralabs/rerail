@@ -8,7 +8,7 @@ import {
 import { launchedDirectly, serveHook } from "../../harness/hook-adapter.js";
 import { hookRerailStarted, runHostHook, type HookOptions } from "../../harness/hook-host.js";
 
-export { cursorHookEvent, cursorHookOutput, handleCursorEvent } from "./cursor-hook-adapter.js";
+export { CURSOR_FOLLOWUP_LOOP_LIMIT, cursorHookEvent, cursorHookOutput, handleCursorEvent } from "./cursor-hook-adapter.js";
 
 export async function runCursorHook(
   input: CursorHookInput,

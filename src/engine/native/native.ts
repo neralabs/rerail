@@ -168,6 +168,18 @@ export interface NativeRepositoryIndexOptions {
   sourceLanguages: Record<string, string>;
   /** Folders below the workspace root that are checkouts judged by their own rules: not walked, only reported. */
   nestedCheckouts: string[];
+  /** Leave out what Git ignores (nested `.gitignore`s, `.git/info/exclude`, `core.excludesFile`); never a tracked file. */
+  followGitignore: boolean;
+}
+
+/** Git's exclude stack for paths below the root it was opened for; see `openGitIgnoreMatcher`. */
+export interface NativeGitIgnoreMatcher {
+  /**
+   * Whether Git ignores `relativePath` (to the matcher's root, `/`-separated): `git check-ignore`'s answer, so a tracked
+   * path, or a folder holding one, never is. `isDirectory` lets directory-only patterns (`build/`) match. Paths outside
+   * the worktree are never ignored. Throws when an ignore file on the way cannot be read.
+   */
+  ignored(relativePath: string, isDirectory: boolean): boolean;
 }
 
 /**
@@ -272,6 +284,8 @@ export interface NativeBinding {
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
+  /** Git's exclude stack for the worktree around `root`, re-reading the index as it changes; null outside any Git worktree. */
+  openGitIgnoreMatcher(root: string): NativeGitIgnoreMatcher | null;
   ConversationEngine: NativeConversationEngineConstructor;
   CodeRuleDslRuntime: NativeCodeRuleDslRuntimeConstructor;
   CodeRuleDslWorkspace: NativeCodeRuleDslWorkspaceConstructor;

@@ -55,6 +55,8 @@ async function strategySession(options: {
   });
   const sessionId = "strategy";
   await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: options.host, sessionId, cwd: root } });
+  // A boundary reached while the evaluator is still opening goes on without code rules.
+  await runtime.codeRulesOpened(sessionId);
   let event = 0;
   const call = (toolCallId: string, path: string) => runtime.ingest({
     kind: "call", eventId: `call-${++event}`, sessionId, toolCallId, toolName: "write", input: { path, content: "" },
@@ -153,7 +155,9 @@ describe("The rewind steer strategy", () => {
               revision = 0;
               checking.resolve();
               await check.promise;
-              await steerDelivery.requestSteer("strategy", "steer", "Checked the edit.", { revision: steering, scope: ["a.ts"], background: true, generatedEdit: true });
+              await steerDelivery.requestSteer("strategy", "steer", "Checked the edit.", {
+                revision: steering, scope: ["a.ts"], background: true, generatedEdit: { violations: [], sourceOf: () => undefined },
+              });
               steered.resolve();
             },
             close: async () => undefined,

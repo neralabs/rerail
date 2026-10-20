@@ -21,16 +21,16 @@
   },
   "files": {
     "recording.json": {
-      "sha256": "2baa8fc4fc3fdcde02845a367113b58861d05ea897a6edb8ad8e8acb455fa802",
-      "size": 2816298,
+      "sha256": "6dffb53a4d903d25ee00064f384238ad80aeac8761d12337483a242faa981613",
+      "size": 2826668,
       "format": "rerail.port-readiness-recording/v2",
-      "asset": "python-bandit-recording-2baa8fc4fc3fdcde02845a367113b58861d05ea897a6edb8ad8e8acb455fa802.json.gz"
+      "asset": "python-bandit-recording-6dffb53a4d903d25ee00064f384238ad80aeac8761d12337483a242faa981613.json.gz"
     },
     "corpus.json": {
-      "sha256": "ead66a1ebf52f6daa1a94556eea9e4443f675f275ae79fe6ab7af9f152b1d949",
-      "size": 474393,
+      "sha256": "93c984b62a038e96c3b4b79dd2904c306680208c0cff82244efe3775359787c6",
+      "size": 293403,
       "format": "rerail.port-readiness-corpus/v2",
-      "asset": "python-bandit-corpus-ead66a1ebf52f6daa1a94556eea9e4443f675f275ae79fe6ab7af9f152b1d949.json.gz"
+      "asset": "python-bandit-corpus-93c984b62a038e96c3b4b79dd2904c306680208c0cff82244efe3775359787c6.json.gz"
     }
   }
 }

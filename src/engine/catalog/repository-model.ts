@@ -24,6 +24,8 @@ export interface RepositoryRecord {
   /** When set-up ran; `null` means Not set up, and nothing runs. */
   readonly configuredAt: number | null;
   readonly started: boolean;
+  /** Whether audits leave out files Git ignores; true until turned off. */
+  readonly followGitignore: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;
 }

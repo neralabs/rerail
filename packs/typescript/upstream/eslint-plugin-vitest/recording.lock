@@ -19,10 +19,10 @@
   },
   "files": {
     "recording.json": {
-      "sha256": "2cf5e774987e23a649aa5d6b8375dec162f293da8396cb53553ba7ec4ac3318f",
-      "size": 409517,
+      "sha256": "96f44496bb2f022ecf5637854e960fe1d1ff4694b426b8d79c11c6abac01d331",
+      "size": 410652,
       "format": "rerail.port-readiness-recording/v2",
-      "asset": "typescript-eslint-plugin-vitest-recording-2cf5e774987e23a649aa5d6b8375dec162f293da8396cb53553ba7ec4ac3318f.json.gz"
+      "asset": "typescript-eslint-plugin-vitest-recording-96f44496bb2f022ecf5637854e960fe1d1ff4694b426b8d79c11c6abac01d331.json.gz"
     },
     "corpus.json": {
       "sha256": "2062b527fbdb0816a05de3ddd8cb88f5dc8bea720acdf757a1c9011d693d0084",

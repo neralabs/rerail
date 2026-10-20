@@ -48,7 +48,7 @@ async function workspace(compiled: NativeCompiledCodeRuleDsl, revision: number, 
 }
 /** Index the attached repository chunk by chunk, as the enforcer does; the workspace revision after it. */
 async function indexRepository(native: NativeCodeRuleDslWorkspace): Promise<number> {
-  const options = { maxFiles: 100_000, maxSourceBytes: 512 * 1024 * 1024, maxFileBytes: 1_000_000, ignoredDirectories: [], sourceLanguages: { ".py": "python" }, nestedCheckouts: [] };
+  const options = { maxFiles: 100_000, maxSourceBytes: 512 * 1024 * 1024, maxFileBytes: 1_000_000, ignoredDirectories: [], sourceLanguages: { ".py": "python" }, nestedCheckouts: [], followGitignore: false };
   for (;;) {
     const chunk = JSON.parse(await native.indexRepositoryAsync(options)) as { done: boolean; revision: number };
     if (chunk.done) return chunk.revision;

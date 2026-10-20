@@ -103,10 +103,10 @@ rerail update check
 rerail update
 rerail update status
 rerail update rollback
-rerail events
+rerail events          # internal testing
 ```
 
-Updates are explicit. `rerail events`, the coding agent hooks, and the daemon run the active version and never contact a registry; a new version arrives only when a person runs `rerail update` (or `/rerail-update` inside OMP, Pi, Claude Code, and Cursor, `$rerail-update` in Codex). Auto-updating a machine's global package without consent is out of scope. A successful update becomes active only for newly started coding agent sessions; an already running event-loop process continues on its original version, but it evaluates nothing itself: like every managed client it sends events to the machine's one main daemon, which the first hook or session of the new version replaces (see "One main instance" in `docs/installation.md`).
+Updates are explicit. `rerail events` ([internal testing](../README.md#internal-testing)), the coding agent hooks, and the daemon run the active version and never contact a registry; a new version arrives only when a person runs `rerail update` (or `/rerail-update` inside OMP, Pi, Claude Code, and Cursor, `$rerail-update` in Codex). Auto-updating a machine's global package without consent is out of scope. A successful update becomes active only for newly started coding agent sessions; an already running event-loop process continues on its original version, but it evaluates nothing itself: like every managed client it sends events to the machine's one main daemon, which the first hook or session of the new version replaces (see "One main instance" in `docs/installation.md`).
 
 An update:
 
@@ -129,6 +129,8 @@ Channels map directly to npm dist-tags. `latest` is stable, while `beta` and `ne
 Both the native entrypoint and a real `RERAIL-EVENTS/1` session-start exchange must pass before activation. An update that fails either check is discarded without changing the active version.
 
 ## Activation
+
+Internal testing: activation profiles (`rerail activate`, `rerail activation request`, `rerail profile` and `--profile`) are not part of Rerail 0.1.0. See the README's [Internal testing](../README.md#internal-testing) section.
 
 Installation and customer activation are separate operations. Package access authorizes download; a signed entitlement authorizes execution and selects a customer deployment.
 

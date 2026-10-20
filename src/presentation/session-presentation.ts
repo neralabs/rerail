@@ -9,7 +9,6 @@ import {
   type RulesDashboardScope,
   type sessionResponseSchema,
 } from "../api/session-contracts.js";
-import { repositoryContextSchema } from "../api/repository-contracts.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import { DAEMON_STATE_FILE, processAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
@@ -214,9 +213,18 @@ export async function steerDashboard(cwd: string): Promise<string | undefined> {
   }
 }
 
+/**
+ * The part of `repository_context_get` the dashboard link needs. Not the operation's own strict schema: a daemon of
+ * another version may answer with more or fewer repository fields, and the link needs none of them.
+ */
+const dashboardScopeSchema = z.object({
+  repository: z.object({ repositoryKey: z.string() }),
+  checkout: z.object({ checkoutPath: z.string() }).nullable(),
+});
+
 /** The repository and checkout the daemon records for the verified checkout; null when it cannot say. */
 async function dashboardScope(daemon: VerifiedDaemon): Promise<RulesDashboardScope | null> {
-  return get(daemon.origin, `/api/repository?${new URLSearchParams({ checkout: daemon.workspace })}`, repositoryContextSchema)
+  return get(daemon.origin, `/api/repository?${new URLSearchParams({ checkout: daemon.workspace })}`, dashboardScopeSchema)
     .then(context => ({ repositoryKey: context.repository.repositoryKey, checkoutPath: context.checkout?.checkoutPath ?? null }))
     .catch(() => null);
 }

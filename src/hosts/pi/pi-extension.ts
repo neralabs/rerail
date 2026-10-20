@@ -199,6 +199,17 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       if (current === undefined) throw new Error("cosine-rules extension received an event before session_start");
       await sendDeliveries(current, await current.ingest(event));
     };
+    const yieldDeliveries = async (sessionId: string): Promise<void> => {
+      const client = native.current();
+      // The daemon client delivers what its reply carries, as it does an event's.
+      if (client !== undefined) {
+        await client.yieldDeliveries();
+        return;
+      }
+      const current = runtime;
+      if (current === undefined) return;
+      await sendDeliveries(current, await current.yieldDeliveries(sessionId));
+    };
 
     let attaching: Promise<void> | undefined;
 
@@ -342,6 +353,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       },
       sessionFor,
       ingest,
+      yieldDeliveries,
       conversationRulesTool: {
         registry: activeRegistry,
         turn: () => turn,

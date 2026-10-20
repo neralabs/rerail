@@ -39,6 +39,8 @@ export const repositorySummarySchema = z.object({
   configuredAt: z.number().int().nullable(),
   started: z.boolean().describe("The repository's own on/off, which every checkout without its own value follows."),
   state: startStateSchema.describe("The repository's own state, before any checkout's own value."),
+  followGitignore: z.boolean()
+    .describe("Whether audits leave out files Git ignores (.gitignore, .git/info/exclude, global excludes); sessions started after a change use the new value."),
   checkoutCount: z.number().int().nonnegative(),
 }).strict();
 
@@ -128,7 +130,7 @@ export const repositoryRulesSchema = z.object({
 
 const settingValues = {
   on: z.boolean().nullable().optional().describe("true/false sets on/off; null clears it; omitted keeps the stored value."),
-  mode: z.enum(RULE_MODES).nullable().optional().describe("Sets the mode; null clears it; omitted keeps the stored value."),
+  mode: z.enum(RULE_MODES).nullable().optional().describe("Sets the mode; null clears it; omitted keeps the stored value. block is in internal testing and is delivered like steer."),
   suppressions: z.enum(RULE_SUPPRESSIONS).nullable().optional()
     .describe("honour or ignore linters' suppression comments (eslint-disable, noqa, ...) for the rule; null clears it; omitted keeps the stored value."),
   config: ruleConfigSchema.nullable().optional()
@@ -199,7 +201,7 @@ export const quarantinedRuleSchema = z.object({
 }).strict();
 
 export const libraryUpsertBodySchema = z.object({
-  kind: z.enum(RULE_KINDS),
+  kind: z.enum(RULE_KINDS).describe("code, or conversation, which is in internal testing."),
   rule: z.union([codeRuleSchema, conversationRuleSchema]),
   revision: z.number().int().positive().optional().describe("Conversation rules only; code rules carry rule.revision."),
   ...targetShape,
@@ -245,4 +247,10 @@ export const startResultSchema = z.object({
 export const linkBodySchema = z.object({
   ...targetShape,
   address: z.string().min(1).describe("A remote address (https, ssh or scp form) that should resolve to this repository."),
+}).strict();
+
+export const followGitignoreBodySchema = z.object({
+  ...targetShape,
+  followGitignore: z.boolean()
+    .describe("true: files Git ignores (.gitignore, .git/info/exclude, global excludes) are not audited; tracked files always are. false: only Rerail's own ignores apply."),
 }).strict();

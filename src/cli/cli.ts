@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
 import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot } from "../engine/package-root.js";
+import { internalTesting } from "../engine/internal-testing.js";
 import { claudeWorkspace } from "../hosts/claude/claude-event-adapter.js";
 import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
 import { renderRerailSummary } from "../harness/rerail-summary.js";
@@ -149,18 +150,21 @@ function usage(): string {
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail show-me [--cleanup] [--repo <dir>] [--json]",
-    "  rerail [--profile <name>] events",
-    "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
     "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--steer-strategy message|rewind|subagent] [--json]",
+    "  rerail update",
+    "  rerail update check [--channel <tag>]",
+    "  rerail update status",
+    "  rerail update rollback",
+    "  rerail update --channel <tag>",
+    "",
+    internalTesting("Not part of the 0.1.0 release:"),
+    "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
+    "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
     "  rerail [--profile <name>] activate --code <code> --activation-url <url> --trust-root <roots.json>",
     "  rerail [--profile <name>] activation request --deployment <id> --output <file>",
     "  rerail [--profile <name>] profile [status|select|remove]",
-    "  rerail [--profile <name>] update",
-    "  rerail [--profile <name>] update check [--channel <tag>]",
-    "  rerail update status",
-    "  rerail update rollback",
-    "  rerail update --channel <tag>",
+    "  rerail --profile <name> update [check [--channel <tag>]]",
   ].join("\n");
 }
 
@@ -270,7 +274,10 @@ async function dispatchToManagedVersion(args: readonly string[], updater: Manage
   return await runChild(process.execPath, [managedCli, MANAGED_CHILD_ARGUMENT, ...args]);
 }
 
-/** The persistent event stream for out-of-process hosts. It never checks for or installs updates; `rerail update` is the only way a new version arrives. */
+/**
+ * The persistent event stream for out-of-process hosts. It never checks for or installs updates; `rerail update` is the only way a new version arrives.
+ * Internal testing: `rerail events`; the hooks of the released coding agents do not use it.
+ */
 async function runEvents(policy?: SignedUpdatePolicy): Promise<number> {
   assertLocalEngineEntitlement(policy);
   return await runChild(process.execPath, [join(packageRoot, ENTRY_POINTS.eventStream)]);
@@ -569,6 +576,7 @@ interface CommandContext {
   profile: ReturnType<typeof takeOption>["value"];
 }
 
+/** Internal testing: activation profiles (`activate`, `activation request`, `profile`, `--profile`). */
 async function runAccountCommand(command: string, args: readonly string[], context: CommandContext): Promise<number | undefined> {
   const { activation, profileStore, packageVersion, profile } = context;
   if (command === "activate") return await runActivateCommand(args, activation, packageVersion, profile);
@@ -593,6 +601,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (daemonExit !== undefined) return daemonExit;
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });
   if (command === "state") return runStateCommand(args);
+  // Internal testing: `scan`, explicit full-repository and git-diff audits. `settings` is decided in NER-1883.
   if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home });
   return undefined;
 }
