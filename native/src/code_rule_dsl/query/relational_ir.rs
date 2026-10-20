@@ -212,6 +212,15 @@ pub(super) struct SemanticRuleSpec {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ParseFactSpec {
+    pub(super) producer: usize,
+    pub(super) host_producer: usize,
+    pub(super) required_host_producer: Option<usize>,
+    pub(super) target_kind: u16,
+    pub(super) export: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SemanticFactSpec {
     pub(super) producer: usize,
     pub(super) argument_labels: Vec<String>,
@@ -292,6 +301,9 @@ enum RelationNode {
     },
     Semantic {
         spec: SemanticFactSpec,
+    },
+    Parsed {
+        spec: ParseFactSpec,
     },
     Utility {
         spec: UtilitySpec,
@@ -465,6 +477,7 @@ impl RelationNode {
                 source, of_rule, ..
             } => source.can_bind() || of_rule.as_deref().is_some_and(Self::can_bind),
             Self::Constrain { .. } | Self::Count { .. } => true,
+            Self::Parsed { spec } => spec.export.is_some(),
             Self::Semantic { spec } => {
                 !spec.argument_labels.is_empty()
                     || spec.rules.iter().any(|rule| {
@@ -555,6 +568,11 @@ impl RelationNode {
                 }
             }
             Self::Compare { source, .. } => source.collect_terminals(terminals),
+            Self::Parsed { .. } => {
+                if !terminals.contains(&TerminalKind::Parse) {
+                    terminals.push(TerminalKind::Parse);
+                }
+            }
             Self::Semantic { spec } => {
                 if !terminals.contains(&TerminalKind::Fact) {
                     terminals.push(TerminalKind::Fact);
@@ -657,6 +675,18 @@ impl RelationNode {
             Self::Compare { source, .. } => {
                 source.collect_operations(operations);
                 for operation in [SqlOperation::Bindings, SqlOperation::WhereFilter] {
+                    if !operations.contains(&operation) {
+                        operations.push(operation);
+                    }
+                }
+            }
+            Self::Parsed { .. } => {
+                for operation in [
+                    SqlOperation::ScanTerminal,
+                    SqlOperation::ScanFact,
+                    SqlOperation::InnerJoin,
+                    SqlOperation::Bindings,
+                ] {
                     if !operations.contains(&operation) {
                         operations.push(operation);
                     }
@@ -802,6 +832,7 @@ impl SqlRenderer {
                 RelationNode::Compare { spec, source } => self.render_comparison(spec, source),
                 RelationNode::Value { spec, source } => self.render_value(spec, source),
                 RelationNode::Semantic { spec } => self.render_semantic(spec),
+                RelationNode::Parsed { spec } => self.render_parsed(spec),
                 RelationNode::Utility { spec, source, body } => {
                     self.render_utility(spec, source, body)
                 }
@@ -935,6 +966,10 @@ impl SqlRenderer {
     fn render_all(&mut self, inputs: &[RelationNode]) -> Result<String, String> {
         if inputs.len() < 2 {
             return Err("ordered conjunction requires at least two operands".to_owned());
+        }
+        if let [source, RelationNode::Parsed { spec }] = inputs {
+            let source = self.render(source)?;
+            return self.render_parsed_source(spec, &source);
         }
         if let [source, RelationNode::Semantic { spec }] = inputs
             && let Some(source_producer) = Self::terminal_producer(source)?
@@ -1497,6 +1532,43 @@ impl SqlRenderer {
         self.ctes.push(format!(
             "{name} AS (\n  SELECT {columns}, source.bindings, source.choice_order FROM {source} source\n  JOIN fact value_fact ON value_fact.producer_id = {} AND value_fact.file_index = source.file_index AND value_fact.node = source.node AND value_fact.fact_kind = 1\n)",
             spec.producer
+        ));
+        Ok(name)
+    }
+
+    fn render_parsed(&mut self, spec: &ParseFactSpec) -> Result<String, String> {
+        let host = self.render_terminal_producer(spec.host_producer, "parse_host")?;
+        self.render_parsed_source(spec, &host)
+    }
+
+    fn render_parsed_source(
+        &mut self,
+        spec: &ParseFactSpec,
+        source: &str,
+    ) -> Result<String, String> {
+        let name = self.next_name("parse");
+        let mut columns = qualified_row_columns("host");
+        let bindings = if let Some(export) = &spec.export {
+            columns = columns
+                .replace("host.start_byte", "candidate.start_byte AS start_byte")
+                .replace("host.end_byte", "candidate.end_byte AS end_byte");
+            format!(
+                "COALESCE((SELECT json_group_array(json(value)) FROM (SELECT value FROM json_each(host.bindings) UNION ALL SELECT json_object('label', {}, 'occurrence', 0, 'node', NULL, 'text', candidate.source_text, 'structure', NULL, 'leaf', candidate.named_leaf, 'kind', 1, 'named', candidate.capture_named, 'equality_occurrence', 0, 'start_byte', candidate.start_byte, 'end_byte', candidate.end_byte))), json('[]'))",
+                Self::sql_text(export)
+            )
+        } else {
+            "host.bindings".to_owned()
+        };
+        let required_host = spec.required_host_producer.map_or_else(String::new, |producer| {
+            format!(
+                "\n    AND EXISTS (SELECT 1 FROM terminal_match required JOIN producer_status required_status USING (producer_id, file_index) WHERE required.producer_id = {producer} AND required.file_index = host.file_index AND required.node = host.node AND required_status.complete = 1)"
+            )
+        });
+        self.ctes.push(format!(
+            "{name} AS (\n  SELECT {columns}, {bindings} AS bindings, '' AS choice_order\n  FROM {source} host\n  JOIN fact candidate ON candidate.producer_id = {producer} AND candidate.file_index = host.file_index AND candidate.node = host.node AND candidate.fact_kind = 18 AND candidate.capture_kind = {target_kind} AND candidate.axis_order > 0\n  JOIN producer_status parse_status ON parse_status.producer_id = candidate.producer_id AND parse_status.file_index = candidate.file_index AND parse_status.complete = 1\n  WHERE 1 = 1{required_host}\n    AND NOT EXISTS (SELECT 1 FROM fact earlier WHERE earlier.producer_id = candidate.producer_id AND earlier.file_index = candidate.file_index AND earlier.node = candidate.node AND earlier.fact_kind = 18 AND earlier.capture_kind = candidate.capture_kind AND earlier.axis_order > 0 AND earlier.axis_order < candidate.axis_order)\n)",
+            producer = spec.producer,
+            target_kind = spec.target_kind,
+            source = source,
         ));
         Ok(name)
     }
@@ -2246,6 +2318,19 @@ impl RelationalIr {
         relation
     }
 
+    pub(super) fn parsed(spec: ParseFactSpec) -> Self {
+        Self {
+            roots: vec![RelationNode::Parsed { spec }],
+            terminal_kinds: vec![TerminalKind::Parse],
+            operations: vec![
+                SqlOperation::ScanTerminal,
+                SqlOperation::ScanFact,
+                SqlOperation::InnerJoin,
+                SqlOperation::Bindings,
+            ],
+        }
+    }
+
     pub(super) fn semantic(spec: SemanticFactSpec) -> Self {
         let mut relation = Self {
             roots: vec![RelationNode::Semantic { spec }],
@@ -2489,6 +2574,16 @@ impl RelationalIr {
                     (kind == TerminalKind::Value
                         && semantic_key == format!("terminal:{}", spec.producer))
                         || contains(source, kind, semantic_key)
+                }
+                RelationNode::Parsed { spec } => {
+                    (kind == TerminalKind::Parse
+                        && semantic_key == format!("terminal:{}", spec.producer))
+                        || (kind == TerminalKind::Universe
+                            && semantic_key == format!("terminal:{}", spec.host_producer))
+                        || spec.required_host_producer.is_some_and(|producer| {
+                            kind == TerminalKind::Kind
+                                && semantic_key == format!("terminal:{producer}")
+                        })
                 }
                 RelationNode::Semantic { spec } => {
                     (kind == TerminalKind::Fact

@@ -49,7 +49,7 @@ pub(super) use memo::with_file as with_file_memo;
 pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
 #[cfg(test)]
 pub(crate) use nth_child::{named_sibling_visits, reset_named_sibling_visits};
-pub(crate) use parse::{HostTest, ParseTest};
+pub(crate) use parse::{HostTest, ParseTest, parse_fact_tree};
 use regex::Regex;
 pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
 #[cfg(test)]
@@ -734,6 +734,16 @@ fn util_limit_hit() -> bool {
 /// Sets up this thread to evaluate `matcher`'s clause on one file, with `work` left of its
 /// `maxVisitedNodes` budget, as `GrammarMatcher::match_root` does for each root, and the Unknown
 /// flag for the sub-rules semantic predicates match themselves.
+pub(crate) fn begin_bounded_producer(work: usize) {
+    UTIL_DEPTH.set(0);
+    UTIL_EXCEEDED.set(None);
+    UTIL_STACK_BASE.set(stack_address());
+    UTIL_STEPS_LEFT.set(work);
+    THREE_VALUED.set(true);
+    UNKNOWN.set(false);
+    resolve::CURRENT_CLAUSE.set(0);
+}
+
 pub(super) fn begin_clause(matcher: &GrammarMatcher, work: usize) {
     CLAUSES_BEGUN.set(CLAUSES_BEGUN.get() + 1);
     UTIL_DEPTH.set(0);

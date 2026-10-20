@@ -232,13 +232,14 @@ fn result_schema(kind: super::relational::TerminalKind) -> Vec<String> {
     let rows = match kind {
         TerminalKind::Pattern => &["producer_status", "terminal_match", "capture"][..],
         TerminalKind::Navigation => &["producer_status", "navigation"],
-        TerminalKind::Value | TerminalKind::Fact => &["producer_status", "fact"],
+        TerminalKind::Value | TerminalKind::Fact | TerminalKind::Parse => {
+            &["producer_status", "fact"]
+        }
         TerminalKind::Universe
         | TerminalKind::Kind
         | TerminalKind::Regex
         | TerminalKind::Text
         | TerminalKind::Equality
-        | TerminalKind::Parse
         | TerminalKind::CallSeed
         | TerminalKind::Transform => &["producer_status", "terminal_match"],
     };
@@ -1795,6 +1796,34 @@ fn production_contract_phase_five_parsed_documents_equal_oracles() {
         expected.sort_unstable();
         assert_eq!(outcome.ranges, expected, "{name}: mapped parse ranges");
         assert!(outcome.errors.is_empty(), "{name}: complete parse facts");
+        let parse_producers = plan
+            .terminals()
+            .iter()
+            .enumerate()
+            .filter(|(_, terminal)| terminal.kind() == super::relational::TerminalKind::Parse)
+            .map(|(producer, terminal)| {
+                assert_eq!(
+                    terminal.producer_kind(),
+                    crate::code_rule_dsl::transducer::sql_backend::ProducerKind::ParseFact,
+                    "{name}: parse has one physical meaning"
+                );
+                assert!(
+                    terminal.parse_fact().is_some(),
+                    "{name}: typed parse descriptor"
+                );
+                producer as i64
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(parse_producers.len(), 1, "{name}: one parse producer");
+        assert!(
+            outcome.statuses.iter().any(|status| {
+                parse_producers.contains(&status.producer)
+                    && status.complete == 1
+                    && status.verdict == Some(1)
+                    && status.error.is_none()
+            }),
+            "{name}: explicit successful parse completion"
+        );
     }
 }
 

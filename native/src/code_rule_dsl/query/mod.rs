@@ -133,6 +133,11 @@ impl SqlPlans {
             .iter()
             .map(relational::TerminalPlan::semantic_fact)
             .collect();
+        let parse_facts = plan
+            .terminals()
+            .iter()
+            .map(relational::TerminalPlan::parse_fact)
+            .collect();
         let demand = PackedDemand::new(
             production_backend(),
             programs,
@@ -144,6 +149,7 @@ impl SqlPlans {
         .and_then(|demand| demand.with_producer_kinds(producer_kinds))
         .and_then(|demand| demand.with_value_facts(value_facts))
         .and_then(|demand| demand.with_semantic_facts(semantic_facts))
+        .and_then(|demand| demand.with_parse_facts(parse_facts))
         .map_err(|error| format!("packed batch verification failed: {error:?}"))?;
         drive_sql(demand, plan.sql()).map_err(|error| error.to_string())
     }

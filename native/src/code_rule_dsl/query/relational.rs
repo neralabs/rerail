@@ -1,7 +1,7 @@
 use super::relational_ir::{
     ComparisonSpec, CountSpec, NavigationAxis, NavigationSpec, NavigationStop, NthChildSpec,
-    RecursiveUtilitySpec, RecursiveUtilityTransition, RelationalIr, SemanticFactSpec,
-    SemanticRuleSpec, SqlOperation, UtilityFrameSpec, UtilitySpec, ValueLiteral,
+    ParseFactSpec, RecursiveUtilitySpec, RecursiveUtilityTransition, RelationalIr,
+    SemanticFactSpec, SemanticRuleSpec, SqlOperation, UtilityFrameSpec, UtilitySpec, ValueLiteral,
     ValuePredicateSpec, qualified_failure_columns, qualified_row_columns,
 };
 use crate::code_rule_dsl::language::{GrammarDialect, label};
@@ -11,7 +11,8 @@ use crate::code_rule_dsl::matcher::{
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Query};
 use crate::code_rule_dsl::packed::Program;
 use crate::code_rule_dsl::transducer::sql_backend::{
-    ProducerKind, SemanticFactDescriptor, SemanticFactSource, ValueFactDescriptor,
+    ParseFactDescriptor, ProducerKind, SemanticFactDescriptor, SemanticFactSource,
+    ValueFactDescriptor,
 };
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::matcher::Matcher;
@@ -32,6 +33,7 @@ pub(super) struct TerminalPlan {
     result_limit: u32,
     value_fact: Option<ValueFactDescriptor>,
     semantic_fact: Option<SemanticFactDescriptor>,
+    parse_fact: Option<ParseFactDescriptor>,
 }
 
 impl TerminalPlan {
@@ -72,6 +74,7 @@ impl TerminalPlan {
             TerminalKind::Pattern => ProducerKind::Pattern,
             TerminalKind::Value => ProducerKind::ValueFact,
             TerminalKind::Fact => ProducerKind::SemanticFact,
+            TerminalKind::Parse => ProducerKind::ParseFact,
             _ => ProducerKind::Terminal,
         }
     }
@@ -82,6 +85,10 @@ impl TerminalPlan {
 
     pub(super) fn semantic_fact(&self) -> Option<SemanticFactDescriptor> {
         self.semantic_fact.clone()
+    }
+
+    pub(super) fn parse_fact(&self) -> Option<ParseFactDescriptor> {
+        self.parse_fact.clone()
     }
 }
 
@@ -249,6 +256,7 @@ enum TerminalIdentity {
     Regex(GrammarDialect, String),
     Value(GrammarDialect, bool, Vec<u16>, String),
     Fact(GrammarDialect, String),
+    Parse(GrammarDialect, String),
 }
 
 type UtilityGraph = BTreeMap<usize, (UtilRef, AstMatcher, Vec<usize>)>;
@@ -352,6 +360,99 @@ impl Builder {
         }
     }
 
+    fn lower_parse(
+        &mut self,
+        test: &crate::code_rule_dsl::matcher::ParseTest,
+        language: GrammarDialect,
+        at: &str,
+        terminals: &mut Vec<usize>,
+        ir: &mut RelationalIr,
+    ) {
+        fn one_kind(matcher: &AstMatcher) -> Option<u16> {
+            let AstMatcher::Kind(kind) = matcher else {
+                return None;
+            };
+            let kinds = kind.potential_kinds()?;
+            (kinds.iter().count() == 1)
+                .then(|| u16::try_from(kinds.iter().next().expect("one kind")).ok())
+                .flatten()
+        }
+        fn candidate_shape(
+            matcher: &AstMatcher,
+            target: &mut Option<u16>,
+            export: &mut Option<String>,
+            host: &mut Option<u16>,
+        ) -> bool {
+            match matcher {
+                AstMatcher::All(items) => items
+                    .iter()
+                    .all(|item| candidate_shape(item, target, export, host)),
+                AstMatcher::Kind(_) => one_kind(matcher)
+                    .filter(|kind| target.replace(*kind).is_none())
+                    .is_some(),
+                AstMatcher::Semantic(Semantic::Capture(label)) => {
+                    export.replace(label.clone()).is_none()
+                }
+                AstMatcher::Semantic(Semantic::Host(test)) => one_kind(test.rule())
+                    .filter(|kind| host.replace(*kind).is_none())
+                    .is_some(),
+                _ => false,
+            }
+        }
+        let AstMatcher::Has(candidate, StopBy::End) = &test.rule else {
+            self.unsupported
+                .push(format!("{at}: parse requires a bounded descendant rule"));
+            return;
+        };
+        let (mut target, mut export, mut host) = (None, None, None);
+        if !candidate_shape(candidate.rule(), &mut target, &mut export, &mut host) {
+            self.unsupported.push(format!(
+                "{at}: parse descendant rule is not relationally lowered"
+            ));
+            return;
+        }
+        if export.is_none() && test.exports.len() == 1 {
+            export = test.exports.first().cloned();
+        }
+        let Some(target_kind) = target else {
+            self.unsupported
+                .push(format!("{at}: parse descendant has no fixed kind"));
+            return;
+        };
+        if export
+            .as_ref()
+            .is_some_and(|label| !test.exports.contains(label))
+        {
+            self.unsupported
+                .push(format!("{at}: parse capture is not in the export catalog"));
+            return;
+        }
+        let host_producer = self.universe_terminal(language);
+        terminals.push(host_producer);
+        let required_host_producer = host.map(|kind| {
+            let producer = self.kind_terminal(language, kind);
+            terminals.push(producer);
+            producer
+        });
+        let producer = self.parse_terminal(
+            language,
+            at,
+            ParseFactDescriptor {
+                grammar: test.grammar,
+                host_kinds: Arc::clone(&test.host_kinds),
+                reading: test.reading,
+            },
+        );
+        terminals.push(producer);
+        *ir = RelationalIr::parsed(ParseFactSpec {
+            producer,
+            host_producer,
+            required_host_producer,
+            target_kind,
+            export,
+        });
+    }
+
     fn lower_semantic(
         &mut self,
         semantic: &Semantic,
@@ -360,6 +461,10 @@ impl Builder {
         terminals: &mut Vec<usize>,
         ir: &mut RelationalIr,
     ) {
+        if let Semantic::Parse(test) = semantic {
+            self.lower_parse(test, language, at, terminals, ir);
+            return;
+        }
         use crate::code_rule_dsl::transducer::semantic_facts::slot;
         let mut rules = Vec::new();
         let mut add = |slot, rule: &Option<AstMatcher>, suffix: &str, this: &mut Self| {
@@ -448,7 +553,8 @@ impl Builder {
                 call_through = Some(term.through);
             }
             Semantic::Resolves(_) | Semantic::Arguments(_) | Semantic::Layout(_) => {}
-            Semantic::Value(_) | Semantic::Parse(_) | Semantic::Host(_) | Semantic::Capture(_) => {
+            Semantic::Parse(_) => unreachable!("parse returned before semantic fact lowering"),
+            Semantic::Value(_) | Semantic::Host(_) | Semantic::Capture(_) => {
                 self.unsupported.push(format!(
                     "{at}: semantic fact family belongs to a later phase"
                 ));
@@ -1407,6 +1513,29 @@ impl Builder {
             result_limit: u32::MAX,
             value_fact: Some(descriptor),
             semantic_fact: None,
+            parse_fact: None,
+        });
+        self.terminal_ids.insert(identity, id);
+        id
+    }
+
+    fn parse_terminal(
+        &mut self,
+        language: GrammarDialect,
+        at: &str,
+        descriptor: ParseFactDescriptor,
+    ) -> usize {
+        let identity = TerminalIdentity::Parse(language, at.to_owned());
+        let id = self.terminals.len();
+        self.terminals.push(TerminalPlan {
+            kind: TerminalKind::Parse,
+            language,
+            program: Program::compile_universe().expect("the parse fact shell is verified"),
+            clauses: vec![self.current_clause],
+            result_limit: u32::try_from(self.current_max_work).unwrap_or(u32::MAX),
+            value_fact: None,
+            semantic_fact: None,
+            parse_fact: Some(descriptor),
         });
         self.terminal_ids.insert(identity, id);
         id
@@ -1434,6 +1563,7 @@ impl Builder {
                 input_labels,
                 call_through,
             }),
+            parse_fact: None,
         });
         self.terminal_ids.insert(identity, id);
         id
@@ -1463,6 +1593,7 @@ impl Builder {
             result_limit: self.current_result_limit,
             value_fact: None,
             semantic_fact: None,
+            parse_fact: None,
         });
         self.terminal_ids.insert(identity, id);
         id

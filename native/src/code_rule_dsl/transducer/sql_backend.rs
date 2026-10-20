@@ -40,6 +40,24 @@ pub(in crate::code_rule_dsl) enum ProducerKind {
     Navigation,
     ValueFact,
     SemanticFact,
+    ParseFact,
+}
+
+/// A bounded parsed-document request. It owns grammar and host selection only. Nested user rules
+/// remain relational SQL operands and are not stored in this descriptor.
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) struct ParseFactDescriptor {
+    pub(in crate::code_rule_dsl) grammar: super::super::literal::Grammar,
+    pub(in crate::code_rule_dsl) host_kinds: Arc<std::collections::BTreeSet<u16>>,
+    pub(in crate::code_rule_dsl) reading: super::super::scope::Reading,
+}
+
+impl std::fmt::Debug for ParseFactDescriptor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ParseFactDescriptor")
+            .finish_non_exhaustive()
+    }
 }
 
 /// A bounded semantic-fact request. The descriptor emits only predicate-local rows. Nested user
@@ -221,6 +239,7 @@ pub(in crate::code_rule_dsl) struct PackedDemand {
     producer_kinds: Vec<ProducerKind>,
     value_facts: Vec<Option<ValueFactDescriptor>>,
     semantic_facts: Vec<Option<SemanticFactDescriptor>>,
+    parse_facts: Vec<Option<ParseFactDescriptor>>,
     files: Vec<TapeDoc>,
     anchors: Vec<Vec<Vec<u32>>>,
     task_grid: Vec<Vec<bool>>,
@@ -248,12 +267,14 @@ impl PackedDemand {
         let producer_kinds = vec![ProducerKind::Terminal; programs.len()];
         let value_facts = vec![None; programs.len()];
         let semantic_facts = vec![None; programs.len()];
+        let parse_facts = vec![None; programs.len()];
         Ok(Self {
             backend,
             programs,
             producer_kinds,
             value_facts,
             semantic_facts,
+            parse_facts,
             files,
             anchors,
             task_grid,
@@ -324,6 +345,25 @@ impl PackedDemand {
         Ok(self)
     }
 
+    pub(in crate::code_rule_dsl) fn with_parse_facts(
+        mut self,
+        parse_facts: Vec<Option<ParseFactDescriptor>>,
+    ) -> Result<Self, PackedError> {
+        if parse_facts.len() != self.programs.len()
+            || parse_facts
+                .iter()
+                .enumerate()
+                .any(|(producer, descriptor)| {
+                    descriptor.is_some()
+                        != (self.producer_kinds[producer] == ProducerKind::ParseFact)
+                })
+        {
+            return Err(PackedError::InvalidAnchor);
+        }
+        self.parse_facts = parse_facts;
+        Ok(self)
+    }
+
     #[cfg(test)]
     pub(in crate::code_rule_dsl) fn with_failure_injection(
         mut self,
@@ -384,6 +424,99 @@ impl PackedDemand {
                         None,
                         Some(code.clone()),
                     ));
+                    continue;
+                }
+                if self.producer_kinds[program] == ProducerKind::ParseFact {
+                    let descriptor = self.parse_facts[program]
+                        .as_ref()
+                        .expect("a verified parse producer has its descriptor");
+                    let parsed = AstGrep::doc(self.files[file].clone());
+                    let _scope = super::super::matcher::FileScopeSlot::install(
+                        Vec::new(),
+                        None,
+                        !parsed.root().get_doc().syntax_error_ranges().is_empty(),
+                    );
+                    let parse_row_start = rows.len();
+                    let mut failure = None;
+                    super::super::matcher::begin_bounded_producer(
+                        self.result_limits[program] as usize,
+                    );
+                    super::super::matcher::with_file_memo(&parsed, || {
+                        let root = parsed.root();
+                        let tape = root.get_doc();
+                        for (task_index, ordinal) in
+                            self.anchors[file][program].iter().copied().enumerate()
+                        {
+                            let host = parsed.adopt(tape.node(ordinal));
+                            let parsed_tree = super::super::matcher::parse_fact_tree(
+                                &host,
+                                descriptor.grammar,
+                                &descriptor.host_kinds,
+                                descriptor.reading,
+                            );
+                            match parsed_tree {
+                                Some(super::super::literal::Parsed::Tree(tree)) => {
+                                    let document = AstGrep::doc(super::super::literal::SubDoc {
+                                        tree: Arc::clone(&tree),
+                                    });
+                                    for (position, candidate) in document.root().dfs().enumerate() {
+                                        if rows.len() - parse_row_start
+                                            >= self.result_limits[program] as usize
+                                        {
+                                            failure = Some("parse-fact-capacity".to_owned());
+                                            break;
+                                        }
+                                        let Some(range) = tree.host_range(candidate.node_id())
+                                        else {
+                                            failure = Some("parse-invalid-map".to_owned());
+                                            break;
+                                        };
+                                        rows.push(PackedRow::parse_fact(
+                                            token,
+                                            file,
+                                            program,
+                                            task_index,
+                                            ordinal,
+                                            position,
+                                            candidate.kind_id(),
+                                            range,
+                                            candidate.text().into_owned(),
+                                            candidate.children().next().is_none(),
+                                            candidate.is_named(),
+                                        ));
+                                    }
+                                }
+                                Some(super::super::literal::Parsed::NotString) => {}
+                                Some(super::super::literal::Parsed::Unknown) | None => {
+                                    failure = Some("parse-incomplete".to_owned());
+                                }
+                            }
+                            if failure.is_some() {
+                                break;
+                            }
+                        }
+                    });
+                    if let Some(code) = failure {
+                        rows.truncate(parse_row_start);
+                        batch_error.get_or_insert_with(|| code.clone());
+                        rows.push(PackedRow::producer_status(
+                            token,
+                            file,
+                            program,
+                            false,
+                            None,
+                            Some(code),
+                        ));
+                    } else {
+                        rows.push(PackedRow::producer_status(
+                            token,
+                            file,
+                            program,
+                            true,
+                            Some(true),
+                            None,
+                        ));
+                    }
                     continue;
                 }
                 if self.producer_kinds[program] == ProducerKind::SemanticFact {
@@ -1227,6 +1360,39 @@ impl PackedRow {
         row.axis_order = Some(child_order as i64);
         row.field_id = Some(i64::from(field));
         row.related_named = Some(i64::from(named));
+        row
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn parse_fact(
+        batch: i64,
+        file: usize,
+        producer: usize,
+        task_index: usize,
+        host: u32,
+        position: usize,
+        kind: u16,
+        range: std::ops::Range<usize>,
+        source_text: String,
+        leaf: bool,
+        named: bool,
+    ) -> Self {
+        let mut row = Self::blank(batch, RowKind::Fact);
+        row.file_index = Some(file as i64);
+        row.producer_id = Some(producer as i64);
+        row.task_index = Some(task_index as i64);
+        row.match_index = Some(position as i64);
+        row.capture_index = Some(position as i64);
+        row.node = Some(host as i64);
+        row.axis_order = Some(position as i64);
+        row.fact_kind = Some(18);
+        row.capture_kind = Some(i64::from(kind));
+        row.start_byte = Some(range.start as i64);
+        row.end_byte = Some(range.end as i64);
+        row.verdict = Some(1);
+        row.source_text = Some(source_text);
+        row.named_leaf = Some(i64::from(leaf));
+        row.capture_named = Some(i64::from(named));
         row
     }
 
