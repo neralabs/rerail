@@ -169,9 +169,10 @@ The loop does not need the distillation that chose the subset. Its tools are kep
 `data-layer/setup/cover.py` writes `$RERAIL_BENCH_HOME/distill/cover.json`, each clause's finding and clean cover files,
 from the home's corpus and policies and a whole-tree and profile run (`data-layer/out/baseline/`,
 `data-layer/out/profile/`). Its helper, `data-layer/setup/lits/`, extracts regex literals as native does; build it with
-`cargo build --release --manifest-path benchmark/data-layer/setup/lits/Cargo.toml`. `select --from <subset.json>`
-then writes the manifest from a distilled subset. The script that merged `cover.json` with a construct census into
-that `subset.json` was not kept.
+`cargo build --release --manifest-path benchmark/data-layer/setup/lits/Cargo.toml`. `data-layer/setup/merge-subset.py`
+merges `cover.json` with the construct census (`$RERAIL_BENCH_HOME/distill/constructs.json`: each hard construct's
+hit and clean files) into `distill/subset.json` and `subset.txt`, and `select --from <subset.json>` then writes the
+manifest. The script that produced the construct census was not kept; re-selecting without it uses `cover.json` alone.
 
 ### The SQL engine's gate
 
