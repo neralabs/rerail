@@ -355,26 +355,34 @@ const clauseResultSchema = z.object({
   sqlMs: z.number().nullable(),
 });
 /**
- * Where a unit's CPU went, as far as the harness and `engineReport()` can tell. `programCpuMs`: SQL lowering and
- * emission (the first engine report builds the program; timed apart, counted in the unit's time); `applyCpuMs`: the
- * apply (parse, plans, sessions, statements, rendering); the rest is the SQL engine's own timers (wall, summed over
- * its worker threads), null on native. Parse and per-file plan building have no timer in either engine.
+ * Where a unit's CPU went, as far as the harness and `engineReport()` can tell. `programCpuMs`: the workspace's
+ * construction and first engine report (the SQL program's lowering and emission run in one or the other, by engine
+ * version); timed apart and counted in the unit's time on both engines. `applyCpuMs`: the apply. `timers`: every
+ * numeric timer of the engine report's `statements`, `sessions`, `pipeline` and `compile` sections, flattened as
+ * `section.name` (`…Milliseconds` wall, `…CpuMilliseconds` thread CPU, each summed over workers); empty on native.
+ * Records from before `timers` carried the old named fields; they still parse.
  */
-const phasesSchema = z.object({
+const phasesSchema = z.looseObject({
   ruleCompileMs: z.number(),
   programCpuMs: z.number(),
   applyCpuMs: z.number(),
-  sessionSetupMs: z.number().nullable(),
-  statementMs: z.number().nullable(),
-  stageMs: z.number().nullable(),
-  selectMs: z.number().nullable(),
-  inputMs: z.number().nullable(),
-  factsMs: z.number().nullable(),
   sessions: z.number().nullable(),
   statementsRun: z.number().nullable(),
   statementsSkipped: z.number().nullable(),
+  timers: z.record(z.string(), z.number()).optional(),
 });
 type Phases = z.infer<typeof phasesSchema>;
+
+/** The engine report's timers, flattened as `section.name`. */
+function engineTimers(report: Record<string, unknown>): Record<string, number> {
+  const timers: Record<string, number> = {};
+  for (const section of ["statements", "sessions", "pipeline", "compile"]) {
+    const values = report[section];
+    if (typeof values !== "object" || values === null) continue;
+    for (const [name, value] of Object.entries(values)) if (/[mM]illiseconds$/.test(name) && typeof value === "number") timers[`${section}.${name}`] = value;
+  }
+  return timers;
+}
 
 const unitEventSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("ready"), setupMs: z.number(), files: z.number().int(), addon: z.object({ path: z.string(), sha256: z.string(), kernelVersion: z.string(), work: z.string() }), workerThreads: z.number() }),
@@ -496,20 +504,20 @@ async function unitChild(options: Options): Promise<number> {
       const linterOf = new Map(rules.map(rule => [documentSchema.parse(rule.document).id, rule.linter]));
       const name = (ruleId: string | undefined, clauseId: string) => `${linterOf.get(ruleId ?? "") ?? ruleId}/${clauseId}`;
       const matcher: Matcher = request.engine === "sql" ? { engine: "sql", ...(request.perFile ? { sqlBatchSize: 1 } : {}) } : { engine: "native" };
+      // The workspace's construction and its first engine report: the SQL program compiles in one of them (by engine
+      // version). Timed apart, then added to the unit's time, so the unit's total holds the compile either way.
+      const programCpu = process.cpuUsage();
+      const programStarted = performance.now();
       const workspace = new RuleWorkspace(engine, rules, matcher);
+      if (request.engine === "sql") workspace.engineReport();
+      const programWallMs = performance.now() - programStarted;
+      const programUsed = process.cpuUsage(programCpu);
+      const programCpuMs = (programUsed.user + programUsed.system) / 1000;
       opened = workspace;
       const candidates = request.files === undefined ? files : request.files.map(path => byPath.get(path)!);
       const accepted = candidates.filter(file => workspace.accepts(file.path));
       emit({ kind: "start", id: request.id, files: accepted.map(file => file.path) });
       const load = loadavg()[0]!;
-      // SQL: the program's lowering and emission, which the first engine report (or apply) runs. Timed apart, then
-      // added to the unit's time, so the unit's total is what it was when the apply ran it.
-      const programCpu = process.cpuUsage();
-      const programStarted = performance.now();
-      if (request.engine === "sql") workspace.engineReport();
-      const programWallMs = request.engine === "sql" ? performance.now() - programStarted : 0;
-      const programUsed = process.cpuUsage(programCpu);
-      const programCpuMs = request.engine === "sql" ? (programUsed.user + programUsed.system) / 1000 : 0;
       let wallMs = programWallMs;
       let cpuMs = programCpuMs;
       const lines: string[] = [];
@@ -560,15 +568,10 @@ async function unitChild(options: Options): Promise<number> {
           ruleCompileMs: compileMs,
           programCpuMs,
           applyCpuMs: cpuMs - programCpuMs,
-          sessionSetupMs: sql?.sessions?.setupMilliseconds ?? null,
-          statementMs: sql?.statements.milliseconds ?? null,
-          stageMs: sql?.statements.stageMilliseconds ?? null,
-          selectMs: sql?.statements.selectMilliseconds ?? null,
-          inputMs: sql?.statements.inputMilliseconds ?? null,
-          factsMs: sql?.statements.factsMilliseconds ?? null,
           sessions: sql?.sessions?.count ?? null,
           statementsRun: sql?.statements.count ?? null,
           statementsSkipped: sql?.statements.skipped ?? null,
+          timers: sql === undefined ? {} : engineTimers(sql),
         },
         program: sql?.program ?? null,
       });
@@ -1313,15 +1316,36 @@ async function run(options: Options): Promise<number> {
     return outcome.status === "ok" && native !== undefined ? [{ key: unitKey(outcome.unit), sql: outcome, native, excessMs: outcome.cpuMs - native.cpuMs }] : [];
   }).sort((a, b) => b.excessMs - a.excessMs);
   const ms = (value: number | null) => (value === null ? "—" : (value / 1000).toFixed(2)).padStart(7);
-  console.log("  top excess by phase (s; SQL engine timers are wall summed over its workers; rest = SQL apply − setup − statements − facts):");
-  console.log(`    ${["excess", "SQL", "native", "rules", "lower", "apply", "setup", "stmts", "facts", "rest", "nat.app", "sess", "run", "skip"].map(text => text.padStart(7)).join(" ")}  unit`);
+  // Each engine timer as its thread CPU where the engine reports it, else its wall time (marked `*`); `—`: no timer.
+  const columns: [label: string, section: string, name: string][] = [
+    ["setup", "sessions", "setup"], ["stmts", "statements", ""], ["parse", "pipeline", "parse"], ["plan", "pipeline", "plan"],
+    ["render", "pipeline", "render"], ["nodeFx", "statements", "nodeFacts"], ["lower", "compile", "lower"], ["emit", "compile", "emit"],
+    ["cplan", "compile", "plan"], ["finish", "compile", "finish"],
+  ];
+  const timer = (timers: Record<string, number>, section: string, name: string) => {
+    const cpu = timers[`${section}.${name === "" ? "cpuMilliseconds" : `${name}CpuMilliseconds`}`];
+    const wall = timers[`${section}.${name === "" ? "milliseconds" : `${name}Milliseconds`}`];
+    return cpu !== undefined ? { value: cpu, wall: false } : wall !== undefined ? { value: wall, wall: true } : undefined;
+  };
+  const cell = (entry: { value: number; wall: boolean } | undefined) => (entry === undefined ? "—" : `${(entry.value / 1000).toFixed(2)}${entry.wall ? "*" : ""}`).padStart(7);
+  console.log("  top excess by phase (s; prog = workspace construction + first report (SQL compile); engine timers are thread CPU summed over workers, * = wall only; rest = SQL apply − setup − stmts − parse − plan − render):");
+  console.log(`    ${["excess", "SQL", "native", "rules", "prog", "apply", ...columns.map(([label]) => label), "rest", "nat.app", "sess", "run", "skip"].map(text => text.padStart(7)).join(" ")}  unit`);
+  const missing = new Set<string>();
   for (const row of excess.slice(0, 15)) {
     const phases: Phases = row.sql.phases;
-    const rest = phases.applyCpuMs - (phases.sessionSetupMs ?? 0) - (phases.statementMs ?? 0) - (phases.factsMs ?? 0);
+    const timers = phases.timers ?? {};
+    const entries = columns.map(([label, section, name]) => {
+      const entry = timer(timers, section, name);
+      if (entry === undefined) missing.add(`${label} (${section}.${name || "milliseconds"})`);
+      else if (entry.wall) missing.add(`${label} CPU (${section}.${name === "" ? "cpuMilliseconds" : `${name}CpuMilliseconds`})`);
+      return entry;
+    });
+    // Inside the apply: setup, statements (the fact terminals inside them), and the per-file pipeline.
+    const inApply = sum(entries.slice(0, 5).map(entry => entry?.value ?? 0));
     const counts = [phases.sessions, phases.statementsRun, phases.statementsSkipped].map(count => String(count ?? "—").padStart(7));
-    console.log(`    ${[row.excessMs, row.sql.cpuMs, row.native.cpuMs, phases.ruleCompileMs, phases.programCpuMs, phases.applyCpuMs, phases.sessionSetupMs, phases.statementMs, phases.factsMs, rest, row.native.phases.applyCpuMs].map(ms).join(" ")} ${counts.join(" ")}  ${row.key}`);
+    console.log(`    ${[row.excessMs, row.sql.cpuMs, row.native.cpuMs, phases.ruleCompileMs, phases.programCpuMs, phases.applyCpuMs].map(ms).join(" ")} ${entries.map(cell).join(" ")} ${ms(phases.applyCpuMs - inApply)} ${ms(row.native.phases.applyCpuMs)} ${counts.join(" ")}  ${row.key}`);
   }
-  console.log("    no timer yet (inside `rest`): parse and tape, per-file plan building (`SqlFile::plan`), match rendering; lowering and emission are one figure (`lower`)");
+  if (missing.size > 0) console.log(`    missing in this engine: ${[...missing].join(", ")}`);
 
   // Against the previous run on this subset and clause set
   if (previous !== undefined) {
