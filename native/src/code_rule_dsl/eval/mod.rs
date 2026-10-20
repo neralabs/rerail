@@ -197,6 +197,7 @@ pub(super) fn evaluate_clauses(
                     (subject, evidence::Side::Subject),
                     snapshot,
                     &mut evaluation.metrics,
+                    engine,
                 )?;
                 let evidence_rows = stateless_rows(
                     code_rule,
@@ -204,6 +205,7 @@ pub(super) fn evaluate_clauses(
                     (evidence, evidence::Side::Evidence),
                     snapshot,
                     &mut evaluation.metrics,
+                    engine,
                 )?;
                 merge(
                     &mut evaluation,
@@ -223,6 +225,7 @@ pub(super) fn evaluate_clauses(
                     (query, evidence::Side::Counted),
                     snapshot,
                     &mut evaluation.metrics,
+                    engine,
                 )?;
                 merge(
                     &mut evaluation,
@@ -260,13 +263,15 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
 }
 
 /// An evidence relation's rows in a stateless snapshot: each file of the code rule's scope and the
-/// relation's domain evaluated alone, so that one file's failure makes only its rows unknown.
+/// relation's domain evaluated alone by `engine`, so that one file's failure makes only its rows
+/// unknown.
 fn stateless_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     (relation, side): (&FactQuery, evidence::Side),
     snapshot: &Snapshot,
     metrics: &mut Metrics,
+    engine: Engine,
 ) -> Result<evidence::Rows> {
     let ast = relation.ast.as_ref();
     let violation = evidence::producer_violation(clause, relation, side);
@@ -305,7 +310,7 @@ fn stateless_rows(
             &mut partial,
             Some(&violation),
             &mut util_limit,
-            Engine::Native,
+            engine,
         )?;
         metrics.visited_nodes += file_metrics.visited_nodes;
         match witnesses {
