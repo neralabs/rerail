@@ -40,6 +40,18 @@
 //! and the argument above holds with a read graph that has no edge. Every reference demands its
 //! keys and reads their answers, so the body is lowered and emitted once however many references
 //! reach it, and equal keys share an answer, as the matcher's per-file utility memo shares it.
+//!
+//! # Following
+//!
+//! The matcher's verdict at a node also reads the binding sub-rules it is matching
+//! (`binding::FOLLOWING`): a binding's site, value or annotation sub-rule fails where it comes
+//! back to a `(node, rule)` in progress, and the memo keys verdicts by them. A cycle one of whose
+//! members holds such a sub-rule reaching the cycle again (`Cycle::following`) has its units keyed
+//! by that context as well, as a set (`emit::following`), so a key is again everything its verdict
+//! reads and the argument above holds over those keys. Only the cycle's own sub-rules can come
+//! back within it: a pair pushed outside the cycle names a rule no member reaches, so a reference
+//! entering the cycle passes the empty context, and a stage the cycle's members read must not
+//! reach back into it (`Lowerer::stage` refuses one).
 
 use super::plan::{SlotKind, Unsupported};
 use super::terminals::pattern_vars;
@@ -63,6 +75,10 @@ pub(super) struct Cycle {
     pub(super) keys: Vec<UtilKey>,
     /// Why the cycle is refused, if it is.
     pub(super) refused: Option<&'static str>,
+    /// Whether some member's binding site, value or annotation sub-rule reaches the cycle again
+    /// (`following_rules`): the matcher guards it (`binding::FOLLOWING`), so its units are keyed
+    /// by their following context.
+    pub(super) following: bool,
 }
 
 /// The utility references a rule holds, without following them.
@@ -78,39 +94,48 @@ fn references(rule: &AstMatcher, out: &mut Vec<UtilRef>) {
 /// Walks `rule`, calling `found(util, stop)` at each utility reference, `stop` where it lies in a
 /// stop rule.
 fn walk(rule: &AstMatcher, stop: bool, found: &mut dyn FnMut(&UtilRef, bool)) {
+    visit(rule, stop, &mut |matcher, stop| match matcher {
+        AstMatcher::Util(util) => found(util, stop),
+        AstMatcher::Call(call) => found(&call.util, stop),
+        _ => {}
+    });
+}
+
+/// Visits every matcher of `rule`'s tree, `rule` first, without following utility references,
+/// calling `seen(matcher, stop)`, `stop` where it lies in a stop rule.
+fn visit<'r>(rule: &'r AstMatcher, stop: bool, seen: &mut dyn FnMut(&'r AstMatcher, bool)) {
+    seen(rule, stop);
     let related =
-        |item: &AstMatcher, stop_by: Option<&AstMatcher>, found: &mut dyn FnMut(&UtilRef, bool)| {
-            walk(item, stop, found);
+        |item: &'r AstMatcher, stop_by: Option<&'r AstMatcher>, seen: &mut dyn FnMut(&'r AstMatcher, bool)| {
+            visit(item, stop, seen);
             if let Some(stop_by) = stop_by {
-                walk(stop_by, true, found);
+                visit(stop_by, true, seen);
             }
         };
     match rule {
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             for item in items {
-                walk(item, stop, found);
+                visit(item, stop, seen);
             }
         }
-        AstMatcher::Not(item) => walk(item, stop, found),
+        AstMatcher::Not(item) => visit(item, stop, seen),
         AstMatcher::Inside(item, by)
         | AstMatcher::Has(item, by)
         | AstMatcher::Precedes(item, by)
-        | AstMatcher::Follows(item, by) => related(item.rule(), stop_rule(by), found),
-        AstMatcher::Field(relation) => related(&relation.rule, stop_rule(&relation.stop), found),
-        AstMatcher::Count(count) => walk(&count.relation, stop, found),
+        | AstMatcher::Follows(item, by) => related(item.rule(), stop_rule(by), seen),
+        AstMatcher::Field(relation) => related(&relation.rule, stop_rule(&relation.stop), seen),
+        AstMatcher::Count(count) => visit(&count.relation, stop, seen),
         AstMatcher::NthChild(nth) => {
             if let Some(rule) = &nth.of_rule {
-                walk(rule, stop, found);
+                visit(rule, stop, seen);
             }
         }
         AstMatcher::Constrained(core) => {
-            walk(&core.rule, stop, found);
+            visit(&core.rule, stop, seen);
             for (_, constraint) in &core.constraints {
-                walk(constraint, stop, found);
+                visit(constraint, stop, seen);
             }
         }
-        AstMatcher::Util(util) => found(util, stop),
-        AstMatcher::Call(call) => found(&call.util, stop),
         AstMatcher::Semantic(semantic) => {
             let mut inner: Vec<&AstMatcher> = Vec::new();
             match semantic {
@@ -127,10 +152,12 @@ fn walk(rule: &AstMatcher, stop: bool, found: &mut dyn FnMut(&UtilRef, bool)) {
                 | Semantic::Calls(_) => {}
             }
             for item in inner {
-                walk(item, stop, found);
+                visit(item, stop, seen);
             }
         }
-        AstMatcher::Pattern(_)
+        AstMatcher::Util(_)
+        | AstMatcher::Call(_)
+        | AstMatcher::Pattern(_)
         | AstMatcher::Kind(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Compare(_)
@@ -138,6 +165,32 @@ fn walk(rule: &AstMatcher, stop: bool, found: &mut dyn FnMut(&UtilRef, bool)) {
         #[cfg(test)]
         AstMatcher::TestUnknown(_) => {}
     }
+}
+
+/// The binding sub-rules in `rule`'s tree that the matcher guards (`binding::FOLLOWING`, which
+/// `match_binding_nodes` keeps): `resolves.binding`'s and `binds`' site, value and annotation,
+/// and `redefines`'; not an `occurrence` rule.
+fn following_rules<'r>(rule: &'r AstMatcher, out: &mut Vec<&'r AstMatcher>) {
+    visit(rule, false, &mut |matcher, _| {
+        let AstMatcher::Semantic(semantic) = matcher else {
+            return;
+        };
+        let nodes = match semantic {
+            Semantic::Binding(test) => [&test.site, &test.value, &test.annotation],
+            Semantic::Binds(test) => {
+                if let Some(redefines) = test.redefines.as_deref() {
+                    out.extend(
+                        [&redefines.site, &redefines.value, &redefines.annotation]
+                            .into_iter()
+                            .flatten(),
+                    );
+                }
+                [&test.site, &test.value, &test.annotation]
+            }
+            _ => return,
+        };
+        out.extend(nodes.into_iter().flatten());
+    });
 }
 
 /// The utilities `util` refers to directly.
@@ -210,16 +263,21 @@ impl Cycle {
         // A stop rule is a per-batch stage, computed before the clause: one that reaches back into
         // the cycle would need the cycle's answers before they exist.
         let mut in_stop = false;
+        let mut guarded = Vec::new();
         for member in &members {
             member.with_target(|rule| {
                 walk(rule, false, &mut |util, stop| {
                     in_stop |= stop && set.contains(&util_key(util));
                 });
+                let mut rules = Vec::new();
+                following_rules(rule, &mut rules);
+                guarded.push(rules.into_iter().any(|rule| reaches(rule, &set)));
             });
         }
         Some(Self {
             keys,
             refused: in_stop.then_some("recursive utility in a stop rule"),
+            following: guarded.into_iter().any(|guarded| guarded),
         })
     }
 }

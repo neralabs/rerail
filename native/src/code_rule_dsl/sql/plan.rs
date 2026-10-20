@@ -86,14 +86,34 @@ impl fmt::Display for Unsupported {
     }
 }
 
+/// A per-batch node set a statement reads: a stage's rows, or (`complement`) every node of the
+/// batch's files but them. A capture-free rule `not R` is `R`'s stage complemented, so a set
+/// holding most nodes of the batch is stored as the few it leaves out; every reader inverts
+/// membership where `complement` is set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct NodeSet {
+    pub(super) stage: usize,
+    pub(super) complement: bool,
+}
+
+impl NodeSet {
+    /// The nodes this set leaves out.
+    pub(super) fn complemented(self) -> Self {
+        Self {
+            stage: self.stage,
+            complement: !self.complement,
+        }
+    }
+}
+
 /// How far a relation walks.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Stop {
     Neighbor,
     End,
-    /// Until (and including) the first node of a shared stage: the stop rule, matched in a fresh
-    /// environment, is a per-batch node set.
-    Rule(usize),
+    /// Until (and including) the first node of a per-batch set: the stop rule, matched in a
+    /// fresh environment.
+    Rule(NodeSet),
 }
 
 /// A relation's walk from the frame's node: its candidates and their walk order.
@@ -137,13 +157,49 @@ impl Walk {
     }
 }
 
+/// What a walk's candidate must be for its sub-rule to hold, or be unknown, at it, as far as no
+/// capture decides (`lower::RootKinds`): the walk reads `kinds` from the kind postings, and
+/// tests `shape` on each candidate before its row is built. Dropping a candidate that is not so
+/// drops one the sub-rule is false at, which changes neither a first match nor a count.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) struct Need {
+    /// Its kinds; `None`: any.
+    pub(super) kinds: Option<Vec<u16>>,
+    /// A structural test beyond its kinds; `None`: none.
+    pub(super) shape: Option<Shape>,
+}
+
+/// A capture-free test on a node (`Need::shape`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Shape {
+    /// Its kind is one of these.
+    Kinds(Vec<u16>),
+    /// A proper descendant's kind is one of these (`has` with `stopBy: end`).
+    Contains(Vec<u16>),
+    /// A child's kind is one of these (`has`).
+    Child(Vec<u16>),
+    All(Vec<Shape>),
+    Any(Vec<Shape>),
+}
+
+impl Shape {
+    /// Whether it tests more than a kind: kinds alone are what `Need::kinds` reads already.
+    pub(super) fn structural(&self) -> bool {
+        match self {
+            Self::Kinds(_) => false,
+            Self::Contains(_) | Self::Child(_) => true,
+            Self::All(shapes) | Self::Any(shapes) => shapes.iter().any(Self::structural),
+        }
+    }
+}
+
 /// `nthChild`'s `ofRule`.
 #[derive(Debug)]
 pub(super) enum OfRule {
     /// A rule that reads or binds captures: probed at each named sibling with the row's bindings.
     Frame(Box<Op>),
-    /// A capture-free rule: a per-batch stage.
-    Stage(usize),
+    /// A capture-free rule: a per-batch set.
+    Stage(NodeSet),
 }
 
 /// A parameterized call's copy of one caller capture into a parameter, and back.
@@ -212,6 +268,11 @@ pub(super) struct AllTerm {
 /// an answer table (the bindings after the body, for the keys it matched). The driver evaluates
 /// the body over every demanded key, pass after pass, until no answer changes and no key is
 /// added; a `Recur` reference reads the answers so far.
+///
+/// A unit of a cycle whose recursion goes through a binding's site, value or annotation
+/// (`recursion::Cycle::following`) is keyed by its following context too (`following`): the
+/// binding sub-rules being matched (`binding::FOLLOWING`, which the matcher's memo keys its
+/// verdicts by), as an interned set (`Op::Follow`).
 #[derive(Debug)]
 pub(super) struct Unit {
     /// The slots the body reads and binds, in the unit's own scope: its key, and its answer.
@@ -219,6 +280,8 @@ pub(super) struct Unit {
     pub(super) body: Op,
     /// The units that reach each other (a strongly connected component) share one loop.
     pub(super) scc: usize,
+    /// The slot holding the following context its body starts from, where it is keyed by one.
+    pub(super) following: Option<SlotId>,
 }
 
 #[derive(Debug)]
@@ -241,13 +304,12 @@ pub(super) enum Op {
     Not(Box<Op>),
     Never,
     /// A relation: `binds` where the sub-rule may bind (the first match in walk order then binds;
-    /// otherwise a semi-join). `kinds`: the kinds a candidate must have for the sub-rule to hold
-    /// there (`lower::RootKinds`), which the walk reads from the kind postings; `None`: any.
+    /// otherwise a semi-join). `need`: what a candidate must be for the sub-rule to hold there.
     Relation {
         walk: Walk,
         sub: Box<Op>,
         binds: bool,
-        kinds: Option<Vec<u16>>,
+        need: Need,
     },
     NthChild {
         step: i32,
@@ -255,7 +317,7 @@ pub(super) enum Op {
         reverse: bool,
         of_rule: Option<OfRule>,
     },
-    /// `count` over a relation's walk, two-valued; `bind` is the `as` slot and its offset. `kinds`
+    /// `count` over a relation's walk, two-valued; `bind` is the `as` slot and its offset. `need`
     /// as a relation's.
     Count {
         walk: Walk,
@@ -263,7 +325,7 @@ pub(super) enum Op {
         min: usize,
         max: Option<usize>,
         bind: Option<(SlotId, i64)>,
-        kinds: Option<Vec<u16>>,
+        need: Need,
     },
     /// A parameterized call: `entry` copies caller captures into parameters, `body` runs in the
     /// callee's scope, `returns` brings back what it bound.
@@ -295,14 +357,14 @@ pub(super) enum Op {
     /// A three-valued relation (`relation::Search`): the first candidate in walk order that is
     /// true binds. An unknown candidate ends the search unknown where it is `strict` (its rule may
     /// bind); otherwise the search goes on, and is unknown where nothing matched. `binds` where the
-    /// sub-rule may bind slots. `kinds` as a relation's: the sub-rule is false, not unknown, at a
-    /// candidate of any other kind.
+    /// sub-rule may bind slots. `need` as a relation's: the sub-rule is false, not unknown, at a
+    /// candidate that is not so.
     Search {
         walk: Walk,
         sub: Box<Op>,
         binds: bool,
         strict: bool,
-        kinds: Option<Vec<u16>>,
+        need: Need,
     },
     /// An input-set terminal's verdicts (`terminals::Verdicts`): each distinct key of the frame,
     /// `(file, node if at_node, bindings of reads)`, is evaluated once natively; the terminal
@@ -315,9 +377,23 @@ pub(super) enum Op {
     },
     /// A recursive unit's answers at the frame's keys: `slots` are the frame's slots for the
     /// unit's key, in order (`None`: the key's own slots, a shared utility in its caller's scope).
+    /// `context`: the slot holding the following context the reference passes, where the unit is
+    /// keyed by one and the reference lies in its cycle; elsewhere it passes none (`Op::Follow`).
     Recur {
         unit: usize,
         slots: Option<Vec<SlotId>>,
+        context: Option<SlotId>,
+    },
+    /// A binding's site, value or annotation sub-rule `sub` at the row's node, as
+    /// `binding::match_binding_nodes` guards it (`FOLLOWING`): false where the row's following
+    /// context (the interned set in `base`, none where NULL) holds `(node, rule)` already; else
+    /// `sub` runs with `out` holding the context with `(node, rule)` added. `rule` numbers the
+    /// sub-rule in its statement, one number per matcher whatever the lowerings of it.
+    Follow {
+        rule: usize,
+        base: SlotId,
+        out: SlotId,
+        sub: Box<Op>,
     },
     /// `violation.each`: the root a row is evaluated for, set in `root`, and on a later round of
     /// the enumeration only the roots still enumerated.
@@ -412,6 +488,7 @@ impl Op {
             Self::EachRoot { .. } | Self::Excluded { .. } | Self::Gate(_) => false,
             Self::Host { .. } | Self::Every { .. } => false,
             Self::Seq(items) => items.iter().any(Self::binds),
+            Self::Follow { sub, .. } => sub.binds(),
             Self::Parse { exports, .. } | Self::Exports { exports, .. } => !exports.is_empty(),
         }
     }

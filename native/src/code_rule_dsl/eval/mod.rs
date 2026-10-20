@@ -14,8 +14,8 @@ pub(super) use output::{
     violation_ids,
 };
 pub(super) use query::{
-    Engine, WitnessError, evaluate_query, file_language, grammar_matcher, witness_from_match,
-    witnesses_from_match,
+    Engine, WitnessError, evaluate_files, evaluate_query, file_language, grammar_matcher,
+    witness_from_match, witnesses_from_match,
 };
 #[cfg(test)]
 pub(super) use query::{reset_shared_group_lookups, shared_group_lookups};
@@ -197,6 +197,7 @@ pub(super) fn evaluate_clauses(
                     (subject, evidence::Side::Subject),
                     snapshot,
                     &mut evaluation.metrics,
+                    engine,
                 )?;
                 let evidence_rows = stateless_rows(
                     code_rule,
@@ -204,6 +205,7 @@ pub(super) fn evaluate_clauses(
                     (evidence, evidence::Side::Evidence),
                     snapshot,
                     &mut evaluation.metrics,
+                    engine,
                 )?;
                 merge(
                     &mut evaluation,
@@ -223,6 +225,7 @@ pub(super) fn evaluate_clauses(
                     (query, evidence::Side::Counted),
                     snapshot,
                     &mut evaluation.metrics,
+                    engine,
                 )?;
                 merge(
                     &mut evaluation,
@@ -260,13 +263,15 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
 }
 
 /// An evidence relation's rows in a stateless snapshot: each file of the code rule's scope and the
-/// relation's domain evaluated alone, so that one file's failure makes only its rows unknown.
+/// relation's domain evaluated alone by `engine`, so that one file's failure makes only its rows
+/// unknown.
 fn stateless_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     (relation, side): (&FactQuery, evidence::Side),
     snapshot: &Snapshot,
     metrics: &mut Metrics,
+    engine: Engine,
 ) -> Result<evidence::Rows> {
     let ast = relation.ast.as_ref();
     let violation = evidence::producer_violation(clause, relation, side);
@@ -284,35 +289,29 @@ fn stateless_rows(
                     .as_ref()
                     .is_none_or(|domain| domain.matches(&file.path))
         })
+        .cloned()
         .collect::<Vec<_>>();
     files.sort_by(|left, right| left.path.cmp(&right.path));
-    for file in files {
-        let single = Snapshot {
-            revision: snapshot.revision,
-            files: vec![file.clone()],
-        };
-        let mut partial = BTreeMap::new();
-        let mut util_limit = None;
-        let mut file_metrics = Metrics::default();
-        let witnesses = evaluate_query(
-            &ast.query,
-            &single,
-            &BTreeMap::new(),
-            &code_rule.scope,
-            &mut file_metrics,
-            limits,
-            false,
-            &mut partial,
-            Some(&violation),
-            &mut util_limit,
-            Engine::Native,
-        )?;
-        metrics.visited_nodes += file_metrics.visited_nodes;
-        match witnesses {
+    // Each file alone, its failure its own; on SQL, every file's matches from one program.
+    let scoped = Snapshot {
+        revision: snapshot.revision,
+        files,
+    };
+    let evaluations = evaluate_files(
+        &ast.query,
+        &scoped,
+        &code_rule.scope,
+        limits,
+        Some(&violation),
+        engine,
+    )?;
+    for (file, evaluation) in scoped.files.iter().zip(evaluations) {
+        metrics.visited_nodes += evaluation.metrics.visited_nodes;
+        match evaluation.witnesses {
             Ok(witnesses)
-                if util_limit.is_none()
-                    && partial.is_empty()
-                    && file_metrics.witnesses <= limits.max_witnesses =>
+                if evaluation.util_limit.is_none()
+                    && evaluation.partial.is_empty()
+                    && evaluation.metrics.witnesses <= limits.max_witnesses =>
             {
                 rows.witnesses.extend(witnesses);
             }

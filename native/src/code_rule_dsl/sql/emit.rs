@@ -14,6 +14,7 @@
 //! insert them by seeking.
 
 mod each;
+mod following;
 mod keyed;
 mod leaves;
 mod lineage;
@@ -22,7 +23,8 @@ mod three;
 use super::lower::{INTERNAL, ORIGIN};
 use super::nearest;
 use super::plan::{
-    CallReturn, CallSlot, OfRule, Op, Slot, SlotId, SlotKind, Source, Statement, Stop, Unit, Walk,
+    CallReturn, CallSlot, Need, NodeSet, OfRule, Op, Shape, Slot, SlotId, SlotKind, Source,
+    Statement, Stop, Unit, Walk,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
@@ -86,6 +88,73 @@ fn start_table() -> String {
 /// The table a stage's rows are stored in for the batch.
 pub(super) fn stage_table(stage: usize) -> String {
     format!("stage_{stage}")
+}
+
+/// Whether node `node` of file `file` (SQL expressions) is in `set`, as an SQL condition: a row of
+/// its stage, or (a complement) none.
+pub(super) fn in_set(set: NodeSet, file: &str, node: &str) -> String {
+    format!(
+        "{}EXISTS (SELECT 1 FROM {} st WHERE st.file = {file} AND st.node = {node})",
+        if set.complement { "NOT " } else { "" },
+        stage_table(set.stage)
+    )
+}
+
+/// `shape` at node `node` of file `file` (SQL expressions), as an SQL condition read from the
+/// `node` table: a kind test by id, a descendant's or a child's from the kind postings within
+/// the node's subtree or among its children. `alias` numbers the nested tables.
+pub(super) fn shape_test(shape: &Shape, file: &str, node: &str, alias: &mut usize) -> String {
+    fn fresh(alias: &mut usize) -> String {
+        *alias += 1;
+        format!("sh{alias}")
+    }
+    let list_of = |kinds: &[u16]| list(kinds);
+    match shape {
+        // No node has none of no kinds: false, with no table read.
+        Shape::Kinds(own) | Shape::Contains(own) | Shape::Child(own) if own.is_empty() => {
+            "0".to_owned()
+        }
+        Shape::Kinds(own) => {
+            let n = fresh(alias);
+            format!(
+                "EXISTS (SELECT 1 FROM node {n} WHERE {n}.file = {file} AND {n}.id = {node} AND {n}.kind IN ({}))",
+                list_of(own)
+            )
+        }
+        Shape::Contains(below) => {
+            let (n, d) = (fresh(alias), fresh(alias));
+            format!(
+                "EXISTS (SELECT 1 FROM node {n} JOIN node {d} ON {d}.file = {n}.file AND {d}.id > {n}.id \
+                 AND {d}.id <= {n}.\"last\" AND {d}.kind IN ({}) WHERE {n}.file = {file} AND {n}.id = {node})",
+                list_of(below)
+            )
+        }
+        Shape::Child(below) => {
+            let d = fresh(alias);
+            format!(
+                "EXISTS (SELECT 1 FROM node {d} WHERE {d}.file = {file} AND {d}.parent = {node} AND {d}.kind IN ({}))",
+                list_of(below)
+            )
+        }
+        Shape::All(shapes) | Shape::Any(shapes) => {
+            let joiner = if matches!(shape, Shape::All(_)) {
+                " AND "
+            } else {
+                " OR "
+            };
+            let parts: Vec<String> = shapes
+                .iter()
+                .map(|part| shape_test(part, file, node, alias))
+                .collect();
+            format!("({})", parts.join(joiner))
+        }
+    }
+}
+
+/// The tables a statement reading `set` for its members only reads whose emptiness empties it
+/// (`Reads::join`): its stage's, unless a complement, which an empty stage leaves whole.
+pub(super) fn set_inputs(set: NodeSet) -> Option<String> {
+    (!set.complement).then(|| stage_table(set.stage))
 }
 
 /// When a statement's output is empty, read from the rows its `Effect`'s inputs hold for the
@@ -839,9 +908,9 @@ impl<'s> Emitter<'s> {
                 walk,
                 sub,
                 binds,
-                kinds,
+                need,
             } => {
-                let candidates = self.candidates(*walk, kinds.as_deref(), input);
+                let candidates = self.candidates(*walk, need, input);
                 self.first_match(&candidates, *walk, false);
                 let matched = self.op(sub, &candidates);
                 self.first_matched(&candidates, &matched);
@@ -876,9 +945,9 @@ impl<'s> Emitter<'s> {
                 min,
                 max,
                 bind,
-                kinds,
+                need,
             } => {
-                let candidates = self.candidates(*walk, kinds.as_deref(), input);
+                let candidates = self.candidates(*walk, need, input);
                 let matched = self.op(sub, &candidates);
                 let counts = self.grouped(
                     "n",
@@ -976,7 +1045,17 @@ impl<'s> Emitter<'s> {
             Op::Unknowable { .. } | Op::AllOpen(_) | Op::AnyOpen(_) | Op::Search { .. } => {
                 unreachable!("three-valued operators lower under `Unknowable`, at the root only")
             }
-            Op::Recur { unit, slots } => self.recur(*unit, slots.as_deref(), input),
+            Op::Recur {
+                unit,
+                slots,
+                context,
+            } => self.recur(*unit, slots.as_deref(), *context, input),
+            Op::Follow {
+                rule,
+                base,
+                out,
+                sub,
+            } => self.follow(*rule, *base, *out, sub, input),
             // The root is bound only where some range is reported for it: elsewhere `Excluded`
             // drops nothing whatever the root, so leaving it unbound keeps the roots out of the
             // distinct keys of the sub-rules (`keyed`) and recursive units, which would otherwise
@@ -1050,23 +1129,31 @@ impl<'s> Emitter<'s> {
 
     /// Creates `unit`'s demand and answer tables where they do not exist yet. A demanded key is
     /// `dirty` until its body is evaluated, and again when a key it read changed its answer. A
-    /// three-valued unit's answer holds its verdict too, `unk`: the key matched or is unknown.
+    /// three-valued unit's answer holds its verdict too, `unk`: the key matched or is unknown. A
+    /// unit keyed by its following context (`Unit::following`) demands it too, in `cf`.
     fn unit_tables(&mut self, unit: usize) {
         let width = self.key_columns(&self.units[unit].key).len();
         let columns: String = (0..width).map(|index| format!(", c{index}")).collect();
+        let context = if self.units[unit].following.is_some() {
+            ", cf"
+        } else {
+            ""
+        };
         let demand = demand_table(unit);
         let answer = answer_table(unit);
         let unk = if self.three { ", unk" } else { "" };
         self.push(
             format!(
-                "CREATE TEMP TABLE IF NOT EXISTS {demand}(id INTEGER PRIMARY KEY, file, node{columns}, dirty INTEGER DEFAULT 1)"
+                "CREATE TEMP TABLE IF NOT EXISTS {demand}(id INTEGER PRIMARY KEY, file, node{columns}{context}, dirty INTEGER DEFAULT 1)"
             ),
             Effect::default(),
         );
         // The whole key: a reference finds its row by `(file, node)` and every key column, and a
         // node can be demanded under many bindings.
         self.push(
-            format!("CREATE INDEX IF NOT EXISTS {demand}_at ON {demand}(file, node{columns})"),
+            format!(
+                "CREATE INDEX IF NOT EXISTS {demand}_at ON {demand}(file, node{columns}{context})"
+            ),
             Effect::default(),
         );
         // The dirty keys, which every pass reads and the loop's guard counts before it runs.
@@ -1083,11 +1170,18 @@ impl<'s> Emitter<'s> {
     }
 
     /// A recursive unit's answers at the keys of `input`'s rows (`site`: the frame's slots for the
-    /// unit's key; `None`, the key's own): the keys are demanded, the loop of the unit's component
-    /// runs where the unit is not being evaluated already, and each row whose key matched takes
-    /// the key's answer. Rows whose key did not match are dropped. Three-valued, a row whose key
-    /// is unknown is unknown (its answer's bindings are the key's, so the row's own).
-    fn recur(&mut self, unit: usize, site: Option<&[SlotId]>, input: &str) -> String {
+    /// unit's key; `None`, the key's own; `context`: the slot of the following context passed,
+    /// none where NULL): the keys are demanded, the loop of the unit's component runs where the
+    /// unit is not being evaluated already, and each row whose key matched takes the key's
+    /// answer. Rows whose key did not match are dropped. Three-valued, a row whose key is unknown
+    /// is unknown (its answer's bindings are the key's, so the row's own).
+    fn recur(
+        &mut self,
+        unit: usize,
+        site: Option<&[SlotId]>,
+        context: Option<SlotId>,
+        input: &str,
+    ) -> String {
         let units = self.units;
         let key = &units[unit].key;
         let unit_columns = self.key_columns(key);
@@ -1098,18 +1192,24 @@ impl<'s> Emitter<'s> {
         self.unit_tables(unit);
         let demand = demand_table(unit);
         let answer = answer_table(unit);
-        let matched: String = site_columns
+        let mut matched: String = site_columns
             .iter()
             .enumerate()
             .map(|(index, column)| format!(" AND d.c{index} IS f.{column}"))
             .collect();
-        let columns: String = (0..site_columns.len())
+        let mut columns: String = (0..site_columns.len())
             .map(|index| format!(", c{index}"))
             .collect();
-        let values: String = site_columns
+        let mut values: String = site_columns
             .iter()
             .map(|column| format!(", f.{column}"))
             .collect();
+        if units[unit].following.is_some() {
+            let passed = context.map_or_else(|| "NULL".to_owned(), |slot| format!("f.s{slot}"));
+            write!(matched, " AND d.cf IS {passed}").expect("write to a string");
+            columns.push_str(", cf");
+            write!(values, ", {passed}").expect("write to a string");
+        }
         self.insert(
             &demand,
             format!(
@@ -1217,6 +1317,7 @@ impl<'s> Emitter<'s> {
         for &unit in &members {
             let key = &units[unit].key;
             let key_columns = self.key_columns(key);
+            let following = units[unit].following.map(|slot| format!("s{slot}"));
             let demand = demand_table(unit);
             let answer = answer_table(unit);
             let mut select = String::from("d.id, d.file, d.node");
@@ -1224,6 +1325,7 @@ impl<'s> Emitter<'s> {
                 let value = match key_columns.iter().position(|key| key == column) {
                     Some(index) => format!("d.c{index}"),
                     None if Some(column) == origin.as_ref() => "d.id".to_owned(),
+                    None if Some(column) == following.as_ref() => "d.cf".to_owned(),
                     None => "NULL".to_owned(),
                 };
                 write!(select, ", {value}").expect("write to a string");
@@ -1234,8 +1336,11 @@ impl<'s> Emitter<'s> {
                 &format!("SELECT {select} FROM {demand} d WHERE d.dirty = 1"),
                 Reads::join(&[&demand]),
             );
-            // One row per demanded key, and one per demand row (its origin).
-            let mut sets = vec![key.iter().copied().collect::<BTreeSet<SlotId>>()];
+            // One row per demanded key (its following context with it), and one per demand row
+            // (its origin).
+            let mut demanded: BTreeSet<SlotId> = key.iter().copied().collect();
+            demanded.extend(units[unit].following);
+            let mut sets = vec![demanded];
             sets.extend(self.origin.map(|origin| BTreeSet::from([origin])));
             self.keyed_by(&keys, sets);
             self.push(
@@ -1392,21 +1497,22 @@ impl<'s> Emitter<'s> {
 
     /// A relation's candidates from each row of `input`: a frame table with a fresh `k` per
     /// candidate and the row's bindings, plus `pk` (the row's `k`) and `ord` (the walk order:
-    /// ids, negated for descending walks). With `kinds`, only the walk's nodes of those kinds
-    /// (the sub-rule's root kinds, `Op::Relation`), read from the kind postings before a
+    /// ids, negated for descending walks). Only those `need` admits (`plan::Need`): the walk reads
+    /// its kinds from the kind postings, and tests its shape on each candidate before the
     /// candidate's row is built. A k-space whose rows are all needed where their parent is
     /// (`lineage`); a first-match search says it stops at its first match.
-    pub(super) fn candidates(&mut self, walk: Walk, kinds: Option<&[u16]>, input: &str) -> String {
+    pub(super) fn candidates(&mut self, walk: Walk, need: &Need, input: &str) -> String {
         let candidates = match self.leaf_candidates(walk, input) {
             Some(candidates) => candidates,
-            None => self.tree_candidates(walk, kinds, input),
+            None => self.tree_candidates(walk, need, input),
         };
         self.open_space(&candidates, input, lineage::Derive::Probe);
         candidates
     }
 
     /// `candidates` of a walk over the tree.
-    fn tree_candidates(&mut self, walk: Walk, kinds: Option<&[u16]>, input: &str) -> String {
+    fn tree_candidates(&mut self, walk: Walk, need: &Need, input: &str) -> String {
+        let kinds = need.kinds.as_deref();
         // Mutant 15: a field relation walks as its plain relation.
         let walk = match walk {
             Walk::FieldHas(_, stop) if super::mutant(15) => Walk::Has(stop),
@@ -1504,8 +1610,7 @@ impl<'s> Emitter<'s> {
                  WHERE fc.field = {field} AND fc.ffirst = 1"
             )),
             // The field child, then its children where it is not in `S`.
-            Walk::FieldHas(field, Stop::Rule(stage)) => {
-                let table = stage_table(stage);
+            Walk::FieldHas(field, Stop::Rule(set)) => {
                 with = format!(
                     "WITH q AS (SELECT f.k AS pk, c.file AS file, c.id AS node FROM {input} f \
                      JOIN node c ON c.file = f.file AND c.parent = f.node WHERE c.field = {field} AND c.ffirst = 1) "
@@ -1519,8 +1624,8 @@ impl<'s> Emitter<'s> {
                 };
                 format!(
                     "{first} UNION ALL SELECT x.pk, c.file, c.id FROM q x \
-                     LEFT JOIN {table} st ON st.file = x.file AND st.node = x.node \
-                     JOIN node c ON c.file = x.file AND c.parent = x.node{c} WHERE st.node IS NULL"
+                     JOIN node c ON c.file = x.file AND c.parent = x.node{c} WHERE NOT {}",
+                    in_set(set, "x.file", "x.node")
                 )
             }
             Walk::FieldInside(field, Stop::Neighbor) => simple(&format!(
@@ -1552,12 +1657,20 @@ impl<'s> Emitter<'s> {
             | Walk::FieldInside(_, Stop::Rule(stage))
                 if super::mutant(9) =>
             {
-                let table = stage_table(stage);
                 format!(
-                    "SELECT * FROM ({source}) WHERE (file, node) NOT IN (SELECT file, node FROM {table})"
+                    "SELECT * FROM ({source}) m WHERE NOT {}",
+                    in_set(stage, "m.file", "m.node")
                 )
             }
             _ => source,
+        };
+        // The shape `need` tests on a candidate, past its kinds.
+        let source = match &need.shape {
+            Some(shape) => format!(
+                "SELECT * FROM ({source}) m WHERE {}",
+                shape_test(shape, "m.file", "m.node", &mut 0)
+            ),
+            None => source,
         };
         let order = if walk.descending() {
             "-c.node"
@@ -1618,18 +1731,18 @@ impl<'s> Emitter<'s> {
                     Reads::join(&[input]),
                 )
             }
-            Some(OfRule::Stage(stage)) => {
+            Some(OfRule::Stage(set)) => {
                 // Ranks among the named children `ofRule` holds at, of the input's parents alone:
                 // a node's rank reads its parent's children, never the rest of the stage, which
                 // can hold most nodes of the batch.
-                let table = stage_table(*stage);
                 let with = if super::mutant(19) {
                     // Mutant 19: ranks over the whole stage, not the input's parents' children.
                     format!(
                         "WITH r AS (SELECT n.file AS file, n.id AS node, \
                          ROW_NUMBER() OVER (PARTITION BY n.file ORDER BY n.id) AS r, \
-                         COUNT(*) OVER (PARTITION BY n.file) AS cnt FROM {table} st \
-                         JOIN node n ON n.file = st.file AND n.id = st.node WHERE n.named = 1 AND n.parent IS NOT NULL) "
+                         COUNT(*) OVER (PARTITION BY n.file) AS cnt FROM {} st \
+                         JOIN node n ON n.file = st.file AND n.id = st.node WHERE n.named = 1 AND n.parent IS NOT NULL) ",
+                        stage_table(set.stage)
                     )
                 } else {
                     format!(
@@ -1639,7 +1752,8 @@ impl<'s> Emitter<'s> {
                          ROW_NUMBER() OVER (PARTITION BY c.file, c.parent ORDER BY c.id) AS r, \
                          COUNT(*) OVER (PARTITION BY c.file, c.parent) AS cnt FROM p \
                          JOIN node c ON c.file = p.file AND c.parent = p.parent \
-                         JOIN {table} st ON st.file = c.file AND st.node = c.id WHERE c.named = 1) "
+                         WHERE c.named = 1 AND {}) ",
+                        in_set(*set, "c.file", "c.id")
                     )
                 };
                 let index = if reverse { "(r.cnt - r.r + 1)" } else { "r.r" };
@@ -1648,7 +1762,10 @@ impl<'s> Emitter<'s> {
                     self.cols("f"),
                     holds(index, step, offset)
                 );
-                self.frame_with("x", &with, &select, Reads::join(&[input, &table]))
+                let table = set_inputs(*set);
+                let mut reads = vec![input];
+                reads.extend(table.as_deref());
+                self.frame_with("x", &with, &select, Reads::join(&reads))
             }
             Some(OfRule::Frame(rule)) => {
                 let siblings = self.name("g");

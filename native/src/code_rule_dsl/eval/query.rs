@@ -361,6 +361,105 @@ pub(crate) fn evaluate_query(
     Ok(Ok(witnesses))
 }
 
+/// One file's evaluation (`evaluate_files`): what `evaluate_query` answers for a snapshot of
+/// that file alone.
+pub(crate) struct FileEvaluation {
+    pub(crate) witnesses: std::result::Result<Vec<Witness>, Incomplete>,
+    pub(crate) partial: BTreeMap<String, String>,
+    pub(crate) util_limit: Option<(String, UtilLimit)>,
+    pub(crate) metrics: Metrics,
+}
+
+/// `query` over each file of `snapshot` alone, in snapshot order, as `evaluate_query` evaluates a
+/// snapshot of that one file (so one file's failure is its own). On the SQL engine an AST query's
+/// matches for every file come from one program run over the files as batches (`SqlFiles`), as
+/// the workspace runs them, not from one program and session per file.
+pub(crate) fn evaluate_files(
+    query: &Query,
+    snapshot: &Snapshot,
+    scope: &CodeRuleScope,
+    limits: &Limits,
+    violation: Option<&ViolationSpec>,
+    engine: Engine,
+) -> Result<Vec<FileEvaluation>> {
+    let empty = || FileEvaluation {
+        witnesses: Ok(Vec::new()),
+        partial: BTreeMap::new(),
+        util_limit: None,
+        metrics: Metrics::default(),
+    };
+    if let (Engine::Sql, Query::Ast { matchers, .. }) = (engine, query) {
+        let sql = SqlFiles::evaluate(
+            matchers,
+            snapshot,
+            scope,
+            violation.and_then(|violation| violation.each.as_deref()),
+        )?;
+        let leaf = Leaf {
+            snapshot,
+            scope,
+            limits,
+            sql: Some(&sql),
+        };
+        let mut evaluations = Vec::with_capacity(snapshot.files.len());
+        for (index, file) in snapshot.files.iter().enumerate() {
+            let mut evaluation = empty();
+            match leaf.file(
+                query,
+                index,
+                file,
+                &mut evaluation.metrics,
+                false,
+                violation,
+                &mut evaluation.util_limit,
+            )? {
+                FileStep::Skipped => {}
+                FileStep::Failed(unread) => {
+                    evaluation.witnesses = Err(Incomplete {
+                        path: file.path.clone(),
+                        unread,
+                    });
+                }
+                FileStep::Read {
+                    witnesses, partial, ..
+                } => {
+                    if let Some(message) = partial {
+                        evaluation.partial.insert(file.path.clone(), message);
+                    }
+                    evaluation.witnesses = Ok(witnesses);
+                }
+            }
+            evaluations.push(evaluation);
+        }
+        return Ok(evaluations);
+    }
+    snapshot
+        .files
+        .iter()
+        .map(|file| {
+            let single = Snapshot {
+                revision: snapshot.revision,
+                files: vec![file.clone()],
+            };
+            let mut evaluation = empty();
+            evaluation.witnesses = evaluate_query(
+                query,
+                &single,
+                &BTreeMap::new(),
+                scope,
+                &mut evaluation.metrics,
+                limits,
+                false,
+                &mut evaluation.partial,
+                violation,
+                &mut evaluation.util_limit,
+                engine,
+            )?;
+            Ok(evaluation)
+        })
+        .collect()
+}
+
 /// Which engine matches a query's AST clauses in the stateless evaluator: the native grammar
 /// matcher (production, and the parity oracle), or the set-based SQL engine (`sql`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -398,8 +497,9 @@ struct SqlFile {
 
 impl SqlFiles {
     /// Runs the query's grammar matchers over every file of the snapshot in the code rule's
-    /// scope as one batch: one statement per grammar matcher that reads a file. Under
-    /// `violation.each` (`each`), a root's matches are its enumeration's, in order.
+    /// scope: one program, its files run as batches (`sql::DEFAULT_BATCH_SIZE`) on one session,
+    /// one statement per grammar matcher that reads a file. Under `violation.each` (`each`), a
+    /// root's matches are its enumeration's, in order.
     fn evaluate(
         matchers: &[GrammarMatcher],
         snapshot: &Snapshot,
@@ -460,7 +560,7 @@ impl SqlFiles {
             .map_err(|error| invalid(error.to_string()))?;
         let docs: Vec<_> = inputs.iter().map(|(doc, _, _)| doc.clone()).collect();
         let mut matches = compiled
-            .run(inputs)
+            .run_batches(inputs, crate::code_rule_dsl::sql::DEFAULT_BATCH_SIZE)
             .map_err(|error| invalid(error.to_string()))?
             .into_iter();
         let mut docs = docs.into_iter();

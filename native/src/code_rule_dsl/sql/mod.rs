@@ -30,6 +30,10 @@ pub(super) use exec::{
 pub(super) use exec::{StatementProfile, profiled};
 pub(super) use timing::{Timing, timed};
 
+/// Files per batch where the caller sets none: the workspace's default, and every batch of a
+/// stateless evaluation.
+pub(super) const DEFAULT_BATCH_SIZE: usize = 64;
+
 /// The mutation kit's switch: whether this process runs seeded semantic mutant `n`
 /// (`RERAIL_SQL_MUTANT=<n>`, read once; unset or 0 runs none). Each mutant is a plausible
 /// regression of one hard construct, a few lines at its site, that the differential and the
@@ -54,7 +58,9 @@ pub(super) use timing::{Timing, timed};
 /// 17. the pattern terminals' tested nodes are keyed by node only, not (term, node) (`exec`);
 /// 18. a unit's key drops the caller's captures it reads (`lower`);
 /// 19. a stage `ofRule`'s `nthChild` ranks over the whole stage, not per parent (`emit`,
-///     `emit/three`).
+///     `emit/three`);
+/// 20. a binding's site, value or annotation sub-rule ignores the `FOLLOWING` guard, entering a
+///     binding node again under the sub-rule it is matching (`emit/following`).
 ///
 /// `tests/replay.jsonl` (`replayed_cases_agree`) kills each of them; `just rerail-sql-gate
 /// --mutants` checks it does, and that the differential at the gate's case count does too.

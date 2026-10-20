@@ -667,36 +667,44 @@ impl Compiled {
             .unwrap_or_default()
     }
 
-    /// Runs one batch on a session of its own: `files` are its tapes, each with the statement (by
-    /// index into the compiled grammars) that matches it, if any, and its roots (every root of the
-    /// statement's kinds, or those an anchor index selected), and what the file's scopes read
-    /// beyond its tape (`FileContext`). Returns each file's matches, ordered by root.
-    pub(in crate::code_rule_dsl) fn run(
+    /// Runs `files` as batches of `batch` files each, in order, on one session of its own: `files`
+    /// are the tapes, each with the statement (by index into the compiled grammars) that matches
+    /// it, if any, and its roots (every root of the statement's kinds, or those an anchor index
+    /// selected), and what the file's scopes read beyond its tape (`FileContext`). Returns each
+    /// file's matches, ordered by root.
+    pub(in crate::code_rule_dsl) fn run_batches(
         &self,
         files: Vec<(TapeDoc, Option<(usize, Option<Arc<[u32]>>)>, FileContext)>,
+        batch: usize,
     ) -> Result<Vec<Vec<SqlMatch>>, SqlError> {
         let mut session = self.session()?;
-        let mut runs: Vec<ClauseRun> = (0..session.plan.clauses.len())
-            .map(|statement| ClauseRun {
-                statement,
-                files: Vec::new(),
-            })
-            .collect();
-        for (index, (_, statement, _)) in files.iter().enumerate() {
-            if let Some((statement, roots)) = statement {
-                runs[*statement].files.push((index, roots.clone()));
+        let mut results: Vec<Vec<SqlMatch>> = Vec::with_capacity(files.len());
+        let mut files = files.into_iter().peekable();
+        while files.peek().is_some() {
+            let chunk: Vec<_> = files.by_ref().take(batch.max(1)).collect();
+            let mut runs: Vec<ClauseRun> = (0..session.plan.clauses.len())
+                .map(|statement| ClauseRun {
+                    statement,
+                    files: Vec::new(),
+                })
+                .collect();
+            for (index, (_, statement, _)) in chunk.iter().enumerate() {
+                if let Some((statement, roots)) = statement {
+                    runs[*statement].files.push((index, roots.clone()));
+                }
             }
-        }
-        let mut results: Vec<Vec<SqlMatch>> = files.iter().map(|_| Vec::new()).collect();
-        let docs = files
-            .into_iter()
-            .map(|(doc, _, context)| (doc, context))
-            .collect();
-        let found = session.run(docs, &runs)?;
-        for (run, found) in runs.iter().zip(found) {
-            for ((file, _), matches) in run.files.iter().zip(found) {
-                results[*file] = matches;
+            let mut found_files: Vec<Vec<SqlMatch>> = chunk.iter().map(|_| Vec::new()).collect();
+            let docs = chunk
+                .into_iter()
+                .map(|(doc, _, context)| (doc, context))
+                .collect();
+            let found = session.run(docs, &runs)?;
+            for (run, found) in runs.iter().zip(found) {
+                for ((file, _), matches) in run.files.iter().zip(found) {
+                    found_files[*file] = matches;
+                }
             }
+            results.extend(found_files);
         }
         Ok(results)
     }
@@ -2056,6 +2064,7 @@ impl Session {
             stats,
             counts,
             at: ("", 0),
+            depth: 0,
         };
         let inputs = Started::now();
         connection.prepare_cached(CLEAR_RUNS)?.execute([])?;
@@ -2252,6 +2261,8 @@ struct Runner<'s> {
     stats: &'s mut Stats,
     counts: &'s mut Counts,
     at: (&'static str, usize),
+    /// How many recursion loops the statement running is in.
+    depth: usize,
 }
 
 impl Runner<'_> {
@@ -2361,6 +2372,7 @@ impl Runner<'_> {
             let mut passes = 0;
             // Mutant 11: the loop's last pass is undone.
             let drop_last = super::mutant(11);
+            self.depth += 1;
             loop {
                 if drop_last {
                     self.connection.execute_batch("SAVEPOINT mutant_pass")?;
@@ -2384,6 +2396,9 @@ impl Runner<'_> {
                     return Err(SqlError::unsupported("recursion deeper than 256 levels"));
                 }
             }
+            self.depth -= 1;
+            #[cfg(any(test, feature = "unbounded-work"))]
+            record_loop(until, passes, end - at - 1);
             at = end + 1;
         }
         Ok(())
@@ -2438,7 +2453,12 @@ impl Runner<'_> {
         self.stats.rows += rows;
         self.stats.time.add(elapsed);
         #[cfg(any(test, feature = "unbounded-work"))]
-        record(&step.sql, elapsed.wall, rows);
+        {
+            record(&step.sql, elapsed.wall, rows);
+            if self.depth > 0 {
+                record_looped(&step.sql, elapsed.wall, rows);
+            }
+        }
         if *MODE == Mode::Check {
             skip::check(&step.sql, outcome, rows);
         }
@@ -2514,6 +2534,50 @@ fn record(sql: &str, nanos: u64, rows: usize) {
             } else {
                 profile.insert(sql.to_owned(), (nanos, rows, 1));
             }
+        }
+    });
+}
+
+/// A thread's recursion loops (`LOOP_PROFILE`): per loop, by its `UNTIL` query, the passes of
+/// each entry and its body's steps; and the statements run inside loops, by text.
+#[cfg(any(test, feature = "unbounded-work"))]
+#[derive(Debug, Default)]
+pub(in crate::code_rule_dsl) struct LoopProfile {
+    /// Per loop: (entries that ran a pass, passes, steps of its body).
+    pub(in crate::code_rule_dsl) loops: std::collections::HashMap<String, (usize, usize, usize)>,
+    /// The statements run inside a loop, as `STATEMENT_PROFILE` counts them.
+    pub(in crate::code_rule_dsl) statements: StatementProfile,
+}
+
+#[cfg(any(test, feature = "unbounded-work"))]
+thread_local! {
+    /// Where set, this thread's recursion loops and the statements they ran (`LoopProfile`).
+    pub(in crate::code_rule_dsl) static LOOP_PROFILE: std::cell::RefCell<Option<LoopProfile>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Adds a loop's entry, its passes and its body's steps to `LOOP_PROFILE`, where set.
+#[cfg(any(test, feature = "unbounded-work"))]
+fn record_loop(until: &str, passes: usize, steps: usize) {
+    LOOP_PROFILE.with_borrow_mut(|profile| {
+        if let Some(profile) = profile {
+            let entry = profile.loops.entry(until.to_owned()).or_default();
+            entry.0 += 1;
+            entry.1 += passes;
+            entry.2 = steps;
+        }
+    });
+}
+
+/// Adds a statement run inside a loop to `LOOP_PROFILE`, where set.
+#[cfg(any(test, feature = "unbounded-work"))]
+fn record_looped(sql: &str, nanos: u64, rows: usize) {
+    LOOP_PROFILE.with_borrow_mut(|profile| {
+        if let Some(profile) = profile {
+            let entry = profile.statements.entry(sql.to_owned()).or_default();
+            entry.0 += nanos;
+            entry.1 += rows;
+            entry.2 += 1;
         }
     });
 }

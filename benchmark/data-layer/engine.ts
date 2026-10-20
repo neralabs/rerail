@@ -287,7 +287,11 @@ export const engineReportSchema = z.union([
       texts: z.number(),
       tables: z.number(),
       prepared: z.number(),
-    }).optional(),
+    }).passthrough().optional(),
+    /** The per-file native steps of a SQL batch (parse, plan, render): `…Milliseconds` wall and `…CpuMilliseconds` thread CPU, summed over workers. */
+    pipeline: z.record(z.string(), z.number()).optional(),
+    /** The SQL program's compile (lower, emit, plan, finish), in the same pairs. */
+    compile: z.record(z.string(), z.number()).optional(),
     profile: sqlProfileSchema.optional(),
   }),
 ]);

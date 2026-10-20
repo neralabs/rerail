@@ -2,9 +2,9 @@
 //! frames that carry `unk` and the withheld-capture mask, and the input-set terminals' verdicts
 //! (`Op::Fact`), which two-valued clauses read too.
 
-use super::{Emitter, Reads, holds, stage_table};
+use super::{Emitter, Reads, holds, in_set, set_inputs, stage_table};
 use crate::code_rule_dsl::sql::nearest;
-use crate::code_rule_dsl::sql::plan::{AllTerm, OfRule, Op, Stop, Walk};
+use crate::code_rule_dsl::sql::plan::{AllTerm, Need, NodeSet, OfRule, Op, Stop, Walk};
 use std::collections::BTreeSet;
 use std::fmt::Write;
 
@@ -43,16 +43,16 @@ impl Emitter<'_> {
                 sub,
                 binds,
                 strict,
-                kinds,
-            } => self.search(*walk, kinds.as_deref(), sub, *binds, *strict, input),
+                need,
+            } => self.search(*walk, need, sub, *binds, *strict, input),
             Op::Count {
                 walk,
                 sub,
                 min,
                 max,
                 bind,
-                kinds,
-            } => self.count_open(*walk, kinds.as_deref(), sub, *min, *max, *bind, input),
+                need,
+            } => self.count_open(*walk, need, sub, *min, *max, *bind, input),
             Op::NthChild {
                 step,
                 offset,
@@ -245,13 +245,13 @@ impl Emitter<'_> {
     fn search(
         &mut self,
         walk: Walk,
-        kinds: Option<&[u16]>,
+        need: &Need,
         sub: &Op,
         binds: bool,
         strict: bool,
         input: &str,
     ) -> String {
-        let candidates = self.candidates(walk, self.narrowed(walk, kinds), input);
+        let candidates = self.candidates(walk, &self.narrowed(walk, need), input);
         // A non-strict search passes over unknown candidates: only a true one ends it.
         self.first_match(&candidates, walk, !strict);
         let matched = self.op(sub, &candidates);
@@ -317,24 +317,29 @@ impl Emitter<'_> {
         self.frame_with("x", &with, &select, reads)
     }
 
-    /// The kinds a three-valued walk's candidates may be narrowed to: none where the walk has an
+    /// What a three-valued walk's candidates may be narrowed to: nothing where the walk has an
     /// unknown stop (`opened`), whose events are placed among every candidate the walk visits.
-    fn narrowed<'k>(&self, walk: Walk, kinds: Option<&'k [u16]>) -> Option<&'k [u16]> {
-        kinds.filter(|_| self.open_stop(walk).is_none())
+    fn narrowed(&self, walk: Walk, need: &Need) -> Need {
+        if self.open_stop(walk).is_some() {
+            Need::default()
+        } else {
+            need.clone()
+        }
     }
 
-    /// The stop-rule stage of `walk` whose verdict may be unknown, where it has one.
-    fn open_stop(&self, walk: Walk) -> Option<usize> {
-        let (Walk::Has(Stop::Rule(stage))
-        | Walk::Inside(Stop::Rule(stage))
-        | Walk::Precedes(Stop::Rule(stage))
-        | Walk::Follows(Stop::Rule(stage))
-        | Walk::FieldHas(_, Stop::Rule(stage))
-        | Walk::FieldInside(_, Stop::Rule(stage))) = walk
+    /// The stop-rule set of `walk` whose verdict may be unknown, where it has one: a stage's own
+    /// rows (a complement is never open: its rule cannot be unknown).
+    fn open_stop(&self, walk: Walk) -> Option<NodeSet> {
+        let (Walk::Has(Stop::Rule(set))
+        | Walk::Inside(Stop::Rule(set))
+        | Walk::Precedes(Stop::Rule(set))
+        | Walk::Follows(Stop::Rule(set))
+        | Walk::FieldHas(_, Stop::Rule(set))
+        | Walk::FieldInside(_, Stop::Rule(set))) = walk
         else {
             return None;
         };
-        self.open.contains(&stage).then_some(stage)
+        (!set.complement && self.open.contains(&set.stage)).then_some(set)
     }
 
     /// The unknown stops of a walk whose stop rule may be unknown: `(pk, e)`, `e` the order key
@@ -345,7 +350,7 @@ impl Emitter<'_> {
     /// it. `None` where the walk has no such stop.
     fn opened(&mut self, walk: Walk, input: &str, candidates: &str) -> Option<String> {
         let stage = self.open_stop(walk)?;
-        let table = stage_table(stage);
+        let table = stage_table(stage.stage);
         let unknown = |alias: &str| {
             format!(
                 "JOIN {table} st ON st.file = {alias}.file AND st.node = {alias}.node AND st.unk = 1"
@@ -402,14 +407,14 @@ impl Emitter<'_> {
     fn count_open(
         &mut self,
         walk: Walk,
-        kinds: Option<&[u16]>,
+        need: &Need,
         sub: &Op,
         min: usize,
         max: Option<usize>,
         bind: Option<(usize, i64)>,
         input: &str,
     ) -> String {
-        let candidates = self.candidates(walk, self.narrowed(walk, kinds), input);
+        let candidates = self.candidates(walk, &self.narrowed(walk, need), input);
         let matched = self.op(sub, &candidates);
         let opened = self.opened(walk, input, &candidates);
         let open = opened.map_or("0".to_owned(), |opened| {
@@ -471,9 +476,20 @@ impl Emitter<'_> {
         let index = if reverse { "(r.cnt - r.r + 1)" } else { "r.r" };
         let position = holds(index, step, offset);
         match of_rule {
-            OfRule::Stage(stage) => {
-                // Over the input's parents' children alone (`Emitter::nth_child`).
-                let table = stage_table(*stage);
+            OfRule::Stage(set) => {
+                // Over the input's parents' children alone (`Emitter::nth_child`). A complement
+                // is never unknown (its rule cannot be): its members are the nodes off the stage.
+                let table = stage_table(set.stage);
+                let (known, unknown) = if set.complement {
+                    (in_set(*set, "c.file", "c.id"), "0".to_owned())
+                } else {
+                    let row = |unk: u8| {
+                        format!(
+                            "EXISTS (SELECT 1 FROM {table} st WHERE st.file = c.file AND st.node = c.id AND st.unk = {unk})"
+                        )
+                    };
+                    (row(0), row(1))
+                };
                 // Mutant 19: ranks over the whole stage, not the input's parents' children.
                 let ranked = if crate::code_rule_dsl::sql::mutant(19) {
                     format!(
@@ -489,8 +505,7 @@ impl Emitter<'_> {
                          ROW_NUMBER() OVER (PARTITION BY c.file, c.parent ORDER BY c.id) AS r, \
                          COUNT(*) OVER (PARTITION BY c.file, c.parent) AS cnt FROM p \
                          JOIN node c ON c.file = p.file AND c.parent = p.parent \
-                         JOIN {table} st ON st.file = c.file AND st.node = c.id \
-                         WHERE c.named = 1 AND st.unk = 0)"
+                         WHERE c.named = 1 AND {known})"
                     )
                 };
                 let with = format!(
@@ -500,8 +515,7 @@ impl Emitter<'_> {
                      {ranked}, \
                      u AS (SELECT DISTINCT c.file AS file, c.parent AS parent FROM p \
                      JOIN node c ON c.file = p.file AND c.parent = p.parent \
-                     JOIN {table} st ON st.file = c.file AND st.node = c.id \
-                     WHERE st.unk = 1 AND c.named = 1) "
+                     WHERE c.named = 1 AND {unknown}) "
                 );
                 let select = format!(
                     "SELECT {} FROM {input} f JOIN r ON r.file = f.file AND r.node = f.node \
@@ -513,7 +527,10 @@ impl Emitter<'_> {
                     self.verdict("f", &[], "0"),
                     self.verdict("f", &[], "1")
                 );
-                self.frame_with("x", &with, &select, Reads::join(&[input, &table]))
+                let table = set_inputs(*set);
+                let mut reads = vec![input];
+                reads.extend(table.as_deref());
+                self.frame_with("x", &with, &select, Reads::join(&reads))
             }
             OfRule::Frame(rule) => {
                 let siblings = self.name("g");

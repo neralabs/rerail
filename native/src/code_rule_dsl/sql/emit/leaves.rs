@@ -3,7 +3,7 @@
 //! `Op::Gate`, `Op::Every`), and parsed trees (`Op::Parse`, `Op::Host`, `Op::Exports`).
 
 use super::{Emitter, Reads};
-use crate::code_rule_dsl::sql::plan::{Export, Op, SlotId, SlotKind, Walk};
+use crate::code_rule_dsl::sql::plan::{Export, Need, Op, SlotId, SlotKind, Walk};
 use std::fmt::Write;
 
 impl Emitter<'_> {
@@ -172,7 +172,7 @@ impl Emitter<'_> {
     /// `Op::Every`: the first candidate in walk order where the sub-rule is not true decides:
     /// false where it is false there, unknown where it is unknown; true where there is none.
     pub(super) fn every(&mut self, walk: Walk, sub: &Op, input: &str) -> String {
-        let candidates = self.candidates(walk, None, input);
+        let candidates = self.candidates(walk, &Need::default(), input);
         let matched = self.op(sub, &candidates);
         let unk = if self.three { "s.unk" } else { "0" };
         let first = self.grouped(

@@ -8,8 +8,8 @@ mod three;
 
 use super::emit;
 use super::plan::{
-    CallReturn, CallSlot, MASK_BITS, Mask, OfRule, Op, Slot, SlotId, SlotKind, Source, Statement,
-    Stop, Unit, Unsupported, Walk, mask,
+    CallReturn, CallSlot, MASK_BITS, Mask, Need, NodeSet, OfRule, Op, Shape, Slot, SlotId,
+    SlotKind, Source, Statement, Stop, Unit, Unsupported, Walk, mask,
 };
 use super::recursion::{self, Cycle, Recursion, UtilKey, util_key};
 use super::terminals::{
@@ -30,6 +30,19 @@ pub(super) const INTERNAL: usize = usize::MAX;
 /// The internal slot holding, in a unit's loop, the demand row a row is evaluated for: what the
 /// loop records each recursive reference's read from (`emit::Emitter::recur`).
 pub(super) const ORIGIN: &str = "\0origin";
+
+/// The internal slot holding, in the body of a unit keyed by its following context
+/// (`plan::Unit::following`), the context its key carries.
+const FOLLOWING: &str = "\0following";
+
+/// While a unit of a following cycle (`recursion::Cycle::following`) is lowered: the cycle's
+/// members, and the slot holding the following context where the lowering is, the unit's own
+/// (`FOLLOWING`) or that of the guarded sub-rule it lies in (`Op::Follow`'s `out`).
+#[derive(Clone)]
+struct Following {
+    keys: std::rc::Rc<HashSet<UtilKey>>,
+    slot: SlotId,
+}
 
 /// A per-batch shared stage: a rule matched in a fresh environment at every node of its root kinds
 /// in the files of its dialect, computed once per batch into `stage_<index>`. Stop rules and
@@ -203,8 +216,13 @@ struct Lowerer<'p> {
     /// The non-recursive utilities the rule being lowered reaches through two or more
     /// references (`recursion::repeated`): each is a unit, its body lowered once.
     shared: HashSet<UtilKey>,
-    /// The root-kinds analysis of the relations' sub-rules, made on first use (`walk_kinds`).
+    /// The root-kinds analysis of the relations' sub-rules, made on first use (`walk_need`).
     kinds: Option<RootKinds>,
+    /// Where a unit of a following cycle is being lowered: its cycle and current context.
+    following: Option<Following>,
+    /// Each guarded binding sub-rule's number in the statement (`Op::Follow::rule`), by its
+    /// address: one per matcher, as the matcher's `FOLLOWING` keys it.
+    follow_rules: HashMap<usize, usize>,
 }
 
 fn unsupported<T>(operator: &str) -> Result<T, Unsupported> {
@@ -212,8 +230,9 @@ fn unsupported<T>(operator: &str) -> Result<T, Unsupported> {
 }
 
 /// The kinds a node must have for a rule to match it: at a node of any other kind the rule is
-/// false, and three-valued not unknown either (`None` where any kind may). A relation's walk reads
-/// only its sub-rule's kinds (`Op::Relation::kinds`); a stage holds only its rule's.
+/// false, and three-valued not unknown either (`None` where any kind may), and a capture-free
+/// shape it must have (`shape`). A relation's walk reads only candidates its sub-rule needs
+/// (`plan::Need`); a stage holds only its rule's kinds.
 ///
 /// `all` is the intersection of its terms' kinds and `any` the union; `not { not { R } }` is
 /// `R`'s, and a utility or call its rule's. Three-valued, an `all` term a row can reach with a
@@ -226,6 +245,10 @@ pub(super) struct RootKinds {
     utilities: HashMap<usize, Option<BTreeSet<u16>>>,
     /// The utilities being analysed.
     visiting: HashSet<usize>,
+    /// Each utility's rule's shape (`RootKinds::shape`), by the rule's address.
+    shapes: HashMap<usize, Option<Shape>>,
+    /// The utilities whose shape is being analysed.
+    shaping: HashSet<usize>,
 }
 
 impl RootKinds {
@@ -234,7 +257,94 @@ impl RootKinds {
             three,
             utilities: HashMap::new(),
             visiting: HashSet::new(),
+            shapes: HashMap::new(),
+            shaping: HashSet::new(),
         }
+    }
+
+    /// What a walk's candidate must be for `rule` to hold, or be unknown, at it (`plan::Need`):
+    /// its kinds, and a shape where one says more than they do.
+    pub(super) fn need(&mut self, rule: &AstMatcher, analysis: &mut Analysis) -> Need {
+        let kinds = self.of(rule, analysis);
+        let shape = self.shape(rule, analysis).filter(Shape::structural);
+        Need {
+            kinds: kinds.map(|kinds| kinds.into_iter().collect()),
+            shape,
+        }
+    }
+
+    /// A capture-free test every node `rule` holds, or is unknown, at passes; `None` where none is
+    /// known. As `of`, with `has` (`stopBy: end`, or a child) as the kinds its rule needs below
+    /// the node: three-valued, such a `has` is unknown only where its rule is unknown at a node it
+    /// visits, which has those kinds.
+    fn shape(&mut self, rule: &AstMatcher, analysis: &mut Analysis) -> Option<Shape> {
+        let kinds = |kinds: BTreeSet<u16>| kinds.into_iter().collect::<Vec<u16>>();
+        match rule {
+            AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Never => self
+                .of(rule, analysis)
+                .map(|own| Shape::Kinds(kinds(own))),
+            AstMatcher::Has(related, StopBy::End) => self
+                .of(related.rule(), analysis)
+                .map(|own| Shape::Contains(kinds(own))),
+            AstMatcher::Has(related, StopBy::Neighbor) => self
+                .of(related.rule(), analysis)
+                .map(|own| Shape::Child(kinds(own))),
+            AstMatcher::Any(items) => {
+                let mut shapes = Vec::with_capacity(items.len());
+                for item in items {
+                    shapes.push(self.shape(item, analysis)?);
+                }
+                Some(Shape::Any(shapes))
+            }
+            AstMatcher::All(items) => {
+                let mut shapes = Vec::new();
+                let mut held = BTreeSet::new();
+                for item in items {
+                    if self.three {
+                        let checked = !analysis.captures.mentions(item).is_disjoint(&held);
+                        if checked || (!item.binds_nothing() && analysis.reads_values(item)) {
+                            held.extend(analysis.captures.binds(item));
+                        }
+                        if checked {
+                            continue;
+                        }
+                    }
+                    shapes.extend(self.shape(item, analysis));
+                }
+                match shapes.len() {
+                    0 => None,
+                    1 => shapes.pop(),
+                    _ => Some(Shape::All(shapes)),
+                }
+            }
+            AstMatcher::Not(inner) => match &**inner {
+                AstMatcher::Not(rule) => self.shape(rule, analysis),
+                _ => None,
+            },
+            AstMatcher::Constrained(core) => self.shape(&core.rule, analysis),
+            AstMatcher::Util(util) => util
+                .with_target(|rule| self.utility_shape(rule, analysis))
+                .flatten(),
+            AstMatcher::Call(call) => call
+                .util
+                .with_target(|rule| self.utility_shape(rule, analysis))
+                .flatten(),
+            _ => None,
+        }
+    }
+
+    fn utility_shape(&mut self, rule: &AstMatcher, analysis: &mut Analysis) -> Option<Shape> {
+        let key = std::ptr::from_ref(rule) as usize;
+        if let Some(shape) = self.shapes.get(&key) {
+            return shape.clone();
+        }
+        if !self.shaping.insert(key) {
+            return None;
+        }
+        let shape = self.shape(rule, analysis);
+        self.shaping.remove(&key);
+        self.shapes.insert(key, shape.clone());
+        shape
     }
 
     pub(super) fn of(
@@ -339,7 +449,10 @@ fn referred(op: &Op, out: &mut Vec<usize>) {
         Op::All(items) | Op::Any(items) | Op::Seq(items) => {
             items.iter().for_each(|item| referred(item, out));
         }
-        Op::Every { sub, .. } | Op::Parse { body: sub, .. } | Op::Host { rule: sub, .. } => {
+        Op::Every { sub, .. }
+        | Op::Parse { body: sub, .. }
+        | Op::Host { rule: sub, .. }
+        | Op::Follow { sub, .. } => {
             referred(sub, out);
         }
         Op::AllOpen(terms) => terms.iter().for_each(|term| referred(&term.op, out)),
@@ -470,16 +583,17 @@ impl<'p> Lowerer<'p> {
             tree: None,
             shared: HashSet::new(),
             kinds: None,
+            following: None,
+            follow_rules: HashMap::new(),
         }
     }
 
-    /// The kinds a walk's candidates must have for `rule` to hold, or be unknown, at them.
-    fn walk_kinds(&mut self, rule: &AstMatcher) -> Option<Vec<u16>> {
+    /// What a walk's candidate must be for `rule` to hold, or be unknown, at it.
+    fn walk_need(&mut self, rule: &AstMatcher) -> Need {
         let three = self.three;
         self.kinds
             .get_or_insert_with(|| RootKinds::new(three))
-            .of(rule, &mut self.program.analysis)
-            .map(|kinds| kinds.into_iter().collect())
+            .need(rule, &mut self.program.analysis)
     }
 
     /// The statement of what was lowered: its root kinds, its operator and its units.
@@ -580,7 +694,28 @@ impl<'p> Lowerer<'p> {
         (!leaky).then(|| Cycle {
             keys: vec![key],
             refused: None,
+            following: false,
         })
+    }
+
+    /// The following context a reference to a unit of `cycle` passes: the current one, where the
+    /// reference lies in a unit of that cycle and the cycle is keyed by its context; none
+    /// elsewhere. A cycle's guarded sub-rules lie in its members' rules, so no reference from
+    /// outside it holds a pair it can meet again: entering it, its context starts empty.
+    fn context(&self, cycle: &Cycle) -> Option<SlotId> {
+        self.following
+            .as_ref()
+            .filter(|following| cycle.following && following.keys.contains(&cycle.keys[0]))
+            .map(|following| following.slot)
+    }
+
+    /// The number of a guarded binding sub-rule (`Op::Follow::rule`).
+    fn follow_rule(&mut self, rule: &AstMatcher) -> usize {
+        let next = self.follow_rules.len();
+        *self
+            .follow_rules
+            .entry(std::ptr::from_ref(rule) as usize)
+            .or_insert(next)
     }
 
     /// The unit of `util`, a member of `cycle` running in `scope` (a call's runs in a frame of its
@@ -647,11 +782,15 @@ impl<'p> Lowerer<'p> {
             }
         }
         self.slot(INTERNAL, ORIGIN, SlotKind::Node);
+        let following = cycle
+            .following
+            .then(|| self.slot(INTERNAL, FOLLOWING, SlotKind::Count));
         let id = self.units.len();
         self.units.push(Unit {
             key: key.clone(),
             body: Op::Never,
             scc: 0,
+            following,
         });
         self.unit_utils.push(util.clone());
         self.unit_index.insert(identity, (id, own));
@@ -662,9 +801,19 @@ impl<'p> Lowerer<'p> {
             .filter(|key| self.program.in_progress.insert(*key))
             .collect();
         let bound: Bound = key.iter().copied().collect();
+        // The body starts from the context its key carries; the lowering it interrupts (a unit
+        // is lowered at its first reference) resumes with its own.
+        let outer = std::mem::replace(
+            &mut self.following,
+            following.map(|slot| Following {
+                keys: std::rc::Rc::new(cycle.keys.iter().copied().collect()),
+                slot,
+            }),
+        );
         let lowered = self.with_exclude(exclude, |lowerer| {
             util.with_target(|rule| lowerer.lower(rule, own, &bound))
         });
+        self.following = outer;
         for key in entered {
             self.program.in_progress.remove(&key);
         }
@@ -860,15 +1009,36 @@ impl<'p> Lowerer<'p> {
         )
     }
 
-    /// A stage for `rule`, matched in a fresh environment: lowered, emitted and keyed by its SQL.
-    fn stage(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
-        let address = (std::ptr::from_ref(rule) as usize, self.stage_key());
-        if let Some(&stage) = self.program.stage_rules.get(&address) {
-            return Ok(stage);
+    /// The per-batch set of the nodes `rule` matches in a fresh environment: a stage lowered,
+    /// emitted and keyed by its SQL. A capture-free `not R` that cannot be unknown is `R`'s set
+    /// complemented: a negation holds at most nodes of the batch, `R` at few. Not one that
+    /// reaches back into the following cycle being lowered: the matcher matches it with the
+    /// binding sub-rules in progress, which a per-batch stage does not know.
+    fn stage(&mut self, rule: &AstMatcher) -> Result<NodeSet, Unsupported> {
+        if let Some(following) = &self.following
+            && recursion::reaches(rule, &following.keys)
+        {
+            return unsupported("per-batch stage reaching back into a following recursion");
         }
-        let stage = self.stage_of(rule)?;
-        self.program.stage_rules.insert(address, stage);
-        Ok(stage)
+        if let AstMatcher::Not(inner) = rule
+            && self.program.analysis.capture_free(inner)
+            && !(self.three && self.program.analysis.reads_values(inner))
+        {
+            return Ok(self.stage(inner)?.complemented());
+        }
+        let address = (std::ptr::from_ref(rule) as usize, self.stage_key());
+        let stage = match self.program.stage_rules.get(&address) {
+            Some(&stage) => stage,
+            None => {
+                let stage = self.stage_of(rule)?;
+                self.program.stage_rules.insert(address, stage);
+                stage
+            }
+        };
+        Ok(NodeSet {
+            stage,
+            complement: false,
+        })
     }
 
     fn stage_of(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
@@ -907,15 +1077,16 @@ impl<'p> Lowerer<'p> {
                 if self.tree.is_some() {
                     return unsupported("stopBy rule inside parse");
                 }
-                let stage = self.stage(rule)?;
-                // A stop rule unknown at a node ends the walk there and leaves it open.
+                let set = self.stage(rule)?;
+                // A stop rule unknown at a node ends the walk there and leaves it open (never a
+                // complement: that rule cannot be unknown).
                 if self.three
                     && self.program.analysis.reads_values(rule)
-                    && !self.open.contains(&stage)
+                    && !self.open.contains(&set.stage)
                 {
-                    self.open.push(stage);
+                    self.open.push(set.stage);
                 }
-                Stop::Rule(stage)
+                Stop::Rule(set)
             }
         })
     }
@@ -1086,7 +1257,7 @@ impl<'p> Lowerer<'p> {
                         walk,
                         sub: Box::new(sub),
                         binds,
-                        kinds: self.walk_kinds(related.rule()),
+                        need: self.walk_need(related.rule()),
                     },
                     out,
                 ))
@@ -1107,7 +1278,7 @@ impl<'p> Lowerer<'p> {
                         walk,
                         sub: Box::new(sub),
                         binds,
-                        kinds: self.walk_kinds(&relation.rule),
+                        need: self.walk_need(&relation.rule),
                     },
                     out,
                 ))
@@ -1182,7 +1353,7 @@ impl<'p> Lowerer<'p> {
                         min: count.min,
                         max: count.max,
                         bind,
-                        kinds: self.walk_kinds(related.rule()),
+                        need: self.walk_need(related.rule()),
                     },
                     out,
                 ))
@@ -1201,7 +1372,15 @@ impl<'p> Lowerer<'p> {
                     let (unit, _) = self.unit(&cycle, util, None, scope, exclude)?;
                     let mut out = bound.clone();
                     out.extend(self.units[unit].key.iter().copied());
-                    return Ok((Op::Recur { unit, slots: None }, out));
+                    let context = self.context(&cycle);
+                    return Ok((
+                        Op::Recur {
+                            unit,
+                            slots: None,
+                            context,
+                        },
+                        out,
+                    ));
                 }
                 // A `matches` evaluates its utility on the frame's nodes only (demand-driven, as
                 // the matcher's memo): inlined, or a unit where two or more references reach it.
@@ -1212,7 +1391,14 @@ impl<'p> Lowerer<'p> {
                     let (unit, _) = self.unit(&cycle, util, None, scope, exclude)?;
                     let mut out = bound.clone();
                     out.extend(self.units[unit].key.iter().copied());
-                    return Ok((Op::Recur { unit, slots: None }, out));
+                    return Ok((
+                        Op::Recur {
+                            unit,
+                            slots: None,
+                            context: None,
+                        },
+                        out,
+                    ));
                 }
                 util.with_target(|rule| self.lower(rule, scope, bound))
                     .expect("a filled utility")
@@ -1269,6 +1455,7 @@ impl<'p> Lowerer<'p> {
                             Op::Recur {
                                 unit,
                                 slots: Some(slots),
+                                context: self.context(&cycle),
                             },
                             None,
                         )
