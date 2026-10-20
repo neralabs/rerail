@@ -3,7 +3,7 @@
   "id": "ruff-f901-raise-not-implemented",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F901 (raise-not-implemented) with default settings: the exception of a `raise` (not its `from` cause) that is the name `NotImplemented` or a call whose callee is that name, parentheses transparent. Reported on the name. Ruff matches the name itself, not the builtin binding.",
+  "description": "Raise NotImplementedError, not NotImplemented; NotImplemented is a comparison sentinel and raising it is a TypeError.",
   "scope": {
     "include": [
       "**/*"

@@ -3,7 +3,7 @@
   "id": "ruff-ret501-unnecessary-return-none",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's RET501 (unnecessary-return-none): `return None` in a function whose every `return` is bare or returns `None` (nested functions and classes are separate; generators and functions whose body is a lone `return` are skipped), unless the function has a return annotation other than `None` or a property decorator (`property`, `enum.property`, `functools.cached_property`, `abc.abstractproperty`, `types.DynamicClassAttribute`, resolved through the file's bindings and imports). Reported on the `return` statement.",
+  "description": "Use a bare return instead of return None in Python functions that never return anything else.",
   "scope": {
     "include": [
       "**/*"

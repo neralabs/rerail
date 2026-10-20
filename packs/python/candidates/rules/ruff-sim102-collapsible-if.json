@@ -3,7 +3,7 @@
   "id": "ruff-sim102-collapsible-if",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM102 (collapsible-if) with default settings: an `if` whose body (or whose last `elif` clause's body, when the last clause is an `elif`) is exactly one `if` without `elif`/`else`, when the `if`'s own body is one statement, the tested condition is not `__name__ == \"__main__\"` or a boolean literal, and the `if` is not a `sys.version_info`/`sys.platform` or `TYPE_CHECKING` block. Every `if` of a nested chain is reported, as Ruff does (its parent-chain exemption compares the parent with itself and never applies). Reported at the `if` or `elif` keyword.",
+  "description": "Collapse an if whose only statement is another if without else into one if joined with and; version, platform and TYPE_CHECKING checks are exempt.",
   "scope": {
     "include": [
       "**/*"

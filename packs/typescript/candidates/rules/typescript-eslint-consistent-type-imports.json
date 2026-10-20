@@ -3,7 +3,7 @@
   "id": "typescript-eslint-consistent-type-imports",
   "revision": 1,
   "mode": "steer",
-  "description": "An import whose binding is only ever used as a type, without `import type`.",
+  "description": "Use import type for TypeScript imports that are only ever used as types; the import is then erased from the compiled output.",
   "scope": {
     "include": [
       "**/*.ts",

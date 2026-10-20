@@ -3,7 +3,7 @@
   "id": "sqlfluff-st10-structure-constant-expression",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's ST10 (structure.constant_expression): report =, != or <> whose operands are the same non-literal written identically, or two literals other than the allowed 1 = 1 and 1 = 0, anchored at the operator. A typed literal (timestamp '...') is no literal there. An operand that is itself an arithmetic, bitwise or other binary expression is not one of SQLFluff's adjacent operands, so such comparisons are skipped.",
+  "description": "Remove SQL comparisons that are always true or false, such as an expression compared to itself or two literals; 1 = 1 and 1 = 0 are allowed.",
   "scope": {
     "include": [
       "**/*.sql"

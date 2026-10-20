@@ -3,7 +3,7 @@
   "id": "bandit-b502-ssl-with-bad-version",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect calls whose method or ssl_version argument selects an insecure SSL/TLS protocol.",
+  "description": "Don't select SSLv2, SSLv3, TLS 1.0 or TLS 1.1 when configuring ssl or pyOpenSSL connections; these protocol versions are broken.",
   "scope": {
     "include": [
       "**/*.py"

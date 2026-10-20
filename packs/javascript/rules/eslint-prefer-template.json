@@ -3,7 +3,7 @@
  "id": "eslint-prefer-template",
  "revision": 3,
  "mode": "steer",
- "description": "Port of ESLint's `prefer-template` rule (https://eslint.org/docs/latest/rules/prefer-template). Flags the outermost `+` concatenation chain that mixes a string literal with a non-string operand.",
+ "description": "Use template literals instead of building strings by joining string literals and other values with +.",
  "scope": {
   "include": [
    "**/*"

@@ -3,7 +3,7 @@
   "id": "ruff-pie790-unnecessary-placeholder",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PIE790 (unnecessary-placeholder): a `pass` statement, or an expression statement that is only `...`, in a body (module, class, function or compound-statement block) of two or more statements. An `...` is kept in a `TYPE_CHECKING` block, a `typing.Protocol` class or an `abc.abstractmethod`-decorated function, and there Ruff stops scanning the body, so a later `pass` is kept too.",
+  "description": "Remove pass and ... placeholders from Python blocks that already contain other statements.",
   "scope": {
     "include": [
       "**/*"

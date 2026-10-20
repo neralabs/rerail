@@ -3,7 +3,7 @@
   "id": "bladestan-random-int-parameters",
   "revision": 1,
   "mode": "steer",
-  "description": "Bladestan 0.11.7 argument.type as PHPStan 2.2.16's RandomIntParametersRule reports it over the compiled template: a random_int() call whose $min and $max, bound as PHP binds them, are constants with $min > $max.",
+  "description": "Pass random_int() in Blade templates a minimum no greater than its maximum; reversed bounds throw an error at render time.",
   "scope": {
     "include": [
       "**/*.blade.php"

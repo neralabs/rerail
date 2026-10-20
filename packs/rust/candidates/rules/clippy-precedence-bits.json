@@ -3,7 +3,7 @@
   "id": "clippy-precedence-bits",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's precedence_bits lint: reports, at any nesting depth, a bitwise (& | ^) operation with an unparenthesized shift operand and no unparenthesized arithmetic operand (that mix is the precedence lint's). Clippy reports every such operation, but operations sharing a start (a left-nested chain like `a ^ b ^ c >> 1 ^ d >> 2`) are one position, so one finding is made per chain, at the outermost operation; macro expansion and semantic type checks are not modelled.",
+  "description": "Parenthesize shifts used as operands of a bitwise AND, OR or XOR in Rust; the precedence is easy to misread.",
   "scope": {
     "include": [
       "**/*"

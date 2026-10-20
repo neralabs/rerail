@@ -3,7 +3,7 @@
   "id": "clippy-int-plus-one",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's int_plus_one lint: reports inequalities equivalent to a strict comparison through addition or subtraction by one; constant evaluation and type semantics are not modelled.",
+  "description": "Use a strict comparison in Rust instead of a non-strict one that adds or subtracts one; it states the bound directly.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {

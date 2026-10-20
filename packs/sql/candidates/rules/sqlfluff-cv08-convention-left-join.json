@@ -3,7 +3,7 @@
   "id": "sqlfluff-cv08-convention-left-join",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's CV08 (convention.left_join): reject RIGHT JOIN and RIGHT OUTER JOIN; report the beginning of the join clause.",
+  "description": "Use LEFT JOIN instead of RIGHT JOIN in SQL, swapping the table order; joins that all read left to right are easier to follow.",
   "scope": {"include": ["**/*.sql"], "exclude": []},
   "clauses": [
     {

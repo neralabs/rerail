@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-dupe-v-else-if",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-dupe-v-else-if` with default options. Reads the script-block program's (`ast.embedded`) `if (...) { } else if (...) { }` chain (v-if / v-else-if elements, nested chains stay separate; the `true` written for a condition-less directive, whose host is its directive name, is no condition): for each else-if test it applies eslint-plugin-vue's or/and set-cover (the test and, when it is a `&&`, each flattened `&&` operand are the conditions; a condition is dead when every `||` operand of it is a superset, as a set of `&&` operands compared by tokens with `||`/`&&` operands in either order, of an `||` operand of some earlier test in the chain) and reports the first condition to become dead walking the chain from the nearest earlier branch, operands in source order and the whole test last, at that condition (parentheses excluded, as ESTree).",
+  "description": "Avoid v-else-if conditions that repeat or are covered by an earlier condition in the same v-if chain; that branch can never render.",
   "scope": {
     "include": [
       "**/*.vue"

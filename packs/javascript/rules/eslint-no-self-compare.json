@@ -3,7 +3,7 @@
   "id": "eslint-no-self-compare",
   "revision": 4,
   "mode": "steer",
-  "description": "ESLint 10.11.0 no-self-compare, default options. Port of ESLint's `no-self-compare` rule (https://eslint.org/docs/latest/rules/no-self-compare). Reports an equality or relational comparison whose operands (parentheses around an operand aside, as ESTree drops them) have the same tokens, comments aside.",
+  "description": "Don't compare a value to itself; the result is fixed, and to check for NaN use Number.isNaN() instead.",
   "scope": {
     "include": [
       "**/*.ts",

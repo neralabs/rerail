@@ -3,7 +3,7 @@
   "id": "eslint-no-dupe-keys",
   "revision": 7,
   "mode": "steer",
-  "description": "ESLint 10.11.0 no-dupe-keys, default options. Port of ESLint's `no-dupe-keys` rule (https://eslint.org/docs/latest/rules/no-dupe-keys). Flags an object-literal property whose static key (ESLint's getStaticPropertyName, via `compare` text `key`) repeats an earlier property of the same object; a getter may pair with a setter, and a non-computed `__proto__: value` is not a key.",
+  "description": "Don't repeat a key in a JavaScript object literal; the later value silently overwrites the earlier one.",
   "scope": {
     "include": [
       "**/*.js",

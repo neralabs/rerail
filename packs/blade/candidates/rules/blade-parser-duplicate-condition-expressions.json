@@ -3,7 +3,7 @@
   "id": "blade-parser-duplicate-condition-expressions",
   "revision": 1,
   "mode": "steer",
-  "description": "stillat/blade-parser 2.1.0 DuplicateConditionExpressionsValidator: the first @elseif of an @if chain whose condition, as written, is an earlier branch's (read from the view, where the chain is one if statement); a later duplicate in the same chain is not reported, as blade-parser stops at the first.",
+  "description": "Avoid repeating an earlier condition of the same chain in a Blade @elseif; that branch can never run.",
   "scope": {
     "include": [
       "**/*.blade.php"

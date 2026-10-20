@@ -3,7 +3,7 @@
   "id": "vitest-no-disabled-tests",
   "revision": 2,
   "mode": "log",
-  "description": "A disabled test: `.skip`, `xit`, `xtest`, `xdescribe`, a test with no function, or `pending()`.",
+  "description": "Fix or delete disabled Vitest tests, such as skipped tests, x-prefixed tests, pending() or tests with no function; they silently never run.",
   "scope": {
     "include": [
       "**/*.test.ts",

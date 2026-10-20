@@ -3,7 +3,7 @@
   "id": "clippy-allow-attributes",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's allow_attributes: reports the path of every outer #[allow(..)] attribute, one a #[cfg_attr(..)] expands to included. The lint needs Rust 1.81 (lint reasons, `suppress.clippy.msrv`). Inner #![allow] is not reported. What a macro invocation's or macro_rules! body's token tree holds, and whether a #[cfg] predicate holds in a build, are not read. A #[cfg_attr] is read as active unless its first argument is exactly `test`, `any()` or `not(clippy)`, the predicates the suppression engine reads as off whatever the build; every other predicate is read as active.",
+  "description": "Use #[expect] instead of outer #[allow] attributes in Rust; an expect warns once the lint it silences stops firing.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {

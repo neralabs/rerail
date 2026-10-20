@@ -3,7 +3,7 @@
   "id": "react-void-dom-elements-no-children",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/void-dom-elements-no-children: a void DOM element (area, base, br, col, embed, hr, img, input, keygen, link, menuitem, meta, param, source, track, wbr) with children, or with a `children` or `dangerouslySetInnerHTML` attribute (one report each); the same through createElement with an object-literal props argument.",
+  "description": "Don't give void DOM elements such as img, br and input children or a dangerouslySetInnerHTML prop; React throws when they have content.",
   "scope": {
     "include": [
       "**/*.ts",

@@ -3,7 +3,7 @@
   "id": "ruff-sim212-if-expr-with-twisted-arms",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM212 (if-expr-with-twisted-arms): `B if not A else A` where the negated test operand and the `else` arm are the same plain name (through any parentheses), reported on the whole expression.",
+  "description": "Swap the arms of a conditional expression that tests not x and falls back to x, so the test reads x without the negation.",
   "scope": {
     "include": [
       "**/*"

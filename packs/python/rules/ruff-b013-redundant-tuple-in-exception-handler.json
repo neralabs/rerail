@@ -3,7 +3,7 @@
   "id": "ruff-b013-redundant-tuple-in-exception-handler",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B013 (redundant-tuple-in-exception-handler): the type of an `except` (or `except*`) handler is a parenthesized tuple with exactly one element that is not starred. Parentheses around the tuple are transparent, and an `as` name does not matter. Reported on the tuple.",
+  "description": "Remove the one-element tuple around a single exception type in an except clause; the parentheses and comma are redundant.",
   "scope": {
     "include": [
       "**/*"

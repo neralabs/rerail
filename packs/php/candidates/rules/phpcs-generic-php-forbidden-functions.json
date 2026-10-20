@@ -3,7 +3,7 @@
   "id": "phpcs-generic-php-forbidden-functions",
   "revision": 1,
   "mode": "steer",
-  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.ForbiddenFunctions with its default list (sizeof, delete): a call PHP resolves to either function.",
+  "description": "Use count() instead of its alias sizeof(), and don't call delete(); stick to the canonical PHP functions.",
   "scope": {
     "include": [
       "**/*.php"

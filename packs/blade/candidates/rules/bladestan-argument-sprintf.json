@@ -3,7 +3,7 @@
   "id": "bladestan-argument-sprintf",
   "revision": 1,
   "mode": "steer",
-  "description": "Bladestan 0.11.7 argument.sprintf (PHPStan 2.2.16 PrintfParametersRule over the compiled template): a sprintf() call whose known format asks for more or fewer values than it passes, or that PHP refuses.",
+  "description": "Pass sprintf() calls in Blade templates exactly as many values as the format string has placeholders, and use only valid placeholders.",
   "scope": {
     "include": [
       "**/*.blade.php"

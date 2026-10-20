@@ -3,7 +3,7 @@
   "id": "next-no-before-interactive-script-outside-document",
   "revision": 3,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-before-interactive-script-outside-document: an opening element named by the default import of next/script with a plain strategy=\"beforeInteractive\", unless the path contains `/app/` or its segment after the first `pages` has a name starting with `_document`.",
+  "description": "Use the beforeInteractive strategy of next/script only in pages/_document or the app directory; elsewhere it cannot run before hydration.",
   "scope": {
     "include": [
       "**/*.ts",

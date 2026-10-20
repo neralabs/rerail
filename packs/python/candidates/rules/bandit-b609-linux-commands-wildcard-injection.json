@@ -3,7 +3,7 @@
   "id": "bandit-b609-linux-commands-wildcard-injection",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect wildcard use with ownership, permission, archive, or synchronization commands",
+  "description": "Avoid wildcards in shell commands that run chown, chmod, tar or rsync; crafted file names can inject extra options.",
   "scope": {
     "include": [
       "**/*.py"

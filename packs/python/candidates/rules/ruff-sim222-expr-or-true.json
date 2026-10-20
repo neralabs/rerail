@@ -3,7 +3,7 @@
   "id": "ruff-sim222-expr-or-true",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM222 (expr-or-true), `is_short_circuit` in flake8_simplify/rules/ast_bool_op.rs:736. Over the values of one `or` run (tree-sitter nests them to the left; parentheses start a new run), a value whose truthiness is unknown is skipped when the run is not in a boolean test, or when it has a side effect (`contains_effect`). The first value that is not skipped and is truthy (`True`, a non-empty literal, ...), or whose successor is, triggers; the finding starts at the value after the last skipped value before it (the whole expression when none), as Ruff's `furthest`. Truthiness follows `Truthiness::from_expr`, including f-string emptiness and `list(...)`-style calls. The finding spans that value only; Ruff's range runs to the end of the expression. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/SIM222.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Simplify an or expression holding an always-truthy value such as True or a non-empty literal; the operands after it never run.",
   "scope": {
     "include": [
       "**/*"

@@ -3,7 +3,7 @@
   "id": "sqlfluff-rf01-references-from",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's RF01 (references.from) with default settings: flag the table qualifier of a column reference that names no table or alias in the FROM clause of its query or of an enclosing query.",
+  "description": "Qualify SQL columns only with a table or alias named in the FROM clause of the query or an enclosing query.",
   "scope": { "include": ["**/*.sql"], "exclude": [] },
   "clauses": [
     {

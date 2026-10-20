@@ -3,7 +3,7 @@
   "id": "ruff-b017-assert-raises-exception",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B017 (assert-raises-exception): `<x>.assertRaises(...)` or `pytest.raises(...)` whose exception (first positional argument, or `exception=` / `expected_exception=`) resolves to the builtin `Exception` or `BaseException` (the unshadowed name, or through an import of `builtins`; parentheses transparent). `pytest.raises` is exempt with `match=` or a string/bytes literal second positional argument. Reported on a `with` item that has no `as` target, and on any such call with at least two positional arguments or a `func=` keyword (the call form). `pytest.raises` and the exception names resolve with `resolves` (imports, their scope and order, and shadowing, as Ruff's semantic model sees them).",
+  "description": "Assert a specific exception type in assertRaises and pytest.raises instead of Exception or BaseException; a blind check lets unrelated errors pass the test.",
   "scope": {
     "include": [
       "**/*"

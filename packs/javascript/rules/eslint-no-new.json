@@ -3,7 +3,7 @@
   "id": "eslint-no-new",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `no-new` rule (https://eslint.org/docs/latest/rules/no-new). Reports an expression statement whose expression (through parentheses) is a `new` expression.",
+  "description": "Don't call a constructor with new only for its side effects; keep the created object or use a plain function.",
   "scope": {
     "include": [
       "**/*"

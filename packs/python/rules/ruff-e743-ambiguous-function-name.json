@@ -3,7 +3,7 @@
   "id": "ruff-e743-ambiguous-function-name",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's E743 (ambiguous-function-name): a function named `l`, `I` or `O`, reported on the name. Includes `async def` and methods.",
+  "description": "Avoid naming functions or methods l, I or O; in many fonts they are hard to tell apart from 1 and 0.",
   "scope": {
     "include": [
       "**/*"

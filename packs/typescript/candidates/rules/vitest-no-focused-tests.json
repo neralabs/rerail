@@ -3,7 +3,7 @@
   "id": "vitest-no-focused-tests",
   "revision": 2,
   "mode": "steer",
-  "description": "A focused test (`.only`), which makes Vitest skip every other test in the file.",
+  "description": "Remove .only from Vitest tests and suites; a focused test makes Vitest skip every other test in the file.",
   "scope": {
     "include": [
       "**/*.test.ts",

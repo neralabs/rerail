@@ -3,7 +3,7 @@
   "id": "bandit-b202-tarfile-unsafe-members",
   "revision": 1,
   "mode": "steer",
-  "description": "After proving an exact tarfile import, resolve an extractall call; allow filter=\"data\", otherwise classify missing members, members supplied by a call, and other members expressions separately and recommend validating/discarding dangerous archive members.",
+  "description": "Validate members before calling extractall() on an archive from tarfile.open; crafted entries can write files outside the target directory.",
   "scope": {
     "include": [
       "**/*.py"

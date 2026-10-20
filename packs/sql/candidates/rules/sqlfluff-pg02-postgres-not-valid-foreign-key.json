@@ -3,7 +3,7 @@
   "id": "sqlfluff-pg02-postgres-not-valid-foreign-key",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's PG02 (postgres.not_valid_foreign_key), force_enable=true. For PostgreSQL only, and it starts off: Rerail reads every .sql file in one dialect, and NOT VALID on a foreign key is PostgreSQL syntax that MySQL and SQLite files do not have. Turn it on for a repository whose SQL is PostgreSQL. an ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY must include NOT VALID; anchored at the ALTER TABLE statement's start. A statement inside a dollar-quoted routine or DO body (which SQLFluff reads as a string) or an error region is not read.",
+  "description": "Add PostgreSQL foreign keys with NOT VALID and validate them in a separate step; checking existing rows at once locks the table.",
   "scope": {
     "include": [
       "**/*.sql"

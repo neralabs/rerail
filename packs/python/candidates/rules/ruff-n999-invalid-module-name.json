@@ -3,7 +3,7 @@
   "id": "ruff-n999-invalid-module-name",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's N999 (invalid-module-name): a `.py` or `.pyi` file in a package (the host sent its module path) whose name is not a valid module name (`is_module_name`: `[a-z_][a-z0-9_]*`, not a keyword), reported at the start of the file. The name is the file's stem (`moduleName`), or for an `__init__` file the package root's directory (`package`: Ruff reads `package.path()`, the top package, not the file's own directory), as on disk. In a `versions` or `migrations` directory a leading digit is allowed (`is_migration_name`). Names matching `pep8-naming.ignore-names` (Ruff's option, with its defaults setUp, tearDown, ...) are exempt.",
+  "description": "Name Python modules and packages in lowercase snake_case that isn't a keyword; other names can't be imported normally.",
   "scope": {
     "include": [
       "**/*.py",

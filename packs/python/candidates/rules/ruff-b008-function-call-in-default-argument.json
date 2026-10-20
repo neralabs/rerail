@@ -3,7 +3,7 @@
   "id": "ruff-b008-function-call-in-default-argument",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B008 (function-call-in-default-argument): every call inside a parameter default (of a `def` or a `lambda`), not looking inside lambdas, unless the parameter's annotation is immutable (Ruff's `is_immutable_annotation`, as in B006) or the callee is a known mutable constructor (`dict`/`list`/`set`, `collections.Counter`/`OrderedDict`/`defaultdict`/`deque`) or immutable-returning callable (`datetime` types, `decimal.Decimal`, `fractions.Fraction`, `operator` getters, `pathlib.Path`, `types.MappingProxyType`, `re.compile`, immutable builtins; a subscripted callee judged by its value). Names resolve with `resolves` (imports, their scope and order, and unshadowed builtins, as Ruff's semantic model sees them); `builtins.X` counts only where Ruff's table lists it. A bare-name callee whose binding (`resolves.binding`) is `X = NewType(name, <immutable annotation>)` (Ruff's `is_immutable_newtype_call`: a plain assignment, the type as `tp=` or the second positional argument) is exempt where that binding shadows no earlier binding of the name in its scope (Ruff's only_binding: `resolves.binding` with `only`) and is not an unpacking. Reported on each call. Ruff's option `flake8-bugbear.extend-immutable-calls` adds immutable calls and annotations.",
+  "description": "Avoid function calls in default arguments; they run once at definition time, so make the call inside the function or use a module-level constant.",
   "scope": {
     "include": [
       "**/*"

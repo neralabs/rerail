@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-require-valid-default-prop",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/require-valid-default-prop` with default options: a prop's default must match the native constructors (String, Number, Boolean, Function, Object, Array, Symbol, BigInt) its `type` names; Object, Array and Function values must come from a factory, whose returns are checked too. Reads Options-API component objects (export default outside script setup, Vue.component/mixin/extend, component/createApp/defineComponent/defineNuxtComponent calls, new Vue, `// @vue/component` marks), top-level script-setup defineProps({...}) objects with withDefaults defaults and destructured defaults, and defineModel options. Props typed only by a TypeScript type argument (defineProps<T>(), defineModel<T>()) and a defineProps argument held in a const are not read.",
+  "description": "Make a Vue prop's default value match its declared type, and return object and array defaults from a factory function.",
   "scope": {
     "include": [
       "**/*.vue"

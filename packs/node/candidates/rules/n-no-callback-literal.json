@@ -3,7 +3,7 @@
   "id": "n-no-callback-literal",
   "revision": 2,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/no-callback-literal: a call of an identifier named `callback` or `cb` (name only, no scope) whose first argument cannot be an error per upstream's couldBeError: a non-null literal, array, object or template literal, or an assignment/sequence/logical/conditional whose possible results all are. The message is softened (NER-1834): a callback named `cb` or `callback` need not be error-first (ws verifyClient, ssh2 authHandler), so it tells the agent to check before passing an error or null first.",
+  "description": "Pass an Error or null, not a string, number, array or object literal, as the first argument of error-first callbacks named callback or cb.",
   "scope": {
     "include": [
       "**/*.ts",

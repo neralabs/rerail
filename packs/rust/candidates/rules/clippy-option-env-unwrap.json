@@ -3,7 +3,7 @@
   "id": "clippy-option-env-unwrap",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's option_env_unwrap: reports unwrap or expect applied to option_env!; macro expansion boundaries are not modelled.",
+  "description": "Use env! instead of unwrapping option_env! in Rust; env! fails at compile time when the variable is missing, not at runtime.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     { "id": "option-env-unwrapping", "forbid": { "ast": { "language": "rust", "rule": { "kind": "call_expression", "regex": "(?s)(?P<O>option_env!\\s*\\([^)]*\\))\\s*\\.\\s*(?:unwrap|expect)\\s*\\(" } } }, "violation": { "suppress": { "clippy": { "lints": ["clippy::option_env_unwrap", "clippy::all", "clippy::correctness", "warnings"] } }, "anchor": "capture.O", "code": "option_env_unwrap", "message": "Clippy option_env_unwrap: option_env! should not be unwrapped" } },

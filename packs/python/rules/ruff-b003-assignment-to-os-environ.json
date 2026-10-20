@@ -3,7 +3,7 @@
   "id": "ruff-b003-assignment-to-os-environ",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B003 (assignment-to-os-environ): a plain assignment statement with exactly one target, that target being the attribute `os.environ` (the name `os`, not resolved; parentheses around the target are transparent). Chained assignments (several targets), annotated and augmented assignments are not checked, as in Ruff. Reported on the attribute.",
+  "description": "Don't assign a new value to os.environ; it doesn't change the real process environment, so update or clear the existing mapping instead.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {

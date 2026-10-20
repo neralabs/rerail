@@ -3,7 +3,7 @@
   "id": "ruff-b035-static-key-dict-comprehension",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B035 (static-key-dict-comprehension): the key of a dict comprehension is constant: a literal, a name the comprehension's generators never store (targets and walrus targets, nested ones included), or an attribute, subscript, operator or tuple built only from such parts. Reported on the key, inside any parentheses.",
+  "description": "Avoid dict comprehensions whose key doesn't depend on the loop variables; every item writes the same key, so only the last value survives.",
   "scope": {
     "include": [
       "**/*"

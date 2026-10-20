@@ -3,7 +3,7 @@
   "id": "typescript-eslint-no-import-type-side-effects",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `no-import-type-side-effects` rule (https://typescript-eslint.io/rules/no-import-type-side-effects). Flags an import whose specifiers are all inline `type` specifiers.",
+  "description": "Use a top-level import type when every imported name is an inline type import; otherwise a side-effect import stays at runtime.",
   "scope": {
     "include": [
       "**/*.ts",

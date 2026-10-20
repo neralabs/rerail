@@ -3,7 +3,7 @@
   "id": "ruff-b027-empty-method-without-abstract-decorator",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B027 (empty-method-without-abstract-decorator): in a class whose only base or keyword is `abc.ABC` or `metaclass=abc.ABCMeta`, a method directly in the class body whose body is only `pass`, string literals and `...`, with no `abc` abstract decorator and no `typing.overload` / `typing_extensions.overload` decorator. Names resolve with `resolves` (imports and shadowing as Ruff's semantic model sees them). Not in stubs. Reported on the whole definition, decorators included.",
+  "description": "Mark empty methods in abstract base classes with an abstract decorator, or give them a body; otherwise it's unclear whether subclasses must override them.",
   "scope": {
     "include": [
       "**/*"

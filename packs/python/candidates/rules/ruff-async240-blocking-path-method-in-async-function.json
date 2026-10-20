@@ -3,7 +3,7 @@
  "id": "ruff-async240-blocking-path-method-in-async-function",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's ASYNC240 (blocking-path-method-in-async-function): a call to an `os.path` function, or a method on a `pathlib` path (a `Path(...)`-family call, or a name whose binding holds such a call or is annotated with a path class, directly or in `|`/`Optional`/`Union`: Ruff's check_type through `resolves.binding`), except Ruff's list of pure methods, inside an `async def` body whose function is the nearest enclosing function, lambda body or class, reported on the callee. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7). A bare name imported from `os.path` resolves through `prefix`. The binding is Ruff's only_binding (`resolves.binding` with `only`: it shadows no earlier binding of the name in its scope).",
+ "description": "Avoid blocking os.path and pathlib filesystem calls inside async functions; use an async path API or a worker thread so they don't block the event loop.",
  "scope": {
   "include": [
    "**/*"

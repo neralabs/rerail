@@ -3,7 +3,7 @@
   "id": "ruff-b018-useless-expression",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B018 (useless-expression): an expression statement (parentheses transparent; a bare tuple counts) that is not a comparison, a string or f-string literal, or `...`, and has no effect in Ruff's `contains_effect` sense: no call other than an argument-less `set()`/`list()`/`tuple()`/`dict()`/`frozenset()`, no `await`, `yield`, walrus, comprehension, generator or subscript, and no binary operation with an operand that is not a literal or display, anywhere inside (lambda bodies included). An attribute access with an effect is reported as a useless attribute access. The builtin names must resolve to the unshadowed builtins (`resolves`, Ruff's `has_builtin_binding`). Reported on the expression.",
+  "description": "Remove expression statements that have no effect, such as a bare name, attribute access or arithmetic on literals; they are usually a mistake.",
   "scope": {
     "include": [
       "**/*"

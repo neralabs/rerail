@@ -3,7 +3,7 @@
   "id": "bandit-b101-assert-used",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Bandit 1.9.4's B101 assert_used: every `assert` statement (Bandit's B101 with its default configuration, which skips no file). Bandit's `# nosec` is honoured (`suppress.nosec`), as its recordings honour it.",
+  "description": "Avoid assert statements in Python code; they are stripped when Python runs with optimization, so any check they perform silently disappears.",
   "scope": {
     "include": [
       "**/*"

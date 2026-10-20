@@ -3,7 +3,7 @@
   "id": "react-hooks-rules-of-hooks",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react-hooks 7.1.1 react-hooks/rules-of-hooks: a hook call (`use`, `useX`, `Namespace.useX`) reported at its callee when it runs (its nearest function, ESLint's code path) in a component or hook (a function named `X…`/`useX`, or memo/forwardRef's callback) conditionally (an if/conditional/logical/switch/catch/default branch, or after an earlier return in the function); in a class method or field; in another named function; at the top level; in an anonymous callback inside a component or hook; in a loop; in an async component or hook; and `use` in try/catch. Code paths are approximated syntactically.",
+  "description": "Call React hooks only at the top level of components and custom hooks, never in conditions, loops, nested callbacks, async functions or after an early return.",
   "scope": {
     "include": [
       "**/*.ts",

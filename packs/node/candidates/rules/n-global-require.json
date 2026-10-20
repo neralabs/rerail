@@ -3,7 +3,7 @@
   "id": "n-global-require",
   "revision": 3,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/global-require: a call of an unshadowed `require` with an ancestor outside upstream's ACCEPTABLE_PARENTS (AssignmentExpression, VariableDeclarator, MemberExpression, ExpressionStatement, CallExpression, ConditionalExpression, Program, VariableDeclaration; tree-sitter's arguments and parenthesized_expression have no ESTree node), or inside an optional chain (ESTree's ChainExpression, which tree-sitter has no node for). No sourceType is pinned, so each file keeps its own module system (.cjs/.cts CommonJS; .mjs/.mts/.tsx an ES module; .js/.jsx/.ts by the nearest package.json's type, Node's syntax detection where that package.json sets no valid type, and an ES module where there is no package.json). As eslint-plugin-n's own configs (flat/mixed-esm-and-cjs picks per file), a CommonJS file has require, module, exports, __dirname and __filename (flat/recommended-script) and an ES module none of them (flat/recommended-module turns them off). Upstream's isShadowed reads the name only (a `require` no file-local binding declares), so an ES module's nested `require(\u2026)` is reported too.",
+  "description": "Keep require() calls at the top level of a module, not inside functions or blocks; nested requires hide dependencies and load synchronously mid-run.",
   "scope": {
     "include": [
       "**/*.ts",

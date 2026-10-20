@@ -3,7 +3,7 @@
   "id": "bandit-b703-django-mark-safe",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect calls resolved to Django safestring APIs that mark a value as safe, including the legacy SafeText, SafeUnicode, SafeString, and SafeBytes aliases covered by Bandit B703.",
+  "description": "Avoid Django mark_safe and the SafeString family on dynamic content; marking unescaped values as safe opens the page to XSS.",
   "scope": {
     "include": [
       "**/*.py"

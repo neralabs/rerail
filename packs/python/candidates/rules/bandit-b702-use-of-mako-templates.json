@@ -3,7 +3,7 @@
   "id": "bandit-b702-use-of-mako-templates",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect use of Mako templates without environment-wide escaping",
+  "description": "Avoid Mako templates or escape every variable with Mako filters; Mako has no environment-wide escaping, so output is open to XSS.",
   "scope": {
     "include": [
       "**/*.py"

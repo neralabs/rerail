@@ -3,7 +3,7 @@
   "id": "ruff-f509-percent-format-unsupported-format-character",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F509 (percent-format-unsupported-format-character): a `%`-format string the parser refuses at an unsupported conversion character. The format string is a str literal (no f/t/b prefix; implicit concatenations joined, escapes decoded, parentheses transparent) left of `%`, read with the `percentFormat` grammar (a port of ruff_python_literal's cformat parser).",
+  "description": "Use only valid conversion characters in Python %-format strings; an unsupported one raises ValueError at runtime.",
   "scope": {
     "include": [
       "**/*"

@@ -3,7 +3,7 @@
   "id": "ruff-e713-not-in-test",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's E713 (not-in-test): `not` applied to a comparison whose only operator is `in` (the comparison may be parenthesized), reported on the comparison inside any parentheses; also inside a string Ruff parses as a type definition (M11a `parse` with `annotation`, nested strings included), reported on each such comparison inside the string.",
+  "description": "Use x not in y instead of not x in y for membership tests; it reads clearly and avoids precedence confusion.",
   "scope": {
     "include": [
       "**/*"

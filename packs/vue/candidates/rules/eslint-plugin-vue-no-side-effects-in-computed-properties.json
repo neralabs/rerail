@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-side-effects-in-computed-properties",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-side-effects-in-computed-properties` (default options). In an Options API getter (files without `<script setup>`) reports `this`/`const vm = this` member assignments, updates, deletes, calls of push/pop/shift/unshift/reverse/splice/sort/copyWithin/fill on a member of `this`, `Object.assign(this.x, ...)`, and `this.$set`/`Vue.set` (at the property). In a composition getter reports the same on a binding declared once, outside the getter, in `<script setup>` or the body of a Vue object's `setup` function, not imported (aliases are not followed, as upstream).",
+  "description": "Keep Vue computed properties free of side effects such as assigning to or mutating component state; a computed should only derive a value.",
   "scope": {
     "include": [
       "**/*.vue"

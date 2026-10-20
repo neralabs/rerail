@@ -3,7 +3,7 @@
   "id": "sqlfluff-am09-ambiguous-order-by-limit",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's AM09 (ambiguous.order_by_limit): report a SELECT's LIMIT clause when the same SELECT has no ORDER BY, anchored at LIMIT. A LIMIT that ends a UNION, INTERSECT or EXCEPT belongs to the set expression, which SQLFluff's AM09 does not read. The grammar parses no OFFSET without LIMIT.",
+  "description": "Add ORDER BY to any SQL query that uses LIMIT or OFFSET; without it, which rows come back is not deterministic.",
   "scope": {
     "include": [
       "**/*.sql"

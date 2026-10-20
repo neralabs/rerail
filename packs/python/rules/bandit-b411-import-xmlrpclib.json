@@ -3,7 +3,7 @@
   "id": "bandit-b411-import-xmlrpclib",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect direct imports of xmlrpc.",
+  "description": "Avoid importing xmlrpc unprotected; its XML parsing is open to XML attacks unless patched with defusedxml.",
   "scope": {
     "include": [
       "**/*.py"

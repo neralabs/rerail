@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-async-in-computed-properties",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-async-in-computed-properties` (default options, ignoredObjectNames: []). Reports, directly in the body of a computed getter (not in a nested function): an `async` getter, an `await`, `new Promise`, a promise call (`.then`/`.catch`/`.finally`, `Promise.all`/`allSettled`/`any`/`race`/`reject`/`resolve`/`try`/`withResolvers`), `this.$nextTick`/`Vue.nextTick`, and `setTimeout`/`setInterval`/`setImmediate`/`requestAnimationFrame` (bare or on `window`) with an argument. Options API getters are read in files without `<script setup>`; composition getters (`computed(...)` imported from Vue) inside a Vue object, or inside `<script setup>`.",
+  "description": "Keep Vue computed properties synchronous, with no async getter, await, promises, nextTick or timers; a computed must return its value right away.",
   "scope": {
     "include": [
       "**/*.vue"

@@ -3,7 +3,7 @@
   "id": "bandit-b604-any-other-function-with-shell-equals-true",
   "revision": 2,
   "mode": "steer",
-  "description": "Detect calls outside the configured subprocess set with a `shell=` keyword argument Bandit's has_shell reads as truthy: anything but a falsy constant (False, None, a zero number, an empty string or bytes), an empty list or an empty dict.",
+  "description": "Avoid passing a truthy shell argument to functions outside subprocess; such wrappers likely run the command through a shell, risking injection.",
   "scope": {
     "include": [
       "**/*.py"

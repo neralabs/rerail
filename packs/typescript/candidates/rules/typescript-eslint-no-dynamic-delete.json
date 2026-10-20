@@ -3,7 +3,7 @@
   "id": "typescript-eslint-no-dynamic-delete",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `no-dynamic-delete` rule (https://typescript-eslint.io/rules/no-dynamic-delete). Flags the key of a computed member deleted with `delete`, unless the key is a string or number literal or a negated number literal.",
+  "description": "Avoid delete with a computed key in TypeScript; use a Map or Set for dynamic keys instead.",
   "scope": { "include": ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"], "exclude": [] },
   "clauses": [
     {

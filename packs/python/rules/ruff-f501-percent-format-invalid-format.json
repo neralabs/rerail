@@ -3,7 +3,7 @@
   "id": "ruff-f501-percent-format-invalid-format",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F501 (percent-format-invalid-format): a `%`-format string the parser refuses for any reason but an unsupported format character (an incomplete specifier, an unclosed mapping key, a width or precision too big). The format string is a str literal (no f/t/b prefix; implicit concatenations joined, escapes decoded, parentheses transparent) left of `%`, read with the `percentFormat` grammar (a port of ruff_python_literal's cformat parser).",
+  "description": "Fix malformed %-format strings, such as incomplete specifiers or unclosed %(key) names; they raise an error at run time.",
   "scope": {
     "include": [
       "**/*"

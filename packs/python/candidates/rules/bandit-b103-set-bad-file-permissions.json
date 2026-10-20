@@ -3,7 +3,7 @@
   "id": "bandit-b103-set-bad-file-permissions",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect literal chmod modes that grant group or world write or execute permissions. World-write findings are higher severity.",
+  "description": "Avoid chmod modes that grant group-write, group-execute, world-write, or world-execute permission; overly broad permissions let other users tamper with files.",
   "scope": {
     "include": [
       "**/*.py"

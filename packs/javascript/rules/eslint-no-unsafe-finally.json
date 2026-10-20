@@ -3,7 +3,7 @@
   "id": "eslint-no-unsafe-finally",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `no-unsafe-finally` rule (https://eslint.org/docs/latest/rules/no-unsafe-finally). Flags return/throw/break/continue inside a finally block that would transfer control out of it: the nearest finally before a function/class boundary (and, for unlabeled break/continue, before an enclosing loop or switch; for a labeled jump, before the labeled statement it targets).",
+  "description": "Don't return, throw, break or continue out of a finally block; it silently overrides the result or exception of the try and catch blocks.",
   "scope": {
     "include": [
       "**/*"

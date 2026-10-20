@@ -3,7 +3,7 @@
   "id": "sqlfluff-am01-ambiguous-distinct",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's AM01 (ambiguous.distinct): flag the SELECT clause's DISTINCT in a SELECT statement that also has GROUP BY (the grammar puts GROUP BY in the FROM node after the SELECT node).",
+  "description": "Avoid DISTINCT in a SQL SELECT that already has GROUP BY; the grouping already makes the rows unique.",
   "scope": {
     "include": [
       "**/*.sql"

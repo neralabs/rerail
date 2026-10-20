@@ -3,7 +3,7 @@
   "id": "typescript-eslint-no-this-alias",
   "revision": 2,
   "mode": "steer",
-  "description": "typescript-eslint 8.70.1 @typescript-eslint/no-this-alias, default options. Port of typescript-eslint's `no-this-alias` rule (https://typescript-eslint.io/rules/no-this-alias). Reports a variable declared or assigned as `this`. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
+  "description": "Don't assign this to a local variable in TypeScript; use arrow functions, which keep this without an alias.",
   "scope": {
     "include": [
       "**/*.ts",

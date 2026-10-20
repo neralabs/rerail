@@ -482,7 +482,7 @@ export const SPECS = [
     upstream: "react/no-danger",
     capabilities: ["syntax", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/no-danger (default options): a `dangerouslySetInnerHTML` attribute on a DOM element (a tag whose name starts with a lower-case letter, jsx-ast-utils' elementType).",
+    description: "Avoid dangerouslySetInnerHTML on DOM elements; injecting raw HTML opens the door to cross-site scripting.",
     checks: [
       {
         id: "upstream",
@@ -498,7 +498,7 @@ export const SPECS = [
     upstream: "react/no-find-dom-node",
     capabilities: ["syntax", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/no-find-dom-node: a call whose callee is `findDOMNode` or a member `.findDOMNode`.",
+    description: "Use refs instead of findDOMNode(); it is deprecated, fails in StrictMode and doesn't work with function components.",
     checks: [
       {
         id: "upstream",
@@ -523,7 +523,7 @@ export const SPECS = [
     upstream: "react/no-is-mounted",
     capabilities: ["syntax", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/no-is-mounted: `this.isMounted()` inside an object property or a method (ESTree Property / MethodDefinition ancestor).",
+    description: "Avoid this.isMounted() in components; it is deprecated, so cancel pending work when the component unmounts instead.",
     checks: [
       {
         id: "upstream",
@@ -547,7 +547,7 @@ export const SPECS = [
     upstream: "react/no-render-return-value",
     capabilities: ["syntax", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/no-render-return-value (latest React): a `ReactDOM.render(...)` call whose value is used: its parent (parentheses aside) is a declarator, a property, a return, an arrow body or an assignment.",
+    description: "Don't use the return value of ReactDOM.render(); put a callback ref on the root element to get the instance instead.",
     checks: [
       {
         id: "upstream",
@@ -581,7 +581,7 @@ export const SPECS = [
     upstream: "react/jsx-no-duplicate-props",
     capabilities: ["syntax", "compare", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/jsx-no-duplicate-props (case-sensitive): an attribute whose plain name an earlier attribute of the same element already has; namespaced names and spreads are skipped.",
+    description: "Don't give a JSX element the same prop twice; only the last value takes effect.",
     checks: [
       {
         id: "upstream",
@@ -606,7 +606,7 @@ export const SPECS = [
     upstream: "react/no-children-prop",
     capabilities: ["syntax", "scope", "value", "arguments", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/no-children-prop (allowFunctions: false): a `children` JSX attribute, and a createElement call (isCreateElement, default pragma) whose second argument is an object literal with a `children` key.",
+    description: "Nest children between JSX tags, or pass them as extra createElement arguments, instead of passing a children prop.",
     checks: [
       { id: "attribute", rule: prop("children"), message: "Do not pass children as props. Instead, nest children between the opening and closing tags." },
       {
@@ -629,7 +629,7 @@ export const SPECS = [
     upstream: "react/jsx-no-comment-textnodes",
     capabilities: ["syntax", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/jsx-no-comment-textnodes: JSX text with a line that starts (after whitespace) with `//` or `/*`.",
+    description: "Wrap comments inside JSX children in braces; otherwise the comment text renders on the page.",
     checks: [
       {
         id: "upstream",
@@ -645,7 +645,7 @@ export const SPECS = [
     upstream: "react/void-dom-elements-no-children",
     capabilities: ["syntax", "scope", "value", "arguments", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/void-dom-elements-no-children: a void DOM element (area, base, br, col, embed, hr, img, input, keygen, link, menuitem, meta, param, source, track, wbr) with children, or with a `children` or `dangerouslySetInnerHTML` attribute (one report each); the same through createElement with an object-literal props argument.",
+    description: "Don't give void DOM elements such as img, br and input children or a dangerouslySetInnerHTML prop; React throws when they have content.",
     checks: [
       {
         id: "jsx-children",
@@ -702,7 +702,7 @@ export const SPECS = [
     upstream: "react/self-closing-comp",
     capabilities: ["syntax", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/self-closing-comp (component: true, html: true): an element with a closing tag and no children but whitespace containing a line break; namespaced tags only when lower-case (DOM).",
+    description: "Write elements without children as self-closing tags instead of an empty opening and closing pair.",
     checks: [
       {
         id: "upstream",
@@ -726,7 +726,7 @@ export const SPECS = [
     upstream: "react/no-string-refs",
     capabilities: ["syntax", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/no-string-refs (latest React, noTemplateLiterals: false): a `ref` attribute whose value is a string literal, bare or in braces. From React 18.3 on the rule no longer reports `this.refs` reads.",
+    description: "Use callback refs or createRef instead of string refs; string refs are deprecated and removed in React 19.",
     checks: [
       {
         id: "upstream",
@@ -743,7 +743,7 @@ export const SPECS = [
     upstream: "react/no-direct-mutation-state",
     capabilities: ["syntax", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/no-direct-mutation-state: an assignment or update whose target is a member chain rooted at `this.state`, inside a class component (nearest class extends Component / PureComponent / React.Component / React.PureComponent) or a function that is a property of the object passed to createReactClass; in a class constructor only when inside a call. Reported at `this`. Function components (Components.detect's stateless detection) are not modelled.",
+    description: "Update class component state with setState() instead of assigning to this.state outside the constructor; direct mutation doesn't trigger a re-render.",
     checks: [
       {
         id: "upstream",
@@ -830,7 +830,7 @@ export const SPECS = [
     upstream: "react/no-danger-with-children",
     capabilities: ["syntax", "scope", "arguments", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/no-danger-with-children: an element with both `dangerouslySetInnerHTML` and children (a first child that is not a line break, or a `children` prop), props read through `{...name}` spreads of a variable initialised with an object literal; and `x.createElement(type, props, ...)` with `dangerouslySetInnerHTML` in props (an object literal or a variable initialised with one) and a third argument or a `children` prop.",
+    description: "Don't give an element both dangerouslySetInnerHTML and children; React throws when both are set.",
     checks: [
       {
         id: "jsx",
@@ -895,7 +895,7 @@ export const SPECS = [
     upstream: "react/button-has-type",
     capabilities: ["syntax", "scope", "value", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/button-has-type (button, submit and reset allowed): a `<button>` without a `type` attribute (jsx-ast-utils getProp, case-insensitive) or whose first `type` value is not a literal button/submit/reset (each leaf of a conditional is checked; a non-literal leaf is reported at itself); the same for `React.createElement('button', props)` (isCreateElement, default pragma).",
+    description: "Give every button an explicit type of button, submit or reset; a button without one submits its form by default.",
     checks: [
       {
         id: "jsx-missing",
@@ -976,7 +976,7 @@ export const SPECS = [
     upstream: "react/jsx-key",
     capabilities: ["syntax", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/jsx-key (default options): an element (not a fragment) without a `key` attribute that is an array literal's element, or that a `.map(fn)` / `.from(x, fn)` callback returns: the arrow's body, a branch of its conditional body, the right side of its logical body, or a return statement directly in the callback's body or in nested if/else branches; never inside a `React.Children.toArray(...)` / `Children.toArray(...)` call.",
+    description: "Add a key prop to JSX elements in array literals and to those returned from map or Array.from callbacks; React needs keys to track list items between renders.",
     checks: [
       {
         id: "array",
@@ -999,7 +999,7 @@ export const SPECS = [
     upstream: "react/jsx-no-undef",
     capabilities: ["syntax", "scope", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/jsx-no-undef (allowGlobals: false, module code): a JSX tag name (not a DOM tag) or the root of a member tag name that no file-local binding declares; globals, even configured ones, do not count in a module.",
+    description: "Import or declare every component used in JSX in the same file; an undefined component name crashes at render.",
     checks: [
       {
         id: "upstream",
@@ -1030,7 +1030,7 @@ export const SPECS = [
     upstream: "react/react-in-jsx-scope",
     capabilities: ["syntax", "scope", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/react-in-jsx-scope (pragma React): a JSX opening element or fragment where no `React` binding is visible: none declared at the top level (import, var/let/const, function), in an enclosing block's own declarations, or as an enclosing function's parameter. Files whose `@jsx X` comment names a factory other than React are not checked: upstream then requires that factory in scope, which the port does not check.",
+    description: "Import React in every file that uses JSX; the classic JSX transform compiles tags to React.createElement calls.",
     checks: [
       {
         id: "upstream",
@@ -1050,7 +1050,7 @@ export const SPECS = [
     upstream: "react/no-unescaped-entities",
     capabilities: ["syntax", "suppression"],
     match: "line",
-    description: "eslint-plugin-react 7.37.5 react/no-unescaped-entities (forbid >, \", ', }): one finding per such character on the first line of a JSX text node (the k-th check holds where that line has at least k of them; ESLint reports each character at its own column). Characters on a text node's later lines are not reported: a finding is anchored at a node, and a text node has no node per line.",
+    description: "Escape >, \", ' and } in JSX text as HTML entities or expressions; unescaped they are usually typos for a closing tag or brace.",
     checks: [1, 2, 3, 4, 5, 6, 7, 8].map(count => ({
       id: `entity-${count}`,
       rule: { kind: "jsx_text", regex: `\\A(?:[^\\n>"'}]*[>"'}]){${count}}` },
@@ -1064,7 +1064,7 @@ export const SPECS = [
     upstream: "react/jsx-no-target-blank",
     capabilities: ["syntax", "value", "compare", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react 7.37.5 react/jsx-no-target-blank (default options: links only, enforceDynamicLinks always, allowReferrer false): an `<a>` whose last `target` is possibly `_blank` (a string, or a conditional with a `_blank` branch), with an external last `href` string (`scheme:` or `//`) or any `href` expression, and whose last `rel` does not give `noreferrer` on every value it may take (a string, the first quasi of a template, both branches of a conditional, or, when target and rel test the same name, the branch target is `_blank` on).",
+    description: "Add a noreferrer rel to links that open external or dynamic URLs with target _blank; otherwise the new page can reach back through window.opener.",
     checks: [
       {
         id: "upstream",
@@ -1092,7 +1092,7 @@ export const SPECS = [
     upstream: "react-hooks/rules-of-hooks",
     capabilities: ["syntax", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react-hooks 7.1.1 react-hooks/rules-of-hooks: a hook call (`use`, `useX`, `Namespace.useX`) reported at its callee when it runs (its nearest function, ESLint's code path) in a component or hook (a function named `X…`/`useX`, or memo/forwardRef's callback) conditionally (an if/conditional/logical/switch/catch/default branch, or after an earlier return in the function); in a class method or field; in another named function; at the top level; in an anonymous callback inside a component or hook; in a loop; in an async component or hook; and `use` in try/catch. Code paths are approximated syntactically.",
+    description: "Call React hooks only at the top level of components and custom hooks, never in conditions, loops, nested callbacks, async functions or after an early return.",
     checks: [
       ...[["ts", "public_field_definition", "\\.(?:[cm]?ts|tsx)$"], ["js", "field_definition", "\\.(?:[cm]?js|jsx)$"]].map(([dialect, fieldKind, path]) => (
       {
@@ -1182,7 +1182,7 @@ export const SPECS = [
     upstream: "react-hooks/exhaustive-deps",
     capabilities: ["syntax", "scope", "compare", "suppression"],
     match: "line+column",
-    description: "eslint-plugin-react-hooks 7.1.1 react-hooks/exhaustive-deps, the missing-dependency report only: the dependency array literal of useEffect / useLayoutEffect / useInsertionEffect / useCallback / useMemo (and React.*), when the inline callback reads a name bound in the function that calls the hook (outside the callback) that no dependency's root names; useState/useReducer setters and dispatchers, useRef, useEffectEvent and useTransition results count as stable.",
+    description: "List every component value that an effect, useCallback or useMemo callback reads in its dependency array; a missing one leaves the callback reading stale values.",
     checks: [
       {
         id: "missing-dependency",

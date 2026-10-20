@@ -3,7 +3,7 @@
   "id": "sqlfluff-al04-aliasing-unique-table",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0 AL04: report each later table relation whose explicit alias matches an earlier alias in the same FROM clause under PostgreSQL name comparison.",
+  "description": "Give every table in a SQL FROM clause a unique alias; a repeated alias makes column references ambiguous.",
   "scope": {
     "include": [
       "**/*.sql"

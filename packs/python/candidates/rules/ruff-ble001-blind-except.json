@@ -3,7 +3,7 @@
   "id": "ruff-ble001-blind-except",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's BLE001 (blind-except): the first builtin `Exception` or `BaseException` (`resolve_builtin_symbol`: the unshadowed name or `builtins.`) in an `except` clause's type, searching nested tuples, reported on it, unless the handler body (not entering nested `try`, `def` or `class`) re-raises (`raise`, `raise e`, `raise ... from e` with the handler's name) or logs the exception: an expression-statement call of `exception`, or of another logger method with `exc_info` not known falsy, on a logger candidate (a value resolving to `logging` or `flask.current_app.logger`, an inline `logging.getLogger(...)`/`Logger(...)`, or a name whose last part starts with `log`/`LOG` or ends with `logger`/`logging` and that has no qualified name: `resolves.import: true`, Ruff's `resolve_qualified_name(..).is_some()`), or a name resolving to `logging.<method>`.",
+  "description": "Avoid catching Exception or BaseException unless the handler re-raises or logs the exception; a blind catch hides unexpected errors.",
   "scope": {
     "include": [
       "**/*"

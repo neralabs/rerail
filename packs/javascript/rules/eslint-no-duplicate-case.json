@@ -3,7 +3,7 @@
   "id": "eslint-no-duplicate-case",
   "revision": 4,
   "mode": "steer",
-  "description": "ESLint 10.11.0 no-duplicate-case, default options. Port of ESLint's `no-duplicate-case` rule (https://eslint.org/docs/latest/rules/no-duplicate-case). Reports a case whose test (inside any parentheses) is token-equal (ESLint's equalTokens, via `compare` text `tokens`) to an earlier case of the same switch.",
+  "description": "Don't repeat the same case test in a switch statement; the duplicate case can never be reached.",
   "scope": {
     "include": [
       "**/*.ts",

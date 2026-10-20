@@ -3,7 +3,7 @@
   "id": "eslint-no-multi-str",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `no-multi-str` rule (https://eslint.org/docs/latest/rules/no-multi-str). Reports a string literal whose source text contains a line break (a backslash line continuation), unless its parent is a JSX attribute or JSX expression container.",
+  "description": "Avoid multiline strings built with backslash line continuations; use a template literal or concatenation instead.",
   "scope": {
     "include": [
       "**/*"

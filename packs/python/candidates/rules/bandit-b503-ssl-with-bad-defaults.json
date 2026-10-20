@@ -3,7 +3,7 @@
   "id": "bandit-b503-ssl-with-bad-defaults",
   "revision": 1,
   "mode": "steer",
-  "description": "Flag function-parameter defaults that resolve through Python imports to configured insecure SSL/TLS protocol constants",
+  "description": "Don't default a function parameter to an SSLv2, SSLv3, TLS 1.0 or TLS 1.1 protocol constant; callers silently inherit a broken protocol.",
   "scope": {
     "include": [
       "**/*.py"

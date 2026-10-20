@@ -3,7 +3,7 @@
   "id": "sqlfluff-st02-structure-simple-case",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's ST02 (structure.simple_case): report a searched CASE with one WHEN that is a boolean (THEN TRUE ELSE FALSE, or the reverse), or whose condition is `column IS NULL` with the column as its ELSE, or `column IS NOT NULL` with the column as its THEN; anchored at the WHEN condition. A simple CASE, several WHENs, a compound condition and IS DISTINCT FROM are not reported.",
+  "description": "Replace a single-branch SQL CASE that only returns TRUE/FALSE or fills in a NULL with the condition itself or COALESCE.",
   "scope": {
     "include": [
       "**/*.sql"

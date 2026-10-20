@@ -3,7 +3,7 @@
   "id": "ruff-w605-invalid-escape-sequence",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's W605 (invalid-escape-sequence): a backslash in a non-raw string, bytes, f-string or t-string literal part that does not start a valid escape (newline, backslash, quotes, `a b f n r t v`, octal digits `0`-`7`, `x`, `N`, `u`, `U`), one finding per backslash. tree-sitter-python leaves such a backslash as a bare `\\` token inside `string_content` (valid escapes are `escape_sequence` nodes); f-string format specifiers keep their text unsplit, so a regex over the specifier walks its escapes and `each` reports every invalid backslash (a specifier with none binds no group and reports nothing).",
+  "description": "Avoid invalid backslash escape sequences in Python strings; use a raw string or a doubled backslash instead.",
   "scope": {
     "include": [
       "**/*"

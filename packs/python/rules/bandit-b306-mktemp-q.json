@@ -3,7 +3,7 @@
   "id": "bandit-b306-mktemp-q",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect use of insecure tempfile.mktemp",
+  "description": "Use tempfile.mkstemp() or NamedTemporaryFile instead of tempfile.mktemp(); mktemp returns a name another process can claim before you create the file.",
   "scope": {
     "include": [
       "**/*.py"

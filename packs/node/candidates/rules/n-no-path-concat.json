@@ -3,7 +3,7 @@
   "id": "n-no-path-concat",
   "revision": 3,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/no-path-concat: `__dirname`/`__filename` (Node's CommonJS-scope globals) or `import.meta.dirname|filename|url` as the left of `+` or a template substitution, when the next part's first character is `/` (path.sep on the recorder's POSIX host): a string starting with /, a constant (followed binding), `path.sep` of the path module (ReferenceTracker reach), or recursively the left of a binary, either side of ||/&&/??, either branch of ?:, an assignment's right side, or a template's first part. No sourceType is pinned, so each file keeps its own module system (.cjs/.cts CommonJS; .mjs/.mts/.tsx an ES module; .js/.jsx/.ts by the nearest package.json's type, Node's syntax detection where that package.json sets no valid type, and an ES module where there is no package.json). As eslint-plugin-n's own configs (flat/mixed-esm-and-cjs picks per file), a CommonJS file has require, module, exports, __dirname and __filename (flat/recommended-script) and an ES module none of them (flat/recommended-module turns them off). So `__dirname` and `__filename` are reached only in a CommonJS file (the `-commonjs` clauses, which declare them); in an ES module only `import.meta` paths are.",
+  "description": "Use path.join() or path.resolve() instead of concatenating __dirname, __filename or import.meta paths with strings; hand-built paths break across platforms.",
   "scope": {
     "include": [
       "**/*.ts",

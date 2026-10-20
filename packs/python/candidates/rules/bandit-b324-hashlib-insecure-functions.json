@@ -3,7 +3,7 @@
   "id": "bandit-b324-hashlib-insecure-functions",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect weak hashlib algorithms and insecure crypt methods while allowing explicitly non-security hashlib use.",
+  "description": "Avoid MD4, MD5, and SHA1 from hashlib unless marked as not for security, and crypt calls without a strong method; use SHA-256 or a modern password hash.",
   "scope": {
     "include": [
       "**/*.py"

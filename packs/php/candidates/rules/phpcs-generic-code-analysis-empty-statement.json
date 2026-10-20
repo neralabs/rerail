@@ -3,7 +3,7 @@
   "id": "phpcs-generic-code-analysis-empty-statement",
   "revision": 1,
   "mode": "steer",
-  "description": "PHP_CodeSniffer 4.0.4 Generic.CodeAnalysis.EmptyStatement: a control structure (if, elseif, else, for, foreach, while, do, switch, try, catch, finally, match) whose braced body holds nothing but comments and white space.",
+  "description": "Remove empty PHP control structure bodies, such as an if, loop, switch, try, catch or match block holding only comments; they hide unfinished or swallowed logic.",
   "scope": {
     "include": [
       "**/*.php"

@@ -3,7 +3,7 @@
   "id": "next-no-sync-scripts",
   "revision": 3,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-sync-scripts: a <script> opening element with a src attribute and neither async nor defer.",
+  "description": "Add async or defer to script tags that load an external src; synchronous scripts block page rendering.",
   "scope": {
     "include": [
       "**/*.ts",

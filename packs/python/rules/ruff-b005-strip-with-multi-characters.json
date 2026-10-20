@@ -3,7 +3,7 @@
   "id": "ruff-b005-strip-with-multi-characters",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B005 (strip-with-multi-characters): `.strip`/`.lstrip`/`.rstrip` called with exactly one positional argument that is a str literal (not bytes, an f- or t-string; escapes decoded, implicit concatenations joined) whose value repeats a character, tested with a backreference (`(.).*\\1`). Reported on the call.",
+  "description": "Avoid strip, lstrip or rstrip with a multi-character string that repeats a character; the argument is a set of characters, not a substring to remove.",
   "scope": {
     "include": [
       "**/*"

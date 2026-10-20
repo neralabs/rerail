@@ -3,7 +3,7 @@
  "id": "ruff-async222-wait-for-process-in-async-function",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's ASYNC222 (wait-for-process-in-async-function): a call to `os.wait`, `os.wait3`, `os.wait4`, `os.waitid` or `os.waitpid` inside an `async def` body whose function is the nearest enclosing function, lambda body or class, reported on the callee. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "description": "Don't call os.wait, os.waitpid or the other blocking os.wait functions inside async functions; they block the event loop.",
  "scope": {
   "include": [
    "**/*"

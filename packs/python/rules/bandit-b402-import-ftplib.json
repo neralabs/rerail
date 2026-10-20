@@ -3,7 +3,7 @@
   "id": "bandit-b402-import-ftplib",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect direct imports of the insecure ftplib module.",
+  "description": "Remove imports of ftplib; FTP sends credentials and data unencrypted, so use SFTP, SCP, or another encrypted protocol.",
   "scope": {
     "include": [
       "**/*.py"

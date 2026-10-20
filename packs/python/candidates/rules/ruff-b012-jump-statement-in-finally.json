@@ -3,7 +3,7 @@
   "id": "ruff-b012-jump-statement-in-finally",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B012 (jump-statement-in-finally): a `return`, `break` or `continue` statement in a `finally` block, reached through the bodies of nested `if` (not `elif`/`else`), `try` (not handlers, `else` or `finally`), `with` and `match` cases; `return` also through `while`/`for` bodies (not their `else`), where `break`/`continue` stop. Function and class bodies stop the walk. Reported on the statement.",
+  "description": "Don't return, break or continue inside a finally block; it silently discards any exception being raised.",
   "scope": {
     "include": [
       "**/*"

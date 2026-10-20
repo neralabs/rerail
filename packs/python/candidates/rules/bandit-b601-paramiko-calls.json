@@ -3,7 +3,7 @@
   "id": "bandit-b601-paramiko-calls",
   "revision": 1,
   "mode": "steer",
-  "description": "Require a paramiko-like import and resolve an exec_command call, which runs remote input through a shell; Bandit recommends verifying that inputs are sanitized.",
+  "description": "Sanitize input passed to Paramiko SSHClient.exec_command; the command runs through a shell on the remote host.",
   "scope": {
     "include": [
       "**/*.py"

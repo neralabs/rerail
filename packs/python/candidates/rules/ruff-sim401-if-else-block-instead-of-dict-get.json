@@ -3,7 +3,7 @@
   "id": "ruff-sim401-if-else-block-instead-of-dict-get",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM401 (if-else-block-instead-of-dict-get): `if K in D: V = D[K] else: V = DEFAULT` (or the `not in` form with the arms swapped), and the conditional-expression form, where the default has no side effect (`contains_effect`). Operands are compared by source text, where Ruff compares expressions (`ComparableExpr`). The statement form needs `D` to be a name whose binding is a dict (`is_dict` through `resolves.binding` with `only`: Ruff's is_known_to_be_of_type_dict, whose only_binding asks that the binding shadows no earlier one). Partial: Ruff also asks that the suggested `V = D.get(K, DEFAULT)` fits the line length.",
+  "description": "Use dict.get() with a default instead of an if/else that checks whether a key is in a dict before reading it.",
   "scope": {
     "include": [
       "**/*"

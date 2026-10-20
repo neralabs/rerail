@@ -3,7 +3,7 @@
   "id": "bandit-b305-cipher-modes",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect use of the insecure ECB cipher mode",
+  "description": "Avoid the ECB cipher mode; it encrypts identical blocks to identical output and leaks patterns in the data, so use an authenticated mode such as GCM.",
   "scope": {
     "include": [
       "**/*.py"

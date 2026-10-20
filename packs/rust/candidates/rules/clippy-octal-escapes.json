@@ -3,7 +3,7 @@
   "id": "clippy-octal-escapes",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's octal_escapes: reports each \\0 followed by one or two octal digits in string, byte-string, or C-string literals; format-string preprocessing and external macros are not modelled.",
+  "description": "Avoid a null escape followed by digits in Rust string literals; Rust has no octal escapes, so it yields a NUL then digits, not the intended character.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [{
     "id": "octal-escape",

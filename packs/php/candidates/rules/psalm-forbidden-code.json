@@ -3,7 +3,7 @@
   "id": "psalm-forbidden-code",
   "revision": 2,
   "mode": "steer",
-  "description": "Psalm 6.19.1 ForbiddenCode with no forbiddenFunctions configured: a call PHP resolves to var_dump or shell_exec (not a first-class callable), and a backtick shell command, which Psalm reads as a shell_exec call. Divergence: a var_dump call is not reported when its output is the point, because removing it changes behaviour: when it is a statement that an earlier statement in the same block starts buffering with ob_start() and a later statement reads the buffer with ob_get_clean() or ob_get_contents(), or when it is inside a function or method named dump or dd, where it is the fallback dumper (NER-1809).",
+  "description": "Remove var_dump(), shell_exec() and backtick shell commands from PHP code; they leak debug output or open the door to command injection.",
   "scope": {
     "include": [
       "**/*.php"

@@ -3,7 +3,7 @@
   "id": "sqlfluff-st01-structure-else-null",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's ST01 (structure.else_null): reject a CASE expression whose ELSE clause is the bare NULL literal; report the CASE expression start.",
+  "description": "Remove ELSE NULL from SQL CASE expressions; CASE already returns NULL when no branch matches.",
   "scope": {
     "include": [
       "**/*.sql"

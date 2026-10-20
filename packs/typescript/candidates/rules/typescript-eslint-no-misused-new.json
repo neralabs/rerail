@@ -3,7 +3,7 @@
   "id": "typescript-eslint-no-misused-new",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `no-misused-new` rule (https://typescript-eslint.io/rules/no-misused-new). Reports a bodiless class method `new` returning its own class, an interface construct signature returning its own interface, and a `constructor` method signature in an interface or type literal.",
+  "description": "Don't declare a new method on a class or a constructor or construct signature on an interface; define a real class constructor instead.",
   "scope": {
     "include": [
       "**/*.ts",

@@ -3,7 +3,7 @@
   "id": "bandit-b201-flask-debug-true",
   "revision": 1,
   "mode": "steer",
-  "description": "After proving flask is imported (including aliases), resolve a call ending in .run and flag debug=True.",
+  "description": "Don't run a Flask app with debug enabled; the interactive debugger lets anyone who can reach it execute arbitrary code.",
   "scope": {
     "include": [
       "**/*.py"

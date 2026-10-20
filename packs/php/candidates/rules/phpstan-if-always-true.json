@@ -3,7 +3,7 @@
   "id": "phpstan-if-always-true",
   "revision": 1,
   "mode": "steer",
-  "description": "PHPStan 2.2.16 if.alwaysTrue (IfConstantConditionRule): an if condition PHP's constant evaluation (variables followed through their one reaching binding) finds always truthy; not the comparisons, negations, ternaries, isset and empty PHPStan leaves to other rules, a condition in a trait, or an if an inline @var doc comment precedes (PHPStan reads the variable as the PHPDoc type).",
+  "description": "Remove PHP if conditions that are always true; the check is redundant and often hides a logic mistake.",
   "scope": {
     "include": [
       "**/*.php"

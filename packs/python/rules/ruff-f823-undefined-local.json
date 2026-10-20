@@ -3,7 +3,7 @@
   "id": "ruff-f823-undefined-local",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F823 (undefined-local) with default settings, on the engine's name resolution (M10a `resolves.beforeLocal`, Ruff's undefined_local): a function's first read of a name that resolves to an enclosing function's or the module's binding which the function's own later binding of the name shadows, where that binding is the function's first and latest of the name (not `global`, `nonlocal` or `del`). Reported on the read. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F823.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Don't read a variable before the function assigns it, even when an outer scope has the same name; Python raises UnboundLocalError.",
   "scope": {
     "include": [
       "**/*"

@@ -539,7 +539,7 @@ function assertingHelper(utils) {
 const DOCUMENTS = {
   "vitest-expect-expect": {
     mode: "steer",
-    description: "A test whose function never calls `expect` or `assert`.",
+    description: "Add at least one expect or assert call to every Vitest test; a test without assertions passes no matter what the code does.",
     clauses: withDefine(utils => [
       {
         id: "no-assertion",
@@ -577,7 +577,7 @@ const DOCUMENTS = {
   },
   "vitest-no-disabled-tests": {
     mode: "log",
-    description: "A disabled test: `.skip`, `xit`, `xtest`, `xdescribe`, a test with no function, or `pending()`.",
+    description: "Fix or delete disabled Vitest tests, such as skipped tests, x-prefixed tests, pending() or tests with no function; they silently never run.",
     clauses: withDefine(
       utils => [
         {
@@ -642,7 +642,7 @@ const DOCUMENTS = {
   },
   "vitest-no-focused-tests": {
     mode: "steer",
-    description: "A focused test (`.only`), which makes Vitest skip every other test in the file.",
+    description: "Remove .only from Vitest tests and suites; a focused test makes Vitest skip every other test in the file.",
     clauses: withDefine(
       utils => [
         {

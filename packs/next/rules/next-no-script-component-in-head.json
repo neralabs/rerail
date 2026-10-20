@@ -3,7 +3,7 @@
   "id": "next-no-script-component-in-head",
   "revision": 2,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-script-component-in-head: a <Head> element with a direct <Script> element child, in a file that imports next/head.",
+  "description": "Place next/script Script components outside Head from next/head; scripts inside Head are not loaded as intended.",
   "scope": {
     "include": [
       "**/*.ts",

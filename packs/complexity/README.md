@@ -125,3 +125,14 @@ node packs/complexity/upstream/lizard/generate.mjs
 It runs `uvx --from lizard==1.24.0 lizard --csv` on `upstream/lizard/fixtures/` and rewrites
 `upstream/lizard/lizard-1.24.0.tsv`. A new case lizard mis-scores needs an entry in the test's `DEVIATIONS`
 list and a line under "Deviations" above.
+
+## Rule details
+
+What each rule matches beyond its one-line description: exact matching, edge cases, upstream settings and known divergences.
+
+### `complexity-cyclomatic-typescript`
+
+Conditional types (`T extends U ? X : Y`) do not count as decision points. The README's "What counts" list for
+TypeScript names optional parameters/properties, optional chaining, default parameters, `??` and `??=` as not counting,
+but does not say conditional types are excluded too (it only mentions lizard reading conditional types as functions
+in the hono comparison).

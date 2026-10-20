@@ -3,7 +3,7 @@
   "id": "ruff-f507-percent-format-positional-count-mismatch",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F507 (percent-format-positional-count-mismatch): a valid `%`-format string without `%(key)` placeholders whose positional values differ in number from a tuple display without starred items, or, with any count but one, from a right operand Ruff's ResolvedPythonType infers as one non-tuple value; with no placeholder, any right operand but a tuple display or one Ruff types as a tuple (`(1,) + (2,)`). `formatArgs` reads the format string left of `%` (a str literal with no f/t/b prefix, implicit concatenations joined, escapes decoded, parentheses transparent) with the `percentFormat` grammar (a port of ruff_python_literal's cformat parser), and the right operand as Ruff's strings.rs does. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F507.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Match the number of %-format placeholders to the number of values supplied; a mismatch raises TypeError at run time.",
   "scope": {
     "include": [
       "**/*"

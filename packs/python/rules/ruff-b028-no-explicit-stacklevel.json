@@ -3,7 +3,7 @@
   "id": "ruff-b028-no-explicit-stacklevel",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B028 (no-explicit-stacklevel): a call to `warnings.warn` with no `stacklevel` (keyword or third positional argument: find_argument_value, through `arguments` in syntactic mode), no non-empty `skip_file_prefixes`, and no `*`/`**` unpacking. The callee resolves with `resolves` (imports and shadowing as Ruff's semantic model sees them). Reported on the callee, inside any parentheses. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/B028.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Pass an explicit stacklevel to warnings.warn(); without it the warning points at the warn call instead of the caller who triggered it.",
   "scope": {
     "include": [
       "**/*"

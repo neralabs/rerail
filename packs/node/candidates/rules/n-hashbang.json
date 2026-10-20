@@ -3,7 +3,7 @@
   "id": "n-hashbang",
   "revision": 1,
   "mode": "steer",
-  "description": "Candidate for eslint-plugin-n 18.4.1 n/hashbang (default options): whether a file needs a shebang is read from the nearest package.json's `bin` (a path, or an object of paths, relative to the manifest's folder, `.js` and `/index` optional); without a package.json nothing is checked, as upstream. A file `bin` does not name reports a shebang (`#!` and at least one character opening the text, ended by a line break): \"This file needs no shebang.\". A file it names reports a first line that is no node shebang (`#!/usr/bin/env`, env flags and variables as upstream's isNodeShebang strips them, then `node`): 'This file needs shebang \"#!/usr/bin/env node\".'. Not ported: the convertPath option and settings, ignoreUnpublished (.npmignore), additionalExecutables and executableMap (the expected executable is always node), and the BOM and CRLF reports on a bin file whose shebang is right (\"This file must not have Unicode BOM.\", \"This file must have Unix linebreaks (LF).\").",
+  "description": "Start the files that package.json lists as bin executables with a node shebang line, and leave the shebang off every other file.",
   "scope": {
     "include": [
       "**/*.ts",

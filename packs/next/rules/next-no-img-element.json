@@ -3,7 +3,7 @@
   "id": "next-no-img-element",
   "revision": 4,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-img-element: an <img> opening element with attributes, not a direct child of <picture>, unless the file is an app-dir metadata image route (the path relative to the ESLint cwd matches ^(src/)?app/ and /opengraph-image|twitter-image|icon.ext). The message is upstream's with more added (NER-1946): what `<Image />` needs (width and height or fill; a matching images.remotePatterns entry for a remote src) and the eslint-disable comment that keeps `<img>`.",
+  "description": "Use the next/image Image component instead of img elements (picture children and metadata image routes aside); it optimizes images for faster loads and less bandwidth.",
   "scope": {
     "include": [
       "**/*.ts",

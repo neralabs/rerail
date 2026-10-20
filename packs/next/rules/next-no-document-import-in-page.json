@@ -3,7 +3,7 @@
   "id": "next-no-document-import-in-page",
   "revision": 3,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-document-import-in-page: an import from next/document, unless the part of the path after its last `pages` is empty or starts with `/_document`.",
+  "description": "Import next/document only in pages/_document; the custom Document API does not work in regular pages or components.",
   "scope": {
     "include": [
       "**/*.ts",

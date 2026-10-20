@@ -3,7 +3,7 @@
   "id": "phpstan-argument-sprintf",
   "revision": 1,
   "mode": "steer",
-  "description": "PHPStan 2.2.16 argument.sprintf (PrintfParametersRule): a sprintf() call whose known format asks for more or fewer values than it passes, or that PHP refuses.",
+  "description": "Pass sprintf() exactly as many values as its format string's placeholders, and keep the format valid; too few values throw and extra ones are silently ignored.",
   "scope": {
     "include": [
       "**/*.php"

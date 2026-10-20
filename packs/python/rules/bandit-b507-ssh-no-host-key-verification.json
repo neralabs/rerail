@@ -3,7 +3,7 @@
   "id": "bandit-b507-ssh-no-host-key-verification",
   "revision": 4,
   "mode": "steer",
-  "description": "Once an import whose name contains paramiko has been walked (Bandit's substring test, in Bandit's source-order walk), flag a call whose function name is set_missing_host_key_policy (the attribute name, a bare name, or a name aliased by an earlier import to one ending in set_missing_host_key_policy) and whose first positional argument is a name, attribute, or call naming AutoAddPolicy or WarningPolicy.",
+  "description": "Don't let Paramiko auto-accept unknown SSH host keys with AutoAddPolicy or WarningPolicy; it opens the door to man-in-the-middle attacks.",
   "scope": {
     "include": [
       "**/*.py"

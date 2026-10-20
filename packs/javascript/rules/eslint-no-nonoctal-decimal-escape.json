@@ -3,7 +3,7 @@
   "id": "eslint-no-nonoctal-decimal-escape",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `no-nonoctal-decimal-escape` rule (https://eslint.org/docs/latest/rules/no-nonoctal-decimal-escape). Reports each \\8 or \\9 escape sequence in a string literal.",
+  "description": "Avoid the \\8 and \\9 escape sequences in strings; they are not valid escapes and just produce the digit, which misleads readers.",
   "scope": {
     "include": [
       "**/*"

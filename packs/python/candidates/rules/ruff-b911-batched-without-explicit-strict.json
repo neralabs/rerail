@@ -3,7 +3,7 @@
   "id": "ruff-b911-batched-without-explicit-strict",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B911 (batched-without-explicit-strict), from target version 3.13 (`when`; `batched_without_explicit_strict.rs:72`): a call to `itertools.batched` with no `strict=` keyword (find_keyword, through `arguments` in syntactic mode) whose first positional argument exists, is not `*` unpacking and is not an infinite iterator. The callee resolves with `resolves` (imports, their scope and order as Ruff's semantic model sees them). Reported on the call.",
+  "description": "Pass strict= explicitly to itertools.batched() on Python 3.13+; otherwise a short final batch passes silently.",
   "scope": {
     "include": [
       "**/*"

@@ -3,7 +3,7 @@
   "id": "ruff-f406-undefined-local-with-nested-import-star-usage",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F406 (undefined-local-with-nested-import-star-usage): a `from <module> import *` outside module scope, i.e. anywhere inside a function or class body, reported on the whole statement.",
+  "description": "Don't use from module import * inside a function or class; star imports are only allowed at module level.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {

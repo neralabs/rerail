@@ -3,7 +3,7 @@
   "id": "ruff-e714-not-is-test",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's E714 (not-is-test): `not` applied to a comparison whose only operator is `is` (the comparison may be parenthesized), reported on the comparison inside any parentheses; also inside a string Ruff parses as a type definition (M11a `parse` with `annotation`, nested strings included), reported on each such comparison inside the string.",
+  "description": "Use x is not y instead of not x is y for identity tests; it reads clearly and avoids precedence confusion.",
   "scope": {
     "include": [
       "**/*"

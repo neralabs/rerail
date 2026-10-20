@@ -3,7 +3,7 @@
   "id": "ruff-pie810-multiple-starts-ends-with",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PIE810 (multiple-starts-ends-with): an `or` chain with two or more operands `R.startswith(x)` (or two `R.endswith(x)`) on the same name `R`, each with one positional argument and no keywords, where the argument is not a name bound to a tuple (Ruff's is_bound_to_tuple through `resolves.binding`, read as lookup_symbol does with `stopAtGlobal`: a `def`'s `*args`, a tuple-typed value, `tuple(...)`, or a `tuple`/`Tuple` annotation or return annotation). Reported on the whole chain, once per such group.",
+  "description": "Pass a tuple to one startswith() or endswith() call instead of or-ing several calls on the same string.",
   "scope": {
     "include": [
       "**/*"

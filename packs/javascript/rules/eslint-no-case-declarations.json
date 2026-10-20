@@ -3,7 +3,7 @@
  "id": "eslint-no-case-declarations",
  "revision": 3,
  "mode": "steer",
- "description": "Port of ESLint's `no-case-declarations` rule (https://eslint.org/docs/latest/rules/no-case-declarations). Flags a let/const, function or class declaration that is a direct statement of a `case` or `default` clause. `using` declarations, which tree-sitter-typescript 0.23.2 parses as assignments with a `using` token, count as lexical declarations.",
+ "description": "Wrap let, const, function and class declarations inside a switch case in braces; otherwise they leak into the whole switch.",
  "scope": {
   "include": [
    "**/*"

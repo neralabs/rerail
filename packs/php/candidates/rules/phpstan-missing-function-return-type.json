@@ -3,7 +3,7 @@
   "id": "phpstan-missing-function-return-type",
   "revision": 1,
   "mode": "steer",
-  "description": "PHPStan 2.2.16 missingType.return as MissingFunctionReturnTypehintRule reports it: a function declaration (not a method or closure) with neither a native return type nor a PHPDoc @return, @phpstan-return or @psalm-return type in its doc comment.",
+  "description": "Declare a return type on PHP functions, natively or with a @return doc tag; methods and closures are not checked.",
   "scope": {
     "include": [
       "**/*.php"

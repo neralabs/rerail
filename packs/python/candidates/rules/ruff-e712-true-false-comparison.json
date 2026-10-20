@@ -3,7 +3,7 @@
   "id": "ruff-e712-true-false-comparison",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's E712 (true-false-comparison) with default settings: `True` or `False` compared with `==` or `!=`, reported on the whole comparison. Operands are checked as for E711; `True == True` (same literal on both sides of `==`) is not reported.",
+  "description": "Avoid comparing to True or False with == or !=; test the value directly, or use is when the exact boolean matters.",
   "scope": {
     "include": [
       "**/*"

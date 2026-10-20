@@ -28,7 +28,7 @@ A document keeps its committed revision when nothing else in it changes; a shipp
 bumps it, as biome-suppression.mjs does. A document with no committed version starts at revision 1.
 
 The utilities emulate @eslint-community/eslint-utils' ReferenceTracker (legacy mode) and ESTree shapes over
-tree-sitter's: see each policy's description. Some helpers exist in two spellings (e.g. a string constant matched by
+tree-sitter's. Each port's description (DESCRIPTIONS) is the steer an agent reads, written by hand. Some helpers exist in two spellings (e.g. a string constant matched by
 its string_fragment or by its value; member property tested before or after the object) because the committed
 policies were authored with both; regeneration reproduces them byte for byte.
 """
@@ -147,8 +147,32 @@ SECOND_LAST = {"position": 2, "reverse": True, "ofRule": NOT_COMMENT}
 # No sourceType: each file keeps its own module system (the engine reads it from the extension and package.json).
 FILE_LO = {}
 NODE_LO = {"globals": {"process": "readonly"}}
-MODULE_SYSTEM = ("No sourceType is pinned, so each file keeps its own module system (.cjs/.cts CommonJS; .mjs/.mts/.tsx an ES module; .js/.jsx/.ts by the nearest package.json's type, Node's syntax detection where that package.json sets no valid type, and an ES module where there is no package.json). "
-                 "As eslint-plugin-n's own configs (flat/mixed-esm-and-cjs picks per file), a CommonJS file has require, module, exports, __dirname and __filename (flat/recommended-script) and an ES module none of them (flat/recommended-module turns them off).")
+# Each port's description: the steer an agent reads.
+DESCRIPTIONS = {
+    "n-callback-return": "Return right after calling a callback named callback, cb or next; otherwise the function keeps running and the callback can fire twice.",
+    "n-exports-style": "Use module.exports instead of the bare exports shortcut in CommonJS files, for one consistent export style.",
+    "n-global-require": "Keep require() calls at the top level of a module, not inside functions or blocks; nested requires hide dependencies and load synchronously mid-run.",
+    "n-handle-callback-err": "Handle the err parameter of error-first callbacks instead of leaving it unused; ignoring it silently swallows failures.",
+    "n-hashbang": "Start the files that package.json lists as bin executables with a node shebang line, and leave the shebang off every other file.",
+    "n-no-callback-literal": "Pass an Error or null, not a string, number, array or object literal, as the first argument of error-first callbacks named callback or cb.",
+    "n-no-deprecated-api": "Avoid deprecated Node.js APIs, such as new Buffer() or the domain module; they may be removed and usually have safer replacements.",
+    "n-no-exports-assign": "Don't assign to exports in CommonJS files; it breaks the link to module.exports, so assign to module.exports instead.",
+    "n-no-mixed-requires": "Keep require() declarations separate from other variable declarations instead of mixing them in one statement.",
+    "n-no-new-require": "Don't use new directly on a require() call; require the module into a variable first, then construct it, for readability.",
+    "n-no-path-concat": "Use path.join() or path.resolve() instead of concatenating __dirname, __filename or import.meta paths with strings; hand-built paths break across platforms.",
+    "n-no-process-env": "Avoid reading process.env directly; pass configuration in explicitly so dependencies on the environment stay visible and testable.",
+    "n-no-sync": "Avoid calling methods whose name ends in Sync, such as readFileSync; they block the Node.js event loop.",
+    "n-prefer-global-buffer": "Use the global Buffer instead of importing or requiring it from the buffer module; it is always available in Node.js.",
+    "n-prefer-global-console": "Use the global console instead of importing or requiring the console module; it is always available in Node.js.",
+    "n-prefer-global-process": "Use the global process instead of importing or requiring the process module; it is always available in Node.js.",
+    "n-prefer-global-text-decoder": "Use the global TextDecoder instead of importing or requiring it from the util module; it is always available in Node.js.",
+    "n-prefer-global-text-encoder": "Use the global TextEncoder instead of importing or requiring it from the util module; it is always available in Node.js.",
+    "n-prefer-global-url": "Use the global URL instead of importing or requiring it from the url module; it is always available in Node.js.",
+    "n-prefer-global-url-search-params": "Use the global URLSearchParams instead of importing or requiring it from the url module; it is always available in Node.js.",
+    "n-prefer-node-protocol": "Load Node.js built-in modules with the node: prefix, such as node:fs, when the project's Node versions support it; it marks them as built-ins npm packages can't shadow.",
+    "n-prefer-promises-dns": "Use the promise-based dns API instead of the callback-style dns functions and Resolver, for cleaner async code.",
+    "n-prefer-promises-fs": "Use the promise-based fs API instead of callback-style fs functions such as readFile and writeFile, for cleaner async code.",
+}
 
 
 def esc(text):
@@ -286,15 +310,9 @@ def prefer_global_docs():
     for name, (rx, prop, mod) in PREFER_GLOBAL.items():
         if prop:
             message = f"Unexpected use of 'require(\"{mod}\").{prop}'. Use the global variable '{prop}' instead."
-            what = f"`{prop}` read from the {mod} module"
         else:
             message = f"Unexpected use of 'require(\"{mod}\")'. Use the global variable '{mod}' instead."
-            what = f"the {mod} module itself"
-        description = (f"eslint-plugin-n 18.4.1 n/prefer-global/{name} (default \"always\"): {what} as ReferenceTracker (legacy mode) finds it — "
-                       f"`require('{mod}')`/`require('node:{mod}')` with the global require, `process.getBuiltinModule(…)` with the global process, through constant aliases, "
-                       + ("member reads, object-pattern properties, import/export specifiers and `export *`" if prop else "and every ESM import/export declaration from it") + ". "
-                       + MODULE_SYSTEM + " So `require(…)` is reached only in a CommonJS file; in an ES module only imports and `process.getBuiltinModule(…)` are.")
-        docs.append(hoist(policy(f"n-prefer-global-{name}", f"n/prefer-global/{name}", description, prefer_global_checks(rx, prop, message))))
+        docs.append(hoist(policy(f"n-prefer-global-{name}", f"n/prefer-global/{name}", DESCRIPTIONS[f"n-prefer-global-{name}"], prefer_global_checks(rx, prop, message))))
     return docs
 
 
@@ -344,14 +362,7 @@ def prefer_promises_docs():
         if constructs:
             checks.append({"id": "construct", "ast": {"languageOptions": NODE_LO, "utils": promises_utils(mod, plain_alt(constructs)),
                                                       "rule": {"kind": "new_expression", **IN_FILE_NAMING_MODULE, "has": {"field": "constructor", "matches": "fn-value"}}}, "message": f"Use 'new {mod}.promises.<name>()' instead."})
-        description = (f"eslint-plugin-n 18.4.1 n/prefer-promises/{mod}: calls of the {mod} module's callback API ({', '.join(calls)}"
-                       + (f"; construction of {', '.join(constructs)}" if constructs else "")
-                       + f") as ReferenceTracker (legacy mode) finds them: members of `require('{mod}')`/`require('node:{mod}')` (global require), `process.getBuiltinModule(…)` (global process), ESM default/namespace imports and constant aliases, destructured properties and import specifiers. Unlike ReferenceTracker, it does not follow assignments to imported or `const` bindings, which throw when they run. "
-                       + MODULE_SYSTEM + " So `require(…)` is reached only in a CommonJS file; in an ES module only imports and `process.getBuiltinModule(…)` are.")
-        if mod == "fs":
-            description += (" Divergence (NER-1834): `watch` is not reported, because `fs.promises.watch` returns an async iterator of change"
-                            " events rather than an FSWatcher and is not a drop-in replacement.")
-        docs.append(policy(f"n-prefer-promises-{mod}", f"n/prefer-promises/{mod}", description, checks))
+        docs.append(policy(f"n-prefer-promises-{mod}", f"n/prefer-promises/{mod}", DESCRIPTIONS[f"n-prefer-promises-{mod}"], checks))
     return docs
 
 
@@ -382,9 +393,7 @@ def no_path_concat_doc():
             {"id": "binary" + suffix, "ast": {**options, "utils": utils, "rule": {"kind": "binary_expression", "all": [op("^\\+$"), {"has": {"field": "left", "matches": "path-source"}}, {"has": {"field": "right", "matches": "first-slash"}}]}}, "message": message},
             {"id": "template" + suffix, "ast": {**options, "utils": utils, "rule": {"kind": "template_string", "has": {"kind": "template_substitution", "has": {"matches": "path-source"},
                                                                                                                        "precedes": {"any": [slash_text, {"kind": "template_substitution", "has": {"matches": "first-slash"}}]}}}}, "message": message}]
-    description = ("eslint-plugin-n 18.4.1 n/no-path-concat: `__dirname`/`__filename` (Node's CommonJS-scope globals) or `import.meta.dirname|filename|url` as the left of `+` or a template substitution, when the next part's first character is `/` (path.sep on the recorder's POSIX host): a string starting with /, a constant (followed binding), `path.sep` of the path module (ReferenceTracker reach), or recursively the left of a binary, either side of ||/&&/??, either branch of ?:, an assignment's right side, or a template's first part. "
-                   + MODULE_SYSTEM + " So `__dirname` and `__filename` are reached only in a CommonJS file (the `-commonjs` clauses, which declare them); in an ES module only `import.meta` paths are.")
-    return hoist(policy("n-no-path-concat", "n/no-path-concat", description, checks))
+    return hoist(policy("n-no-path-concat", "n/no-path-concat", DESCRIPTIONS["n-no-path-concat"], checks))
 
 
 def prefer_node_protocol_doc(builtins):
@@ -412,17 +421,16 @@ def prefer_node_protocol_doc(builtins):
         {"id": "get-builtin-module", "ast": {"rule": {**builtin, **first_argument_of(get_builtin_module)}}, "message": message},
         {"id": "import-export-source", "ast": {"file": esm, "rule": {**builtin, "inside": {"field": "source", "any": [{"kind": "import_statement"}, {"kind": "export_statement"}]}}}, "message": message},
         {"id": "import-expression", "ast": {"file": esm, "rule": {**builtin, **first_argument_of(import_call)}}, "message": message}]
-    description = "eslint-plugin-n 18.4.1 n/prefer-node-protocol (default options): a string literal whose value names a module of the plugin's NodeBuiltinModules table (lib/unsupported-features/node-builtins.js) that the table also lists as `node:<name>`, as the only argument of a non-optional `require(…)`, the first of `process.getBuiltinModule(…)`/`globalThis.process.getBuiltinModule(…)`, the source of an import/export declaration or of `import(…)`. Upstream reads names only, no scope. As upstream, the file's configured Node range (the nearest package.json's `engines.node`, else its `devEngines.runtime` entry named node, else >=16.0.0) must be a subset of ^12.20.0 || >=14.13.1 for imports and of ^14.18.0 || >=16.0.0 for require (that range lies inside the first); process.getBuiltinModule is checked whatever the range. Not ported: the `version` option and the `n`/`node` settings that override the range."
-    return policy("n-prefer-node-protocol", "n/prefer-node-protocol", description, checks)
+    return policy("n-prefer-node-protocol", "n/prefer-node-protocol", DESCRIPTIONS["n-prefer-node-protocol"], checks)
 
 
 # ---- hand-shaped syntax rules ----------------------------------------------------------------------------------------
 
 def syntax_docs():
     docs = []
-    docs.append(policy("n-no-new-require", "n/no-new-require", "eslint-plugin-n 18.4.1 n/no-new-require: `new` whose callee is the identifier `require` (upstream reads the name only, no scope).", [
+    docs.append(policy("n-no-new-require", "n/no-new-require", DESCRIPTIONS["n-no-new-require"], [
         {"id": "upstream", "ast": {"rule": {"kind": "new_expression", "has": {"field": "constructor", "kind": "identifier", "regex": "^require$"}}}, "message": "Unexpected use of new with require."}]))
-    docs.append(policy("n-no-process-env", "n/no-process-env", "eslint-plugin-n 18.4.1 n/no-process-env: `process.env` / `process['env']` member reads on an identifier named process (upstream reads the name only, no scope); default options allow no variable.", [
+    docs.append(policy("n-no-process-env", "n/no-process-env", DESCRIPTIONS["n-no-process-env"], [
         {"id": "upstream", "ast": {"rule": {"any": [
             {"kind": "member_expression", "all": [{"has": {"field": "object", "kind": "identifier", "regex": "^process$"}}, {"has": {"field": "property", "kind": "property_identifier", "regex": "^env$"}}]},
             {"kind": "subscript_expression", "all": [{"has": {"field": "object", "kind": "identifier", "regex": "^process$"}}, {"has": {"field": "index", "kind": "string", "has": {"kind": "string_fragment", "regex": "^env$"}}}]}]}}, "message": "Unexpected use of process.env."}]))
@@ -432,15 +440,13 @@ def syntax_docs():
     chain = {"any": [{"has": {"kind": "optional_chain"}},
                      {"inside": {"stopBy": "end", "any": [{"kind": "call_expression"}, {"kind": "member_expression"}, {"kind": "subscript_expression"}],
                                  "has": {"stopBy": {"any": [{"kind": "arguments"}, {"kind": "parenthesized_expression"}, {"kind": "template_string"}]}, "kind": "optional_chain"}}}]}
-    docs.append(policy("n-global-require", "n/global-require", "eslint-plugin-n 18.4.1 n/global-require: a call of an unshadowed `require` with an ancestor outside upstream's ACCEPTABLE_PARENTS (AssignmentExpression, VariableDeclarator, MemberExpression, ExpressionStatement, CallExpression, ConditionalExpression, Program, VariableDeclaration; tree-sitter's arguments and parenthesized_expression have no ESTree node), or inside an optional chain (ESTree's ChainExpression, which tree-sitter has no node for). "
-                       + MODULE_SYSTEM + " Upstream's isShadowed reads the name only (a `require` no file-local binding declares), so an ES module's nested `require(…)` is reported too.", [
+    docs.append(policy("n-global-require", "n/global-require", DESCRIPTIONS["n-global-require"], [
         {"id": "upstream", "ast": {"languageOptions": FILE_LO, "rule": {"kind": "call_expression",
                                                                                          "has": {"field": "function", "kind": "identifier", "regex": "^require$", "resolves": {"global": ["require"], "declared": False}},
                                                                                          "any": [{"inside": {"stopBy": "end", "not": {"any": [{"kind": k} for k in accept]}}}, chain]}}, "message": "Unexpected require()."}]))
 
     module_exports = {"kind": "member_expression", "all": [{"has": {**ident("module"), "field": "object"}}, {"has": {"field": "property", "kind": "property_identifier", "regex": "^exports$"}}]}
-    docs.append(policy("n-no-exports-assign", "n/no-exports-assign", "eslint-plugin-n 18.4.1 n/no-exports-assign: an assignment to the global `exports` (CommonJS scope), except `module.exports = exports = …` and `exports = module.exports = …`. "
-                       + MODULE_SYSTEM + " So only a CommonJS file has the global `exports`; an ES module's assignments are not reported.", [
+    docs.append(policy("n-no-exports-assign", "n/no-exports-assign", DESCRIPTIONS["n-no-exports-assign"], [
         {"id": "upstream", "ast": {"languageOptions": FILE_LO, "rule": {"any": [{"kind": "assignment_expression"}, {"kind": "augmented_assignment_expression"}],
                                                                     "has": {**ident("exports"), "field": "left"},
                                                                     "not": {"any": [
@@ -451,7 +457,7 @@ def syntax_docs():
     sync_id = {"any": [{"kind": "identifier"}, {"kind": "property_identifier"}], "regex": "Sync$"}
     callee_member = {"kind": "member_expression", "inside": {"kind": "call_expression", "field": "function", **NOT_TAGGED}}
     call_child = {"kind": "call_expression", **NOT_TAGGED, "any": [{"has": {"field": "function", **sync_id}}, {"has": {"field": "arguments", "kind": "arguments", "has": sync_id}}]}
-    docs.append(policy("n-no-sync", "n/no-sync", "eslint-plugin-n 18.4.1 n/no-sync (default options): upstream's selectors `CallExpression > MemberExpression.callee Identifier[name=/Sync$/]` and `CallExpression > Identifier[name=/Sync$/]`, reported at the identifier's ESTree parent: a call with a /Sync$/ identifier as callee or argument, or a node inside (or being) a call's member callee with a /Sync$/ identifier child (tree-sitter's arguments node is no ESTree parent: its identifiers belong to the call).", [
+    docs.append(policy("n-no-sync", "n/no-sync", DESCRIPTIONS["n-no-sync"], [
         {"id": "call-child", "ast": {"rule": call_child}, "message": "Unexpected sync method."},
         {"id": "callee-member-descendant", "ast": {"rule": {"has": sync_id, "any": [callee_member, {"inside": {"stopBy": "end", **callee_member}}], "not": {"any": [{"kind": "arguments"}, call_child]}}}, "message": "Unexpected sync method."}]))
 
@@ -459,13 +465,12 @@ def syntax_docs():
         {"kind": "call_expression", **NOT_TAGGED, "has": {"field": "function", "kind": "identifier", "regex": "^require$"}},
         {"any": [{"kind": "member_expression"}, {"kind": "subscript_expression"}], "has": {"field": "object", "matches": "require-init"}},
         {"kind": "parenthesized_expression", "has": {"matches": "require-init"}}]}}
-    docs.append(policy("n-no-mixed-requires", "n/no-mixed-requires", "eslint-plugin-n 18.4.1 n/no-mixed-requires (default options, grouping off): a variable declaration with a declarator initialised by `require(…)` (or a member chain on one; the name only, no scope) beside one uninitialised or initialised otherwise. A chain with `?.` is ESTree's ChainExpression, so not a require declarator.", [
+    docs.append(policy("n-no-mixed-requires", "n/no-mixed-requires", DESCRIPTIONS["n-no-mixed-requires"], [
         {"id": "upstream", "ast": {"utils": require_init, "rule": {"any": [{"kind": "variable_declaration"}, {"kind": "lexical_declaration"}], "all": [
             {"has": {"kind": "variable_declarator", "has": {"field": "value", "matches": "require-init"}}},
             {"has": {"kind": "variable_declarator", "not": {"has": {"field": "value", "matches": "require-init"}}}}]}}, "message": "Do not mix 'require' and other declarations."}]))
 
-    docs.append(policy("n-exports-style", "n/exports-style", "eslint-plugin-n 18.4.1 n/exports-style (default \"module.exports\", no batch assign): every reference to the global `exports` (Node's CommonJS-scope binding; a local `exports` shadows it). "
-                       + MODULE_SYSTEM + " So only a CommonJS file has the global `exports`; an ES module's references are not reported.", [
+    docs.append(policy("n-exports-style", "n/exports-style", DESCRIPTIONS["n-exports-style"], [
         {"id": "upstream", "ast": {"languageOptions": FILE_LO, "rule": {"any": [{"kind": "identifier"}, {"kind": "shorthand_property_identifier"}], "regex": "^exports$", "resolves": {"global": ["exports"]}}}, "message": "Unexpected access to 'exports'. Use 'module.exports' instead."}]))
 
     err_id = {"kind": "identifier", "regex": "^err$", "binds": {"form": "parameter", "referenced": False}}
@@ -474,7 +479,7 @@ def syntax_docs():
                          {"kind": "assignment_pattern", "has": {"field": "left", **err_id}},
                          {"kind": "rest_pattern", "has": err_id}]}
     fn_kinds = ["function_declaration", "function_expression", "generator_function_declaration", "generator_function", "arrow_function"]
-    docs.append(policy("n-handle-callback-err", "n/handle-callback-err", "eslint-plugin-n 18.4.1 n/handle-callback-err (default \"err\"): a function whose first parameter variable is named `err` and has no reference (reads or writes); a method is reported at its parameter list, where its ESTree FunctionExpression starts.", [
+    docs.append(policy("n-handle-callback-err", "n/handle-callback-err", DESCRIPTIONS["n-handle-callback-err"], [
         {"id": "function", "ast": {"utils": {"first-err": first_err}, "rule": {"any": [
             {"any": [{"kind": k} for k in fn_kinds], "has": {"field": "parameters", "has": {"nthChild": FIRST, "matches": "first-err"}}},
             {"kind": "arrow_function", "has": {"field": "parameter", **err_id}},
@@ -487,7 +492,7 @@ def syntax_docs():
         {"kind": "sequence_expression", "has": {"nthChild": LAST, "matches": "cannot-be-error"}},
         {"kind": "binary_expression", "all": [op("^(?:\\|\\||&&|\\?\\?)$"), {"has": {"field": "left", "matches": "cannot-be-error"}}, {"has": {"field": "right", "matches": "cannot-be-error"}}]},
         {"kind": "ternary_expression", "all": [{"has": {"field": "consequence", "matches": "cannot-be-error"}}, {"has": {"field": "alternative", "matches": "cannot-be-error"}}]}]}
-    docs.append(policy("n-no-callback-literal", "n/no-callback-literal", "eslint-plugin-n 18.4.1 n/no-callback-literal: a call of an identifier named `callback` or `cb` (name only, no scope) whose first argument cannot be an error per upstream's couldBeError: a non-null literal, array, object or template literal, or an assignment/sequence/logical/conditional whose possible results all are. The message is softened (NER-1834): a callback named `cb` or `callback` need not be error-first (ws verifyClient, ssh2 authHandler), so it tells the agent to check before passing an error or null first.", [
+    docs.append(policy("n-no-callback-literal", "n/no-callback-literal", DESCRIPTIONS["n-no-callback-literal"], [
         {"id": "upstream", "ast": {"utils": {"cannot-be-error": cannot_be_error}, "rule": {"kind": "call_expression", **NOT_TAGGED, "all": [
             {"has": {"field": "function", "kind": "identifier", "regex": "^(?:callback|cb)$"}},
             {"has": {"field": "arguments", "kind": "arguments", "has": {"nthChild": FIRST, "matches": "cannot-be-error"}}}]}}, "message": "Unexpected literal in error position of callback. This rule goes by the callback's name only: if the callback is error-first, pass an Error or null as its first argument; if its API defines a different first argument (ws verifyClient's cb(result, code), ssh2 authHandler's callback(nextMethod)), leave the call as it is."}]))
@@ -501,7 +506,7 @@ def syntax_docs():
 
     ok_last = statement_of_call({"nthChild": LAST, "inside": {"kind": "statement_block", "inside": {**any_func, "field": "body"}}})
     ok_before_return = statement_of_call({"nthChild": SECOND_LAST, "inside": {"kind": "statement_block", "has": {"kind": "return_statement", "nthChild": LAST}}})
-    docs.append(policy("n-callback-return", "n/callback-return", "eslint-plugin-n 18.4.1 n/callback-return (default callbacks callback, cb, next): a call of one of those names inside a function, unless its nearest block/return/arrow ancestor is a return or an arrow function, it is the last statement of a function body (or the right side of a binary/logical expression statement there), or the statement just before a block's final return.", [
+    docs.append(policy("n-callback-return", "n/callback-return", DESCRIPTIONS["n-callback-return"], [
         {"id": "upstream", "ast": {"rule": {"kind": "call_expression", **NOT_TAGGED, "all": [
             {"has": {"field": "function", "kind": "identifier", "regex": "^(?:callback|cb|next)$"}},
             {"not": {"inside": {"stopBy": stop, "any": [{"kind": "return_statement"}, {"kind": "arrow_function"}]}}},
@@ -643,9 +648,7 @@ def no_deprecated_api_doc(trace):
                        "forbid": {"ast": {"language": "typescript", "languageOptions": lo, "rule": {"any": alts}}},
                        "violation": {"anchor": "witness.span", "code": "n/no-deprecated-api", "message": f"Deprecated Node.js API ({root}).",
                                     "suppress": suppress("n/no-deprecated-api")}})
-    description = ("eslint-plugin-n 18.4.1 n/no-deprecated-api (default options; the configured version only words the message): every read, call or construction its deprecation trace map marks (generated from lib/rules/no-deprecated-api.js rawModules and globals), as ReferenceTracker (legacy mode) reaches it: require/process.getBuiltinModule/ESM imports of the modules (with and without `node:`), global variables (declared by globals.node, the ES builtins or /* global */ comments) and members of global/globalThis, through constant aliases, (nested) destructuring, defaults and member chains. "
-                   + MODULE_SYSTEM + " So `require` and its members are reached only in a CommonJS file; Buffer, global and process in every file.")
-    return {"format": "rerail.policy/v1", "id": "n-no-deprecated-api", "revision": 1, "mode": "steer", "description": description,
+    return {"format": "rerail.policy/v1", "id": "n-no-deprecated-api", "revision": 1, "mode": "steer", "description": DESCRIPTIONS["n-no-deprecated-api"],
             "scope": {"include": INCLUDE, "exclude": []}, "clauses": checks}
 
 
@@ -668,7 +671,7 @@ def node_shebang_rx():
 def hashbang_doc():
     # getShebangInfo: `#!` and at least one character at the start of the text, ended by a line break.
     shebang = {"kind": "program", "regex": "\\A#![^\\r\\n\\x{2028}\\x{2029}]+\\r?\\n"}
-    return policy("n-hashbang", "n/hashbang", "Candidate for eslint-plugin-n 18.4.1 n/hashbang (default options): whether a file needs a shebang is read from the nearest package.json's `bin` (a path, or an object of paths, relative to the manifest's folder, `.js` and `/index` optional); without a package.json nothing is checked, as upstream. A file `bin` does not name reports a shebang (`#!` and at least one character opening the text, ended by a line break): \"This file needs no shebang.\". A file it names reports a first line that is no node shebang (`#!/usr/bin/env`, env flags and variables as upstream's isNodeShebang strips them, then `node`): 'This file needs shebang \"#!/usr/bin/env node\".'. Not ported: the convertPath option and settings, ignoreUnpublished (.npmignore), additionalExecutables and executableMap (the expected executable is always node), and the BOM and CRLF reports on a bin file whose shebang is right (\"This file must not have Unicode BOM.\", \"This file must have Unix linebreaks (LF).\").", [
+    return policy("n-hashbang", "n/hashbang", DESCRIPTIONS["n-hashbang"], [
         {"id": "needs-no-shebang", "ast": {"file": {"package": {"bin": False}}, "rule": {"kind": "hash_bang_line", "inside": shebang}}, "message": "This file needs no shebang."},
         {"id": "needs-shebang", "anchor": "file.start", "ast": {"file": {"package": {"bin": True}}, "rule": {"kind": "program", "not": {"regex": node_shebang_rx()}}}, "message": "This file needs shebang \"#!/usr/bin/env node\"."}])
 

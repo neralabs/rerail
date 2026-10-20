@@ -3,7 +3,7 @@
   "id": "vitest-expect-expect",
   "revision": 2,
   "mode": "steer",
-  "description": "A test whose function never calls `expect` or `assert`.",
+  "description": "Add at least one expect or assert call to every Vitest test; a test without assertions passes no matter what the code does.",
   "scope": {
     "include": [
       "**/*.test.ts",

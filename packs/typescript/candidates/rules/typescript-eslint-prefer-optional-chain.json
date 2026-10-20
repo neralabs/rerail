@@ -3,7 +3,7 @@
   "id": "typescript-eslint-prefer-optional-chain",
   "revision": 1,
   "mode": "log",
-  "description": "An && chain that checks a value and then reads through it, which `?.` says in one step.",
+  "description": "Use optional chaining in TypeScript instead of an && chain that checks a value and then reads through it; it says the same thing in one step.",
   "scope": {
     "include": [
       "**/*.ts",

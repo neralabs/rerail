@@ -3,7 +3,7 @@
  "id": "ruff-async100-cancel-scope-no-checkpoint",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's ASYNC100 (cancel-scope-no-checkpoint): a `with` statement whose last timeout-context item (`asyncio.timeout[_at]`, `anyio.move_on_after`/`fail_after`/`CancelScope`, `trio.move_on_after`/`move_on_at`/`fail_after`/`fail_at`/`CancelScope` calls) is the last item when the statement is `async with`, and whose body has no `yield` (nested scopes included) and no `await`, `async with`, `async for` or async comprehension outside nested functions and classes. Reported on the whole statement. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "description": "Add an await inside asyncio, anyio or trio timeout and cancel-scope blocks; without a checkpoint the timeout can never fire.",
  "scope": {
   "include": [
    "**/*"

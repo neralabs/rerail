@@ -3,7 +3,7 @@
   "id": "ruff-b023-function-uses-loop-variable",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B023 (function-uses-loop-variable): a name loaded in the body of a function or lambda defined inside a loop (for, while, or comprehension), when the function neither takes it as a parameter nor stores it anywhere in its body, and the loop assigns it (assignment, augmented or annotated assignment, for or comprehension target; not inside nested functions or lambdas). The function is the first def or unsafe lambda on the way down from the loop; a lambda is safe when it is returned directly, called immediately, a positional argument of `filter`/`reduce`/`map`/`functools.reduce`, or the value of a `key=` keyword. Reported on the name.",
+  "description": "Pass loop variables into functions and lambdas defined inside a loop as arguments or defaults; otherwise they all see the variable's last value.",
   "scope": {
     "include": [
       "**/*"

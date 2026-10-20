@@ -3,7 +3,7 @@
   "id": "bandit-b403-import-pickle",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect direct imports of pickle, cPickle, dill, and shelve.",
+  "description": "Avoid importing pickle, cPickle, dill, or shelve; deserializing untrusted data with them can execute arbitrary code.",
   "scope": {
     "include": [
       "**/*.py"

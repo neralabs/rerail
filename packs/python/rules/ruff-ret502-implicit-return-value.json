@@ -3,7 +3,7 @@
   "id": "ruff-ret502-implicit-return-value",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's RET502 (implicit-return-value): a bare `return` in a function that also has a `return` with a value other than `None` (nested functions and classes are separate; generators and functions whose body is a lone `return` are skipped), reported on the `return`.",
+  "description": "Use return None instead of a bare return in Python functions that also return a value; make the None result explicit.",
   "scope": {
     "include": [
       "**/*"

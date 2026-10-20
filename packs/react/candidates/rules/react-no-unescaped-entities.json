@@ -3,7 +3,7 @@
   "id": "react-no-unescaped-entities",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/no-unescaped-entities (forbid >, \", ', }): one finding per such character on the first line of a JSX text node (the k-th check holds where that line has at least k of them; ESLint reports each character at its own column). Characters on a text node's later lines are not reported: a finding is anchored at a node, and a text node has no node per line.",
+  "description": "Escape >, \", ' and } in JSX text as HTML entities or expressions; unescaped they are usually typos for a closing tag or brace.",
   "scope": {
     "include": [
       "**/*.ts",

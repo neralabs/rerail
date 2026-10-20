@@ -3,7 +3,7 @@
   "id": "phpcs-generic-php-no-silenced-errors",
   "revision": 2,
   "mode": "steer",
-  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.NoSilencedErrors: every @ error-control operator. Divergence: not reported where the @ is part of an idiom that needs it, because removing it changes behaviour. These are a silenced mkdir(), rmdir() or unlink() of a path that the right operand of a `&&`, `||`, `and` or `or` re-checks with is_dir(), is_file() or file_exists(), where the @ call is that operator's left operand or reaches it only through `!`, parentheses and earlier operands of the same `&&`/`||`/`and`/`or` chain (the race-safe `!@mkdir($dir) && !is_dir($dir)`, where the re-check decides whether a warning was a failure), and a silenced trigger_error() or user_error() whose second argument, or argument named error_level, is E_USER_DEPRECATED (Symfony's deprecation convention, silenced so only error handlers that opt in log it) (NER-1811).",
+  "description": "Avoid the @ error-control operator in PHP outside race-safe directory checks and deprecation notices; it hides every warning, so handle failures explicitly.",
   "scope": {
     "include": [
       "**/*.php"

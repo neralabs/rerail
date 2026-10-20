@@ -3,7 +3,7 @@
   "id": "tlint-spaces-around-blade-render-content",
   "revision": 2,
   "mode": "steer",
-  "description": "tlint 9.7.0 SpacesAroundBladeRenderContent: an echo on one line, `{{ }}` (not a `{{-- --}}` comment, not an escaped `@{{ }}`) or `{!! !!}`, not written with exactly one space inside each delimiter.",
+  "description": "Write single-line Blade echoes, escaped or raw, with exactly one space inside each delimiter.",
   "scope": {
     "include": [
       "**/*.blade.php"

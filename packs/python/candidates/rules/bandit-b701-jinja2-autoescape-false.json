@@ -3,7 +3,7 @@
   "id": "bandit-b701-jinja2-autoescape-false",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect Jinja environments without safe autoescaping",
+  "description": "Enable autoescaping on Jinja2 environments with autoescape=True or select_autoescape(); without it rendered templates are open to XSS.",
   "scope": {
     "include": [
       "**/*.py"

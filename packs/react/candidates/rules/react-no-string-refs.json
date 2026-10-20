@@ -3,7 +3,7 @@
   "id": "react-no-string-refs",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/no-string-refs (latest React, noTemplateLiterals: false): a `ref` attribute whose value is a string literal, bare or in braces. From React 18.3 on the rule no longer reports `this.refs` reads.",
+  "description": "Use callback refs or createRef instead of string refs; string refs are deprecated and removed in React 19.",
   "scope": {
     "include": [
       "**/*.ts",

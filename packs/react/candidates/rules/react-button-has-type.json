@@ -3,7 +3,7 @@
   "id": "react-button-has-type",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/button-has-type (button, submit and reset allowed): a `<button>` without a `type` attribute (jsx-ast-utils getProp, case-insensitive) or whose first `type` value is not a literal button/submit/reset (each leaf of a conditional is checked; a non-literal leaf is reported at itself); the same for `React.createElement('button', props)` (isCreateElement, default pragma).",
+  "description": "Give every button an explicit type of button, submit or reset; a button without one submits its form by default.",
   "scope": {
     "include": [
       "**/*.ts",

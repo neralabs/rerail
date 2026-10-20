@@ -3,7 +3,7 @@
   "id": "phpcs-generic-php-backtick-operator",
   "revision": 1,
   "mode": "steer",
-  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.BacktickOperator: each backtick of a shell command expression (PHP_CodeSniffer reports the opening and the closing one).",
+  "description": "Avoid the backtick shell operator in PHP; it runs shell commands implicitly and invites command injection.",
   "scope": {
     "include": [
       "**/*.php"

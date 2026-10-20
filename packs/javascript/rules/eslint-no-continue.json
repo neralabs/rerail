@@ -3,7 +3,7 @@
   "id": "eslint-no-continue",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `no-continue` rule (https://eslint.org/docs/latest/rules/no-continue). Reports every `continue` statement.",
+  "description": "Avoid continue statements in loops; restructure the loop with a condition instead.",
   "scope": {
     "include": [
       "**/*"

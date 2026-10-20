@@ -3,7 +3,7 @@
   "id": "next-no-styled-jsx-in-document",
   "revision": 2,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-styled-jsx-in-document: a <style> opening element with a `jsx` attribute in a file whose path, between its first and second `pages`, names a document.",
+  "description": "Don't use styled-jsx style tags in pages/_document; the custom Document does not support them.",
   "scope": {
     "include": [
       "**/*.ts",

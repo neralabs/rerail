@@ -3,7 +3,7 @@
   "id": "bandit-b610-django-extra-used",
   "revision": 2,
   "mode": "steer",
-  "description": "Port of Bandit 1.9.4's B610 django_extra_used: a call of `extra` whose `where` or `tables` is not a list of plain strings, or whose `select` is not a dict of plain strings, bound to QuerySet.extra's six positional slots. Port of the kernel test b610_extra_with_a_non_literal_where_tables_or_select. Bandit's `# nosec` is honoured (`suppress.nosec`), as its recordings honour it. Divergence: Bandit reports a call of any function or method named `extra`; the port reports only a method call whose receiver looks like a Django QuerySet or Manager: a name or attribute named `objects`, `qs`, `QS`, `queryset`, `querysets`, `manager` or `managers`, alone or after an underscore-joined prefix (`User.objects`, `self.queryset`, `base_qs`, `_default_manager`); a call of `get_queryset`; a method call on such a receiver (`User.objects.filter(...)`); or `self` or `super()` inside a class with a base whose name ends in `QuerySet` (`QuerySet`, `SoftDeleteQuerySet`, `TreeQuerySet`) or is `Manager`, `BaseManager` or `BaseUserManager`, optionally dotted (`models.QuerySet`); a base that only ends in `Manager` (`AbstractContextManager`, `PluginManager`, `TreeManager`) does not count. A bare `extra(...)` call and `extra` on any other receiver (`parser.extra(...)`, `self.extra(...)` in an unrelated class) are not reported (NER-1827).",
+  "description": "Pass only literal strings to the where, tables and select arguments of Django QuerySet.extra(); dynamic values open the query to SQL injection.",
   "scope": {
     "include": [
       "**/*"

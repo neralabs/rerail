@@ -3,7 +3,7 @@
   "id": "bladestan-if-always-false",
   "revision": 1,
   "mode": "steer",
-  "description": "Bladestan 0.11.7 (PHPStan 2.2.16 over the compiled template) if.alwaysFalse (IfConstantConditionRule): an if condition PHP's constant evaluation (variables followed through their one reaching binding) finds always falsy; not the comparisons, negations, ternaries, isset and empty PHPStan leaves to other rules, a condition in a trait, or an if an inline @var doc comment precedes (PHPStan reads the variable as the PHPDoc type).",
+  "description": "Remove if conditions in Blade templates that are always false from values the template itself sets; the branch never runs.",
   "scope": {
     "include": [
       "**/*.blade.php"

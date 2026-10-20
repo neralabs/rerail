@@ -3,7 +3,7 @@
   "id": "ruff-t100-debugger",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's T100 (debugger): imports of debugger modules (`is_debugger_import`) and of debugger functions (`from M import n` with `M.n` in `is_debugger_call`), once per imported name, matched by module with `resolves.imported`, relative imports by the module's text (`relative: \"text\"`: Ruff ignores the level). It also flags calls whose callee resolves to a debugger function (`resolve_qualified_name` through the file's imports, or the builtin `breakpoint`).",
+  "description": "Remove debugger imports and calls such as pdb.set_trace() and breakpoint() before committing.",
   "scope": {
     "include": [
       "**/*"

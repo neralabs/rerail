@@ -3,7 +3,7 @@
   "id": "ruff-e402-module-import-not-at-top-of-file",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's E402 (module-import-not-at-top-of-file): an `import` or `from ... import` statement directly at module level after an import boundary, reported on the statement. A boundary is any earlier module-level statement other than an import, the module docstring (a plain string literal as the first statement), a single-target assignment to a dunder name, and the allowed path/environment setup calls (`sys.path` mutation, `os.environ` edits, `os.putenv`/`unsetenv`, `matplotlib.use`, `pytest.importorskip`, `site.addsitedir`); `if`, `try`, `with` and `match` blocks and everything inside them are never boundaries. Qualified names are resolved through the file's imports as Ruff resolves them at that point of the module.",
+  "description": "Keep Python module-level imports at the top of the file, before other code; only docstrings, dunder assignments and sys.path or environment setup may come first.",
   "scope": {
     "include": [
       "**/*"

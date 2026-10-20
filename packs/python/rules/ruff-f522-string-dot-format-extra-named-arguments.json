@@ -3,7 +3,7 @@
   "id": "ruff-f522-string-dot-format-extra-named-arguments",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F522 (string-dot-format-extra-named-arguments): a `.format` call without `**` on a valid format string, passing a keyword argument no named field (top level or nested in a spec) reads. `formatArgs` reads the format string receiving `.format` (a str literal with no f/t/b prefix, implicit concatenations joined, escapes decoded, parentheses transparent) with the `braceFormat` grammar (a port of ruff_python_literal's format parser as pyflakes' FormatSummary reads it), and the call's arguments as Ruff's strings.rs does.",
+  "description": "Remove keyword arguments to str.format() that no named placeholder in the string uses; they are silently ignored.",
   "scope": {
     "include": [
       "**/*"

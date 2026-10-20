@@ -3,7 +3,7 @@
   "id": "bladestan-missing-function-return-type",
   "revision": 1,
   "mode": "steer",
-  "description": "Bladestan 0.11.7 (PHPStan 2.2.16 over the compiled template) missingType.return as MissingFunctionReturnTypehintRule reports it: a function declaration (not a method or closure) with neither a native return type nor a PHPDoc @return, @phpstan-return or @psalm-return type in its doc comment.",
+  "description": "Declare a return type, native or as a @return doc tag, on every named function defined in a Blade template.",
   "scope": {
     "include": [
       "**/*.blade.php"

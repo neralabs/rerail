@@ -3,7 +3,7 @@
   "id": "eslint-no-caller",
   "revision": 2,
   "mode": "steer",
-  "description": "Port of ESLint's `no-caller` rule (https://eslint.org/docs/latest/rules/no-caller). Reports `arguments.callee` and `arguments.caller` (object through parentheses).",
+  "description": "Don't use arguments.callee or arguments.caller; they are deprecated and throw in strict mode.",
   "scope": {
     "include": [
       "**/*"

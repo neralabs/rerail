@@ -3,7 +3,7 @@
  "id": "typescript-eslint-no-confusing-non-null-assertion",
  "revision": 3,
  "mode": "steer",
- "description": "Port of typescript-eslint's `no-confusing-non-null-assertion` rule (https://typescript-eslint.io/rules/no-confusing-non-null-assertion). Flags `=`, `==`, `===`, `in` and `instanceof` expressions whose left operand ends in a non-null assertion `!` (outside parentheses).",
+ "description": "Avoid a non-null assertion right before =, ==, ===, in or instanceof; it reads like != or a negated test.",
  "scope": {
   "include": [
    "**/*.ts",

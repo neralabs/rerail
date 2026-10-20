@@ -3,7 +3,7 @@
   "id": "ruff-sim107-return-in-try-except-finally",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM107 (return-in-try-except-finally): the first top-level `return` of a `finally` body when the `try` body or an `except` handler body has a top-level `return`.",
+  "description": "Don't return from a finally block when the try or except also returns; the finally return silently overrides theirs.",
   "scope": {
     "include": [
       "**/*"

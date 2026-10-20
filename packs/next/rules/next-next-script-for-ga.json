@@ -3,7 +3,7 @@
   "id": "next-next-script-for-ga",
   "revision": 2,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/next-script-for-ga: a <script> with a literal src containing the Google Analytics or gtag URL, or whose dangerouslySetInnerHTML object's first property is a template literal whose first quasi contains the GA or GTM script URL.",
+  "description": "Use the Google helpers from @next/third-parties instead of raw script tags for Google Analytics or Tag Manager; they load the tags without slowing the page.",
   "scope": {
     "include": [
       "**/*.ts",

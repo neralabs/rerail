@@ -3,7 +3,7 @@
   "id": "eslint-no-debugger",
   "revision": 3,
   "mode": "steer",
-  "description": "ESLint 10.11.0 no-debugger, default options. Port of ESLint's `no-debugger` rule (https://eslint.org/docs/latest/rules/no-debugger). Reports every `debugger` statement.",
+  "description": "Remove debugger statements; they pause execution whenever developer tools are open.",
   "scope": {
     "include": [
       "**/*.ts",

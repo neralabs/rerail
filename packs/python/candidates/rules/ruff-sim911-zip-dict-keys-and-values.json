@@ -3,7 +3,7 @@
   "id": "ruff-sim911-zip-dict-keys-and-values",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM911 (zip-dict-keys-and-values): `zip(d.keys(), d.values())`, the same plain name on both calls, no arguments to either, no keyword but `strict`, and `zip` the builtin (or `builtins.zip`). Reported on the `zip` call, where `d`'s binding is a dict (Ruff's `is_dict` through `resolves.binding`: a `def`'s `**kwargs`, a dict-typed value or `dict(...)`, a `dict`/`Dict` annotation or return annotation; unpacking carries no value).",
+  "description": "Use dict.items() instead of zipping a dict's keys() and values() together.",
   "scope": {
     "include": [
       "**/*"

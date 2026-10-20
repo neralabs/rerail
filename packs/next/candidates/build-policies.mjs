@@ -136,7 +136,7 @@ function policy(rule, description, checks, { candidate = false } = {}) {
     id: `next-${rule}`,
     revision: committed?.revision ?? 1,
     mode: "steer",
-    description: `@next/eslint-plugin-next 16.3.8 ${code}: ${description}`,
+    description,
     scope: SCOPE,
     clauses: checks.map(({ id, ast, message, anchor = "witness.span", each }) => ({
       id,
@@ -156,7 +156,7 @@ function policy(rule, description, checks, { candidate = false } = {}) {
 
 // ---- rules ---------------------------------------------------------------------------------------------------------
 
-policy("no-img-element", "an <img> opening element with attributes, not a direct child of <picture>, unless the file is an app-dir metadata image route (the path relative to the ESLint cwd matches ^(src/)?app/ and /opengraph-image|twitter-image|icon.ext). The message is upstream's with more added (NER-1946): what `<Image />` needs (width and height or fill; a matching images.remotePatterns entry for a remote src) and the eslint-disable comment that keeps `<img>`.", [
+policy("no-img-element", "Use the next/image Image component instead of img elements (picture children and metadata image routes aside); it optimizes images for faster loads and less bandwidth.", [
   {
     id: "upstream",
     ast: {
@@ -208,7 +208,7 @@ policy("no-img-element", "an <img> opening element with attributes, not a direct
   },
 ]);
 
-policy("no-head-element", "a <head> opening element, unless the file's path contains `app/`.", [
+policy("no-head-element", "Use the Head component from next/head instead of a raw head element outside the app directory; Next.js manages the page head itself.", [
   {
     id: "upstream",
     ast: { file: { path: { notRegex: "app/" } }, rule: { all: [OPEN, named("head")] } },
@@ -217,7 +217,7 @@ policy("no-head-element", "a <head> opening element, unless the file's path cont
 // The port readiness gates no longer score the plugin's invalid[1], JSX at pages/index.ts that upstream's own parser rejects.
 ]);
 
-policy("no-sync-scripts", "a <script> opening element with a src attribute and neither async nor defer.", [
+policy("no-sync-scripts", "Add async or defer to script tags that load an external src; synchronous scripts block page rendering.", [
   {
     id: "upstream",
     ast: { rule: { all: [OPEN, named("script"), hasAttribute("src"), { not: hasAttribute("async") }, { not: hasAttribute("defer") }] } },
@@ -225,7 +225,7 @@ policy("no-sync-scripts", "a <script> opening element with a src attribute and n
   },
 ]);
 
-policy("no-css-tags", "a <link> with rel=\"stylesheet\" and a string href that does not start with http(s).", [
+policy("no-css-tags", "Import local stylesheets instead of adding them with link tags, so Next.js can bundle and optimize the CSS; links to external stylesheet URLs are allowed.", [
   {
     id: "upstream",
     ast: { rule: { all: [OPEN, named("link"), hasAttribute("rel", plainString({ eq: "stylesheet" })), hasAttribute("href", { has: { kind: "string", not: { value: { startsWith: "http" } } } })] } },
@@ -237,7 +237,7 @@ policy("no-css-tags", "a <link> with rel=\"stylesheet\" and a string href that d
 const HAS_DISPLAY = "^[^?]*\\?(?:[^&?]*&)*display(?:=|&|\\?|$)";
 /** Approximation: some display piece (not only the first, which URLSearchParams.get reads) is auto, block or fallback. */
 const BAD_DISPLAY = "^[^?]*\\?(?:[^&?]*&)*display=(?:auto|block|fallback)(?:&|\\?|$)";
-policy("google-font-display", "a <link> whose literal href is a Google Fonts CSS URL whose query has no display parameter, or display=auto|block|fallback.", [
+policy("google-font-display", "Add a display value of swap or optional to Google Fonts stylesheet links; a missing, auto, block or fallback value can hide or shift text while the font loads.", [
   {
     id: "upstream",
     ast: {
@@ -256,7 +256,7 @@ policy("google-font-display", "a <link> whose literal href is a Google Fonts CSS
   },
 ]);
 
-policy("google-font-preconnect", "a <link> whose literal href starts with https://fonts.gstatic.com and whose rel is not the literal \"preconnect\".", [
+policy("google-font-preconnect", "Mark links to Google's font file host (fonts.gstatic.com) as preconnect; it opens the connection early so fonts load sooner.", [
   {
     id: "upstream",
     ast: {
@@ -279,7 +279,7 @@ const firstQuasiContains = url => ({
     { has: { kind: "jsx_expression", has: { kind: "object", has: { kind: "pair", nthChild: 1, has: { field: "value", kind: "template_string", regex: `^\`(?:[^$]|\\$[^{])*?${url}` } } } } },
   ],
 });
-policy("next-script-for-ga", "a <script> with a literal src containing the Google Analytics or gtag URL, or whose dangerouslySetInnerHTML object's first property is a template literal whose first quasi contains the GA or GTM script URL.", [
+policy("next-script-for-ga", "Use the Google helpers from @next/third-parties instead of raw script tags for Google Analytics or Tag Manager; they load the tags without slowing the page.", [
   {
     id: "upstream",
     ast: {
@@ -305,7 +305,7 @@ const POLYFILLED = ["Array.prototype.@@iterator", "Array.prototype.at", "Array.p
 const featureAlternation = POLYFILLED.map(feature => feature.replaceAll(".", "\\.").replaceAll("@", "(?:@|%40)")).join("|");
 const SEPARATOR = "(?:,|%2[Cc])";
 const POLYFILL_HOSTS = ["https://cdn.polyfill.io/v2/", "https://polyfill.io/v3/", "https://polyfill-fastly.net/", "https://polyfill-fastly.io/", "https://cdnjs.cloudflare.com/polyfill/"];
-policy("no-unwanted-polyfillio", "a <script> (or the first local name an import from next/script binds) with a plain string src on a polyfill.io host whose first features parameter lists a feature Next.js already polyfills.", [
+policy("no-unwanted-polyfillio", "Don't load polyfills from polyfill.io for features Next.js already polyfills; they duplicate code and add page weight.", [
   {
     id: "upstream",
     ast: {
@@ -327,7 +327,7 @@ policy("no-unwanted-polyfillio", "a <script> (or the first local name an import 
   },
 ]);
 
-policy("no-assign-module-variable", "a variable declaration with a declarator whose identifier is `module`.", [
+policy("no-assign-module-variable", "Don't declare a variable named module in Next.js code; it shadows the module object Node.js and the bundler rely on.", [
   {
     id: "upstream",
     ast: {
@@ -337,7 +337,7 @@ policy("no-assign-module-variable", "a variable declaration with a declarator wh
   },
 ]);
 
-policy("no-document-import-in-page", "an import from next/document, unless the part of the path after its last `pages` is empty or starts with `/_document`.", [
+policy("no-document-import-in-page", "Import next/document only in pages/_document; the custom Document API does not work in regular pages or components.", [
   {
     id: "upstream",
     ast: { file: { path: { notRegex: LAST_PIECE_DOCUMENT } }, rule: importFrom("next/document") },
@@ -345,7 +345,7 @@ policy("no-document-import-in-page", "an import from next/document, unless the p
   },
 ]);
 
-policy("no-head-import-in-document", "an import from next/head in a file whose path, between its first and second `pages`, names a document (name starts with `_document`, or `/_document/index`).", [
+policy("no-head-import-in-document", "Use Head from next/document, not next/head, in pages/_document; next/head is meant for individual pages.", [
   {
     id: "upstream",
     ast: { file: { path: { regex: SPLIT2_DOCUMENT } }, rule: importFrom("next/head") },
@@ -353,7 +353,7 @@ policy("no-head-import-in-document", "an import from next/head in a file whose p
   },
 ]);
 
-policy("no-styled-jsx-in-document", "a <style> opening element with a `jsx` attribute in a file whose path, between its first and second `pages`, names a document.", [
+policy("no-styled-jsx-in-document", "Don't use styled-jsx style tags in pages/_document; the custom Document does not support them.", [
   {
     id: "upstream",
     ast: { file: { path: { regex: SPLIT2_DOCUMENT } }, rule: { all: [OPEN, named("style"), hasAttribute("jsx")] } },
@@ -362,7 +362,7 @@ policy("no-styled-jsx-in-document", "a <style> opening element with a `jsx` attr
 ]);
 
 const ELEMENT_NAMED = name => ({ any: [{ kind: "jsx_self_closing_element", ...named(name) }, { kind: "jsx_element", has: { field: "open_tag", ...named(name) } }] });
-policy("no-title-in-document-head", "the first <title> element child of a <Head> element, in a file with an import from next/document that binds the local name Head.", [
+policy("no-title-in-document-head", "Set page titles with Head from next/head on each page, not with a title inside the custom Document's Head from next/document.", [
   {
     id: "upstream",
     ast: {
@@ -379,7 +379,7 @@ policy("no-title-in-document-head", "the first <title> element child of a <Head>
   },
 ]);
 
-policy("no-script-component-in-head", "a <Head> element with a direct <Script> element child, in a file that imports next/head.", [
+policy("no-script-component-in-head", "Place next/script Script components outside Head from next/head; scripts inside Head are not loaded as intended.", [
   {
     id: "upstream",
     ast: {
@@ -400,7 +400,7 @@ const objectSpreadKey = name => ({
   has: { kind: "spread_element", has: { kind: "object", has: { any: [{ kind: "pair", has: { field: "key", kind: "property_identifier", regex: `^${name}$` } }, { kind: "shorthand_property_identifier", regex: `^${name}$` }] } } },
 });
 const hasAttributeOrSpreadKey = name => ({ has: { any: [attribute(name), objectSpreadKey(name)] } });
-policy("inline-script-id", "an element named by the first local an import from next/script binds, with children or dangerouslySetInnerHTML and no id (attributes and keys of object-literal spreads; any other spread makes it uncheckable).", [
+policy("inline-script-id", "Give every next/script component with inline content an id; Next.js needs it to track and optimize the script.", [
   {
     id: "upstream",
     ast: {
@@ -424,7 +424,7 @@ const USE_CLIENT = { kind: "expression_statement", has: { kind: "string", value:
 const DEFAULT_EXPORT_OF_N_AFTER_USE_CLIENT = inProgram({ kind: "export_statement", all: [{ has: { kind: "identifier", pattern: "$N" } }, { follows: { stopBy: "end", ...USE_CLIENT } }] });
 const DECLARES_N = { any: [{ kind: "function_declaration", has: { field: "name", pattern: "$N" } }, { any: [{ kind: "lexical_declaration" }, { kind: "variable_declaration" }], has: { kind: "variable_declarator", has: { field: "name", kind: "identifier", pattern: "$N" } } }] };
 const ASYNC_CLIENT_MESSAGE = `Prevent Client Components from being async functions. See: ${DOCS}/no-async-client-component`;
-policy("no-async-client-component", "after a top-level \"use client\" statement: an `export default async function` with a capitalized name, or the first top-level declaration of the capitalized name `export default` exports when it is an async function or a variable initialized with an async arrow.", [
+policy("no-async-client-component", "Don't make the default-exported component of a \"use client\" file an async function; Client Components cannot be async.", [
   {
     id: "export-default-function",
     ast: {
@@ -459,7 +459,7 @@ policy("no-async-client-component", "after a top-level \"use client\" statement:
   },
 ]);
 // ---- third batch ---------------------------------------------------------------------------------------------------
-policy("no-before-interactive-script-outside-document", "an opening element named by the default import of next/script with a plain strategy=\"beforeInteractive\", unless the path contains `/app/` or its segment after the first `pages` has a name starting with `_document`.", [
+policy("no-before-interactive-script-outside-document", "Use the beforeInteractive strategy of next/script only in pages/_document or the app directory; elsewhere it cannot run before hydration.", [
   {
     id: "upstream",
     ast: {
@@ -485,7 +485,7 @@ const DOCUMENT_CLASS = {
     inProgram(importFrom("next/document", defaultLocal({ pattern: "$D" }))),
   ],
 };
-policy("no-duplicate-head", "every <Head> child of a returned element after the first, in a return inside a class extending the default import of next/document.", [
+policy("no-duplicate-head", "Keep a single Head element in a custom Next.js Document's render output; duplicate heads produce unexpected markup.", [
   {
     id: "upstream",
     ast: {
@@ -517,7 +517,7 @@ const distanceOne = word => {
 };
 const TYPO = `^(?:${DATA_FUNCTIONS.flatMap(distanceOne).join("|")})$`;
 const TYPO_NAME = { regex: TYPO, not: { regex: `^(?:${DATA_FUNCTIONS.join("|")})$` } };
-policy("no-typos", "an exported function or variable whose name is one edit away from getStaticProps, getStaticPaths or getServerSideProps, in a file whose segment after the first `pages` is non-empty and not under /api.", [
+policy("no-typos", "Spell getStaticProps, getStaticPaths and getServerSideProps exactly in page files; an export one letter off is silently ignored by Next.js.", [
   {
     id: "upstream",
     ast: {
@@ -557,7 +557,7 @@ const DEFAULT_COMPONENT = {
   ],
 };
 const CUSTOM_FONT_MESSAGE = `Custom fonts not added in \`pages/_document.js\` will only load for a single page. This is discouraged. See: ${DOCS}/no-page-custom-font`;
-policy("no-page-custom-font", "a <link> whose literal href is a Google Fonts CSS URL, unless the file is pages/_document (last `pages` piece starts with /_document) and the link is inside the default-exported component.", [
+policy("no-page-custom-font", "Add Google Fonts stylesheet links only inside the default-exported custom Document in pages/_document; fonts linked elsewhere load for one page and skip font optimization.", [
   { id: "page", ast: { file: { path: { notRegex: LAST_PIECE_DOCUMENT } }, rule: GOOGLE_FONT_LINK }, message: CUSTOM_FONT_MESSAGE },
   {
     id: "document",
@@ -596,7 +596,7 @@ const LOCATION_UTILS = {
 const LOCATION_MESSAGE = `Do not use \`location\` to navigate to internal Next.js pages. Use \`redirect()\` in the render phase, or \`useRouter().push()\` in Client Components' event handlers instead. See: ${DOCS}/no-location-assign-relative-destination`;
 policy(
   "no-location-assign-relative-destination",
-  "an assignment to location.href (or window/globalThis/document/self.location.href) or a call of its assign(), whose value's static string prefix is a relative URL.",
+  "Don't navigate to internal pages by setting location.href or calling location.assign with a relative URL; use redirect() or the router for client-side navigation.",
   [
     {
       id: "href",

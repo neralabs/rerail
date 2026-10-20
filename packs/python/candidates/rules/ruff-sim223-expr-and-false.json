@@ -3,7 +3,7 @@
   "id": "ruff-sim223-expr-and-false",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM223 (expr-and-false), `is_short_circuit` in flake8_simplify/rules/ast_bool_op.rs:736. Over the values of one `and` run (tree-sitter nests them to the left; parentheses start a new run), a value whose truthiness is unknown is skipped when the run is not in a boolean test, or when it has a side effect (`contains_effect`). The first value that is not skipped and is falsy (`False`, `None`, zero, an empty literal, ...), or whose successor is, triggers; the finding starts at the value after the last skipped value before it (the whole expression when none), as Ruff's `furthest`. Truthiness follows `Truthiness::from_expr`, including f-string emptiness and `list(...)`-style calls. The finding spans that value only; Ruff's range runs to the end of the expression.",
+  "description": "Simplify an and expression holding an always-falsy value such as False, None, zero or an empty literal; the operands after it never run.",
   "scope": {
     "include": [
       "**/*"

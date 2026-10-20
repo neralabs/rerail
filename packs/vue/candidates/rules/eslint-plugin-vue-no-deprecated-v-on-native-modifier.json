@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-deprecated-v-on-native-modifier",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-deprecated-v-on-native-modifier`: a `native` modifier token of a `v-on:`/`@` directive (a directive_modifier named native under a directive_attribute that is v-on or starts with `@`). Reported at the modifier name.",
+  "description": "Remove the .native modifier from v-on listeners; Vue 3 dropped it and passes listeners to the component root on its own.",
   "scope": {
     "include": [
       "**/*.vue"

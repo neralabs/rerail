@@ -3,7 +3,7 @@
   "id": "eslint-no-script-url",
   "revision": 4,
   "mode": "steer",
-  "description": "ESLint 10.11.0 no-script-url, default options. Port of ESLint's `no-script-url` rule (https://eslint.org/docs/latest/rules/no-script-url). Flags string literals and untagged, substitution-free template literals whose value starts with `javascript:` (case-insensitive): cooked, or for a JSX attribute string raw with HTML character references decoded.",
+  "description": "Avoid javascript: URLs in strings and template literals; running code from a URL is a form of eval.",
   "scope": {
     "include": [
       "**/*.ts",

@@ -3,7 +3,7 @@
   "id": "unicorn-filename-case",
   "revision": 1,
   "mode": "steer",
-  "description": "A JavaScript file name that is not kebab-case (leading `_` and `.` are ignored).",
+  "description": "Name JavaScript files in kebab-case, ignoring leading underscores and dots; consistent names are easier to find and import.",
   "scope": {
     "include": [
       "**/*.js",

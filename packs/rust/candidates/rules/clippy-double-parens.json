@@ -3,7 +3,7 @@
   "id": "clippy-double-parens",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's double_parens lint: reports redundant nested parentheses around an expression (only whitespace between the two opening or closing parentheses, as Clippy's source check requires; a call's sole argument in parentheses, reported once where the nested-parentheses clauses already report the same span); macro expansion and tuple/unit argument semantics are not modelled.",
+  "description": "Remove redundant double parentheses around Rust expressions and around a call's only argument.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {

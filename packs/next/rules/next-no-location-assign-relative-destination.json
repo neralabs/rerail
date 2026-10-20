@@ -3,7 +3,7 @@
   "id": "next-no-location-assign-relative-destination",
   "revision": 1,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-location-assign-relative-destination: an assignment to location.href (or window/globalThis/document/self.location.href) or a call of its assign(), whose value's static string prefix is a relative URL.",
+  "description": "Don't navigate to internal pages by setting location.href or calling location.assign with a relative URL; use redirect() or the router for client-side navigation.",
   "scope": {
     "include": [
       "**/*.ts",
