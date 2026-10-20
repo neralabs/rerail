@@ -444,6 +444,78 @@ impl NodeFacts {
     }
 }
 
+/// A document's nodes as a transducer program reads them (`Program::holds`, the `program_match`
+/// terminal): the `node` table's columns, and each node's text, read from the document's tree.
+impl crate::code_rule_dsl::transducer::Tree for NodeFacts {
+    fn len(&self) -> u32 {
+        self.len
+    }
+
+    fn kind(&self, node: u32) -> u16 {
+        NodeFacts::kind(self, node)
+    }
+
+    fn field(&self, node: u32) -> u16 {
+        NodeFacts::field(self, node)
+    }
+
+    fn field_first(&self, node: u32) -> bool {
+        let slot = node as usize;
+        self.positions().field_first[slot / 64] >> (slot % 64) & 1 == 1
+    }
+
+    fn flags(&self, node: u32) -> u8 {
+        let [extra, error, missing] = match &self.tree {
+            Tree::Tape(root) => root.root().get_doc().transducer_marks(node),
+            Tree::Sub(root) => {
+                let sub = Self::sub_node(root, node);
+                [sub.is_extra(), sub.is_error(), sub.is_missing()]
+            }
+        };
+        u8::from(self.named(node))
+            | (u8::from(extra) << 1)
+            | (u8::from(missing) << 2)
+            | (u8::from(error) << 3)
+    }
+
+    fn parent(&self, node: u32) -> Option<u32> {
+        let parent = NodeFacts::parent(self, node);
+        (parent != NONE).then_some(parent)
+    }
+
+    fn last(&self, node: u32) -> u32 {
+        NodeFacts::last(self, node)
+    }
+
+    fn first_child(&self, node: u32) -> Option<u32> {
+        let first = self.first(node);
+        (first != NONE).then_some(first)
+    }
+
+    fn next_sibling(&self, node: u32) -> Option<u32> {
+        NodeFacts::next_sibling(self, node)
+    }
+
+    fn text(&self, node: u32) -> &str {
+        match &self.tree {
+            Tree::Tape(root) => root.root().get_doc().transducer_text_str(node),
+            Tree::Sub(root) => {
+                let tree = &root.root().get_doc().tree;
+                let range = Self::sub_node(root, node).range();
+                &tree.text()[range.start - tree.offset()..range.end - tree.offset()]
+            }
+        }
+    }
+
+    fn span_len(&self, node: u32) -> u64 {
+        let range = match &self.tree {
+            Tree::Tape(root) => root.root().get_doc().transducer_span(node),
+            Tree::Sub(root) => Self::sub_node(root, node).range(),
+        };
+        range.len() as u64
+    }
+}
+
 const COL_FILE: c_int = 0;
 const COL_ID: c_int = 1;
 const COL_LAST: c_int = 2;

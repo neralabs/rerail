@@ -87,6 +87,8 @@ pub(super) struct ProgramBuilder {
     analysis: Analysis,
     /// The time emitting the stages took, as lowering reached them.
     pub(super) stage_emission: Timing,
+    /// The stages and programs pushdown compiled (`pushdown`).
+    pub(super) pushdown: super::pushdown::Pushdown,
 }
 
 /// The capture and value analyses lowering reads (`CaptureAnalysis`, `reads_values`,
@@ -494,6 +496,7 @@ pub(super) fn referred(op: &Op, out: &mut Vec<usize>) {
         }
         Op::Kinds(_)
         | Op::Regex(_)
+        | Op::Program(_)
         | Op::Pattern { .. }
         | Op::Never
         | Op::NthChild { .. }
@@ -643,9 +646,15 @@ impl<'p> Lowerer<'p> {
         }
     }
 
-    /// The statement of what was lowered: its root kinds, its operator and its units.
+    /// The statement of what was lowered: its root kinds, its operator and its units, their
+    /// capture-free node-local sub-rules pushed down (`pushdown`).
     fn finish(self, kinds: Option<Vec<u16>>, op: Op) -> Statement {
+        let op = super::pushdown::push(op, self.program);
         let mut units = self.units;
+        for unit in &mut units {
+            let body = std::mem::replace(&mut unit.body, Op::Never);
+            unit.body = super::pushdown::push(body, self.program);
+        }
         assign_sccs(&mut units);
         Statement {
             slots: self.slots,
@@ -1151,22 +1160,30 @@ impl<'p> Lowerer<'p> {
 
     /// A stage's statement. A rule that cannot be unknown is lowered two-valued even in a
     /// three-valued clause (its verdict is the same, with no `unk` to carry through its frames),
-    /// and its stage's rows say `unk = 0` for the clause's readers.
+    /// and its stage's rows say `unk = 0` for the clause's readers. A stage whose rule compiles
+    /// whole to a transducer program is that program's one statement over its files (`pushdown`).
     fn stage_of(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
         let three = self.three && reads_values(rule, &mut BTreeSet::new());
         let kinds = RootKinds::new(three)
             .of(rule, &mut self.program.analysis)
             .map(|kinds| kinds.into_iter().collect());
-        let statement = {
+        let lowered = {
             let mut lowerer = Lowerer::new(self.program, self.dialect);
             lowerer.three = three;
             lowerer.shared = recursion::repeated(&[rule]);
             let (op, _) = lowerer.lower(rule, 0, &BTreeSet::new())?;
-            let op = lowerer.unknowable(op);
-            lowerer.finish(kinds, op)
+            match super::pushdown::stage(&op, self.three, lowerer.program) {
+                Some(sql) => Ok(sql),
+                None => {
+                    let op = lowerer.unknowable(op);
+                    Err(lowerer.finish(kinds, op))
+                }
+            }
         };
-        let sql = timed(&mut self.program.stage_emission, || {
-            emit::stage(&statement, self.three)
+        let sql = lowered.unwrap_or_else(|statement| {
+            timed(&mut self.program.stage_emission, || {
+                emit::stage(&statement, self.three)
+            })
         });
         let digest = format!("{}:{}", self.dialect, sql.statements.join(";\n"));
         if let Some(&existing) = self.program.stage_index.get(&digest) {
