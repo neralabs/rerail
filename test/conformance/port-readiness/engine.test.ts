@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, test } from "vitest";
 
-import { PACKAGE_ROOT } from "../../../src/engine/index.js";
-import { engineIdentity, engineKey, engineSources, FAMILY_SOURCES, policyFamilies, staleNativeBinary, withExpando } from "../../../conformance/port-readiness/engine.js";
+import { PACKAGE_ROOT, resolveNativeBindingPath } from "../../../src/engine/index.js";
+import { engineIdentity, engineKey, engineSources, FAMILY_SOURCES, loadEngine, nativeBinarySha256, policyFamilies, staleNativeBinary, withExpando } from "../../../conformance/port-readiness/engine.js";
 
 test("pattern text takes ast-grep's expando exactly where ast-grep's pre_process_pattern puts it", () => {
   assert.equal(withExpando("def f($NAME=$VALUE):", "µ"), "def f(µNAME=µVALUE):");
@@ -198,6 +199,18 @@ describe("a rule's engine key", () => {
     assert.equal(staleNativeBinary(root, binary), "languages/python.json");
     at("native/rerail_engine.darwin-arm64.node", 4_000);
     assert.equal(staleNativeBinary(root, binary), undefined);
+  });
+
+  // No key covers the binary, so each report says which one judged: merge refuses shards another binary made.
+  test("a run records the sha256 of the native binary it loaded, read once per path", () => {
+    assert.equal(loadEngine(PACKAGE_ROOT).binary, createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex"));
+    const binary = join(checkout(sources), "native", "rerail_engine.darwin-arm64.node");
+    writeFileSync(binary, "a build\n");
+    const first = nativeBinarySha256(binary);
+    assert.equal(first, createHash("sha256").update("a build\n").digest("hex"));
+    // `require` keeps the binary it first loaded from a path, so a build written there later is not the one a run used.
+    writeFileSync(binary, "a later build\n");
+    assert.equal(nativeBinarySha256(binary), first);
   });
 
   test("a rule of no family, or of one with no sources of its own, keys on the whole engine", () => {

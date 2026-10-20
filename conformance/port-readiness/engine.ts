@@ -28,7 +28,9 @@ import {
  *
  * The native binary is not part of it. It is not bit-reproducible, so hashing it made a build-cache miss on unchanged
  * sources re-judge every rule; the sources it was built from say the same thing, and say it reproducibly. That holds
- * only while the binary is their build: one older than a source (`staleNativeBinary`) saves no result.
+ * only while the binary is their build: one older than a source (`staleNativeBinary`) saves no result. The binary's
+ * own sha256 is recorded on each report instead (`Engine.binary`), never in a key, so `merge` can refuse shards that
+ * another binary made.
  */
 export interface EngineIdentity {
   /** sha256 over each shared engine source file's path and the sha256 of its bytes in the working tree. */
@@ -90,6 +92,8 @@ export interface CompiledPolicy {
 
 export interface Engine {
   identity: EngineIdentity;
+  /** The sha256 of the native binary loaded (`nativeBinarySha256`): what each report records, and no key reads. */
+  binary: string;
   /** The capabilities JSON every policy is compiled against: native/src/code_rule_dsl/capabilities.json. */
   capabilities: string;
   rerail: RerailModules;
@@ -309,11 +313,11 @@ export function engineSources(root: string = PACKAGE_ROOT): { shared: string[]; 
  * imported as TypeScript, so its edits take effect without a build.
  *
  * The binary is no part of a rule's key, so one left over from before a source edit would judge rules under the edited
- * sources' key and its verdicts would be read back as theirs; a run on one saves no result (cli.ts). Shards run on a
- * stale binary and merged after a rebuild are not caught: a shard report does not say which binary made it. `npm run build:native` writes the binary after cargo
- * rebuilds what a newer source changed, and CI unpacks it from the build job's artifact after the checkout, so a
- * binary built from these sources is newer than all of them.
- * A binary misjudged stale costs a run its cache writes and `--write`, never a verdict.
+ * sources' key and its verdicts would be read back as theirs; a run on one saves no result (cli.ts). Shards run on one
+ * and merged after a rebuild are told apart by the binary each report records (merge.ts). `npm run build:native`
+ * writes the binary after cargo rebuilds what a newer source changed, and CI unpacks it from the build job's artifact
+ * after the checkout, so a binary built from these sources is newer than all of them. A binary misjudged stale costs a
+ * run its cache writes, never a verdict.
  */
 export function staleNativeBinary(root: string = PACKAGE_ROOT, binary: string = resolveNativeBindingPath()): string | undefined {
   const built = statSync(binary).mtimeMs;
@@ -324,6 +328,22 @@ export function staleNativeBinary(root: string = PACKAGE_ROOT, binary: string = 
   };
   const { shared, families } = engineSources(root);
   return [...shared, ...Object.values(families).flat()].find((path) => !path.startsWith("src/engine/") && modified(path) > built);
+}
+
+/** Each native binary's sha256 this process has read, by path. */
+const binaryDigests = new Map<string, string>();
+
+/**
+ * The sha256 of the bytes of the native binary at `binary` (by default the one loadNativeBinding loads, so
+ * RERAIL_ENGINE_PATH is honoured): what a report records as the binary that made it. Not its path or modification
+ * time, which say nothing of what was built. Each path is read once per process: `require` keeps the binary it first
+ * loaded from a path whatever is written there later, so the bytes read as loadEngine loads it are the ones every run
+ * in the process used, and a run over every tool-pack hashes them once.
+ */
+export function nativeBinarySha256(binary: string = resolveNativeBindingPath()): string {
+  const digest = binaryDigests.get(binary) ?? sha256(readFileSync(binary));
+  binaryDigests.set(binary, digest);
+  return digest;
 }
 
 /**
@@ -457,6 +477,7 @@ export function loadEngine(root: string = PACKAGE_ROOT): Engine {
 
   return {
     identity: engineIdentity(root),
+    binary: nativeBinarySha256(),
     capabilities,
     rerail: RERAIL_MODULES,
     compile,

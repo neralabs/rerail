@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { PACKAGE_ROOT } from "../../src/engine/index.js";
 import { DEFAULT_CACHE_ROOT } from "./corpus.js";
 import { staleNativeBinary } from "./engine.js";
-import { mergeDirectory } from "./merge.js";
+import { checkoutBinary, mergeDirectory } from "./merge.js";
 import { ProcessCommandRunner } from "./process.js";
 import { fetchToolPackRecordings } from "./recording/fetch.js";
 import { renderMarkdown } from "./report.js";
@@ -106,7 +106,8 @@ async function merge(args: string[]): Promise<number> {
   const [directory, ...rest] = args;
   if (directory === undefined || directory.startsWith("--")) throw new Error(USAGE);
   parse(rest, [], []);
-  const { merged, problems } = await mergeDirectory(resolve(directory));
+  // Every shard must be one native binary's run, and the checkout's when it has one (CI's report job has none).
+  const { merged, problems } = await mergeDirectory(resolve(directory), checkoutBinary());
   for (const report of merged) console.log(`${report.toolPack}: merged ${report.rules.length} rules; ${report.summary.shipped.pass}/${report.summary.shipped.rules} shipped pass, ${report.summary.candidates.pass}/${report.summary.candidates.rules} candidates pass; ${blockingFailures(report)} blocking failure(s)`);
   for (const problem of problems) process.stderr.write(`not merged: ${problem}\n`);
   console.log(`merged ${merged.length} sharded tool-pack(s) in ${resolve(directory)}`);

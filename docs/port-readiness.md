@@ -168,7 +168,9 @@ Some things are deliberately out of the key. The Node.js version (CI pins only t
 only `cargo test` compiles cannot. And the native binary: it is not bit-reproducible, so hashing it made a
 build-cache miss on unchanged sources re-judge every rule, and the sources it was built from say the same thing
 reproducibly. That holds only while the binary is their build, so a binary older than an engine source it is built from
-(an edit not yet rebuilt) saves no result. A shard report does not record which binary made it, so shards run on a stale binary and merged after a rebuild are not caught: rerun them.
+(an edit not yet rebuilt) saves no result. Each report records the sha256 of the binary that made it instead
+(`engine.binary`), which no key reads, and `merge` refuses shards that different binaries made, so shards run on a
+stale binary and merged after a rebuild are caught: rebuild once and rerun every shard.
 The test-only sources are every file a `#[cfg(test)] mod` declaration reaches, which is how the engine keeps its oracle
 tests beside the code they check.
 
@@ -379,5 +381,8 @@ then merges each tool-pack's shards into one report before the summary:
 npm run port-readiness -- merge .rerail/reports/port-readiness   # shard-*of*/<pack>--<tool>.json -> <pack>--<tool>.json
 ```
 
-A tool-pack whose shards are missing, of another count, or disagree on what they share gets no merged report, so the
-summary fails it.
+A tool-pack whose shards are missing, of another count, or disagree on what they share (the native binary that made
+them, the engine sources, the upstream, the tool-pack checks, the corpus) gets no merged report, so the summary fails
+it. With a native binary in the checkout, `merge` also refuses shards that it did not make, or whose reports do not
+say which binary made them (written before reports recorded it): rerun them. CI's report job has no binary, and its
+shards all unpack the build job's.

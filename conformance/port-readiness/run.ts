@@ -121,7 +121,11 @@ export interface GatesReport {
   tool: string;
   toolPack: string;
   upstream: { name: string; repository: string; commit: string; version: string; license: string; recommended_configs: string[]; runtime: string; identity: Record<string, string> };
-  engine: Pick<EngineIdentity, "sha256">;
+  /**
+   * The engine's identity, and the sha256 of the native binary that judged (`Engine.binary`), which no key reads: a
+   * report written before reports recorded the binary has none.
+   */
+  engine: Pick<EngineIdentity, "sha256"> & { binary?: string };
   gates: { id: GateId; title: string; blocking: boolean }[];
   method: Record<"tool-pack" | GateId, Record<string, string>>;
   /** Tool-pack checks: a failing one fails every shipped rule (the recording is stale). */
@@ -625,8 +629,9 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
     tool,
     toolPack: `${pack}/${tool}`,
     upstream: { ...manifest.upstream, identity: adapter.identity },
-    // The whole engine, every family's files included: what the run judged on, not what any one rule keyed on.
-    engine: { sha256: engine.identity.sha256 },
+    // The whole engine, every family's files included: what the run judged on, not what any one rule keyed on. And the
+    // binary that loaded, which no key covers: merge refuses shards that different binaries made.
+    engine: { sha256: engine.identity.sha256, binary: engine.binary },
     gates: GATES.map((entry) => ({ ...entry })),
     method: method(manifest),
     toolPackChecks: toolPack,

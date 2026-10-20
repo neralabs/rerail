@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, it } from "vitest";
 
+import { resolveNativeBindingPath } from "../../../src/engine/index.js";
 import { resultPath } from "../../../conformance/port-readiness/cache.js";
-import { mergeDirectory, mergeShards } from "../../../conformance/port-readiness/merge.js";
+import { checkoutBinary, mergeDirectory, mergeShards } from "../../../conformance/port-readiness/merge.js";
 import { summarizeRules, unusedGapLine, type GatesReport, type RuleReport } from "../../../conformance/port-readiness/run.js";
 import { parseShard, shardName, shardOf, type Shard } from "../../../conformance/port-readiness/shard.js";
 import { readReports } from "../../../conformance/port-readiness/summary.js";
@@ -37,13 +39,13 @@ function rule(id: string, location: RuleReport["location"] = "shipped", failing 
   };
 }
 
-/** A shard's report of the rules of `ids` that fall in `shard`, out of `total` rules. */
-function shardReport(shard: Shard, ids: string[], options: { total?: number; excused?: number; integrity?: string[]; failing?: string[] } = {}): GatesReport {
+/** A shard's report of the rules of `ids` that fall in `shard`, out of `total` rules, made by the binary `binary`. */
+function shardReport(shard: Shard, ids: string[], options: { total?: number; excused?: number; integrity?: string[]; failing?: string[]; binary?: string } = {}): GatesReport {
   const rules = ids.filter((id) => shardOf(id, shard.count) === shard.index).map((id) => rule(id, id.startsWith("c-") ? "candidate" : "shipped", options.failing?.includes(id)));
   return {
     format: "rerail.port-readiness/v1", pack: "demo", tool: "tool", toolPack: "demo/tool",
     upstream: { name: "", repository: "", commit: "", version: "", license: "", recommended_configs: [], runtime: "", identity: {} },
-    engine: { sha256: "e" }, gates: [], method: {} as GatesReport["method"], toolPackChecks: { pass: true, checks: [] },
+    engine: { sha256: "e", binary: options.binary ?? "b" }, gates: [], method: {} as GatesReport["method"], toolPackChecks: { pass: true, checks: [] },
     integrity: options.integrity ?? [], knownGaps: [{ id: "gap", proven: true, kind: "valid-source", excused: options.excused ?? 0 }],
     gapCandidates: [{ gate: "matches-upstream-tests", file: "t/a.ts", engine: "parse", verdict: "valid-source", parsers: [] }],
     corpus: { tasks: [], files: 3, excluded: 0 }, unmapped: [], listedWithoutDocument: 0,
@@ -118,10 +120,47 @@ describe("merge", () => {
     const to = (from + 1) % moved.length;
     moved[to]!.rules.push(moved[from]!.rules.pop()!);
     assert.throws(() => mergeShards(moved), /is in shard-\d+of3, not in shard \d+/u);
-    assert.throws(() => mergeShards([parts[0]!, { ...parts[1]!, engine: { sha256: "other" } }, parts[2]!]), /disagree on engine: shard-2of3 differ from shard-1of3/u);
+    assert.throws(() => mergeShards([parts[0]!, { ...parts[1]!, engine: { sha256: "other", binary: "b" } }, parts[2]!]), /disagree on engine: shard-2of3 differ from shard-1of3/u);
     assert.throws(() => mergeShards([parts[0]!, parts[1]!, { ...parts[2]!, corpus: { tasks: [], files: 2, excluded: 0 } }]), /disagree on corpus: shard-3of3 differ.*failed to fetch or apply/u);
     const { shard: _shard, ...whole } = parts[0]!;
     assert.throws(() => mergeShards([whole as GatesReport, parts[1]!, parts[2]!]), /not a shard's/u);
+  });
+
+  // No rule's key covers the native binary (engine.ts), so shards run on a stale one and merged after a rebuild agree
+  // on everything else: each report's engine.binary is what tells them apart.
+  it("refuses shards another native binary made, before it compares the engine sources", () => {
+    const parts = shards(3);
+    assert.throws(() => mergeShards([parts[0]!, { ...parts[1]!, engine: { sha256: "other", binary: "other" } }, parts[2]!]), /^Error: demo\/tool: shard-2of3 made by another native binary than shard-1of3: rebuild once and rerun every shard$/u);
+    assert.throws(() => mergeShards([parts[0]!, shardReport({ index: 2, count: 3 }, IDS, { binary: "c" }), shardReport({ index: 3, count: 3 }, IDS, { binary: "c" })]), /: shard-2of3, shard-3of3 made by another native binary than shard-1of3:/u);
+    // A report written before reports recorded the binary says nothing that matches one that does.
+    const unrecorded = { ...parts[2]!, engine: { sha256: "e" } };
+    assert.throws(() => mergeShards([parts[0]!, parts[1]!, unrecorded]), /: shard-3of3 made by another native binary than shard-1of3:/u);
+  });
+
+  it("with a native binary in the checkout, refuses shards it did not make or that do not say which made them", () => {
+    const parts = shards(2);
+    assert.equal(mergeShards(parts, "b").engine.binary, "b");
+    assert.throws(() => mergeShards(parts, "c"), /^Error: demo\/tool: shard-1of2, shard-2of2 made by another native binary than this checkout's: rerun every shard on it$/u);
+    const unrecorded = parts.map((part) => ({ ...part, engine: { sha256: "e" } }));
+    assert.throws(() => mergeShards(unrecorded, "b"), /^Error: demo\/tool: shard-1of2, shard-2of2 do not say which native binary made them \(written before reports recorded it\): rerun every shard$/u);
+    // Shards that disagree with each other are told so first, whatever the checkout's binary.
+    assert.throws(() => mergeShards([parts[0]!, { ...parts[1]!, engine: { sha256: "e", binary: "c" } }], "c"), /: shard-2of2 made by another native binary than shard-1of2: rebuild once/u);
+  });
+
+  it("with no native binary in the checkout, as in CI's report job, merges shards that agree", () => {
+    const report = mergeShards(shards(2), undefined);
+    assert.deepEqual(report.engine, { sha256: "e", binary: "b" });
+    assert.equal(report.rules.length, IDS.length);
+  });
+
+  it("the checkout's binary is the one RERAIL_ENGINE_PATH names, and one that names no file is an error", () => {
+    const directory = mkdtempSync(join(tmpdir(), "gates-binary-"));
+    temporary.push(directory);
+    const binary = join(directory, "rerail_engine.node");
+    writeFileSync(binary, "a build\n");
+    assert.equal(checkoutBinary(binary), createHash("sha256").update("a build\n").digest("hex"));
+    assert.throws(() => checkoutBinary(join(directory, "missing.node")), /RERAIL_ENGINE_PATH does not exist/u);
+    assert.equal(checkoutBinary(), createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex"));
   });
 
   it("a shard that took every result from the cache merges with one that judged: both carry the same corpus-complete", () => {
@@ -145,10 +184,16 @@ describe("merge", () => {
     const result = await mergeDirectory(directory);
     assert.deepEqual(result.problems, []);
     assert.deepEqual(readReports(directory).map((report) => [report.toolPack, report.rules.length]), [["demo/tool", 11]]);
-    assert.ok(existsSync(join(directory, "demo--tool.md")));
+    assert.match(readFileSync(join(directory, "demo--tool.md"), "utf8"), /^- Engine: this checkout's, identity `e`, native binary `b`$/mu);
+
+    // Shards another binary made than the checkout's leave no tool-pack report either.
+    rmSync(join(directory, "demo--tool.json"));
+    const rebuilt = await mergeDirectory(directory, "c");
+    assert.equal(rebuilt.merged.length, 0);
+    assert.match(rebuilt.problems[0]!, /demo\/tool: shard-1of2, shard-2of2 made by another native binary than this checkout's/u);
+    assert.equal(existsSync(join(directory, "demo--tool.json")), false);
 
     // A missing shard leaves no tool-pack report, and says why.
-    rmSync(join(directory, "demo--tool.json"));
     rmSync(join(directory, "shard-2of2"), { recursive: true });
     const short = await mergeDirectory(directory);
     assert.equal(short.merged.length, 0);

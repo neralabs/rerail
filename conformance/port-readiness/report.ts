@@ -142,7 +142,8 @@ export function renderMarkdown(report: GatesReport): string {
     `**${summary.shipped.pass} of ${summary.shipped.rules} shipped rules pass every blocking gate; ${summary.candidates.pass} of ${summary.candidates.rules} candidates do.**`,
     "",
     `- Upstream: ${report.upstream.name}, ${report.upstream.repository} at \`${report.upstream.commit}\` (${report.upstream.version}, ${report.upstream.license}); runtime ${report.upstream.runtime}`,
-    `- Engine: this checkout's, identity \`${report.engine.sha256.slice(0, 16)}\``,
+    // A report written before reports recorded the native binary names none.
+    `- Engine: this checkout's, identity \`${report.engine.sha256.slice(0, 16)}\`${report.engine.binary === undefined ? "" : `, native binary \`${report.engine.binary.slice(0, 16)}\``}`,
     `- Cache: ${report.cache.hits} of ${report.cache.rules} rule result(s) from the cache`,
     `- Documents not mapped to an upstream rule: ${report.unmapped.length === 0 ? "none" : report.unmapped.map((entry) => `\`${entry.file}\` (${entry.location})`).join(", ")}`,
     `- conformance.json entries of ${report.tool} listed, no document yet: ${report.listedWithoutDocument}`,
