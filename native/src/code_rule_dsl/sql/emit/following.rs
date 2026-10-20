@@ -120,12 +120,15 @@ impl Emitter<'_> {
             ),
             Reads::join(&[&fresh, &sets]),
         );
+        // `CROSS JOIN` fixes the order: each entered row probes `added` on `(b, x)`. Left free,
+        // the planner can scan `added` outermost, where the element is an expression of `f.node`
+        // no index serves, and scan the entered rows once per added row.
         let following = self.within(&held, |this| {
             this.frame(
                 "y",
                 &format!(
-                    "SELECT {} FROM {entered} f JOIN {added} a ON a.b IS f.s{base} AND a.x = {element} \
-                     JOIN {sets} s ON s.key = a.key",
+                    "SELECT {} FROM {entered} f CROSS JOIN {added} a ON a.b IS f.s{base} AND a.x = {element} \
+                     CROSS JOIN {sets} s ON s.key = a.key",
                     this.select("f", &[(format!("s{out}"), "s.id".to_owned())])
                 ),
                 Reads::join(&[&entered, &added, &sets]),
