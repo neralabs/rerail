@@ -1375,7 +1375,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -1916,7 +1915,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -2457,7 +2455,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -2998,7 +2995,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -3539,7 +3535,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -4080,7 +4075,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -4621,7 +4615,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -5162,7 +5155,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -5710,7 +5702,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -6263,7 +6254,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -6820,7 +6810,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -7358,7 +7347,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -7902,7 +7890,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -8446,7 +8433,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -8984,7 +8970,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -9530,7 +9515,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -10074,7 +10058,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -10621,7 +10604,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -11159,7 +11141,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -11744,7 +11725,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -12326,7 +12306,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -12911,7 +12890,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -13471,7 +13449,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -14071,7 +14048,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -14777,7 +14753,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -14833,11 +14808,11 @@
         "stages": [
           {
             "name": "syntax_rows_0",
-            "query": "SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_0 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_1 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_2 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_3 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_4 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_5 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_6 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_7 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_8 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_9 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_10 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_11"
+            "query": "SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_0 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_1 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_2 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_3 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_4 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_5 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_6 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_7 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_8 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_9 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_10 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_11"
           },
           {
             "name": "syntax_rows_1",
-            "query": "SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_12 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_13 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,value_start,value_end,value_kind,value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_14 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_15 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,type_start,type_end,type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_16 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_17 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind FROM syntax_18 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind FROM syntax_19 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind FROM syntax_20 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_21 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind FROM syntax_22 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind FROM syntax_23 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind FROM syntax_24"
+            "query": "SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_12 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_13 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,value_start,value_end,value_kind,value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_14 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_15 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,type_start,type_end,type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_16 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind,NULL AS parameters_start,NULL AS parameters_end,NULL AS parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_17 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind FROM syntax_18 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind FROM syntax_19 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind FROM syntax_20 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS value_source,NULL AS type_start,NULL AS type_end,NULL AS type_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,NULL AS condition_start,NULL AS condition_end,NULL AS condition_kind,NULL AS consequence_start,NULL AS consequence_end,NULL AS consequence_kind FROM syntax_21 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind FROM syntax_22 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind FROM syntax_23 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind FROM syntax_24"
           },
           {
             "name": "nodes",
@@ -14860,7 +14835,10 @@
                 "__start",
                 "__end"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "edges",
@@ -14888,7 +14866,10 @@
                 "__path",
                 "name"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "ownership",
@@ -14920,7 +14901,10 @@
                 "__path",
                 "name"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "methods",
@@ -14935,7 +14919,10 @@
                 "__path",
                 "id"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "attributes",
@@ -14945,7 +14932,10 @@
                 "__path",
                 "id"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "calls",
@@ -14959,18 +14949,24 @@
                 "__path",
                 "callee"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "arguments",
-            "query": "SELECT n.*,c.id AS call,row_number() OVER(PARTITION BY c.__path,c.id ORDER BY n.__start)-1 AS position FROM calls c JOIN nodes n ON n.__path=c.__path AND n.parent=c.arguments_kind||':'||c.arguments_start||':'||c.arguments_end WHERE n.kind NOT IN ('comment','keyword_argument','list_splat','dictionary_splat')",
+            "query": "SELECT n.__path,n.__start,n.__end,n.kind,n.line,n.parent_start,n.parent_end,n.parent_kind,n.ancestor_start,n.ancestor_end,n.ancestor_kind,n.name_start,n.name_end,n.name_kind,n.name_source,n.left_start,n.left_end,n.left_kind,n.right_start,n.right_end,n.right_kind,n.value_start,n.value_end,n.value_kind,n.value_source,n.type_start,n.type_end,n.type_kind,n.function_start,n.function_end,n.function_kind,n.arguments_start,n.arguments_end,n.arguments_kind,n.object_start,n.object_end,n.object_kind,n.object_source,n.attribute_start,n.attribute_source,n.body_start,n.body_end,n.body_kind,n.parameters_start,n.parameters_end,n.parameters_kind,n.condition_start,n.condition_end,n.condition_kind,n.consequence_start,n.consequence_end,n.consequence_kind,n.id,n.parent,n.edge_parent,n.ordinal,c.id AS call,row_number() OVER(PARTITION BY c.__path,c.id ORDER BY n.__start)-1 AS position FROM calls c JOIN nodes n ON n.__path=c.__path AND n.parent=c.arguments_kind||':'||c.arguments_start||':'||c.arguments_end WHERE n.kind NOT IN ('comment','keyword_argument','list_splat','dictionary_splat')",
             "indexes": [
               [
                 "__path",
                 "call",
                 "position"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "keywords",
@@ -14985,13 +14981,17 @@
                 "__path",
                 "value"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "descendants",
             "reachability": {
               "roots": "SELECT __path,id FROM nodes WHERE kind IN ('function_definition','class_definition','for_statement','for_in_clause','assignment','delete_statement','block','if_statement','elif_clause','match_statement') UNION SELECT __path,parent FROM nodes WHERE kind='for_in_clause' AND parent IS NOT NULL UNION SELECT child.__path,child.id FROM nodes child JOIN nodes cmp ON cmp.__path=child.__path AND cmp.id=child.parent WHERE cmp.kind='comparison_operator' UNION SELECT __path,name_kind||':'||name_start||':'||name_end FROM nodes WHERE name_start IS NOT NULL UNION SELECT __path,left_kind||':'||left_start||':'||left_end FROM nodes WHERE left_start IS NOT NULL UNION SELECT __path,right_kind||':'||right_start||':'||right_end FROM nodes WHERE right_start IS NOT NULL UNION SELECT __path,value_kind||':'||value_start||':'||value_end FROM nodes WHERE value_start IS NOT NULL UNION SELECT __path,type_kind||':'||type_start||':'||type_end FROM nodes WHERE type_start IS NOT NULL UNION SELECT __path,function_kind||':'||function_start||':'||function_end FROM nodes WHERE function_start IS NOT NULL UNION SELECT __path,arguments_kind||':'||arguments_start||':'||arguments_end FROM nodes WHERE arguments_start IS NOT NULL UNION SELECT __path,object_kind||':'||object_start||':'||object_end FROM nodes WHERE object_start IS NOT NULL UNION SELECT __path,body_kind||':'||body_start||':'||body_end FROM nodes WHERE body_start IS NOT NULL UNION SELECT __path,parameters_kind||':'||parameters_start||':'||parameters_end FROM nodes WHERE parameters_start IS NOT NULL UNION SELECT __path,condition_kind||':'||condition_start||':'||condition_end FROM nodes WHERE condition_start IS NOT NULL UNION SELECT __path,consequence_kind||':'||consequence_start||':'||consequence_end FROM nodes WHERE consequence_start IS NOT NULL UNION SELECT __path,id FROM arguments",
-              "edges": "SELECT __path,src,dst FROM edges"
+              "edges": "SELECT __path,src,dst FROM edges",
+              "graph": "forest"
             }
           },
           {
@@ -15006,7 +15006,10 @@
                 "__path",
                 "value"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "assignments",
@@ -15025,7 +15028,10 @@
                 "__path",
                 "value"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "parameters",
@@ -15157,7 +15163,10 @@
                 "__path",
                 "id"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "abstract_functions",
@@ -15171,24 +15180,30 @@
           },
           {
             "name": "last_methods",
-            "query": "SELECT * FROM (SELECT *,row_number() OVER(PARTITION BY __path,cls,name ORDER BY __start DESC) AS chosen FROM methods) WHERE chosen=1",
+            "query": "SELECT * FROM (SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind,id,parent,edge_parent,ordinal,name,cls,class_name,row_number() OVER(PARTITION BY __path,cls,name ORDER BY __start DESC) AS chosen FROM methods) WHERE chosen=1",
             "indexes": [
               [
                 "__path",
                 "cls",
                 "name"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "last_module_functions",
-            "query": "SELECT * FROM (SELECT *,row_number() OVER(PARTITION BY __path,name ORDER BY __start DESC) AS chosen FROM module_functions) WHERE chosen=1",
+            "query": "SELECT * FROM (SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,value_source,type_start,type_end,type_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind,parameters_start,parameters_end,parameters_kind,condition_start,condition_end,condition_kind,consequence_start,consequence_end,consequence_kind,id,parent,edge_parent,ordinal,name,row_number() OVER(PARTITION BY __path,name ORDER BY __start DESC) AS chosen FROM module_functions) WHERE chosen=1",
             "indexes": [
               [
                 "__path",
                 "name"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "ir_names",
@@ -15951,7 +15966,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -16280,7 +16294,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -16609,7 +16622,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -16938,7 +16950,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -17267,7 +17278,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -17596,7 +17606,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -17925,7 +17934,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -18254,7 +18262,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -18590,7 +18597,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -18931,7 +18937,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -19276,7 +19281,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -19602,7 +19606,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -19934,7 +19937,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -20266,7 +20268,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -20592,7 +20593,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -20925,7 +20925,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -21257,7 +21256,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -21589,7 +21587,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -21915,7 +21912,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -22275,7 +22271,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -22632,7 +22627,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -22992,7 +22986,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -23337,7 +23330,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -23712,7 +23704,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -24193,7 +24184,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -24236,11 +24226,11 @@
         "stages": [
           {
             "name": "syntax_rows_0",
-            "query": "SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_0 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_1 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_2 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_3 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_4 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_5 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_6 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_7 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_8 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_9 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_10 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_11 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_12 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_13 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,value_start,value_end,value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_14 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_15 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_16"
+            "query": "SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_0 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_1 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_2 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_3 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_4 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_5 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_6 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_7 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_8 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_9 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_10 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_11 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_12 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_13 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,value_start,value_end,value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_14 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_15 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_16"
           },
           {
             "name": "syntax_rows_1",
-            "query": "SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_17 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind FROM syntax_18 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind FROM syntax_19 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind FROM syntax_20 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,body_start,body_end,body_kind FROM syntax_21 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind FROM syntax_22 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind FROM syntax_23 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind FROM syntax_24"
+            "query": "SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_start,NULL AS name_end,NULL AS name_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_17 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind FROM syntax_18 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind FROM syntax_19 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind FROM syntax_20 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS value_start,NULL AS value_end,NULL AS value_kind,NULL AS function_start,NULL AS function_end,NULL AS function_kind,NULL AS arguments_start,NULL AS arguments_end,NULL AS arguments_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_start,NULL AS attribute_source,body_start,body_end,body_kind FROM syntax_21 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind FROM syntax_22 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind FROM syntax_23 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_start,name_end,name_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,value_start,value_end,value_kind,function_start,function_end,function_kind,arguments_start,arguments_end,arguments_kind,object_start,object_end,object_kind,object_source,attribute_start,attribute_source,body_start,body_end,body_kind FROM syntax_24"
           },
           {
             "name": "nodes",
@@ -24263,7 +24253,10 @@
                 "__start",
                 "__end"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "edges",
@@ -24291,7 +24284,10 @@
                 "__path",
                 "name"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "ownership",
@@ -24323,7 +24319,10 @@
                 "__path",
                 "name"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "attributes",
@@ -24333,7 +24332,10 @@
                 "__path",
                 "id"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "calls",
@@ -24347,7 +24349,10 @@
                 "__path",
                 "callee"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "keywords",
@@ -24362,7 +24367,10 @@
                 "__path",
                 "value"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "assignments",
@@ -24381,7 +24389,10 @@
                 "__path",
                 "value"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "files",
@@ -24717,7 +24728,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -24969,7 +24979,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -25221,7 +25230,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -25473,7 +25481,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -25725,7 +25732,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -25977,7 +25983,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -26229,7 +26234,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -26481,7 +26485,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -26740,7 +26743,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -27004,7 +27006,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -27272,7 +27273,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -27521,7 +27521,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -27770,7 +27769,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -28024,7 +28022,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -28273,7 +28270,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -28523,7 +28519,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -28778,7 +28773,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -29033,7 +29027,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -29282,7 +29275,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -29552,7 +29544,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -29819,7 +29810,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -30089,7 +30079,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -30354,7 +30343,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -30639,7 +30627,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -31030,7 +31017,6 @@
               },
               "project": {
                 "kind": "capture.NODE.kind",
-                "text": "capture.NODE",
                 "line": "capture.NODE.startLine",
                 "parent_start": "capture.PARENT.startByte",
                 "parent_end": "capture.PARENT.endByte",
@@ -31060,7 +31046,7 @@
         "stages": [
           {
             "name": "nodes",
-            "query": "SELECT *,kind||':'||__start||':'||__end AS id,\n parent_kind||':'||parent_start||':'||parent_end AS parent,\n ancestor_kind||':'||ancestor_start||':'||ancestor_end AS edge_parent,\n row_number() OVER(PARTITION BY __path,parent_start,parent_end,parent_kind ORDER BY __start,__end,kind)-1 AS ordinal\n FROM (SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_0 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_1 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_2 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_3 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_4 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_5 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_6 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_7 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_8 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_9 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_10 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_11 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,object_start,object_end,object_kind,object_source,attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_12 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_13 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_14 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_15 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_16 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_17 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,object_start,object_end,object_kind,object_source,attribute_source,body_start,body_end,body_kind FROM syntax_18 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,object_start,object_end,object_kind,object_source,attribute_source,body_start,body_end,body_kind FROM syntax_19 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,object_start,object_end,object_kind,object_source,attribute_source,body_start,body_end,body_kind FROM syntax_20 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,body_start,body_end,body_kind FROM syntax_21 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,object_start,object_end,object_kind,object_source,attribute_source,body_start,body_end,body_kind FROM syntax_22 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,object_start,object_end,object_kind,object_source,attribute_source,body_start,body_end,body_kind FROM syntax_23 UNION ALL SELECT __path,__start,__end,kind,text,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,object_start,object_end,object_kind,object_source,attribute_source,body_start,body_end,body_kind FROM syntax_24)",
+            "query": "SELECT *,kind||':'||__start||':'||__end AS id,\n parent_kind||':'||parent_start||':'||parent_end AS parent,\n ancestor_kind||':'||ancestor_start||':'||ancestor_end AS edge_parent,\n row_number() OVER(PARTITION BY __path,parent_start,parent_end,parent_kind ORDER BY __start,__end,kind)-1 AS ordinal\n FROM (SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_0 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_1 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_2 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_3 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_4 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_5 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_6 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_7 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_8 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_9 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_10 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_11 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,object_start,object_end,object_kind,object_source,attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_12 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_13 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_14 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_15 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_16 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,NULL AS name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,NULL AS body_start,NULL AS body_end,NULL AS body_kind FROM syntax_17 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,object_start,object_end,object_kind,object_source,attribute_source,body_start,body_end,body_kind FROM syntax_18 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,object_start,object_end,object_kind,object_source,attribute_source,body_start,body_end,body_kind FROM syntax_19 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,object_start,object_end,object_kind,object_source,attribute_source,body_start,body_end,body_kind FROM syntax_20 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,NULL AS left_start,NULL AS left_end,NULL AS left_kind,NULL AS right_start,NULL AS right_end,NULL AS right_kind,NULL AS object_start,NULL AS object_end,NULL AS object_kind,NULL AS object_source,NULL AS attribute_source,body_start,body_end,body_kind FROM syntax_21 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,object_start,object_end,object_kind,object_source,attribute_source,body_start,body_end,body_kind FROM syntax_22 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,object_start,object_end,object_kind,object_source,attribute_source,body_start,body_end,body_kind FROM syntax_23 UNION ALL SELECT __path,__start,__end,kind,line,parent_start,parent_end,parent_kind,ancestor_start,ancestor_end,ancestor_kind,name_source,left_start,left_end,left_kind,right_start,right_end,right_kind,object_start,object_end,object_kind,object_source,attribute_source,body_start,body_end,body_kind FROM syntax_24)",
             "indexes": [
               [
                 "__path",
@@ -31079,7 +31065,10 @@
                 "__start",
                 "__end"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "edges",
@@ -31107,7 +31096,10 @@
                 "__path",
                 "name"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "ownership",
@@ -31139,7 +31131,10 @@
                 "__path",
                 "name"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "attributes",
@@ -31149,7 +31144,10 @@
                 "__path",
                 "id"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "assignments",
@@ -31168,7 +31166,10 @@
                 "__path",
                 "value"
               ]
-            ]
+            ],
+            "deferred": {
+              "text": "source_text(__path,__start,__end)"
+            }
           },
           {
             "name": "files",
@@ -81433,7 +81434,8 @@
             "name": "descendants",
             "reachability": {
               "roots": "WITH RECURSIVE roots(__path,id) AS (SELECT __path,id FROM nodes WHERE kind='type' OR kind='assignment' AND type_start IS NOT NULL OR kind='function_definition' AND (name_source='require_sql_physical_conditional' OR name_source='compile_sql_conditional_step' OR name_source='compile' AND rx_matches(__path,'(?:^|/)l2070_batching/conditional_step\\.py$')) UNION SELECT __path,left_kind||':'||left_start||':'||left_end FROM nodes WHERE kind IN ('assignment','for_statement') UNION SELECT __path,condition_kind||':'||condition_start||':'||condition_end FROM nodes WHERE kind IN ('if_statement','elif_clause') UNION SELECT __path,subject_kind||':'||subject_start||':'||subject_end FROM nodes WHERE kind='match_statement' UNION SELECT child.__path,child.id FROM nodes parent JOIN nodes child ON child.__path=parent.__path AND child.parent=parent.id AND child.ordinal=1 WHERE parent.kind='conditional_expression') SELECT __path,id FROM roots",
-              "edges": "SELECT __path,src,dst FROM edges"
+              "edges": "SELECT __path,src,dst FROM edges",
+              "graph": "forest"
             }
           },
           {

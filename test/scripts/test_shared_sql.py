@@ -6,7 +6,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "dsl"))
-from data_layer_six.ast_relations import grouped_relations
+from data_layer_six.ast_relations import grouped_relations, relational, defer_node_text, typed_input_partitions, narrow_deferred_windows
 from data_layer_six.common import E, K, S
 
 
@@ -22,6 +22,42 @@ def resolve(value, entry, oracle=False):
 
 
 class SharedSqlTests(unittest.TestCase):
+    def test_window_inputs_do_not_compute_unused_deferred_text(self):
+        stage = S("last_methods", "SELECT * FROM (SELECT *,row_number() OVER(PARTITION BY __path,cls,name ORDER BY __start DESC) AS chosen FROM methods) WHERE chosen=1")
+        clause = relational("quality-contracts-1", [stage], "SELECT * FROM last_methods")
+        defer_node_text(clause)
+        original = stage["query"]
+        narrow_deferred_windows(clause)
+        metadata = ["__path", "__start", "__end", *clause["relational"]["inputs"]["raw_nodes"]["evidence"]["project"], "id", "parent", "edge_parent", "ordinal", "name", "cls", "class_name"]
+        db = sqlite3.connect(":memory:")
+        calls = []
+        db.create_function("tick", 1, lambda value: calls.append(value) or "unused payload")
+        db.execute("CREATE TABLE stored(" + ",".join(metadata) + ")")
+        for i in range(2):
+            values = {"__path": "a.py", "__start": i, "name": "read", "cls": "c", "class_name": "C"}
+            db.execute("INSERT INTO stored VALUES(" + ",".join("?" for _ in metadata) + ")", [values.get(name) for name in metadata])
+        db.execute("CREATE VIEW methods AS SELECT *,tick(__path) AS text FROM stored")
+        before = db.execute("SELECT __path,__start,name FROM (" + original + ")").fetchall()
+        self.assertTrue(calls)
+        calls.clear()
+        after = db.execute("SELECT __path,__start,name FROM (" + stage["query"] + ")").fetchall()
+        self.assertEqual(after, before)
+        self.assertEqual(calls, [])
+        db.close()
+
+    def test_deferred_producers_remove_eager_text_before_typed_extraction(self):
+        clause = relational("quality-contracts-1", [], "SELECT * FROM functions")
+        defer_node_text(clause)
+        typed_input_partitions(clause)
+        plan = clause["relational"]
+        self.assertTrue(all("text" not in r["evidence"]["project"] for r in plan["inputs"].values()))
+        self.assertEqual(next(s for s in plan["stages"] if s["name"] == "nodes")["deferred"], {"text": "source_text(__path,__start,__end)"})
+        self.assertEqual(next(s for s in plan["stages"] if s["name"] == "functions")["deferred"], {"text": "source_text(__path,__start,__end)"})
+        conditional = relational("quality-conditional-1", [], "SELECT * FROM functions")
+        before = copy.deepcopy(conditional)
+        defer_node_text(conditional)
+        self.assertEqual(conditional, before)
+
     def generate(self, shared, groups=None):
         # Oversize combined SELECTs force the old generator to split consumers.
         padding = " /* " + "x" * 8500 + " */"

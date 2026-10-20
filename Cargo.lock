@@ -2447,6 +2447,7 @@ dependencies = [
  "rayon",
  "regex",
  "regex-syntax",
+ "rerail-reachability-spike",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -2463,6 +2464,16 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-reachability-spike"
+version = "0.1.0"
+dependencies = [
+ "fallible-iterator",
+ "regex",
+ "rusqlite",
+ "serde_json",
 ]
 
 [[package]]

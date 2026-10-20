@@ -106,7 +106,10 @@ jobs:
               - '.cargo/**'
               - 'scripts/profiling/reachability/**'
               - 'scripts/profiling/reachability_*.py'
+              - 'scripts/profiling/native_*_*.py'
               - 'test/scripts/test_reachability.py'
+              - 'test/scripts/test_native_relations.py'
+              - 'test/scripts/test_native_sql_plan.py'
               - 'package.json'
               - '.github/workflows/ci.yml'
               - '.gitattributes'
@@ -185,7 +188,10 @@ jobs:
         env:
           RERAIL_REACH_EXTENSION: ${{ github.workspace }}/target/reachability-spike/release/librerail_reachability_spike.so
           PYTHONDONTWRITEBYTECODE: "1"
-        run: python3 test/scripts/test_reachability.py
+        run: |
+          python3 test/scripts/test_reachability.py
+          python3 test/scripts/test_native_relations.py
+          python3 test/scripts/test_native_sql_plan.py
 
   # Builds the package once: dist/ and the release native engine, handed to every test job.
   build:

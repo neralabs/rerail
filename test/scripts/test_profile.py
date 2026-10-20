@@ -25,6 +25,8 @@ class ProfileTests(unittest.TestCase):
         before = {"parity":parity, "exitCode":0, "timedOut":False, "native":{"spans":[]}}
         after = copy.deepcopy(before); after["parity"]["coldMs"] = 10
         self.assertEqual(compare(before, after)["phases"]["cold"]["wallSpeedup"], 2)
+        after["nativeInput"] = "captures"
+        self.assertEqual(compare(before, after)["changedSettings"]["nativeInput"]["experiment"], "captures")
         after["parity"]["nativeSha256"] = "different"
         with self.assertRaisesRegex(ValueError, "nativeSha256"): compare(before, after)
         after = copy.deepcopy(before); after["trace"] = "off"

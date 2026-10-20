@@ -9,8 +9,12 @@ use rusqlite::Connection;
 use rusqlite::functions::FunctionFlags;
 use rusqlite::hooks::{AuthAction, Authorization};
 
+mod anchors;
+pub(super) mod deferred;
+mod forest;
 mod insert;
 mod reachability;
+mod source;
 pub(super) use reachability::Reachability;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -25,6 +29,9 @@ pub(super) struct Stage {
     pub(super) query: String,
     pub(super) indexes: Vec<Vec<String>>,
     pub(super) reachability: Option<Reachability>,
+    pub(super) deferred: BTreeMap<String, String>,
+    pub(super) stored_columns: Vec<String>,
+    pub(super) output_columns: Vec<String>,
 }
 #[derive(Clone)]
 pub(super) struct References {
@@ -51,6 +58,8 @@ pub(super) struct Plan {
     pub(super) query: String,
     pub(super) key: Vec<String>,
     pub(super) code: Option<String>,
+    pub(super) last_uses: BTreeMap<String, usize>,
+    pub(super) reads_source: bool,
 }
 
 pub(super) fn identifier(value: &str) -> bool {
@@ -146,6 +155,7 @@ pub(super) fn connection(max_pattern: usize, work: Arc<AtomicUsize>) -> Result<C
         })
         .map_err(sql_error)?;
     }
+    source::install(&db, None, work)?;
     Ok(db)
 }
 
@@ -158,7 +168,19 @@ pub(super) fn columns(
     query: &str,
     tables: &BTreeSet<String>,
 ) -> Result<Vec<String>> {
+    inspect(db, query, tables).map(|(columns, _, _)| columns)
+}
+
+pub(super) fn inspect(
+    db: &Connection,
+    query: &str,
+    tables: &BTreeSet<String>,
+) -> Result<(Vec<String>, BTreeSet<String>, bool)> {
     let tables = tables.clone();
+    let reads = Arc::new(parking_lot::Mutex::new(BTreeSet::new()));
+    let observed = Arc::clone(&reads);
+    let source_read = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let source_observed = Arc::clone(&source_read);
     db.authorizer(Some(
         move |context: rusqlite::hooks::AuthContext<'_>| match context.action {
             AuthAction::Select | AuthAction::Recursive => Authorization::Allow,
@@ -166,6 +188,9 @@ pub(super) fn columns(
                 if tables.contains(table_name)
                     || matches!(table_name, "json_each" | "json_tree") =>
             {
+                if tables.contains(table_name) {
+                    observed.lock().insert(table_name.to_owned());
+                }
                 Authorization::Allow
             }
             // A generated reachability view exposes only its public columns. SQLite
@@ -174,9 +199,10 @@ pub(super) fn columns(
             AuthAction::Read { table_name, .. }
                 if context.accessor.is_some_and(|view| {
                     tables.contains(view)
-                        && ["keys", "pairs"]
-                            .iter()
-                            .any(|suffix| table_name == format!("__reach_{view}_{suffix}"))
+                        && (table_name == format!("__stage_{view}")
+                            || ["keys", "pairs"]
+                                .iter()
+                                .any(|suffix| table_name == format!("__reach_{view}_{suffix}")))
                 }) =>
             {
                 Authorization::Allow
@@ -232,8 +258,12 @@ pub(super) fn columns(
                         | "rx_matches"
                         | "rx_extract"
                         | "rx_replace"
+                        | "source_text"
                 ) =>
             {
+                if function_name.eq_ignore_ascii_case("source_text") {
+                    source_observed.store(true, Ordering::Relaxed);
+                }
                 Authorization::Allow
             }
             _ => Authorization::Deny,
@@ -259,7 +289,11 @@ pub(super) fn columns(
         if distinct.len() != columns.len() || columns.is_empty() {
             return Err(invalid("relational query columns must have distinct names"));
         }
-        Ok(columns)
+        Ok((
+            columns,
+            reads.lock().clone(),
+            source_read.load(Ordering::Relaxed),
+        ))
     })();
     db.authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> Authorization>)
         .map_err(sql_error)?;
@@ -270,9 +304,14 @@ pub(super) fn create_input(db: &Connection, name: &str, fields: &[String]) -> Re
     db.execute(&format!("CREATE TABLE {} (__path TEXT NOT NULL, __start INTEGER NOT NULL, __end INTEGER NOT NULL{})",quote(name),fields.iter().map(|field|format!(",{}",quote(field))).collect::<String>()),[]).map_err(sql_error)?;
     Ok(())
 }
-pub(super) fn create_stage(db: &Connection, stage: &Stage, materialize: bool) -> Result<()> {
+pub(super) fn create_stage(
+    db: &Connection,
+    stage: &Stage,
+    materialize: bool,
+    work: &Arc<AtomicUsize>,
+) -> Result<()> {
     if materialize && let Some(spec) = &stage.reachability {
-        return reachability::create(db, stage, spec);
+        return reachability::create(db, stage, spec, work);
     }
     #[cfg(feature = "code-rule-profile")]
     if materialize && std::env::var_os("RERAIL_SQL_QUERY_PLANS").is_some() {
@@ -295,12 +334,30 @@ pub(super) fn create_stage(db: &Connection, stage: &Stage, materialize: bool) ->
     }
     #[cfg(feature = "code-rule-profile")]
     let mut span = super::profile::trace::Span::start("sql-materialize", &stage.name);
+    let physical = if materialize {
+        deferred::physical_name(stage)
+    } else {
+        stage.name.clone()
+    };
     let mut statement = db
         .prepare(&format!(
             "CREATE TEMP TABLE {} AS {}",
-            quote(&stage.name),
+            quote(&physical),
             if materialize {
-                stage.query.clone()
+                if stage.deferred.is_empty() {
+                    stage.query.clone()
+                } else {
+                    format!(
+                        "SELECT {} FROM ({})",
+                        stage
+                            .stored_columns
+                            .iter()
+                            .map(|s| quote(s))
+                            .collect::<Vec<_>>()
+                            .join(","),
+                        stage.query
+                    )
+                }
             } else {
                 // Runtime stages are tables. Keep that schema boundary while validating:
                 // nested views expand shared dependencies exponentially during prepare.
@@ -320,6 +377,28 @@ pub(super) fn create_stage(db: &Connection, stage: &Stage, materialize: bool) ->
         drop(span);
     }
     executed?;
+    if !materialize {
+        for column in stage
+            .deferred
+            .keys()
+            .filter(|name| !stage.stored_columns.contains(name))
+        {
+            // Replaced query columns already exist in the validation table.
+            let exists = db
+                .prepare(&format!("SELECT * FROM {} LIMIT 0", quote(&stage.name)))
+                .map_err(sql_error)?
+                .column_names()
+                .contains(&column.as_str());
+            if !exists {
+                db.execute_batch(&format!(
+                    "ALTER TABLE {} ADD COLUMN {}",
+                    quote(&stage.name),
+                    quote(column)
+                ))
+                .map_err(sql_error)?;
+            }
+        }
+    }
     if materialize {
         for (index, fields) in stage.indexes.iter().enumerate() {
             #[cfg(feature = "code-rule-profile")]
@@ -328,7 +407,7 @@ pub(super) fn create_stage(db: &Connection, stage: &Stage, materialize: bool) ->
                 &format!(
                     "CREATE INDEX {} ON {} ({})",
                     quote(&format!("__{}_{}", stage.name, index)),
-                    quote(&stage.name),
+                    quote(&physical),
                     fields
                         .iter()
                         .map(|field| quote(field))
@@ -342,9 +421,12 @@ pub(super) fn create_stage(db: &Connection, stage: &Stage, materialize: bool) ->
         if !stage.indexes.is_empty() {
             #[cfg(feature = "code-rule-profile")]
             let _span = super::profile::trace::Span::start("sql-analyze", &stage.name);
-            db.execute(&format!("ANALYZE temp.{}", quote(&stage.name)), [])
+            db.execute(&format!("ANALYZE temp.{}", quote(&physical)), [])
                 .map_err(sql_error)?;
         }
+    }
+    if materialize {
+        deferred::view(db, stage)?;
     }
     Ok(())
 }
@@ -387,8 +469,6 @@ pub(super) fn evaluate(
     rows: Vec<Rows>,
     snapshot: &Snapshot,
 ) -> Evaluation {
-    #[cfg(not(feature = "code-rule-profile"))]
-    let _ = snapshot;
     #[cfg(feature = "code-rule-profile")]
     let _context = super::profile::trace::Context::enter(
         &code_rule.id,
@@ -416,13 +496,31 @@ pub(super) fn evaluate(
         Ordering::Relaxed,
     );
     let run = || -> Result<Vec<Value>> {
+        #[cfg(feature = "code-rule-profile")]
+        let release_stages = std::env::var_os("RERAIL_SQL_RETAIN_STAGES").is_none();
+        #[cfg(not(feature = "code-rule-profile"))]
+        let release_stages = true;
+        let anchors = anchors::collect(plan, &rows);
+        let mut retained_inputs = Vec::new();
         let db = connection(
             code_rule.capabilities.limits.max_regex_pattern_bytes,
             Arc::clone(&work),
         )?;
+        if plan.reads_source {
+            let visible = Snapshot {
+                revision: snapshot.revision,
+                files: snapshot
+                    .files
+                    .iter()
+                    .filter(|file| code_rule.scope.matches(&file.path))
+                    .cloned()
+                    .collect(),
+            };
+            source::install(&db, Some(&visible), Arc::clone(&work))?;
+        }
         db.execute_batch("BEGIN").map_err(sql_error)?;
         let mut tables = BTreeSet::new();
-        for ((name, input), rows) in plan.inputs.iter().zip(&rows) {
+        for ((name, input), rows) in plan.inputs.iter().zip(rows) {
             #[cfg(feature = "code-rule-profile")]
             if std::env::var_os("RERAIL_CODE_RULE_RELATIONAL_PROFILE").is_some() {
                 eprintln!(
@@ -436,6 +534,22 @@ pub(super) fn evaluate(
                 .iter()
                 .map(|project| project.field.clone())
                 .collect::<Vec<_>>();
+            #[cfg(feature = "code-rule-profile")]
+            if std::env::var("RERAIL_SQL_INPUT_VTAB").is_ok_and(|v| v == "captures") {
+                super::profile::capture_rows::load(
+                    &db,
+                    name,
+                    &fields,
+                    &rows.witnesses,
+                    &input.anchor,
+                    Arc::clone(&work),
+                )?;
+                tables.insert(name.clone());
+                if !release_stages {
+                    retained_inputs.push(rows);
+                }
+                continue;
+            }
             create_input(&db, name, &fields)?;
             insert::insert_rows(
                 &db,
@@ -462,6 +576,10 @@ pub(super) fn evaluate(
                 "relational input row budget exceeded",
             )?;
             tables.insert(name.clone());
+            // SQL owns the copied values; only compact anchors remain necessary.
+            if !release_stages {
+                retained_inputs.push(rows);
+            }
         }
         if let Some(reference) = &plan.references {
             let graph = super::calls::reference_rows(reference.key)
@@ -527,7 +645,7 @@ pub(super) fn evaluate(
             }),
         )
         .map_err(sql_error)?;
-        for stage in &plan.stages {
+        for (index, stage) in plan.stages.iter().enumerate() {
             {
                 #[cfg(feature = "code-rule-profile")]
                 let _span = super::profile::trace::Span::start("sql-validate", &stage.name);
@@ -535,7 +653,7 @@ pub(super) fn evaluate(
             }
             #[cfg(feature = "code-rule-profile")]
             let started = std::time::Instant::now();
-            let materialized = create_stage(&db, stage, true);
+            let materialized = create_stage(&db, stage, true, &work);
             #[cfg(feature = "code-rule-profile")]
             if std::env::var_os("RERAIL_CODE_RULE_RELATIONAL_PROFILE").is_some() {
                 super::profile::trace::emit(
@@ -547,26 +665,22 @@ pub(super) fn evaluate(
                 invalid(format!("relational stage {}: {}", stage.name, error.reason))
             })?;
             tables.insert(stage.name.clone());
+            for (name, _) in plan
+                .last_uses
+                .iter()
+                .filter(|(_, last)| release_stages && **last == index)
+            {
+                #[cfg(feature = "code-rule-profile")]
+                let _span = super::profile::trace::Span::start("sql-release", name);
+                deferred::release(&db, name, &plan.stages)?;
+                tables.remove(name);
+            }
         }
         #[cfg(feature = "code-rule-profile")]
         let _span = super::profile::trace::Span::start("sql-result", "query");
         let names = columns(&db, &plan.query, &tables)?;
         let mut statement = db.prepare(&plan.query).map_err(sql_error)?;
         let mut query = statement.query([]).map_err(sql_error)?;
-        let anchors = plan
-            .inputs
-            .iter()
-            .zip(rows.iter())
-            .flat_map(|((_, input), rows)| {
-                rows.witnesses.iter().map(|witness| {
-                    let span = super::violations::anchored_span(&input.anchor, witness).0;
-                    (
-                        (witness.path.as_str(), span.start_byte, span.end_byte),
-                        (span, witness.ignored),
-                    )
-                })
-            })
-            .collect::<HashMap<_, _>>();
         let mut findings = Vec::new();
         let mut identities = BTreeSet::new();
         while let Some(row) = query.next().map_err(sql_error)? {
@@ -598,7 +712,8 @@ pub(super) fn evaluate(
             };
             let (start, end) = (number("start_byte")?, number("end_byte")?);
             let (span, ignored) = anchors
-                .get(&(path, start, end))
+                .get(path)
+                .and_then(|by_span| by_span.get(&(start, end)))
                 .copied()
                 .or_else(|| {
                     (start == 0 && end == 0 && plan.locations.contains(path))

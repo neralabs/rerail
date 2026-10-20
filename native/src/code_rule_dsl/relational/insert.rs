@@ -2,7 +2,10 @@
 use super::{invalid, quote, sql_error};
 use napi::Result;
 use rusqlite::{Connection, params_from_iter, types::Value};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 const DEFAULT_ROWS: usize = 32;
 const DEFAULT_BYTES: usize = 1024 * 1024;
@@ -11,6 +14,7 @@ const DEFAULT_BYTES: usize = 1024 * 1024;
 struct Limits {
     rows: usize,
     bytes: usize,
+    charge_rows: bool,
 }
 
 #[derive(Debug)]
@@ -26,9 +30,18 @@ pub(super) fn insert_rows<R: IntoIterator<Item = Value>>(
     name: &str,
     width: usize,
     rows: impl IntoIterator<Item = R>,
-    work: &AtomicUsize,
+    work: &std::sync::Arc<AtomicUsize>,
     exhausted: &str,
 ) -> Result<()> {
+    #[cfg(feature = "code-rule-profile")]
+    if !name.starts_with("__") && std::env::var_os("RERAIL_SQL_INPUT_VTAB").is_some() {
+        return super::super::profile::native_rows::load(
+            db,
+            name,
+            rows,
+            std::sync::Arc::clone(work),
+        );
+    }
     #[cfg(feature = "code-rule-profile")]
     let mut span = crate::code_rule_dsl::profile::trace::Span::start("sql-input", name);
     #[cfg(feature = "code-rule-profile")]
@@ -49,6 +62,7 @@ pub(super) fn insert_rows<R: IntoIterator<Item = Value>>(
         Limits {
             rows: requested,
             bytes: DEFAULT_BYTES,
+            charge_rows: true,
         },
     );
     #[cfg(feature = "code-rule-profile")]
@@ -66,6 +80,31 @@ pub(super) fn insert_rows<R: IntoIterator<Item = Value>>(
             stats.max_buffered_bytes,
         );
     })
+}
+
+/// Derived writes spend SQLite VM work; the producing algorithm charges visits.
+/// They are not new AST inputs, and the loop still polls cancellation.
+pub(super) fn stage_rows<R: IntoIterator<Item = Value>>(
+    db: &Connection,
+    name: &str,
+    width: usize,
+    rows: impl IntoIterator<Item = R>,
+    work: &Arc<AtomicUsize>,
+) -> Result<()> {
+    write_rows(
+        db,
+        name,
+        width,
+        rows,
+        work,
+        "interrupted: derived SQL row budget exceeded",
+        Limits {
+            rows: DEFAULT_ROWS,
+            bytes: DEFAULT_BYTES,
+            charge_rows: false,
+        },
+    )
+    .map(|_| ())
 }
 
 fn payload_bytes(value: &Value) -> usize {
@@ -107,7 +146,7 @@ fn write_rows<R: IntoIterator<Item = Value>>(
         let count = values.len() / width;
         if count == batch_rows {
             if full_statement.is_none() {
-                full_statement = Some(db.prepare(&sql(batch_rows)).map_err(sql_error)?);
+                full_statement = Some(db.prepare_cached(&sql(batch_rows)).map_err(sql_error)?);
             }
             full_statement
                 .as_mut()
@@ -130,11 +169,12 @@ fn write_rows<R: IntoIterator<Item = Value>>(
     let mut scratch = Vec::with_capacity(width);
     let (mut count, mut bytes, mut maximum) = (0, 0usize, 0);
     for row in rows {
-        if work
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
-                left.checked_sub(1)
-            })
-            .is_err()
+        if limits.charge_rows
+            && work
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                    left.checked_sub(1)
+                })
+                .is_err()
             || crate::code_rule_dsl::budget::step_budget_exhausted()
         {
             return Err(invalid(exhausted));
@@ -202,6 +242,7 @@ mod tests {
             Limits {
                 rows: 32,
                 bytes: DEFAULT_BYTES,
+                charge_rows: true,
             },
         )
         .unwrap();
@@ -244,6 +285,7 @@ mod tests {
             Limits {
                 rows: 32,
                 bytes: DEFAULT_BYTES,
+                charge_rows: true,
             },
         )
         .unwrap();
@@ -257,7 +299,11 @@ mod tests {
             rows,
             &AtomicUsize::new(100),
             "exhausted",
-            Limits { rows: 32, bytes: 8 },
+            Limits {
+                rows: 32,
+                bytes: 8,
+                charge_rows: true,
+            },
         )
         .unwrap();
         assert_eq!(
@@ -284,6 +330,7 @@ mod tests {
             Limits {
                 rows: 32,
                 bytes: DEFAULT_BYTES,
+                charge_rows: true,
             },
         )
         .unwrap();
@@ -299,6 +346,7 @@ mod tests {
             Limits {
                 rows: 32,
                 bytes: DEFAULT_BYTES,
+                charge_rows: true,
             },
         )
         .unwrap_err();

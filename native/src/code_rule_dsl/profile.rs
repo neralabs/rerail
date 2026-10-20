@@ -1,6 +1,9 @@
 //! Benchmark-only attribution for the existing workspace evaluator.
 //! Disabled in production builds. Reports worker CPU separately from wall time.
 
+pub(super) mod capture_rows;
+pub(super) mod native_rows;
+mod native_tape;
 mod semantic;
 pub(crate) mod trace;
 use ast_grep_core::matcher::{DumpPattern, Matcher};

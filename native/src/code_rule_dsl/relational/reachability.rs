@@ -1,15 +1,22 @@
 //! SQLite owns graph normalization, bounded root batches, and cycle-safe closure.
 //! Consumers use a stable relation so another physical adapter need not change rules.
 use super::{Connection, Result, Stage, quote, sql_error};
+use std::sync::{Arc, atomic::AtomicUsize};
 
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Reachability {
     pub(in crate::code_rule_dsl) roots: String,
     pub(in crate::code_rule_dsl) edges: String,
     pub(in crate::code_rule_dsl) batch_size: usize,
+    pub(in crate::code_rule_dsl) forest: bool,
 }
 
-pub(super) fn create(db: &Connection, stage: &Stage, spec: &Reachability) -> Result<()> {
+pub(super) fn create(
+    db: &Connection,
+    stage: &Stage,
+    spec: &Reachability,
+    work: &Arc<AtomicUsize>,
+) -> Result<()> {
     // Internal names cannot be authored as stage/input identifiers or read by policies.
     let name = |suffix: &str| quote(&format!("__reach_{}_{}", stage.name, suffix));
     let (roots, edges, keys, compact, requests, batch, pairs) = (
@@ -47,39 +54,47 @@ pub(super) fn create(db: &Connection, stage: &Stage, spec: &Reachability) -> Res
     drop(span);
     #[cfg(feature = "code-rule-profile")]
     let mut span = super::super::profile::trace::Span::start("sql-reach-walk", &stage.name);
-    let mut fill = db
+    let (mut batches, mut requested) = (0, 0);
+    if spec.forest {
+        (requested, batches) = super::forest::materialize(
+            db,
+            &format!("__reach_{}", stage.name),
+            spec.batch_size,
+            work,
+        )?;
+    } else {
+        let mut fill = db
         .prepare(&format!(
             "INSERT INTO {batch} SELECT root FROM {requests} WHERE root>?1 ORDER BY root LIMIT ?2"
         ))
         .map_err(sql_error)?;
-    let mut walk = db.prepare(&format!(
+        let mut walk = db.prepare(&format!(
         "WITH RECURSIVE walk(root,node) AS (
            SELECT root,root FROM {batch} UNION SELECT w.root,e.dst FROM walk w JOIN {compact} e ON e.src=w.node)
          INSERT INTO {pairs} SELECT root,node FROM walk"
     )).map_err(sql_error)?;
-    let mut last = 0_i64;
-    let mut batches = 0_usize;
-    let mut requested = 0_usize;
-    loop {
-        db.execute(&format!("DELETE FROM {batch}"), [])
-            .map_err(sql_error)?;
-        let count = fill
-            .execute(rusqlite::params![last, spec.batch_size as i64])
-            .map_err(sql_error)?;
-        if count == 0 {
-            break;
+        let mut last = 0_i64;
+        loop {
+            db.execute(&format!("DELETE FROM {batch}"), [])
+                .map_err(sql_error)?;
+            let count = fill
+                .execute(rusqlite::params![last, spec.batch_size as i64])
+                .map_err(sql_error)?;
+            if count == 0 {
+                break;
+            }
+            last = db
+                .query_row(&format!("SELECT max(root) FROM {batch}"), [], |r| r.get(0))
+                .map_err(sql_error)?;
+            walk.execute([]).map_err(sql_error)?;
+            batches += 1;
+            requested += count;
         }
-        last = db
-            .query_row(&format!("SELECT max(root) FROM {batch}"), [], |r| r.get(0))
-            .map_err(sql_error)?;
-        walk.execute([]).map_err(sql_error)?;
-        batches += 1;
-        requested += count;
     }
     #[cfg(feature = "code-rule-profile")]
     {
         span.detail(
-            || serde_json::json!({"batchRows":spec.batch_size,"batches":batches,"roots":requested}),
+            || serde_json::json!({"batchRows":spec.batch_size,"batches":batches,"roots":requested,"forest":spec.forest}),
         );
         drop(span);
     }

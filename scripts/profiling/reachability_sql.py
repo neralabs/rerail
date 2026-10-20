@@ -119,10 +119,11 @@ def materialize(db, roots, backend="sql", batch_size=256, max_candidates=5_000_0
         if not forest:
             backend = "sql"
     handle = None
-    if backend in ("scalar", "vtab", "vtab-direct"):
+    if backend in ("scalar", "vtab", "vtab-direct", "tree"):
         nodes = [row[0] for row in db.execute("SELECT compact FROM reach_keys")]
         edges = list(db.execute("SELECT src,dst FROM reach_edges"))
-        handle = db.execute("SELECT reach_load(?,?,?,?)", (json.dumps(nodes), json.dumps(edges), work, milliseconds)).fetchone()[0]
+        loader = "tree_load" if backend == "tree" else "reach_load"
+        handle = db.execute(f"SELECT {loader}(?,?,?,?)", (json.dumps(nodes), json.dumps(edges), work, milliseconds)).fetchone()[0]
     loaded = time.process_time()
     statements = 0
     candidates = len(requests) * db.execute("SELECT count(*) FROM reach_keys").fetchone()[0]
@@ -146,7 +147,7 @@ def materialize(db, roots, backend="sql", batch_size=256, max_candidates=5_000_0
                     SELECT root,root FROM reach_batch
                     UNION SELECT w.root,e.dst FROM walk w JOIN reach_edges e ON e.src=w.node)
                     INSERT INTO reach_pairs SELECT root,node FROM walk""" + (" ORDER BY root,node" if ordered_pairs else ""))
-            elif backend == "vtab":
+            elif backend in ("vtab", "tree"):
                 db.execute("INSERT INTO reach_pairs SELECT root,node FROM reachability WHERE graph=? AND root IN (SELECT root FROM reach_batch)", (handle,))
             elif backend == "scalar":
                 db.execute("INSERT INTO reach_pairs SELECT r.root,k.compact FROM reach_batch r CROSS JOIN reach_keys k WHERE is_reachable(?,r.root,k.compact)", (handle,))

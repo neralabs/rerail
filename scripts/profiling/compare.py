@@ -37,6 +37,8 @@ def compare(baseline, experiment, allow_policy_changes=False):
                         "wallSpeedup": before[key] / after[key] if after[key] else None,
                         "baselineCpuMs": cpu(before), "experimentCpuMs": cpu(after)}
     return {"phases": phases, "baselinePeakRssBytes": before["peakRssBytes"], "experimentPeakRssBytes": after["peakRssBytes"],
+            "changedSettings": {key: {"baseline": baseline.get(key), "experiment": experiment.get(key)}
+                                for key in ["insertBatch", "nativeInput", "sharedInputIndex", "retainSqlStages"] if baseline.get(key) != experiment.get(key)},
             "changedPolicies": changed,
             "nativeSha256": before["nativeSha256"], "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."}
 

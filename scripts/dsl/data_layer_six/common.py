@@ -40,16 +40,18 @@ def q(value):return "'"+str(value).replace("'","''")+"'"
 def literals(values):return '('+','.join(q(v) for v in sorted(values))+')'
 def choice(option,yes,no):return {'$option':option,'cases':{'true':yes,'false':no}}
 
-def write(out,name,clauses,pin,roots,exclude,utils=None,options=None,mode='block'):
- from .ast_relations import trim_ast_projection,typed_input_partitions,batched_reachability
+def write(out,name,clauses,pin,roots,exclude,utils=None,options=None,mode='block',optimized_relations=False):
+ from .ast_relations import trim_ast_projection,typed_input_partitions,batched_reachability,defer_node_text,narrow_deferred_windows
  for clause in clauses:
   if 'relational' in clause:
+   if optimized_relations:defer_node_text(clause)
    trim_ast_projection(clause)
+   if optimized_relations:narrow_deferred_windows(clause)
    plan=clause['relational']
    if not plan.get('locations') and not clause['id'].startswith('quality-conditional') and clause['id']!='quality-project-taxonomy':
     plan.setdefault('partitionBy','file')
    if not clause['id'].startswith('step-'):typed_input_partitions(clause)
-   if name=='serverplan_quality':batched_reachability(clause)
+   if name=='serverplan_quality':batched_reachability(clause,forest=optimized_relations)
  definition={'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'all'},**(options or {})}}
  if utils:definition.update(language='python',utils=utils)
  doc={'format':'rerail.policy/v1','id':'data-layer-'+name.replace('_','-'),'revision':1,'mode':mode,

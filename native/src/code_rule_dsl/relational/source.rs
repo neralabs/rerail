@@ -1,0 +1,93 @@
+//! Immutable snapshot text access. SQL retains metadata and asks for source slices on demand.
+use super::{Connection, Result, Snapshot, sql_error};
+use rusqlite::functions::FunctionFlags;
+use rusqlite::types::{ToSql, ToSqlOutput, ValueRef};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
+
+struct Slice {
+    source: Arc<String>,
+    start: usize,
+    end: usize,
+}
+impl ToSql for Slice {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        // The constructor checks UTF-8 boundaries. The Arc keeps this immutable
+        // slice alive until SQLite copies its result; no intermediate String.
+        Ok(ToSqlOutput::Borrowed(ValueRef::Text(
+            &self.source.as_bytes()[self.start..self.end],
+        )))
+    }
+}
+
+pub(super) fn charge(work: &AtomicUsize, count: usize) -> Result<()> {
+    if work
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+            left.checked_sub(count)
+        })
+        .is_err()
+        || crate::code_rule_dsl::budget::step_budget_exhausted()
+    {
+        return Err(super::invalid(
+            "interrupted: relational native work budget exceeded",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn install(
+    db: &Connection,
+    snapshot: Option<&Snapshot>,
+    work: Arc<AtomicUsize>,
+) -> Result<()> {
+    let files = snapshot
+        .into_iter()
+        .flat_map(|s| &s.files)
+        .map(|file| (file.path.clone(), Arc::clone(&file.source)))
+        .collect::<HashMap<_, _>>();
+    db.create_scalar_function(
+        c"source_text",
+        3,
+        FunctionFlags::SQLITE_UTF8
+            | FunctionFlags::SQLITE_DETERMINISTIC
+            | FunctionFlags::SQLITE_INNOCUOUS,
+        move |ctx| {
+            charge(&work, 1).map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
+            let path = match ctx.get_raw(0) {
+                ValueRef::Null => None,
+                ValueRef::Text(bytes) => Some(
+                    std::str::from_utf8(bytes)
+                        .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))?,
+                ),
+                _ => {
+                    return Err(rusqlite::Error::UserFunctionError(
+                        "source_text path must be text".into(),
+                    ));
+                }
+            };
+            let start = ctx
+                .get::<Option<i64>>(1)?
+                .and_then(|v| usize::try_from(v).ok());
+            let end = ctx
+                .get::<Option<i64>>(2)?
+                .and_then(|v| usize::try_from(v).ok());
+            let source = path.and_then(|p| files.get(p));
+            let text = source.and_then(|s| s.get(start?..end?));
+            if let Some(text) = text {
+                charge(&work, text.len().div_ceil(256))
+                    .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
+            }
+            Ok(text.map(|_| Slice {
+                source: Arc::clone(source.unwrap()),
+                start: start.unwrap(),
+                end: end.unwrap(),
+            }))
+        },
+    )
+    .map_err(sql_error)
+}

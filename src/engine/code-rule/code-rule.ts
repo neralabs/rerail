@@ -194,8 +194,8 @@ export interface CodeRuleDslRelational {
   inputs: Record<string, CodeRuleDslRelation>;
   references?: { language: "python"; siblingLinks?: NonNullable<CodeRuleDslAstRule["calls"]>["siblingLinks"]; constructorFields?: NonNullable<CodeRuleDslAstRule["calls"]>["constructorFields"] };
   stages?: ({ name: string } & (
-    | { query: string; indexes?: string[][]; reachability?: never }
-    | { reachability: { roots: string; edges: string; batchSize?: number }; query?: never; indexes?: never }
+    | { query: string; indexes?: string[][]; deferred?: Record<string, string>; reachability?: never }
+    | { reachability: { roots: string; edges: string; batchSize?: number; graph?: "directed" | "forest" }; query?: never; indexes?: never; deferred?: never }
   ))[];
   query: string;
   key?: string[];
