@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,7 +6,7 @@ import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js
 import { sqlfluffSpan, SQLFLUFF_SPAN_PARTS, violationSpan } from "../../../port-readiness/span-units/sqlfluff.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPythonToolkit, pythonRegex } from "../languages/python.js";
-import { checkoutUpstream, treeDigest, uvRuntime } from "../runtimes.js";
+import { checkoutUpstream, existsExactly, treeDigest, uvRuntime } from "../runtimes.js";
 
 /**
  * The SQLFluff adapter. Expected answers come from running the pinned SQLFluff itself on every case of each rule's
@@ -88,10 +87,12 @@ export async function createSqlfluffAdapter(pack: PackManifest, names: string[],
 
   // not-overfit reads upstream's code from the pinned checkout, which the tool-pack checks show is the code that runs.
   const fromCheckout = (file: string) => join(upstream.directory, PACKAGE, relative(facts.package, file));
+  // Python imports are case-sensitive: `from sqlfluff.core.parser.grammar import Sequence` names the class, not a
+  // module grammar/Sequence.py, which a case-insensitive filesystem would find as grammar/sequence.py.
   const moduleFile = (module: string): string | undefined => {
     if (!module.startsWith("sqlfluff.")) return undefined;
     const base = join(upstream.directory, "src", ...module.split("."));
-    return [`${base}.py`, join(base, "__init__.py")].find((path) => existsSync(path));
+    return [`${base}.py`, join(base, "__init__.py")].find((path) => existsExactly(upstream.directory, path));
   };
   const ruleFiles = [...new Set(Object.values(facts.rules).map((rule) => fromCheckout(rule.file)))];
   const literals = new Map<string, { names: string[]; imports: string[] }>();

@@ -323,6 +323,11 @@ conformance/recorders/port-readiness/runtimes/php/build.sh "$PWD/.rerail/php/8.5
 PATH="$PWD/.rerail/php/8.5.11/bin:$PATH" npm run port-readiness:record -- --pack php --tool phpcs
 ```
 
+`rust/clippy`'s corpus answers depend on the host: Clippy lints only the code rustc compiles, and a `#[cfg(target_os =
+"linux")]` item is compiled on Linux alone. Its recordings are CI's, recorded on `x86_64-unknown-linux-gnu`; recorded on
+macOS, `corpus.json` lacks the findings in Linux-only code (tokio's `examples/prewarm-fd-table.rs`), so record it on
+Linux or take the lock CI's leg writes (its report artifact holds the recording).
+
 Locally that is all: the lock names what was just recorded and the gates read it out of the cache, so iterating on a
 port needs no release and no network. In CI, a gate leg records a tool-pack whose recording the release does not hold
 (above), and `port-readiness-record.yml` is the only workflow that uploads, so later runs fetch instead of recording.
