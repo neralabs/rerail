@@ -193,7 +193,10 @@ export interface CodeRuleDslRelational {
   partitionBy?: "file" | "repository";
   inputs: Record<string, CodeRuleDslRelation>;
   references?: { language: "python"; siblingLinks?: NonNullable<CodeRuleDslAstRule["calls"]>["siblingLinks"]; constructorFields?: NonNullable<CodeRuleDslAstRule["calls"]>["constructorFields"] };
-  stages?: { name: string; query: string; indexes?: string[][] }[];
+  stages?: ({ name: string } & (
+    | { query: string; indexes?: string[][]; reachability?: never }
+    | { reachability: { roots: string; edges: string; batchSize?: number }; query?: never; indexes?: never }
+  ))[];
   query: string;
   key?: string[];
   code?: string;

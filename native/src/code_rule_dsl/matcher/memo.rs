@@ -88,7 +88,7 @@ struct FileMemo {
     excluding: rustc_hash::FxHashMap<Key, Entry>,
     generation: u64,
     /// The file's nodes by kind, in preorder, listed on first use.
-    kinds: Option<rustc_hash::FxHashMap<u16, Vec<u32>>>,
+    kinds: Option<Arc<crate::code_rule_dsl::tape::KindPostings>>,
     /// The nodes passing each walk filter (by its address), in preorder.
     postings: rustc_hash::FxHashMap<usize, Arc<[u32]>>,
     /// `nthChild`'s counted siblings by counting term and parent (`siblings`).
@@ -188,7 +188,31 @@ unsafe fn same<T, U>(value: T) -> U {
 const POLL_INTERVAL: usize = 256;
 
 /// A file's nodes by kind, in preorder; `None` where the deadline passed first.
-fn kind_index(tape: &TapeDoc) -> Option<rustc_hash::FxHashMap<u16, Vec<u32>>> {
+fn kind_index(tape: &TapeDoc) -> Option<Arc<crate::code_rule_dsl::tape::KindPostings>> {
+    #[cfg(feature = "code-rule-profile")]
+    let shared = std::env::var_os("RERAIL_SHARED_INPUT_INDEX").is_some();
+    #[cfg(not(feature = "code-rule-profile"))]
+    let shared = false;
+    kind_index_with(tape, shared)
+}
+
+fn kind_index_with(
+    tape: &TapeDoc,
+    _shared: bool,
+) -> Option<Arc<crate::code_rule_dsl::tape::KindPostings>> {
+    #[cfg(feature = "code-rule-profile")]
+    if _shared && let Some(index) = tape.shared_kind_postings.get() {
+        let _span = crate::code_rule_dsl::profile::trace::Span::start("input-kind-index", "hit");
+        // Preserve the budget polls the original full traversal would spend.
+        for _ in 0..tape.transducer_len().div_ceil(POLL_INTERVAL) {
+            if budget::matcher_budget_exhausted() {
+                return None;
+            }
+        }
+        return Some(Arc::clone(index));
+    }
+    #[cfg(feature = "code-rule-profile")]
+    let _span = crate::code_rule_dsl::profile::trace::Span::start("input-kind-index", "build");
     let mut kinds = rustc_hash::FxHashMap::<u16, Vec<u32>>::default();
     for ordinal in 0..tape.transducer_len() as u32 {
         if (ordinal as usize).is_multiple_of(POLL_INTERVAL) && budget::matcher_budget_exhausted() {
@@ -199,7 +223,42 @@ fn kind_index(tape: &TapeDoc) -> Option<rustc_hash::FxHashMap<u16, Vec<u32>>> {
             .or_default()
             .push(ordinal);
     }
+    let kinds = Arc::new(kinds);
+    #[cfg(feature = "code-rule-profile")]
+    if _shared {
+        let _ = tape.shared_kind_postings.set(Arc::clone(&kinds));
+    }
     Some(kinds)
+}
+
+#[cfg(all(test, feature = "code-rule-profile"))]
+#[test]
+fn shared_input_kind_index_is_document_scoped_and_obeys_cancellation() {
+    use crate::code_rule_dsl::{
+        language::GrammarDialect,
+        tape::{Grammar, TapeImage},
+    };
+    use std::sync::atomic::AtomicBool;
+    let grammar = Grammar::new(GrammarDialect::Python).unwrap();
+    let source = Arc::new("def read(): return 1\n".to_owned());
+    let image = TapeImage::parse(&grammar, &source, &|| false)
+        .unwrap()
+        .unwrap();
+    let doc =
+        TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &image, &|| false).unwrap();
+    let first = kind_index_with(&doc, true).unwrap();
+    let second = kind_index_with(&doc.clone(), true).unwrap();
+    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!(first, kind_index_with(&doc, false).unwrap());
+    let other = TapeDoc::restore(source, grammar, &image, &|| false).unwrap();
+    assert!(!Arc::ptr_eq(
+        &first,
+        &kind_index_with(&other, true).unwrap()
+    ));
+    let closed = Arc::new(AtomicBool::new(true));
+    let _budget = budget::MatchBudget::work(&closed, 10_000);
+    assert!(kind_index_with(&doc, true).is_none());
+    assert!(kind_index_with(&doc, false).is_none());
 }
 
 /// The nodes of `filter`'s kinds whose text holds its needle, in preorder; `None` where the
@@ -288,12 +347,12 @@ pub(super) fn nodes_of_kinds(
     let address = std::ptr::from_ref(file) as usize;
     MEMO.with_borrow_mut(|memo| {
         if memo.root != address {
-            return kind_index(tape).as_ref().map_or_else(Vec::new, collect);
+            return kind_index(tape).as_deref().map_or_else(Vec::new, collect);
         }
         if memo.kinds.is_none() {
             memo.kinds = kind_index(tape);
         }
-        memo.kinds.as_ref().map_or_else(Vec::new, collect)
+        memo.kinds.as_deref().map_or_else(Vec::new, collect)
     })
 }
 

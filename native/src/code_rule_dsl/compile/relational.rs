@@ -159,12 +159,12 @@ pub(super) fn compile(
     if let Some(value) = spec.get("stages") {
         let values = value
             .as_array()
-            .filter(|items| items.len() <= 32)
-            .ok_or_else(|| invalid(format!("{path}/stages must contain at most 32 stages")))?;
+            .filter(|items| items.len() <= 64)
+            .ok_or_else(|| invalid(format!("{path}/stages must contain at most 64 stages")))?;
         for (index, value) in values.iter().enumerate() {
             let at = format!("{path}/stages/{index}");
             let spec = object(value, &at)?;
-            reject_unknown(spec, &["name", "query", "indexes"], &at)?;
+            reject_unknown(spec, &["name", "query", "indexes", "reachability"], &at)?;
             let name = non_empty_str(spec.get("name"), &format!("{at}/name"))?.to_owned();
             if !relational::identifier(&name)
                 || tables.iter().any(|table| table.eq_ignore_ascii_case(&name))
@@ -173,11 +173,59 @@ pub(super) fn compile(
                     "{at}/name must be a new relation identifier"
                 )));
             }
-            let query = text(
-                spec.get("query"),
-                &format!("{at}/query"),
-                capabilities.limits.max_ast_pattern_bytes,
-            )?;
+            let reachability = spec
+                .get("reachability")
+                .map(|value| -> Result<_> {
+                    if spec.contains_key("query") || spec.contains_key("indexes") {
+                        return Err(invalid(format!(
+                            "{at}: reachability cannot declare query or indexes"
+                        )));
+                    }
+                    let shape = object(value, &format!("{at}/reachability"))?;
+                    reject_unknown(shape, &["roots", "edges", "batchSize"], &at)?;
+                    let mut queries = Vec::new();
+                    for (field, required) in [
+                        ("roots", vec!["__path", "id"]),
+                        ("edges", vec!["__path", "src", "dst"]),
+                    ] {
+                        let query = text(
+                            shape.get(field),
+                            &format!("{at}/reachability/{field}"),
+                            capabilities.limits.max_ast_pattern_bytes,
+                        )?;
+                        if relational::columns(&db, &query, &tables)? != required {
+                            return Err(invalid(format!(
+                                "{at}/reachability/{field} must select {} in order",
+                                required.join(",")
+                            )));
+                        }
+                        queries.push(query);
+                    }
+                    let batch_size = match shape.get("batchSize") {
+                        None => 256,
+                        Some(value) => value
+                            .as_u64()
+                            .filter(|v| (1..=4096).contains(v))
+                            .ok_or_else(|| {
+                                invalid(format!("{at}/reachability/batchSize must be 1 to 4096"))
+                            })? as usize,
+                    };
+                    Ok(relational::Reachability {
+                        roots: queries.remove(0),
+                        edges: queries.remove(0),
+                        batch_size,
+                    })
+                })
+                .transpose()?;
+            let query = if reachability.is_some() {
+                "SELECT NULL AS __path,NULL AS root,NULL AS node WHERE 0".to_owned()
+            } else {
+                text(
+                    spec.get("query"),
+                    &format!("{at}/query"),
+                    capabilities.limits.max_ast_pattern_bytes,
+                )?
+            };
             let columns = relational::columns(&db, &query, &tables)?;
             let indexes = spec
                 .get("indexes")
@@ -206,6 +254,7 @@ pub(super) fn compile(
                 name,
                 query,
                 indexes,
+                reachability,
             };
             relational::create_stage(&db, &stage, false)?;
             tables.insert(stage.name.clone());
