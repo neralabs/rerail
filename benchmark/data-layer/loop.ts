@@ -7,14 +7,16 @@
 // time, never split and retried within the run. The verdict is parity (each clause's SQL lines against native's over
 // the subset, apart from native's budget failures), speed (SQL/native CPU and wall over the units both finished, the
 // costliest statements, clauses and (clause, file)s, against the previous run), a projection to the whole tree, and
-// the whole-program SQL setup (every clause in one program, compiled, and a first session), capped. Native's lines over
-// the subset and its whole-tree time are cached per native source hash (`~/rerail-bench/data-layer/loop-cache/`);
-// every run is recorded in `~/rerail-bench/data-layer/loop-runs/`.
+// the whole-program SQL setup (every clause in one program, compiled, and a first session), capped, and the mutation
+// stage (`mutations.ts`: native against SQL over each rule's base and recorded mutations). Native's lines over the
+// subset and its whole-tree time are cached per native source hash (`~/rerail-bench/data-layer/loop-cache/`); every run
+// is recorded in `~/rerail-bench/data-layer/loop-runs/`.
 //
-//   loop.ts run        [--rounds N] [--jobs N] [--memory GiB] [--chunk S] [--replan] [--cap S] [--group-cap S] [--clauses a,b] [--program-cap S] [--show N]
+//   loop.ts run        [--rounds N] [--jobs N] [--memory GiB] [--chunk S] [--replan] [--cap S] [--group-cap S] [--clauses a,b] [--program-cap S] [--mutations selected|all|off] [--show N]
 //   loop.ts calibrate  [--jobs N] [--cap S] [--group-cap S]: the latest run's units over the full corpus, against its projection
 //   loop.ts costs      [--jobs N] [--cap S] [--files-from list]: each file's SQL time with every clause in one program, per-(clause, file) attribution
 //   loop.ts select     --from <distilled subset.json>: writes loop-subset.json (the files, why, and per-clause native coverage)
+//   loop.ts mutations  [--mutations all|selected] [--select] [--cover cover.json]: the mutation stage alone (default: every mutation over the whole tree)
 //   loop.ts unit-child | program-child (internal): one JSON line per event on stdout
 //
 // Caps are CPU seconds (user + system, every thread of the child), so they do not move with the machine's load.
@@ -29,9 +31,14 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { collectRepository, modulePath } from "./corpus.js";
 import {
-  compareStrings, engineReportSchema, failureLine, loadEngine, loadRules, rerailRoot, RuleWorkspace, sha256, violationLine,
-  type Engine, type EngineResult, type Matcher, type PortedRule, type SourceFile,
+  compareStrings, engineReportSchema, loadEngine, loadRules, rerailRoot, RuleWorkspace, sha256,
+  type Engine, type Matcher, type PortedRule, type SourceFile,
 } from "./engine.js";
+import {
+  printMutations, readMutationSelection, readSubsetHits, runMutations, selectMutations, summarizeMutations,
+  type MutationRun, type MutationSet, type MutationSummary,
+} from "./mutations.js";
+import { compareLines, linesOf, parseLine } from "./parity.js";
 
 const script = fileURLToPath(import.meta.url);
 const benchHome = resolve(homedir(), "rerail-bench");
@@ -40,8 +47,6 @@ const defaultSubset = resolve(rerailRoot, "benchmark/data-layer/loop-subset.json
 const defaultCosts = resolve(stateRoot, "loop-costs.json");
 const platform = `${process.platform}-${process.arch}`;
 const defaultAddon = resolve(rerailRoot, `target-loop/addon/rerail_engine.${platform}.node`);
-/** The SQL engine leaves native's work-budget failures alone: those (rule, clause, file)s are not compared. */
-const BUDGET_FAILURE = "budget-exceeded";
 /** A run is untrusted when the 1-minute load average before it exceeds this, or its rounds spread more than this. */
 const LOAD_LIMIT = 6;
 const SPREAD_LIMIT = 0.1;
@@ -68,7 +73,7 @@ type EngineName = "native" | "sql";
 // Options
 
 interface Options {
-  command: "run" | "calibrate" | "costs" | "select" | "unit-child" | "program-child";
+  command: "run" | "calibrate" | "costs" | "select" | "mutations" | "unit-child" | "program-child";
   addon: string;
   corpus: string;
   policies: string;
@@ -94,15 +99,24 @@ interface Options {
   from: string | undefined;
   filesFrom: string | undefined;
   output: string | undefined;
+  /**
+   * The mutation stage: `selected` runs `loop-mutations.json`'s mutations over the subset, `all` every recorded mutation
+   * over the whole tree.
+   */
+  mutations: "selected" | "all" | "off";
+  /** mutations: run every mutation over the subset and write `loop-mutations.json` (the greedy selection) from it. */
+  select: boolean;
+  /** The distillation's per-clause coverage of the subset (`hit`: a finding file). */
+  cover: string;
   // unit children only
   scope: "subset" | "full" | "list";
 }
 
 const valued = [
   "--addon", "--corpus", "--policies", "--subset", "--rounds", "--jobs", "--chunk", "--cap", "--group-cap", "--program-cap",
-  "--memory", "--clauses", "--show", "--from", "--files-from", "--output", "--scope",
+  "--memory", "--clauses", "--show", "--from", "--files-from", "--output", "--scope", "--mutations", "--cover",
 ];
-const commands = ["run", "calibrate", "costs", "select", "unit-child", "program-child"] as const;
+const commands = ["run", "calibrate", "costs", "select", "mutations", "unit-child", "program-child"] as const;
 
 function integer(name: string, value: string, minimum: number): number {
   const parsed = Number(value);
@@ -117,10 +131,12 @@ function parseOptions(argv: readonly string[]): Options {
   if (!commands.includes(command as Options["command"])) throw new UsageError(`unknown command ${command}`);
   const values: Record<string, string> = {};
   let replan = false;
+  let selectMutationSet = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
-    if (argument === "--replan") {
-      replan = true;
+    if (argument === "--replan" || argument === "--select") {
+      if (argument === "--replan") replan = true;
+      else selectMutationSet = true;
       continue;
     }
     const [key, inline] = argument.includes("=") ? [argument.slice(0, argument.indexOf("=")), argument.slice(argument.indexOf("=") + 1)] : [argument, undefined];
@@ -132,6 +148,8 @@ function parseOptions(argv: readonly string[]): Options {
   const scope = values["--scope"] ?? "subset";
   if (scope !== "subset" && scope !== "full" && scope !== "list") throw new UsageError(`--scope takes subset, full or list, not ${scope}`);
   const defaultCap = command === "calibrate" ? "300" : command === "costs" ? "15" : "60";
+  const mutations = values["--mutations"] ?? (command === "mutations" ? "all" : "selected");
+  if (mutations !== "selected" && mutations !== "all" && mutations !== "off") throw new UsageError(`--mutations takes selected, all or off, not ${mutations}`);
   return {
     replan,
     command: command as Options["command"],
@@ -151,6 +169,9 @@ function parseOptions(argv: readonly string[]): Options {
     from: values["--from"] === undefined ? undefined : resolve(values["--from"]),
     filesFrom: values["--files-from"] === undefined ? undefined : resolve(values["--files-from"]),
     output: values["--output"] === undefined ? undefined : resolve(values["--output"]),
+    mutations,
+    select: selectMutationSet,
+    cover: resolve(values["--cover"] ?? resolve(benchHome, "distill/cover.json")),
     scope,
   };
 }
@@ -270,64 +291,6 @@ function unitRule(engine: Engine, policies: string, unit: Unit): PortedRule {
   const clauses = document.clauses.filter(clause => clause.define !== undefined || ids.has(clause.id));
   const source = JSON.stringify({ ...document, clauses });
   return { linter: unit.linter, path, sha256: sha256(source), clauses: clauses.length, document: { ...document, clauses }, compiled: engine.binding.CodeRuleDslRuntime.compile(source, "json", engine.capabilities.source) };
-}
-
-function linesOf(result: EngineResult): string[] {
-  return [...result.violations.map(violationLine), ...result.failures.map(failureLine)].sort(compareStrings);
-}
-
-// ---------------------------------------------------------------------------------------------------------------------
-// Parity
-
-interface Line {
-  text: string;
-  kind: string;
-  rule: string;
-  clause: string;
-  code: string;
-  path: string;
-}
-
-function parseLine(text: string): Line {
-  const [kind = "", rule = "", clause = "", code = "", path = ""] = text.split("\t");
-  return { text, kind, rule, clause, code, path };
-}
-
-interface ClauseParity {
-  clause: string;
-  compared: number;
-  /** (rule, clause, file)s native ran out of its work budget on: not compared. */
-  budgetExcluded: string[];
-  files: { path: string; onlyNative: string[]; onlySql: string[] }[];
-}
-
-/** One clause's SQL lines against native's, apart from the files where native ran out of its work budget. */
-function compareLines(clause: string, native: readonly string[], sql: readonly string[]): ClauseParity {
-  const key = (line: Line) => `${line.rule}\t${line.clause}\t${line.path}`;
-  const parsedNative = native.map(parseLine);
-  const excluded = new Set(parsedNative.filter(line => line.kind === "failure" && line.code === BUDGET_FAILURE).map(key));
-  const left = parsedNative.filter(line => !excluded.has(key(line)));
-  const right = sql.map(parseLine).filter(line => !excluded.has(key(line)));
-  const count = (lines: Line[]) => {
-    const counts = new Map<string, number>();
-    for (const line of lines) counts.set(line.text, (counts.get(line.text) ?? 0) + 1);
-    return counts;
-  };
-  const leftCounts = count(left);
-  const rightCounts = count(right);
-  const files = new Map<string, ClauseParity["files"][number]>();
-  const file = (line: Line) => {
-    let found = files.get(line.path);
-    if (found === undefined) files.set(line.path, found = { path: line.path, onlyNative: [], onlySql: [] });
-    return found;
-  };
-  for (const line of left) if ((rightCounts.get(line.text) ?? 0) < (leftCounts.get(line.text) ?? 0)) file(line).onlyNative.push(line.text);
-  for (const line of right) if ((leftCounts.get(line.text) ?? 0) < (rightCounts.get(line.text) ?? 0)) file(line).onlySql.push(line.text);
-  for (const found of files.values()) {
-    found.onlyNative = [...new Set(found.onlyNative)];
-    found.onlySql = [...new Set(found.onlySql)];
-  }
-  return { clause, compared: left.length, budgetExcluded: [...excluded].sort(compareStrings), files: [...files.values()].sort((a, b) => compareStrings(a.path, b.path)) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1214,6 +1177,8 @@ async function run(options: Options): Promise<number> {
     process.stderr.write(`  round ${round}: ${seconds(result.wallMs)} wall, up to ${result.peakRunning} of ${options.jobs} jobs at once; ${sql.filter(outcome => outcome.status !== "ok").length} SQL units past their cap; largest unit ${gib(peakRss)} resident\n`);
   }
   pool.close();
+  // After the rounds, so it does not load the machine under their timings.
+  const mutationParity = options.mutations === "off" ? undefined : await mutationStage(options, options.mutations);
 
   const problems: string[] = [];
   // Parity: each clause's lines in the last round SQL finished it.
@@ -1253,6 +1218,13 @@ async function run(options: Options): Promise<number> {
     }
   }
   for (const [clause, reason] of [...refused].slice(0, options.show)) console.log(`  refused ${clause}: ${reason}`);
+  if (mutationParity !== undefined) {
+    console.log("");
+    printMutations(mutationParity.run, mutationParity.summary, mutationParity.label, options.show);
+    for (const error of mutationParity.run.errors) problems.push(`mutation stage: ${error.linter}: ${error.detail}`);
+    if (mutationParity.summary.lost.length > 0) problems.push(`mutation stage: the selection is stale (${mutationParity.summary.lost.length} clauses without their true positive)`);
+  }
+  const mutationsDiffer = mutationParity?.summary.differing.length ?? 0;
 
   // Speed: per round, over the units both engines finished.
   const totals = rounds.map(round => {
@@ -1406,6 +1378,7 @@ async function run(options: Options): Promise<number> {
     totals: { sqlCpuMs: sqlCpu, sqlWallMs: sqlWall, nativeCpuMs: nativeCpu, nativeWallMs: nativeWall },
     ratio,
     parity: { equal: differing.length === 0, compared: parities.length, differing, timeouts, errors, refused: [...refused].map(([clause, reason]) => ({ clause, reason })) },
+    mutations: mutationParity === undefined ? null : mutationRecord(mutationParity),
     statements: topStatements.slice(0, 50),
     clauses: clauseTimes,
     clauseFiles: clauseFiles.slice(0, 200),
@@ -1421,9 +1394,65 @@ async function run(options: Options): Promise<number> {
   console.log("");
   for (const problem of problems.slice(0, options.show)) console.log(`PROBLEM: ${problem}`);
   if (problems.length > options.show) console.log(`PROBLEM: … ${problems.length - options.show} more`);
-  const verdict = problems.length > 0 ? "ERROR" : differing.length > 0 ? "FAIL" : "PASS";
-  console.log(`VERDICT ${verdict}: parity ${differing.length === 0 ? "ok" : `${differing.length} clauses differ`}${notCompared.length > 0 ? `, ${notComparedText}` : ""}; SQL/native CPU ${ratio.cpu.toFixed(2)}×, wall ${ratio.wall.toFixed(2)}×${untrusted.length > 0 ? " (untrusted timing)" : ""}; projected whole tree ${projectedRatio.toFixed(2)}×; ${seconds(performance.now() - started)} for the run; record ${recordPath.replace(homedir(), "~")}`);
+  const verdict = problems.length > 0 ? "ERROR" : differing.length > 0 || mutationsDiffer > 0 ? "FAIL" : "PASS";
+  console.log(`VERDICT ${verdict}: parity ${differing.length === 0 ? "ok" : `${differing.length} clauses differ`}${notCompared.length > 0 ? `, ${notComparedText}` : ""}; mutations ${mutationParity === undefined ? "off" : mutationsDiffer === 0 ? "ok" : `${mutationsDiffer} cases differ`}; SQL/native CPU ${ratio.cpu.toFixed(2)}×, wall ${ratio.wall.toFixed(2)}×${untrusted.length > 0 ? " (untrusted timing)" : ""}; projected whole tree ${projectedRatio.toFixed(2)}×; ${seconds(performance.now() - started)} for the run; record ${recordPath.replace(homedir(), "~")}`);
   return verdict === "PASS" ? 0 : verdict === "FAIL" ? 1 : 3;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// mutations: native against SQL over each rule's base and its recorded mutations (mutations.ts)
+
+const defaultMutationSelection = resolve(rerailRoot, "benchmark/data-layer/loop-mutations.json");
+/** A rule's mutation child is killed past this many wall seconds. */
+const MUTATION_CAP_SECONDS = 540;
+
+interface MutationStage {
+  run: MutationRun;
+  summary: MutationSummary;
+  label: string;
+}
+
+/** `selected`: `loop-mutations.json`'s mutations over the subset; `all`: every recorded mutation over the whole tree. */
+async function mutationStage(options: Options, mode: "selected" | "all", subsetBase = mode === "selected"): Promise<MutationStage> {
+  const set: MutationSet = mode === "all" ? { kind: "all" } : readMutationSelection(defaultMutationSelection);
+  const run = await runMutations({ addon: options.addon, corpus: options.corpus, policies: options.policies, set, subset: subsetBase ? options.subset : undefined, jobs: options.jobs, capSeconds: MUTATION_CAP_SECONDS });
+  const base = subsetBase ? "subset" : "whole tree";
+  const label = set.kind === "all" ? `every recorded mutation over the ${base}` : `the ${Object.values(set.mutations).flat().length} mutations of loop-mutations.json over the ${base}`;
+  return { run, summary: summarizeMutations(run, set, readSubsetHits(options.cover)), label };
+}
+
+function mutationRecord(stage: MutationStage) {
+  return {
+    label: stage.label, wallMs: stage.run.wallMs, rules: stage.run.rules, errors: stage.run.errors,
+    mutations: stage.summary.mutations, withFindings: stage.summary.withFindings,
+    truePositiveClauses: stage.summary.truePositiveClauses, newlyCovered: stage.summary.newlyCovered, lost: stage.summary.lost,
+    differing: stage.summary.differing,
+  };
+}
+
+/**
+ * The mutation stage alone (`--mutations all` by default: every mutation over the whole tree), recorded with every
+ * case in `~/rerail-bench/data-layer/mutation-runs/`. `--select` runs every mutation over the subset and writes
+ * `loop-mutations.json`, the greedy selection the loop runs by default.
+ */
+async function mutations(options: Options): Promise<number> {
+  if (options.mutations === "off") throw new UsageError("mutations takes --mutations all or selected");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const head = git(rerailRoot, "rev-parse", "--short", "HEAD").trim();
+  // The findings are the addon's, which a build of another HEAD may have made: hashed before the stage loads it.
+  const addonSha256 = sha256(readFileSync(options.addon));
+  const stage = await mutationStage(options, options.select ? "all" : options.mutations, options.select || options.mutations === "selected");
+  printMutations(stage.run, stage.summary, stage.label, options.show);
+  if (options.select) {
+    const selection = selectMutations(stage.run, readSubsetHits(options.cover), `greedy set cover over every recorded mutation on the subset base (each step: the mutation giving the most clauses without a subset hit their first true positive, the cheaper on a tie), native findings of addon ${addonSha256.slice(0, 19)} (rerail HEAD ${head}), ${stamp}`);
+    writeFileSync(defaultMutationSelection, `${JSON.stringify(selection, null, 2)}\n`);
+    console.log(`wrote ${defaultMutationSelection}: ${Object.keys(selection.covers).length} mutations for ${stage.summary.newlyCovered.length} clauses`);
+  }
+  mkdirSync(resolve(stateRoot, "mutation-runs"), { recursive: true });
+  const recordPath = resolve(stateRoot, "mutation-runs", `${stamp}.json`);
+  writeFileSync(recordPath, `${JSON.stringify({ format: "rerail.sql-loop-mutations-run/v1", head, addon: options.addon, addonSha256, ...mutationRecord(stage), cases: stage.run.cases })}\n`);
+  console.log(`record ${recordPath.replace(homedir(), "~")}`);
+  return stage.run.errors.length > 0 || stage.summary.lost.length > 0 ? 3 : stage.summary.differing.length > 0 ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1663,7 +1692,12 @@ async function main(): Promise<number> {
     if (options.command === "unit-child") process.exit(await unitChild(options));
     if (options.command === "program-child") return await programChild(options);
     if (!existsSync(options.addon)) throw new UsageError(`no addon at ${options.addon}; build it with \`just rerail-sql-loop\` (or --addon)`);
-    return options.command === "select" ? await select(options) : options.command === "costs" ? await costs(options) : options.command === "calibrate" ? await calibrate(options) : await run(options);
+    if ((options.command === "run" || options.command === "mutations") && options.mutations !== "off") {
+      // Checked before the run: the stage comes after the rounds.
+      if (!existsSync(options.cover)) throw new UsageError(`no subset coverage at ${options.cover} (--cover)`);
+      if (options.mutations === "selected" && !options.select && !existsSync(defaultMutationSelection)) throw new UsageError(`no mutation selection at ${defaultMutationSelection}; write it with \`just rerail-sql-loop-tool mutations --select\``);
+    }
+    return options.command === "select" ? await select(options) : options.command === "costs" ? await costs(options) : options.command === "calibrate" ? await calibrate(options) : options.command === "mutations" ? await mutations(options) : await run(options);
   } catch (error) {
     if (!(error instanceof UsageError)) throw error;
     process.stderr.write(`rerail-sql-loop: ${error.message}\n`);

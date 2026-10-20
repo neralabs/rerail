@@ -91,6 +91,17 @@ The verdict reports:
 - **Program:** the whole-program SQL setup, capped by `--program-cap` (default 60 s CPU), in the same queue. Every
   clause is compiled into one program, and each worker's session opens. The whole-tree run pays this before it reads
   any file.
+- **Mutations:** native against SQL on the recorded mutations, after the rounds (`data-layer/mutations.ts`). The
+  subset only has findings for the clauses that fire on the clean tree, so for most clauses its parity covers only
+  the clean side. Each recorded mutation (`<policies>/<linter>/mutations/`) makes some rule fire. For each rule, one
+  child process loads the base on both engines. Each mutation is then an incremental apply of its changed files,
+  compared line by line like the subset parity (native is the oracle, not the linter's record), after which the base
+  is restored. `--mutations selected` (the default) runs the mutations listed in `data-layer/loop-mutations.json`
+  over the subset. That is the greedy smallest set giving every clause without a subset hit its first true positive:
+  159 of 437 mutations, about 50 s. `--mutations all` runs every mutation over the whole tree (over 3 minutes,
+  mostly serverplan_state_tripwires). `--mutations off` skips the stage. A differing case fails the run, as a
+  differing clause does. A child that fails or passes 540 s, or a selected clause that no longer gets its true
+  positive (the selection is stale), is a PROBLEM.
 
 A run is untrusted when:
 
@@ -113,6 +124,11 @@ the timed run with a command, set `RERAIL_BENCH_LOCK=<command>`, for example a l
   every `select`.
 - **`costs`** times every subset file on SQL with every clause in one program, one file per apply, each capped by
   `--cap`. The profile gives each (clause, file) its statement time. It writes `~/rerail-bench/data-layer/loop-costs.json`.
+- **`mutations`** runs the mutation stage alone, by default `--mutations all` (every mutation over the whole tree).
+  It records every case in `~/rerail-bench/data-layer/mutation-runs/`. With `--select`, it runs every mutation over
+  the subset and rewrites `loop-mutations.json` from what native found. Re-select after a policy, mutation or subset
+  change. `--cover` names the distillation's per-clause coverage (default `~/rerail-bench/distill/cover.json`), whose
+  `hit` says which clauses already have a finding file in the subset.
 
 ### The SQL engine's gate
 

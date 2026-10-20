@@ -62,7 +62,7 @@ rerail-query-parity *args:
 rerail-data-layer *args:
     @node --import tsx benchmark/data-layer/data-layer.ts {{ args }}
 
-# The SQL engine's speed loop: build the `loop` profile addon (target-loop/), then the reporting clauses in cost-planned units on SQL and native over benchmark/data-layer/loop-subset.json, longest first over up to 14 processes within a memory budget: SQL/native CPU ratio, parity, TIMEOUT and ERROR rows, projection (benchmark/README.md). RERAIL_BENCH_LOCK=<command> prefixes the timed run (e.g. ~/rerail-bench/bench-lock).
+# The SQL engine's speed loop: build the `loop` profile addon (target-loop/), then the reporting clauses in cost-planned units on SQL and native over benchmark/data-layer/loop-subset.json, longest first over up to 14 processes within a memory budget: SQL/native CPU ratio, parity, TIMEOUT and ERROR rows, projection; then the mutation stage, native against SQL on the recorded mutations (--mutations selected|all|off, default selected: benchmark/data-layer/loop-mutations.json over the subset) (benchmark/README.md). RERAIL_BENCH_LOCK=<command> prefixes the timed run (e.g. ~/rerail-bench/bench-lock).
 rerail-sql-loop *args:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -71,7 +71,7 @@ rerail-sql-loop *args:
     echo "rerail-sql-loop: build $((SECONDS - started)) s" >&2
     ${RERAIL_BENCH_LOCK:-} node --import tsx benchmark/data-layer/loop.ts run {{ args }}
 
-# The loop's other commands: costs (per (clause, file) SQL times) | select (writes loop-subset.json) | calibrate (SQL per clause on the full corpus against the projection). Re-calibrate after every select.
+# The loop's other commands: costs (per (clause, file) SQL times) | select (writes loop-subset.json) | calibrate (SQL per clause on the full corpus against the projection) | mutations (the mutation stage alone, default every mutation over the whole tree; --select rewrites loop-mutations.json). Re-calibrate after every select.
 rerail-sql-loop-tool *args:
     @${RERAIL_BENCH_LOCK:-} node --import tsx benchmark/data-layer/loop.ts {{ args }}
 
