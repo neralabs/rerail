@@ -834,7 +834,8 @@ async function runUnits(pool: UnitPool, batch: UnitBatch): Promise<{ outcomes: U
 // The whole-program SQL setup: every clause in one program, compiled, and every worker's session
 
 const programEventSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("program"), compileMs: z.number(), setupMs: z.number(), cpuMs: z.number(), rssBytes: z.number(), clauses: z.number().int() }),
+  /** `workspaceMs`: `new RuleWorkspace(...)`, where `addCodeRule` compiles every clause into the SQL program. */
+  z.object({ kind: z.literal("program"), compileMs: z.number(), workspaceMs: z.number(), setupMs: z.number(), cpuMs: z.number(), rssBytes: z.number(), clauses: z.number().int() }),
   /** Past `--program-cap` CPU seconds: the child dies right after this event. */
   z.object({ kind: z.literal("timeout"), cpuMs: z.number(), wallMs: z.number(), rssBytes: z.number() }),
 ]);
@@ -862,7 +863,9 @@ async function programChild(options: Options): Promise<number> {
   const compileStarted = performance.now();
   const rules = loadRules(engine, options.policies);
   const compileMs = performance.now() - compileStarted;
+  const workspaceStarted = performance.now();
   const workspace = new RuleWorkspace(engine, rules, { engine: "sql" });
+  const workspaceMs = performance.now() - workspaceStarted;
   try {
     const started = performance.now();
     // `serverplan_quality` scopes `**/*.py`: one batch per worker, so the program compiles and every session opens.
@@ -871,7 +874,7 @@ async function programChild(options: Options): Promise<number> {
     const setupMs = performance.now() - started;
     const rssBytes = watchdog.stop();
     const used = process.cpuUsage(cpu);
-    emitLine({ kind: "program", compileMs, setupMs, cpuMs: (used.user + used.system) / 1000, rssBytes, clauses: reportingClauses(rules).length } satisfies ProgramEvent);
+    emitLine({ kind: "program", compileMs, workspaceMs, setupMs, cpuMs: (used.user + used.system) / 1000, rssBytes, clauses: reportingClauses(rules).length } satisfies ProgramEvent);
   } finally {
     watchdog.stop();
     workspace.close();
@@ -881,7 +884,7 @@ async function programChild(options: Options): Promise<number> {
 
 /** The whole-program setup; `rssBytes`: its child's peak resident set. */
 type ProgramOutcome =
-  | { status: "ok"; compileMs: number; setupMs: number; cpuMs: number; rssBytes: number; clauses: number }
+  | { status: "ok"; compileMs: number; workspaceMs: number; setupMs: number; cpuMs: number; rssBytes: number; clauses: number }
   | { status: "timeout"; cpuMs: number; wallMs: number; rssBytes: number }
   | { status: "error"; wallMs: number };
 
@@ -898,7 +901,7 @@ async function runProgram(options: Options): Promise<ProgramOutcome> {
   child.on("close", () => exited.resolve());
   await exited.promise;
   clearTimeout(guard);
-  if (found?.kind === "program") return { status: "ok", compileMs: found.compileMs, setupMs: found.setupMs, cpuMs: found.cpuMs, rssBytes: found.rssBytes, clauses: found.clauses };
+  if (found?.kind === "program") return { status: "ok", compileMs: found.compileMs, workspaceMs: found.workspaceMs, setupMs: found.setupMs, cpuMs: found.cpuMs, rssBytes: found.rssBytes, clauses: found.clauses };
   if (found?.kind === "timeout") return { status: "timeout", cpuMs: found.cpuMs, wallMs: found.wallMs, rssBytes: found.rssBytes };
   return { status: "error", wallMs: performance.now() - started };
 }
@@ -1377,7 +1380,7 @@ async function run(options: Options): Promise<number> {
   if (program !== undefined) {
     console.log("");
     console.log(program.status === "ok"
-      ? `PROGRAM: ${program.clauses} clauses in one SQL program: rules compiled in ${seconds(program.compileMs)}; a first batch per worker (SQL program compile and every session's tables) ${seconds(program.setupMs)}; ${seconds(program.cpuMs)} CPU in all, ${gib(program.rssBytes)} resident at the peak`
+      ? `PROGRAM: ${program.clauses} clauses in one SQL program: rules compiled in ${seconds(program.compileMs)}; workspace (SQL program compile, in addCodeRule) ${seconds(program.workspaceMs)}; a first batch per worker (every session's tables) ${seconds(program.setupMs)}; ${seconds(program.cpuMs)} CPU in all, ${gib(program.rssBytes)} resident at the peak`
       : program.status === "timeout"
         ? `PROGRAM TIMEOUT: compiling every clause into one SQL program and opening the sessions passed the ${options.programCapSeconds} s CPU cap (${seconds(program.cpuMs)} CPU, ${seconds(program.wallMs)} wall, ${gib(program.rssBytes)} resident by then); the whole-tree run pays this before any file`
         : `PROGRAM ERROR: compiling every clause into one SQL program and opening the sessions failed after ${seconds(program.wallMs)}`);
