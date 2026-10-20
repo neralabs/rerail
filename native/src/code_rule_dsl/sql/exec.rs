@@ -2100,8 +2100,8 @@ impl Session {
         runner.stats.input.add(inputs.elapsed());
         // Stages in index order: a stage only reads stages made before it.
         let started = Started::now();
-        for stage in 0..stages.len() {
-            if stage_files[stage].is_empty() {
+        for (stage, files) in stage_files.iter().enumerate() {
+            if files.is_empty() {
                 continue;
             }
             runner.at = ("stage", stage);
@@ -2232,8 +2232,8 @@ impl Session {
             );
         }
         let started = Started::now();
-        for stage in 0..stages.len() {
-            if !stage_files[stage].is_empty() {
+        for (stage, files) in stage_files.iter().enumerate() {
+            if !files.is_empty() {
                 runner.at = ("stage", stage);
                 runner.clear(plan.prepared(stage))?;
             }
