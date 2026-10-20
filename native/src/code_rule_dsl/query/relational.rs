@@ -434,10 +434,14 @@ impl Builder {
             return;
         }
         let host_producer = self.universe_terminal(language);
-        terminals.push(host_producer);
+        if !terminals.contains(&host_producer) {
+            terminals.push(host_producer);
+        }
         let required_host_producer = host.map(|kind| {
             let producer = self.kind_terminal(language, kind);
-            terminals.push(producer);
+            if !terminals.contains(&producer) {
+                terminals.push(producer);
+            }
             producer
         });
         let producer = self.parse_terminal(
@@ -449,7 +453,9 @@ impl Builder {
                 reading: test.reading,
             },
         );
-        terminals.push(producer);
+        if !terminals.contains(&producer) {
+            terminals.push(producer);
+        }
         *ir = RelationalIr::parsed(ParseFactSpec {
             producer,
             host_producer,

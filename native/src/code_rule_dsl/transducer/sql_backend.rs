@@ -530,7 +530,14 @@ impl PackedDemand {
                                 }
                                 Some(super::super::literal::Parsed::NotString) => {}
                                 Some(super::super::literal::Parsed::Unknown) | None => {
-                                    failure = Some("parse-incomplete".to_owned());
+                                    failure = Some(
+                                        if super::super::matcher::bounded_producer_exceeded() {
+                                            "parse-fact-capacity"
+                                        } else {
+                                            "parse-incomplete"
+                                        }
+                                        .to_owned(),
+                                    );
                                 }
                             }
                             if failure.is_some() {

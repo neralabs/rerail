@@ -170,7 +170,10 @@ fn phase_five_authored_sql_goldens() -> std::collections::BTreeMap<String, Strin
             let start = body
                 .find("WITH ")
                 .expect("an authored Phase 5 SQL contract has one statement");
-            (name.trim().to_owned(), normalized_sql(body[start..].trim()))
+            (
+                name.trim().to_owned(),
+                normalized_sql(body[start..].trim().trim_end_matches(';')),
+            )
         })
         .collect()
 }
@@ -1818,6 +1821,140 @@ fn production_contract_phase_five_has_complete_authored_sql_and_catalogs() {
 }
 
 #[test]
+fn production_contract_phase_five_authored_sql_equals_oracles() {
+    let statements = phase_five_authored_sql_goldens();
+    for name in [
+        "semantic-parse-literal",
+        "semantic-parse-host",
+        "semantic-parse-capture-export",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the parsed-document contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the parsed-document policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        let expected = case.expected.oracle.violations[0]["span"].clone();
+        assert_eq!(
+            outcome.ranges,
+            [(
+                expected["startByte"].as_u64().expect("start byte") as usize,
+                expected["endByte"].as_u64().expect("end byte") as usize,
+            )],
+            "{name}: authored parse SQL range"
+        );
+        assert!(
+            outcome.errors.is_empty(),
+            "{name}: authored parse SQL completion"
+        );
+    }
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-generated-document-map")
+        .expect("the generated-document contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("the generated-document policy compiles");
+    let map = &case.workspace.document_maps[0].spans[0];
+    let outcome = super::policy_lowering_tests::sql_outcome_for_statement_with_document_maps(
+        &compiled,
+        &case.workspace.files[0].source,
+        &[(
+            map.source_start,
+            map.source_end,
+            map.generated_start,
+            map.generated_end,
+        )],
+        &statements["semantic-generated-document-map"],
+    )
+    .expect("the authored generated-document SQL executes");
+    assert_eq!(outcome.ranges, [(0, 13)]);
+    assert_eq!(outcome.file_indices, [0]);
+    assert!(outcome.errors.is_empty());
+}
+
+#[test]
+fn production_contract_phase_five_catalogs_are_repeatable_and_concurrent() {
+    let expected = phase_five_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|golden| (golden.name.clone(), golden.terminal_catalog))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let names = expected.keys().cloned().collect::<Vec<_>>();
+    for _ in 0..3 {
+        for name in &names {
+            let case = cases()
+                .into_iter()
+                .find(|case| &case.name == name)
+                .expect("the Phase 5 contract exists");
+            assert_eq!(
+                actual_implementation_golden(&case).terminal_catalog,
+                expected[name],
+                "{name}: repeatable catalog"
+            );
+        }
+    }
+    let threads = names
+        .into_iter()
+        .map(|name| {
+            let expected = expected[&name].clone();
+            std::thread::spawn(move || {
+                let case = cases()
+                    .into_iter()
+                    .find(|case| case.name == name)
+                    .expect("the concurrent Phase 5 contract exists");
+                assert_eq!(
+                    actual_implementation_golden(&case).terminal_catalog,
+                    expected
+                );
+            })
+        })
+        .collect::<Vec<_>>();
+    for thread in threads {
+        thread
+            .join()
+            .expect("Phase 5 catalog compilation completed");
+    }
+}
+
+#[test]
+fn production_contract_phase_five_parse_capacity_is_atomic() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-parse-literal")
+        .expect("the parsed-document contract exists");
+    let mut capabilities: Value =
+        serde_json::from_str(CAPABILITIES).expect("default capabilities are JSON");
+    capabilities["limits"]["maxVisitedNodes"] = 1.into();
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        capabilities.to_string(),
+    )
+    .expect("the capacity-limited parse policy compiles");
+    let outcome =
+        super::policy_lowering_tests::sql_outcome(&compiled, &case.workspace.files[0].source);
+    assert!(
+        outcome.ranges.is_empty(),
+        "parse failure publishes no partial result"
+    );
+    assert_eq!(outcome.errors, ["parse-fact-capacity"]);
+}
+
+#[test]
 fn production_contract_phase_five_generated_document_maps_are_required() {
     let case = cases()
         .into_iter()
@@ -1855,6 +1992,15 @@ fn production_contract_phase_five_generated_document_maps_are_required() {
     )
     .expect("the complete document map executes");
     assert_eq!(outcome.ranges, [(0, 13)], "mapped source span");
+    assert_eq!(outcome.file_indices, [0], "mapped source document identity");
+    assert_eq!(
+        case.workspace.document_maps[0].source_path, case.expected.oracle.violations[0]["path"],
+        "mapped identity resolves to the oracle source path"
+    );
+    assert_ne!(
+        case.workspace.document_maps[0].generated_path, case.expected.oracle.violations[0]["path"],
+        "the generated path is not published as the source path"
+    );
     assert!(outcome.errors.is_empty(), "complete map has no failure");
     assert_eq!(
         super::policy_lowering_tests::sql_outcome_with_document_maps(
@@ -1876,6 +2022,18 @@ fn production_contract_phase_five_generated_document_maps_are_required() {
         .expect("overlapping map rows are rejected"),
         "document-map-overlap"
     );
+    for invalid in [[(0, 0, 0, 20)], [(0, 13, 20, 20)], [(0, 15, 0, 20)]] {
+        assert_eq!(
+            super::policy_lowering_tests::sql_outcome_with_document_maps(
+                &compiled,
+                &case.workspace.files[0].source,
+                &invalid,
+            )
+            .err()
+            .expect("a malformed map span is rejected"),
+            "document-map-invalid-span"
+        );
+    }
 }
 
 #[test]

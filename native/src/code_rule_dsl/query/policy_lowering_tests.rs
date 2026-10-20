@@ -1077,6 +1077,7 @@ pub(super) struct SqlProducerStatusRow {
 
 pub(super) struct SqlOutcome {
     pub(super) ranges: Vec<(usize, usize)>,
+    pub(super) file_indices: Vec<i64>,
     pub(super) errors: Vec<String>,
     pub(super) facts: Vec<SqlFactRow>,
     pub(super) statuses: Vec<SqlProducerStatusRow>,
@@ -1262,6 +1263,7 @@ fn sql_outcome_with_failure(
                     .map(|index| row.get::<_, i64>(index))
                     .transpose()?
                     .unwrap_or(3),
+                get_optional("file_index")?,
                 get_optional("node")?,
                 named("error_code")
                     .map(|index| row.get::<_, Option<String>>(index))
@@ -1332,15 +1334,21 @@ fn sql_outcome_with_failure(
     let anchor = &compiled.inner.clauses[0].violation.anchor;
     let mut errors = rows
         .iter()
-        .filter(|(row_kind, _, _, _, _)| *row_kind == 8)
-        .map(|(_, _, error, _, _)| error.clone().expect("a failure row has an error code"))
+        .filter(|(row_kind, _, _, _, _, _)| *row_kind == 8)
+        .map(|(_, _, _, error, _, _)| error.clone().expect("a failure row has an error code"))
         .collect::<Vec<_>>();
     errors.sort();
     errors.dedup();
+    let mut file_indices = rows
+        .iter()
+        .filter(|(row_kind, _, _, _, _, _)| *row_kind != 8)
+        .map(|(_, file, _, _, _, _)| file.expect("a violation row has a file"))
+        .collect::<Vec<_>>();
+    file_indices.sort_unstable();
     let mut ranges = rows
         .into_iter()
-        .filter(|(row_kind, _, _, _, _)| *row_kind != 8)
-        .map(|(_, node, _, bindings, argument_node)| {
+        .filter(|(row_kind, _, _, _, _, _)| *row_kind != 8)
+        .map(|(_, _, node, _, bindings, argument_node)| {
             let node = node.expect("a violation row has a node");
             if let Anchor::Capture(label) = anchor {
                 let bindings = serde_json::from_str::<serde_json::Value>(&bindings)
@@ -1370,6 +1378,7 @@ fn sql_outcome_with_failure(
     ranges.sort_unstable();
     SqlOutcome {
         ranges,
+        file_indices,
         errors,
         facts,
         statuses,
@@ -1377,11 +1386,10 @@ fn sql_outcome_with_failure(
     }
 }
 
-pub(super) fn sql_outcome_with_document_maps(
-    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+fn validated_document_maps(
     source: &str,
     maps: &[(usize, usize, usize, usize)],
-) -> Result<SqlOutcome, String> {
+) -> Result<Vec<DocumentMapSpan>, String> {
     if maps.is_empty() {
         return Err("document-map-missing".to_owned());
     }
@@ -1397,25 +1405,49 @@ pub(super) fn sql_outcome_with_document_maps(
             return Err("document-map-overlap".to_owned());
         }
     }
+    Ok(ordered
+        .into_iter()
+        .map(
+            |(source_start, source_end, generated_start, generated_end)| DocumentMapSpan {
+                source_document: 0,
+                generated_document: 0,
+                source_start,
+                source_end,
+                generated_start,
+                generated_end,
+            },
+        )
+        .collect())
+}
+
+pub(super) fn sql_outcome_with_document_maps(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    source: &str,
+    maps: &[(usize, usize, usize, usize)],
+) -> Result<SqlOutcome, String> {
     Ok(sql_outcome_with_failure(
         compiled,
         source,
         GrammarDialect::Blade,
         None,
         None,
-        ordered
-            .into_iter()
-            .map(
-                |(source_start, source_end, generated_start, generated_end)| DocumentMapSpan {
-                    source_document: 0,
-                    generated_document: 0,
-                    source_start,
-                    source_end,
-                    generated_start,
-                    generated_end,
-                },
-            )
-            .collect(),
+        validated_document_maps(source, maps)?,
+    ))
+}
+
+pub(super) fn sql_outcome_for_statement_with_document_maps(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    source: &str,
+    maps: &[(usize, usize, usize, usize)],
+    sql: &str,
+) -> Result<SqlOutcome, String> {
+    Ok(sql_outcome_with_failure(
+        compiled,
+        source,
+        GrammarDialect::Blade,
+        None,
+        Some(sql),
+        validated_document_maps(source, maps)?,
     ))
 }
 

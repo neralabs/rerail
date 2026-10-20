@@ -1,3 +1,34 @@
 {
-  "cases": []
+  "cases": [
+    {
+      "name": "semantic-parse-literal",
+      "terminal_catalog": [
+        {"ordinal": 0, "kind": "kind", "dialect": "python", "producer_kind": "terminal", "program_digest": "2595d0069113b4b26d9b54671d4b059e77fc23feb29af1e0db4596388125b020", "result_schema": ["producer_status", "terminal_match"], "owning_clause_ids": ["sql-contract-semantic-parse-literal/contract"], "result_limit": 10000, "completion_required": true},
+        {"ordinal": 1, "kind": "universe", "dialect": "python", "producer_kind": "terminal", "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83", "result_schema": ["producer_status", "terminal_match"], "owning_clause_ids": ["sql-contract-semantic-parse-literal/contract"], "result_limit": 10000, "completion_required": true},
+        {"ordinal": 2, "kind": "parse", "dialect": "python", "producer_kind": "parsefact", "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83", "result_schema": ["producer_status", "fact"], "owning_clause_ids": ["sql-contract-semantic-parse-literal/contract"], "result_limit": 2000000, "completion_required": true}
+      ]
+    },
+    {
+      "name": "semantic-parse-host",
+      "terminal_catalog": [
+        {"ordinal": 0, "kind": "kind", "dialect": "python", "producer_kind": "terminal", "program_digest": "2595d0069113b4b26d9b54671d4b059e77fc23feb29af1e0db4596388125b020", "result_schema": ["producer_status", "terminal_match"], "owning_clause_ids": ["sql-contract-semantic-parse-host/contract"], "result_limit": 10000, "completion_required": true},
+        {"ordinal": 1, "kind": "universe", "dialect": "python", "producer_kind": "terminal", "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83", "result_schema": ["producer_status", "terminal_match"], "owning_clause_ids": ["sql-contract-semantic-parse-host/contract"], "result_limit": 10000, "completion_required": true},
+        {"ordinal": 2, "kind": "parse", "dialect": "python", "producer_kind": "parsefact", "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83", "result_schema": ["producer_status", "fact"], "owning_clause_ids": ["sql-contract-semantic-parse-host/contract"], "result_limit": 2000000, "completion_required": true}
+      ]
+    },
+    {
+      "name": "semantic-parse-capture-export",
+      "terminal_catalog": [
+        {"ordinal": 0, "kind": "kind", "dialect": "python", "producer_kind": "terminal", "program_digest": "2595d0069113b4b26d9b54671d4b059e77fc23feb29af1e0db4596388125b020", "result_schema": ["producer_status", "terminal_match"], "owning_clause_ids": ["sql-contract-semantic-parse-capture-export/contract"], "result_limit": 10000, "completion_required": true},
+        {"ordinal": 1, "kind": "universe", "dialect": "python", "producer_kind": "terminal", "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83", "result_schema": ["producer_status", "terminal_match"], "owning_clause_ids": ["sql-contract-semantic-parse-capture-export/contract"], "result_limit": 10000, "completion_required": true},
+        {"ordinal": 2, "kind": "parse", "dialect": "python", "producer_kind": "parsefact", "program_digest": "733f8a57b075c3ccc4884b04ca19d2a8ab1b02258c69596e2ab78099f21a9d83", "result_schema": ["producer_status", "fact"], "owning_clause_ids": ["sql-contract-semantic-parse-capture-export/contract"], "result_limit": 2000000, "completion_required": true}
+      ]
+    },
+    {
+      "name": "semantic-generated-document-map",
+      "terminal_catalog": [
+        {"ordinal": 0, "kind": "kind", "dialect": "blade", "producer_kind": "terminal", "program_digest": "ac52ece2b92951b8a8ceb3bf0762226ee9a699fe61066a64bb38db0f6ff0ed00", "result_schema": ["producer_status", "terminal_match"], "owning_clause_ids": ["sql-contract-semantic-generated-document-map/contract"], "result_limit": 10000, "completion_required": true}
+      ]
+    }
+  ]
 }

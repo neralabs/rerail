@@ -734,6 +734,10 @@ fn util_limit_hit() -> bool {
 /// Sets up this thread to evaluate `matcher`'s clause on one file, with `work` left of its
 /// `maxVisitedNodes` budget, as `GrammarMatcher::match_root` does for each root, and the Unknown
 /// flag for the sub-rules semantic predicates match themselves.
+pub(crate) fn bounded_producer_exceeded() -> bool {
+    UTIL_EXCEEDED.get().is_some()
+}
+
 pub(crate) fn begin_bounded_producer(work: usize) {
     UTIL_DEPTH.set(0);
     UTIL_EXCEEDED.set(None);
