@@ -1102,10 +1102,17 @@ fn production_contract_phases_two_and_three_have_complete_physical_sql_contracts
             );
         }
         assert!(sql.contains("AS clause_ordinal"), "{name}: clause identity");
-        assert!(
-            sql.contains("row_kind, failed.producer_id"),
-            "{name}: typed failure union"
-        );
+        if *name == "disabled-when" {
+            assert!(
+                !sql.contains("FROM producer_status failed"),
+                "{name}: a producer-free clause has no producer failure union"
+            );
+        } else {
+            assert!(
+                sql.contains("row_kind, failed.producer_id"),
+                "{name}: typed failure union"
+            );
+        }
         assert!(
             sql.ends_with("ORDER BY clause_ordinal, file_index, node, choice_order, producer_id, match_index, capture_index"),
             "{name}: deterministic clause ordering"
