@@ -5,7 +5,7 @@
 
 use super::exec::{Batch, BatchSlot, SubFile};
 use crate::code_rule_dsl::literal::SubDoc;
-use crate::code_rule_dsl::matcher::node_at;
+use crate::code_rule_dsl::matcher::{KindPostings, node_at};
 use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::{AstGrep, Doc};
 use rusqlite::fallible_iterator::FallibleIterator;
@@ -53,6 +53,8 @@ pub(super) fn text_hash(text: &str) -> i64 {
 pub(super) struct NodeFacts {
     tree: Tree,
     len: u32,
+    /// An anchor index's kind postings over the whole tree, until `postings` reads them.
+    seed: parking_lot::Mutex<Option<Arc<KindPostings>>>,
     postings: OnceLock<Postings>,
     positions: OnceLock<Positions>,
 }
@@ -65,6 +67,7 @@ enum Tree {
 }
 
 /// Node ids grouped by kind: each kind's ids ascending.
+#[cfg_attr(test, derive(Debug, PartialEq))]
 struct Postings {
     /// Each kind present, ascending, and where its ids start in `ids`.
     kinds: Vec<(u16, u32)>,
@@ -95,6 +98,12 @@ fn count_bytes(bytes: usize) {
     FACT_BYTES.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// The time the batches' files' kind postings took to build (`NodeFacts::postings_built`), summed
+/// over the workers: read by `workspace::sql::tests::per_file_plan_against_native`.
+#[cfg(test)]
+pub(in crate::code_rule_dsl) static POSTINGS_TIME: parking_lot::Mutex<super::Timing> =
+    parking_lot::const_mutex(super::Timing::ZERO);
+
 /// A column a row derives from its node (`NodeFacts::derived`).
 fn derived<'r, D: Doc>(
     node: ast_grep_core::Node<'r, D>,
@@ -119,25 +128,28 @@ fn derived<'r, D: Doc>(
 }
 
 impl NodeFacts {
-    /// The rows of `root`'s tape.
-    pub(super) fn of(root: &AstGrep<TapeDoc>) -> Self {
+    /// The rows of `root`'s tape; `kinds`, the kind postings of an anchor index over it, where
+    /// one was built (read in place of sorting the nodes by kind, where its walk reached them all).
+    pub(super) fn of(root: &AstGrep<TapeDoc>, kinds: Option<Arc<KindPostings>>) -> Self {
         let len = root.root().get_doc().transducer_len() as u32;
-        Self::over(Tree::Tape(root.clone()), len)
+        let seed = kinds.filter(|kinds| kinds.nodes == len as usize);
+        Self::over(Tree::Tape(root.clone()), len, seed)
     }
 
     /// The rows of a parsed literal's tree (`parse`): its nodes are numbered in preorder from
     /// its root, as a tape's are.
     pub(super) fn of_tree(root: &AstGrep<SubDoc>) -> Self {
         let len = root.root().get_doc().tree.len() as u32;
-        Self::over(Tree::Sub(root.clone()), len)
+        Self::over(Tree::Sub(root.clone()), len, None)
     }
 
-    fn over(tree: Tree, len: u32) -> Self {
+    fn over(tree: Tree, len: u32, seed: Option<Arc<KindPostings>>) -> Self {
         #[cfg(test)]
         FACT_NODES.fetch_add(len as usize, std::sync::atomic::Ordering::Relaxed);
         Self {
             tree,
             len,
+            seed: parking_lot::Mutex::new(seed),
             postings: OnceLock::new(),
             positions: OnceLock::new(),
         }
@@ -238,7 +250,23 @@ impl NodeFacts {
     }
 
     fn postings_built(&self) -> &Postings {
-        self.postings.get_or_init(|| self.postings())
+        self.postings.get_or_init(|| {
+            #[cfg(test)]
+            let started = super::timing::Started::now();
+            let seed = self.seed.lock().take();
+            let postings = match &seed {
+                Some(seed) => self.seeded(seed),
+                None => self.postings(),
+            };
+            #[cfg(test)]
+            {
+                POSTINGS_TIME.lock().add(started.elapsed());
+                if seed.is_some() {
+                    assert_eq!(postings, self.postings(), "an anchor index's kind postings");
+                }
+            }
+            postings
+        })
     }
 
     /// Where the nodes of `kind` are among the postings (`posted`).
@@ -283,6 +311,37 @@ impl NodeFacts {
                 key as u32
             })
             .collect();
+        #[cfg(test)]
+        count_bytes(ids.capacity() * 4 + kinds.capacity() * 8);
+        Postings { kinds, ids }
+    }
+
+    /// The postings an anchor index's walk over the whole tape built (`KindPostings`): its kinds'
+    /// lists side by side in kind order, the error nodes' at their kind's place, without sorting.
+    fn seeded(&self, seed: &KindPostings) -> Postings {
+        let mut kinds: Vec<(u16, u32)> = Vec::new();
+        let mut ids: Vec<u32> = Vec::with_capacity(self.len as usize);
+        let mut push = |kind: u16, list: &[usize]| {
+            kinds.push((kind, ids.len() as u32));
+            ids.extend(list.iter().map(|&id| id as u32));
+        };
+        let mut errors = seed
+            .errors
+            .first()
+            .map(|&first| (self.kind(first as u32), seed.errors.as_slice()));
+        for (kind, list) in seed.kinds.iter().enumerate() {
+            let kind = kind as u16;
+            if let Some((error_kind, list)) = errors.filter(|&(error_kind, _)| error_kind < kind) {
+                push(error_kind, list);
+                errors = None;
+            }
+            if !list.is_empty() {
+                push(kind, list);
+            }
+        }
+        if let Some((error_kind, list)) = errors {
+            push(error_kind, list);
+        }
         #[cfg(test)]
         count_bytes(ids.capacity() * 4 + kinds.capacity() * 8);
         Postings { kinds, ids }

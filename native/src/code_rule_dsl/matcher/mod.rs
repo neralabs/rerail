@@ -30,7 +30,7 @@ use super::budget;
 use crate::code_rule_dsl::language::GrammarDialect;
 pub(super) use analysis::RequiredText;
 pub(crate) use analysis::calls_positive_only;
-pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
+pub(super) use anchors::{AnchorPlan, FileAnchorIndex, KindPostings, Selection};
 pub(super) use arguments::{Arguments, Passed, SlotKind};
 pub(super) use arguments_sql::SQL_CALL_KINDS;
 use ast_grep_core::matcher::Matcher;
