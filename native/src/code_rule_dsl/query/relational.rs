@@ -337,6 +337,7 @@ impl Builder {
                 slot,
                 target_kind: Some(kind),
                 relation: None,
+                incomplete_position: None,
             };
         }
         let mut relation = RelationalIr::empty();
@@ -345,6 +346,7 @@ impl Builder {
             slot,
             target_kind: None,
             relation: Some(Box::new(relation)),
+            incomplete_position: None,
         }
     }
 
@@ -401,6 +403,13 @@ impl Builder {
             Semantic::FormatArgs(test) => {
                 add(slot::UNUSED, &test.unused, "unused", self);
                 add(slot::MISSING, &test.missing, "missing", self);
+                for rule in &mut rules {
+                    rule.incomplete_position = match rule.slot {
+                        slot::UNUSED => Some(0),
+                        slot::MISSING => Some(1),
+                        _ => None,
+                    };
+                }
             }
             Semantic::Calls(test) => {
                 let Some(term) = self.current_calls.get(&test.key).cloned() else {
@@ -431,6 +440,7 @@ impl Builder {
                     slot: slot::CALL_TARGET,
                     target_kind: None,
                     relation: Some(Box::new(relation)),
+                    incomplete_position: None,
                 });
                 call_through = Some(term.through);
             }

@@ -726,6 +726,46 @@ fn production_contract_phase_four_formats_match_authored_sql() {
 }
 
 #[test]
+fn production_contract_phase_four_incomplete_format_analysis_cannot_match() {
+    let statements = authored_sql_goldens();
+    for (name, position) in [
+        ("semantic-format-unused-arguments", 0),
+        ("semantic-format-missing-fields", 1),
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the format contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the format policy compiles");
+        let original = "fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6)";
+        let columns = format!(
+            "batch, 6, producer_id, file_index, task_index, match_index, {position}, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, 14, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, 1, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence"
+        );
+        let injected = format!(
+            "fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6 UNION ALL SELECT {columns} FROM packed gate WHERE gate.row_kind = 6 AND gate.fact_kind = 0)"
+        );
+        let sql = statements[name].replacen(original, &injected, 1);
+        assert_ne!(sql, statements[name], "incomplete-state injection applied");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &sql,
+        );
+        assert!(outcome.ranges.is_empty(), "{name}: incomplete analysis");
+        assert!(
+            outcome.errors.is_empty(),
+            "{name}: semantic unknown is not failure"
+        );
+    }
+}
+
+#[test]
 fn production_contract_phases_two_to_four_match_authored_sql_statements() {
     let expected = authored_sql_goldens();
     let expected_names = PHASE_TWO_CASES

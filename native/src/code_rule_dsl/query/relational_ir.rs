@@ -207,6 +207,7 @@ pub(super) struct SemanticRuleSpec {
     pub(super) slot: u16,
     pub(super) target_kind: Option<u16>,
     pub(super) relation: Option<Box<RelationalIr>>,
+    pub(super) incomplete_position: Option<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -967,6 +968,7 @@ impl SqlRenderer {
                         spec.producer,
                         rule.slot,
                         target_kind,
+                        rule.incomplete_position,
                     );
                 }
                 if let Some(relation) = &rule.relation
@@ -978,6 +980,7 @@ impl SqlRenderer {
                         spec.producer,
                         target_producer,
                         rule.slot,
+                        rule.incomplete_position,
                     );
                 }
             }
@@ -1253,13 +1256,19 @@ impl SqlRenderer {
         fact_producer: usize,
         slot: u16,
         target_kind: u16,
+        incomplete_position: Option<u32>,
     ) -> Result<String, String> {
         let source = self.render_terminal_producer(source_producer, "source")?;
         let target = self.next_name("semantic_site");
         let verdict = "CASE WHEN source.verdict = 0 OR gate.verdict = 0 THEN 0 WHEN source.verdict IS NULL OR gate.verdict < 0 OR gate.verdict IS NULL THEN NULL ELSE 1 END";
         let columns = qualified_row_columns_with_verdict("source", verdict);
+        let complete = incomplete_position.map_or_else(String::new, |position| {
+            format!(
+                " AND NOT EXISTS (SELECT 1 FROM fact incomplete WHERE incomplete.producer_id = gate.producer_id AND incomplete.file_index = gate.file_index AND incomplete.node = gate.node AND incomplete.match_index = gate.match_index AND incomplete.fact_kind = 14 AND incomplete.capture_index = {position} AND incomplete.verdict <> 0)"
+            )
+        });
         self.ctes.push(format!(
-            "{target} AS (\n  SELECT DISTINCT {columns}, source.bindings, source.choice_order FROM {source} source\n  JOIN fact gate ON gate.producer_id = {fact_producer} AND gate.file_index = source.file_index AND gate.node = source.node AND gate.fact_kind = 0\n  JOIN fact target ON target.producer_id = gate.producer_id AND target.file_index = gate.file_index AND target.node = gate.node AND target.match_index = gate.match_index AND target.fact_kind = {slot}\n  JOIN producer_status status ON status.producer_id = gate.producer_id AND status.file_index = gate.file_index\n  WHERE status.complete = 1 AND gate.verdict <> 0 AND target.verdict = 1 AND target.capture_kind = {target_kind}\n)"
+            "{target} AS (\n  SELECT DISTINCT {columns}, source.bindings, source.choice_order FROM {source} source\n  JOIN fact gate ON gate.producer_id = {fact_producer} AND gate.file_index = source.file_index AND gate.node = source.node AND gate.fact_kind = 0\n  JOIN fact target ON target.producer_id = gate.producer_id AND target.file_index = gate.file_index AND target.node = gate.node AND target.match_index = gate.match_index AND target.fact_kind = {slot}\n  JOIN producer_status status ON status.producer_id = gate.producer_id AND status.file_index = gate.file_index\n  WHERE status.complete = 1 AND gate.verdict <> 0 AND target.verdict = 1 AND target.capture_kind = {target_kind}{complete}\n)"
         ));
         Ok(target)
     }
@@ -1270,13 +1279,19 @@ impl SqlRenderer {
         fact_producer: usize,
         target_producer: usize,
         slot: u16,
+        incomplete_position: Option<u32>,
     ) -> Result<String, String> {
         let source = self.render_terminal_producer(source_producer, "source")?;
         let targets = self.next_name("semantic_target");
         let target_verdict = "CASE WHEN source.verdict = 0 OR gate.verdict = 0 THEN 0 WHEN source.verdict IS NULL OR gate.verdict < 0 OR gate.verdict IS NULL THEN NULL ELSE 1 END";
         let target_columns = qualified_row_columns_with_verdict("source", target_verdict);
+        let complete = incomplete_position.map_or_else(String::new, |position| {
+            format!(
+                " AND NOT EXISTS (SELECT 1 FROM fact incomplete WHERE incomplete.producer_id = gate.producer_id AND incomplete.file_index = gate.file_index AND incomplete.node = gate.node AND incomplete.match_index = gate.match_index AND incomplete.fact_kind = 14 AND incomplete.capture_index = {position} AND incomplete.verdict <> 0)"
+            )
+        });
         self.ctes.push(format!(
-            "{targets} AS (\n  SELECT {target_columns}, source.bindings, source.choice_order, target.related_node AS target_node FROM {source} source\n  JOIN fact gate ON gate.producer_id = {fact_producer} AND gate.file_index = source.file_index AND gate.node = source.node AND gate.fact_kind = 0\n  JOIN fact target ON target.producer_id = gate.producer_id AND target.file_index = gate.file_index AND target.node = gate.node AND target.match_index = gate.match_index AND target.fact_kind = {slot}\n  JOIN producer_status status ON status.producer_id = gate.producer_id AND status.file_index = gate.file_index\n  WHERE status.complete = 1 AND gate.verdict <> 0 AND target.verdict = 1\n)"
+            "{targets} AS (\n  SELECT {target_columns}, source.bindings, source.choice_order, target.related_node AS target_node FROM {source} source\n  JOIN fact gate ON gate.producer_id = {fact_producer} AND gate.file_index = source.file_index AND gate.node = source.node AND gate.fact_kind = 0\n  JOIN fact target ON target.producer_id = gate.producer_id AND target.file_index = gate.file_index AND target.node = gate.node AND target.match_index = gate.match_index AND target.fact_kind = {slot}\n  JOIN producer_status status ON status.producer_id = gate.producer_id AND status.file_index = gate.file_index\n  WHERE status.complete = 1 AND gate.verdict <> 0 AND target.verdict = 1{complete}\n)"
         ));
         let nested = self.render_terminal_producer(target_producer, "semantic_target_rule")?;
         let checked = self.next_name("semantic_target_result");
