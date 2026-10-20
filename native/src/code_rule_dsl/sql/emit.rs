@@ -37,12 +37,14 @@ pub(super) const FILES: &str = "/*FILES*/";
 /// whose roots an anchor index narrowed (the root frame's second branch).
 pub(super) const ROOTS: &str = "/*ROOTS*/";
 /// Where the driver substitutes the prefix of the statement's own tables that live across its
-/// operators: a recursion unit's tables, the enumeration's frames.
+/// operators: the enumeration's frames, a recursion's frames.
 pub(super) const NAMESPACE: &str = "/*NS*/";
 /// Before an operator's temporary table (`Emitter::name`: a prefix of letters, then digits):
 /// the driver allocates each that is a frame a register, a frame name shared across clauses and
-/// reused once the temporary is dead (`exec::registers`); one that stays a B-tree takes the
-/// statement's namespace.
+/// reused once the temporary is dead (`exec::registers`); one that stays a B-tree is a B-tree
+/// register, shared across clauses by its declaration (`exec::btree_registers`). A recursion's
+/// B-trees (a unit's demand and answer, a component's reads) are temporaries too, prefixed `u`,
+/// which no operator's temporary is.
 pub(super) const TEMP: &str = "/*T*/";
 /// Where the driver substitutes the prefix of a `violation.each` enumeration's tables: `x`, the
 /// ranges reported per root `(file, root, start, end)`; `a`, the roots still enumerated; `r`, the
@@ -72,12 +74,12 @@ pub(super) fn stage_namespace(stage: usize) -> String {
 
 /// A unit's demand table: `(id, file, node, c0…)`, the keys asked for.
 fn demand_table(unit: usize) -> String {
-    format!("{NAMESPACE}d{unit}")
+    format!("{TEMP}ud{unit}")
 }
 
 /// A unit's answer table: `(id, c0…)`, the bindings after the body for the keys it matched.
 fn answer_table(unit: usize) -> String {
-    format!("{NAMESPACE}a{unit}")
+    format!("{TEMP}ua{unit}")
 }
 
 /// A statement's recursive reads from its own rows, outside every unit's body: `(-1, 0, unit,
@@ -86,10 +88,15 @@ fn start_table() -> String {
     format!("{NAMESPACE}ex")
 }
 
+/// A component's recursive reads among its own units: `(unit, key, unit, key)`.
+fn reads_table(scc: usize) -> String {
+    format!("{TEMP}ue{scc}")
+}
+
 /// A component's recursive reads into the units of other components (`(unit, key, unit, key)`,
-/// as `e{scc}` holds its reads among its own): only the recursion check reads them.
+/// as `reads_table` holds its reads among its own): only the recursion check reads them.
 fn cross_table(scc: usize) -> String {
-    format!("{NAMESPACE}r{scc}")
+    format!("{TEMP}ur{scc}")
 }
 
 /// The table a stage's rows are stored in for the batch.
@@ -997,8 +1004,9 @@ impl<'s> Emitter<'s> {
                 .collect();
             write!(
                 query,
-                " UNION ALL SELECT su, s, du, d, du IN ({}) FROM {NAMESPACE}e{scc}",
-                members.join(", ")
+                " UNION ALL SELECT su, s, du, d, du IN ({}) FROM {}",
+                members.join(", "),
+                reads_table(scc)
             )
             .expect("write to a string");
             if self.crosses(scc) {
@@ -1535,7 +1543,7 @@ impl<'s> Emitter<'s> {
         // which only starts the check at more keys.
         let (reads, source) = match (self.evaluating.last(), self.origin) {
             (Some(&from), Some(origin)) if units[from].scc == scc => (
-                format!("{NAMESPACE}e{}", units[from].scc),
+                reads_table(units[from].scc),
                 format!("{from}, f.s{origin}"),
             ),
             (Some(&from), Some(origin)) => {
@@ -1610,7 +1618,7 @@ impl<'s> Emitter<'s> {
         for &unit in &members {
             self.unit_tables(unit);
         }
-        let reads = format!("{NAMESPACE}e{scc}");
+        let reads = reads_table(scc);
         let changed = format!("{NAMESPACE}c{scc}");
         for sql in [
             format!("CREATE TEMP TABLE IF NOT EXISTS {reads}(su, s, du, d)"),
