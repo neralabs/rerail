@@ -2006,6 +2006,42 @@ fn production_contract_phase_six_rejects_files_before_terminal_demand() {
 }
 
 #[test]
+fn production_contract_phase_six_failed_dependency_does_not_suppress_independent_clause() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-fact-producer-failure")
+        .expect("semantic failure contract");
+    let mut policy = case.policy.clone();
+    policy["clauses"]
+        .as_array_mut()
+        .expect("clauses")
+        .push(serde_json::json!({
+            "id": "independent",
+            "forbid": {"ast": {"language": "python", "rule": {"pattern": "x = 1"}}},
+            "violation": {"anchor": "witness.span", "code": "SQL", "message": "independent"}
+        }));
+    let compiled = CodeRuleDslRuntime::compile(
+        policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("independent-clause policy compiles");
+    let outcome = super::policy_lowering_tests::sql_outcome_with_fact_failure(
+        &compiled,
+        "x = 1\nx\n",
+        GrammarDialect::Python,
+        0,
+        "capacity-failure",
+    );
+    assert_eq!(outcome.errors, ["capacity-failure"]);
+    assert_eq!(
+        outcome.ranges,
+        [(0, 5)],
+        "the independent clause still publishes its violation"
+    );
+}
+
+#[test]
 fn production_contract_phase_six_preserves_syntax_error_unknown() {
     let case = cases()
         .into_iter()
