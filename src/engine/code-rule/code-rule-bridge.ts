@@ -20,6 +20,8 @@ import { languageOfPath, SOURCE_LANGUAGES } from "./code-rule-languages.js";
 
 
 const MAX_SOURCE_BYTES = 1_000_000;
+/** The most source text the session keeps as later preimages (`#texts`); the least recently changed goes first. */
+const MAX_SESSION_TEXT_BYTES = 64 * 1024 * 1024;
 /** Paths observed per wave; on network or virtualised mounts each lstat/read is a round trip, so latency, not bandwidth, bounds the walk. */
 const OBSERVATION_CONCURRENCY = 16;
 const IGNORED_DIRECTORIES = new Set([
@@ -215,9 +217,11 @@ export class CodeRuleBridge {
   readonly #observed = new Map<string, ObservedSource>();
   /**
    * The text each source this session changed was last seen with: the preimage of its next change made without one
-   * captured, once its digest proves it (`#recoverPreimages`). Only changed sources are kept, never the baseline.
+   * captured, once its digest proves it (`#recoverPreimages`). Only changed sources are kept, never the baseline, and at
+   * most `MAX_SESSION_TEXT_BYTES` of them, the least recently changed evicted first: an evicted source falls back to Git.
    */
-  readonly #texts = new Map<string, string>();
+  readonly #texts = new Map<string, { text: string; bytes: number }>();
+  #textBytes = 0;
   #lastResponse = emptyResponse(0);
   #sessionId: string | undefined;
   #revision = 0;
@@ -259,6 +263,7 @@ export class CodeRuleBridge {
       this.#commands.clear();
       this.#observed.clear();
       this.#texts.clear();
+      this.#textBytes = 0;
       this.#discovery = undefined;
       const root = await realpath(this.#cwd);
       await this.#auditor.openWorkspace(sessionId);
@@ -387,6 +392,7 @@ export class CodeRuleBridge {
       this.#commands.clear();
       this.#observed.clear();
       this.#texts.clear();
+      this.#textBytes = 0;
       this.#discovery = undefined;
       await this.#auditor.close(options);
     });
@@ -777,8 +783,8 @@ export class CodeRuleBridge {
     const sessionId = this.#requireSession();
     const edits = await this.#recoverPreimages(discovery.root, captured, uncaptured);
     for (const edit of edits) {
-      if (edit.generatedText !== undefined) this.#texts.set(edit.path, edit.generatedText);
-      else if (edit.deleted) this.#texts.delete(edit.path);
+      this.#forgetText(edit.path);
+      if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText);
     }
     const paths = edits.map(edit => edit.path).sort(compareDeterministicStrings);
     this.#revision += 1;
@@ -802,14 +808,14 @@ export class CodeRuleBridge {
     const recovered = new Map<string, string>();
     const unresolved: string[] = [];
     for (const [path, digest] of uncaptured) {
-      const text = this.#texts.get(path);
+      const text = this.#texts.get(path)?.text;
       if (text !== undefined && createHash("sha256").update(text).digest("hex") === digest) recovered.set(path, text);
       else unresolved.push(path);
     }
     if (unresolved.length > 0) {
       const revisions = unresolved.flatMap(path => [`:./${path}`, `HEAD:./${path}`]);
-      // Each blob is at most a source's size; the headers are a few dozen bytes.
-      const blobs = await readGitBlobs(root, revisions, { maxBytes: revisions.length * (MAX_SOURCE_BYTES + 256) });
+      // A blob larger than a source could never match its digest: it is skipped, never read into memory.
+      const blobs = await readGitBlobs(root, revisions, { maxBlobBytes: MAX_SOURCE_BYTES });
       for (const path of unresolved) {
         const blob = [blobs.get(`:./${path}`), blobs.get(`HEAD:./${path}`)]
           .find(candidate => candidate !== undefined && createHash("sha256").update(candidate).digest("hex") === uncaptured.get(path));
@@ -822,6 +828,25 @@ export class CodeRuleBridge {
       const { previousReadError: _uncaptured, ...rest } = edit;
       return { ...rest, previousText };
     });
+  }
+
+  /** Keeps `text` as the source's latest; past `MAX_SESSION_TEXT_BYTES`, the least recently changed sources go. */
+  #rememberText(path: string, text: string): void {
+    const bytes = Buffer.byteLength(text);
+    this.#texts.set(path, { text, bytes });
+    this.#textBytes += bytes;
+    for (const [oldest, entry] of this.#texts) {
+      if (this.#textBytes <= MAX_SESSION_TEXT_BYTES) break;
+      this.#texts.delete(oldest);
+      this.#textBytes -= entry.bytes;
+    }
+  }
+
+  #forgetText(path: string): void {
+    const entry = this.#texts.get(path);
+    if (entry === undefined) return;
+    this.#texts.delete(path);
+    this.#textBytes -= entry.bytes;
   }
 
   #touchSource(discovery: SourceDiscovery, path: string): void {

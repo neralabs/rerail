@@ -781,14 +781,21 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       }
       const previous = this.#pending.get(edit.path);
       if (previous !== undefined) {
+        // Out of the queue before any await, so the pump never evaluates an edit whose audit ends here.
+        this.#pending.delete(edit.path);
         previous.auditId ??= this.#startAudit(previous.scope, previous.mode, previous.revision, [edit.path], null);
         this.#finishAudit(previous.auditId, "superseded", [], []);
         try {
           // Its lines were never reported: the edit that supersedes it reports them with its own.
           if (previous.scope === "ai-output")
-            this.#unreported.set(edit.path, { base: this.#reportBase(edit.path, await this.#load(previous)), published: false });
+            this.#unreported.set(edit.path, { base: this.#reportBase(edit.path, await this.#preimageOf(previous)), published: false });
         } finally {
           this.#release(previous);
+        }
+        if (this.#closing) {
+          this.#startAudit(scope, mode, revision, [edit.path], null);
+          this.#release(stored);
+          return;
         }
       }
       this.#pending.set(edit.path, stored);
@@ -1163,13 +1170,22 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /**
    * Where the edit of `path` measures what it generated: from the preimage of the source's oldest edit whose lines may
    * not have reached the agent (`#unreported`), else from its own preimage. A published edit counts only when the
-   * runtime says a newer revision dropped its steer before delivery; an unreadable earlier preimage is not used.
+   * runtime says a newer revision dropped its steer before delivery. An earlier edit whose own preimage was unknown
+   * carries that forward, so the edit reports its whole file (`#selectViolations`) as the earlier one would have.
    */
-  #reportBase(path: string, edit: CodeRuleEdit): ReportBase {
+  #reportBase(path: string, edit: ReportBase): ReportBase {
     const dropped = this.#sessionId !== undefined && (this.#steerDelivery.undelivered?.(this.#sessionId, this.#presentPath(path)) ?? false);
     const outstanding = this.#unreported.get(path);
-    if (outstanding === undefined || outstanding.base.previousReadError !== undefined) return edit;
+    if (outstanding === undefined) return edit;
     return !outstanding.published || dropped ? outstanding.base : edit;
+  }
+  /** A superseded edit's preimage; one that cannot be read back is unknown, so it reports its whole file. */
+  async #preimageOf(stored: StoredEdit): Promise<ReportBase> {
+    try {
+      return await this.#load(stored);
+    } catch (error) {
+      return { previousReadError: `Superseded edit could not be read back: ${errorMessage(error)}` };
+    }
   }
   /**
    * An edit's violations: in touched-files scope its file's, otherwise those in the lines it generated since `base`
