@@ -32,6 +32,7 @@ and `<landing>` a checkout of nera-landing, whose design tokens the UI files pro
 | `native/src/code_rule_dsl/value/ecma/builtins.generated.rs` | `scripts/generate/value/ecma-builtins.mjs` | `npx -y node@25.2.1 scripts/generate/value/ecma-builtins.mjs <tools>/node_modules` (@eslint-community/eslint-utils 4.10.1; the output records the Node.js version) |
 | `native/src/code_rule_dsl/value/ecma/entities.generated.rs` | `scripts/generate/value/ecma-entities.mjs` | `node scripts/generate/value/ecma-entities.mjs <tools>/node_modules` (@typescript-eslint/typescript-estree 8.70.1) |
 | `native/src/code_rule_dsl/value/names/names.bin` | `scripts/generate/value/names.py` | `python3.13 scripts/generate/value/names.py <NameAliases.txt of Unicode 15.1.0>`; read by `include_bytes!` at this path, kept in Git LFS |
+| `native/grammars/tree-sitter-sql/src/parser.generated.c.gz` | `scripts/generate/grammars/committed-parsers.mjs` | `node scripts/generate/grammars/committed-parsers.mjs` (tree-sitter-generate as Cargo.lock pins it; about 15 minutes with the release build it runs): the engine's build script generates it and writes it back; every other build refuses it when its first line names another grammar.json, grammar version or tree-sitter-generate. Kept in Git LFS |
 
 ## Host (`src/`, `ui/`)
 
