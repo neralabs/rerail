@@ -417,9 +417,9 @@ and start again.
 
 Everything else in the managed installation goes through that daemon rather
 than evaluating in-process: the Claude Code, Codex, and Cursor hooks, OMP and
-Pi sessions, and `rerail events` streams send their events to it, starting it
-when it is not running (unless `RERAIL_AUTOSTART=0`), and CLI commands such as
-`rerail scan` use its API. Any process other than the lock holder that tries to
+Pi sessions, and `rerail events` streams (in internal testing) send their events
+to it, starting it when it is not running (unless `RERAIL_AUTOSTART=0`), and CLI
+commands such as `rerail settings` and `rerail scan` (in internal testing) use its API. Any process other than the lock holder that tries to
 open the machine-wide store gets an error and a failed policy run instead of a
 second writer. Development builds never take the lock and never open that
 store.
@@ -428,7 +428,7 @@ Updates hand over without overlap: `rerail update` only activates the new
 version, and the next hook or session from it stops the old daemon, waits
 until that process has exited and the OS has released its lock, then starts
 the new daemon, which takes the lock. `rerail setup` replaces a stale daemon
-the same way. A `rerail events` stream that outlives an update keeps sending to
+the same way. A `rerail events` stream (in internal testing) that outlives an update keeps sending to
 whichever daemon is running and never brings its own version back.
 
 ### Database compatibility
@@ -534,6 +534,6 @@ harness sessions after every rebuild.
 
 ## What is not automated yet
 
-- Activation (`rerail activate`) is optional until a control plane exists.
+- Activation (`rerail activate`), in internal testing, is optional until a control plane exists.
 - A service unit (launchd/systemd) so the daemon survives reboots; today
   adapters restart it on the next session.

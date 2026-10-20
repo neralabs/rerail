@@ -38,7 +38,7 @@ A **rule attachment** adds a rule pack, a By Rerail rule or a library rule to a 
 A **rule setting** changes, for one rule or one whole pack in a folder, any of:
 
 - `on`;
-- `mode` (Log, Steer or Block);
+- `mode` (Log, Steer or Block; Block is in [internal testing](../README.md#internal-testing) and is delivered like Steer);
 - `suppressions`: `honour` or `ignore` linters' suppression comments (`// eslint-disable-next-line`, `# noqa`, `# nosec`, ...). A ported rule reads the comments of the linter it ports, where its document's `suppress` names them. Under `ignore`, no linter's comment silences it;
 - `config`: the option values of one code rule by Rerail, by option name. They replace the defaults its document's `define.options` declare, and the document is resolved again with them. `config` is set on a rule (not a pack) for the whole repository (folder `""`), because one compiled rule runs in every folder of a checkout. Your library rules take no `config`: edit the rule instead. Each option must be one the document declares, with a value its declaration allows; anything else is refused with `400 invalid-setting`.
 
@@ -61,7 +61,7 @@ So `config` merges per option: a checkout that sets `{ "option": "type" }` keeps
 
 Every effective rule reports what decided each field: `repository_rules_get` returns it as `onSource`, `modeSource`, `suppressionsSource`, and `configSource`, which names the setting that decided each option (this checkout's or a containing checkout's setting, the repository's setting, the pack's starting value, or the rule's default). If a stored `config` no longer applies to the rule's document (a later release removed the option), `configError` says why, and the rule runs nowhere: it is quarantined with that reason.
 
-Conversation rules are resolved the same way for the folder the session started in.
+Conversation rules, which are in [internal testing](../README.md#internal-testing), are resolved the same way for the folder the session started in.
 
 ## Which checkout judges a file
 

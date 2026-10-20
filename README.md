@@ -111,7 +111,7 @@ Rerail 0.1.0 releases code rules in `log` or `steer` mode, the dashboard, and th
 | Feature | Where it surfaces |
 | --- | --- |
 | Full-repository scanning | `rerail scan`; the `audit_requests_create`, `audit_requests_list`, `repository_audits_list` and `repository_audit_entries_list` operations; the automatic first repository audit at session start |
-| Conversation rules, cosine (similarity) and command (tool-call) alike | `kind: "conversation"` rules; `/cosine-rules` and the `conversation_rules` tool in OMP and Pi; `/rerail-create`'s command rules |
+| Conversation rules, cosine (similarity) and command (tool-call) alike | `kind: "conversation"` rules, shown in the dashboard with an `Internal testing` badge; `/cosine-rules` and the `conversation_rules` tool in OMP and Pi; `/rerail-create`'s command rules |
 | Semantic tools | `rerail_mark`, `rerail_select`, `rerail_project` and `rerail_relate` in OMP and Pi |
 | Block mode | `mode: "block"`, stored and delivered exactly like `steer`; the dashboard shows it as not in this version |
 | Activation profiles | `rerail activate`, `rerail activation request`, `rerail profile` and `--profile` |

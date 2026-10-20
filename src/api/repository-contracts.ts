@@ -128,7 +128,7 @@ export const repositoryRulesSchema = z.object({
 
 const settingValues = {
   on: z.boolean().nullable().optional().describe("true/false sets on/off; null clears it; omitted keeps the stored value."),
-  mode: z.enum(RULE_MODES).nullable().optional().describe("Sets the mode; null clears it; omitted keeps the stored value. block is in internal testing and steers."),
+  mode: z.enum(RULE_MODES).nullable().optional().describe("Sets the mode; null clears it; omitted keeps the stored value. block is in internal testing and is delivered like steer."),
   suppressions: z.enum(RULE_SUPPRESSIONS).nullable().optional()
     .describe("honour or ignore linters' suppression comments (eslint-disable, noqa, ...) for the rule; null clears it; omitted keeps the stored value."),
   config: ruleConfigSchema.nullable().optional()
