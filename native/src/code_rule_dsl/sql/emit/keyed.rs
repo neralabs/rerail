@@ -299,6 +299,12 @@ impl Emitter<'_> {
         {
             return None;
         }
+        // Mutant 13: the key omits its first slot.
+        let key = if crate::code_rule_dsl::sql::mutant(13) {
+            Rc::new(key.iter().skip(1).copied().collect())
+        } else {
+            key
+        };
         let columns: Vec<String> = key.iter().flat_map(|&slot| self.columns(slot)).collect();
         // The key frame: one row per distinct key, the other slots unbound.
         let keys = self.name("q");

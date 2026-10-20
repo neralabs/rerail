@@ -303,7 +303,8 @@ impl NodeFacts {
                 let mut child = self.first(id);
                 while child != NONE {
                     let slot = child as usize;
-                    if self.named(child) {
+                    // Mutant 7: anonymous siblings count.
+                    if self.named(child) || super::mutant(7) {
                         named += 1;
                         positions.named_ix[slot] = named;
                     }

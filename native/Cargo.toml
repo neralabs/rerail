@@ -13,6 +13,9 @@ bench-backends = ["dep:metal"]
 # Benchmark builds only (`benchmark/data-layer/`): lifts every per-file and per-clause work
 # allowance, so a slow file shows its real cost instead of a budget failure. Never shipped.
 unbounded-work = []
+# The mutation kit outside `cargo test` (the fast loop's addon): `RERAIL_SQL_MUTANT=<n>` selects a
+# seeded SQL-engine mutant (`sql::mutant`). Never shipped.
+sql-mutants = []
 [dependencies]
 ast-grep-core = "=0.50.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched

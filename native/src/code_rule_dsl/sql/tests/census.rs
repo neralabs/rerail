@@ -310,7 +310,7 @@ fn run_corpus() {
             .iter()
             .filter(|clause| clause.get("define").is_none())
         {
-            // `RERAIL_CORPUS_CLAUSES`: only the clauses whose `policy/id` holds this text.
+            // `RERAIL_CORPUS_CLAUSES`: only the clauses `selected` keeps.
             let name = format!(
                 "{}/{}",
                 path.parent()
@@ -319,7 +319,8 @@ fn run_corpus() {
                     .unwrap_or_default(),
                 clause["id"].as_str().unwrap_or_default()
             );
-            if std::env::var("RERAIL_CORPUS_CLAUSES").is_ok_and(|only| !name.contains(&only)) {
+            if std::env::var("RERAIL_CORPUS_CLAUSES").is_ok_and(|filter| !selected(&name, &filter))
+            {
                 continue;
             }
             let mut document = policy.clone();
@@ -452,6 +453,24 @@ fn run_corpus() {
         );
     }
     assert!(differ.is_empty(), "{} clauses differ", differ.len());
+}
+
+/// Whether the clause `name` (`policy/id`) passes the `RERAIL_CORPUS_CLAUSES` filter: texts
+/// separated by commas, the clause holding one of the plain ones (where there is one) and none of
+/// the `!`-prefixed ones.
+fn selected(name: &str, filter: &str) -> bool {
+    let (mut wanted, mut listed) = (false, false);
+    for text in filter.split(',').filter(|text| !text.is_empty()) {
+        match text.strip_prefix('!') {
+            Some(skipped) if name.contains(skipped) => return false,
+            Some(_) => {}
+            None => {
+                listed = true;
+                wanted |= name.contains(text);
+            }
+        }
+    }
+    wanted || !listed
 }
 
 /// Whether a rule reaches a recursive utility.
