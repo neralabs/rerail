@@ -837,6 +837,43 @@ fn production_contract_phase_two_nested_truth_matches_authored_sql() {
 }
 
 #[test]
+fn production_contract_phase_two_authored_nested_truth_equals_oracle() {
+    let statements = authored_sql_goldens();
+    let name = "nested-all-any-not";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the nested truth contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("the nested truth policy compiles");
+    let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+        &compiled,
+        &case.workspace.files[0].source,
+        crate::code_rule_dsl::language::GrammarDialect::Python,
+        &statements[name],
+    );
+    let mut expected = case
+        .expected
+        .oracle
+        .violations
+        .iter()
+        .map(|violation| {
+            (
+                violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+            )
+        })
+        .collect::<Vec<_>>();
+    expected.sort_unstable();
+    assert_eq!(outcome.ranges, expected, "authored nested truth ranges");
+    assert!(outcome.errors.is_empty(), "authored nested truth failures");
+}
+
+#[test]
 fn production_contract_phase_two_not_relations_match_authored_sql() {
     let expected = authored_sql_goldens();
     for name in ["not-complete-positive", "not-unknown"] {

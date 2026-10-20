@@ -760,6 +760,7 @@ struct SqlRenderer {
     ctes: Vec<String>,
     errors: Vec<String>,
     utility_attempts: Vec<UtilityAttempt>,
+    ordered_unions: Vec<(Vec<RelationNode>, String)>,
 }
 
 impl SqlRenderer {
@@ -770,6 +771,7 @@ impl SqlRenderer {
             ctes: Vec::new(),
             errors: Vec::new(),
             utility_attempts: Vec::new(),
+            ordered_unions: Vec::new(),
         }
     }
 
@@ -1327,6 +1329,13 @@ impl SqlRenderer {
         if inputs.len() < 2 {
             return Err("ordered alternatives require at least two operands".to_owned());
         }
+        if let Some((_, relation)) = self
+            .ordered_unions
+            .iter()
+            .find(|(rendered_inputs, _)| rendered_inputs == inputs)
+        {
+            return Ok(relation.clone());
+        }
         let relations = inputs
             .iter()
             .map(|input| self.render(input))
@@ -1350,6 +1359,7 @@ impl SqlRenderer {
         self.ctes.push(format!(
             "{name} AS (\n  SELECT {columns}, chosen.bindings, chosen.choice_order FROM (\n    SELECT branch.*, row_number() OVER (PARTITION BY file_index, node ORDER BY CASE WHEN verdict = 1 OR (verdict IS NULL AND unknown_blocks = 1) THEN 0 WHEN verdict IS NULL THEN 1 ELSE 2 END, branch_order, choice_order, producer_id, match_index) AS truth_order FROM {union} branch\n  ) chosen\n  WHERE chosen.truth_order = 1 AND chosen.verdict IS NOT 0\n)"
         ));
+        self.ordered_unions.push((inputs.to_vec(), name.clone()));
         Ok(name)
     }
 
