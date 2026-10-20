@@ -15,10 +15,12 @@
 //! nodes grouped by `anc` (ascending in each group). Lookups are by `id` (one row) or by `anc`
 //! with an `id` range (the nodes whose nearest proper `S`-ancestor is `anc`), within one `file`.
 //!
-//! Keeping a set for the batch is exact because a stage's rows are fixed once the batch's stages
-//! ran: `Session::run_batch` runs every stage before any clause, a stage reads only stages made
-//! before it, and every batch is a fresh `Batch` (the cache is keyed by its identity). So the
-//! member list is read once per stage and batch; later statements' lists are not read.
+//! Keeping a set for the batch is exact because a stage's rows are fixed once the stage ran:
+//! `Session::run_batch` runs every stage before any clause that reads it (a stage with one
+//! consumer in that clause's run, before its statements after the root frame), a stage reads
+//! only stages made before it, and every batch is a fresh `Batch` (the cache is keyed by its
+//! identity). So the member list is read once per stage and batch; later statements' lists are
+//! not read.
 
 use super::exec::{Batch, BatchSlot, SubFile};
 use super::nodes::{NONE, NodeFacts, facts_of, integer};

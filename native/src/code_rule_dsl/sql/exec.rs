@@ -985,6 +985,10 @@ struct Plan {
     tables: Vec<Table>,
     stages: Vec<(GrammarDialect, Prepared)>,
     clauses: Vec<(Prepared, Vec<CaptureColumn>)>,
+    /// Per stage, the clause that is its only reader, where no other clause or stage reads it:
+    /// such a stage is materialized for one consumer, so it runs inside that clause's run, after
+    /// its root frame, and not where the clause's root frame is empty (`Runner::prepared_with`).
+    sole: Vec<Option<usize>>,
     marks: usize,
     texts: usize,
     bytes: usize,
@@ -1138,10 +1142,27 @@ impl Planner {
                 prepared.steps.len() + blocks + 1 + prepared.clear.len() + each
             })
             .sum();
+        // Each stage's readers: a stage read by another stage, or by two clauses, is shared.
+        let mut readers: Vec<(usize, Option<usize>)> = vec![(0, None); planned_stages.len()];
+        for (_, prepared) in &planned_stages {
+            for &stage in &prepared.stages {
+                readers[stage] = (readers[stage].0 + 2, None);
+            }
+        }
+        for (clause, (prepared, _)) in self.clauses.iter().enumerate() {
+            for &stage in &prepared.stages {
+                readers[stage] = (readers[stage].0 + 1, Some(clause));
+            }
+        }
+        let sole = readers
+            .into_iter()
+            .map(|(count, clause)| clause.filter(|_| count == 1))
+            .collect();
         Ok(Plan {
             tables: self.catalog.tables,
             stages: planned_stages,
             clauses: self.clauses,
+            sole,
             marks: self.marks,
             texts: self.texts.0.len(),
             bytes: self.texts.0.keys().map(|text| text.len()).sum(),
@@ -2056,7 +2077,7 @@ impl Session {
             counts,
             ..
         } = self;
-        let (stages, clauses) = (&plan.stages, &plan.clauses);
+        let (stages, clauses, sole) = (&plan.stages, &plan.clauses, &plan.sole);
         let connection = &*connection;
         let mut runner = Runner {
             connection,
@@ -2115,10 +2136,11 @@ impl Session {
             }
         }
         runner.stats.input.add(inputs.elapsed());
-        // Stages in index order: a stage only reads stages made before it.
+        // Stages in index order: a stage only reads stages made before it. A stage with one
+        // consumer runs in its clause's run instead (`Plan::sole`).
         let started = Started::now();
         for (stage, (_, prepared)) in stages.iter().enumerate() {
-            if stage_files[stage].is_empty() {
+            if stage_files[stage].is_empty() || sole[stage].is_some() {
                 continue;
             }
             runner.at = ("stage", stage);
@@ -2128,6 +2150,7 @@ impl Session {
             }
         }
         runner.stats.stages.add(started.elapsed());
+        let mut sole_ran = vec![false; stages.len()];
         let mut results = Vec::with_capacity(runs.len());
         let mut position: Vec<usize> = vec![usize::MAX; batch.files.len()];
         for run in runs {
@@ -2141,6 +2164,17 @@ impl Session {
                 }
                 let (prepared, captures) = &clauses[run.statement];
                 runner.at = ("clause", run.statement);
+                // The stages only this clause reads, run once in the batch after its root frame.
+                let mut deferred: Vec<(usize, &Prepared)> = Vec::new();
+                for (stage, clause) in sole.iter().enumerate() {
+                    if *clause == Some(run.statement)
+                        && !stage_files[stage].is_empty()
+                        && !sole_ran[stage]
+                    {
+                        sole_ran[stage] = true;
+                        deferred.push((stage, &stages[stage].1));
+                    }
+                }
                 if let Some(each) = &prepared.each {
                     let rows = connection
                         .prepare_cached(&format!("INSERT INTO {}r VALUES (0)", each.prefix))?
@@ -2154,7 +2188,7 @@ impl Session {
                 for round in 0.. {
                     // A clause whose root frame was empty selects nothing (`Runner::prepared`,
                     // which counted its last as passed over).
-                    let ran = runner.prepared(prepared)?;
+                    let ran = runner.prepared_with(prepared, &mut deferred)?;
                     let outcome = runner.outcome(&prepared.last, !ran);
                     let skipped = *MODE == Mode::Skip && (!ran || outcome == Outcome::Empty);
                     if skipped && ran {
@@ -2293,7 +2327,18 @@ impl Runner<'_> {
     /// empty for the batch, every statement after it reads nothing, and is passed over (checking,
     /// run and found to change nothing); returns whether the root frame had rows.
     fn prepared(&mut self, prepared: &Prepared) -> Result<bool, SqlError> {
+        self.prepared_with(prepared, &mut Vec::new())
+    }
+
+    /// `prepared`, running `deferred` first after the root frame (and not at all where the skip
+    /// passes over the rest): the stages only this clause reads (`Plan::sole`), each made once.
+    fn prepared_with(
+        &mut self,
+        prepared: &Prepared,
+        deferred: &mut Vec<(usize, &Prepared)>,
+    ) -> Result<bool, SqlError> {
         let Some(root) = &prepared.root else {
+            self.deferred(deferred)?;
             self.steps(&prepared.steps, &prepared.blocks, false)?;
             return Ok(true);
         };
@@ -2304,8 +2349,27 @@ impl Runner<'_> {
             self.stats.skipped += root.rest;
             return Ok(false);
         }
+        self.deferred(deferred)?;
         self.steps(&prepared.steps[root.at + 1..], &prepared.blocks, empty)?;
         Ok(!empty)
+    }
+
+    /// Makes the stages `deferred` holds, in index order, and empties it.
+    fn deferred(&mut self, deferred: &mut Vec<(usize, &Prepared)>) -> Result<(), SqlError> {
+        if deferred.is_empty() {
+            return Ok(());
+        }
+        let (at, started) = (self.at, Started::now());
+        for (stage, prepared) in deferred.drain(..) {
+            self.at = ("stage", stage);
+            let ran = self.prepared(prepared)?;
+            if ran || *MODE == Mode::Check {
+                self.statement(&prepared.last, !ran)?;
+            }
+        }
+        self.at = at;
+        self.stats.stages.add(started.elapsed());
+        Ok(())
     }
 
     /// Executes a stage's or clause's statements, each loop (`emit::LOOP` … `emit::UNTIL`) while
