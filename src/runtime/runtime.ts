@@ -1201,7 +1201,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  /** The audit at session start: one repository audit per checkout it reaches, each claimed before it starts. */
+  /**
+   * The audit at session start: one repository audit per checkout it reaches, each claimed before it starts.
+   * Internal testing: the automatic first full-repository scan, log-only.
+   */
   async #runRepositoryAudit(sessionId: string, state: RuntimeSessionState): Promise<void> {
     const claimed = new Set<string>();
     const audit: RepositoryAuditHooks = {
@@ -1297,6 +1300,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     state.eventDeliveries.set(sample.eventId, deliveries);
   }
 
+  /** Internal testing: explicit audit requests, the work behind `rerail scan` and `audit_requests_create`. */
   #scheduleAuditRequests(sessionId: string): void {
     const state = this.#sessions.get(sessionId);
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;

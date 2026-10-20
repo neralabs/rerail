@@ -150,6 +150,7 @@ async function runSettingsCommand(
   return 0;
 }
 
+/** Internal testing: `rerail scan`, an explicit full-repository or git-diff audit of one session's checkout. */
 async function runAuditRequestCommand(
   base: URL,
   session: string,
