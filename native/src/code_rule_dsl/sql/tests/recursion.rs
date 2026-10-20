@@ -1073,17 +1073,27 @@ fn a_recursion_level_runs_a_bounded_number_of_statements_per_batch() {
             ] } },
         }),
     ];
-    let mut passes = Vec::new();
-    for rule in rules {
-        let rule = compiled(rule);
-        let grammars = vec![&grammar_matchers(&rule)[0]];
-        let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
-        passes.extend(program.loop_statements());
-    }
-    eprintln!("statements per recursion level: {passes:?}");
+    let passes = |rules: &[Value]| {
+        let mut passes = Vec::new();
+        for rule in rules {
+            let rule = compiled(rule.clone());
+            let grammars = vec![&grammar_matchers(&rule)[0]];
+            let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
+            passes.extend(program.loop_statements());
+        }
+        passes
+    };
+    let pushed = passes(&rules);
+    let lowered = {
+        let _lowering = crate::code_rule_dsl::sql::pushdown::SqlLowering::hold();
+        passes(&rules)
+    };
+    eprintln!("statements per recursion level: {pushed:?}, without pushdown {lowered:?}");
     // Each unit's tables include the dirty-key index (`emit::unit_tables`), one statement more
-    // per demanding site inside the loop.
-    assert_eq!(passes, [65, 44]);
+    // per demanding site inside the loop. Pushdown leaves both alone: the capture-free
+    // recursion's `kind`+`regex` term is worth no program (`pushdown::threshold`).
+    assert_eq!(lowered, [65, 44]);
+    assert_eq!(pushed, [65, 44]);
 }
 
 /// Every table a statement creates has one column list: a three-valued `all`'s frames are not

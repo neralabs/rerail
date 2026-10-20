@@ -7,6 +7,7 @@ mod keyed;
 mod leaves;
 mod nodes;
 mod probe;
+mod pushdown;
 mod recursion;
 mod setops;
 mod setup;
@@ -107,14 +108,27 @@ fn a_sample_clause_set_runs_a_bounded_number_of_statements_per_batch() {
         .iter()
         .map(|rule| &grammar_matchers(rule)[0])
         .collect();
-    let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
-    let (stages, clauses) = program.statement_count();
-    eprintln!("sample clause set: {stages} stage statements, {clauses} clause statements");
+    let count = || {
+        crate::code_rule_dsl::sql::compile(&grammars)
+            .expect("compiles")
+            .statement_count()
+    };
+    let (stages, clauses) = count();
+    let lowered = {
+        let _lowering = crate::code_rule_dsl::sql::pushdown::SqlLowering::hold();
+        count()
+    };
+    eprintln!(
+        "sample clause set: {stages} stage statements, {clauses} clause statements; without pushdown {lowered:?}"
+    );
     // `count` groups into a table keyed by row (`Emitter::grouped`). No rule walks over a frame
     // that repeats a key (the nested `has` walks children, one row each): nothing is keyed. No
     // kind test is run on a frame whose nodes all pass it (`Emitter::kinds`): neither a root
     // frame's nor a walk's or a count's candidates are re-tested for the kinds they were read by.
-    assert_eq!((stages, clauses), (4, 52));
+    assert_eq!(lowered, (4, 52));
+    // Pushdown (`pushdown`): the third rule's capture-free `not has` and kind test are one
+    // program term; the `functions` stop rule is kind tests alone, so its stage stays SQL.
+    assert_eq!((stages, clauses), (4, 48));
 }
 
 /// Terminals run once per statement over their whole input set, never once per row: a fresh
@@ -148,6 +162,8 @@ fn terminals_run_once_per_statement_never_per_row() {
 #[test]
 fn walks_read_their_sub_rule_kinds_and_a_double_negation_is_a_semi_join() {
     use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
+    // The SQL lowering of the walks, which pushdown would make programs.
+    let _lowering = crate::code_rule_dsl::sql::pushdown::SqlLowering::hold();
     let source = "function g() { f(1); h(x, 2); u(3); }\nconst y = k(u);\n";
     let calls = json!({ "not": { "not": { "kind": "call_expression" } } });
     let cases = [
@@ -247,6 +263,8 @@ fn walks_test_field_shapes_skip_implied_kind_tests_and_key_without_unbound_slots
 #[test]
 fn a_walk_s_candidates_hold_only_the_slots_read_after_them() {
     use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
+    // The SQL lowering of the walks, which pushdown would make programs.
+    let _lowering = crate::code_rule_dsl::sql::pushdown::SqlLowering::hold();
     let source = "function g() { f(a, b, c, d); h(x, 2); }\nf(x, y, z, w);\n";
     // The candidates' slot columns of the has-end walk, and the clause's own.
     let widths = |rule: &CompiledCodeRuleDsl| -> (usize, usize) {
