@@ -2138,6 +2138,47 @@ fn production_contract_phase_three_leaf_utilities_match_authored_sql() {
 }
 
 #[test]
+fn production_contract_phase_three_authored_leaf_utilities_equal_oracles() {
+    let statements = authored_sql_goldens();
+    for name in ["utility-simple", "utility-nested"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the leaf utility contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the leaf utility policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: authored utility ranges");
+        assert!(
+            outcome.errors.is_empty(),
+            "{name}: authored utility failures"
+        );
+    }
+}
+
+#[test]
 fn production_contract_phase_three_utilities_lower_to_named_sql_components() {
     let expected_catalogs = [
         (
