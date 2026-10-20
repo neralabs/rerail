@@ -2619,24 +2619,22 @@ impl Runner<'_> {
                 continue;
             }
             let mut passes = 0;
-            // Mutant 11: the loop's last pass is undone.
+            // Mutant 11: the loop's last pass is undone (its recursion tables, which no SQLite
+            // savepoint reaches, restored as the pass found them).
+            #[cfg_attr(not(any(test, feature = "sql-mutants")), allow(unused_variables))]
             let drop_last = super::mutant(11);
             self.depth += 1;
             loop {
-                if drop_last {
-                    self.connection.execute_batch("SAVEPOINT mutant_pass")?;
-                }
+                #[cfg(any(test, feature = "sql-mutants"))]
+                let before = drop_last.then(|| self.recs.snapshot());
                 self.steps(bound, &steps[at + 1..end], known_empty)?;
                 passes += 1;
                 let changed = dirty(self.connection)?;
-                if drop_last {
-                    let undo = if changed {
-                        ""
-                    } else {
-                        "ROLLBACK TO mutant_pass; "
-                    };
-                    self.connection
-                        .execute_batch(&format!("{undo}RELEASE mutant_pass"))?;
+                #[cfg(any(test, feature = "sql-mutants"))]
+                if let Some(before) = before
+                    && !changed
+                {
+                    self.recs.restore(before);
                 }
                 if !changed {
                     break;

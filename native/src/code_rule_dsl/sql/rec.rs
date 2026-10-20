@@ -163,6 +163,28 @@ impl RecStore {
         }
     }
 
+    /// Every table's rows and indexes as they stand (mutant 11 restores them: SQLite's
+    /// savepoints do not reach a virtual table's buffers).
+    #[cfg(any(test, feature = "sql-mutants"))]
+    pub(super) fn snapshot(&self) -> Snapshot {
+        Snapshot(
+            self.tables
+                .lock()
+                .values()
+                .map(|shared| (Arc::clone(shared), shared.get().clone()))
+                .collect(),
+        )
+    }
+
+    /// Puts back the tables `snapshot` took. Between statements only.
+    #[cfg(any(test, feature = "sql-mutants"))]
+    pub(super) fn restore(&self, snapshot: Snapshot) {
+        for (shared, table) in snapshot.0 {
+            // SAFETY: as in `clear`.
+            *unsafe { shared.get_mut() } = table;
+        }
+    }
+
     /// The bytes the tables' buffers hold allocated (a text or blob value's own bytes aside).
     pub(super) fn bytes(&self) -> usize {
         self.tables
@@ -178,6 +200,10 @@ impl RecStore {
         self.table(name).map(|shared| shared.get().live)
     }
 }
+
+/// The recursion tables as `RecStore::snapshot` took them.
+#[cfg(any(test, feature = "sql-mutants"))]
+pub(super) struct Snapshot(Vec<(Arc<Shared>, Table)>);
 
 /// A table shared by its virtual table, its cursors and the store. A connection is used by one
 /// thread at a time and SQLite calls a virtual table's methods one at a time; a write never moves
@@ -208,6 +234,7 @@ const NULL: u8 = 1;
 const OTHER: u8 = 2;
 
 /// A hash index on `columns`: each hash's newest row, then each row's next of its hash.
+#[derive(Clone)]
 struct Index {
     columns: Vec<usize>,
     heads: FxHashMap<u64, u32>,
@@ -215,12 +242,14 @@ struct Index {
 }
 
 /// The rows holding `value` in `column`.
+#[derive(Clone)]
 struct Set {
     column: usize,
     value: i64,
     rows: BTreeSet<u32>,
 }
 
+#[derive(Clone)]
 struct Table {
     width: usize,
     /// Per column: declared `INTEGER` (a value takes numeric affinity), and its default.
