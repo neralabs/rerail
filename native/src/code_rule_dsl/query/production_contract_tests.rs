@@ -157,6 +157,31 @@ fn authored_sql_goldens() -> std::collections::BTreeMap<String, String> {
         .collect()
 }
 
+fn phase_five_authored_sql_goldens() -> std::collections::BTreeMap<String, String> {
+    let source =
+        include_str!("../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_5.sql");
+    source
+        .split("-- fixture: ")
+        .skip(1)
+        .map(|section| {
+            let (name, body) = section
+                .split_once('\n')
+                .expect("an authored Phase 5 SQL contract has a fixture name");
+            let start = body
+                .find("WITH ")
+                .expect("an authored Phase 5 SQL contract has one statement");
+            (name.trim().to_owned(), normalized_sql(body[start..].trim()))
+        })
+        .collect()
+}
+
+fn phase_five_implementation_goldens() -> ImplementationGoldenFile {
+    serde_json::from_str(include_str!(
+        "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_5.json"
+    ))
+    .expect("the Phase 5 implementation goldens have the strict schema")
+}
+
 fn implementation_goldens() -> ImplementationGoldenFile {
     serde_json::from_str(include_str!(
         "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.json"
@@ -1751,6 +1776,44 @@ fn production_contract_phase_four_sql_results_equal_semantic_oracles() {
         let outcome =
             super::policy_lowering_tests::sql_outcome_for_dialect(&compiled, &file.source, dialect);
         assert_eq!(outcome.ranges, expected, "{}", case.name);
+    }
+}
+
+#[test]
+fn production_contract_phase_five_has_complete_authored_sql_and_catalogs() {
+    let sql = phase_five_authored_sql_goldens();
+    let catalogs = phase_five_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|golden| (golden.name.clone(), golden))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for name in [
+        "semantic-parse-literal",
+        "semantic-parse-host",
+        "semantic-parse-capture-export",
+        "semantic-generated-document-map",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the Phase 5 contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(
+                sql.get(name)
+                    .unwrap_or_else(|| panic!("{name}: authored SQL"))
+            ),
+            "{name}: exact authored Phase 5 SQL"
+        );
+        assert_eq!(
+            actual.terminal_catalog,
+            catalogs
+                .get(name)
+                .unwrap_or_else(|| panic!("{name}: authored terminal catalog"))
+                .terminal_catalog,
+            "{name}: exact authored Phase 5 catalog"
+        );
     }
 }
 

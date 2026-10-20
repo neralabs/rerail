@@ -1,0 +1,2 @@
+-- Authored exact SQL contracts for Phase 5 parsed and generated documents.
+-- This file is intentionally empty until each contract is independently authored.
