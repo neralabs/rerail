@@ -55,6 +55,12 @@ pub(super) const FRAME: &str = "/*FRAME*/";
 /// The most rows a session's frames hold at once: a batch that would hold more fails.
 pub(super) const BUDGET: usize = 1 << 26;
 
+/// The rows an emptied frame's buffers keep for the batch's next write to it (`CLEAR`); a frame
+/// emptied holding more frees them. Clauses run one after another and share frames, so frames
+/// keeping every buffer held each frame's most rows of the batch at once (432 MiB in one
+/// session's batch of three data-layer files), where the rows live at once are far fewer.
+const KEEP: usize = 1 << 12;
+
 /// The `xBestIndex` cost of a full scan: a stat-less B-tree's row estimate, so that plans weigh
 /// a frame as they weighed its table.
 const SCAN_COST: f64 = 1_048_576.0;
@@ -136,7 +142,7 @@ pub(super) fn rewrite(statements: Vec<String>) -> Vec<String> {
 /// The frames of one session's connection, by table name.
 #[derive(Default)]
 pub(super) struct FrameStore {
-    frames: parking_lot::Mutex<HashMap<String, Arc<Shared>>>,
+    frames: parking_lot::Mutex<HashMap<Arc<str>, Arc<Shared>>>,
     /// Rows held across every frame.
     live: AtomicUsize,
     /// The most rows held at once since the store was made.
@@ -150,7 +156,45 @@ const MODULE: Module<'static, FrameTable> = Module::update_module();
 pub(super) struct FrameAux {
     store: Arc<FrameStore>,
     shared: Arc<Shared>,
+}
+
+/// A frame's declaration as `FRAME` gives it, parsed once for a program (`Declaration::parse`)
+/// and shared by every session's frame of it: its name, the schema SQLite declares it with, and
+/// what each column, its key and its indexes are.
+pub(super) struct Declaration {
+    name: Arc<str>,
     schema: CString,
+    columns: Box<[ColumnType]>,
+    key: Key,
+    /// The column lists the table it stands for was indexed on (its key's included): plans
+    /// weigh a lookup on a prefix of one as a B-tree index's.
+    indexed: Vec<Vec<usize>>,
+}
+
+/// A column's declared type, as values are stored and probed.
+struct ColumnType {
+    /// Declared `INTEGER`: a probe takes numeric affinity.
+    integer: bool,
+    /// Declared `NOT NULL DEFAULT` an integer: what a NULL stores. SQLite passes a column an
+    /// `INSERT` omits as NULL, and a B-tree would refuse an explicit NULL.
+    default: Option<i64>,
+}
+
+impl Declaration {
+    /// The declaration a `FRAME` step makes (the step after the marker): the frame's name, then
+    /// its entries in parentheses.
+    pub(super) fn parse(declaration: &str) -> Result<Self> {
+        let bad = || Error::ModuleError(format!("frame: bad declaration {declaration}"));
+        let open = declaration.find('(').ok_or_else(bad)?;
+        let close = declaration
+            .rfind(')')
+            .filter(|&close| close > open)
+            .ok_or_else(bad)?;
+        parse(
+            declaration[..open].trim(),
+            &arguments(&declaration[open + 1..close]),
+        )
+    }
 }
 
 /// `text` split at its top-level commas (none inside parentheses or quotes), as SQLite splits a
@@ -176,40 +220,41 @@ fn arguments(text: &str) -> Vec<&str> {
 }
 
 impl FrameStore {
-    /// Makes the frame a `FRAME` step declares (`declaration` is the step after the marker) on
-    /// `connection`: a registration of the `frame` module under the frame's name, whose eponymous
-    /// table is the frame. A frame of that name already made stays (`CREATE TABLE IF NOT
-    /// EXISTS`). Returns the frame's name.
-    pub(super) fn register<'d>(
+    /// Makes the frame `declaration` declares on `connection`: a registration of the `frame`
+    /// module under the frame's name, whose eponymous table is the frame. A frame of that name
+    /// already made stays (`CREATE TABLE IF NOT EXISTS`). The frame holds no buffers until it is
+    /// first written.
+    pub(super) fn register(
         self: &Arc<Self>,
         connection: &Connection,
-        declaration: &'d str,
-    ) -> Result<&'d str> {
-        let bad = || Error::ModuleError(format!("frame: bad declaration {declaration}"));
-        let open = declaration.find('(').ok_or_else(bad)?;
-        let close = declaration
-            .rfind(')')
-            .filter(|&close| close > open)
-            .ok_or_else(bad)?;
-        let name = declaration[..open].trim();
-        if self.frames.lock().contains_key(name) {
-            return Ok(name);
+        declaration: &Arc<Declaration>,
+    ) -> Result<()> {
+        let name = &declaration.name;
+        if self.frames.lock().contains_key(&**name) {
+            return Ok(());
         }
-        let (schema, frame) = parse(&arguments(&declaration[open + 1..close]))?;
-        let shared = Arc::new(Shared(UnsafeCell::new(frame)));
+        let shared = Arc::new(Shared(UnsafeCell::new(Frame {
+            declaration: Arc::clone(declaration),
+            columns: Vec::new(),
+            len: 0,
+            ascending: true,
+            dense: true,
+            largest: 0,
+            lookups: RefCell::default(),
+            order: RefCell::default(),
+        })));
         self.frames
             .lock()
-            .insert(name.to_owned(), Arc::clone(&shared));
+            .insert(Arc::clone(name), Arc::clone(&shared));
         connection.create_module(
-            name,
+            &**name,
             &MODULE,
             Some(FrameAux {
                 store: Arc::clone(self),
                 shared,
-                schema,
             }),
         )?;
-        Ok(name)
+        Ok(())
     }
 
     /// How many frames the store holds.
@@ -247,9 +292,8 @@ impl FrameStore {
             let frame = unsafe { shared.get_mut() };
             self.live.fetch_sub(frame.len, Atomic::Relaxed);
             frame.clear();
-            for column in &mut frame.columns {
-                column.release();
-            }
+            frame.columns = Vec::new();
+            *frame.lookups.get_mut() = Vec::new();
         }
     }
 
@@ -318,13 +362,13 @@ enum Key {
 /// sorted by them, then in scan order.
 type Lookup = (Vec<usize>, Rc<[u32]>);
 
+/// A session's frame: its declaration's rows. The columns' buffers are made on the frame's first
+/// write, and freed when the batch ends (`FrameStore::release`): a frame no batch wrote holds
+/// none, so `columns` is empty or holds every column.
 struct Frame {
+    declaration: Arc<Declaration>,
     columns: Vec<Column>,
     len: usize,
-    key: Key,
-    /// The column lists the table it stands for was indexed on (its key's included): plans
-    /// weigh a lookup on a prefix of one as a B-tree index's.
-    indexed: Vec<Vec<usize>>,
     /// `Key::Rowid`: whether the keys were appended in ascending order, and whether they are
     /// consecutive besides; the largest so far.
     ascending: bool,
@@ -350,10 +394,25 @@ impl Frame {
     }
 
     fn rowid(&self, row: usize) -> i64 {
-        match self.key {
+        match self.declaration.key {
             Key::Rowid(column) => self.columns[column].integer(row),
             _ => row as i64 + 1,
         }
+    }
+
+    /// Appends `value` to `column` as row `row`, making the columns' buffers on the frame's
+    /// first write.
+    fn push(&mut self, column: usize, row: usize, value: ValueRef<'_>) {
+        if self.columns.is_empty() {
+            self.columns = self
+                .declaration
+                .columns
+                .iter()
+                .map(|_| Column::default())
+                .collect();
+        }
+        let default = self.declaration.columns[column].default;
+        self.columns[column].push(row, value, default);
     }
 
     /// Compares rows `a` and `b` on `columns`.
@@ -369,7 +428,7 @@ impl Frame {
 
     /// The rows in scan order, where they are not stored in it.
     fn scan_order(&self) -> Result<Option<Rc<[u32]>>> {
-        let columns: &[usize] = match &self.key {
+        let columns: &[usize] = match &self.declaration.key {
             Key::Position => return Ok(None),
             Key::Rowid(_) if self.ascending => return Ok(None),
             Key::Rowid(column) => std::slice::from_ref(column),
@@ -522,23 +581,18 @@ struct Column {
     data: Data,
     /// `Narrow`/`Wide`: the rows that are NULL, a bit each (missing words are all clear).
     nulls: Vec<u64>,
-    /// Declared `INTEGER`: a probe takes numeric affinity.
-    integer: bool,
-    /// Declared `NOT NULL DEFAULT` an integer: what a NULL stores. SQLite passes a column an
-    /// `INSERT` omits as NULL, and a B-tree would refuse an explicit NULL.
-    default: Option<i64>,
 }
 
-impl Column {
-    fn new(integer: bool, default: Option<i64>) -> Self {
+impl Default for Column {
+    fn default() -> Self {
         Self {
             data: Data::Narrow(Vec::new()),
             nulls: Vec::new(),
-            integer,
-            default,
         }
     }
+}
 
+impl Column {
     fn is_null(&self, row: usize) -> bool {
         self.nulls
             .get(row / 64)
@@ -583,8 +637,9 @@ fn owned(value: ValueRef<'_>) -> Value {
 }
 
 impl Column {
-    fn push(&mut self, row: usize, value: ValueRef<'_>) {
-        let value = match (value, self.default) {
+    /// Appends `value` as row `row`; a NULL stores `default` where the column declares one.
+    fn push(&mut self, row: usize, value: ValueRef<'_>, default: Option<i64>) {
+        let value = match (value, default) {
             (ValueRef::Null, Some(default)) => ValueRef::Integer(default),
             (value, _) => value,
         };
@@ -621,24 +676,24 @@ impl Column {
         }
     }
 
+    /// Empties the column, keeping its buffers for the batch's next write up to `KEEP` rows.
     fn clear(&mut self) {
         match &mut self.data {
-            Data::Narrow(values) => values.clear(),
+            Data::Narrow(values) if values.capacity() <= KEEP => values.clear(),
             _ => self.data = Data::Narrow(Vec::new()),
         }
-        self.nulls.clear();
-    }
-
-    fn release(&mut self) {
-        self.data = Data::Narrow(Vec::new());
-        self.nulls = Vec::new();
+        if self.nulls.capacity() <= KEEP / 64 {
+            self.nulls.clear();
+        } else {
+            self.nulls = Vec::new();
+        }
     }
 }
 
-/// A frame's declared schema and empty buffers, from its declaration's entries (`FRAME`): the
-/// column definitions and table constraints of the `CREATE TABLE` it stands for, then the
-/// table's indexes (`INDEX (…)`, `rewrite`).
-fn parse(args: &[&str]) -> Result<(CString, Frame)> {
+/// Frame `frame`'s declaration, from its entries (`FRAME`): the column definitions and table
+/// constraints of the `CREATE TABLE` it stands for, then the table's indexes (`INDEX (…)`,
+/// `rewrite`).
+fn parse(frame: &str, args: &[&str]) -> Result<Declaration> {
     let mut declared = Vec::new();
     let mut names: Vec<String> = Vec::new();
     let mut columns = Vec::new();
@@ -692,7 +747,7 @@ fn parse(args: &[&str]) -> Result<(CString, Frame)> {
             .is_some_and(|word| word.contains("INT"));
         declared.push(format!("{name} {}", decl.trim()));
         names.push(name.to_owned());
-        columns.push(Column::new(integer, default));
+        columns.push(ColumnType { integer, default });
     }
     let position = |name: &String| {
         names
@@ -714,20 +769,13 @@ fn parse(args: &[&str]) -> Result<(CString, Frame)> {
     }
     let schema = CString::new(format!("CREATE TABLE x({})", declared.join(", ")))
         .map_err(|_| Error::ModuleError("frame: a NUL in the schema".into()))?;
-    Ok((
+    Ok(Declaration {
+        name: frame.into(),
         schema,
-        Frame {
-            columns,
-            len: 0,
-            key,
-            indexed,
-            ascending: true,
-            dense: true,
-            largest: 0,
-            lookups: RefCell::default(),
-            order: RefCell::default(),
-        },
-    ))
+        columns: columns.into(),
+        key,
+        indexed,
+    })
 }
 
 #[repr(C)]
@@ -741,7 +789,7 @@ impl FrameTable {
     fn of(aux: Option<&FrameAux>) -> Result<(Cow<'static, CStr>, Self)> {
         let aux = aux.ok_or_else(|| Error::ModuleError("frame: no frame".into()))?;
         Ok((
-            Cow::Owned(aux.schema.clone()),
+            Cow::Owned(aux.shared.get().declaration.schema.clone()),
             Self {
                 base: sqlite3_vtab::default(),
                 shared: Arc::clone(&aux.shared),
@@ -788,7 +836,7 @@ unsafe impl<'vtab> VTab<'vtab> for FrameTable {
             }
         }
         used.sort_unstable_by_key(|&(_, column, _)| column);
-        let scan_key: Vec<c_int> = match &frame.key {
+        let scan_key: Vec<c_int> = match &frame.declaration.key {
             Key::Position => vec![-1],
             Key::Rowid(column) => vec![*column as c_int],
             Key::Primary(columns) => columns.iter().map(|&column| column as c_int).collect(),
@@ -811,7 +859,7 @@ unsafe impl<'vtab> VTab<'vtab> for FrameTable {
             info.set_estimated_rows(SCAN_COST as i64);
             return Ok(true);
         }
-        let unique = match &frame.key {
+        let unique = match &frame.declaration.key {
             Key::Position => false,
             Key::Rowid(key) => used.iter().any(|&(_, column, _)| column == *key),
             Key::Primary(key) => key
@@ -822,6 +870,7 @@ unsafe impl<'vtab> VTab<'vtab> for FrameTable {
         // on other columns, and a filtered scan's for constants on other columns (SQLite's
         // heuristic: an `=` keeps a quarter of the rows, half for -1, 0 or 1).
         let indexed = frame
+            .declaration
             .indexed
             .iter()
             .any(|columns| used.iter().any(|&(_, column, _)| column == columns[0]));
@@ -906,7 +955,7 @@ impl UpdateVTab<'_> for FrameTable {
     fn insert(&mut self, args: &Inserts<'_>) -> Result<i64> {
         // SAFETY: SQLite calls `xUpdate` with no cursor of the frame inside a method (`Shared`).
         let frame = unsafe { self.shared.get_mut() };
-        if args.len() != frame.columns.len() + 2 {
+        if args.len() != frame.declaration.columns.len() + 2 {
             return Err(Error::ModuleError("frame: wrong column count".into()));
         }
         let live = self.store.live.fetch_add(1, Atomic::Relaxed) + 1;
@@ -921,7 +970,7 @@ impl UpdateVTab<'_> for FrameTable {
         let mut values = args.iter();
         let _old = values.next();
         let new_rowid = values.next().unwrap_or(ValueRef::Null);
-        let rowid = match frame.key {
+        let rowid = match frame.declaration.key {
             Key::Rowid(key) => {
                 let given = args.iter().nth(key + 2).unwrap_or(ValueRef::Null);
                 let value = match given {
@@ -957,13 +1006,13 @@ impl UpdateVTab<'_> for FrameTable {
                     } else {
                         value
                     };
-                    frame.columns[column].push(row, value);
+                    frame.push(column, row, value);
                 }
                 rowid
             }
             _ => {
                 for (column, value) in values.enumerate() {
-                    frame.columns[column].push(row, value);
+                    frame.push(column, row, value);
                 }
                 row as i64 + 1
             }
@@ -1034,9 +1083,13 @@ impl FrameCursor<'_> {
     /// The rows matching `probes` (column, value) on the ascending columns `columns`.
     fn find(&mut self, columns: &[usize], probes: &[Probe<'_>]) -> Result<Rows> {
         let frame = self.shared.get();
+        // An empty frame holds no buffers to search (`Frame::push`).
+        if frame.len == 0 {
+            return Ok(Rows::Range { next: 0, end: 0 });
+        }
         // A key lookup in a frame whose keys ascend: by position or by binary search.
         if let ([column], [probe]) = (columns, probes)
-            && frame.key == Key::Rowid(*column)
+            && frame.declaration.key == Key::Rowid(*column)
             && frame.ascending
         {
             let key = match *probe {
@@ -1132,7 +1185,7 @@ unsafe impl VTabCursor for FrameCursor<'_> {
                 .parse()
                 .map_err(|_| Error::ModuleError("frame: bad plan".into()))?;
             let mut probe = Probe::of(value);
-            if frame.columns[column].integer {
+            if frame.declaration.columns[column].integer {
                 probe = probe.numeric();
             }
             if matches!(probe, Probe::Null) && !is {
@@ -1210,7 +1263,10 @@ mod tests {
         for statement in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
             match statement.strip_prefix(FRAME) {
                 Some(declaration) => {
-                    store.register(connection, declaration).expect("registers");
+                    let declaration = Declaration::parse(declaration).expect("parses");
+                    store
+                        .register(connection, &Arc::new(declaration))
+                        .expect("registers");
                 }
                 None => connection.execute_batch(statement).expect("runs"),
             }
@@ -1412,7 +1468,7 @@ mod tests {
                     } else {
                         value
                     };
-                    frame.columns[column].push(at, value);
+                    frame.push(column, at, value);
                 }
                 frame.len += 1;
             }

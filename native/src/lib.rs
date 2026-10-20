@@ -49,9 +49,11 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 /// Tree-sitter allocates through jemalloc, as Rust does: a parse allocates many small subtrees,
 /// which the system allocator served at 10% of the parse. Installed when the addon loads, before
 /// any Tree-sitter call; like Tree-sitter's own allocator, these abort when allocation fails.
+/// SQLite allocates through jemalloc too (`install_sqlite_allocator`).
 #[cfg(not(windows))]
 #[napi_derive::module_init]
-fn install_tree_sitter_allocator() {
+fn install_allocators() {
+    install_sqlite_allocator();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         // SAFETY: jemalloc's malloc accepts any size.
@@ -88,6 +90,54 @@ fn install_tree_sitter_allocator() {
             free,
         }));
     }
+}
+
+/// SQLite's heap through jemalloc, installed when the addon loads, before any connection
+/// initializes SQLite: the SQL engine's sessions free pages (a batch's B-tree pages,
+/// `sql::exec::Session::run`) and statements (their caches' least recently used) all through a
+/// scan, and jemalloc returns freed pages to the system after its decay, where the system
+/// allocator kept them resident; the addon's allocator statistics then count SQLite's heap too.
+#[cfg(not(windows))]
+fn install_sqlite_allocator() {
+    use rusqlite::ffi;
+    use std::ffi::{c_int, c_void};
+    unsafe extern "C" fn malloc(size: c_int) -> *mut c_void {
+        // SAFETY: SQLite asks for a positive size; jemalloc's malloc accepts any.
+        unsafe { tikv_jemalloc_sys::malloc(size as usize) }
+    }
+    unsafe extern "C" fn free(pointer: *mut c_void) {
+        // SAFETY: SQLite frees only what `malloc` or `realloc` returned.
+        unsafe { tikv_jemalloc_sys::free(pointer) }
+    }
+    unsafe extern "C" fn realloc(pointer: *mut c_void, size: c_int) -> *mut c_void {
+        // SAFETY: SQLite passes a pointer `malloc` or `realloc` returned and a positive size.
+        unsafe { tikv_jemalloc_sys::realloc(pointer, size as usize) }
+    }
+    unsafe extern "C" fn size(pointer: *mut c_void) -> c_int {
+        // SAFETY: SQLite asks the size of what `malloc` or `realloc` returned.
+        unsafe { tikv_jemalloc_sys::malloc_usable_size(pointer) as c_int }
+    }
+    unsafe extern "C" fn roundup(size: c_int) -> c_int {
+        // SAFETY: nallocx only computes the size class of a positive size.
+        unsafe { tikv_jemalloc_sys::nallocx(size.max(1) as usize, 0) as c_int }
+    }
+    unsafe extern "C" fn init(_: *mut c_void) -> c_int {
+        ffi::SQLITE_OK
+    }
+    unsafe extern "C" fn shutdown(_: *mut c_void) {}
+    let methods = ffi::sqlite3_mem_methods {
+        xMalloc: Some(malloc),
+        xFree: Some(free),
+        xRealloc: Some(realloc),
+        xSize: Some(size),
+        xRoundup: Some(roundup),
+        xInit: Some(init),
+        xShutdown: Some(shutdown),
+        pAppData: std::ptr::null_mut(),
+    };
+    // SAFETY: SQLite copies the methods; no connection exists yet, so SQLite is not initialized.
+    // Were it initialized, the call fails with SQLITE_MISUSE and SQLite keeps its allocator.
+    unsafe { ffi::sqlite3_config(ffi::SQLITE_CONFIG_MALLOC, &methods) };
 }
 
 pub(crate) const WORKER_THREADS: usize = 4;
