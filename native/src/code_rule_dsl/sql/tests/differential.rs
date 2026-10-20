@@ -7,7 +7,9 @@
 //! The generator is deterministic: `RERAIL_SQL_DIFF_SEED` (default `0x5e7_c0de`) seeds it and
 //! `RERAIL_SQL_DIFF_CASES` (default 500) sets how many compiled cases are compared. Rules the
 //! front end rejects (an invalid pattern or kind, an order conflict) are generated but not
-//! counted.
+//! counted. `RERAIL_SQL_DIFF_KEEP` names a file every differing case is appended to (its index
+//! among the compared cases, rule and violation; one JSON line each), which
+//! `replayed_cases_agree` replays.
 
 use super::snapshot;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
@@ -302,6 +304,69 @@ impl Generator<'_> {
             format!("${}", self.single())
         } else {
             text
+        }
+    }
+
+    /// A pattern binding each of `names` at a leaf of one snippet, in order, where some snippet
+    /// has enough leaves.
+    fn pattern_binding(&mut self, names: &[String]) -> Option<String> {
+        let snippets: Vec<&Snippet> = self
+            .vocabulary
+            .snippets
+            .iter()
+            .filter(|snippet| snippet.leaves.len() >= names.len())
+            .collect();
+        if snippets.is_empty() {
+            return None;
+        }
+        let snippet = snippets[self.rng.below(snippets.len())];
+        let mut edits: Vec<(&Range<usize>, &String)> = snippet.leaves.iter().zip(names).collect();
+        edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
+        let mut text = snippet.text.clone();
+        for (range, name) in edits {
+            text.replace_range(range.clone(), &format!("${name}"));
+        }
+        Some(text)
+    }
+
+    /// A probe that reads a capture bound before it: `$X` binds the node, and `not` asks for a
+    /// related node with its text (with `X` bound it is a test, not a fresh binding).
+    fn bound_probe(&mut self, rule: &mut Map<String, Value>) {
+        let name = self.single();
+        let key = *self.rng.pick(&["inside", "has", "precedes", "follows"]);
+        let stop = *self.rng.pick(&["end", "neighbor"]);
+        rule.insert("pattern".into(), json!(format!("${name}")));
+        rule.insert(
+            "not".into(),
+            json!({ key: { "stopBy": stop, "pattern": format!("${name}") } }),
+        );
+    }
+
+    /// Three-valued: an unknown term that may bind `X`, then a term on `X`, under `not` or `any`
+    /// (the second's verdict is withheld where the first may have bound `X`).
+    fn withheld(&mut self, rule: &mut Map<String, Value>, depth: usize) {
+        let name = format!("${}", self.single());
+        let term = |generator: &mut Self, last: Value| {
+            let key = *generator
+                .rng
+                .pick(&["inside", "has", "precedes", "follows"]);
+            let stop = *generator.rng.pick(&["end", "neighbor"]);
+            json!({ key: { "stopBy": stop, "all": [{ "pattern": name }, last] } })
+        };
+        let unknown = if self.rng.chance(50) {
+            json!({ "testUnknown": "." })
+        } else {
+            json!({ "testUnknown": self.rng.pick(&self.vocabulary.regexes) })
+        };
+        let first = term(self, unknown);
+        let test = self.simple(depth + 2);
+        let second = term(self, test);
+        let all = json!({ "all": [first, second] });
+        if self.rng.chance(50) {
+            rule.insert("not".into(), all);
+        } else {
+            let other = self.rule(depth + 1);
+            rule.insert("any".into(), json!([all, other]));
         }
     }
 
@@ -745,6 +810,17 @@ impl Generator<'_> {
                 self.leaf(&mut rule, depth);
                 continue;
             }
+            // A shape the plain draw rarely reaches, now and then near the root: a `not` probe
+            // reading a capture bound before it; three-valued, an unknown term that may bind
+            // ahead of a term on its capture.
+            if depth < 2 && self.rng.chance(5) {
+                if self.three && self.rng.chance(50) {
+                    self.withheld(&mut rule, depth);
+                } else {
+                    self.bound_probe(&mut rule);
+                }
+                continue;
+            }
             let base = if deep { 22 } else { 8 };
             // `compare` and `layout` everywhere; `value` and `testUnknown` in three-valued cases.
             let extra = if self.three { 6 } else { 2 };
@@ -820,9 +896,16 @@ impl Generator<'_> {
                 12 => {
                     if !self.calls.is_empty() && self.rng.chance(50) {
                         let (name, params) = self.rng.pick(&self.calls).clone();
+                        // Now and then every parameter on one capture: the call's bindings of
+                        // them must agree.
+                        let shared =
+                            (params.len() > 1 && self.rng.chance(40)).then(|| self.single());
                         let args: Map<String, Value> = params
                             .iter()
-                            .map(|param| (param.clone(), json!(format!("${}", self.single()))))
+                            .map(|param| {
+                                let capture = shared.clone().unwrap_or_else(|| self.single());
+                                (param.clone(), json!(format!("${capture}")))
+                            })
                             .collect();
                         rule.insert("matches".into(), json!({ name: args }));
                     } else if !self.plain.is_empty() {
@@ -986,7 +1069,16 @@ impl Generator<'_> {
                 };
                 self.params = Some(params.clone());
                 let mut rule = self.rule(2);
-                if self.rng.chance(70) {
+                // Now and then a pattern binding every parameter, which a call mapping them to
+                // one capture binds to different texts.
+                let every = if params.len() > 1 && self.rng.chance(50) {
+                    self.pattern_binding(&params)
+                } else {
+                    None
+                };
+                if let Some(every) = every {
+                    rule["pattern"] = json!(every);
+                } else if self.rng.chance(70) {
                     rule["pattern"] = json!(format!("${}", params[0]));
                 }
                 self.params = None;
@@ -1006,14 +1098,85 @@ impl Generator<'_> {
         {
             rule["matches"] = reference;
         }
+        // Now and then the rule is a call mapping two parameters to one capture, of a utility
+        // whose pattern binds them at two leaves: where their texts differ, the call fails.
+        if self.rng.chance(5)
+            && let Some(both) = self.pattern_binding(&["P".to_owned(), "Q".to_owned()])
+        {
+            let capture = format!("${}", self.single());
+            utils.insert(
+                "w0".into(),
+                json!({ "params": ["P", "Q"], "rule": { "pattern": both } }),
+            );
+            rule = json!({ "matches": { "w0": { "P": capture, "Q": capture } } });
+        }
+        // Now and then a utility sharing the rule's scope, reached twice (one unit), comparing
+        // its own capture against the rule's: it reads a capture it does not hold.
+        if self.rng.chance(8) {
+            let caller = self.single();
+            let own = SINGLE
+                .iter()
+                .find(|name| **name != caller)
+                .expect("two names");
+            let op = *self.rng.pick(&["eq", "ne"]);
+            let mut reader = json!({
+                "pattern": format!("${own}"),
+                "compare": { "left": own, "op": op, "right": caller, "text": "node" },
+            });
+            if self.rng.chance(50) {
+                reader["kind"] = json!(self.rng.pick(&self.vocabulary.kinds));
+            }
+            utils.insert("v0".into(), reader);
+            if !rule["pattern"]
+                .as_str()
+                .is_some_and(|pattern| pattern.contains(&format!("${caller}")))
+            {
+                rule["pattern"] = json!(format!("${caller}"));
+            }
+            let keys = ["inside", "has", "precedes", "follows"];
+            let (first, second) = (*self.rng.pick(&keys), *self.rng.pick(&keys));
+            rule["all"] = json!([
+                { first: { "stopBy": "end", "matches": "v0" } },
+                { second: { "stopBy": "end", "matches": "v0" } },
+            ]);
+        }
         self.recursive = serde_json::to_string(&rule).is_ok_and(|text| text.contains("\"r0\""));
+        let rule_text = rule.to_string();
         ast.insert("rule".into(), rule);
         if !utils.is_empty() {
             ast.insert("utils".into(), Value::Object(utils));
         }
         if self.rng.chance(15) {
-            let name = self.single();
-            ast.insert("constraints".into(), json!({ name: self.rule(2) }));
+            let all_text = Value::Object(ast.clone()).to_string();
+            let named = |text: &str, name: &&str| text.contains(&format!("${name}"));
+            let bound: Vec<&str> = SINGLE
+                .iter()
+                .copied()
+                .filter(|name| named(&rule_text, name))
+                .collect();
+            let free: Vec<&str> = SINGLE
+                .iter()
+                .copied()
+                .filter(|name| !named(&all_text, name))
+                .collect();
+            let mut constraints = Map::new();
+            if !bound.is_empty() && !free.is_empty() && self.rng.chance(60) {
+                // A chain: one capture's constraint binds a capture the rule does not, whose own
+                // constraint holds only where it is checked after the binding (in name order).
+                let (bound, free) = (*self.rng.pick(&bound), *self.rng.pick(&free));
+                let key = *self.rng.pick(&["inside", "has"]);
+                constraints.insert(
+                    bound.into(),
+                    json!({ key: { "stopBy": "end", "pattern": format!("${free}") } }),
+                );
+                constraints.insert(free.into(), self.rule(2));
+            } else {
+                for _ in 0..1 + self.rng.below(2) {
+                    let name = self.single();
+                    constraints.insert(name, self.rule(2));
+                }
+            }
+            ast.insert("constraints".into(), Value::Object(constraints));
         }
         let message = if self.counted { "n=$N" } else { "x" };
         let mut violation = json!({ "anchor": "witness.span", "code": "X", "message": message });
@@ -1073,9 +1236,19 @@ static CASES_OVER_TWO_SECONDS: std::sync::atomic::AtomicUsize =
 
 /// Appends `line` to `RERAIL_SQL_DIFF_SLOW_LOG`, where it is set, one whole line at a time.
 fn slow_log(line: &Value) {
+    append_log("RERAIL_SQL_DIFF_SLOW_LOG", line);
+}
+
+/// Appends `line` to `RERAIL_SQL_DIFF_KEEP`, where it is set, one whole line at a time.
+fn keep_log(line: &Value) {
+    append_log("RERAIL_SQL_DIFF_KEEP", line);
+}
+
+/// Appends `line` to the file the environment variable `variable` names, where it is set.
+fn append_log(variable: &str, line: &Value) {
     use std::io::Write as _;
     static LOG: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    if let Ok(path) = std::env::var("RERAIL_SQL_DIFF_SLOW_LOG") {
+    if let Ok(path) = std::env::var(variable) {
         let _held = LOG
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1084,7 +1257,7 @@ fn slow_log(line: &Value) {
             .append(true)
             .open(&path)
             .and_then(|mut file| file.write_all(format!("{line}\n").as_bytes()))
-            .expect("the slow-case log");
+            .unwrap_or_else(|error| panic!("{variable}: {error}"));
     }
 }
 
@@ -1376,6 +1549,9 @@ fn generated_rules_agree_with_the_native_matcher() {
                     three_each_unknown += usize::from(three && each && unknown);
                 }
                 Outcome::Differs { native, sql } => {
+                    // `RERAIL_SQL_DIFF_KEEP`: every differing case, whole, one JSON line each
+                    // with its index among the compared cases, for `replayed_cases_agree`.
+                    keep_log(&json!({ "case": compared, "ast": ast, "violation": violation }));
                     compared += 1;
                     differences.push((ast.clone(), native, sql));
                 }
@@ -1463,15 +1639,22 @@ fn generated_rules_agree_with_the_native_matcher() {
     );
 }
 
-/// The cases of `RERAIL_SQL_DIFF_REPLAY` (lines of `RERAIL_SQL_DIFF_SLOW_LOG`), one at a time on
-/// the differential's inputs: each one's native and SQL time, the rows its statements wrote, and
-/// whether the engines agree. Run by hand:
-/// `RERAIL_SQL_DIFF_REPLAY=<file> cargo test --release sql::tests::differential::replayed -- --ignored --nocapture`.
+/// The replayed cases, one at a time on the differential's inputs: each one's native and SQL
+/// time, the rows its statements wrote, and whether the engines agree; every case must be
+/// compared and agree. By default the cases of `tests/replay.jsonl`, which kill every seeded
+/// mutant (`sql::mutant`); `RERAIL_SQL_DIFF_REPLAY` names another file of them (lines of
+/// `RERAIL_SQL_DIFF_SLOW_LOG` or `RERAIL_SQL_DIFF_KEEP`):
+/// `RERAIL_SQL_DIFF_REPLAY=<file> cargo test --profile loop sql::tests::differential::replayed -- --nocapture`.
 #[test]
-#[ignore = "replays a file of cases, run by hand"]
 fn replayed_cases_agree() {
     use crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE;
-    let path = std::env::var("RERAIL_SQL_DIFF_REPLAY").expect("RERAIL_SQL_DIFF_REPLAY");
+    let path = std::env::var("RERAIL_SQL_DIFF_REPLAY").unwrap_or_else(|_| {
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/code_rule_dsl/sql/tests/replay.jsonl"
+        )
+        .to_owned()
+    });
     let inputs: Vec<(&str, Value)> = FIXTURES
         .iter()
         .map(|(label, paths)| {
@@ -1487,7 +1670,7 @@ fn replayed_cases_agree() {
     let mut capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
     capabilities["limits"]["maxWitnesses"] = json!(1_000_000);
     capabilities["limits"]["maxVisitedNodes"] = json!(1_000_000_000);
-    let mut differ = 0;
+    let (mut differ, mut uncompared) = (0, 0);
     for line in std::fs::read_to_string(&path).expect("replay file").lines() {
         let case: Value = serde_json::from_str(line).expect("a JSON case");
         let (ast, violation) = (&case["ast"], &case["violation"]);
@@ -1509,9 +1692,18 @@ fn replayed_cases_agree() {
                 differ += 1;
                 "DIFFERS".to_owned()
             }
-            Outcome::Unsupported(reason) => reason.clone(),
-            Outcome::NativeLimit => "native limit".to_owned(),
-            Outcome::Rejected => "rejected".to_owned(),
+            Outcome::Unsupported(reason) => {
+                uncompared += 1;
+                reason.clone()
+            }
+            Outcome::NativeLimit => {
+                uncompared += 1;
+                "native limit".to_owned()
+            }
+            Outcome::Rejected => {
+                uncompared += 1;
+                "rejected".to_owned()
+            }
         };
         let (native, sql) = LAST_TIMES.get();
         let failed = LAST_SQL_ERROR
@@ -1537,6 +1729,7 @@ fn replayed_cases_agree() {
         }
     }
     assert_eq!(differ, 0, "{differ} replayed cases differ");
+    assert_eq!(uncompared, 0, "{uncompared} replayed cases not compared");
 }
 
 /// The loops of a statement's `EXPLAIN QUERY PLAN` rows `(id, parent, detail)` that read a whole

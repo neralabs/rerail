@@ -135,6 +135,8 @@ struct Lowerer<'p> {
     /// The non-recursive utilities the rule being lowered reaches through two or more
     /// references (`recursion::repeated`): each is a unit, its body lowered once.
     shared: HashSet<UtilKey>,
+    /// The root-kinds analysis of the relations' sub-rules, made on first use (`walk_kinds`).
+    kinds: Option<RootKinds>,
 }
 
 fn unsupported<T>(operator: &str) -> Result<T, Unsupported> {
@@ -147,35 +149,98 @@ fn capture_free(rule: &AstMatcher) -> bool {
     analysis.mentions(rule).is_empty() && analysis.counts(rule).is_empty()
 }
 
-/// The kinds a node must have for `rule` to match it; `None` where any may.
-fn root_kinds(rule: &AstMatcher, depth: usize) -> Option<BTreeSet<u16>> {
-    if depth > 32 {
-        return None;
-    }
-    match rule {
-        AstMatcher::Pattern(pattern) => pattern
-            .potential_kinds()
-            .map(|kinds| kinds.iter().map(|kind| kind as u16).collect()),
-        AstMatcher::Kind(kind) => kind
-            .potential_kinds()
-            .map(|kinds| kinds.iter().map(|kind| kind as u16).collect()),
-        AstMatcher::Any(items) => {
-            let mut kinds = BTreeSet::new();
-            for item in items {
-                kinds.extend(root_kinds(item, depth + 1)?);
-            }
-            Some(kinds)
+/// The kinds a node must have for a rule to match it: at a node of any other kind the rule is
+/// false, and three-valued not unknown either (`None` where any kind may). A relation's walk reads
+/// only its sub-rule's kinds (`Op::Relation::kinds`); a stage holds only its rule's.
+///
+/// `all` is the intersection of its terms' kinds and `any` the union; `not { not { R } }` is
+/// `R`'s, and a utility or call its rule's. Three-valued, an `all` term a row can reach with a
+/// capture it mentions withheld passes the row through untouched (`match_all`), so only the
+/// others' kinds bound the `all`'s. A utility reached again while it is being analysed (a
+/// recursive reference) may match any kind.
+pub(super) struct RootKinds {
+    three: bool,
+    captures: CaptureAnalysis,
+    /// Each utility's rule's kinds, by the rule's address.
+    utilities: HashMap<usize, Option<BTreeSet<u16>>>,
+    /// The utilities being analysed.
+    visiting: HashSet<usize>,
+}
+
+impl RootKinds {
+    pub(super) fn new(three: bool) -> Self {
+        Self {
+            three,
+            captures: CaptureAnalysis::default(),
+            utilities: HashMap::new(),
+            visiting: HashSet::new(),
         }
-        AstMatcher::All(items) => items
-            .iter()
-            .filter_map(|item| root_kinds(item, depth + 1))
-            .reduce(|a, b| a.intersection(&b).copied().collect()),
-        AstMatcher::Constrained(core) => root_kinds(&core.rule, depth + 1),
-        AstMatcher::Util(util) => util
-            .with_target(|rule| root_kinds(rule, depth + 1))
-            .flatten(),
-        AstMatcher::Never => Some(BTreeSet::new()),
-        _ => None,
+    }
+
+    pub(super) fn of(&mut self, rule: &AstMatcher) -> Option<BTreeSet<u16>> {
+        match rule {
+            AstMatcher::Pattern(pattern) => pattern
+                .potential_kinds()
+                .map(|kinds| kinds.iter().map(|kind| kind as u16).collect()),
+            AstMatcher::Kind(kind) => kind
+                .potential_kinds()
+                .map(|kinds| kinds.iter().map(|kind| kind as u16).collect()),
+            AstMatcher::Any(items) => {
+                let mut kinds = BTreeSet::new();
+                for item in items {
+                    kinds.extend(self.of(item)?);
+                }
+                Some(kinds)
+            }
+            AstMatcher::All(items) => {
+                let mut kinds: Option<BTreeSet<u16>> = None;
+                // The captures a term may withhold from the terms after it (`lower::all_open`).
+                let mut held = BTreeSet::new();
+                for item in items {
+                    if self.three {
+                        let checked = !self.captures.mentions(item).is_disjoint(&held);
+                        if checked
+                            || (!item.binds_nothing() && reads_values(item, &mut BTreeSet::new()))
+                        {
+                            held.extend(self.captures.binds(item));
+                        }
+                        if checked {
+                            continue;
+                        }
+                    }
+                    if let Some(own) = self.of(item) {
+                        kinds = Some(match kinds {
+                            Some(kinds) => kinds.intersection(&own).copied().collect(),
+                            None => own,
+                        });
+                    }
+                }
+                kinds
+            }
+            AstMatcher::Not(inner) => match &**inner {
+                AstMatcher::Not(rule) => self.of(rule),
+                _ => None,
+            },
+            AstMatcher::Constrained(core) => self.of(&core.rule),
+            AstMatcher::Util(util) => util.with_target(|rule| self.utility(rule)).flatten(),
+            AstMatcher::Call(call) => call.util.with_target(|rule| self.utility(rule)).flatten(),
+            AstMatcher::Never => Some(BTreeSet::new()),
+            _ => None,
+        }
+    }
+
+    fn utility(&mut self, rule: &AstMatcher) -> Option<BTreeSet<u16>> {
+        let key = std::ptr::from_ref(rule) as usize;
+        if let Some(kinds) = self.utilities.get(&key) {
+            return kinds.clone();
+        }
+        if !self.visiting.insert(key) {
+            return None;
+        }
+        let kinds = self.of(rule);
+        self.visiting.remove(&key);
+        self.utilities.insert(key, kinds.clone());
+        kinds
     }
 }
 
@@ -337,7 +402,17 @@ impl<'p> Lowerer<'p> {
             sources: Vec::new(),
             tree: None,
             shared: HashSet::new(),
+            kinds: None,
         }
+    }
+
+    /// The kinds a walk's candidates must have for `rule` to hold, or be unknown, at them.
+    fn walk_kinds(&mut self, rule: &AstMatcher) -> Option<Vec<u16>> {
+        let three = self.three;
+        self.kinds
+            .get_or_insert_with(|| RootKinds::new(three))
+            .of(rule)
+            .map(|kinds| kinds.into_iter().collect())
     }
 
     /// The statement of what was lowered: its root kinds, its operator and its units.
@@ -477,7 +552,8 @@ impl<'p> Lowerer<'p> {
         // `compare` against the caller's binding): its answer depends on them as well, so they
         // are its key too, every slot the scope has of them (as a terminal reads them,
         // `read_slots`), as the matcher's memo keys its verdicts by every capture it may read.
-        if params.is_none() {
+        // Mutant 18: the key drops the caller's captures the unit reads.
+        if params.is_none() && !super::mutant(18) {
             let held_names: BTreeSet<&str> = held.iter().map(|(name, _)| name.as_str()).collect();
             let read: BTreeSet<String> = util
                 .with_target(|rule| CaptureAnalysis::default().mentions(rule))
@@ -729,7 +805,9 @@ impl<'p> Lowerer<'p> {
     }
 
     fn stage_of(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
-        let kinds = root_kinds(rule, 0).map(|kinds| kinds.into_iter().collect());
+        let kinds = RootKinds::new(self.three)
+            .of(rule)
+            .map(|kinds| kinds.into_iter().collect());
         let statement = {
             let mut lowerer = Lowerer::new(self.program, self.dialect);
             lowerer.three = self.three;
@@ -919,8 +997,11 @@ impl<'p> Lowerer<'p> {
                 Ok((Op::Any(ops), out))
             }
             AstMatcher::Not(inner) => {
+                // Mutant 3: the probe ignores the captures bound before it.
+                let fresh = Bound::new();
+                let probe = if super::mutant(3) { &fresh } else { bound };
                 let (op, _) =
-                    self.with_exclude(None, |lowerer| lowerer.lower(inner, scope, bound))?;
+                    self.with_exclude(None, |lowerer| lowerer.lower(inner, scope, probe))?;
                 Ok((Op::Not(Box::new(op)), bound.clone()))
             }
             AstMatcher::Never => Ok((Op::Never, bound.clone())),
@@ -938,6 +1019,7 @@ impl<'p> Lowerer<'p> {
                         walk,
                         sub: Box::new(sub),
                         binds,
+                        kinds: self.walk_kinds(related.rule()),
                     },
                     out,
                 ))
@@ -958,6 +1040,7 @@ impl<'p> Lowerer<'p> {
                         walk,
                         sub: Box::new(sub),
                         binds,
+                        kinds: self.walk_kinds(&relation.rule),
                     },
                     out,
                 ))
@@ -1032,6 +1115,7 @@ impl<'p> Lowerer<'p> {
                         min: count.min,
                         max: count.max,
                         bind,
+                        kinds: self.walk_kinds(related.rule()),
                     },
                     out,
                 ))
@@ -1198,7 +1282,11 @@ impl<'p> Lowerer<'p> {
             AstMatcher::Constrained(core) => {
                 let (rule, mut current) = self.lower(&core.rule, scope, bound)?;
                 let mut constraints = Vec::new();
-                for (name, constraint) in &core.constraints {
+                // Mutant 14: the constraints in reverse order.
+                let (flip, count) = (super::mutant(14), core.constraints.len());
+                for index in 0..count {
+                    let (name, constraint) =
+                        &core.constraints[if flip { count - 1 - index } else { index }];
                     let Some(slot) = self.existing(scope, name, SlotKind::Node) else {
                         // Never bound, so never checked.
                         continue;

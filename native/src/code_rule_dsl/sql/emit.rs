@@ -315,10 +315,16 @@ pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Emitte
         format!("INSERT INTO {a} SELECT file, node FROM {ef}"),
         Reads::join(&[&ef]).writes(Writes::Insert(a.clone())),
     );
+    // Mutant 10: a match that repeats a range is reported too.
+    let reported = if super::mutant(10) {
+        "e.es IS NOT NULL".to_owned()
+    } else {
+        format!("(e.file, e.node) IN (SELECT file, node FROM {ef})")
+    };
     emitter.push(
         format!(
             "SELECT e.file, e.node{} FROM {eo} e WHERE (SELECT round FROM {EACH}r) = 0 \
-             OR (e.file, e.node) IN (SELECT file, node FROM {ef}) \
+             OR {reported} \
              ORDER BY e.file, e.node",
             of("e")
         ),
@@ -674,7 +680,10 @@ impl<'s> Emitter<'s> {
             Op::Any(branches) => {
                 let mut rest = input.to_owned();
                 let mut outs = Vec::new();
-                for (index, branch) in branches.iter().enumerate() {
+                // Mutant 2: the branches last first.
+                let flip = super::mutant(2);
+                for index in 0..branches.len() {
+                    let branch = &branches[if flip { branches.len() - 1 - index } else { index }];
                     let out = self.op(branch, &rest);
                     if index + 1 < branches.len() {
                         // `rest` without the rows the branch matched: all of it where none did.
@@ -700,6 +709,9 @@ impl<'s> Emitter<'s> {
                 self.frame("x", &union, Reads::union(&branches))
             }
             Op::Not(inner) => {
+                if let Op::Not(rule) = &**inner {
+                    return self.holds_at(rule, input);
+                }
                 let out = self.op(inner, input);
                 self.frame(
                     "x",
@@ -715,14 +727,21 @@ impl<'s> Emitter<'s> {
                 &format!("SELECT {} FROM {input} f WHERE 0", self.cols("f")),
                 Reads::join(&[input]),
             ),
-            Op::Relation { walk, sub, binds } => {
-                let candidates = self.candidates(*walk, input);
+            Op::Relation {
+                walk,
+                sub,
+                binds,
+                kinds,
+            } => {
+                let candidates = self.candidates(*walk, kinds.as_deref(), input);
                 let matched = self.op(sub, &candidates);
                 if *binds {
                     // `ord` is the walk order (negated ids for descending walks): its minimum
                     // is the first match.
+                    // Mutant 1: any match, not the first.
+                    let first = if super::mutant(1) { "g.ord" } else { "MIN(g.ord)" };
                     let with = format!(
-                        "WITH w AS (SELECT g.pk AS pk, MIN(g.ord) AS o{} FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk) ",
+                        "WITH w AS (SELECT g.pk AS pk, {first} AS o{} FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk) ",
                         self.physical_of("s")
                     );
                     let select = format!(
@@ -747,8 +766,9 @@ impl<'s> Emitter<'s> {
                 min,
                 max,
                 bind,
+                kinds,
             } => {
-                let candidates = self.candidates(*walk, input);
+                let candidates = self.candidates(*walk, kinds.as_deref(), input);
                 let matched = self.op(sub, &candidates);
                 let counts = self.grouped(
                     "n",
@@ -1233,28 +1253,79 @@ impl<'s> Emitter<'s> {
         self.frame_with("x", &with, &select, Reads::join(&[input]))
     }
 
+    /// `not { not { rule } }`: the rows `rule` holds at, with their own bindings (both negations
+    /// drop the rule's), as one semi-join. Three-valued, unknown where `rule` is unknown, as two
+    /// negations of it are.
+    pub(super) fn holds_at(&mut self, rule: &Op, input: &str) -> String {
+        let out = self.op(rule, input);
+        let select = if self.three {
+            format!(
+                "SELECT {} FROM {input} f JOIN {out} o ON o.k = f.k",
+                self.verdict("f", &[], "o.unk")
+            )
+        } else {
+            format!(
+                "SELECT {} FROM {input} f WHERE f.k IN (SELECT k FROM {out})",
+                self.cols("f")
+            )
+        };
+        self.frame("x", &select, Reads::join(&[input, &out]))
+    }
+
     /// A relation's candidates from each row of `input`: a frame table with a fresh `k` per
     /// candidate and the row's bindings, plus `pk` (the row's `k`) and `ord` (the walk order:
-    /// ids, negated for descending walks).
-    fn candidates(&mut self, walk: Walk, input: &str) -> String {
+    /// ids, negated for descending walks). With `kinds`, only the walk's nodes of those kinds
+    /// (the sub-rule's root kinds, `Op::Relation`), read from the kind postings before a
+    /// candidate's row is built.
+    pub(super) fn candidates(&mut self, walk: Walk, kinds: Option<&[u16]>, input: &str) -> String {
         if let Some(candidates) = self.leaf_candidates(walk, input) {
             return candidates;
         }
+        // Mutant 15: a field relation walks as its plain relation.
+        let walk = match walk {
+            Walk::FieldHas(_, stop) if super::mutant(15) => Walk::Has(stop),
+            Walk::FieldInside(_, stop) if super::mutant(15) => Walk::Inside(stop),
+            walk => walk,
+        };
         let at = "JOIN node fn ON fn.file = f.file AND fn.id = f.node";
         let simple = |from: &str| {
             format!("SELECT f.k AS pk, c.file AS file, c.id AS node FROM {input} f {from}")
         };
+        // The kind test on the candidate `node` row `c`, in its join.
+        let c = match kinds {
+            None | Some([]) => String::new(),
+            Some(kinds) => format!(" AND c.kind IN ({})", list(kinds)),
+        };
         let mut with = String::new();
         let source = match walk {
-            Walk::Has(Stop::Neighbor) => {
-                simple("JOIN node c ON c.file = f.file AND c.parent = f.node")
+            // A sub-rule no node can match (`Never`'s kinds): no candidate.
+            _ if kinds.is_some_and(<[u16]>::is_empty) => {
+                format!("SELECT f.k AS pk, f.file AS file, f.node AS node FROM {input} f WHERE 0")
             }
+            // Mutant 8: only the named children.
+            Walk::Has(Stop::Neighbor) => simple(&format!(
+                "JOIN node c ON c.file = f.file AND c.parent = f.node{c}{}",
+                if super::mutant(8) {
+                    " AND c.named = 1"
+                } else {
+                    ""
+                }
+            )),
             Walk::Has(Stop::End) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.id > f.node AND c.id <= fn.\"last\""
+                "{at} JOIN node c ON c.file = f.file AND c.id > f.node AND c.id <= fn.\"last\"{c}"
             )),
             // A rule stop's walks read the stop set `S` through `nearest` (no recursion). `has`
             // visits a descendant `c` of `f` where no node strictly between them is in `S`: where
-            // `c`'s nearest proper ancestor in `S` is `f`'s nearest ancestor-or-self in `S`.
+            // `c`'s nearest proper ancestor in `S` is `f`'s nearest ancestor-or-self in `S`. With
+            // kinds, the subtree's nodes of those kinds come from the postings and each is
+            // looked up in `nearest`; without, `nearest` lists the nodes under `f`'s base.
+            Walk::Has(Stop::Rule(stage)) if kinds.is_some() => simple(&format!(
+                "CROSS JOIN nearest nf ON {} AND nf.id = f.node \
+                 CROSS JOIN node c ON c.file = f.file AND c.id > f.node AND c.id <= nf.\"last\"{c} \
+                 CROSS JOIN nearest nc ON {} AND nc.id = c.id AND nc.anc = nf.base",
+                nearest::set_of("nf", stage, "f.file"),
+                nearest::set_of("nc", stage, "c.file")
+            )),
             Walk::Has(Stop::Rule(stage)) => simple(&format!(
                 "CROSS JOIN nearest nf ON {} AND nf.id = f.node \
                  CROSS JOIN nearest c ON {} AND c.anc = nf.base AND c.id > f.node AND c.id <= nf.\"last\"",
@@ -1262,80 +1333,105 @@ impl<'s> Emitter<'s> {
                 nearest::set_of("c", stage, "f.file")
             )),
             Walk::Inside(Stop::Neighbor) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.id = fn.parent"
+                "{at} JOIN node c ON c.file = f.file AND c.id = fn.parent{c}"
             )),
-            Walk::Inside(Stop::End) => {
-                simple("JOIN node c ON c.file = f.file AND c.id < f.node AND c.\"last\" >= f.node")
-            }
+            Walk::Inside(Stop::End) => simple(&format!(
+                "JOIN node c ON c.file = f.file AND c.id < f.node AND c.\"last\" >= f.node{c}"
+            )),
             // `inside` ends at `f`'s nearest proper ancestor in `S`, inclusive.
             Walk::Inside(Stop::Rule(stage)) => simple(&format!(
                 "CROSS JOIN nearest nf ON {} AND nf.id = f.node \
-                 CROSS JOIN node c ON c.file = f.file AND c.id < f.node AND c.\"last\" >= f.node AND c.id >= nf.anc",
+                 CROSS JOIN node c ON c.file = f.file AND c.id < f.node AND c.\"last\" >= f.node AND c.id >= nf.anc{c}",
                 nearest::set_of("nf", stage, "f.file")
             )),
             Walk::Precedes(Stop::Neighbor) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.id = fn.next"
+                "{at} JOIN node c ON c.file = f.file AND c.id = fn.next{c}"
             )),
             Walk::Precedes(Stop::End) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id >= fn.anext"
+                "{at} JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id >= fn.anext{c}"
             )),
             // The sibling walks end at the first node in `S` of their chain, inclusive.
             Walk::Precedes(Stop::Rule(stage)) => simple(&format!(
                 "{at} CROSS JOIN nearest na ON {} AND na.id = fn.anext \
                  CROSS JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id >= fn.anext \
-                 AND c.id <= COALESCE(na.nxt, 4294967295)",
+                 AND c.id <= COALESCE(na.nxt, 4294967295){c}",
                 nearest::set_of("na", stage, "f.file")
             )),
             Walk::Follows(Stop::Neighbor) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.id = fn.prev"
+                "{at} JOIN node c ON c.file = f.file AND c.id = fn.prev{c}"
             )),
             Walk::Follows(Stop::End) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id <= fn.aprev"
+                "{at} JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id <= fn.aprev{c}"
             )),
             Walk::Follows(Stop::Rule(stage)) => simple(&format!(
                 "{at} CROSS JOIN nearest na ON {} AND na.id = fn.aprev \
                  CROSS JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id <= fn.aprev \
-                 AND c.id >= COALESCE(na.prv, 0)",
+                 AND c.id >= COALESCE(na.prv, 0){c}",
                 nearest::set_of("na", stage, "f.file")
             )),
             Walk::FieldHas(field, Stop::Neighbor) => simple(&format!(
-                "JOIN node c ON c.file = f.file AND c.parent = f.node WHERE c.field = {field} AND c.ffirst = 1"
+                "JOIN node c ON c.file = f.file AND c.parent = f.node{c} WHERE c.field = {field} AND c.ffirst = 1"
             )),
             Walk::FieldHas(field, Stop::End) => simple(&format!(
                 "JOIN node fc ON fc.file = f.file AND fc.parent = f.node \
-                 JOIN node c ON c.file = fc.file AND c.id >= fc.id AND c.id <= fc.\"last\" \
+                 JOIN node c ON c.file = fc.file AND c.id >= fc.id AND c.id <= fc.\"last\"{c} \
                  WHERE fc.field = {field} AND fc.ffirst = 1"
             )),
+            // The field child, then its children where it is not in `S`.
             Walk::FieldHas(field, Stop::Rule(stage)) => {
                 let table = stage_table(stage);
                 with = format!(
                     "WITH q AS (SELECT f.k AS pk, c.file AS file, c.id AS node FROM {input} f \
                      JOIN node c ON c.file = f.file AND c.parent = f.node WHERE c.field = {field} AND c.ffirst = 1) "
                 );
+                let first = if kinds.is_some() {
+                    format!(
+                        "SELECT q.pk, q.file, q.node FROM q JOIN node c ON c.file = q.file AND c.id = q.node{c}"
+                    )
+                } else {
+                    "SELECT pk, file, node FROM q".to_owned()
+                };
                 format!(
-                    "SELECT pk, file, node FROM q UNION ALL SELECT x.pk, c.file, c.id FROM q x \
+                    "{first} UNION ALL SELECT x.pk, c.file, c.id FROM q x \
                      LEFT JOIN {table} st ON st.file = x.file AND st.node = x.node \
-                     JOIN node c ON c.file = x.file AND c.parent = x.node WHERE st.node IS NULL"
+                     JOIN node c ON c.file = x.file AND c.parent = x.node{c} WHERE st.node IS NULL"
                 )
             }
             Walk::FieldInside(field, Stop::Neighbor) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.id = fn.parent WHERE fn.field = {field} AND fn.ffirst = 1"
+                "{at} JOIN node c ON c.file = f.file AND c.id = fn.parent{c} WHERE fn.field = {field} AND fn.ffirst = 1"
             )),
             Walk::FieldInside(field, Stop::End) => simple(&format!(
                 "JOIN node w ON w.file = f.file AND w.id <= f.node AND w.\"last\" >= f.node \
-                 JOIN node c ON c.file = w.file AND c.id = w.parent WHERE w.field = {field} AND w.ffirst = 1"
+                 JOIN node c ON c.file = w.file AND c.id = w.parent{c} WHERE w.field = {field} AND w.ffirst = 1"
             )),
             // The ancestors `inside` walks to, through a field child `w` of each: `w` an
             // ancestor-or-self of `f` below its nearest proper ancestor in `S`.
             Walk::FieldInside(field, Stop::Rule(stage)) => simple(&format!(
                 "CROSS JOIN nearest nf ON {} AND nf.id = f.node \
                  CROSS JOIN node w ON w.file = f.file AND w.id <= f.node AND w.\"last\" >= f.node AND w.id > nf.anc \
-                 CROSS JOIN node c ON c.file = w.file AND c.id = w.parent WHERE w.field = {field} AND w.ffirst = 1",
+                 CROSS JOIN node c ON c.file = w.file AND c.id = w.parent{c} WHERE w.field = {field} AND w.ffirst = 1",
                 nearest::set_of("nf", stage, "f.file")
             )),
             Walk::Slot(_) | Walk::Related(_) => {
                 unreachable!("a terminal's walk (`leaf_candidates`)")
             }
+        };
+        // Mutant 9: the stop node is not a candidate.
+        let source = match walk {
+            Walk::Has(Stop::Rule(stage))
+            | Walk::Inside(Stop::Rule(stage))
+            | Walk::Precedes(Stop::Rule(stage))
+            | Walk::Follows(Stop::Rule(stage))
+            | Walk::FieldHas(_, Stop::Rule(stage))
+            | Walk::FieldInside(_, Stop::Rule(stage))
+                if super::mutant(9) =>
+            {
+                let table = stage_table(stage);
+                format!(
+                    "SELECT * FROM ({source}) WHERE (file, node) NOT IN (SELECT file, node FROM {table})"
+                )
+            }
+            _ => source,
         };
         let order = if walk.descending() {
             "-c.node"
@@ -1401,15 +1497,25 @@ impl<'s> Emitter<'s> {
                 // a node's rank reads its parent's children, never the rest of the stage, which
                 // can hold most nodes of the batch.
                 let table = stage_table(*stage);
-                let with = format!(
-                    "WITH p AS (SELECT DISTINCT n.file AS file, n.parent AS parent FROM {input} f \
-                     JOIN node n ON n.file = f.file AND n.id = f.node WHERE n.parent IS NOT NULL), \
-                     r AS (SELECT c.file AS file, c.id AS node, \
-                     ROW_NUMBER() OVER (PARTITION BY c.file, c.parent ORDER BY c.id) AS r, \
-                     COUNT(*) OVER (PARTITION BY c.file, c.parent) AS cnt FROM p \
-                     JOIN node c ON c.file = p.file AND c.parent = p.parent \
-                     JOIN {table} st ON st.file = c.file AND st.node = c.id WHERE c.named = 1) "
-                );
+                let with = if super::mutant(19) {
+                    // Mutant 19: ranks over the whole stage, not the input's parents' children.
+                    format!(
+                        "WITH r AS (SELECT n.file AS file, n.id AS node, \
+                         ROW_NUMBER() OVER (PARTITION BY n.file ORDER BY n.id) AS r, \
+                         COUNT(*) OVER (PARTITION BY n.file) AS cnt FROM {table} st \
+                         JOIN node n ON n.file = st.file AND n.id = st.node WHERE n.named = 1 AND n.parent IS NOT NULL) "
+                    )
+                } else {
+                    format!(
+                        "WITH p AS (SELECT DISTINCT n.file AS file, n.parent AS parent FROM {input} f \
+                         JOIN node n ON n.file = f.file AND n.id = f.node WHERE n.parent IS NOT NULL), \
+                         r AS (SELECT c.file AS file, c.id AS node, \
+                         ROW_NUMBER() OVER (PARTITION BY c.file, c.parent ORDER BY c.id) AS r, \
+                         COUNT(*) OVER (PARTITION BY c.file, c.parent) AS cnt FROM p \
+                         JOIN node c ON c.file = p.file AND c.parent = p.parent \
+                         JOIN {table} st ON st.file = c.file AND st.node = c.id WHERE c.named = 1) "
+                    )
+                };
                 let index = if reverse { "(r.cnt - r.r + 1)" } else { "r.r" };
                 let select = format!(
                     "SELECT {} FROM {input} f JOIN r ON r.file = f.file AND r.node = f.node WHERE {}",
@@ -1661,7 +1767,12 @@ impl<'s> Emitter<'s> {
             }
         }
         let returned = format!("({})", returned.join(" OR "));
-        let ok = format!("({})", ok.join(" AND "));
+        // Mutant 12: conflicting parameters return anyway.
+        let ok = if super::mutant(12) {
+            "1".to_owned()
+        } else {
+            format!("({})", ok.join(" AND "))
+        };
         // Three-valued: a body whose verdict is unknown returns nothing; the call is unknown.
         let (returned, verdict) = if self.three {
             (format!("(b.unk = 0 AND {returned})"), "b.unk")
