@@ -6,7 +6,7 @@ import ts from "typescript";
 
 import {
   fileType, parsedAs, parserLanguage, vueReadsAsComponent, vueScriptLangs, vueScriptParser,
-} from "../../../conformance/recorders/port-readiness/adapters/eslint-upstream.js";
+} from "../../../conformance/recorders/port-readiness/adapters/eslint/eslint-upstream.js";
 import type { BabelParser, TypeScript } from "../../../conformance/recorders/port-readiness/languages/ecmascript.js";
 import { componentParserVerdicts, type SfcCompiler, type SfcParseResult } from "../../../conformance/recorders/port-readiness/languages/vue.js";
 

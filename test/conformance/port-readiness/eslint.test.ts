@@ -10,12 +10,12 @@ import ts from "typescript";
 import {
   bareRuleName, declaredVersion, definingModule, directiveValuesFrom, helperPackage, implementationPath, importedModules, inHelperPackage,
   packageName, resolveModule, ruleDocumentation, testFixtureFiles,
-} from "../../../conformance/recorders/port-readiness/adapters/eslint.js";
+} from "../../../conformance/recorders/port-readiness/adapters/eslint/eslint.js";
 import { eslintLineStarts, eslintPoint, messageSpan } from "../../../conformance/port-readiness/span-units/eslint.js";
 import {
   caseFixture, casePath, caseWords, configNamed, declaresEnvironment, deprecationText, fileType, firstApproved, frozenFileType, isOff, modulePackage, parsedAs, parserLanguage,
   withoutEnvironment, withSetting, writtenExpectation,
-} from "../../../conformance/recorders/port-readiness/adapters/eslint-upstream.js";
+} from "../../../conformance/recorders/port-readiness/adapters/eslint/eslint-upstream.js";
 import { babelErrors, literalNames, type BabelParser, type TypeScript } from "../../../conformance/recorders/port-readiness/languages/ecmascript.js";
 
 const bytes = (text: string) => Buffer.byteLength(text, "utf8");

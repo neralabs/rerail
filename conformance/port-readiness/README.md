@@ -38,7 +38,7 @@ and `77c266a` on branch `ner-1762-engine-gaps`.
 | --- | --- |
 | `gates/compile.ts`, `generality.ts`, `size.ts`, `upstream-tests.ts`, `provenance.ts` | `checks/loads.ts`, `not-overfit.ts`, `compact.ts`, `matches-upstream-tests.ts`, `upstream-status.ts` |
 | `gates/real-code.ts` | none: Gate 6 runs in NRV only, and its goldens are imported |
-| `adapters/`, `languages/`, `runtimes.ts` | `conformance/recorders/port-readiness/adapters/` (`eslint_*` files are `eslint-*`), `languages/`, `runtimes.ts` |
+| `adapters/`, `languages/`, `runtimes.ts` | `conformance/recorders/port-readiness/adapters/` (`eslint_*` files are `adapters/eslint/eslint-*`), `languages/`, `runtimes.ts` |
 | `pack.ts`; `cli.ts`, `corpus.ts`, `engine.ts`, `goldens.ts`, `policy-literals.ts`, `report.ts`, `run.ts`, `spans.ts`, `types.ts` | `manifest.ts`; the file of the same name, most of them rewritten |
 | `rerail.ts` | none: the gates read this checkout, not a pinned rerail commit |
 
@@ -104,7 +104,7 @@ whose sha256 is not the one the lock names fails the run.
 `npm run port-readiness:record -- --pack <id> --tool <tool>` (conformance/recorders/port-readiness/) writes the recordings. A tool-pack
 check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to promote. The
 recording is stale when pins disagree between `gates.yaml`, `recording.lock`, `recording.json` and `conformance.json`, a
-runtime's pins (`package.json`, `pyproject.toml`, `.python-version`, `composer.json`, `.php-version`, PHP's `extensions.txt`) differ from the ones the lock records, the kept
+runtime's pins (`package.json`, `pyproject.toml`, `.python-version`, `composer.json`, `.php-version`, PHP's `extensions.txt`, `rust-toolchain.toml`) differ from the ones the lock records, the kept
 licence (every `LICENSE` or `LICENCE` file under `licenses/<project>/`, in any letter case and with any extension, read in name order) is not the recorded one, or a rule is not recorded (`corpus-pins` and the recording checks). `corpus-complete` fails when a file `corpus.json` answers for was not fetched with its
 recorded sha256 (a download or git fetch failed); those results are not cached. `bundled-load` loads every document in
 the pack's `rules/` together through rerail's bundled-rule loader, on every run, so a conflict between rules (a

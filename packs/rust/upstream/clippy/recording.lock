@@ -2,7 +2,7 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "clippy",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.2",
+  "recorder": "0.1.0-next.3",
   "pins": {
     "repository": "https://github.com/rust-lang/rust-clippy",
     "commit": "49e2f89a2605a9a340e04955fdbefa9803e6027a",

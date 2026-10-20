@@ -2,7 +2,7 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "eslint-plugin-vue",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.2",
+  "recorder": "0.1.0-next.3",
   "pins": {
     "repository": "https://github.com/vuejs/eslint-plugin-vue",
     "commit": "ec9c53a6fbed637d7b0fbcd6893b0206ae32839f",
