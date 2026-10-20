@@ -2,7 +2,7 @@
 //! frames that carry `unk` and the withheld-capture mask, and the input-set terminals' verdicts
 //! (`Op::Fact`), which two-valued clauses read too.
 
-use super::{Emitter, Reads, holds, in_set, set_inputs, stage_table};
+use super::{Emitter, Live, Reads, holds, in_set, set_inputs, stage_table};
 use crate::code_rule_dsl::sql::nearest;
 use crate::code_rule_dsl::sql::plan::{AllTerm, Need, NodeSet, OfRule, Op, Stop, Walk};
 use std::collections::BTreeSet;
@@ -20,15 +20,15 @@ impl Emitter<'_> {
     /// The three-valued lowering of the operators that read a sub-rule's verdict; `None` for the
     /// others, whose rows are true wherever they emit one (leaves), or which read `unk`
     /// themselves (calls, terminals).
-    pub(super) fn op3(&mut self, op: &Op, input: &str) -> Option<String> {
+    pub(super) fn op3(&mut self, op: &Op, input: &str, live: &Live) -> Option<String> {
         Some(match op {
-            Op::AllOpen(terms) => self.all_open(terms, input),
-            Op::AnyOpen(branches) => self.any_open(branches, input),
+            Op::AllOpen(terms) => self.all_open(terms, input, live),
+            Op::AnyOpen(branches) => self.any_open(branches, input, live),
             Op::Not(inner) => {
                 if let Op::Not(rule) = &**inner {
                     return Some(self.holds_at(rule, input));
                 }
-                let out = self.op(inner, input);
+                let out = self.op(inner, input, &Live::default());
                 self.frame(
                     "x",
                     &format!(
@@ -44,7 +44,7 @@ impl Emitter<'_> {
                 binds,
                 strict,
                 need,
-            } => self.search(*walk, need, sub, *binds, *strict, input),
+            } => self.search(op, *walk, need, sub, *binds, *strict, input, live),
             Op::Count {
                 walk,
                 sub,
@@ -52,18 +52,18 @@ impl Emitter<'_> {
                 max,
                 bind,
                 need,
-            } => self.count_open(*walk, need, sub, *min, *max, *bind, input),
+            } => self.count_open(op, *walk, need, sub, *min, *max, *bind, input),
             Op::NthChild {
                 step,
                 offset,
                 reverse,
                 of_rule: Some(of_rule),
-            } => self.nth_child_open(*step, *offset, *reverse, of_rule, input),
+            } => self.nth_child_open(op, *step, *offset, *reverse, of_rule, input, live),
             Op::Constrained { rule, constraints } => {
-                self.constrained_open(rule, constraints, input)
+                self.constrained_open(rule, constraints, input, live)
             }
-            Op::All(items) => self.each_open(items, input),
-            Op::NthCommit { nth, commit } => self.nth_commit_open(nth, commit, input),
+            Op::All(items) => self.each_open(items, input, live),
+            Op::NthCommit { nth, commit } => self.nth_commit_open(nth, commit, input, live),
             Op::Any(_) | Op::Relation { .. } => {
                 unreachable!("a three-valued clause lowers them as AnyOpen and Search")
             }
@@ -75,9 +75,10 @@ impl Emitter<'_> {
     /// joins the row's accumulated `unk` and, where it is unknown and may bind, its bind mask
     /// joins `wh`. A withheld row passes the term untouched, its bind mask joining `wh`. The
     /// `all` is unknown, with its input's bindings, where any term was.
-    fn all_open(&mut self, terms: &[AllTerm], input: &str) -> String {
+    fn all_open(&mut self, terms: &[AllTerm], input: &str, live: &Live) -> String {
+        let lives = self.pipeline(terms.iter().map(|term| &term.op), live);
         let mut current = input.to_owned();
-        for (index, term) in terms.iter().enumerate() {
+        for ((index, term), after) in terms.iter().enumerate().zip(&lives) {
             let first = index == 0;
             // The rows that reach the term with a capture it mentions withheld.
             let held = (!first && term.checked)
@@ -93,26 +94,30 @@ impl Emitter<'_> {
                 // Mutant 4: no term is withheld.
                 .filter(|held| !held.is_empty() && !crate::code_rule_dsl::sql::mutant(4));
             let run = match &held {
-                Some(held) => self.frame(
-                    "y",
-                    &format!(
-                        "SELECT {} FROM {current} p WHERE NOT ({held})",
-                        self.cols("p")
-                    ),
-                    Reads::join(&[&current]),
-                ),
+                Some(held) => {
+                    let before = self.live_before(&term.op, after);
+                    self.within(&before, |this| {
+                        this.frame(
+                            "y",
+                            &format!(
+                                "SELECT {} FROM {current} p WHERE NOT ({held})",
+                                this.cols("p")
+                            ),
+                            Reads::join(&[&current]),
+                        )
+                    })
+                }
                 None => current.clone(),
             };
             self.inherit(&current, &run, &BTreeSet::new());
             self.same_space(&current, &run);
-            let out = self.op(&term.op, &run);
+            let out = self.op(&term.op, &run, after);
+            let (term_slots, passed_slots) =
+                self.within(after, |this| (this.physical_of("o"), this.physical_of("p")));
             let mut select = if first {
-                format!("SELECT o.k, o.file, o.node{}, o.unk", self.physical_of("o"))
+                format!("SELECT o.k, o.file, o.node{term_slots}, o.unk")
             } else {
-                format!(
-                    "SELECT o.k, o.file, o.node{}, p.unk | o.unk",
-                    self.physical_of("o")
-                )
+                format!("SELECT o.k, o.file, o.node{term_slots}, p.unk | o.unk")
             };
             for word in 0..self.masks {
                 let before = if first {
@@ -142,8 +147,7 @@ impl Emitter<'_> {
             if let Some(held) = &held {
                 write!(
                     select,
-                    " UNION ALL SELECT p.k, p.file, p.node{}, p.unk",
-                    self.physical_of("p")
+                    " UNION ALL SELECT p.k, p.file, p.node{passed_slots}, p.unk"
                 )
                 .expect("write to a string");
                 for word in 0..self.masks {
@@ -159,7 +163,7 @@ impl Emitter<'_> {
             } else {
                 Reads::join(&[&out])
             };
-            let next = self.frame("v", &select, reads);
+            let next = self.within(after, |this| this.frame("v", &select, reads));
             let changed = self.touched(&term.op);
             self.inherit(&current, &next, &changed);
             self.same_space(&current, &next);
@@ -170,7 +174,8 @@ impl Emitter<'_> {
         }
         // An unknown `all` commits nothing: its row keeps the input's bindings.
         let overrides: Vec<(String, String)> = self
-            .physical
+            .layout
+            .columns
             .iter()
             .map(|column| {
                 (
@@ -193,14 +198,15 @@ impl Emitter<'_> {
     /// decided. A true branch decides with its bindings; an unknown one decides unknown where it
     /// may bind, and otherwise lets later branches decide, the row remembering it (`unk` of the
     /// rows still open). Rows no branch matched are unknown where one was.
-    fn any_open(&mut self, branches: &[(Op, bool)], input: &str) -> String {
+    fn any_open(&mut self, branches: &[(Op, bool)], input: &str, live: &Live) -> String {
+        let left = self.remainders(branches.iter().map(|(branch, _)| branch), live);
         let mut rest = input.to_owned();
         let mut parts = Vec::new();
         // The frames the parts read: each branch's output, and the last remainder.
         let mut frames = Vec::new();
         for (index, (branch, may_bind)) in branches.iter().enumerate() {
             let before = if index == 0 { "0" } else { "r.unk" };
-            let out = self.op(branch, &rest);
+            let out = self.op(branch, &rest, live);
             parts.push(format!(
                 "SELECT {} FROM {out} o WHERE o.unk = 0",
                 self.verdict("o", &[], "0")
@@ -219,14 +225,16 @@ impl Emitter<'_> {
                     self.verdict("r", &[], "1")
                 ));
             } else {
-                let next = self.frame(
-                    "y",
-                    &format!(
-                        "SELECT {} FROM {rest} r LEFT JOIN {out} o ON o.k = r.k WHERE o.k IS NULL OR ({open})",
-                        self.verdict("r", &[], &format!("({before} | (o.k IS NOT NULL))"))
-                    ),
-                    Reads::anti(&rest, &[&out]),
-                );
+                let next = self.within(&left[index + 1], |this| {
+                    this.frame(
+                        "y",
+                        &format!(
+                            "SELECT {} FROM {rest} r LEFT JOIN {out} o ON o.k = r.k WHERE o.k IS NULL OR ({open})",
+                            this.verdict("r", &[], &format!("({before} | (o.k IS NOT NULL))"))
+                        ),
+                        Reads::anti(&rest, &[&out]),
+                    )
+                });
                 self.inherit(&rest, &next, &BTreeSet::new());
                 self.same_space(&rest, &next);
                 rest = next;
@@ -242,19 +250,29 @@ impl Emitter<'_> {
     /// `relation::Search` over a walk: a strict search ends at its first candidate that is true
     /// or unknown, or at an unknown stop; any other is true where a candidate is (the first one
     /// binds) and otherwise unknown where a candidate or a stop was.
+    #[allow(clippy::too_many_arguments)]
     fn search(
         &mut self,
+        op: &Op,
         walk: Walk,
         need: &Need,
         sub: &Op,
         binds: bool,
         strict: bool,
         input: &str,
+        live: &Live,
     ) -> String {
-        let candidates = self.candidates(walk, &self.narrowed(walk, need), input);
+        // The first match returns the slots of `live` the walk may rebind, where it binds.
+        let back = if binds {
+            self.rebound(op, live)
+        } else {
+            Live::default()
+        };
+        let held = self.live_before(op, &back);
+        let candidates = self.candidates(walk, &self.narrowed(walk, need), input, &held);
         // A non-strict search passes over unknown candidates: only a true one ends it.
         self.first_match(&candidates, walk, !strict);
-        let matched = self.op(sub, &candidates);
+        let matched = self.op(sub, &candidates, &back);
         self.first_matched(&candidates, &matched);
         let opened = self.opened(walk, input, &candidates);
         // Every event is a matched candidate's or an unknown stop's.
@@ -262,12 +280,10 @@ impl Emitter<'_> {
             Some(opened) => Reads::union(&[&matched, opened]),
             None => Reads::join(&[input, &matched]),
         };
-        let physical = self.physical.clone();
+        let returned = self.layout_of(&back);
         let from = |alias: &str, test: &str| -> Vec<(String, String)> {
-            if !binds {
-                return Vec::new();
-            }
-            physical
+            returned
+                .columns
                 .iter()
                 .map(|column| {
                     (
@@ -281,14 +297,14 @@ impl Emitter<'_> {
         if strict && !crate::code_rule_dsl::sql::mutant(5) {
             // Events in walk order: each candidate's test, then an unknown stop's (`opened`).
             let stops = opened.map_or(String::new(), |opened| {
-                let nulls: String = self.physical.iter().map(|_| ", NULL").collect();
+                let nulls: String = returned.columns.iter().map(|_| ", NULL").collect();
                 format!(" UNION ALL SELECT pk, e, 1{nulls} FROM {opened}")
             });
+            let found = self.within(&back, |this| this.physical_of("s"));
             let with = format!(
-                "WITH v AS (SELECT g.pk AS pk, 2 * g.ord AS e, s.unk AS uk{} FROM {matched} s JOIN {candidates} g ON g.k = s.k{stops}), \
+                "WITH v AS (SELECT g.pk AS pk, 2 * g.ord AS e, s.unk AS uk{found} FROM {matched} s JOIN {candidates} g ON g.k = s.k{stops}), \
                  w AS (SELECT pk, MIN(e) AS e, uk{} FROM v GROUP BY pk) ",
-                self.physical_of("s"),
-                self.physical_list()
+                returned.list
             );
             let select = format!(
                 "SELECT {} FROM {input} f JOIN w ON w.pk = f.k",
@@ -299,11 +315,11 @@ impl Emitter<'_> {
         let stops = opened.map_or(String::new(), |opened| {
             format!(" UNION SELECT pk FROM {opened}")
         });
+        let found = self.within(&back, |this| this.physical_of("s"));
         let first = self.grouped(
-            &format!("o{}", self.physical_list()),
+            &format!("o{}", returned.list),
             &format!(
-                "SELECT g.pk, MIN(g.ord){} FROM {matched} s JOIN {candidates} g ON g.k = s.k WHERE s.unk = 0 GROUP BY g.pk",
-                self.physical_of("s")
+                "SELECT g.pk, MIN(g.ord){found} FROM {matched} s JOIN {candidates} g ON g.k = s.k WHERE s.unk = 0 GROUP BY g.pk"
             ),
             Reads::join(&[&matched, &candidates]),
         );
@@ -406,6 +422,7 @@ impl Emitter<'_> {
     #[allow(clippy::too_many_arguments)]
     fn count_open(
         &mut self,
+        op: &Op,
         walk: Walk,
         need: &Need,
         sub: &Op,
@@ -414,8 +431,9 @@ impl Emitter<'_> {
         bind: Option<(usize, i64)>,
         input: &str,
     ) -> String {
-        let candidates = self.candidates(walk, &self.narrowed(walk, need), input);
-        let matched = self.op(sub, &candidates);
+        let held = self.live_before(op, &Live::default());
+        let candidates = self.candidates(walk, &self.narrowed(walk, need), input, &held);
+        let matched = self.op(sub, &candidates, &Live::default());
         let opened = self.opened(walk, input, &candidates);
         let open = opened.map_or("0".to_owned(), |opened| {
             format!("(f.k IN (SELECT pk FROM {opened}))")
@@ -465,13 +483,16 @@ impl Emitter<'_> {
     /// `NthChild::index` with `ofRule`: unknown where a named sibling's probe is (before the
     /// position is read); otherwise the node's rank among the siblings `ofRule` is true at, its
     /// own bindings under `ofRule` committed.
+    #[allow(clippy::too_many_arguments)]
     fn nth_child_open(
         &mut self,
+        op: &Op,
         step: i32,
         offset: i32,
         reverse: bool,
         of_rule: &OfRule,
         input: &str,
+        live: &Live,
     ) -> String {
         let index = if reverse { "(r.cnt - r.r + 1)" } else { "r.r" };
         let position = holds(index, step, offset);
@@ -533,39 +554,45 @@ impl Emitter<'_> {
                 self.frame_with("x", &with, &select, Reads::join(&reads))
             }
             OfRule::Frame(rule) => {
+                // The probe returns the slots of `live` the rule may rebind.
+                let back = self.rebound(op, live);
+                let held = self.live_before(op, &back);
                 let siblings = self.name("g");
-                let columns = format!(
-                    "k INTEGER PRIMARY KEY, file, node{}, pk, ord{}",
-                    self.physical_list(),
-                    self.extra_list()
-                );
-                self.create(&siblings, &columns);
-                self.insert(
-                    &siblings,
-                    format!(
-                        "INSERT INTO {siblings} SELECT NULL, c.file, c.id{}, f.k, c.id{} FROM {input} f \
-                         JOIN node fn ON fn.file = f.file AND fn.id = f.node \
-                         JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
-                        self.physical_of("f"),
-                        self.zeros()
-                    ),
-                    Reads::join(&[input]),
-                );
+                self.within(&held, |this| {
+                    let columns = format!(
+                        "k INTEGER PRIMARY KEY, file, node{}, pk, ord{}",
+                        this.physical_list(),
+                        this.extra_list()
+                    );
+                    this.create(&siblings, &columns);
+                    this.insert(
+                        &siblings,
+                        format!(
+                            "INSERT INTO {siblings} SELECT NULL, c.file, c.id{}, f.k, c.id{} FROM {input} f \
+                             JOIN node fn ON fn.file = f.file AND fn.id = f.node \
+                             JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
+                            this.physical_of("f"),
+                            this.zeros()
+                        ),
+                        Reads::join(&[input]),
+                    );
+                });
                 self.open_space(&siblings, input, super::lineage::Derive::Probe);
-                let matched = self.op(rule, &siblings);
+                let matched = self.op(rule, &siblings, &back);
+                let returned = self.within(&back, |this| this.physical_of("s"));
                 let with = format!(
                     "WITH r AS (SELECT g.pk AS pk, g.node AS node, \
                      ROW_NUMBER() OVER (PARTITION BY g.pk ORDER BY g.node) AS r, \
-                     COUNT(*) OVER (PARTITION BY g.pk) AS cnt{} FROM {matched} s JOIN {siblings} g ON g.k = s.k \
+                     COUNT(*) OVER (PARTITION BY g.pk) AS cnt{returned} FROM {matched} s JOIN {siblings} g ON g.k = s.k \
                      WHERE s.unk = 0), \
-                     u AS (SELECT DISTINCT g.pk AS pk FROM {matched} s JOIN {siblings} g ON g.k = s.k WHERE s.unk = 1) ",
-                    self.physical_of("s")
+                     u AS (SELECT DISTINCT g.pk AS pk FROM {matched} s JOIN {siblings} g ON g.k = s.k WHERE s.unk = 1) "
                 );
+                let overrides = self.all_from(&back, "r");
                 let select = format!(
                     "SELECT {} FROM {input} f JOIN r ON r.pk = f.k AND r.node = f.node \
                      WHERE f.k NOT IN (SELECT pk FROM u) AND {position} \
                      UNION ALL SELECT {} FROM {input} f WHERE f.k IN (SELECT pk FROM u)",
-                    self.verdict("f", &self.all_from("r"), "0"),
+                    self.verdict("f", &overrides, "0"),
                     self.verdict("f", &[], "1")
                 );
                 // Both parts read the siblings `ofRule` matched (`r`, `u`).
@@ -576,39 +603,54 @@ impl Emitter<'_> {
 
     /// `Constrained::match_node`: an unknown rule ends unknown before any constraint; each
     /// constraint then runs at its bound capture's node, an unknown one ending the root unknown.
-    fn constrained_open(&mut self, rule: &Op, constraints: &[(usize, Op)], input: &str) -> String {
-        let mut current = self.op(rule, input);
-        for (slot, constraint) in constraints {
+    fn constrained_open(
+        &mut self,
+        rule: &Op,
+        constraints: &[(usize, Op)],
+        input: &str,
+        live: &Live,
+    ) -> String {
+        let (before, lives) = self.constrained_lives(constraints, live);
+        let mut current = self.op(rule, input, &before);
+        for ((slot, constraint), after) in constraints.iter().zip(&lives) {
             let column = format!("s{slot}");
-            let passed = self.frame(
-                "y",
-                &format!(
-                    "SELECT {} FROM {current} f WHERE f.unk = 1 OR f.{column} IS NULL",
-                    self.verdict("f", &[], "f.unk")
-                ),
-                Reads::join(&[&current]),
-            );
-            let captured = self.frame(
-                "g",
-                &format!(
-                    "SELECT f.k, f.file, f.{column}{}{} FROM {current} f WHERE f.unk = 0 AND f.{column} IS NOT NULL",
-                    self.physical_of("f"),
-                    self.zeros()
-                ),
-                Reads::join(&[&current]),
-            );
+            let passed = self.within(after, |this| {
+                this.frame(
+                    "y",
+                    &format!(
+                        "SELECT {} FROM {current} f WHERE f.unk = 1 OR f.{column} IS NULL",
+                        this.verdict("f", &[], "f.unk")
+                    ),
+                    Reads::join(&[&current]),
+                )
+            });
+            let held = self.live_before(constraint, after);
+            let captured = self.within(&held, |this| {
+                this.frame(
+                    "g",
+                    &format!(
+                        "SELECT f.k, f.file, f.{column}{}{} FROM {current} f WHERE f.unk = 0 AND f.{column} IS NOT NULL",
+                        this.physical_of("f"),
+                        this.zeros()
+                    ),
+                    Reads::join(&[&current]),
+                )
+            });
             self.same_space(&current, &passed);
             self.same_space(&current, &captured);
-            let checked = self.op(constraint, &captured);
-            let next = self.frame(
-                "x",
-                &format!(
-                    "SELECT {} FROM {checked} c JOIN {current} f ON f.k = c.k UNION ALL SELECT {} FROM {passed} p",
-                    self.verdict("f", &self.all_from("c"), "c.unk"),
-                    self.verdict("p", &[], "p.unk")
-                ),
-                Reads::union(&[&checked, &passed]),
-            );
+            let checked = self.op(constraint, &captured, after);
+            let overrides = self.all_from(after, "c");
+            let next = self.within(after, |this| {
+                this.frame(
+                    "x",
+                    &format!(
+                        "SELECT {} FROM {checked} c JOIN {current} f ON f.k = c.k UNION ALL SELECT {} FROM {passed} p",
+                        this.verdict("f", &overrides, "c.unk"),
+                        this.verdict("p", &[], "p.unk")
+                    ),
+                    Reads::union(&[&checked, &passed]),
+                )
+            });
             self.same_space(&current, &next);
             current = next;
         }

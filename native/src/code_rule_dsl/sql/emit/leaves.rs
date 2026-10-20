@@ -2,9 +2,11 @@
 //! (`Walk::Slot`, `Walk::Related`), the sequences and gates their sub-rules run in (`Op::Seq`,
 //! `Op::Gate`, `Op::Every`), and parsed trees (`Op::Parse`, `Op::Host`, `Op::Exports`).
 
-use super::{Emitter, Reads};
+use super::{Emitter, Live, Reads};
 use crate::code_rule_dsl::sql::plan::{Export, Need, Op, SlotId, SlotKind, Walk};
+use std::collections::BTreeSet;
 use std::fmt::Write;
+use std::rc::Rc;
 
 impl Emitter<'_> {
     /// A key value of a slot of `alias`, as the `fact` table decodes it: a node id, a list's
@@ -65,7 +67,7 @@ impl Emitter<'_> {
                     source.term
                 );
                 let mut slots = String::new();
-                for column in &self.physical {
+                for column in self.layout.columns.iter() {
                     match overrides.iter().find(|(name, _)| name == column) {
                         Some((_, value)) => write!(slots, ", {value}"),
                         None => write!(slots, ", f.{column}"),
@@ -100,26 +102,29 @@ impl Emitter<'_> {
 
     /// `Op::Seq`: each item runs on the rows every item before it was true at; a row an item is
     /// unknown at ends unknown, with its input's bindings, and one it is false at ends.
-    pub(super) fn seq(&mut self, items: &[Op], input: &str) -> String {
+    pub(super) fn seq(&mut self, items: &[Op], input: &str, live: &Live) -> String {
+        let lives = self.pipeline(items.iter(), live);
         if !self.three {
             let mut current = input.to_owned();
-            for item in items {
-                current = self.op(item, &current);
+            for (item, live) in items.iter().zip(&lives) {
+                current = self.op(item, &current, live);
             }
             return current;
         }
         let mut current = input.to_owned();
         let mut unknown = Vec::new();
         let mut outs = Vec::new();
-        for (index, item) in items.iter().enumerate() {
-            let out = self.op(item, &current);
+        for (index, (item, after)) in items.iter().zip(&lives).enumerate() {
+            let out = self.op(item, &current, after);
             unknown.push(format!("SELECT k FROM {out} WHERE unk = 1"));
             current = if index + 1 < items.len() {
-                let next = self.frame(
-                    "y",
-                    &format!("SELECT {} FROM {out} f WHERE f.unk = 0", self.cols("f")),
-                    Reads::join(&[&out]),
-                );
+                let next = self.within(after, |this| {
+                    this.frame(
+                        "y",
+                        &format!("SELECT {} FROM {out} f WHERE f.unk = 0", this.cols("f")),
+                        Reads::join(&[&out]),
+                    )
+                });
                 self.same_space(&out, &next);
                 next
             } else {
@@ -171,9 +176,10 @@ impl Emitter<'_> {
 
     /// `Op::Every`: the first candidate in walk order where the sub-rule is not true decides:
     /// false where it is false there, unknown where it is unknown; true where there is none.
-    pub(super) fn every(&mut self, walk: Walk, sub: &Op, input: &str) -> String {
-        let candidates = self.candidates(walk, &Need::default(), input);
-        let matched = self.op(sub, &candidates);
+    pub(super) fn every(&mut self, every: &Op, walk: Walk, sub: &Op, input: &str) -> String {
+        let held = self.live_before(every, &Live::default());
+        let candidates = self.candidates(walk, &Need::default(), input, &held);
+        let matched = self.op(sub, &candidates, &Live::default());
         let unk = if self.three { "s.unk" } else { "0" };
         let first = self.grouped(
             "st",
@@ -308,24 +314,32 @@ impl Emitter<'_> {
         overrides.push((format!("s{}", host.0), "f.file".to_owned()));
         overrides.push((format!("s{}", host.1), "f.node".to_owned()));
         overrides.push((format!("s{tree}"), "p.tree".to_owned()));
-        let mut entry = "p.k, p.tree, 0".to_owned();
-        for column in &self.physical {
-            match overrides.iter().find(|(name, _)| name == column) {
-                Some((_, value)) => write!(entry, ", {value}"),
-                None => write!(entry, ", f.{column}"),
+        // The body leaves the tree and the captures its exports read; its roots hold what it
+        // reads too.
+        let mut exported: BTreeSet<SlotId> = exports.iter().map(|export| export.from).collect();
+        exported.insert(tree);
+        let exported: Live = Rc::new(exported);
+        let held = self.live_before(body, &exported);
+        let roots = self.within(&held, |this| {
+            let mut entry = "p.k, p.tree, 0".to_owned();
+            for column in this.layout.columns.iter() {
+                match overrides.iter().find(|(name, _)| name == column) {
+                    Some((_, value)) => write!(entry, ", {value}"),
+                    None => write!(entry, ", f.{column}"),
+                }
+                .expect("write to a string");
             }
-            .expect("write to a string");
-        }
-        entry.push_str(self.zeros());
-        let roots = self.frame(
-            "i",
-            &format!(
-                "SELECT {entry} FROM {input} f JOIN {parsed} p ON p.k = f.k WHERE p.unk = 0 AND p.tree >= 0"
-            ),
-            Reads::join(&[input, &parsed]),
-        );
+            entry.push_str(this.zeros());
+            this.frame(
+                "i",
+                &format!(
+                    "SELECT {entry} FROM {input} f JOIN {parsed} p ON p.k = f.k WHERE p.unk = 0 AND p.tree >= 0"
+                ),
+                Reads::join(&[input, &parsed]),
+            )
+        });
         self.same_space(input, &roots);
-        let matched = self.op(body, &roots);
+        let matched = self.op(body, &roots, &exported);
         let (with, joins, exported) = self.export_reads("b", "f", tree, exports);
         let with = if with.is_empty() {
             String::new()
@@ -373,23 +387,27 @@ impl Emitter<'_> {
         } else {
             format!("WITH {}", with.replace("{INPUT}", input))
         };
-        let mut select = format!("f.k, f.s{}, f.s{}", host.0, host.1);
-        for column in &self.physical {
-            match overrides.iter().find(|(name, _)| name == column) {
-                Some((_, value)) => write!(select, ", {value}"),
-                None => write!(select, ", f.{column}"),
+        // The host's rows hold what `rule` reads.
+        let held = self.live_before(rule, &Live::default());
+        let at_host = self.within(&held, |this| {
+            let mut select = format!("f.k, f.s{}, f.s{}", host.0, host.1);
+            for column in this.layout.columns.iter() {
+                match overrides.iter().find(|(name, _)| name == column) {
+                    Some((_, value)) => write!(select, ", {value}"),
+                    None => write!(select, ", f.{column}"),
+                }
+                .expect("write to a string");
             }
-            .expect("write to a string");
-        }
-        select.push_str(self.zeros());
-        let at_host = self.frame_with(
-            "h",
-            &with,
-            &format!("SELECT {select} FROM {input} f{joins}"),
-            Reads::join(&[input]),
-        );
+            select.push_str(this.zeros());
+            this.frame_with(
+                "h",
+                &with,
+                &format!("SELECT {select} FROM {input} f{joins}"),
+                Reads::join(&[input]),
+            )
+        });
         self.same_space(input, &at_host);
-        let held = self.op(rule, &at_host);
+        let held = self.op(rule, &at_host, &Live::default());
         let unk = if self.three { "o.unk" } else { "0" };
         self.frame(
             "x",
