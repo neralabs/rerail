@@ -13,6 +13,7 @@ import { afterAll, describe, it } from "vitest";
 import { parse } from "yaml";
 
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
+import { loadEngine } from "../../../conformance/port-readiness/engine.js";
 import { ProcessCommandRunner } from "../../../conformance/port-readiness/process.js";
 import { CORPUS_FORMAT, RECORDING_FORMAT } from "../../../conformance/port-readiness/recording/schema.js";
 import { buildRecordingLock, recordingLockText, writeCachedRecording } from "../../../conformance/port-readiness/recording/store.js";
@@ -121,6 +122,8 @@ describe("a refresh run compares each fresh verdict with the cached one under it
     // A run that does not refresh compares nothing, and its report says nothing of comparing.
     assert.deepEqual(seeded.cache, { rules: 1, hits: 0 });
     assert.match(renderMarkdown(seeded), /^- Cache: 0 of 1 rule result\(s\) from the cache$/mu);
+    // Every report names the native binary that judged it.
+    assert.equal(seeded.engine.binary, loadEngine(where.root).binary);
     assert.equal(seeded.rules[0]!.stoppedAt, "not-overfit");
     assert.equal(seeded.rules[0]!.gates.compact.pass, true);
     // A candidate that stops at a gate blocks nothing.
@@ -184,9 +187,11 @@ describe("a refresh run compares each fresh verdict with the cached one under it
     const current = readdirSync(directory).sort();
     const rule = current.find((name) => !name.startsWith("pack-"))!;
     const packEntry = current.find((name) => name.startsWith("pack-"))!;
-    // What earlier runs left: a result and a tool-pack entry under keys that have since moved, a temporary file of a
-    // write that never finished, and a shard's own directory, which an unsharded run does not own.
-    const stale = { [`${"0".repeat(64)}.json`]: rule, [`pack-${"1".repeat(64)}.json`]: packEntry, [`${rule}.123.tmp`]: rule };
+    // What earlier runs left: a result and a tool-pack entry under keys that have since moved, a file no write names,
+    // a write's temporary file (another process's, still in flight), and a shard's own directory, which an unsharded
+    // run does not own.
+    const temporaryFile = `${rule}.123.tmp`;
+    const stale = { [`${"0".repeat(64)}.json`]: rule, [`pack-${"1".repeat(64)}.json`]: packEntry, "stray.tmp": rule, [temporaryFile]: rule };
     for (const [name, from] of Object.entries(stale)) copyFileSync(join(directory, from), join(directory, name));
     mkdirSync(join(directory, "shard-1of2"));
     copyFileSync(join(directory, rule), join(directory, "shard-1of2", rule));
@@ -196,9 +201,9 @@ describe("a refresh run compares each fresh verdict with the cached one under it
     await judge(where, "cached");
     await judge(where, "no-cache");
     assert.deepEqual(files(), [...current, ...Object.keys(stale)].sort());
-    // A refresh saves every result the tool-pack has now, and only those are left.
+    // A refresh saves every result the tool-pack has now, and only those are left, beside the write's temporary file.
     assert.deepEqual((await judge(where, "refresh")).cache, { rules: 1, hits: 0, compared: 1, differing: [] });
-    assert.deepEqual(files(), current);
+    assert.deepEqual(files(), [...current, temporaryFile].sort());
     assert.deepEqual(readdirSync(join(directory, "shard-1of2")), [rule]);
   });
 

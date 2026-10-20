@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node
 import { mkdir } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
-import { dependencyDigest, resultPath, ruleKey, readCached, toolPackKey, trackedDigest, writeCached, GATE_CODE, type SharedKeyInputs } from "./cache.js";
+import { dependencyDigest, isTemporaryFile, resultPath, ruleKey, readCached, toolPackKey, trackedDigest, writeCached, GATE_CODE, type SharedKeyInputs } from "./cache.js";
 import { upstreamStatusChecks, defaultOn } from "./checks/upstream-status.js";
 import { loadAsBundled, loadsGate } from "./checks/loads.js";
 import { packConformance, passesConformanceChecks } from "./checks/passes-conformance.js";
@@ -157,10 +157,11 @@ export function verdictDrift(cached: CachedRule, fresh: CachedRule): VerdictDrif
 
 /**
  * Delete every file in the tool-pack's (or the shard's) result directory but the entries under `keep`: once a refresh
- * has saved every result the tool-pack has now, the rest are under keys that have moved on, which no run reads again,
- * or a write's temporary file that never finished. CI restores the results a leg saved last and saves them back with
- * its own (port-readiness.yml), so without this a leg's archive would gain a full set each time the keys move. A
- * directory in it (an unsharded tool-pack's holds its shards') is not this run's, and stays.
+ * has saved every result the tool-pack has now, the rest are under keys that have moved on, which no run reads again.
+ * CI restores the results a leg saved last and saves them back with its own (port-readiness.yml), so without this a
+ * leg's archive would gain a full set each time the keys move. A write's temporary file (isTemporaryFile) stays: this
+ * run's writes have all been renamed by now, so one is another process's write in flight, whose rename deleting it
+ * would fail. A directory in it (an unsharded tool-pack's holds its shards') is not this run's, and stays too.
  */
 function pruneCached(cacheRoot: string, pack: string, tool: string, keep: readonly string[], shard?: Shard): void {
   const kept = new Set(keep.map((key) => resultPath(cacheRoot, pack, tool, key, shard)));
@@ -168,7 +169,7 @@ function pruneCached(cacheRoot: string, pack: string, tool: string, keep: readon
   if (!existsSync(directory)) return;
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
-    if (entry.isFile() && !kept.has(path)) rmSync(path, { force: true });
+    if (entry.isFile() && !kept.has(path) && !isTemporaryFile(entry.name)) rmSync(path, { force: true });
   }
 }
 

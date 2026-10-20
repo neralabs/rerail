@@ -121,7 +121,8 @@ npm run port-readiness -- summary .rerail/reports/port-readiness # the merged su
 
 The engine is this checkout's (`npm run build:native` first). The first run fetches the real-code files the goldens
 name into `.rerail/port-readiness/` (pinned); later runs reuse them and the results of every rule whose inputs did not change.
-`--no-cache` judges every rule again. The command exits 1 when a shipped rule fails, as CI does.
+`--no-cache` judges every rule again. The command exits 1 when a shipped rule fails, or when `--refresh-cache` finds a
+fresh verdict that differs from the cached one (below), as CI does.
 
 ### What a cached result is keyed by
 
@@ -187,8 +188,9 @@ the same key is compared, so a rule whose key moved since main last saved is jud
 each report says how many results it compared (`cache.compared`) and lists the differences (`cache.differing`). Having
 saved every result, the refresh deletes every other file in the tool-pack's (or shard's) result directory: those are
 under keys that have moved on, and CI saves a leg's results back on top of the ones it restored, so without this the
-leg's cache entry would gain a full set each time the keys move. `--no-cache` reads, compares, saves and deletes
-nothing, and a run on a stale native binary compares and deletes nothing.
+leg's cache entry would gain a full set each time the keys move. A write's temporary file stays, since it may be another
+run's write still in flight. `--no-cache` reads, compares, saves and deletes nothing, and a run on a stale native binary
+compares and deletes nothing.
 
 In CI every run saves its results, pull requests included. GitHub scopes a pull request's cache to that pull request,
 so main never reads one: a push to main reads only what main's own pushes and the nightly saved. A pull request can

@@ -71,9 +71,10 @@ npm run port-readiness -- summary .rerail/reports/port-readiness --planned '["py
 node conformance/port-readiness/plan.mjs [--diff <from> <to>]   # CI's legs: every one, or the ones a diff selects
 ```
 
-Exit 1 when a shipped rule fails (or the summary has a blocking failure), 2 on an exception. The run needs the built
-native engine; it reads no upstream runtime. It fetches only the pinned corpus files the goldens name (from catalog task
-files and the pack's `conformance.json` corpora), cached under `.rerail/port-readiness/corpus/`.
+Exit 1 when a shipped rule fails, a refresh finds a fresh verdict that differs from the cached one under its key, or the
+summary has a blocking failure; 2 on an exception. The run needs the built native engine; it reads no upstream runtime.
+It fetches only the pinned corpus files the goldens name (from catalog task files and the pack's `conformance.json`
+corpora), cached under `.rerail/port-readiness/corpus/`.
 
 Per-rule results are cached under `.rerail/port-readiness/results/<pack>/<tool>/<key>.json`, a shard's under
 `<tool>/shard-<i>of<n>/` (`--cache <dir>` moves the root).

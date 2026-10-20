@@ -241,3 +241,9 @@ export async function writeCached(cacheRoot: string, pack: string, tool: string,
   await writeFile(temporary, `${JSON.stringify({ format: CACHE_FORMAT, value })}\n`);
   await rename(temporary, path);
 }
+
+/**
+ * Whether the file `name` in a result directory is the temporary file writeCached writes, then renames onto its entry:
+ * `<key>.json.<pid>.tmp`.
+ */
+export const isTemporaryFile = (name: string): boolean => /\.json\.\d+\.tmp$/u.test(name);

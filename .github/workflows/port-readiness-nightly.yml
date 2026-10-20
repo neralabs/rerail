@@ -183,7 +183,7 @@ jobs:
         run: npm run port-readiness:record -- --pack "$PACK" --tool "$TOOL" --check
 
   gates:
-    name: Port readiness, uncached
+    name: Port readiness, re-judged
     needs: build
     # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
     if: github.repository_owner == 'neralabs'

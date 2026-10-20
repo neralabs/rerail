@@ -197,8 +197,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # 1: a shipped rule failed a gate (the report job says which and why). 2: the run itself failed.
-      - name: Fail when a shipped rule failed
+      # 1: a shipped rule failed a gate, or a refresh (the nightly) found a fresh verdict that differs from the cached
+      # one under the same key (the report job says which and why). 2: the run itself failed.
+      - name: Fail when a shipped rule failed or a verdict drifted
         if: steps.gates.outputs.status != '0'
         env:
           STATUS: ${{ steps.gates.outputs.status }}
