@@ -6,6 +6,8 @@
 
 use super::relational::SqlCatalogPlan;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
+use crate::code_rule_dsl::language::{GrammarDialect, label};
+use crate::code_rule_dsl::packed::Program;
 use crate::code_rule_dsl::test_support::CAPABILITIES;
 use serde::Deserialize;
 use serde_json::Value;
@@ -1884,6 +1886,39 @@ fn production_contract_phase_five_authored_sql_equals_oracles() {
     assert_eq!(outcome.ranges, [(0, 13)]);
     assert_eq!(outcome.file_indices, [0]);
     assert!(outcome.errors.is_empty());
+}
+
+#[test]
+fn production_contract_phase_five_catalog_digests_come_from_low_level_programs() {
+    let python = label(GrammarDialect::Python).expect("Python label");
+    let blade = label(GrammarDialect::Blade).expect("Blade label");
+    let python_string = Program::compile_kind(GrammarDialect::Python.kind_id("string"))
+        .expect("Python string program")
+        .canonical_digest(python, b"");
+    let blade_echo = Program::compile_kind(GrammarDialect::Blade.kind_id("echo"))
+        .expect("Blade echo program")
+        .canonical_digest(blade, b"");
+    let python_universe = Program::compile_universe()
+        .expect("universe program")
+        .canonical_digest(python, b"");
+    let catalogs = phase_five_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|golden| (golden.name, golden.terminal_catalog))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for name in [
+        "semantic-parse-literal",
+        "semantic-parse-host",
+        "semantic-parse-capture-export",
+    ] {
+        assert_eq!(catalogs[name][0].program_digest, python_string);
+        assert_eq!(catalogs[name][1].program_digest, python_universe);
+        assert_eq!(catalogs[name][2].program_digest, python_universe);
+    }
+    assert_eq!(
+        catalogs["semantic-generated-document-map"][0].program_digest,
+        blade_echo
+    );
 }
 
 #[test]
