@@ -16,10 +16,13 @@
 
 mod each;
 mod following;
+mod fusion;
 mod guards;
+mod inline;
 mod keyed;
 mod leaves;
 mod lineage;
+mod shared_search;
 mod three;
 
 use super::lower::{INTERNAL, ORIGIN};
@@ -31,15 +34,6 @@ use super::plan::{
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 use std::rc::Rc;
-
-#[cfg(feature = "unbounded-work")]
-mod fusion;
-#[cfg(feature = "unbounded-work")]
-mod inline;
-#[cfg(feature = "unbounded-work")]
-mod shared_search;
-#[cfg(feature = "unbounded-work")]
-mod spike;
 
 /// Where the driver substitutes the statement's whole files (`n.file IN (…)` of the root frame).
 pub(super) const FILES: &str = "/*FILES*/";
@@ -303,11 +297,7 @@ impl Emitted {
     }
 
     fn finish(self) -> Self {
-        #[cfg(feature = "unbounded-work")]
-        if super::diagnostics::fuse_frames() {
-            return inline::fuse(self);
-        }
-        self
+        inline::fuse(self)
     }
 }
 
@@ -469,10 +459,6 @@ struct Layout {
 }
 
 struct Emitter<'s> {
-    #[cfg(feature = "unbounded-work")]
-    first_probe_active: bool,
-    #[cfg(feature = "unbounded-work")]
-    first_candidate: bool,
     kinds_of: HashMap<String, Vec<u16>>,
     slots: &'s [Slot],
     units: &'s [Unit],
@@ -544,10 +530,6 @@ impl<'s> Emitter<'s> {
     fn new(statement: &'s Statement) -> Self {
         let slots = &statement.slots;
         let mut emitter = Self {
-            #[cfg(feature = "unbounded-work")]
-            first_probe_active: false,
-            #[cfg(feature = "unbounded-work")]
-            first_candidate: false,
             kinds_of: HashMap::new(),
             slots,
             units: &statement.units,
@@ -908,7 +890,7 @@ impl<'s> Emitter<'s> {
             Some(kinds) => format!(" AND n.kind IN ({})", list(kinds)),
         };
         let guard = String::new();
-        let guard = if !self.three && super::options::root_guards() {
+        let guard = if !self.three {
             guards::root_guard(op, self.units)
                 .map_or(guard.clone(), |guard| format!(" AND ({guard})"))
         } else {
@@ -971,7 +953,6 @@ impl<'s> Emitter<'s> {
     /// repeat a key (`keyed`), else directly.
     fn op(&mut self, op: &Op, input: &str, live: &Live) -> String {
         if !self.three
-            && super::options::elide_kind_copies()
             && let Op::Kinds(kinds) = op
             && self
                 .kinds_of
@@ -1040,14 +1021,7 @@ impl<'s> Emitter<'s> {
 
     /// `op` on `input` (`Emitter::op`), in the output frame's layout.
     fn apply(&mut self, op: &Op, input: &str, live: &Live) -> String {
-        #[cfg(feature = "unbounded-work")]
-        if super::diagnostics::shared_search()
-            && let Some(out) = self.shared_search(op, input, live)
-        {
-            return out;
-        }
-        #[cfg(feature = "unbounded-work")]
-        if let Some(out) = self.try_first_probe(op, input, live) {
+        if let Some(out) = self.shared_search(op, input, live) {
             return out;
         }
         if self.three
@@ -1667,26 +1641,6 @@ impl<'s> Emitter<'s> {
                 "INSERT INTO {changed} SELECT {unit}, id FROM \
                      (SELECT * FROM {fresh} EXCEPT {before} UNION SELECT * FROM ({before} EXCEPT SELECT * FROM {fresh}))"
             );
-            #[cfg(feature = "unbounded-work")]
-            let difference = if super::diagnostics::joined_diff() {
-                let mut equal = (0..width)
-                    .map(|column| format!("n.c{column} IS a.c{column}"))
-                    .collect::<Vec<_>>();
-                if self.three {
-                    equal.push("n.unk IS a.unk".to_owned());
-                }
-                let changed_value = if equal.is_empty() {
-                    String::new()
-                } else {
-                    format!(" OR NOT ({})", equal.join(" AND "))
-                };
-                format!(
-                    "INSERT INTO {changed} SELECT {unit}, n.id FROM {fresh} n LEFT JOIN {answer} a ON a.id = n.id WHERE a.id IS NULL{changed_value} \
-                    UNION ALL SELECT {unit}, a.id FROM {answer} a LEFT JOIN {fresh} n ON n.id = a.id WHERE n.id IS NULL AND a.id IN (SELECT k FROM {keys})"
-                )
-            } else {
-                difference
-            };
             self.insert(&changed, difference, Reads::union(&[&fresh, &answer]));
             self.push(
                 format!("DELETE FROM {answer} WHERE id IN (SELECT k FROM {keys})"),
@@ -1761,43 +1715,24 @@ impl<'s> Emitter<'s> {
             );
             return self.frame_with("x", &with, &select, Reads::join(&[input]));
         }
-        if super::options::integer_pattern_keys() {
-            let columns: Vec<String> = reads
-                .iter()
-                .flat_map(|&slot| match self.slots[slot].kind {
-                    SlotKind::List => vec![format!("s{slot}a"), format!("s{slot}b")],
-                    _ => vec![format!("s{slot}")],
-                })
-                .collect();
-            let descriptor = if columns.is_empty() {
-                input.to_owned()
-            } else {
-                format!("{input},{}", columns.join(","))
-            };
-            let with = format!(
-                "WITH p AS MATERIALIZED (SELECT ek{values} FROM pattern WHERE term = {term} \
-                 AND frame = '{descriptor}' AND ek IN (SELECT k FROM {input})) "
-            );
-            let select = format!(
-                "SELECT {} FROM {input} f JOIN p ON p.ek = f.k",
-                self.select("f", &overrides)
-            );
-            return self.frame_with("x", &with, &select, Reads::join(&[input]));
-        }
-        let mut key = String::from("f.file || ',' || f.node");
-        for &slot in reads {
-            let value = match self.slots[slot].kind {
-                SlotKind::List => format!("f.s{slot}a || ':' || f.s{slot}b"),
-                _ => format!("f.s{slot}"),
-            };
-            write!(key, " || ',' || COALESCE({value}, '')").expect("write to a string");
-        }
+        let columns: Vec<String> = reads
+            .iter()
+            .flat_map(|&slot| match self.slots[slot].kind {
+                SlotKind::List => vec![format!("s{slot}a"), format!("s{slot}b")],
+                _ => vec![format!("s{slot}")],
+            })
+            .collect();
+        let descriptor = if columns.is_empty() {
+            input.to_owned()
+        } else {
+            format!("{input},{}", columns.join(","))
+        };
         let with = format!(
-            "WITH e AS MATERIALIZED (SELECT f.k AS k, {key} AS ek FROM {input} f), \
-             p AS MATERIALIZED (SELECT ek{values} FROM pattern WHERE term = {term} AND ek IN (SELECT ek FROM e)) "
+            "WITH p AS MATERIALIZED (SELECT ek{values} FROM pattern WHERE term = {term} \
+             AND frame = '{descriptor}' AND ek IN (SELECT k FROM {input})) "
         );
         let select = format!(
-            "SELECT {} FROM {input} f JOIN e ON e.k = f.k JOIN p ON p.ek = e.ek",
+            "SELECT {} FROM {input} f JOIN p ON p.ek = f.k",
             self.select("f", &overrides)
         );
         self.frame_with("x", &with, &select, Reads::join(&[input]))
@@ -1835,20 +1770,16 @@ impl<'s> Emitter<'s> {
         input: &str,
         held: &BTreeSet<SlotId>,
     ) -> String {
-        #[cfg(not(feature = "unbounded-work"))]
-        let first = false;
-        #[cfg(feature = "unbounded-work")]
-        let first = std::mem::take(&mut self.first_candidate);
         let candidates = self.within(held, |this| match this.leaf_candidates(walk, input) {
             Some(candidates) => candidates,
-            None => this.tree_candidates(walk, need, input, first),
+            None => this.tree_candidates(walk, need, input),
         });
         self.open_space(&candidates, input, lineage::Derive::Probe);
         candidates
     }
 
     /// `candidates` of a walk over the tree.
-    fn tree_candidates(&mut self, walk: Walk, need: &Need, input: &str, first: bool) -> String {
+    fn tree_candidates(&mut self, walk: Walk, need: &Need, input: &str) -> String {
         let kinds = need.kinds.as_deref();
         // Mutant 15: a field relation walks as its plain relation.
         let walk = match walk {
@@ -1857,15 +1788,13 @@ impl<'s> Emitter<'s> {
             walk => walk,
         };
         let at = "JOIN node fn ON fn.file = f.file AND fn.id = f.node";
-        let direct = super::options::direct_candidates()
-            && matches!(
-                walk,
-                Walk::Has(Stop::Neighbor | Stop::End)
-                    | Walk::Inside(Stop::Neighbor | Stop::End)
-                    | Walk::Precedes(Stop::Neighbor | Stop::End)
-                    | Walk::Follows(Stop::Neighbor | Stop::End)
-            )
-            && !kinds.is_some_and(<[u16]>::is_empty);
+        let direct = matches!(
+            walk,
+            Walk::Has(Stop::Neighbor | Stop::End)
+                | Walk::Inside(Stop::Neighbor | Stop::End)
+                | Walk::Precedes(Stop::Neighbor | Stop::End)
+                | Walk::Follows(Stop::Neighbor | Stop::End)
+        ) && !kinds.is_some_and(<[u16]>::is_empty);
         let carry = if direct {
             self.physical_of("f")
         } else {
@@ -1894,14 +1823,6 @@ impl<'s> Emitter<'s> {
                     ""
                 }
             )),
-            Walk::Has(Stop::End) if first => {
-                let predicate = c.replace("c.kind", "p.kind");
-                simple(&format!(
-                    "{at} JOIN node c ON c.file = f.file AND c.id = \
-                     (SELECT p.id FROM node p WHERE p.file = f.file AND p.id > f.node \
-                     AND p.id <= fn.\"last\"{predicate} ORDER BY p.id LIMIT 1)"
-                ))
-            }
             Walk::Has(Stop::End) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id > f.node AND c.id <= fn.\"last\"{c}"
             )),
@@ -1926,12 +1847,6 @@ impl<'s> Emitter<'s> {
             Walk::Inside(Stop::Neighbor) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id = fn.parent{c}"
             )),
-            Walk::Inside(Stop::End) if first => simple(&format!(
-                "JOIN node c ON c.file = f.file AND c.id = \
-                 (SELECT p.id FROM node p WHERE p.file = f.file AND p.id < f.node \
-                 AND p.\"last\" >= f.node{} ORDER BY p.id DESC LIMIT 1)",
-                c.replace("c.kind", "p.kind")
-            )),
             Walk::Inside(Stop::End) => simple(&format!(
                 "JOIN node c ON c.file = f.file AND c.id < f.node AND c.\"last\" >= f.node{c}"
             )),
@@ -1943,12 +1858,6 @@ impl<'s> Emitter<'s> {
             )),
             Walk::Precedes(Stop::Neighbor) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id = fn.next{c}"
-            )),
-            Walk::Precedes(Stop::End) if first => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.id = \
-                 (SELECT p.id FROM node p WHERE p.file = f.file AND p.parent = fn.wpar \
-                 AND p.id >= fn.anext{} ORDER BY p.id LIMIT 1)",
-                c.replace("c.kind", "p.kind")
             )),
             Walk::Precedes(Stop::End) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id >= fn.anext{c}"
@@ -1962,12 +1871,6 @@ impl<'s> Emitter<'s> {
             )),
             Walk::Follows(Stop::Neighbor) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id = fn.prev{c}"
-            )),
-            Walk::Follows(Stop::End) if first => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.id = \
-                 (SELECT p.id FROM node p WHERE p.file = f.file AND p.parent = fn.wpar \
-                 AND p.id <= fn.aprev{} ORDER BY p.id DESC LIMIT 1)",
-                c.replace("c.kind", "p.kind")
             )),
             Walk::Follows(Stop::End) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id <= fn.aprev{c}"

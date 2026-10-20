@@ -2,20 +2,23 @@
 
 Commit `c034acd3` enables the previously measured optimization combination whenever the caller selects the SQL engine.
 Typed pattern inputs, root guards, kind-copy elimination, direct candidates, and batch transactions need no environment settings.
-The first-candidate probe stays disabled because it regresses the real catalog.
+The first-candidate probe regresses the real catalog and is now removed.
 
 Three additional compiler prototypes implement the [compiler design](sql-set-composition-compiler-design.md).
-They remain disabled by default and exist only in the `unbounded-work` build.
+These passes now run automatically in both ordinary and diagnostic builds.
+Their earlier opt-in switches and the older compiler alternatives are removed.
+The tables below retain measurements from the comparison build before that cleanup.
+The selected implementation is the row labeled "All three new prototypes".
 They improve the real scan modestly, while eliminating the quadratic search work on supported synthetic cases.
 The remaining real-corpus gap is still about 4.5 times native.
 
 ## Implemented prototypes
 
-| Setting | Change |
+| Compiler pass | Change |
 | --- | --- |
-| `RERAIL_SQL_FUSE_FILTERS=1` | Fuse deterministic filters and initial metadata projections in three-valued conjunctions |
-| `RERAIL_SQL_SHARED_SEARCH=1` | Evaluate independent descendant predicates once per eligible node, then seek each root's first match |
-| `RERAIL_SQL_FUSE_FRAMES=1` | Inline adjacent, single-consumer frames within explicit materialization and query-size limits |
+| Filter fusion | Fuse deterministic filters and initial metadata projections in three-valued conjunctions |
+| Shared search | Evaluate independent descendant predicates once per eligible node, then seek each root's first match |
+| Bounded frame fusion | Inline adjacent, single-consumer frames within explicit materialization and query-size limits |
 
 Shared search accepts kinds, plain regex, fresh-environment patterns, and conjunctions of those leaves.
 Those predicates cannot read the input captures or return unknown.
@@ -46,7 +49,8 @@ Three interleaved rounds give these median apply CPU times:
 | All three new prototypes | 6.072 | 4.48× |
 
 The combined gain is 4.2% against the enabled defaults.
-Frame inlining alone gains 1.1%, which is too small to justify promotion from this measurement.
+Frame inlining alone gains 1.1 percent.
+The selected configuration includes it with the other two passes, using the measured bounds.
 An earlier interleaved comparison of the first two prototypes also showed small gains.
 Their combined CPU time was 6.057 seconds against 6.223 for that comparison's control.
 
@@ -159,7 +163,17 @@ The CTE experiment shows why widening fusion without those guarantees is a poor 
 
 ## Validation and reproduction
 
-The final SQL suite passes 116 tests with nine measurement tests ignored in each configuration:
+After switch removal, the ordinary release build passes 114 SQL tests with zero failures.
+The diagnostic build passes 115 tests, including 3,000 generated native/SQL comparisons with zero differences.
+Its query-plan audit covers 722 clauses and 33,686 statements.
+Nine measurement tests remain ignored in each build.
+The diagnostic test build uses 16 code-generation units for the engine crate.
+Both builds use the allocator override described in the earlier reports.
+Clippy passes with warnings denied.
+
+The following historical checks describe the comparison build at `b4a9b406`, before the compiler switches were removed.
+
+The comparison SQL suite passes 116 tests with nine measurement tests ignored in each configuration:
 new defaults, filter fusion, shared search, frame inlining, and all three prototypes together.
 Each configuration targets 3,000 compared generated cases and includes saved replays and the query-plan gate.
 Regression tests cover first-match captures, outer captures, unknown propagation, domain gaps, linear work, column affinity, and error ordering.
@@ -184,11 +198,11 @@ node benchmark/sql-set-search-scaling.mjs \
   --depths 128,512,2048,4096
 ```
 
-Enable all new compiler prototypes in a diagnostic build with:
+The current build needs no compiler settings:
 
 ```sh
-RERAIL_SQL_FUSE_FILTERS=1 \
-RERAIL_SQL_SHARED_SEARCH=1 \
-RERAIL_SQL_FUSE_FRAMES=1 \
 node benchmark/sql-set-investigation.mjs /absolute/path/config.json
 ```
+
+Historical variants require builds from their recorded commits.
+Environment settings no longer select those compiler variants.

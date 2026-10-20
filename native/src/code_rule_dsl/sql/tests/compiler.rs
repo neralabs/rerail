@@ -1,4 +1,4 @@
-//! Semantic and work-volume gates for the benchmark-only compiler paths.
+//! Semantic and work-volume gates for SQL compiler optimizations.
 
 use super::hard_cases::agreed;
 #[cfg(feature = "unbounded-work")]
@@ -58,9 +58,6 @@ fn fused_filters_keep_unknown_verdicts_and_later_false_terms_can_still_decide() 
 #[cfg(feature = "unbounded-work")]
 #[test]
 fn shared_search_avoids_quadratic_rows_for_early_late_and_missing_matches() {
-    if !crate::code_rule_dsl::sql::diagnostics::shared_search() {
-        return;
-    }
     let depth = 128;
     let mut source = (0..depth)
         .map(|i| format!("if (a{i}) {{ f(a, b);\n"))

@@ -13,7 +13,6 @@ mod frames;
 mod lower;
 mod nearest;
 mod nodes;
-mod options;
 mod plan;
 mod recursion;
 pub(super) mod select_when;

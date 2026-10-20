@@ -9,7 +9,7 @@
 
 use super::{PATTERN_COLUMNS, PatternTerm, Terminal};
 use crate::code_rule_dsl::matcher::node_at;
-use crate::code_rule_dsl::sql::exec::{Batch, BatchFile, BatchSlot};
+use crate::code_rule_dsl::sql::exec::{Batch, BatchSlot};
 use crate::code_rule_dsl::sql::nodes::{NodeFacts, hasher, integer};
 use crate::code_rule_dsl::sql::plan::SlotKind;
 use crate::code_rule_dsl::tape::TapeDoc;
@@ -23,7 +23,6 @@ use rusqlite::vtab::{
 };
 use rusqlite::{Error, Result};
 use std::borrow::Cow;
-use std::collections::BTreeSet;
 use std::ffi::{CStr, c_int};
 use std::hash::Hasher;
 use std::marker::PhantomData;
@@ -33,7 +32,7 @@ use std::sync::{Arc, LazyLock};
 pub(in crate::code_rule_dsl::sql) struct PatternRow {
     file: u32,
     node: u32,
-    ek: Value,
+    ek: Option<i64>,
     values: Arc<[Option<i64>]>,
 }
 
@@ -47,7 +46,7 @@ impl PatternRow {
         Self {
             file,
             node,
-            ek: Value::Null,
+            ek: None,
             values,
         }
     }
@@ -140,48 +139,6 @@ pub(in crate::code_rule_dsl::sql) fn fresh_match(
     term.pattern
         .match_node_with_env(node_at(&entry.root, node), &mut env)?;
     Some(values(term, &entry.facts, &env).into())
-}
-
-/// Decodes an env-input key (`file,node,<value>…`, one value per read capture: a node id, or a
-/// list's `lo:hi`, empty where unbound), matches it, and returns its row where it matches.
-fn env_row(batch: &Batch, term: &PatternTerm, ek: &str) -> Option<PatternRow> {
-    let mut parts = ek.split(',');
-    let file: u32 = parts.next()?.parse().ok()?;
-    let node: u32 = parts.next()?.parse().ok()?;
-    let entry: &BatchFile = batch.files.get(file as usize)?;
-    if node >= entry.facts.len() {
-        return None;
-    }
-    let mut env = MetaVarEnv::new();
-    for &read in &term.reads {
-        let part = parts.next()?;
-        if part.is_empty() {
-            continue;
-        }
-        let (name, kind) = &term.vars[read];
-        match kind {
-            SlotKind::List => {
-                let (lo, hi) = part.split_once(':')?;
-                let nodes = list_nodes(&entry.facts, lo.parse().ok()?, hi.parse().ok()?)
-                    .into_iter()
-                    .map(|id| node_at(&entry.root, id))
-                    .collect();
-                env.insert_multi(name, nodes)?;
-            }
-            _ => {
-                env.insert(name, node_at(&entry.root, part.parse().ok()?))?;
-            }
-        }
-    }
-    let mut env = Cow::Owned(env);
-    term.pattern
-        .match_node_with_env(node_at(&entry.root, node), &mut env)?;
-    Some(PatternRow {
-        file,
-        node,
-        ek: Value::Text(ek.to_owned()),
-        values: values(term, &entry.facts, &env).into(),
-    })
 }
 
 /// The frame owns the input tuple; only its integer row key crosses SQLite.
@@ -315,6 +272,7 @@ unsafe impl<'vtab> VTab<'vtab> for PatternTable {
             }
         }
         let input = ek
+            .filter(|_| frame.is_some())
             .map(|ek| (ek, IDX_EK, IDX_EK_LIST))
             .or(nk.map(|nk| (nk, IDX_NK, IDX_NK_LIST)));
         let (Some(term), Some((input, one, list))) = (term, input) else {
@@ -427,7 +385,7 @@ unsafe impl VTabCursor for PatternCursor<'_> {
                             rows.push(PatternRow {
                                 file,
                                 node,
-                                ek: Value::Integer(key),
+                                ek: Some(key),
                                 values,
                             });
                         }
@@ -436,20 +394,9 @@ unsafe impl VTabCursor for PatternCursor<'_> {
                 rows
             }
         } else {
-            let mut keys = BTreeSet::new();
-            if idx_num & IDX_EK_LIST != 0 {
-                let mut items = args.in_values(1)?;
-                while let Some(item) = items.next()? {
-                    if let ValueRef::Text(text) = item {
-                        keys.insert(String::from_utf8_lossy(text).into_owned());
-                    }
-                }
-            } else if let Value::Text(text) = args.get::<Value>(1)? {
-                keys.insert(text);
-            }
-            keys.iter()
-                .filter_map(|ek| env_row(&batch, term, ek))
-                .collect()
+            return Err(Error::ModuleError(
+                "pattern: environment inputs require an integer frame descriptor".into(),
+            ));
         };
         Ok(())
     }

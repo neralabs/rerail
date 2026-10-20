@@ -80,9 +80,7 @@ impl Emitter<'_> {
         let mut current = input.to_owned();
         for ((index, term), after) in terms.iter().enumerate().zip(&lives) {
             let first = index == 0;
-            #[cfg(feature = "unbounded-work")]
-            if super::super::diagnostics::fuse_filters()
-                && (first || !term.checked)
+            if (first || !term.checked)
                 && let Some(next) = self.fused_filter(&term.op, &current, first, after)
             {
                 self.inherit(&current, &next, &BTreeSet::new());
@@ -122,9 +120,7 @@ impl Emitter<'_> {
             self.inherit(&current, &run, &BTreeSet::new());
             self.same_space(&current, &run);
             let out = self.op(&term.op, &run, after);
-            #[cfg(feature = "unbounded-work")]
             if first
-                && super::super::diagnostics::fuse_filters()
                 && (!term.withholds
                     || term.binds.iter().all(|&bits| bits == 0)
                     || matches!(

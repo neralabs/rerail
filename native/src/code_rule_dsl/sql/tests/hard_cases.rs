@@ -67,7 +67,7 @@ pub(super) fn agreed(language: &str, ast: Value, source: &str) -> Vec<String> {
 }
 
 #[test]
-fn a_descendant_search_handles_probe_success_fallback_and_no_match() {
+fn a_descendant_search_handles_early_late_and_missing_matches() {
     let ast = json!({ "rule": {
         "kind": "expression_statement",
         "has": { "stopBy": "end", "kind": "identifier", "regex": "^b$", "pattern": "$X" }
@@ -75,43 +75,6 @@ fn a_descendant_search_handles_probe_success_fallback_and_no_match() {
     assert_eq!(
         agreed("typescript", ast, "f(a, b);\ng(b, a);\nh(c);\nb();\n"),
         ["f(a, b); X=b", "g(b, a); X=b", "b(); X=b"]
-    );
-}
-
-/// An early match must not materialize every descendant of every enclosing root.
-#[cfg(feature = "unbounded-work")]
-#[test]
-fn first_candidate_probes_write_linear_rows_when_each_root_matches_immediately() {
-    if !super::first_probe_enabled() {
-        return;
-    }
-    use crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE;
-    let depth = 96;
-    let mut source = (0..depth)
-        .map(|i| format!("if (a{i}) {{\n"))
-        .collect::<String>();
-    source.push_str("f();\n");
-    source.push_str(&"}\n".repeat(depth));
-    let rule = compile(
-        "typescript",
-        json!({ "rule": {
-        "kind": "if_statement",
-        "has": { "stopBy": "end", "kind": "parenthesized_expression", "pattern": "$A" }
-    } }),
-    );
-    STATEMENT_PROFILE.set(Some(Default::default()));
-    let result = same(&rule, &snapshot(&[("typescript", "a.ts", &source)]));
-    let rows = STATEMENT_PROFILE
-        .take()
-        .unwrap_or_default()
-        .values()
-        .map(|(_, rows, _)| rows)
-        .sum::<usize>();
-    assert_eq!(result["violations"].as_array().map(Vec::len), Some(depth));
-    assert_eq!(result["failures"], json!([]));
-    assert!(
-        rows < 12 * depth,
-        "{rows} rows for {depth} immediately matching roots"
     );
 }
 

@@ -279,17 +279,6 @@ fn markers(language: &str, ast: Value) -> [usize; 3] {
 
 fn assert_markers(language: &str, ast: Value, expected: [usize; 3]) {
     let actual = markers(language, ast);
-    #[cfg(feature = "unbounded-work")]
-    if crate::code_rule_dsl::sql::diagnostics::first_probe_all() {
-        // A probe and its fallback can demand the same unit at two sites. They must still
-        // share one body and one loop; there are at most twice as many demanding sites.
-        assert_eq!(&actual[..2], &expected[..2]);
-        assert!(
-            (expected[2]..=2 * expected[2] + 1).contains(&actual[2]),
-            "{actual:?}"
-        );
-        return;
-    }
     assert_eq!(actual, expected);
 }
 
@@ -1099,18 +1088,13 @@ fn a_recursion_level_runs_a_bounded_number_of_statements_per_batch() {
     eprintln!("statements per recursion level: {passes:?}");
     // Each unit's tables include the dirty-key index (`emit::unit_tables`), one statement more
     // per demanding site inside the loop.
-    #[cfg(feature = "unbounded-work")]
-    if crate::code_rule_dsl::sql::diagnostics::fuse_frames() {
-        assert_eq!(passes.len(), 2);
-        assert!(
-            passes
-                .iter()
-                .zip([65, 44])
-                .all(|(&count, ceiling)| count > 0 && count <= ceiling)
-        );
-        return;
-    }
-    assert_eq!(passes, [65, 44]);
+    assert_eq!(passes.len(), 2);
+    assert!(
+        passes
+            .iter()
+            .zip([65, 44])
+            .all(|(&count, ceiling)| count > 0 && count <= ceiling)
+    );
 }
 
 /// Every table a statement creates has one column list: a three-valued `all`'s frames are not

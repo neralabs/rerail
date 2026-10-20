@@ -50,8 +50,7 @@ for (const [name, kind, regex, pattern] of [
       baseConfig, output: resolve(output, `${name}-${depth}.json`), rounds,
       variants: [
         { name: "native", engine: "native" },
-        { name: "sql-default" },
-        { name: "sql-shared", environment: { RERAIL_SQL_SHARED_SEARCH: "1" } },
+        { name: "sql" },
       ],
     };
     const config = resolve(output, `${name}-${depth}.config.json`);

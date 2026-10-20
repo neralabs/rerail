@@ -19,7 +19,7 @@ const metadata = {
   machine: { cpu: cpus()[0]?.model, logicalCpus: cpus().length, node: process.version },
   runnerSha256: hash(readFileSync(runner)),
   capabilitiesSha256: hash(readFileSync(base.capabilities)),
-  sourceHashes: ["emit.rs", "emit/keyed.rs", "emit/spike.rs", "emit/guards.rs", "emit/fusion.rs", "emit/shared_search.rs", "emit/inline.rs", "emit/three.rs", "exec.rs", "frames.rs", "options.rs", "diagnostics.rs", "terminals/pattern.rs", "../../lib.rs"].map(name => {
+  sourceHashes: ["emit.rs", "emit/keyed.rs", "emit/guards.rs", "emit/fusion.rs", "emit/shared_search.rs", "emit/inline.rs", "emit/three.rs", "exec.rs", "frames.rs", "diagnostics.rs", "terminals/pattern.rs", "../../lib.rs"].map(name => {
     const path = fileURLToPath(new URL(`../native/src/code_rule_dsl/sql/${name}`, import.meta.url));
     return { path, sha256: hash(readFileSync(path)) };
   }),

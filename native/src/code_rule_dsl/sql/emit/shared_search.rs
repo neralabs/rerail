@@ -1,4 +1,4 @@
-//! Benchmark-only first-match composition through a shared, indexed eligible-node relation.
+//! First-match composition through a shared, indexed eligible-node relation.
 
 use super::{Effect, Emitter, Live, Op, Reads, Stop, Walk, Writes, list, shape_test};
 use std::collections::BTreeSet;

@@ -1,4 +1,4 @@
-//! Benchmark-only selection fusion for three-valued conjunctions.
+//! Selection fusion for three-valued conjunctions.
 
 use super::{Emitter, Live, Op, Reads, list};
 

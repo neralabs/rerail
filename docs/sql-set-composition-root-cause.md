@@ -1,5 +1,9 @@
 # Why the SQL workload remains expensive
 
+This report records the earlier experiment at `235dde6a`.
+Its compiler switches and first-candidate probe are historical and no longer exist.
+The [current design](sql-set-composition-compiler-design.md) describes the single selected compiler implementation.
+
 The previous fixes are committed as `235dde6a`.
 They remove bad demand access paths, but leave substantial unnecessary evaluation and materialization.
 A complete statement trace now quantifies that work.

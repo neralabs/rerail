@@ -2,10 +2,10 @@
 
 The validated SQL access paths and Python candidate guards are now production defaults.
 The measured compiler optimizations and batch transactions are also enabled in production.
-The first-candidate probe remains opt-in because it regresses the real Python policy scan.
+The losing first-candidate probe and alternate answer-difference implementation are removed.
 The enabled changes reduce demand cardinality, but leave a substantial gap from native execution.
 The subsequent [root-cause analysis](sql-set-composition-root-cause.md) measures the remaining generated work and a quadratic first-match defect.
-The [compiler spike results](sql-set-composition-compiler-spike.md) describe the next experimental passes.
+The [compiler spike results](sql-set-composition-compiler-spike.md) describe the subsequent passes, which now run automatically.
 
 ## Implemented defaults
 
@@ -22,7 +22,6 @@ Both guards are necessary conditions of their original rules.
 Policy identity, revision, messages, and suppression rules remain the same.
 A regression test compares the original native findings with both guarded engines on positive Ruff and noqa fixtures.
 
-The answer-difference rewrite remains disabled.
 Worker count, automatic indexes, cache sizes, SQLite memory management, and default batch size retain their existing defaults.
 The earlier [tuning report](sql-set-composition-tuning.md) records the measurements that selected these changes.
 
@@ -48,16 +47,10 @@ Rerail already has per-worker sessions, prepared-statement reuse, and capture li
 
 Integer pattern inputs, conservative root guards, kind-copy elimination, and direct candidates are now enabled by default.
 Each batch also runs inside one transaction.
-The production build does not read environment switches for these defaults.
-The benchmark build can disable individual paths for comparison.
-
-| Benchmark setting that disables the default | Enabled behavior |
-| --- | --- |
-| `RERAIL_SQL_PATTERN_KEYS=text` | Pass integer input-row handles to bound pattern terminals |
-| `RERAIL_SQL_ROOT_GUARDS=0` | Apply proven structural restrictions before root frame construction |
-| `RERAIL_SQL_ELIDE_KIND_COPIES=0` | Reuse frames whose known kinds already satisfy a kind test |
-| `RERAIL_SQL_DIRECT_CANDIDATES=0` | Carry captures through candidate construction without a second input-frame lookup |
-| `RERAIL_SQL_BATCH_TRANSACTION=0` | Run one transaction per batch, with rollback and cleanup on failure |
+Production and diagnostic builds use the same implementation.
+Older compiler alternatives and their environment switches are removed.
+Bound pattern terminals accept integer row handles and typed capture inputs.
+The compiler also applies shared search, filter fusion, and bounded frame fusion where their safety conditions hold.
 
 The promoted combination preserved all 580 full findings on the 138-file scan.
 Its measured CPU time was 33.126 seconds, compared with 43.468 for the previous defaults.

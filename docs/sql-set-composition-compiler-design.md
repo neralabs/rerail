@@ -1,9 +1,50 @@
-# SQL compiler work-reduction spikes
+# SQL compiler work reduction
 
 The measured compiler still spends hundreds of millions of VM steps on a small input.
 This design changes the work that emission requests from SQLite.
-The existing join fixes and validated compiler optimizations are the enabled baseline.
-The original first-candidate probe remains disabled because it regresses the real policy scan.
+The SQL engine uses one compiler configuration in production and diagnostic builds.
+Filter fusion, shared search, and bounded frame fusion run automatically when their safety conditions hold.
+There are no environment switches for old compiler implementations.
+The losing first-candidate probe and alternate answer-difference implementation are removed.
+
+## Execution pipeline
+
+```mermaid
+flowchart LR
+    A[Compiled rule tree] --> B[Frame IR and capture liveness]
+    B --> C[SQL emission and proven search transformations]
+    C --> D[Bounded frame fusion]
+    D --> E[Register allocation and prepared statements]
+    E --> F[Batched execution]
+    F --> G[First-match findings and captures]
+```
+
+The frame IR records nodes, capture columns, operator order, utility calls, and three-valued behavior.
+A frame row carries an input key, file, node, and only the captures that later operators need.
+Three-valued clauses also carry an unknown flag and a withheld-capture mask.
+
+The emitter writes set operations over those rows.
+Frames normally use Rust column buffers behind SQLite virtual tables.
+Indexed temporary B-trees hold relations that need ordered or grouped access.
+The frame fusion pass removes safe intermediate relations before register allocation assigns reusable storage.
+
+Each worker retains one SQLite session and its prepared statements across batches.
+A batch runs in one transaction.
+Native pattern and semantic terminals receive complete input sets through virtual tables.
+Recursive utilities use demanded-key and answer tables with host-controlled loops.
+They use no recursive CTEs.
+
+## Why the remaining gap needs demand analysis
+
+The issue is work amplification before SQLite executes the queries.
+Nested searches can expand a small tree into millions of candidate pairs.
+Capture-dependent utilities also distinguish environments that differ only in node occurrence.
+Copies and repeated evaluation then multiply the cost of those intermediate rows.
+
+The current transformations reduce frame-copy rows by 24 percent, but remove only four percent of VM steps on the real trace.
+That trace still has 678,834 candidate rows and 156,872 capture-bearing demands.
+Those counts do not change under the transformations.
+The next design must restrict capture-dependent inputs before candidate and demand construction.
 
 ## Preserve the evaluation contract
 
@@ -14,9 +55,9 @@ An unknown conjunction withholds later terms that mention unavailable captures.
 Recursive dependencies include only the reads that native execution reaches.
 A change must preserve recursion refusals, complete findings, captures, fixes, and suppression state.
 
-## Spike A: fuse deterministic filters into conjunctions
+## Deterministic filter fusion
 
-A three-valued conjunction currently emits a term's output frame, then another frame to merge the accumulated verdict and withheld mask.
+Without fusion, a three-valued conjunction emits a term's output frame, then another frame to merge the accumulated verdict and withheld mask.
 Kinds and plain regex predicates cannot return unknown or change captures.
 For these terms, emit one filtered selection that carries the existing verdict and mask.
 For the first term, reset that metadata to zero as the original operator contract requires.
@@ -28,14 +69,13 @@ Its operator output already contains the correct verdict, captures, and zero mas
 Reuse that frame when the term cannot withhold, has no bind bits, or is a deterministic leaf.
 Keep the existing path for other terms.
 
-The spike is benchmark-only under `RERAIL_SQL_FUSE_FILTERS=1`.
-Measure affected rows, VM steps, statement count, and CPU on the real policy catalog.
-Unknown propagation and withheld-capture tests are mandatory.
+The compiler applies this transformation when the term satisfies those conditions.
+Unknown propagation and withheld-capture tests cover the transformation.
 
-## Spike B: evaluate eligible nodes before composing root/node pairs
+## Shared descendant search
 
 The eager search builds every root/descendant pair, evaluates each candidate, and selects the first success afterwards.
-A failed first-candidate probe then repeats the complete search.
+The rejected first-candidate probe repeats the complete search after a failed probe.
 Instead, evaluate an input-independent predicate once per distinct node and store its successful bindings.
 Then each root performs an indexed range seek for its first eligible descendant.
 
@@ -76,13 +116,14 @@ The B-tree contains at most one row per eligible node, rather than one per root/
 For nested roots with immediate matches, the candidate domain and output grow linearly.
 For a predicate with no matches, the domain still grows linearly and the empty successful set ends every search.
 Late matches also avoid the eager root/node cross product.
-Small, isolated roots can lose from domain setup, so the real policy scan must decide whether this path merits promotion.
+Small, isolated roots can lose from domain setup.
+The selected implementation accepts that setup cost and avoids the quadratic expansion for supported bodies.
+The real corpus gains about four percent from the combined transformations.
 
-The spike is benchmark-only under `RERAIL_SQL_SHARED_SEARCH=1`.
-It must preserve capture liveness and register lifetimes.
-The prototype does not introduce recursive CTEs or per-row native matcher calls.
+The transformation preserves capture liveness and register lifetimes.
+It introduces neither recursive CTEs nor per-row native matcher calls.
 
-## Spike C: bounded fusion of adjacent frames
+## Bounded frame fusion
 
 The first filter fusion removes only deterministic leaves and initial metadata copies.
 The broader pass runs over emitted statements before register allocation.
@@ -115,7 +156,7 @@ Pure SQL producers can fold into more general consumers when no mutable-state ba
 The prototype retains explicit input sets and materialized terminal CTEs.
 Native callbacks still evaluate sets in batches.
 
-The spike is benchmark-only under `RERAIL_SQL_FUSE_FRAMES=1`.
+The compiler always runs this bounded pass before register allocation.
 Comparison and runtime-error regression tests accompany the native differential gate.
 
 ## Progressive search for the remaining operators
@@ -132,6 +173,26 @@ Non-strict unknown roots remember that event and continue until success or exhau
 Dependencies from earlier batches remain reachable even after their candidate frames are cleared.
 Recursive answer changes must reopen roots whose stopping decision depends on those answers.
 This requires explicit frontier state and dependency tracking, rather than extending the existing probe flag.
+
+## Compiler properties for demand narrowing
+
+The next pass needs capture-use properties that distinguish unification, identity, source location, and semantic reads.
+Existing read and bind sets identify required columns, but do not prove that two occurrences are interchangeable.
+An unsupported use retains the exact capture key.
+
+These properties belong in the operator IR before SQL emission.
+The pass derives candidate restrictions from bound captures before a walk allocates its candidate frame.
+Utility lowering then chooses lookup keys separately from the original bindings returned to callers.
+Nullable captures retain a separate unbound mode.
+
+Ordered effects also constrain these transformations.
+A terminal failure cannot move behind a filter that hides it.
+An unknown verdict can stop a strict search or withhold a later capture-dependent term.
+Recursive reads must remain attached to the roots that reach them.
+The compiler needs those proofs before it can share or defer the work.
+
+This pass is a proposed extension.
+The current implementation does not normalize capture-dependent utility keys or maintain progressive frontiers.
 
 ## Capture-aware demands and frame ownership
 
@@ -159,14 +220,16 @@ Memory accounting must count retained backing buffers and selection vectors.
 This avoids substituting evaluated expressions into later SQL and can preserve existing lookup indexes.
 It requires a frame-store ownership change and is outside the current SQL-only fusion spike.
 
-## Promotion gates
+## Validation and remaining limits
 
 Run complete-output comparisons against native on positive, negative, late-match, capture-dependent, recursive, and unknown fixtures.
-Run the generated differential suite and saved replays with each spike separately and together.
+Run the generated differential suite and saved replays against the single compiler configuration.
 Reject a negative benchmark if planning skips SQL entirely.
 The negative search fixture uses repeated-variable unification, which necessary pattern anchors cannot decide.
 Inspect query plans for indexed range seeks and avoid whole-table inner scans.
 Compare the 32-file tuning scan and all 138 manifest files with identical rules and source bytes.
 Use separate traced and timed runs.
-The shared-search B-tree needs an explicit memory budget before production promotion.
-Keep a losing or insufficiently checked path disabled.
+The shared-search B-tree has no separate byte budget, like the other temporary B-trees in this engine.
+Its row count is bounded by eligible nodes in the batch, rather than root/node pairs.
+An explicit temporary-storage budget remains future work.
+Benchmark comparisons against older compiler versions use separate commit builds.

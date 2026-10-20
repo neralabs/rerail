@@ -362,7 +362,6 @@ impl Emitter<'_> {
             );
         });
         self.keyed_by(&keys, vec![(*key).clone()]);
-        #[cfg(feature = "unbounded-work")]
         if let Some(kinds) = self.kinds_of.get(input).cloned() {
             self.kinds_of.insert(keys.clone(), kinds);
         }

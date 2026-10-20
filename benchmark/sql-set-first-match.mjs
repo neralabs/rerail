@@ -47,7 +47,6 @@ for (const depth of depths) {
       { name: "native-neighbor", engine: "native", policies: [neighbor] },
       { name: "sql-end" },
       { name: "sql-neighbor", policies: [neighbor] },
-      { name: "sql-first-probe", environment: { RERAIL_SQL_FIRST_PROBE: "1" } },
     ],
   };
   const config = resolve(output, `scale-${depth}.config.json`);
