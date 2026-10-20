@@ -66,6 +66,14 @@ pub(super) const ACYCLIC: &str = "/*ACYCLIC*/";
 pub(super) const BLOCK: &str = "/*BLOCK*/";
 pub(super) const END: &str = "/*END*/";
 pub(super) const RUN: &str = "/*RUN*/";
+/// The unit of a recursion's pseudo-nodes in its reads (`keyed`): a candidate evaluated once for
+/// every row of a unit's body that shares its key, whatever key the row is evaluated for. A
+/// read `(unit, key) → (PSEUDO, candidate)` says the key's row reaches the candidate, and the
+/// candidate's reads `(PSEUDO, candidate) → (unit, key)` are those of every row reaching it.
+pub(super) const PSEUDO: i64 = -2;
+/// The SQL function that numbers pseudo-nodes: each call a number no call on the session's
+/// connection returned before, so a pass's candidates never meet an earlier pass's reads.
+pub(super) const PSEUDO_KEY_FUNCTION: &str = "pseudo_key";
 
 /// The prefix of a stage's own tables.
 pub(super) fn stage_namespace(stage: usize) -> String {
@@ -533,6 +541,12 @@ struct Emitter<'s> {
     /// The unit bodies being emitted, innermost last, and the next one's id.
     members: Vec<lineage::Member>,
     next_member: usize,
+    /// How many keyed evaluations of candidates (`keyed`), each a pseudo-node its rows' reads
+    /// are recorded from, the operator being emitted in a unit's body lies in; and the most of
+    /// them any read of the component's loop being emitted lay in, the hops its dirty-key update
+    /// follows back through pseudo-nodes.
+    pseudo: usize,
+    pseudo_levels: usize,
 }
 
 /// `kinds` sorted, each once (`Emitter::kinds`).
@@ -596,6 +610,8 @@ impl<'s> Emitter<'s> {
             spaces: Vec::new(),
             members: Vec::new(),
             next_member: 0,
+            pseudo: 0,
+            pseudo_levels: 0,
         };
         emitter.fix_columns();
         emitter
@@ -1000,13 +1016,15 @@ impl<'s> Emitter<'s> {
 
     /// Accepts the statement's recursion (`exec::acyclic`): every read recorded from a needed row,
     /// `(unit, key, unit, key, inner)`, `inner` where both units are of one component, the
-    /// clause's own as from unit `-1`'s key `0` (`start_table`).
+    /// clause's own as from unit `-1`'s key `0` (`start_table`). A component's reads into and out
+    /// of its pseudo-nodes (`PSEUDO`) are inner: a path through one is a read of its component's.
     fn acyclic(&mut self) {
         let mut query = format!("{ACYCLIC}SELECT su, s, du, d, 0 FROM {}", start_table());
         for &scc in &self.blocks {
             let members: Vec<String> = (0..self.units.len())
                 .filter(|&unit| self.units[unit].scc == scc)
                 .map(|unit| unit.to_string())
+                .chain(std::iter::once(PSEUDO.to_string()))
                 .collect();
             write!(
                 query,
@@ -1493,6 +1511,17 @@ impl<'s> Emitter<'s> {
         );
     }
 
+    /// Where a read from a row `f` of `from`'s body is recorded from, as `su, s`: the key the row
+    /// is evaluated for (its `origin`), or, inside a keyed evaluation of candidates, the
+    /// candidate's pseudo-node, which the origin slot holds there (`keyed`).
+    pub(super) fn read_source(&self, from: usize, origin: SlotId) -> String {
+        if self.pseudo > 0 {
+            format!("{PSEUDO}, f.s{origin}")
+        } else {
+            format!("{from}, f.s{origin}")
+        }
+    }
+
     /// A recursive unit's answers at the keys of `input`'s rows (`site`: the frame's slots for the
     /// unit's key; `None`, the key's own; `context`: the slot of the following context passed,
     /// none where NULL): the keys are demanded, the loop of the unit's component runs where the
@@ -1560,10 +1589,10 @@ impl<'s> Emitter<'s> {
         // which only starts the check at more keys.
         let (reads, source) = match (self.evaluating.last(), self.origin) {
             (Some(&from), Some(origin)) if units[from].scc == scc => {
-                (reads_table(units[from].scc), format!("{from}, f.s{origin}"))
+                (reads_table(units[from].scc), self.read_source(from, origin))
             }
             (Some(&from), Some(origin)) => {
-                (cross_table(units[from].scc), format!("{from}, f.s{origin}"))
+                (cross_table(units[from].scc), self.read_source(from, origin))
             }
             _ => (start_table(), "-1, 0".to_owned()),
         };
@@ -1656,6 +1685,11 @@ impl<'s> Emitter<'s> {
                 self.push(sql, Effect::default());
             }
         }
+        // The component's bodies record their reads from pseudo-nodes of their own.
+        let outer = (
+            std::mem::take(&mut self.pseudo),
+            std::mem::take(&mut self.pseudo_levels),
+        );
         self.emitting.push(scc);
         self.looping += 1;
         self.push(LOOP.to_owned(), Effect::default());
@@ -1750,6 +1784,21 @@ impl<'s> Emitter<'s> {
                 Reads::copy(&fresh),
             );
         }
+        // A key reads a changed key through pseudo-nodes too (`PSEUDO`), as many as its bodies
+        // nest keyed evaluations: each of them that reads a changed key or pseudo-node is
+        // changed in turn, so the dirty-key update below finds the keys that read it.
+        for _ in 0..self.pseudo_levels {
+            self.insert(
+                &changed,
+                format!(
+                    "INSERT INTO {changed} SELECT DISTINCT e.su, e.s FROM {reads} e JOIN {changed} c \
+                     ON c.u = e.du AND c.id = e.d WHERE e.su = {PSEUDO} AND NOT EXISTS \
+                     (SELECT 1 FROM {changed} h WHERE h.u = e.su AND h.id = e.s)"
+                ),
+                Reads::join(&[&reads, &changed]),
+            );
+        }
+        (self.pseudo, self.pseudo_levels) = outer;
         for &unit in &members {
             let demand = demand_table(unit);
             self.push(
@@ -1875,7 +1924,11 @@ impl<'s> Emitter<'s> {
                 candidates
             }
         });
-        self.open_space(&candidates, input, lineage::Derive::Probe);
+        let reach = match walk {
+            Walk::Has(_) | Walk::FieldHas(..) => lineage::Reach::Kept,
+            _ => lineage::Reach::Meets,
+        };
+        self.open_space(&candidates, input, lineage::Derive::Probe, reach);
         candidates
     }
 
@@ -2180,7 +2233,12 @@ impl<'s> Emitter<'s> {
                         Reads::join(&[input]),
                     );
                 });
-                self.open_space(&siblings, input, lineage::Derive::Probe);
+                self.open_space(
+                    &siblings,
+                    input,
+                    lineage::Derive::Probe,
+                    lineage::Reach::Meets,
+                );
                 let matched = self.op(rule, &siblings, &back);
                 let returned = self.within(&back, |this| this.physical_of("s"));
                 let with = format!(

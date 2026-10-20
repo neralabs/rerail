@@ -12,9 +12,10 @@
 //! slots it sets (`Walk::Slot`, `Walk::Related`), a gate's slot, a parsed tree's inner, host,
 //! tree and export slots, a count's `as`, a call's caller and parameter slots and every slot of
 //! its body, a recursive reference's key (and, in a unit's loop, the origin slot its read is
-//! recorded under), `violation.each`'s root and enumerated slots. That is the
-//! same key the native matcher's per-file memo keys a utility's answer by: the node and the input
-//! bindings restricted to the utility's scope, with the exclusion state (the each root).
+//! recorded under, but where the module's last section takes it out), `violation.each`'s root
+//! and enumerated slots. That is the same key the native matcher's per-file memo keys a
+//! utility's answer by: the node and the input bindings restricted to the utility's scope, with
+//! the exclusion state (the each root).
 //!
 //! So `keyed` takes the input's `DISTINCT (file, node, columns of touched)`, gives each key its
 //! own `k`, runs the operator on that key frame (each key evaluated once, whatever the number of
@@ -41,8 +42,40 @@
 //! A slot unbound in every row of the input (the root frame binds none, and an operator leaves
 //! the slots it does not name as they were: `Emitter::nulls`) is one value, NULL, across it. So
 //! the key leaves it out, and a frame unique on a set of slots is unique on the set without it.
+//!
+//! # Recursive reads from a key: pseudo-nodes
+//!
+//! In a unit's body every row carries the origin slot, the demand row it is evaluated for, which
+//! names the key a recursive read is recorded from (`Emitter::recur`). It decides no verdict, so
+//! a key may leave it out: the key then stands for every row sharing it, whatever key each is
+//! evaluated for, and is evaluated once. Its frame's origin column numbers the key afresh
+//! instead, a pseudo-node (`emit::PSEUDO`) no pass met before (`emit::PSEUDO_KEY_FUNCTION`),
+//! which the reads under the key are recorded from; and each input row's key reads the
+//! pseudo-node of its key, `(origin, key) → (PSEUDO, pseudo-node)`, from the rows `lineage`
+//! needs.
+//!
+//! That pays only where many of the unit's keys reach one row: the key frame, the input rows'
+//! reads into it and the back join cost a row each, and save the rows the keys share. So the
+//! origin leaves the key only where both hold, decided from the plan alone:
+//! - rows of distinct keys can meet (`Emitter::shared`): a walk between the unit's keys and the
+//!   input leads distinct nodes to one (up the tree, along siblings, to a terminal's related
+//!   node). Without one, a row's node descends from its own key's node alone and the rows that
+//!   share a key are one key's;
+//! - the operator, two-valued, reaches two recursive references or more, each demanded, answered
+//!   and recorded once per key rather than per row (`serverplan_state_tripwires`' `rtauth` walk:
+//!   491k candidates of 1.7k keys, the descendants of an ancestor many keys share). Such an
+//!   operator is keyed even where it does not walk.
+//!
+//! Elsewhere the origin is part of the key, as any other slot the operator names.
+//!
+//! The check is exact (`exec::acyclic`, `lineage`'s argument). A key's pseudo-node is needed
+//! where one of its rows is (`lineage::Derive::Keyed`), and its evaluation is the same for every
+//! row: a path `s → p → d` holds exactly where a needed row evaluated for `s` reads `d` through
+//! its key, and a pseudo-node is no hop of the depth limit. A pass's pseudo-nodes are new, so a
+//! key's reads replaced by a later pass drop its reads into them, and the reads out of a
+//! pseudo-node no kept read reaches decide nothing.
 
-use super::{Effect, Emitter, Live, Reads};
+use super::{Effect, Emitter, Live, PSEUDO, PSEUDO_KEY_FUNCTION, Reads};
 use crate::code_rule_dsl::sql::plan::{Export, OfRule, Op, SlotId, Source, Unit, Walk};
 use std::collections::BTreeSet;
 use std::fmt::Write;
@@ -242,6 +275,13 @@ fn walks(op: &Op) -> bool {
     }
 }
 
+/// How many recursive references `op`'s tree holds.
+fn references(op: &Op) -> usize {
+    let mut referred = Vec::new();
+    crate::code_rule_dsl::sql::lower::referred(op, &mut referred);
+    referred.len()
+}
+
 /// Whether `op` is evaluated per distinct key: an operator that walks, or a negation, call,
 /// parsed tree or host rule over one. A pipeline (`all`, `any`, a sequence) is not: its terms
 /// key themselves.
@@ -305,32 +345,52 @@ impl Emitter<'_> {
         }
     }
 
-    /// `op` on `input` per distinct key (the module doc), where it walks and `input` may hold
-    /// several rows of one key, its output holding `live`; `None` where it is evaluated directly.
+    /// `op` on `input` per distinct key (the module doc), where it walks (or, two-valued, reaches
+    /// two recursive references or more over rows several keys of its unit share) and `input`
+    /// may hold several rows of one key, its output holding `live`; `None` where it is evaluated
+    /// directly.
     pub(super) fn keyed(&mut self, op: &Op, input: &str, live: &Live) -> Option<String> {
-        if !keyed_operator(op) {
+        // Rows several keys of the unit share (`Emitter::shared`), read by two references or
+        // more: keyed apart from the keys they are evaluated for (the module doc).
+        let shared = !self.three && references(op) >= 2 && self.shared(input);
+        if !keyed_operator(op) && !shared {
             return None;
         }
         let touched = self.touched(op);
+        // There the origin decides no verdict: it names the key a read is recorded from. So no
+        // key holds it, and each key stands for every row sharing it, whatever key the row is
+        // evaluated for: a pseudo-node of the recursion's reads (the module doc).
+        let origin = self
+            .origin
+            .filter(|origin| shared && touched.contains(origin));
+        let named_slots: BTreeSet<SlotId> = touched
+            .iter()
+            .copied()
+            .filter(|&slot| Some(slot) != origin)
+            .collect();
         // A slot unbound in every input row is one value: no key needs it, and a frame unique on
         // a set of slots is unique on the set without it.
         let nulls = self.nulls_of(input);
         if self.unique.get(input).is_some_and(|sets| {
-            sets.iter()
-                .any(|set| set.difference(&nulls).all(|slot| touched.contains(slot)))
+            sets.iter().any(|set| {
+                set.difference(&nulls)
+                    .all(|slot| named_slots.contains(slot))
+            })
         }) {
             return None;
         }
         // Mutant 13: the key omits its first slot.
         let named: BTreeSet<SlotId> = if crate::code_rule_dsl::sql::mutant(13) {
-            touched.iter().skip(1).copied().collect()
+            named_slots.iter().skip(1).copied().collect()
         } else {
-            (*touched).clone()
+            named_slots
         };
         let key: BTreeSet<SlotId> = named.difference(&nulls).copied().collect();
         let columns: Vec<String> = key.iter().flat_map(|&slot| self.columns(slot)).collect();
-        // The key frame: one row per distinct key, the other slots the operator names unbound.
-        // Its rows return the key's slots of `live`.
+        let pseudo = origin.filter(|origin| !self.evaluating.is_empty() && !nulls.contains(origin));
+        // The key frame: one row per distinct key, the other slots the operator names unbound
+        // but the origin, which numbers its pseudo-node. Its rows return the key's slots of
+        // `live`.
         let keys = self.name("q");
         let back = self.rebound(op, live);
         self.within(&touched, |this| {
@@ -349,6 +409,8 @@ impl Emitter<'_> {
             for column in this.layout.columns.iter() {
                 if columns.contains(column) {
                     write!(values, ", {column}")
+                } else if pseudo.is_some_and(|origin| *column == format!("s{origin}")) {
+                    write!(values, ", {PSEUDO_KEY_FUNCTION}()")
                 } else {
                     values.write_str(", NULL")
                 }
@@ -370,10 +432,18 @@ impl Emitter<'_> {
         });
         self.keyed_by(&keys, vec![key.clone()]);
         self.inherit_kinds(input, &keys);
-        self.nulls.insert(
-            keys.clone(),
-            Rc::new(touched.difference(&key).copied().collect()),
-        );
+        let unbound = touched
+            .difference(&key)
+            .copied()
+            .filter(|&slot| Some(slot) != pseudo)
+            .collect();
+        self.nulls.insert(keys.clone(), Rc::new(unbound));
+        // A key's rows meet no other key's: under a pseudo-node a walk must converge again.
+        let reach = if pseudo.is_some() {
+            super::lineage::Reach::Apart
+        } else {
+            super::lineage::Reach::Kept
+        };
         self.open_space(
             &keys,
             input,
@@ -381,8 +451,33 @@ impl Emitter<'_> {
                 input: input.to_owned(),
                 columns: columns.clone(),
             },
+            reach,
         );
+        if let (Some(origin), Some(&from)) = (pseudo, self.evaluating.last()) {
+            // Each input row's key reads its pseudo-node: recorded from the needed rows, as the
+            // reads under the key are from its own (`lineage`).
+            let reads = super::reads_table(self.units[from].scc);
+            let source = self.read_source(from, origin);
+            let matched: String = columns
+                .iter()
+                .map(|column| format!(" AND q.{column} IS f.{column}"))
+                .collect();
+            self.record_read(
+                &reads,
+                input,
+                &keys,
+                format!(
+                    "INSERT INTO {reads} SELECT {source}, {PSEUDO}, q.s{origin} FROM {input} f"
+                ),
+                format!(" CROSS JOIN {keys} q ON q.file = f.file AND q.node = f.node{matched}"),
+            );
+            self.pseudo += 1;
+            self.pseudo_levels = self.pseudo_levels.max(self.pseudo);
+        }
         let out = self.op(op, &keys, &back);
+        if pseudo.is_some() {
+            self.pseudo -= 1;
+        }
         // Each input row takes its key's verdict: the slots the operator names as it left them;
         // the input's unbound slots are not read.
         let mut overrides: Vec<(String, String)> = named

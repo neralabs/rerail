@@ -590,7 +590,12 @@ impl Emitter<'_> {
                         Reads::join(&[input]),
                     );
                 });
-                self.open_space(&siblings, input, super::lineage::Derive::Probe);
+                self.open_space(
+                    &siblings,
+                    input,
+                    super::lineage::Derive::Probe,
+                    super::lineage::Reach::Meets,
+                );
                 let matched = self.op(rule, &siblings, &back);
                 let returned = self.within(&back, |this| this.physical_of("s"));
                 let with = format!(
