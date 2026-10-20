@@ -253,6 +253,24 @@ impl FrameStore {
         }
     }
 
+    /// The bytes the frames' column buffers hold allocated, rows or not (an emptied frame keeps up
+    /// to `RETAIN` rows' worth); a text or blob value's own bytes are not counted.
+    pub(super) fn bytes(&self) -> usize {
+        self.frames
+            .lock()
+            .values()
+            .flat_map(|shared| &shared.get().columns)
+            .map(|column| {
+                let data = match &column.data {
+                    Data::Narrow(values) => values.capacity() * size_of::<i32>(),
+                    Data::Wide(values) => values.capacity() * size_of::<i64>(),
+                    Data::Any(values) => values.capacity() * size_of::<Value>(),
+                };
+                data + column.nulls.capacity() * size_of::<u64>()
+            })
+            .sum()
+    }
+
     /// The most rows the frames held at once.
     #[cfg(test)]
     pub(super) fn peak(&self) -> usize {

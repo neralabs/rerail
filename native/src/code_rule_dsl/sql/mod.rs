@@ -23,8 +23,8 @@ mod texts;
 mod timing;
 
 pub(super) use exec::{
-    ClauseRun, CompilePhases, Compiled, FileContext, ProgramCompiler, Session, SqlError, SqlMatch,
-    Stats, compile_enumerating, environment,
+    ClauseRun, CompilePhases, Compiled, FileContext, ProgramCompiler, Session, SessionMemory,
+    SqlError, SqlMatch, Stats, compile_enumerating, environment,
 };
 #[cfg(feature = "unbounded-work")]
 pub(super) use exec::{StatementProfile, profiled};
