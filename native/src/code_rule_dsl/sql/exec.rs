@@ -956,6 +956,8 @@ impl Catalog {
 /// statement texts.
 struct Plan {
     tables: Vec<Table>,
+    /// Per table, a frame's declaration parsed, which every session's frame of it shares.
+    declarations: Vec<Option<Arc<frames::Declaration>>>,
     shapes: Shapes,
     stages: Vec<(GrammarDialect, Instance)>,
     clauses: Vec<(Instance, Vec<CaptureColumn>)>,
@@ -1137,8 +1139,20 @@ impl Planner {
             .into_iter()
             .map(|(count, clause)| clause.filter(|_| count == 1))
             .collect();
+        let declarations = self
+            .catalog
+            .tables
+            .iter()
+            .map(|table| match &table.make {
+                Make::Frame(declaration) => frames::Declaration::parse(declaration)
+                    .map(|parsed| Some(Arc::new(parsed)))
+                    .map_err(|error| error.to_string()),
+                Make::Rec(_) | Make::BTree(_) => Ok(None),
+            })
+            .collect::<Result<_, _>>()?;
         Ok(Plan {
             tables: self.catalog.tables,
+            declarations,
             shapes,
             stages: planned_stages,
             clauses: self.clauses,
@@ -1916,16 +1930,28 @@ const CLEAR_RUNS: &str = "DELETE FROM runs";
 const CLEAR_ROOTS: &str = "DELETE FROM roots";
 const INSERT_RUN: &str = "INSERT INTO runs(run, file) VALUES (?1, ?2)";
 const INSERT_ROOT: &str = "INSERT OR IGNORE INTO roots(run, file, node) VALUES (?1, ?2, ?3)";
+/// Returns the temporary database's free pages to the allocator: a batch's B-tree rows, emptied
+/// when their clause ends, leave their pages free (`auto_vacuum = INCREMENTAL`), and an
+/// in-memory database keeps free pages allocated until a vacuum truncates them.
+const FREE_PAGES: &str = "PRAGMA temp.incremental_vacuum";
 /// The statements every batch runs besides its stages' and clauses'.
-const BATCH_STATEMENTS: usize = 4;
+const BATCH_STATEMENTS: usize = 5;
+/// The most statements a session's cache holds; the least recently run is finalized when a new
+/// one is prepared past it. A statement holds 5 KiB on average. On workspace 01 with the Tempo and
+/// data-layer policies each of the four sessions runs about 19k distinct texts (395 MiB held
+/// uncapped, whether its clauses run grouped or not); at 2,048 they hold 40 MiB, and re-preparing
+/// the evicted ones costs 0.6% of the scan's instructions (nothing measurable at 4,096, 1.5% at
+/// 1,024).
+const STATEMENT_CACHE: usize = 2048;
 
 /// A connection running one compiled program's batches (`Plan`). A session starts with only the
 /// tables of the batch's own rows, `runs` and `roots`: the files and roots a statement's root
 /// frame reads, under the statement's run id. A stage's or clause's tables are made on its first
 /// run (`activate`), and its statements prepared on their first execution, into a cache sized
-/// for the distinct texts of the stages and clauses that ran. The session keeps them across
-/// batches: a batch empties its tables (`frames`: the frame tables' buffers; `recs`: the
-/// recursion tables') and refills them through the cached statements. `counts`: every counted
+/// for the distinct texts of the stages and clauses that ran, up to `STATEMENT_CACHE`. The
+/// session keeps them across batches: a batch empties its tables (`frames`: the frame tables'
+/// buffers, freed when it ends; `recs`: the recursion tables'; the B-trees' pages, returned by
+/// `FREE_PAGES`) and refills them through the cached statements. `counts`: every counted
 /// table's rows (`skip`).
 pub(in crate::code_rule_dsl) struct Session {
     connection: Connection,
@@ -1969,8 +1995,9 @@ impl Session {
         let slot = Arc::new(BatchSlot::default());
         let connection = connect(&slot)?;
         let frames = Arc::new(FrameStore::default());
+        // `auto_vacuum` applies to a database made after it: before the first table.
         connection.execute_batch(
-            "PRAGMA temp_store = MEMORY; \
+            "PRAGMA temp_store = MEMORY; PRAGMA temp.auto_vacuum = INCREMENTAL; \
              CREATE TEMP TABLE runs(run INTEGER NOT NULL, file INTEGER NOT NULL, \
              PRIMARY KEY (run, file)) WITHOUT ROWID; \
              CREATE TEMP TABLE roots(run INTEGER NOT NULL, file INTEGER NOT NULL, \
@@ -2038,7 +2065,10 @@ impl Session {
                     continue;
                 }
                 match &plan.tables[table].make {
-                    Make::Frame(declaration) => {
+                    Make::Frame(_) => {
+                        let declaration = plan.declarations[table]
+                            .as_ref()
+                            .expect("a plan parses its frames' declarations");
                         self.frames.register(&self.connection, declaration)?;
                     }
                     Make::Rec(declaration) => self.recs.register(&self.connection, declaration)?,
@@ -2058,7 +2088,7 @@ impl Session {
         }
         if self.capacity > capacity {
             self.connection
-                .set_prepared_statement_cache_capacity(self.capacity);
+                .set_prepared_statement_cache_capacity(self.capacity.min(STATEMENT_CACHE));
             self.stats.texts += self.capacity - capacity;
         }
         self.stats.setup.add(started.elapsed());
@@ -2093,9 +2123,9 @@ impl Session {
 
     /// The heap the session holds: its connection's schema (the tables and frames the session
     /// made), prepared statements and page cache (the temporary B-trees' pages), as
-    /// `sqlite3_db_status` reports them (SQLite allocates through the system allocator, outside
-    /// the addon's); its frames' column buffers (`FrameStore::bytes`) and its recursion tables'
-    /// (`RecStore::bytes`).
+    /// `sqlite3_db_status` reports them (SQLite allocates through the addon's jemalloc where it
+    /// has one, `install_sqlite_allocator`, so the allocator's statistics count them too); its
+    /// frames' column buffers (`FrameStore::bytes`) and its recursion tables' (`RecStore::bytes`).
     pub(in crate::code_rule_dsl) fn memory(&self) -> SessionMemory {
         let status = |operation| {
             let (mut current, mut highwater) = (0, 0);
@@ -2176,9 +2206,11 @@ impl Session {
     /// Runs one batch of `docs`, each with what its scopes read beyond its tape (`FileContext`):
     /// each of `runs` over its files (a statement in one run at most). Returns, per run and per
     /// file of it (in its order), the file's matches, ordered by root. A batch that fails leaves
-    /// every table empty, so the session runs the next one afresh. The input-set terminals' file
-    /// scopes live for the batch: built on a file's first key, kept across the batch's
-    /// statements, and dropped when it ends.
+    /// every table empty, so the session runs the next one afresh; every batch ends with its
+    /// frames' and emptied recursion tables' buffers freed and its B-trees' free pages returned
+    /// (`FREE_PAGES`), so a session holds between batches only what it keeps for all of them. The
+    /// input-set terminals' file scopes live for the batch: built on a file's first key, kept
+    /// across the batch's statements, and dropped when it ends.
     pub(in crate::code_rule_dsl) fn run(
         &mut self,
         docs: Vec<(TapeDoc, FileContext)>,
@@ -2207,14 +2239,13 @@ impl Session {
         drop(scopes);
         *self.slot.current.write() = None;
         if result.is_err() {
+            // The frames are emptied below, as after every batch.
             for (table, made) in self.plan.tables.iter().zip(&self.made) {
                 if !made {
                     continue;
                 }
                 match table.make {
-                    Make::Frame(_) => {
-                        self.frames.clear(&table.name);
-                    }
+                    Make::Frame(_) => {}
                     Make::Rec(_) => {
                         self.recs.clear(&table.name);
                     }
@@ -2230,8 +2261,12 @@ impl Session {
             }
             self.counts.reset();
         }
-        self.frames.trim();
-        self.recs.trim();
+        self.frames.release();
+        self.recs.release();
+        let mut free = self.connection.prepare_cached(FREE_PAGES)?;
+        let mut freed = free.query([])?;
+        // Each step frees one page.
+        while freed.next()?.is_some() {}
         result
     }
 
