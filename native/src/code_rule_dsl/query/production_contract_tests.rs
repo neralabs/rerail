@@ -1754,6 +1754,51 @@ fn production_contract_phase_four_sql_results_equal_semantic_oracles() {
 }
 
 #[test]
+fn production_contract_phase_five_parsed_documents_equal_oracles() {
+    for name in [
+        "semantic-parse-literal",
+        "semantic-parse-host",
+        "semantic-parse-capture-export",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the parsed-document contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the parsed-document policy compiles");
+        let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+            .unwrap_or_else(|error| panic!("{name}: {}", error.unsupported().join("; ")));
+        assert!(
+            plan.terminals()
+                .iter()
+                .any(|terminal| terminal.kind() == super::relational::TerminalKind::Parse),
+            "{name}: one bounded parse producer"
+        );
+        let outcome =
+            super::policy_lowering_tests::sql_outcome(&compiled, &case.workspace.files[0].source);
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: mapped parse ranges");
+        assert!(outcome.errors.is_empty(), "{name}: complete parse facts");
+    }
+}
+
+#[test]
 fn production_contract_phase_four_unknown_fact_never_becomes_true() {
     let mut case = cases()
         .into_iter()
