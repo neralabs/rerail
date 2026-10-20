@@ -236,6 +236,8 @@ impl Emitter<'_> {
                     )
                 });
                 self.inherit(&rest, &next, &BTreeSet::new());
+                self.inherit_kinds(&rest, &next);
+                self.inherit_nulls(&rest, &next, &BTreeSet::new());
                 self.same_space(&rest, &next);
                 rest = next;
             }

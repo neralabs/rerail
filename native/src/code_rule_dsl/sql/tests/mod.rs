@@ -111,9 +111,10 @@ fn a_sample_clause_set_runs_a_bounded_number_of_statements_per_batch() {
     let (stages, clauses) = program.statement_count();
     eprintln!("sample clause set: {stages} stage statements, {clauses} clause statements");
     // `count` groups into a table keyed by row (`Emitter::grouped`). No rule walks over a frame
-    // that repeats a key (the nested `has` walks children, one row each): nothing is keyed. A
-    // walk's sub-rule does not re-test the kind its candidates were read by (`on_candidates`).
-    assert_eq!((stages, clauses), (6, 60));
+    // that repeats a key (the nested `has` walks children, one row each): nothing is keyed. No
+    // kind test is run on a frame whose nodes all pass it (`Emitter::kinds`): neither a root
+    // frame's nor a walk's or a count's candidates are re-tested for the kinds they were read by.
+    assert_eq!((stages, clauses), (4, 52));
 }
 
 /// Terminals run once per statement over their whole input set, never once per row: a fresh
@@ -186,6 +187,53 @@ fn walks_read_their_sub_rule_kinds_and_a_double_negation_is_a_semi_join() {
     }
 }
 
+/// A walk to sites that need a field child of some kinds reads only candidates that have it
+/// (`plan::Shape::Field`); no kind test is re-run on a frame whose nodes all pass it, under a
+/// double negation either (`Emitter::kinds`); and a key leaves out the slots no input row binds
+/// (`Emitter::nulls`): the candidates of a walk from the roots are keyed by `(file, node)` alone.
+/// Both engines agree.
+#[test]
+fn walks_test_field_shapes_skip_implied_kind_tests_and_key_without_unbound_slots() {
+    use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
+    let source = "function g() { a.f(1); h(x); b.c.k(2); }\nconst y = u.v(3) + w(4);\n";
+    let site = json!({ "all": [
+        { "kind": "call_expression" },
+        { "has": { "field": "function", "kind": "member_expression" } },
+    ] });
+    let rule = compiled(json!({ "rule": { "kind": "program", "has": {
+        "stopBy": "end",
+        "all": [
+            { "not": { "not": site } },
+            { "not": { "not": { "has": { "field": "function", "pattern": "$O.$M" } } } },
+        ],
+    } } }));
+    same(&rule, &snapshot(&[("typescript", "a.ts", source)]));
+    let grammars: Vec<_> = grammar_matchers(&rule).iter().collect();
+    let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
+    let statements: Vec<&String> = program.statements().collect();
+    let walk = statements
+        .iter()
+        .find(|statement| statement.contains("c.id <= fn.\"last\""))
+        .expect("a has-end walk");
+    assert!(walk.contains(".field = "), "the walk tests the field shape: {walk}");
+    assert!(
+        !statements.iter().any(|statement| statement
+            .contains("JOIN node n ON n.file = f.file AND n.id = f.node WHERE n.kind")),
+        "no kind test is re-run"
+    );
+    let keys: Vec<&&String> = statements
+        .iter()
+        .filter(|statement| statement.contains("SELECT DISTINCT f.file AS file, f.node AS node"))
+        .collect();
+    assert!(!keys.is_empty(), "the candidates are keyed");
+    for key in keys {
+        assert!(
+            !key.contains("f.node AS node, f.s"),
+            "a key holds no unbound slot: {key}"
+        );
+    }
+}
+
 /// A frame holds only the slots read after it (`emit`'s liveness), as `spt-022`'s walks from a
 /// statement of many captures do: a walk's candidates carry the slots its sub-rule reads and
 /// those it returns to the row, not every capture of the clause. A semi-join's carry none; a
@@ -203,12 +251,13 @@ fn a_walk_s_candidates_hold_only_the_slots_read_after_them() {
             .iter()
             .find(|statement| statement.contains("c.id <= fn.\"last\""))
             .expect("a has-end walk");
+        // Each held slot's column: copied from the row, or `NULL` where no row binds it.
         let copied = walk
             .split_once("SELECT NULL, c.file, c.node")
             .and_then(|(_, rest)| rest.split_once(", c.pk"))
             .expect("a candidate row")
             .0
-            .matches(", f.s")
+            .matches(", ")
             .count();
         let selected = statements
             .iter()

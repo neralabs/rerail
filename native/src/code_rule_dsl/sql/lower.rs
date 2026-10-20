@@ -271,12 +271,14 @@ impl RootKinds {
     /// What a walk's candidate must be for `rule` to hold, or be unknown, at it (`plan::Need`):
     /// its kinds, and a shape where one says more than they do.
     pub(super) fn need(&mut self, rule: &AstMatcher, analysis: &mut Analysis) -> Need {
-        let kinds = self.of(rule, analysis);
-        let shape = self.shape(rule, analysis).filter(Shape::structural);
-        Need {
-            kinds: kinds.map(|kinds| kinds.into_iter().collect()),
-            shape,
-        }
+        let kinds: Option<Vec<u16>> = self
+            .of(rule, analysis)
+            .map(|kinds| kinds.into_iter().collect());
+        let shape = self
+            .shape(rule, analysis)
+            .map(|shape| shape.past(kinds.as_deref()))
+            .filter(Shape::structural);
+        Need { kinds, shape }
     }
 
     /// A capture-free test every node `rule` holds, or is unknown, at passes; `None` where none is
@@ -295,6 +297,12 @@ impl RootKinds {
             AstMatcher::Has(related, StopBy::Neighbor) => self
                 .of(related.rule(), analysis)
                 .map(|own| Shape::Child(kinds(own))),
+            AstMatcher::Field(relation)
+                if !relation.inside && matches!(relation.stop, StopBy::Neighbor) =>
+            {
+                self.of(&relation.rule, analysis)
+                    .map(|own| Shape::Field(relation.field, kinds(own)))
+            }
             AstMatcher::Any(items) => {
                 let mut shapes = Vec::with_capacity(items.len());
                 for item in items {

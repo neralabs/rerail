@@ -37,6 +37,10 @@
 //! `(file, node)`, a key frame on its key, a unit's demanded keys on the unit's key; a relation's
 //! candidates are not. Where the input is unique on a subset of the key, it already holds one row
 //! per key and is evaluated directly.
+//!
+//! A slot unbound in every row of the input (the root frame binds none, and an operator leaves
+//! the slots it does not name as they were: `Emitter::nulls`) is one value, NULL, across it. So
+//! the key leaves it out, and a frame unique on a set of slots is unique on the set without it.
 
 use super::{Effect, Emitter, Live, Reads};
 use crate::code_rule_dsl::sql::plan::{Export, OfRule, Op, SlotId, Source, Unit, Walk};
@@ -308,19 +312,22 @@ impl Emitter<'_> {
             return None;
         }
         let touched = self.touched(op);
-        if self
-            .unique
-            .get(input)
-            .is_some_and(|sets| sets.iter().any(|set| set.is_subset(&touched)))
-        {
+        // A slot unbound in every input row is one value: no key needs it, and a frame unique on
+        // a set of slots is unique on the set without it.
+        let nulls = self.nulls_of(input);
+        if self.unique.get(input).is_some_and(|sets| {
+            sets.iter()
+                .any(|set| set.difference(&nulls).all(|slot| touched.contains(slot)))
+        }) {
             return None;
         }
         // Mutant 13: the key omits its first slot.
-        let key = if crate::code_rule_dsl::sql::mutant(13) {
-            Rc::new(touched.iter().skip(1).copied().collect())
+        let named: BTreeSet<SlotId> = if crate::code_rule_dsl::sql::mutant(13) {
+            touched.iter().skip(1).copied().collect()
         } else {
-            Rc::clone(&touched)
+            (*touched).clone()
         };
+        let key: BTreeSet<SlotId> = named.difference(&nulls).copied().collect();
         let columns: Vec<String> = key.iter().flat_map(|&slot| self.columns(slot)).collect();
         // The key frame: one row per distinct key, the other slots the operator names unbound.
         // Its rows return the key's slots of `live`.
@@ -361,7 +368,12 @@ impl Emitter<'_> {
                 Reads::join(&[input]),
             );
         });
-        self.keyed_by(&keys, vec![(*key).clone()]);
+        self.keyed_by(&keys, vec![key.clone()]);
+        self.inherit_kinds(input, &keys);
+        self.nulls.insert(
+            keys.clone(),
+            Rc::new(touched.difference(&key).copied().collect()),
+        );
         self.open_space(
             &keys,
             input,
@@ -371,11 +383,18 @@ impl Emitter<'_> {
             },
         );
         let out = self.op(op, &keys, &back);
-        // Each input row takes its key's verdict: the key's slots as the operator left them.
-        let overrides: Vec<(String, String)> = columns
+        // Each input row takes its key's verdict: the slots the operator names as it left them;
+        // the input's unbound slots are not read.
+        let mut overrides: Vec<(String, String)> = named
             .iter()
+            .flat_map(|&slot| self.columns(slot))
             .map(|column| (column.clone(), format!("o.{column}")))
             .collect();
+        for column in self.null_columns(input) {
+            if !overrides.iter().any(|(name, _)| *name == column) {
+                overrides.push((column, "NULL".to_owned()));
+            }
+        }
         // A keyed operator emits no withheld capture (its rows are verdicts, `plan`'s contract).
         let select = if self.three {
             self.verdict("f", &overrides, "o.unk")

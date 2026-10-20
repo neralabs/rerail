@@ -178,6 +178,9 @@ pub(super) enum Shape {
     Contains(Vec<u16>),
     /// A child's kind is one of these (`has`).
     Child(Vec<u16>),
+    /// The first child in this field has one of these kinds (a field `has` with `stopBy:
+    /// neighbor`, which tests that child alone).
+    Field(u16, Vec<u16>),
     All(Vec<Shape>),
     Any(Vec<Shape>),
 }
@@ -187,8 +190,32 @@ impl Shape {
     pub(super) fn structural(&self) -> bool {
         match self {
             Self::Kinds(_) => false,
-            Self::Contains(_) | Self::Child(_) => true,
+            Self::Contains(_) | Self::Child(_) | Self::Field(..) => true,
             Self::All(shapes) | Self::Any(shapes) => shapes.iter().any(Self::structural),
+        }
+    }
+
+    /// The shape tested on a candidate of `kinds` (`Need::kinds`, which the walk reads from the
+    /// postings): without an `all`'s kind tests every one of them passes.
+    pub(super) fn past(self, kinds: Option<&[u16]>) -> Self {
+        let Some(kinds) = kinds else {
+            return self;
+        };
+        match self {
+            Self::All(shapes) => {
+                let mut kept: Vec<Shape> = shapes
+                    .into_iter()
+                    .filter(|shape| {
+                        !matches!(shape, Self::Kinds(own) if kinds.iter().all(|kind| own.contains(kind)))
+                    })
+                    .map(|shape| shape.past(Some(kinds)))
+                    .collect();
+                match kept.len() {
+                    1 => kept.pop().expect("one shape"),
+                    _ => Self::All(kept),
+                }
+            }
+            shape => shape,
         }
     }
 }
