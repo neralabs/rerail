@@ -1105,6 +1105,23 @@ pub(super) fn sql_outcome_for_statement(
     sql_outcome_with_failure(compiled, source, dialect, None, Some(sql))
 }
 
+pub(super) fn sql_outcome_for_statement_with_fact_failure(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    source: &str,
+    dialect: GrammarDialect,
+    fact_producer: usize,
+    code: &str,
+    sql: &str,
+) -> SqlOutcome {
+    sql_outcome_with_failure(
+        compiled,
+        source,
+        dialect,
+        Some((fact_producer, code.to_owned())),
+        Some(sql),
+    )
+}
+
 pub(super) fn sql_outcome_with_fact_failure(
     compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
     source: &str,

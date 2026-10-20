@@ -1113,6 +1113,40 @@ fn production_contract_phase_four_real_fact_capacity_is_atomic() {
 }
 
 #[test]
+fn production_contract_phase_four_authored_failure_sql_projects_every_incomplete_fact_producer() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-fact-producer-failure")
+        .expect("the semantic fact failure contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+    let statements = authored_sql_goldens();
+    for code in ["capacity-failure", "semantic-fact-capacity"] {
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement_with_fact_failure(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            0,
+            code,
+            &statements[&case.name],
+        );
+        assert!(outcome.ranges.is_empty(), "{code}: no partial violation");
+        assert!(outcome.facts.is_empty(), "{code}: no partial facts");
+        assert_eq!(outcome.errors, [code], "{code}: typed clause failure");
+        assert!(outcome.statuses.iter().any(|status| {
+            status.producer == 1
+                && status.complete == 0
+                && status.verdict.is_none()
+                && status.error.as_deref() == Some(code)
+        }));
+    }
+}
+
+#[test]
 fn production_contract_phase_four_fact_failure_is_incomplete_and_has_no_partial_result() {
     let case = cases()
         .into_iter()
