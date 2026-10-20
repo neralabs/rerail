@@ -1008,6 +1008,23 @@ impl FileScopeSlot {
         })
     }
 
+    /// Adds `tables` to the tables built or reused so far, each whose grammar and reading none of
+    /// them has, as cached tables are: built elsewhere for the same file (the SQL engine's other
+    /// sessions of a batch), so read rather than built again.
+    pub(crate) fn adopt(&self, tables: &[Arc<ScopeTable>]) {
+        FILE_SCOPES.with_borrow_mut(|slot| {
+            if let Some(slot) = slot {
+                for table in tables {
+                    if !slot.tables.iter().any(|held| {
+                        held.language == table.language && held.reading == table.reading
+                    }) {
+                        slot.tables.push(Arc::clone(table));
+                    }
+                }
+            }
+        });
+    }
+
     /// A slot for a file's scopes set aside earlier (`park`): the tables, values and lines it
     /// built so far are read again rather than rebuilt.
     pub(crate) fn resume(parked: ParkedScopes) -> Self {

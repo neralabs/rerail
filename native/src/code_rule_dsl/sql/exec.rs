@@ -62,6 +62,10 @@ struct SubFiles {
     index: HashMap<usize, u32>,
 }
 
+/// A file's scope tables, shared by the clones of its `FileContext`.
+pub(in crate::code_rule_dsl) type SharedTables =
+    Arc<parking_lot::Mutex<Vec<Arc<crate::code_rule_dsl::scope::ScopeTable>>>>;
+
 /// What the native evaluator installs for a file besides its tree: its host path, its Python
 /// module path and the scope tables it has cached for the file's revision (the workspace's),
 /// which the input-set terminals' file scopes read (`FileScopeSlot::install`).
@@ -69,7 +73,11 @@ struct SubFiles {
 pub(in crate::code_rule_dsl) struct FileContext {
     pub(in crate::code_rule_dsl) path: Option<String>,
     pub(in crate::code_rule_dsl) module: Option<Arc<crate::code_rule_dsl::module_path::ModulePath>>,
-    pub(in crate::code_rule_dsl) scopes: Vec<Arc<crate::code_rule_dsl::scope::ScopeTable>>,
+    /// The cached scope tables, and those the batch's terminals build on the file since: one
+    /// cell for every clone of the context, so the groups a grouped batch runs in parallel, each
+    /// on its own session and thread (`SqlEngine::run_grouped`), build each table once between
+    /// them where one has built it before another needs it.
+    pub(in crate::code_rule_dsl) scopes: SharedTables,
     /// The workspace's (or stateless evaluation's) call-graph closure and the file's summary,
     /// which `calls` reads as `calls::FileCallsSlot` installs them for the file's evaluation.
     pub(in crate::code_rule_dsl) calls: Option<(
@@ -95,13 +103,16 @@ type FreshMatches = HashMap<i64, Option<Arc<[Option<i64>]>>>;
 pub(in crate::code_rule_dsl) type RunFile =
     (TapeDoc, Option<(usize, Option<Arc<[u32]>>)>, FileContext);
 
-/// A batch: its files' tapes and node facts, its program, and the fresh-env matches of each
-/// pattern terminal at the nodes tested so far.
+/// A batch: its files' tapes and node facts, its program, the fresh-env matches of each pattern
+/// terminal at the nodes tested so far, and the fact terms' remembered verdicts.
 pub(super) struct Batch {
     pub(super) files: Vec<BatchFile>,
     pub(super) program: Arc<Program>,
     fresh: Vec<parking_lot::Mutex<FreshMatches>>,
     subfiles: parking_lot::Mutex<SubFiles>,
+    /// Per fact term (by terminal index), its verdicts so far (`terminals::FactMemo`).
+    pub(super) fact_memos:
+        parking_lot::Mutex<rustc_hash::FxHashMap<usize, super::terminals::FactMemo>>,
 }
 
 impl Batch {
@@ -138,6 +149,7 @@ impl Batch {
                 .collect(),
             program,
             subfiles: parking_lot::Mutex::default(),
+            fact_memos: parking_lot::Mutex::default(),
         })
     }
 
