@@ -71,6 +71,7 @@ describe("the engine sources a rule's key covers", () => {
       "native/grammars/tree-sitter-sql/PATCHES.md",
       "native/grammars/tree-sitter-sql/rerail.patch",
       "native/grammars/tree-sitter-sql/src/grammar.json",
+      "native/grammars/tree-sitter-sql/src/parser.generated.c.gz",
       "native/grammars/tree-sitter-sql/src/scanner.c",
       "native/grammars/tree-sitter-sql/src/tree_sitter/alloc.h",
       "native/grammars/tree-sitter-sql/src/tree_sitter/array.h",
