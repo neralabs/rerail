@@ -85,6 +85,24 @@ struct ExpectedOracle {
     failures: Vec<Value>,
 }
 
+#[test]
+fn implementation_catalog_fixture_has_one_meaning() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.json"
+    ))
+    .expect("the implementation catalog fixture is JSON");
+    for case in fixture["cases"]
+        .as_array()
+        .expect("the catalog fixture has cases")
+    {
+        assert!(
+            case.get("normalized_sql").is_none(),
+            "{} duplicates its SQL contract in the catalog fixture",
+            case["name"]
+        );
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct ImplementationGoldenFile {
