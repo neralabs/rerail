@@ -1554,7 +1554,7 @@ fn rec_registers(
                 at.insert(name, declared.len());
                 declared.push((name, unnamed(item, name)));
             }
-        } else if item.starts_with("CREATE INDEX ")
+        } else if rec::is_index(item)
             && let Some((_, on)) = item.split_once(" ON ")
             && let Some(name) = on.strip_prefix(emit::TEMP).map(temporary)
             && let Some(&index) = at.get(name)
@@ -1773,7 +1773,7 @@ fn plan(
         }
         let sql = rename(sql);
         stages_read(&sql, &mut stages);
-        if sql.starts_with("CREATE INDEX ") {
+        if rec::is_index(&sql) {
             indexes.push(sql);
             continue;
         }

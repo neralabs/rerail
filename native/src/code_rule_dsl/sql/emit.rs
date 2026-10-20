@@ -1586,7 +1586,8 @@ impl<'s> Emitter<'s> {
         // into that unit's component's reads (`cross_table` where it reads another component),
         // or from the statement's own rows; recorded from the rows the matcher evaluates
         // (`lineage`). Without an origin slot to name the key, it counts as the statement's own,
-        // which only starts the check at more keys.
+        // which only starts the check at more keys. A component's reads are a set its table
+        // keeps (`recursion_loop`: a read made before is ignored), the start table's a frame.
         let (reads, source) = match (self.evaluating.last(), self.origin) {
             (Some(&from), Some(origin)) if units[from].scc == scc => {
                 (reads_table(units[from].scc), self.read_source(from, origin))
@@ -1596,11 +1597,16 @@ impl<'s> Emitter<'s> {
             }
             _ => (start_table(), "-1, 0".to_owned()),
         };
+        let insert = if reads == start_table() {
+            format!("INSERT INTO {reads} SELECT DISTINCT")
+        } else {
+            format!("INSERT OR IGNORE INTO {reads} SELECT")
+        };
         self.record_read(
             &reads,
             input,
             &demand,
-            format!("INSERT INTO {reads} SELECT DISTINCT {source}, {unit}, d.id FROM {input} f"),
+            format!("{insert} {source}, {unit}, d.id FROM {input} f"),
             format!(" JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched}"),
         );
         let overrides: Vec<(String, String)> = site_columns
@@ -1665,8 +1671,11 @@ impl<'s> Emitter<'s> {
         }
         let reads = reads_table(scc);
         let changed = format!("{NAMESPACE}c{scc}");
+        // A component's reads are a set: each read once (`rec`'s `UNIQUE`), whatever number of
+        // rows or statements make it (`recur`'s `INSERT OR IGNORE`).
         for sql in [
             format!("CREATE TEMP TABLE IF NOT EXISTS {reads}(su, s, du, d)"),
+            format!("CREATE UNIQUE INDEX IF NOT EXISTS {reads}_read ON {reads}(su, s, du, d)"),
             format!("CREATE INDEX IF NOT EXISTS {reads}_to ON {reads}(du, d)"),
             format!("CREATE INDEX IF NOT EXISTS {reads}_from ON {reads}(su, s)"),
             format!("CREATE TEMP TABLE IF NOT EXISTS {changed}(u, id)"),
@@ -1680,6 +1689,9 @@ impl<'s> Emitter<'s> {
         if let Some(crossing) = &crossing {
             for sql in [
                 format!("CREATE TEMP TABLE IF NOT EXISTS {crossing}(su, s, du, d)"),
+                format!(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS {crossing}_read ON {crossing}(su, s, du, d)"
+                ),
                 format!("CREATE INDEX IF NOT EXISTS {crossing}_from ON {crossing}(su, s)"),
             ] {
                 self.push(sql, Effect::default());

@@ -467,7 +467,7 @@ impl Emitter<'_> {
                 input,
                 &keys,
                 format!(
-                    "INSERT INTO {reads} SELECT {source}, {PSEUDO}, q.s{origin} FROM {input} f"
+                    "INSERT OR IGNORE INTO {reads} SELECT {source}, {PSEUDO}, q.s{origin} FROM {input} f"
                 ),
                 format!(" CROSS JOIN {keys} q ON q.file = f.file AND q.node = f.node{matched}"),
             );

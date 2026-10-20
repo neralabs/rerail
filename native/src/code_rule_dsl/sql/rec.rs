@@ -10,6 +10,9 @@
 //!   and a key is unique);
 //! - a hash index per `INDEX (…)` of its declaration: a whole-key lookup (a demand row by its
 //!   key, a read by the key it is from or the key it reads);
+//! - a hash index per `UNIQUE (…)`, which refuses a row equal on its columns to a live one: a
+//!   component's reads are a set, so `INSERT OR IGNORE` drops a read recorded before, uncounted
+//!   (the table declares constraint support, so SQLite neither counts nor fails an ignored row);
 //! - a row set per `SET (column = value)`: the rows holding that value (the dirty keys).
 //!
 //! No constraint is omitted: SQLite checks every row a lookup returns, so a lookup returns a
@@ -50,18 +53,29 @@ const SCAN_COST: f64 = 1_048_576.0;
 /// A table is compacted once it holds at least this many deleted rows, and more than live ones.
 const COMPACT: usize = 4096;
 
-/// The `CREATE INDEX` of a recursion table as its declaration's entry: `INDEX (columns)`, or
-/// `SET (column = value)` for a partial index `… WHERE column = value` (the rows it holds are
-/// what a plan reads it for). `None` for another statement.
+/// The `CREATE [UNIQUE] INDEX` of a recursion table as its declaration's entry:
+/// `INDEX (columns)` (`UNIQUE (columns)`), or `SET (column = value)` for a partial index
+/// `… WHERE column = value` (the rows it holds are what a plan reads it for). `None` for another
+/// statement.
 pub(super) fn index_entry(sql: &str) -> Option<(&str, String)> {
-    let (_, on) = sql.strip_prefix("CREATE INDEX ")?.split_once(" ON ")?;
+    let (unique, rest) = match sql.strip_prefix("CREATE UNIQUE INDEX ") {
+        Some(rest) => (true, rest),
+        None => (false, sql.strip_prefix("CREATE INDEX ")?),
+    };
+    let (_, on) = rest.split_once(" ON ")?;
     let (table, rest) = on.split_once('(')?;
     let (columns, rest) = rest.split_once(')')?;
     let entry = match rest.trim().strip_prefix("WHERE ") {
+        None if unique => format!("UNIQUE ({columns})"),
         None => format!("INDEX ({columns})"),
         Some(condition) => format!("SET ({})", condition.trim()),
     };
     Some((table.trim(), entry))
+}
+
+/// Whether `sql` makes an index (`index_entry`).
+pub(super) fn is_index(sql: &str) -> bool {
+    sql.starts_with("CREATE INDEX ") || sql.starts_with("CREATE UNIQUE INDEX ")
 }
 
 /// A recursion table's declaration from its `CREATE TEMP TABLE`: `name(columns)`.
@@ -233,10 +247,12 @@ const INTEGER: u8 = 0;
 const NULL: u8 = 1;
 const OTHER: u8 = 2;
 
-/// A hash index on `columns`: each hash's newest row, then each row's next of its hash.
+/// A hash index on `columns`: each hash's newest row, then each row's next of its hash. `unique`:
+/// no two live rows are equal on `columns` (`Table::insert` refuses the second).
 #[derive(Clone)]
 struct Index {
     columns: Vec<usize>,
+    unique: bool,
     heads: FxHashMap<u64, u32>,
     next: Vec<u32>,
 }
@@ -434,6 +450,31 @@ impl Table {
         }
     }
 
+    /// Whether `slot`, its values pushed but not yet live, equals a live row on a unique index's
+    /// columns.
+    fn duplicate(&self, slot: usize) -> bool {
+        self.indexes
+            .iter()
+            .filter(|index| index.unique)
+            .any(|index| {
+                let hash = self.row_hash(slot, &index.columns);
+                let mut at = index.heads.get(&hash).copied().unwrap_or(NONE);
+                while at != NONE {
+                    let row = at as usize;
+                    if self.alive[row]
+                        && index
+                            .columns
+                            .iter()
+                            .all(|&column| self.canon(row, column) == self.canon(slot, column))
+                    {
+                        return true;
+                    }
+                    at = index.next[row];
+                }
+                false
+            })
+    }
+
     fn insert(&mut self, args: &Inserts<'_>) -> Result<i64> {
         if args.len() != self.width + 2 {
             return Err(Error::ModuleError("rec: wrong column count".into()));
@@ -457,12 +498,12 @@ impl Table {
                 if self.slot_of.contains_key(&rowid) {
                     return Err(Error::ModuleError("rec: UNIQUE constraint failed".into()));
                 }
-                self.largest = Some(self.largest.map_or(rowid, |largest| largest.max(rowid)));
-                self.slot_of.insert(rowid, self.slots() as u32);
                 Some(rowid)
             }
             None => None,
         };
+        let slot = self.slots();
+        let others = self.others.len();
         for (column, value) in args.iter().skip(2).enumerate() {
             match (rowid, self.key) {
                 (Some(rowid), Some(key)) if key == column => {
@@ -470,6 +511,20 @@ impl Table {
                 }
                 _ => self.push(column, value),
             }
+        }
+        if self.duplicate(slot) {
+            self.values.truncate(slot * self.width);
+            self.tags.truncate(slot * self.width);
+            self.others.truncate(others);
+            // `INSERT OR IGNORE` drops the row, uncounted (`RecTable::connect`).
+            return Err(Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE),
+                None,
+            ));
+        }
+        if let Some(rowid) = rowid {
+            self.largest = Some(self.largest.map_or(rowid, |largest| largest.max(rowid)));
+            self.slot_of.insert(rowid, slot as u32);
         }
         self.alive.push(true);
         self.live += 1;
@@ -631,7 +686,7 @@ impl Table {
 }
 
 /// A table's declared schema and empty buffers from its declaration's entries: its column
-/// definitions, then `INDEX (…)` and `SET (column = value)` entries.
+/// definitions, then `INDEX (…)`, `UNIQUE (…)` and `SET (column = value)` entries.
 fn parse(text: &str) -> Result<(CString, Table)> {
     let mut parts: Vec<&str> = Vec::new();
     let (mut depth, mut from) = (0usize, 0);
@@ -661,10 +716,16 @@ fn parse(text: &str) -> Result<(CString, Table)> {
                 .to_owned(),
         )
     };
-    let mut owned: Vec<String> = Vec::new();
+    // Each index's columns, and whether it is unique.
+    let mut owned: Vec<(String, bool)> = Vec::new();
     for part in parts.iter().copied().filter(|part| !part.is_empty()) {
         if let Some(list) = inside("INDEX", part) {
-            owned.push(list);
+            owned.push((list, false));
+            index_lists.push(part);
+            continue;
+        }
+        if let Some(list) = inside("UNIQUE", part) {
+            owned.push((list, true));
             index_lists.push(part);
             continue;
         }
@@ -706,10 +767,11 @@ fn parse(text: &str) -> Result<(CString, Table)> {
             .ok_or_else(|| Error::ModuleError(format!("rec: no column {name}")))
     };
     let mut indexes = Vec::new();
-    for list in &owned {
+    for (list, unique) in &owned {
         let columns = list.split(',').map(position).collect::<Result<Vec<_>>>()?;
         indexes.push(Index {
             columns,
+            unique: *unique,
             heads: FxHashMap::default(),
             next: Vec::new(),
         });
@@ -758,8 +820,23 @@ pub(super) struct RecTable {
 }
 
 impl RecTable {
-    fn of(aux: Option<&RecAux>) -> Result<(Cow<'static, CStr>, Self)> {
+    /// The table `aux` carries, on `db`: with constraint support, so a row a unique index
+    /// refuses (`Table::insert`) is one `INSERT OR IGNORE` passes over, neither counted nor failed.
+    fn of(db: &mut VTabConnection, aux: Option<&RecAux>) -> Result<(Cow<'static, CStr>, Self)> {
         let aux = aux.ok_or_else(|| Error::ModuleError("rec: no table".into()))?;
+        // rusqlite's `VTabConnection::config` passes no value, which `SQLITE_VTAB_CONSTRAINT_
+        // SUPPORT` reads as its one variadic `int`: call it with `1`.
+        // SAFETY: `db` is the connection calling `xConnect`, the one place SQLite allows this.
+        let code = unsafe {
+            rusqlite::ffi::sqlite3_vtab_config(
+                db.handle(),
+                rusqlite::ffi::SQLITE_VTAB_CONSTRAINT_SUPPORT,
+                1 as c_int,
+            )
+        };
+        if code != rusqlite::ffi::SQLITE_OK {
+            return Err(Error::SqliteFailure(rusqlite::ffi::Error::new(code), None));
+        }
         Ok((
             Cow::Owned(aux.schema.clone()),
             Self {
@@ -782,14 +859,14 @@ unsafe impl<'vtab> VTab<'vtab> for RecTable {
     type Cursor = RecCursor<'vtab>;
 
     fn connect(
-        _db: &mut VTabConnection,
+        db: &mut VTabConnection,
         aux: Option<&RecAux>,
         _module: &[u8],
         _database: &[u8],
         _table: &[u8],
         _args: &[&[u8]],
     ) -> Result<(Cow<'static, CStr>, Self)> {
-        Self::of(aux)
+        Self::of(db, aux)
     }
 
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
@@ -897,14 +974,14 @@ impl CreateVTab<'_> for RecTable {
     const KIND: VTabKind = VTabKind::Eponymous;
 
     fn create(
-        _db: &mut VTabConnection,
+        db: &mut VTabConnection,
         aux: Option<&RecAux>,
         _module: &[u8],
         _database: &[u8],
         _table: &[u8],
         _args: &[&[u8]],
     ) -> Result<(Cow<'static, CStr>, Self)> {
-        Self::of(aux)
+        Self::of(db, aux)
     }
 }
 
@@ -1267,6 +1344,52 @@ mod tests {
             rows(&connection, "SELECT d FROM e WHERE su = 1 AND s = 57"),
             ints(&[&[7]])
         );
+    }
+
+    #[test]
+    fn a_unique_index_ignores_a_read_made_before_uncounted() {
+        let (connection, store) = store(&["e(su, s, du, d, UNIQUE (su, s, du, d), INDEX (su, s))"]);
+        assert_eq!(
+            rec_entry("CREATE UNIQUE INDEX IF NOT EXISTS e_read ON e(su, s, du, d)"),
+            ("e", "UNIQUE (su, s, du, d)".to_owned())
+        );
+        // Within one statement and across statements; 1.0 equals 1.
+        let changed = connection
+            .execute(
+                "INSERT OR IGNORE INTO e SELECT 1, value % 3, 2, 7 FROM json_each('[0,1,2,3,4,5]')",
+                [],
+            )
+            .expect("inserts");
+        assert_eq!(changed, 3);
+        let changed = connection
+            .execute(
+                "INSERT OR IGNORE INTO e VALUES (1, 1.0, 2, 7), (1, 3, 2, 7), (NULL, 1, 2, 7)",
+                [],
+            )
+            .expect("inserts");
+        assert_eq!(changed, 2);
+        assert_eq!(store.rows("e"), Some(5));
+        // Without `OR IGNORE` a repeated read fails; a deleted one is made again.
+        assert!(
+            connection
+                .execute("INSERT INTO e VALUES (1, 3, 2, 7)", [])
+                .is_err()
+        );
+        connection
+            .execute_batch("DELETE FROM e WHERE su = 1 AND s = 3")
+            .expect("deletes");
+        let changed = connection
+            .execute("INSERT OR IGNORE INTO e VALUES (1, 3, 2, 7)", [])
+            .expect("inserts");
+        assert_eq!(changed, 1);
+        assert_eq!(
+            rows(&connection, "SELECT s FROM e WHERE su = 1 ORDER BY s"),
+            ints(&[&[0], &[1], &[2], &[3]])
+        );
+    }
+
+    fn rec_entry(sql: &str) -> (&str, String) {
+        index_entry(sql).expect("an index")
     }
 
     impl RecStore {
