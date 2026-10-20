@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parse as parseToml } from "smol-toml";
@@ -57,6 +57,21 @@ export function withoutMachinePaths(text: string, directories: readonly string[]
     return existsSync(given) ? [given, realpathSync(given)] : [given];
   }))].sort((a, b) => b.length - a.length);
   return prefixes.reduce((stripped, prefix) => stripped.replaceAll(`${prefix}/`, ""), text);
+}
+
+/**
+ * Whether `path` exists under `root` with every component below `root` named exactly as given. macOS's default
+ * filesystem finds `grammar/Sequence.py` when the file is `grammar/sequence.py`, Linux's does not, and a module
+ * resolved through `existsSync` alone made the recording differ between them.
+ */
+export function existsExactly(root: string, path: string): boolean {
+  if (!existsSync(path)) return false;
+  let directory = root;
+  for (const part of relative(root, path).split(sep)) {
+    if (!readdirSync(directory).includes(part)) return false;
+    directory = join(directory, part);
+  }
+  return true;
 }
 
 export interface UpstreamCheckout {
