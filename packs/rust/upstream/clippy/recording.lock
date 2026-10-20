@@ -21,10 +21,10 @@
       "asset": "rust-clippy-recording-6a41abf74fc6e2a7859026946a6a096bd65bc691f5d6cfaffef9e17a64f1f3be.json.gz"
     },
     "corpus.json": {
-      "sha256": "a69f59eb021c21661f1fe5be0ae00da7c908cb3735734573727940ecf37fa5c3",
-      "size": 61866,
+      "sha256": "4adfaf09297383f9273cfd1522a8d0db12d9a51dcd45cf197c49ea7565060252",
+      "size": 62020,
       "format": "rerail.port-readiness-corpus/v2",
-      "asset": "rust-clippy-corpus-a69f59eb021c21661f1fe5be0ae00da7c908cb3735734573727940ecf37fa5c3.json.gz"
+      "asset": "rust-clippy-corpus-4adfaf09297383f9273cfd1522a8d0db12d9a51dcd45cf197c49ea7565060252.json.gz"
     }
   }
 }
