@@ -326,10 +326,13 @@ impl ClauseSql {
             .collect();
         let sql = match each {
             Some(name) => {
-                let slot = statement.slots.iter().position(|slot| {
-                    slot.scope == 0 && slot.kind == SlotKind::Node && slot.name == name
-                });
-                emit::clause_each(statement, slot)
+                let slot = |kind: SlotKind| {
+                    statement
+                        .slots
+                        .iter()
+                        .position(|slot| slot.scope == 0 && slot.kind == kind && slot.name == name)
+                };
+                emit::clause_each(statement, slot(SlotKind::Node), slot(SlotKind::Text))
             }
             None => emit::clause(statement),
         };

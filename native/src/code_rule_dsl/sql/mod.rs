@@ -70,7 +70,9 @@ pub(super) const DEFAULT_BATCH_SIZE: usize = 64;
 /// 20. a binding's site, value or annotation sub-rule ignores the `FOLLOWING` guard, entering a
 ///     binding node again under the sub-rule it is matching (`emit/following`).
 /// 21. a call's unit drops from its key the parameters its body reads and never holds, so it
-///     reads them unbound (`lower`).
+///     reads them unbound (`lower`);
+/// 22. `violation.each` excludes a parsed tree's node by its range in the tree, not in the host
+///     (`emit/each`).
 ///
 /// `tests/replay.jsonl` (`replayed_cases_agree`) kills each of them; `just rerail-sql-gate
 /// --mutants` checks it does, and that the differential at the gate's case count does too.
