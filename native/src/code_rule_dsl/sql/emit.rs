@@ -41,10 +41,10 @@ pub(super) const ROOTS: &str = "/*ROOTS*/";
 pub(super) const NAMESPACE: &str = "/*NS*/";
 /// Before an operator's temporary table (`Emitter::name`: a prefix of letters, then digits):
 /// the driver allocates each that is a frame a register, a frame name shared across clauses and
-/// reused once the temporary is dead (`exec::registers`); one that stays a B-tree is a B-tree
-/// register, shared across clauses by its declaration (`exec::btree_registers`). A recursion's
-/// B-trees (a unit's demand and answer, a component's reads) are temporaries too, prefixed `u`,
-/// which no operator's temporary is.
+/// reused once the temporary is dead (`exec::registers`); one that is a recursion table (`rec`)
+/// is a register too, shared across clauses by its declaration (`exec::rec_registers`). A
+/// recursion's tables (a unit's demand and answer, a component's reads) are temporaries too,
+/// prefixed `u`, which no operator's temporary is.
 pub(super) const TEMP: &str = "/*T*/";
 /// Where the driver substitutes the prefix of a `violation.each` enumeration's tables: `x`, the
 /// ranges reported per root `(file, root, start, end)`; `a`, the roots still enumerated; `r`, the

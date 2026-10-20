@@ -2069,7 +2069,8 @@ pub(super) fn inner_scans(plan: &[(i64, i64, String)]) -> Vec<String> {
                 if codes.is_empty() {
                     number.trim().parse::<i64>().unwrap_or(0) != 0
                 } else if codes.starts_with('@') {
-                    // A frame's lookup on its constrained columns (`frames`).
+                    // A frame's or a recursion table's lookup on its constrained columns
+                    // (`frames`, `rec`).
                     true
                 } else {
                     // `b=`: a `nearest` walk's lookup of one input row's listed rows.

@@ -8,6 +8,7 @@ use super::lower::{ProgramBuilder, Stage};
 use super::nearest::NearestTable;
 use super::nodes::{NodeFacts, NodeTable};
 use super::plan::{SlotKind, Statement, Unsupported};
+use super::rec::{self, RecStore};
 use super::shapes::{
     Block, Bound, Draft, DraftBlock, DraftEach, DraftStep, Instance, Kind, Root, ShapeCensus,
     ShapeMaker, Shapes, Step,
@@ -818,10 +819,10 @@ impl Stats {
     }
 }
 
-/// Empties `table` (the counted table `id`), where it holds rows: a frame through its buffers
-/// (`frames::CLEAR`), a B-tree by its `DELETE`.
-fn clear_step(id: usize, table: &str, frame: bool) -> DraftStep {
-    let sql = if frame {
+/// Empties `table` (the counted table `id`), where it holds rows: a frame or a recursion table
+/// through its buffers (`frames::CLEAR`), a B-tree by its `DELETE`.
+fn clear_step(id: usize, table: &str, buffered: bool) -> DraftStep {
+    let sql = if buffered {
         format!("{}{table}", frames::CLEAR)
     } else {
         format!("DELETE FROM {table}")
@@ -853,8 +854,18 @@ fn clearing<T: Clone>(table: T) -> Effect<T> {
 enum Make {
     /// A frame, by its declaration (`frames::FRAME`, `FrameStore::register`).
     Frame(String),
-    /// A B-tree, by its `CREATE TABLE` and its indexes' statements.
+    /// A recursion table, by its declaration (`rec::declaration` with its indexes' entries,
+    /// `RecStore::register`): a table some statement updates or deletes from by a condition.
+    Rec(String),
+    /// A B-tree, by its `CREATE TABLE` and its indexes' statements (an enumeration's).
     BTree(String),
+}
+
+impl Make {
+    /// Whether its rows are in Rust memory, emptied through their buffers (`frames::CLEAR`).
+    fn buffered(&self) -> bool {
+        !matches!(self, Self::BTree(_))
+    }
 }
 
 /// A counted table: its name, and how a session makes it.
@@ -872,17 +883,17 @@ struct Catalog {
 
 impl Catalog {
     /// The table `name`, made by `make`: a frame is made once for every list that declares it
-    /// alike (a register), a B-tree once (`IF NOT EXISTS`). A name is a frame or a B-tree, never
-    /// both.
+    /// alike (a register), a recursion table or a B-tree once (`IF NOT EXISTS`). A name is one
+    /// kind of table.
     fn add(&mut self, name: &str, make: Make) -> Result<usize, String> {
         if let Some(&id) = self.ids.get(name) {
             return match (&self.tables[id].make, &make) {
                 (Make::Frame(made), Make::Frame(declared)) if made == declared => Ok(id),
-                (Make::BTree(_), Make::BTree(_)) => Ok(id),
+                (Make::BTree(_), Make::BTree(_)) | (Make::Rec(_), Make::Rec(_)) => Ok(id),
                 (Make::Frame(_), Make::Frame(_)) => {
                     Err(format!("{name} is two frames of different declarations"))
                 }
-                _ => Err(format!("{name} is both a frame and a B-tree")),
+                _ => Err(format!("{name} is two kinds of table")),
             };
         }
         let id = self.tables.len();
@@ -906,19 +917,15 @@ impl Catalog {
         )
     }
 
-    /// Adds `sql`, a `CREATE INDEX`, to the making of the B-tree it indexes.
+    /// Adds `sql`, a `CREATE INDEX`, to the making of the recursion table it indexes.
     fn index(&mut self, sql: &str) -> Result<(), String> {
-        let name = sql
-            .split_once(" ON ")
-            .and_then(|(_, on)| on.split([' ', '(']).next())
-            .unwrap_or_default();
+        let (name, entry) = rec::index_entry(sql).unwrap_or_default();
         match self.ids.get(name).map(|&id| &mut self.tables[id].make) {
-            Some(Make::BTree(create)) => {
-                create.push_str("; ");
-                create.push_str(sql);
+            Some(Make::Rec(declaration)) => {
+                rec::add_entry(declaration, &entry);
                 Ok(())
             }
-            _ => Err(format!("an index of no B-tree: {sql}")),
+            _ => Err(format!("an index of no recursion table: {sql}")),
         }
     }
 
@@ -952,13 +959,14 @@ struct Plan {
 }
 
 /// What a plan holds: its steps (markers and clears included), their distinct texts, and its
-/// frame and B-tree names; and how they are stored: the stages' and clauses' distinct shapes, and
-/// their texts' distinct skeletons (`texts`), in `stored` bytes.
+/// frame, recursion table and B-tree names; and how they are stored: the stages' and clauses'
+/// distinct shapes, and their texts' distinct skeletons (`texts`), in `stored` bytes.
 #[derive(Clone, Copy, Debug, Default)]
 pub(in crate::code_rule_dsl) struct Census {
     pub(in crate::code_rule_dsl) steps: usize,
     pub(in crate::code_rule_dsl) texts: usize,
     pub(in crate::code_rule_dsl) frames: usize,
+    pub(in crate::code_rule_dsl) recs: usize,
     pub(in crate::code_rule_dsl) btrees: usize,
     /// The distinct texts' bytes.
     pub(in crate::code_rule_dsl) bytes: usize,
@@ -1133,18 +1141,18 @@ impl Planner {
 
 impl Plan {
     fn census(&self) -> Census {
-        let frames = self
-            .tables
-            .iter()
-            .filter(|table| matches!(table.make, Make::Frame(_)))
-            .count();
+        let count =
+            |kind: fn(&Make) -> bool| self.tables.iter().filter(|table| kind(&table.make)).count();
+        let frames = count(|make| matches!(make, Make::Frame(_)));
+        let recs = count(|make| matches!(make, Make::Rec(_)));
         let census = &self.census;
         Census {
             steps: census.steps,
             texts: census.texts,
             bytes: census.bytes,
             frames,
-            btrees: self.tables.len() - frames,
+            recs,
+            btrees: self.tables.len() - frames - recs,
             shapes: census.shapes,
             skeletons: census.skeletons,
             stored: census.stored,
@@ -1498,20 +1506,21 @@ fn registers(
 }
 
 /// Names the temporaries of one stage's or clause's statements (`items`, after `frames::rewrite`)
-/// that stay B-trees, as `registers` names frames: a B-tree's class is its declaration, its
-/// `CREATE TABLE` with its indexes, numbered in `classes`, which every list shares, and the
-/// list's `k`-th B-tree of a class, in the order they are made, is `{prefix}b{class}_{k}`. A
-/// clause's tables are emptied when it ends, so clauses share B-trees as they share frames: a
-/// session makes a B-tree per class and rank the program needs, not one per clause (its
-/// recursion units' tables were 29,429 B-trees of 137 classes on the data-layer and Tempo
-/// policies, 1,097 shared), and the clauses alike run the same texts. A B-tree is live for its
-/// whole list, so no two of a list share one.
-fn btree_registers(
+/// that are not frames, the recursion tables, as `registers` names frames: a table's class is its
+/// declaration, its `CREATE TABLE` with its indexes, numbered in `classes`, which every list
+/// shares, and the list's `k`-th table of a class, in the order they are made, is
+/// `{prefix}b{class}_{k}`. A clause's tables are emptied when it ends, so clauses share them as
+/// they share frames: a session makes a table per class and rank the program needs, not one per
+/// clause (its recursion units' tables were 29,429 of 137 classes on the data-layer and Tempo
+/// policies, 1,097 shared), and the clauses alike run the same texts. A recursion table is live
+/// for its whole list, so no two of a list share one.
+fn rec_registers(
     items: &[String],
     classes: &mut HashMap<String, usize>,
     prefix: &str,
 ) -> HashMap<String, String> {
-    // Each B-tree temporary, in the order it is made, with its declaration: `@` for its name.
+    // Each recursion table temporary, in the order it is made, with its declaration: `@` for
+    // its name.
     let mut declared: Vec<(&str, String)> = Vec::new();
     let mut at: HashMap<&str, usize> = HashMap::new();
     let unnamed = |sql: &str, name: &str| {
@@ -1684,12 +1693,12 @@ fn temporaries_in(sql: &str) -> memchr::memmem::FindIter<'_, 'static> {
 /// Fixes the text of `emitted`'s statements, loops' markers included (`Runner::steps`), with
 /// their effects over the counted tables of `catalog`, to which it adds the tables they make: a
 /// table its statements only append to and empty whole is a frame (`frames::rewrite`), any other
-/// a B-tree. An operator's temporary that is a frame is a register (`registers`), emptied before
-/// a later temporary takes it. The statements read their root frame's files and roots under the
-/// run id `run`; `names` is the prefixes of their own tables (`emit::NAMESPACE`), of their
-/// registers, and of an enumeration's tables (`emit::EACH`), which `enumeration` makes. The
-/// tables of its own (named by a prefix of `names`) are the catalog's last, one after another
-/// (`Draft::own`).
+/// a recursion table (`rec`). An operator's temporary that is a frame is a register
+/// (`registers`), emptied before a later temporary takes it. The statements read their root
+/// frame's files and roots under the run id `run`; `names` is the prefixes of their own tables
+/// (`emit::NAMESPACE`), of their registers, and of an enumeration's tables (`emit::EACH`), which
+/// `enumeration` makes. The tables of its own (named by a prefix of `names`) are the catalog's
+/// last, one after another (`Draft::own`).
 fn plan(
     catalog: &mut Catalog,
     classes: &mut HashMap<String, usize>,
@@ -1729,10 +1738,10 @@ fn plan(
         .into_iter();
     let items = frames::rewrite(statements);
     let (registers, clears) = registers(&items, classes, prefix);
-    let btrees = btree_registers(&items, classes, prefix);
-    // A temporary's name: its register, a frame's or a B-tree's.
+    let recs = rec_registers(&items, classes, prefix);
+    // A temporary's name: its register, a frame's or a recursion table's.
     let temporary_name =
-        |name: &str, out: &mut String| match registers.get(name).or_else(|| btrees.get(name)) {
+        |name: &str, out: &mut String| match registers.get(name).or_else(|| recs.get(name)) {
             Some(register) => out.push_str(register),
             None => {
                 out.push_str(namespace);
@@ -1762,10 +1771,9 @@ fn plan(
                 .map(|(name, _)| name.trim())
                 .ok_or_else(|| format!("a frame without columns: {sql}"))?;
             (name.to_owned(), Make::Frame(declaration.to_owned()))
-        } else if let Some(table) = sql.strip_prefix("CREATE TEMP TABLE ") {
-            let table = table.strip_prefix("IF NOT EXISTS ").unwrap_or(table);
-            let name = table.split(['(', ' ']).next().unwrap_or_default();
-            (name.to_owned(), Make::BTree(sql.clone()))
+        } else if let Some(declaration) = rec::declaration(&sql) {
+            let name = declaration.split(['(', ' ']).next().unwrap_or_default();
+            (name.to_owned(), Make::Rec(declaration.clone()))
         } else {
             steps.push((sql, effects.next().expect("an effect per statement")));
             continue;
@@ -1806,8 +1814,8 @@ fn plan(
     for ((name, _), id) in made.iter().zip(ids) {
         if cleared.insert(id) {
             tables.push(id);
-            let frame = matches!(catalog.tables[id].make, Make::Frame(_));
-            clear.push(clear_step(id, name, frame));
+            let buffered = catalog.tables[id].make.buffered();
+            clear.push(clear_step(id, name, buffered));
         }
     }
     // A table's name in an effect, as the statements name it.
@@ -1904,8 +1912,9 @@ const BATCH_STATEMENTS: usize = 4;
 /// frame reads, under the statement's run id. A stage's or clause's tables are made on its first
 /// run (`activate`), and its statements prepared on their first execution, into a cache sized
 /// for the distinct texts of the stages and clauses that ran. The session keeps them across
-/// batches: a batch empties its tables (`frames`: the frame tables' buffers) and refills them
-/// through the cached statements. `counts`: every counted table's rows (`skip`).
+/// batches: a batch empties its tables (`frames`: the frame tables' buffers; `recs`: the
+/// recursion tables') and refills them through the cached statements. `counts`: every counted
+/// table's rows (`skip`).
 pub(in crate::code_rule_dsl) struct Session {
     connection: Connection,
     slot: Arc<BatchSlot>,
@@ -1913,6 +1922,7 @@ pub(in crate::code_rule_dsl) struct Session {
     plan: Arc<Plan>,
     stats: Stats,
     frames: Arc<FrameStore>,
+    recs: RecStore,
     counts: Counts,
     /// Per counted table: whether it is made.
     made: Vec<bool>,
@@ -1930,13 +1940,14 @@ pub(in crate::code_rule_dsl) struct Session {
 }
 
 /// The heap a session holds (`Session::memory`), in bytes: its connection's, by
-/// `sqlite3_db_status`, and its frames' column buffers.
+/// `sqlite3_db_status`, its frames' column buffers and its recursion tables' buffers.
 #[derive(Clone, Copy, Debug, Default)]
 pub(in crate::code_rule_dsl) struct SessionMemory {
     pub(in crate::code_rule_dsl) schema: usize,
     pub(in crate::code_rule_dsl) statements: usize,
     pub(in crate::code_rule_dsl) cache: usize,
     pub(in crate::code_rule_dsl) frames: usize,
+    pub(in crate::code_rule_dsl) recursion: usize,
 }
 
 impl Session {
@@ -1954,11 +1965,10 @@ impl Session {
              node INTEGER NOT NULL, PRIMARY KEY (run, file, node)) WITHOUT ROWID;",
         )?;
         connection.set_prepared_statement_cache_capacity(BATCH_STATEMENTS);
-        // Every B-tree of the plan, before any statement is prepared: a `CREATE TEMP TABLE`
-        // scans the whole schema to parse its entry and expires every prepared statement of the
-        // connection (the temporary schema changed), so a B-tree made lazily, on its clause's
-        // first run, re-prepared each statement cached so far. Clauses share their B-trees
-        // (`btree_registers`), so the plan holds few.
+        // Every B-tree of the plan (an enumeration's), before any statement is prepared: a
+        // `CREATE TEMP TABLE` scans the whole schema to parse its entry and expires every
+        // prepared statement of the connection (the temporary schema changed), so a B-tree made
+        // lazily, on its clause's first run, re-prepared each statement cached so far.
         let mut made = vec![false; plan.tables.len()];
         let mut tables = 0;
         for (table, is_made) in plan.tables.iter().zip(&mut made) {
@@ -1992,13 +2002,15 @@ impl Session {
             },
             plan,
             frames,
+            recs: RecStore::default(),
         })
     }
 
-    /// Makes the frames of the stages and clauses `pending` names (stages first, then clauses, as
-    /// `Plan::prepared` indexes them) and of the stages they read, where none ran on this session
-    /// before, and sizes the statement cache for their texts: a `violation.each` clause's rounds
-    /// run three statements of their own. Their B-trees are made with the session.
+    /// Makes the frames and recursion tables of the stages and clauses `pending` names (stages
+    /// first, then clauses, as `Plan::prepared` indexes them) and of the stages they read, where
+    /// none ran on this session before, and sizes the statement cache for their texts: a
+    /// `violation.each` clause's rounds run three statements of their own. Their B-trees are made
+    /// with the session.
     fn activate(&mut self, mut pending: Vec<usize>) -> Result<(), SqlError> {
         let started = Started::now();
         let plan = Arc::clone(&self.plan);
@@ -2013,10 +2025,13 @@ impl Session {
                 if self.made[table] {
                     continue;
                 }
-                let Make::Frame(declaration) = &plan.tables[table].make else {
-                    unreachable!("a session makes its B-trees when it starts")
-                };
-                self.frames.register(&self.connection, declaration)?;
+                match &plan.tables[table].make {
+                    Make::Frame(declaration) => {
+                        self.frames.register(&self.connection, declaration)?;
+                    }
+                    Make::Rec(declaration) => self.recs.register(&self.connection, declaration)?,
+                    Make::BTree(_) => unreachable!("a session makes its B-trees when it starts"),
+                }
                 self.made[table] = true;
                 self.stats.tables += 1;
             }
@@ -2067,7 +2082,8 @@ impl Session {
     /// The heap the session holds: its connection's schema (the tables and frames the session
     /// made), prepared statements and page cache (the temporary B-trees' pages), as
     /// `sqlite3_db_status` reports them (SQLite allocates through the system allocator, outside
-    /// the addon's); and its frames' column buffers (`FrameStore::bytes`).
+    /// the addon's); its frames' column buffers (`FrameStore::bytes`) and its recursion tables'
+    /// (`RecStore::bytes`).
     pub(in crate::code_rule_dsl) fn memory(&self) -> SessionMemory {
         let status = |operation| {
             let (mut current, mut highwater) = (0, 0);
@@ -2093,6 +2109,7 @@ impl Session {
             statements: status(rusqlite::ffi::SQLITE_DBSTATUS_STMT_USED),
             cache: status(rusqlite::ffi::SQLITE_DBSTATUS_CACHE_USED),
             frames: self.frames.bytes(),
+            recursion: self.recs.bytes(),
         }
     }
 
@@ -2186,6 +2203,9 @@ impl Session {
                     Make::Frame(_) => {
                         self.frames.clear(&table.name);
                     }
+                    Make::Rec(_) => {
+                        self.recs.clear(&table.name);
+                    }
                     Make::BTree(_) => {
                         self.connection
                             .prepare_cached(&format!("DELETE FROM {}", table.name))?
@@ -2199,6 +2219,7 @@ impl Session {
             self.counts.reset();
         }
         self.frames.trim();
+        self.recs.trim();
         result
     }
 
@@ -2212,6 +2233,7 @@ impl Session {
             plan,
             stats,
             frames,
+            recs,
             counts,
             texts,
             clause_times,
@@ -2223,6 +2245,7 @@ impl Session {
         let mut runner = Runner {
             connection,
             frames,
+            recs,
             stats,
             counts,
             texts,
@@ -2447,6 +2470,7 @@ impl Session {
 struct Runner<'s> {
     connection: &'s Connection,
     frames: &'s FrameStore,
+    recs: &'s RecStore,
     stats: &'s mut Stats,
     counts: &'s mut Counts,
     /// Spare buffers to write the steps' texts into, one per text being run at once.
@@ -2610,24 +2634,22 @@ impl Runner<'_> {
                 continue;
             }
             let mut passes = 0;
-            // Mutant 11: the loop's last pass is undone.
+            // Mutant 11: the loop's last pass is undone (its recursion tables, which no SQLite
+            // savepoint reaches, restored as the pass found them).
+            #[cfg_attr(not(any(test, feature = "sql-mutants")), allow(unused_variables))]
             let drop_last = super::mutant(11);
             self.depth += 1;
             loop {
-                if drop_last {
-                    self.connection.execute_batch("SAVEPOINT mutant_pass")?;
-                }
+                #[cfg(any(test, feature = "sql-mutants"))]
+                let before = drop_last.then(|| self.recs.snapshot());
                 self.steps(bound, &steps[at + 1..end], known_empty)?;
                 passes += 1;
                 let changed = dirty(self.connection)?;
-                if drop_last {
-                    let undo = if changed {
-                        ""
-                    } else {
-                        "ROLLBACK TO mutant_pass; "
-                    };
-                    self.connection
-                        .execute_batch(&format!("{undo}RELEASE mutant_pass"))?;
+                #[cfg(any(test, feature = "sql-mutants"))]
+                if let Some(before) = before
+                    && !changed
+                {
+                    self.recs.restore(before);
                 }
                 if !changed {
                     break;
@@ -2722,6 +2744,10 @@ impl Runner<'_> {
         }
         self.release(text);
         self.counts.wrote(&writes, rows);
+        // A delete leaves dead rows in a recursion table: compacted between statements.
+        if let Writes::Delete(table) = writes {
+            self.recs.settle(self.counts.name(table));
+        }
         Ok(())
     }
 
@@ -2742,8 +2768,8 @@ impl Runner<'_> {
         Ok(())
     }
 
-    /// Empties one table, unless it is empty already: a frame through its buffers
-    /// (`frames::CLEAR`, which runs no statement), a B-tree by its `DELETE`.
+    /// Empties one table, unless it is empty already: a frame or a recursion table through its
+    /// buffers (`frames::CLEAR`, which runs no statement), a B-tree by its `DELETE`.
     fn clear_step(&mut self, bound: Bound<'_>, clear: &Step) -> Result<(), SqlError> {
         let action = bound.action(clear);
         let mut text = self.buffer();
@@ -2760,9 +2786,13 @@ impl Runner<'_> {
         let rows = match action.kind {
             Kind::Clear(table) => {
                 let name = self.counts.name(bound.table(table));
-                let rows = self.frames.rows(name).expect("a registered frame");
-                self.frames.clear(name);
-                rows
+                match self.frames.rows(name) {
+                    Some(rows) => {
+                        self.frames.clear(name);
+                        rows
+                    }
+                    None => self.recs.clear(name).expect("a registered table"),
+                }
             }
             _ => {
                 bound.text(clear, &mut text);
