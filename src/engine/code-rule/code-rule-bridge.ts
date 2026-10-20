@@ -157,6 +157,10 @@ function underBaselineRoot(roots: ReadonlySet<string>, path: string): boolean {
   for (const root of roots) if (root === "" || path.startsWith(`${root}/`)) return true;
   return false;
 }
+/** `absolute` relative to the walk's root (the session folder), `/`-separated, as the auditor names paths. */
+function sessionPath(root: string, absolute: string): string {
+  return relative(root, absolute).split(sep).join("/");
+}
 function uncapturedPreimage(baselinePath: boolean, before: ObservedSource | undefined): Pick<CodeRuleEdit, "previousReadError"> {
   if (baselinePath) return { previousReadError: "Source changed during initial discovery without a captured preimage" };
   if (before === undefined) return {};
@@ -595,18 +599,23 @@ export class CodeRuleBridge {
     }
   }
 
+  /** Folders Git ignores (when the session follows `.gitignore`) are never entered, so nothing below them is observed. */
   async #expandDirectory(walk: SourceWalk, absolute: string): Promise<void> {
     for await (const entry of await opendir(absolute)) {
       if (walk.discovery.cancelled) return;
       if (entry.isSymbolicLink() || (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name))) continue;
-      if (entry.isDirectory() || entry.isFile()) walk.stack.push(join(absolute, entry.name));
+      const child = join(absolute, entry.name);
+      if (entry.isDirectory() && this.#auditor.ignoresPath?.(sessionPath(walk.discovery.root, child), true)) continue;
+      if (entry.isDirectory() || entry.isFile()) walk.stack.push(child);
     }
   }
 
+  /** A file Git ignores is not observed at all: no baseline entry, so no later read or edit of it is audited. */
   async #observeRegularFile(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
-    const path = relative(walk.discovery.root, absolute).split(sep).join("/");
+    const path = sessionPath(walk.discovery.root, absolute);
     const language = languageOfPath(SOURCE_LANGUAGES, path);
-    if (language !== undefined) await this.#observeFile(walk, { absolute, path, language }, info);
+    if (language !== undefined && !this.#auditor.ignoresPath?.(path, false))
+      await this.#observeFile(walk, { absolute, path, language }, info);
   }
 
   async #observeFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
@@ -650,7 +659,7 @@ export class CodeRuleBridge {
 
   #recordObservationFailure(walk: SourceWalk, absolute: string, error: unknown): void {
     const { discovery, previousSources, scan } = walk;
-    const path = relative(discovery.root, absolute).split(sep).join("/");
+    const path = sessionPath(discovery.root, absolute);
     const language = languageOfPath(SOURCE_LANGUAGES, path);
     const readError = error instanceof Error ? error.message : String(error);
     if (language !== undefined) {

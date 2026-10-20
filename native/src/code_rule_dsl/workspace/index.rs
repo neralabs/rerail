@@ -1,8 +1,9 @@
 //! Repository indexing: the host drives the index of the attached Git worktree one bounded chunk
 //! per call (`WorkspaceIndexTask`), restoring completed clean directories and reading the rest.
 //!
-//! File set: the index evaluates exactly the files the host's walk selects (`walk`); Git and
-//! Rerail ignore rules decide only which of them the store may restore.
+//! File set: the index evaluates exactly the files the host's walk selects (`walk`), which leaves
+//! out what Git ignores only when the host follows `.gitignore`; `.rerailignore` and Rerail's
+//! built-in ignores decide only which of them the store may restore.
 //!
 //! Memory bound: a chunk reads at most `INDEX_BATCH_FILES` files and stops reading once it holds
 //! `INDEX_BATCH_BYTES` of source, so it holds less than that plus one file (at most
@@ -69,6 +70,9 @@ pub struct RepositoryIndexOptions {
     /// own rules: the walk neither lists nor reads them, and reports the ones it reached. Any
     /// other folder is walked, whether or not it holds a `.git` entry.
     pub nested_checkouts: Vec<String>,
+    /// Whether files Git ignores (nested `.gitignore`s, `.git/info/exclude`, `core.excludesFile`;
+    /// never a tracked file) are left out of the walk, as the host's own walks leave them out.
+    pub follow_gitignore: bool,
 }
 
 pub struct WorkspaceIndexTask {
@@ -102,6 +106,7 @@ impl WorkspaceIndexTask {
                 .map(|(extension, label)| (extension.to_owned(), label.to_owned()))
                 .collect(),
                 nested_checkouts: Vec::new(),
+                follow_gitignore: false,
             },
         }
     }
@@ -297,11 +302,12 @@ impl WorkspaceIndexTask {
 
     /// The workspace's scoped sources as the host's walk selects them: every regular file below
     /// the workspace root with a host source language and a code-rule scope, outside the host's
-    /// ignored directories and never through a symlink, sorted by path. Git, `.rerailignore` and
-    /// Rerail's built-in ignores play no part here; they decide only which of these files the store
-    /// may restore. Directories it cannot list become read failures. A directory the host names as
-    /// a nested checkout is not descended into, only reported. Also returns whether the files
-    /// exceed `max_files`, in which case it stops listing.
+    /// ignored directories, outside what Git ignores when the host follows `.gitignore` (a path
+    /// whose ignore files cannot be read is kept and reported), and never through a symlink,
+    /// sorted by path. `.rerailignore` and Rerail's built-in ignores play no part here; they decide
+    /// only which of these files the store may restore. Directories it cannot list become read
+    /// failures. A directory the host names as a nested checkout is not descended into, only
+    /// reported. Also returns whether the files exceed `max_files`, in which case it stops listing.
     fn walk(
         &self,
         repository: &git_workspace::GitWorkspace,
@@ -322,6 +328,11 @@ impl WorkspaceIndexTask {
             .map(String::as_str)
             .collect::<HashSet<_>>();
         let max_files = self.options.max_files as usize;
+        let mut git_ignore = if self.options.follow_gitignore {
+            crate::git_ignore::GitIgnore::open(&repository.worktree_root).map_err(invalid)?
+        } else {
+            None
+        };
         let mut files = Vec::new();
         let mut nested_checkouts = BTreeSet::new();
         let mut over_budget = false;
@@ -380,10 +391,22 @@ impl WorkspaceIndexTask {
                     ));
                     continue;
                 }
-                match language {
-                    None if pruned.contains(path.as_str()) => {
-                        nested_checkouts.insert(path);
+                if language.is_none() && pruned.contains(path.as_str()) {
+                    // A nested checkout follows its own repository's ignores, not this one's.
+                    nested_checkouts.insert(path);
+                    continue;
+                }
+                if let Some(git_ignore) = git_ignore.as_mut() {
+                    match git_ignore.ignored(&format!("{prefix}{path}"), language.is_none()) {
+                        Ok(true) => continue,
+                        Ok(false) => {}
+                        // Walked as if not ignored: an unreadable `.gitignore` never hides files.
+                        Err(message) => {
+                            failures.push(read_failure(&path, "source-incomplete", &message))
+                        }
                     }
+                }
+                match language {
                     None => directories.push((entry.path(), path)),
                     Some(_) if files.len() == max_files => {
                         over_budget = true;

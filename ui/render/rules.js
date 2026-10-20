@@ -4,7 +4,7 @@
  */
 import { h, setAttr, setText, setClass, chevron, icon, syncChildren } from "../dom.js";
 import { fmt, plural, whenLabel } from "../format.js";
-import { isByRerail, isRunning } from "../derive.js";
+import { INTERNAL_TESTING, isByRerail, isInternalTesting, isRunning } from "../derive.js";
 import { isMeasured, isAudited, fires, allFires, activityAllOf, data, ui, rangeLabel, ruleSections, filtering, titleOf, originChip, panelRuleId } from "../state.js";
 
 export const CREATE_COMMAND = "/rerail-create";
@@ -18,11 +18,12 @@ function createRow(stored) {
   const sw = h("button.sw", { role: "switch", "aria-checked": "false", "data-act": "toggle", "data-i": id });
   const origin = h("span.badge");
   const stopped = h("span.badge", { hidden: true }, "Not running");
+  const internal = h("span.badge", { hidden: true, title: "Not part of Rerail 0.1.0: conversation rules are in internal testing." }, INTERNAL_TESTING);
   const folder = h("span.mono", { title: "Added at" });
   const last = h("span");
   const row = h("div.row", { "data-id": id },
-    h("div.rmain", null, h("div.rtitle", null, title), h("div.rside", null, count, sw), h("div.rmeta", null, origin, stopped, h("span.mono", null, id), folder, last)));
-  row._r = { title, count, sw, origin, stopped, folder, last };
+    h("div.rmain", null, h("div.rtitle", null, title), h("div.rside", null, count, sw), h("div.rmeta", null, origin, internal, stopped, h("span.mono", null, id), folder, last)));
+  row._r = { title, count, sw, origin, internal, stopped, folder, last };
   return row;
 }
 
@@ -52,6 +53,7 @@ function updateRow(row, stored) {
   setAttr(r.sw, "aria-label", `Turn ${title} ${stored.enabled ? "off" : "on"}`);
   setAttr(r.origin, "class", `badge ${isByRerail(stored) ? "rerail" : "mine"}`);
   setText(r.origin, originChip(stored));
+  setAttr(r.internal, "hidden", !isInternalTesting(stored));
   // The folders the rule is added at, when it is not the whole repository.
   setText(r.folder, stored.folders.filter(f => f !== "").join(", "));
   setAttr(r.folder, "hidden", stored.folders.every(f => f === ""));

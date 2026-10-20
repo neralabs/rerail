@@ -88,7 +88,7 @@ async function fetch(args: string[]): Promise<number> {
   const selected = gatedToolPacks(root).filter(({ pack, tool }) => (flags["--pack"] === undefined || flags["--pack"] === pack) && (flags["--tool"] === undefined || flags["--tool"] === tool));
   if (selected.length === 0) throw new Error(`no gated tool-pack matches${flags["--pack"] === undefined ? "" : ` --pack ${String(flags["--pack"])}`}${flags["--tool"] === undefined ? "" : ` --tool ${String(flags["--tool"])}`}`);
   // The repository and the token come from the job's environment. Locally the attestation check needs a signed-in
-  // GitHub CLI or GITHUB_TOKEN (or GH_TOKEN), even for a public release; only the hand-uploaded LIFTED_ASSETS skip it.
+  // GitHub CLI or GITHUB_TOKEN (or GH_TOKEN), even for a public release; no recording skips it (LIFTED_ASSETS is empty).
   const options = {
     ...(typeof flags["--repository"] === "string" ? { repository: flags["--repository"] } : process.env.GITHUB_REPOSITORY === undefined ? {} : { repository: process.env.GITHUB_REPOSITORY }),
     ...((process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN) === undefined ? {} : { token: (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN)! }),

@@ -154,7 +154,10 @@ export function optionsText(stored, checkoutPath) {
   return stored.configError ? `${text} · does not apply: ${stored.configError}` : text;
 }
 
-export const kindLabel = stored => (stored.kind === "conversation" ? "Conversation rule" : "File rule");
+/** Conversation rules are in internal testing (README.md, Internal testing): Rerail 0.1.0 releases code rules only. */
+export const INTERNAL_TESTING = "Internal testing";
+export const isInternalTesting = stored => stored.kind === "conversation";
+export const kindLabel = stored => (isInternalTesting(stored) ? `Conversation rule · ${INTERNAL_TESTING}` : "File rule");
 
 /** What a conversation rule samples, as the scope sentence names it. */
 function sampleSubject(source) {
@@ -206,7 +209,7 @@ export function technical(stored) {
     const tokens = rule.sample.minimumTokens ? ` · ≥${rule.sample.minimumTokens} tokens` : "";
     return {
       rows: [
-        ["Kind", "Conversation rule"],
+        ["Kind", kindLabel(stored)],
         ["Match", `${rule.match.operator ?? "pattern"}${rule.match.threshold === undefined ? "" : ` ${rule.match.threshold}`}`],
         ["Sample", `${rule.sample.source} · ${rule.sample.boundary}${tokens}`],
         ["Repeat", repeatText(rule.repeat)],

@@ -26,7 +26,7 @@ decides; nothing is added until they say yes.
 |---|---|
 | [references/suggesting-rules.md](references/suggesting-rules.md) | you suggest rules: evidence, the value model, the shortlist |
 | [references/code-rules.md](references/code-rules.md) | you draft a rule over the code in files |
-| [references/conversation-rules.md](references/conversation-rules.md) | you draft a rule over a command the agent runs |
+| [references/conversation-rules.md](references/conversation-rules.md) | you draft a rule over a command the agent runs (internal testing) |
 | [references/rule-quality.md](references/rule-quality.md) | you check a draft before showing it, and when you tune a rule |
 
 ## Which path
@@ -65,7 +65,8 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    `rerail rules export --output <tmp>/rules.json` for a rule of the person's that already does this; offer to change that one
    instead.
 2. **Choose the kind.** A code rule checks files; read [references/code-rules.md](references/code-rules.md). A conversation rule
-   checks a command the agent runs; read [references/conversation-rules.md](references/conversation-rules.md).
+   checks a command the agent runs; read [references/conversation-rules.md](references/conversation-rules.md). Conversation
+   rules are in internal testing: Rerail 0.1.0 releases code rules only.
    - Give it the id `local:<short-kebab-name>` and `revision` 1.
    - Set `mode`. Use `steer` when you are sure of the rule. Use `log` when the repo pass or the meaning leaves doubt. Never use
      `block`.
@@ -122,6 +123,8 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    - **Rows you are unsure of.** Mark the row `Not sure`. Below the card, show one line from this repo that the rule catches and
      one that it misses, and set the rule to Log.
    - **Rules from the shortlist.** Put one line above the card: `From: <the evidence, e.g. "you corrected this 3 times">`.
+   - **Conversation rules** (command or similarity). Put one line above the card: `Internal testing: this kind of rule is not
+     part of Rerail 0.1.0 yet.`
    - **"Change something".** Offer Steer and Log, each with what it means, and any other row the person names.
    - **"Show me the rule".** Print the rule JSON, then ask again.
 7. **Add it, only after the person says yes:**

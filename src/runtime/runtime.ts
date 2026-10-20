@@ -13,8 +13,9 @@ import {
 } from "../engine/adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
-import { BOUNDARY_DISCOVERY_WAIT_MS, CodeRuleBridge, generatedEditPaths, type SourceObservationCache } from "../engine/code-rule/code-rule-bridge.js";
-import type { AuditorCloseOptions, CodeRuleAuditor, AuditSettings, RuleSteerDelivery, RepositoryAuditHooks } from "../engine/code-rule/code-rule.js";
+import { CodeRuleBridge, generatedEditPaths, type SourceObservationCache } from "../engine/code-rule/code-rule-bridge.js";
+import { buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery, type RepositoryAuditHooks, type SteerSourceOf } from "../engine/code-rule/code-rule.js";
+import { missedSteerDigestEnabled } from "../engine/experimental-features.js";
 import type { AuditRecorder, AuditRecord } from "../engine/audit/audit.js";
 import { SqliteAuditStore } from "../engine/audit/audit-store.js";
 import { SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
@@ -61,20 +62,33 @@ function assertEventHost(host: RerailHost): void {
 /**
  * How long a one-shot hook (Claude Code, Codex, Cursor) waits after a tool for that edit's rule check, so a steer lands
  * under the edit and the coding agent can act on it in the same turn. A check usually takes tens of milliseconds; one
- * that runs longer is delivered at the next hook instead (at the turn's end in Claude Code), and the hook never waits
- * past this. OMP and Pi run in process and always wait for the check.
+ * that runs longer goes out at the next hook (with the experimental missed-steer digest, in the digest the turn's end
+ * carries instead), and the hook never waits past this.
  */
 const HOOK_EDIT_CHECK_MS = 1_000;
+/**
+ * How long an OMP or Pi tool result or turn end waits for the audits of the session's generated edits. An edit's audit
+ * takes milliseconds, so its steer still reaches the agent before the next model call; a shell command that wrote
+ * thousands of sources keeps its audits running for minutes, and the agent must not stall for them: past the cap the
+ * audits carry on and their steers arrive with a later reply or poll (with the experimental missed-steer digest, held
+ * for the digest at the end of the agent's run, `yieldDeliveries`). Well inside the host's 25 s hook budget, with room
+ * for the source walk (`BOUNDARY_DISCOVERY_WAIT_MS`) that precedes it.
+ */
+const NATIVE_EDIT_CHECK_MS = 10_000;
+
+/** The first line of the yield digest: its findings belong to steps the agent has already moved past. */
+const MISSED_STEERS_LEAD = "Rerail finished checking these edits only after the steps that made them had moved on:";
 
 /**
- * Waits for `work` up to `ms`; past the cap the work carries on in the background. The wait only decides when the
- * hook answers, so a failure of the check is not raised here: the check records its own failures in its audit.
+ * Waits for `work` up to `ms`, and says whether it finished; past the cap the work carries on in the background. The
+ * wait only decides when the hook answers, so a failure of the check is not raised here: the check records its own
+ * failures in its audit.
  */
-async function settledWithin(work: Promise<void>, ms: number): Promise<void> {
-  const capped = Promise.withResolvers<void>();
-  const timer = setTimeout(capped.resolve, ms);
+async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> {
+  const capped = Promise.withResolvers<false>();
+  const timer = setTimeout(() => capped.resolve(false), ms);
   try {
-    await Promise.race([work.catch(() => undefined), capped.promise]);
+    return await Promise.race([work.then(() => true, () => true), capped.promise]);
   } finally {
     clearTimeout(timer);
   }
@@ -313,6 +327,18 @@ interface PendingSteer {
   scope: string[];
 }
 
+/**
+ * One finding of a generated-edit steer that arrived while no boundary of its session was waiting for it, held for the
+ * session's yield digest. `scope` is the finding's own source when the steer spoke for it, so a later edit of one file
+ * drops only that file's findings; a finding elsewhere is stale once any source of its steer is.
+ */
+interface MissedFinding {
+  violation: CodeRuleViolation;
+  sourceOf: SteerSourceOf;
+  revision: number;
+  scope: string[];
+}
+
 /** The checkout a session started in (physical root), the session folder relative to it, and that folder resolved once. */
 interface StartingCheckout {
   root: string;
@@ -320,11 +346,6 @@ interface StartingCheckout {
   /** The session's folder, resolved once at open; every later use reads this, never the folder name again. */
   cwd: string;
 }
-
-/** What the evaluator does for a boundary the session answered without it: begin a tool call, or finish one. */
-type DeferredCodeRuleBoundary =
-  | { kind: "call"; toolCallId: string; toolName: string; paths: string[] }
-  | { kind: "result"; toolCallId: string; failed: boolean };
 
 interface RuntimeSessionState {
   descriptor: AdapterSession;
@@ -362,8 +383,20 @@ interface RuntimeSessionState {
   auditRequestWork: Promise<void> | undefined;
   repositoryAudit: Promise<void> | undefined;
   pendingCodeRuleCalls: Array<{ id: string; toolName: string }>;
-  /** Boundaries answered without the evaluator because it was still opening; it begins and finishes them once open. */
-  deferredCodeRuleBoundaries: DeferredCodeRuleBoundary[];
+  /** The edit checks a boundary stopped waiting for, until they drain; no later boundary waits for them again. */
+  overdueEditChecks: Promise<void> | undefined;
+  /**
+   * The boundaries of this session waiting for its edit checks right now: a generated-edit steer that arrives while
+   * one waits rides that boundary's answer, and one that arrives while none does is held for the yield digest.
+   */
+  editCheckWaits: number;
+  /**
+   * How many of those waits are the agent's yield. While checks an earlier boundary gave up on are still draining, a
+   * steer belongs to a step the agent has left, so only a yield carries it as it comes; any other boundary holds it.
+   */
+  yieldWaits: number;
+  /** Generated-edit findings no boundary waited for, in the order they arrived, until the session's next yield. */
+  missedFindings: MissedFinding[];
   closed: boolean;
 }
 
@@ -483,8 +516,13 @@ export interface RerailRuntimeOptions {
     audits: AuditRecorder;
     /** Where the evaluator writes its storage-attach and repository-audit timing lines; it writes none without it. */
     timingLog?: (line: string) => void;
+    /**
+     * Leave out what Git ignores: the session checkout's repository setting as the session opened, fixed for its life
+     * (a flip mid-session would make the shell-write walk report every ignored file it starts or stops seeing as edited).
+     */
+    followGitignore: boolean;
   } & AuditSettings) => CodeRuleAuditor;
-  /** How long a turn end or command result waits for the session's shell-write walk, and a code-rule boundary for the evaluator to open; the bridge's default otherwise. */
+  /** How long a turn end or command result waits for the session's shell-write walk; the bridge's default otherwise. */
   discoveryWaitMs?: number;
   /** Receives the timing lines of session start and slow turn ends (the daemon passes its log); without it they are not written. */
   timingLog?: (line: string) => void;
@@ -622,8 +660,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const state = this.#session(event.sessionId);
     this.#scheduleAuditRequests(state.descriptor.sessionId);
     state.ruleSync?.refresh();
-    // A code-rule boundary waits for the session's evaluator to open, within a bound; any other event goes on without it.
-    const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#awaitCodeRuleWorkspace(state, event) : state.codeRuleBridge;
+    // A code-rule boundary reached while the session's evaluator is still opening (indexing) goes on without code rules.
+    const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#codeRuleWorkspaceNow(state, event) : state.codeRuleBridge;
     bridge?.refreshCodeRules();
     if (event.kind === "call") {
       const id = event.toolCallId;
@@ -639,28 +677,67 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const index = state.pendingCodeRuleCalls.findIndex((call) => call.id === event.toolCallId);
       if (index >= 0) {
         const [call] = state.pendingCodeRuleCalls.splice(index, 1);
-        await bridge?.finish(call!.id, event.failed === true);
-        await this.#append(state, { type: "policy-result", toolCallId: call!.id });
-        const settled = bridge?.settleGeneratedEdits();
-        if (ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native") await settled;
-        else if (settled !== undefined) await settledWithin(settled, HOOK_EDIT_CHECK_MS);
+        // From the finish on, which may check the edit before it returns, to the end of the wait.
+        await this.#waitingForEditChecks(state, false, async () => {
+          await bridge?.finish(call!.id, event.failed === true);
+          await this.#append(state, { type: "policy-result", toolCallId: call!.id });
+          await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
+        });
       }
     }
+    // A hook host's stop hook is the end of the agent's run; OMP and Pi end a turn at every model call, and yield later.
+    const yields = event.kind === "turn-end" && ADAPTER_CAPABILITIES[descriptor.host].toolSurface !== "native";
     if (event.kind === "turn-end") {
-      const walkStartedAt = performance.now();
-      await bridge?.checkpoint("turn");
-      this.#reportSlowTurnEndWait(event.sessionId, "the source walk", walkStartedAt);
-      // The turn's own edits, not unrelated audits: the session-start repository audit runs for minutes on a
-      // large checkout, and a turn boundary that waited for it held the session's request lane past the host's timeout.
-      const settleStartedAt = performance.now();
-      await bridge?.settleGeneratedEdits();
-      this.#reportSlowTurnEndWait(event.sessionId, "generated-edit audits", settleStartedAt);
+      // The source walk checks the shell writes it finds as generated edits, so the boundary waits from its start.
+      await this.#waitingForEditChecks(state, yields, async () => {
+        const walkStartedAt = performance.now();
+        await bridge?.checkpoint("turn");
+        this.#reportSlowTurnEndWait(event.sessionId, "the source walk", walkStartedAt);
+        // The turn's own edits, not unrelated audits: the session-start repository audit runs for minutes on a
+        // large checkout, and a turn boundary that waited for it held the session's request lane past the host's timeout.
+        // A hook host's stop hook carries the turn's steers, so it waits for all of them; OMP and Pi wait within the cap.
+        const settleStartedAt = performance.now();
+        if (yields) await bridge?.settleGeneratedEdits();
+        else await this.#awaitEditChecks(state, bridge, NATIVE_EDIT_CHECK_MS);
+        this.#reportSlowTurnEndWait(event.sessionId, "generated-edit audits", settleStartedAt);
+      });
     }
     if (event.kind === "session-end") return [];
     const deliveries = await this.#collectPendingSteers(state);
+    if (yields) {
+      const digest = await this.#takeMissedDigest(state);
+      if (digest !== undefined) deliveries.push(digest);
+    }
     deliveries.push(...(state.eventDeliveries.get(event.eventId) ?? []));
     state.eventDeliveries.delete(event.eventId);
     return deliveries;
+  }
+
+  /** Runs `wait` as a boundary waiting for the session's edit checks: the steers they produce meanwhile ride its answer. */
+  async #waitingForEditChecks(state: RuntimeSessionState, yields: boolean, wait: () => Promise<void>): Promise<void> {
+    state.editCheckWaits += 1;
+    if (yields) state.yieldWaits += 1;
+    try {
+      await wait();
+    } finally {
+      state.editCheckWaits -= 1;
+      if (yields) state.yieldWaits -= 1;
+    }
+  }
+
+  /**
+   * A boundary's wait for the session's edit checks, capped at `capMs`. Checks run in order, so while a backlog an
+   * earlier boundary stopped waiting for is still draining, a later edit's check is behind it too: the boundary answers
+   * at once rather than spend the cap again, and those steers wait for the yield digest.
+   */
+  async #awaitEditChecks(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, capMs: number): Promise<void> {
+    if (bridge === undefined || state.overdueEditChecks !== undefined) return;
+    const settled = bridge.settleGeneratedEdits();
+    if (await settledWithin(settled, capMs)) return;
+    const overdue: Promise<void> = settled.catch(() => undefined).finally(() => {
+      if (state.overdueEditChecks === overdue) state.overdueEditChecks = undefined;
+    });
+    state.overdueEditChecks = overdue;
   }
 
   /** A turn end that waits long holds the session's request lane: the daemon log says how long and on what; fast ones say nothing. */
@@ -671,32 +748,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * The session's evaluator for a code-rule boundary, waited for at most `#discoveryWaitMs`: the host aborts a request
-   * after 30 s, so an open held up by Git discovery or a slow storage attach must not hold the session's first tool
-   * call. Past the wait the boundary is answered without code rules and recorded in the session's history; its begin
-   * or finish is queued for the evaluator to run once it has opened, so the edit is still audited and its steer
-   * delivered at a later boundary.
+   * The session's evaluator for a code-rule boundary, without waiting for one still opening (indexing the repository):
+   * such a boundary is answered without code rules and recorded in the session's history, and what it would have
+   * checked is not checked later either, so the agent is never held up by indexing nor steered turns later for it.
    */
-  async #awaitCodeRuleWorkspace(state: RuntimeSessionState, event: AdapterEvent): Promise<CodeRuleBridge | undefined> {
+  async #codeRuleWorkspaceNow(state: RuntimeSessionState, event: AdapterEvent): Promise<CodeRuleBridge | undefined> {
     if (!state.codeRuleOpening) return await state.codeRuleWorkspace;
-    const budget = Promise.withResolvers<undefined>();
-    const timer = setTimeout(() => budget.resolve(undefined), this.#discoveryWaitMs ?? BOUNDARY_DISCOVERY_WAIT_MS);
-    try {
-      const opened = await Promise.race([state.codeRuleWorkspace.then(bridge => ({ bridge })), budget.promise]);
-      if (opened !== undefined) return opened.bridge;
-    } finally {
-      clearTimeout(timer);
-    }
-    // Opened since the wait ran out: nothing is pending.
-    if (!state.codeRuleOpening) return await state.codeRuleWorkspace;
-    // Queued and recorded with no await in between: the evaluator's drain of the queue sees this boundary or the bridge does.
-    if (event.kind === "call") {
-      state.deferredCodeRuleBoundaries.push({
-        kind: "call", toolCallId: event.toolCallId, toolName: event.toolName, paths: generatedEditPaths(event.toolName, event.input),
-      });
-    } else if (event.kind === "result") {
-      state.deferredCodeRuleBoundaries.push({ kind: "result", toolCallId: event.toolCallId, failed: event.failed === true });
-    }
     if (event.kind === "call" || event.kind === "result" || event.kind === "turn-end") {
       const boundary = event.kind;
       try {
@@ -714,11 +771,32 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * Completed code-rule results not yet handed to the host, for hosts that poll instead of
-   * receiving `deliverBackground` pushes. Unknown or closed sessions have nothing pending.
+   * receiving `deliverBackground` pushes. Unknown or closed sessions have nothing pending. The findings held for the
+   * yield digest are not among them.
    */
   async collectDeliveries(sessionId: string): Promise<AdapterDelivery[]> {
     const state = this.#sessions.get(sessionId);
     return state === undefined || this.#stopped() ? [] : this.#collectPendingSteers(state);
+  }
+
+  /**
+   * The end of an OMP or Pi agent's run, which their turn end is not (they end a turn at every model call). Waits, as
+   * a turn end does, for the session's edit checks within `NATIVE_EDIT_CHECK_MS`, then answers with the steers still
+   * pending and the digest of the findings no earlier boundary waited for. Findings that arrive later wait for the
+   * session's next yield.
+   */
+  yieldDeliveries(sessionId: string): Promise<AdapterDelivery[]> {
+    if (this.#stopped()) return Promise.resolve([]);
+    return this.#ingestLanes.run(sessionId, async () => {
+      const state = this.#sessions.get(sessionId);
+      if (state === undefined || this.#stopped()) return [];
+      const bridge = state.codeRuleReady ? state.codeRuleBridge : undefined;
+      await this.#waitingForEditChecks(state, true, () => this.#awaitEditChecks(state, bridge, NATIVE_EDIT_CHECK_MS));
+      const deliveries = await this.#collectPendingSteers(state);
+      const digest = await this.#takeMissedDigest(state);
+      if (digest !== undefined) deliveries.push(digest);
+      return deliveries;
+    });
   }
 
   async #collectPendingSteers(state: RuntimeSessionState): Promise<AdapterDelivery[]> {
@@ -731,6 +809,43 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       if (delivery !== undefined) deliveries.push(delivery);
     }
     return deliveries;
+  }
+
+  /**
+   * One steer listing, per rule, every finding held since the session's last yield that no later edit made stale,
+   * each once, in the order they arrived; recorded like any steer. Undefined when there is none.
+   */
+  async #takeMissedDigest(state: RuntimeSessionState): Promise<AdapterDelivery | undefined> {
+    // An evaluator still opening may yet fail, and what it observed with it.
+    if (!state.codeRuleReady || this.#stopped()) return undefined;
+    const findings = state.missedFindings.filter(finding => this.#isCurrentSteer(state, finding));
+    state.missedFindings = [];
+    const seen = new Set<string>();
+    const violations: CodeRuleViolation[] = [];
+    const sources = new Map<string, SteerSourceOf>();
+    for (const { violation, sourceOf } of findings) {
+      const key = JSON.stringify([violation.ruleId, violation.message, violation.path, violation.span?.startLine, violation.span?.startColumn]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      violations.push(violation);
+      if (!sources.has(violation.ruleId)) sources.set(violation.ruleId, sourceOf);
+    }
+    if (violations.length === 0) return undefined;
+    const steer = buildSteer(violations, ruleId => sources.get(ruleId)?.(ruleId));
+    const digest: AdapterDelivery = {
+      sessionId: state.descriptor.sessionId,
+      requested: "steer",
+      mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery.steer,
+      content: `${MISSED_STEERS_LEAD}\n\n${steer.content}`,
+      ruleIds: steer.ruleIds,
+    };
+    try {
+      await this.persistDelivery(digest);
+    } catch (error) {
+      process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+    // A stop committed elsewhere while the ledger was written withholds it, as it does any steer.
+    return state.closed || this.#stopped() ? undefined : digest;
   }
 
   async mark(sessionId: string, change: WatermarkChange): Promise<MarkReceipt> {
@@ -886,6 +1001,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return this.#evaluatorOpens.size > 0;
   }
 
+  /**
+   * Settles once the session's code-rule evaluator has opened, or failed to: its repository indexed and its rules
+   * compiled, so an edit is checked as it is made. At once for a session that has none or is unknown.
+   */
+  async codeRulesOpened(sessionId: string): Promise<void> {
+    await this.#sessions.get(sessionId)?.codeRuleWorkspace.catch(() => undefined);
+  }
+
   async dispose(): Promise<void> {
     clearInterval(this.#controlTimer);
     await Promise.all([...this.#sessions.keys()].map(sessionId => this.closeSession(sessionId)));
@@ -950,7 +1073,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       repositoryAudit: undefined,
       // Restored whether or not the evaluator opens, so their results still close them in the ledger.
       pendingCodeRuleCalls: unresolvedCodeRuleCalls(ledger).map(call => ({ id: call.toolCallId, toolName: call.toolName })),
-      deferredCodeRuleBoundaries: [],
+      overdueEditChecks: undefined,
+      editCheckWaits: 0,
+      yieldWaits: 0,
+      missedFindings: [],
       closed: false,
     };
     // Set when the evaluator failed to open: what it observed while opening belongs to no live evaluator.
@@ -976,10 +1102,24 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           this.#recordUndelivered(activeState, pending);
           return "discarded";
         }
+        const findings = metadata?.generatedEdit;
+        const missed = activeState.editCheckWaits === 0 || (activeState.overdueEditChecks !== undefined && activeState.yieldWaits === 0);
+        if (findings !== undefined && missed && missedSteerDigestEnabled()) {
+          // Experimental (off unless enabled): the boundary that waited for this edit has answered, so a steer now would
+          // reach the agent at some later, unrelated step; its findings wait for the digest at the end of the agent's run.
+          const scope = new Set(pending.scope);
+          for (const violation of findings.violations) {
+            const own = violation.path !== undefined && scope.has(violation.path);
+            activeState.missedFindings.push({
+              violation, sourceOf: findings.sourceOf, revision, scope: own ? [violation.path!] : pending.scope,
+            });
+          }
+          return "queued";
+        }
         activeState.pendingSteers.push(pending);
         if (activeState.codeRuleReady && metadata?.background === true && this.#deliverBackground !== undefined) {
           const inFlight = this.#deliverSteer(activeState, pending, true);
-          const waitsForNativeBoundary = metadata.generatedEdit === true
+          const waitsForNativeBoundary = metadata.generatedEdit !== undefined
             && ADAPTER_CAPABILITIES[activeState.descriptor.host].toolSurface === "native";
           if (waitsForNativeBoundary) await inFlight;
         }
@@ -1000,6 +1140,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
             if ((current.codeRuleSourceVersions.get(path) ?? 0) <= pending.revision) surviving.add(path);
           return false;
         });
+        // A held finding is its source's own, so only the revised sources' findings go.
+        current.missedFindings = current.missedFindings.filter(finding => {
+          if (this.#isCurrentSteer(current, finding)) return true;
+          this.#recordUndelivered(current, finding);
+          return false;
+        });
         return [...surviving];
       },
       undelivered: (sessionId, path) => {
@@ -1018,6 +1164,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         ...(this.#timingLog === undefined ? {} : { timingLog: this.#timingLog }),
         ...this.#auditSettings,
         ...auditSettings,
+        followGitignore: this.#catalogs.followsGitignore(checkout.root),
       });
       bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
@@ -1035,6 +1182,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           current.pendingSteers = current.pendingSteers.filter(pending => {
             if (this.#isCurrentSteer(current, pending)) return true;
             this.#recordUndelivered(current, pending);
+            return false;
+          });
+          current.missedFindings = current.missedFindings.filter(finding => {
+            if (this.#isCurrentSteer(current, finding)) return true;
+            this.#recordUndelivered(current, finding);
             return false;
           });
         },
@@ -1055,6 +1207,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       if (open === undefined) {
         retired = true;
         opened.pendingSteers = [];
+        opened.missedFindings = [];
         return undefined;
       }
       opened.codeRuleReady = true;
@@ -1073,6 +1226,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       retired = true;
       opened.codeRuleOffReason = message;
       opened.pendingSteers = [];
+      opened.missedFindings = [];
       return undefined;
     }).finally(() => {
       opened.codeRuleOpening = false;
@@ -1106,19 +1260,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       opened = true;
       for (const call of unresolvedCodeRuleCalls(ledger)) {
         if (state.closed) break;
+        // A result that arrived while the evaluator opened went on without code rules: its call is not begun late, or
+        // the bridge would hold it pending, and skip its paths in every later shell-write walk, for the session's life.
+        if (!state.pendingCodeRuleCalls.some(pending => pending.id === call.toolCallId)) continue;
         await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
-      }
-      // Boundaries answered without the evaluator while it opened: their begins and finishes run now, in arrival
-      // order, until none is left. A begin has no preimage to restore: the edit it audits reads as uncaptured.
-      while (state.deferredCodeRuleBoundaries.length > 0 && !state.closed) {
-        const next = state.deferredCodeRuleBoundaries[0]!;
-        if (next.kind === "call") await bridge.begin(next.toolCallId, next.toolName, { paths: next.paths }, {});
-        else await bridge.finish(next.toolCallId, next.failed);
-        state.deferredCodeRuleBoundaries.shift();
       }
     } catch (error) {
       delete state.codeRuleBridge;
-      state.deferredCodeRuleBoundaries = [];
       const release = this.#lateRelease();
       await (opened ? bridge.close(release) : auditor.close(release)).catch(() => undefined);
       state.codeRuleOffReason = error instanceof Error ? error.message : String(error);
@@ -1165,6 +1313,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async #abandonSession(sessionId: string, opened: RuntimeSessionState, auditor: CodeRuleAuditor | undefined): Promise<void> {
     opened.closed = true;
     opened.pendingSteers = [];
+    opened.missedFindings = [];
     this.#sessions.delete(sessionId);
     if (opened.ownerClaim !== undefined) {
       this.#controls.interrupt(sessionId);
@@ -1184,6 +1333,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (state !== undefined) {
       state.closed = true;
       state.pendingSteers = [];
+      state.missedFindings = [];
       this.#closedSessions.set(sessionId, {
         descriptor: state.descriptor, startedAt: state.startedAt, endedAt: Date.now(), repositoryKey: this.#repositoryKey(state.checkout),
       });
@@ -1217,7 +1367,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  /** The audit at session start: one repository audit per checkout it reaches, each claimed before it starts. */
+  /**
+   * The audit at session start: one repository audit per checkout it reaches, each claimed before it starts.
+   * Internal testing: the automatic first full-repository scan, log-only.
+   */
   async #runRepositoryAudit(sessionId: string, state: RuntimeSessionState): Promise<void> {
     const claimed = new Set<string>();
     const audit: RepositoryAuditHooks = {
@@ -1313,6 +1466,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     state.eventDeliveries.set(sample.eventId, deliveries);
   }
 
+  /** Internal testing: explicit audit requests, the work behind `rerail scan` and `audit_requests_create`. */
   #scheduleAuditRequests(sessionId: string): void {
     const state = this.#sessions.get(sessionId);
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
@@ -1370,7 +1524,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  #isCurrentSteer(state: RuntimeSessionState, pending: PendingSteer): boolean {
+  /** Whether a steer, or a held finding, still speaks for the current revision of every source it names. */
+  #isCurrentSteer(state: RuntimeSessionState, pending: Pick<PendingSteer, "revision" | "scope">): boolean {
     return !state.closed
       && this.#sessions.get(state.descriptor.sessionId) === state
       && (pending.scope.length === 0
@@ -1378,8 +1533,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         : pending.scope.every(path => (state.codeRuleSourceVersions.get(path) ?? 0) <= pending.revision));
   }
 
-  /** Marks the sources whose newer revision keeps `pending` from the agent (`undeliveredSources`). */
-  #recordUndelivered(state: RuntimeSessionState, pending: PendingSteer): void {
+  /** Marks the sources whose newer revision keeps a steer, or a held finding, from the agent (`undeliveredSources`). */
+  #recordUndelivered(state: RuntimeSessionState, pending: Pick<PendingSteer, "revision" | "scope">): void {
     for (const path of pending.scope)
       if ((state.codeRuleSourceVersions.get(path) ?? 0) > pending.revision) state.undeliveredSources.add(path);
   }

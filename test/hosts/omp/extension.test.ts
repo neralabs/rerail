@@ -27,6 +27,7 @@ import {
   type AdapterDelivery,
   openRerailDatabase,
   setRuleSetting,
+  CodeRuleBridge,
 } from "../../../src/engine/index.js";
 import { createConversationRulesExtension } from "../../../src/hosts/omp/extension.js";
 import { NativeSessionClient } from "../../../src/harness/index.js";
@@ -524,8 +525,8 @@ describe("OMP conversation-rules extension", () => {
 
   /**
    * A running daemon whose native sessions can be refused by name, whose next initialize can be held mid-flight, whose
-   * ingests `state.ingest` can hold or answer with deliveries, and which keeps the gaps it is asked to record and the
-   * events it took.
+   * ingests `state.ingest` and yields `state.yield` can hold or answer with deliveries, and which keeps the gaps it is
+   * asked to record and the events it took.
    */
   function flakyDaemon(cwd: string) {
     daemonRoute.start = async () => ({
@@ -537,6 +538,7 @@ describe("OMP conversation-rules extension", () => {
       down: new Set<string>(),
       hold: undefined as PromiseWithResolvers<void> | undefined,
       ingest: undefined as (() => Promise<readonly AdapterDelivery[]>) | undefined,
+      yield: undefined as (() => Promise<readonly AdapterDelivery[]>) | undefined,
     };
     const requests: Array<{ operation: string; sessionId: string }> = [];
     const gaps: unknown[] = [];
@@ -554,7 +556,8 @@ describe("OMP conversation-rules extension", () => {
       if (state.down.has(request.sessionId)) throw new TypeError("fetch failed");
       if (request.operation === "record-gap") gaps.push(z.object({ input: z.unknown() }).parse(body).input);
       if (request.operation === "ingest") ingested.push(z.object({ event: z.object({ json: z.unknown() }) }).parse(body).event.json);
-      const deliveries = request.operation === "ingest" && state.ingest !== undefined ? await state.ingest() : [];
+      const answer = request.operation === "ingest" ? state.ingest : request.operation === "yield" ? state.yield : undefined;
+      const deliveries = answer === undefined ? [] : await answer();
       return Response.json({ result: null, deliveries, entries: [] });
     });
     return { state, requests, gaps, ingested, initializes: (sessionId: string) => requests.filter(r => r.operation === "initialize" && r.sessionId === sessionId).length };
@@ -1007,6 +1010,78 @@ describe("OMP conversation-rules extension", () => {
         await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements."),
       ]);
       await ended;
+    });
+
+    it("sends the digest of the steers that missed their step at the end of the run, once the turn end has answered", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      const digested = Promise.withResolvers<void>();
+      const digest = `Rerail finished checking these edits only after the steps that made them had moved on:\n\n${steerBlock(
+        "checkout", "Check checkout requirements. (src/a.ts:2:7)", { mode: "steer", origin: steerOrigin("checkout") },
+      )}`;
+      daemon.state.yield = async () => {
+        await digested.promise;
+        return [{ sessionId: "omp-test-session", requested: "steer", mechanism: "native-queue", content: digest, ruleIds: ["checkout"] }];
+      };
+      daemon.requests.length = 0;
+
+      const ended = harness.handlers.get("turn_end")!({
+        type: "turn_end",
+        message: { role: "assistant", timestamp: 100, responseId: "response-1", content: [{ type: "text", text: "Done." }] },
+      }, harness.context);
+      let stopped = false;
+      const stop = (harness.handlers.get("session_stop")!({ type: "session_stop", signal: new AbortController().signal }, harness.context) as Promise<unknown>)
+        .then(result => { stopped = true; return result; });
+      await vi.waitFor(() => expect(daemon.requests.map(request => request.operation)).toContain("yield"));
+      // Asked after the turn end, and the run is held until it answers.
+      expect(daemon.requests.map(request => request.operation).filter(operation => operation === "ingest" || operation === "yield")).toEqual(["ingest", "yield"]);
+      await settleIo();
+      expect(stopped).toBe(false);
+      expect(harness.messages).toEqual([]);
+
+      digested.resolve();
+      await expect(stop).resolves.toBeUndefined();
+      expect(harness.messages.map(sent => [sent.message.content, sent.options])).toEqual([
+        [linkSteers(digest, await steerDashboard(harness.context.cwd)), { deliverAs: "steer" }],
+      ]);
+      await ended;
+    });
+  });
+
+  describe("while the daemon indexes the repository", () => {
+    it("says so in the footer until it is done, while a prompt and its tool call go on at once, without code rules", async () => {
+      const opening = Promise.withResolvers<void>();
+      const open = CodeRuleBridge.prototype.openWorkspace;
+      const spy = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace").mockImplementationOnce(async function (this: CodeRuleBridge, sessionId: string) {
+        await opening.promise;
+        await open.call(this, sessionId);
+      });
+      const harness = await createHarness();
+      const footer: string[][] = [];
+      Object.assign(harness.context, {
+        hasUI: true,
+        mode: "tui",
+        ui: { setWidget: (_key: string, lines: string[] | undefined) => { footer.push(lines ?? []); } },
+      });
+      const indexingShown = () => footer.at(-1)?.some(line => line.endsWith("indexing")) === true;
+      try {
+        createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+        await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+        await vi.waitFor(() => expect(indexingShown()).toBe(true));
+
+        // Neither waits for indexing: both answer while the evaluator is still held in its open.
+        await harness.handlers.get("before_agent_start")!({ type: "before_agent_start", prompt: "hello" }, harness.context);
+        await harness.handlers.get("tool_call")!({ type: "tool_call", toolCallId: "write-1", toolName: "write", input: { path: "a.ts", content: "x" } }, harness.context);
+        expect(indexingShown()).toBe(true);
+
+        opening.resolve();
+        await vi.waitFor(() => expect(indexingShown()).toBe(false));
+      } finally {
+        opening.resolve();
+        spy.mockRestore();
+      }
     });
   });
 });

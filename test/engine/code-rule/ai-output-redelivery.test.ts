@@ -73,7 +73,7 @@ async function secondEditBeforeDelivery(timing: "superseded" | "dropped", second
     if (timing === "dropped") {
       // The first edit's steer is queued now, behind the second edit's call: its result's revision drops it.
       release();
-      await vi.waitFor(() => expect(audits.list({ sessionId }).audits).toEqual([expect.objectContaining({ status: "completed" })]));
+      await vi.waitFor(() => expect(audits.list({ sessionId, scope: "ai-output" }).audits).toEqual([expect.objectContaining({ status: "completed" })]));
     }
     await writeFile(file, second);
     await ingest({ kind: "result", toolCallId: "second" });

@@ -7,6 +7,7 @@ import { runCodexHook } from "../src/hosts/codex/index.js";
 import { RerailDaemon } from "../src/daemon/index.js";
 import { runCursorHook } from "../src/hosts/cursor/index.js";
 import { type AdapterDelivery, headlineText, steerHeadlines, parseConversationRule } from "../src/engine/index.js";
+import { awaitCodeRulesOpen } from "./support/code-rules-open.js";
 import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRule } from "./support/contract-code-rule.js";
 import { cursorRelayed, steerText } from "./support/steer-text.js";
 import { startTestRepository } from "../test/support/started-repository.js";
@@ -61,6 +62,7 @@ describe("engine service", () => {
       service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
 
       await ingestEngineEvent(socketPath, { kind: "session-start", eventId: "start", session });
+      await awaitCodeRulesOpen(socketPath, session);
       await ingestEngineEvent(socketPath, {
         kind: "call",
         eventId: "call:write-route",
@@ -223,6 +225,7 @@ describe("engine service", () => {
       await writeFile(join(root, "api/route.py"), "def route():\n    return 1\n");
       service = await startEngineService(options);
       await ingestEngineEvent(socketPath, { kind: "session-start", eventId: "start", session });
+      await awaitCodeRulesOpen(socketPath, session);
       await ingestEngineEvent(socketPath, {
         kind: "call",
         eventId: "call",
@@ -235,6 +238,10 @@ describe("engine service", () => {
       service = undefined;
       await writeFile(join(root, "api/route.py"), "def route(cursor):\n    cursor.execute('SELECT 1')\n");
       service = await startEngineService(options);
+      // The restarted runtime takes the session back at its next event and reopens its evaluator; a result that
+      // arrived during that open would go on without code rules.
+      await ingestEngineEvent(socketPath, { kind: "user-prompt", eventId: "reattach", sessionId: session.sessionId, session, text: "go on" });
+      await awaitCodeRulesOpen(socketPath, session);
       const deliveries = await ingestEngineEvent(socketPath, {
         kind: "result",
         eventId: "result",

@@ -326,6 +326,7 @@ describe("source-scoped steers", () => {
     const session = { host: "omp" as const, sessionId: "partial", cwd: root };
     try {
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.codeRulesOpened(session.sessionId);
       expect(await runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "" })).toEqual([]);
       await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
       expect(reader.events(session.sessionId).filter(event => event.kind === "source-discovery-pending").map(event => event.payload))
@@ -371,6 +372,7 @@ describe("source-scoped steers", () => {
       const session = { host: "omp" as const, sessionId: "slow-turn", cwd: root };
       try {
         await runtime.ingest({ kind: "session-start", eventId: "start", session });
+        await runtime.codeRulesOpened(session.sessionId);
         vi.useFakeTimers({ toFake: ["performance"] });
         const turnEnd = runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "" });
         await settling.promise;
@@ -425,6 +427,7 @@ describe("source-scoped steers", () => {
     const session = { host: "omp" as const, sessionId: "unrecorded-partial", cwd: root };
     try {
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.codeRulesOpened(session.sessionId);
       await expect(runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "" })).resolves.toEqual([]);
       await expect(runtime.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId })).resolves.toEqual([]);
       expect(recordDiscoveryPending.mock.calls.map(([, boundary]) => boundary)).toEqual(["turn", "close"]);
@@ -440,7 +443,7 @@ describe("source-scoped steers", () => {
     }
   });
 
-  it("starts a session before its evaluator opens, and holds a tool call until it has", async () => {
+  it("starts a session before its evaluator opens, and answers a tool call at once without code rules", async () => {
     const root = await realpath(await temporaryDirectory());
     const databasePath = join(root, "rerail.sqlite");
     const attachments = gateStorageAttachments();
@@ -454,18 +457,18 @@ describe("source-scoped steers", () => {
       // The session has started; its evaluator is still waiting to attach storage.
       await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(1));
       expect(await runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: session.sessionId, text: "edit it" })).toEqual([]);
-      // The call captures its preimage only once the evaluator is open.
-      const call = runtime.ingest({
+      // The call does not wait for the evaluator, so its edit is not checked when its result arrives either.
+      expect(await runtime.ingest({
         kind: "call", eventId: "call", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", input: { path: "edited.py" },
-      });
+      })).toEqual([]);
       attachments.workspaces[0]!.release();
-      await call;
+      await runtime.codeRulesOpened(session.sessionId);
       await writeFile(join(root, "edited.py"), "NEEDLE\n");
       expect(await runtime.ingest({
         kind: "result", eventId: "result", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", output: "written",
-      })).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
+      })).toEqual([]);
     } finally {
       for (const workspace of attachments.workspaces) workspace.release();
       attachments.restore();
@@ -617,15 +620,14 @@ describe("source-scoped steers", () => {
     }
   });
 
-  describe("a code-rule boundary reached while the evaluator is still opening", () => {
-    /** A runtime whose first evaluator is held in its storage attach, and a boundary waits for it only 50 ms. */
+  describe("a code-rule boundary reached while the evaluator is still opening (indexing)", () => {
+    /** A runtime whose first evaluator is held in its storage attach. */
     async function openingFixture() {
       const root = await realpath(await temporaryDirectory());
       const databasePath = join(root, "rerail.sqlite");
       const attachments = gateStorageAttachments();
       const runtime = new RerailRuntime({
         storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
-        discoveryWaitMs: 50,
         createAuditor: options => new NativeCodeRuleEnforcer(needleCatalog(), options),
       });
       const audits = new SqliteAuditStore(databasePath);
@@ -658,10 +660,10 @@ describe("source-scoped steers", () => {
       return { root, session, attachments, audits, reader, call, result, steers, runtime, close };
     }
 
-    it("is answered without code rules once the wait runs out, recorded in the session's history, and its edit is audited and steered after the evaluator opens", async () => {
+    it("is answered at once without code rules and recorded in the session's history", async () => {
       const test = await openingFixture();
       try {
-        // The evaluator never opens in this stretch: each boundary answers on its own.
+        // The evaluator never opens in this stretch: each boundary answers on its own, without waiting for it.
         expect(await test.call("write")).toEqual([]);
         await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
         expect(await test.result("write")).toEqual([]);
@@ -670,183 +672,25 @@ describe("source-scoped steers", () => {
           .toEqual([{ boundary: "call" }, { boundary: "result" }, { boundary: "turn-end" }]);
         expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual([]);
         test.attachments.workspaces[0]!.release();
-        // Opened: the call that began before the evaluator did is begun and finished, so its edit is audited and steered.
+        // Opened: the call it answered is not begun or finished late. The evaluator's first walk still sees the file
+        // changed while it ran, as it sees any change it did not watch being made, and checks it.
         expect(await test.steers()).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
-        expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual(expect.arrayContaining([
-          expect.objectContaining({ scope: "ai-output", status: "completed", paths: ["edited.py"] }),
-        ]));
+
       } finally { await test.close(); }
     });
 
-    it("begins a call it answered early once the evaluator opens, so a result that arrives after finishes it", async () => {
+    it("does not check at its result the edit of a call it answered while indexing, even once the evaluator has opened", async () => {
       const test = await openingFixture();
       try {
         expect(await test.call("write")).toEqual([]);
         test.attachments.workspaces[0]!.release();
-        // The open has finished, with the queued begin run, once the repository audit's own workspace is created.
-        await vi.waitFor(() => expect(test.attachments.workspaces).toHaveLength(2));
+        await test.runtime.codeRulesOpened(test.session.sessionId);
         await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
-        expect(await test.result("write")).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
+        expect(await test.result("write")).toEqual([]);
       } finally { await test.close(); }
     });
   });
 
-  describe("a session closed while its evaluator drains the boundaries queued behind its open", () => {
-    /**
-     * A runtime whose first evaluator opens behind a gated storage attach. A boundary waits for it only 50 ms and is
-     * answered without code rules; once the evaluator opens, its drain runs the queued write and then holds, with the
-     * edit accepted but pending behind a replacement workspace whose attach is gated, until `drain.resolve()`.
-     */
-    async function drainFixture() {
-      const root = await realpath(await temporaryDirectory());
-      const databasePath = join(root, "rerail.sqlite");
-      const attachments = gateStorageAttachments();
-      let revision = 1;
-      const catalog = testCodeRuleCatalog(() => [codeRuleSchema.parse({
-        format: "rerail.policy/v1", id: "test:needle", revision, mode: "steer",
-        scope: { include: ["**/*.py"], exclude: [] },
-        clauses: [{
-          id: "needle",
-          violation: { code: "NEEDLE", anchor: "witness.span", message: "No needle" },
-          forbid: { regex: { pattern: "NEEDLE", source: "file.content" } },
-        }],
-      })]);
-      const evaluators: Array<{ evaluator: NativeCodeRuleEnforcer; interrupted: PromiseWithResolvers<void>; closed: PromiseWithResolvers<void> }> = [];
-      const runtime = new RerailRuntime({
-        storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
-        discoveryWaitMs: 50,
-        createAuditor: options => {
-          const evaluator = new NativeCodeRuleEnforcer(catalog, options);
-          const entry = { evaluator, interrupted: Promise.withResolvers<void>(), closed: Promise.withResolvers<void>() };
-          const interrupt = evaluator.interrupt.bind(evaluator);
-          evaluator.interrupt = interruptOptions => { interrupt(interruptOptions); entry.interrupted.resolve(); };
-          const close = evaluator.close.bind(evaluator);
-          evaluator.close = async closeOptions => { await close(closeOptions); entry.closed.resolve(); };
-          evaluators.push(entry);
-          return evaluator;
-        },
-      });
-      const audits = new SqliteAuditStore(databasePath);
-      const session = { host: "omp" as const, sessionId: "draining", cwd: root };
-      const drain = Promise.withResolvers<void>();
-      const held = Promise.withResolvers<void>();
-      const finish = CodeRuleBridge.prototype.finish;
-      let holding = true;
-      vi.spyOn(CodeRuleBridge.prototype, "finish").mockImplementation(async function (this: CodeRuleBridge, ...args) {
-        const responses = await finish.apply(this, args);
-        if (holding) {
-          holding = false;
-          // A newer catalog: the replacement's gated attach keeps the pump from starting the accepted edit.
-          revision = 2;
-          evaluators[0]!.evaluator.refreshCodeRules();
-          held.resolve();
-          await drain.promise;
-        }
-        return responses;
-      });
-      await runtime.ingest({ kind: "session-start", eventId: "start", session });
-      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(1));
-      expect(await runtime.ingest({
-        kind: "call", eventId: "call", sessionId: session.sessionId, toolCallId: "write", toolName: "write", input: { path: "edited.py" },
-      })).toEqual([]);
-      await writeFile(join(root, "edited.py"), "NEEDLE\n");
-      expect(await runtime.ingest({
-        kind: "result", eventId: "result", sessionId: session.sessionId, toolCallId: "write", toolName: "write", output: "written",
-      })).toEqual([]);
-      /** Opens the first evaluator and waits for its drain to hold with the write accepted. */
-      const openAndHold = async () => {
-        attachments.workspaces[0]!.release();
-        await held.promise;
-        expect(evaluators[0]!.evaluator.snapshotStatus().pending).toBe(true);
-        expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([]);
-      };
-      const close = async () => {
-        drain.resolve();
-        for (const workspace of attachments.workspaces) workspace.release();
-        attachments.restore();
-        vi.mocked(CodeRuleBridge.prototype.finish).mockRestore();
-        await runtime.dispose();
-        audits.close();
-      };
-      return { runtime, audits, attachments, evaluators, session, drain, openAndHold, close };
-    }
-
-    it("ends the audit of the edit it had accepted, and every other audit of the session, when it was only closed", async () => {
-      const test = await drainFixture();
-      try {
-        await test.openAndHold();
-        // An audit of the session that no evaluator owns: only the session-wide interrupt of an ordinary close ends it.
-        const orphan = test.audits.start({
-          sessionId: test.session.sessionId, workspaceRoot: test.session.cwd, scope: "touched-files", mode: "log",
-          catalogRevision: null, ruleRevisions: [], revision: 0, paths: ["orphan.py"],
-        });
-        await test.runtime.closeSession(test.session.sessionId);
-        test.drain.resolve();
-        await test.evaluators[0]!.interrupted.promise;
-        expect(test.audits.get(orphan)).toMatchObject({ status: "interrupted" });
-        expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual(expect.arrayContaining([
-          expect.objectContaining({ scope: "ai-output", status: "interrupted", paths: ["edited.py"] }),
-        ]));
-        expect(test.audits.list({ sessionId: test.session.sessionId }).audits.filter(audit => audit.status === "running")).toEqual([]);
-      } finally { await test.close(); }
-    });
-
-    it("ends the audit of the edit it had accepted, and only that, when the session id was reopened meanwhile", async () => {
-      const test = await drainFixture();
-      try {
-        await test.openAndHold();
-        await test.runtime.closeSession(test.session.sessionId);
-        await test.runtime.ingest({ kind: "session-start", eventId: "start-2", session: test.session });
-        await vi.waitFor(() => expect(test.attachments.workspaces).toHaveLength(3));
-        test.attachments.workspaces[2]!.release();
-        // The second session's evaluator has opened and its repository audit waits for the gate.
-        await vi.waitFor(() => expect(test.attachments.workspaces).toHaveLength(4));
-        expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual([
-          expect.objectContaining({ scope: "repository", status: "running" }),
-        ]);
-        test.drain.resolve();
-        await test.evaluators[0]!.interrupted.promise;
-        expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual(expect.arrayContaining([
-          expect.objectContaining({ scope: "repository", status: "running" }),
-          expect.objectContaining({ scope: "ai-output", status: "interrupted", paths: ["edited.py"] }),
-        ]));
-        expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toHaveLength(2);
-        test.attachments.workspaces[3]!.release();
-        await vi.waitFor(() => expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual(expect.arrayContaining([
-          expect.objectContaining({ scope: "repository", status: "completed" }),
-          expect.objectContaining({ scope: "ai-output", status: "interrupted" }),
-        ])));
-      } finally { await test.close(); }
-    });
-
-    it("keeps the stores open under the evaluator's late release when the runtime is disposed meanwhile", async () => {
-      const test = await drainFixture();
-      const closeSpy = vi.spyOn(CodeRuleBridge.prototype, "close");
-      try {
-        await test.openAndHold();
-        await test.runtime.closeSession(test.session.sessionId);
-        let disposed = false;
-        const disposing = test.runtime.dispose().then(() => { disposed = true; });
-        // The evaluator's drain is still running behind the closed session: disposal waits for its release. One
-        // macrotask lets every microtask of a disposal that did not wait run to its end.
-        await new Promise<void>(resolve => setImmediate(resolve));
-        expect(disposed).toBe(false);
-        test.drain.resolve();
-        // The evaluator's close joins the replacement workspace's attach, still gated.
-        for (const workspace of test.attachments.workspaces) workspace.release();
-        await disposing;
-        await expect(closeSpy.mock.results[0]!.value).resolves.toBeUndefined();
-        const recorded = test.audits.list({ sessionId: test.session.sessionId }).audits;
-        expect(recorded).toEqual(expect.arrayContaining([
-          expect.objectContaining({ scope: "ai-output", status: "interrupted", paths: ["edited.py"] }),
-        ]));
-        expect(recorded.filter(audit => audit.status === "running")).toEqual([]);
-      } finally {
-        closeSpy.mockRestore();
-        await test.close();
-      }
-    });
-  });
 
   it("keeps a session whose evaluator cannot open, and records why its code rules are off", async () => {
     const root = await realpath(await temporaryDirectory());
@@ -1033,7 +877,7 @@ describe("source-scoped steers", () => {
           revision: batch.revision,
           scope: batch.edits.map(edit => edit.path),
           background: true,
-          generatedEdit: true,
+          generatedEdit: { violations: [], sourceOf: () => undefined },
         });
         return { revision: batch.revision, disposition: "steer", violations: [], failures: [] };
       },

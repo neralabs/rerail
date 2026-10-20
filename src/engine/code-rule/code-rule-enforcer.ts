@@ -10,6 +10,7 @@ import {
   loadNativeBinding,
   RESULT_PAGE_BYTES,
   type NativeCodeRuleDslWorkspace,
+  type NativeGitIgnoreMatcher,
   type NativePackageFacts,
   type NativeRepositoryIndexOptions,
 } from "../native/native.js";
@@ -26,6 +27,7 @@ import {
   type RuleSteerDelivery,
   type RepositoryAuditHooks,
   type AuditorCloseOptions,
+  type SteerSourceOf,
 } from "./code-rule.js";
 import {
   AUDIT_BLIND_REASONS,
@@ -83,8 +85,8 @@ export const IGNORED_DIRECTORIES = new Set([
   "target",
   "vendor",
 ]);
-/** A repository index honours the walk's bounds, ignored directories and source languages. */
-const REPOSITORY_INDEX_OPTIONS: Omit<NativeRepositoryIndexOptions, "nestedCheckouts"> = {
+/** A repository index honours the walk's bounds, ignored directories and source languages; the lane adds Git's ignores. */
+const REPOSITORY_INDEX_OPTIONS: Omit<NativeRepositoryIndexOptions, "nestedCheckouts" | "followGitignore"> = {
   maxFiles: AUDIT_MAX_FILES,
   maxSourceBytes: AUDIT_MAX_SOURCE_BYTES,
   maxFileBytes: MAX_SOURCE_BYTES,
@@ -497,6 +499,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /** Folders below the workspace root that are checkouts of their own, as the owner of this lane decides. */
   readonly #nestedCheckouts: () => readonly string[];
   readonly #timingLog: ((line: string) => void) | undefined;
+  readonly #followGitignore: boolean;
+  /** Git's exclude stack for this checkout, opened on first use; null outside Git or where it cannot be opened. */
+  #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
   #scope: AuditScope;
   #mode: AuditMode;
   #workspace: PreparedWorkspace | undefined;
@@ -569,6 +574,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       nestedCheckouts?: () => readonly string[];
       /** Receives the storage-attach and repository-audit timing lines (the daemon passes its log); without it they are not written. */
       timingLog?: (line: string) => void;
+      /**
+       * Leave out what Git ignores (nested `.gitignore`s, `.git/info/exclude`, `core.excludesFile`; never a tracked
+       * file): edits to it are not audited and repository walks skip it. Off by default; a session reads it from its
+       * repository's setting when it opens, and it holds for the session's life.
+       */
+      followGitignore?: boolean;
     },
   ) {
     this.#catalog = catalog;
@@ -580,6 +591,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#presentPath = options.presentPath ?? (path => path);
     this.#nestedCheckouts = options.nestedCheckouts ?? (() => []);
     this.#timingLog = options.timingLog;
+    this.#followGitignore = options.followGitignore ?? false;
     this.#ownedAudits =
       options.audits === undefined
         ? new SqliteAuditStore(defaultRerailDatabasePath())
@@ -594,7 +606,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * and import aliases (`paths`, `baseUrl`) those `package` facts read, and, where a code rule reads Next server module
    * graphs, any source a manifest reads, since its imports move other sources in or out of a graph, and any file in an
    * `app/` folder, which may make a root `app/` (hiding `src/app/`) present. Without such a rule, the scopes alone
-   * decide.
+   * decide. Whatever they say, a path Git ignores is refused while the lane follows `.gitignore`.
    */
   acceptsPath(path: string): boolean {
     const language = languageFor(path);
@@ -605,8 +617,26 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       (((manifestDirectory(path) !== undefined || isModuleConfig(path)) &&
         (workspace?.readsPackageManifests() ?? true)) ||
         (workspace?.readsServerGraph() === true && graphInput) ||
-        (workspace?.acceptsPath(path) ?? true))
+        (workspace?.acceptsPath(path) ?? true)) &&
+      !this.ignoresPath(path, false)
     );
+  }
+
+  /**
+   * Whether `path` (relative to the workspace root) is left out because Git ignores it and this lane follows
+   * `.gitignore`. Outside Git nothing is. Ignore files that cannot be read leave the path audited (reported on stderr),
+   * so a broken `.gitignore` never hides sources.
+   */
+  ignoresPath(path: string, directory: boolean): boolean {
+    if (!this.#followGitignore) return false;
+    try {
+      this.#gitIgnore ??= loadNativeBinding().openGitIgnoreMatcher(this.#workspaceRoot);
+      return this.#gitIgnore?.ignored(path, directory) ?? false;
+    } catch (error) {
+      this.#gitIgnore ??= null;
+      process.stderr.write(`rerail: cannot read Git ignore rules for ${path || "."}: ${errorMessage(error)}\n`);
+      return false;
+    }
   }
 
   snapshotStatus(): CodeRuleResponse & { pending: boolean } {
@@ -1281,7 +1311,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     let backoff = 2;
     while (!this.#closing) {
       try {
-        return await workspace.indexRepositoryAsync({ ...REPOSITORY_INDEX_OPTIONS, nestedCheckouts: [...nested.pruned] });
+        return await workspace.indexRepositoryAsync({
+          ...REPOSITORY_INDEX_OPTIONS,
+          nestedCheckouts: [...nested.pruned],
+          followGitignore: this.#followGitignore,
+        });
       } catch (error) {
         if (!(error instanceof Error) || error.message !== "WORKSPACE_BUSY") throw error;
         await pause(backoff);
@@ -1493,7 +1527,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
   }
 
-  /** A folder the lane's owner names as a checkout of its own is skipped and reported, so its own rules judge it. */
+  /**
+   * A folder the lane's owner names as a checkout of its own is skipped and reported, so its own rules judge it; a
+   * folder Git ignores is pruned while the lane follows `.gitignore` (files are checked as they are read).
+   */
   #shouldWalkDirectoryEntry(
     workspace: NativeCodeRuleDslWorkspace,
     canonicalRoot: string,
@@ -1505,7 +1542,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const absolute = join(directory, entry.name);
     const path = relative(canonicalRoot, absolute).split(sep).join("/");
     if (entry.isDirectory()) {
-      if (!nested.pruned.has(path)) return true;
+      if (!nested.pruned.has(path)) return !this.ignoresPath(path, true);
       nested.reached.push(path);
       return false;
     }
@@ -1522,7 +1559,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     facts: SourceFactsCache,
   ): Promise<WorkspaceFile | undefined> {
     const language = languageFor(path);
-    if (!info.isFile() || language === undefined || !workspace.acceptsPath(path) || seen.has(path)) return undefined;
+    if (!info.isFile() || language === undefined || !workspace.acceptsPath(path) || seen.has(path) || this.ignoresPath(path, false))
+      return undefined;
     seen.add(path);
     if (info.size > MAX_SOURCE_BYTES) {
       failures.push(failure("source", "budget-exceeded", "Source exceeds the per-file byte budget", path, "read"));
@@ -1801,16 +1839,17 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const steerable = violations.filter((violation) => steers(violation.mode)).map(violation => this.#presented(violation));
     if (steerable.length === 0) return;
     const provenance = this.#workspace?.provenance ?? this.#catalog.provenance();
-    const steer = buildSteer(steerable, ruleId => {
+    const sourceOf: SteerSourceOf = ruleId => {
       const recorded = provenance.find(entry => entry.ruleId === ruleId);
       return recorded !== undefined && "source" in recorded ? recorded.source : undefined;
-    });
+    };
+    const steer = buildSteer(steerable, sourceOf);
     await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
       revision,
       scope,
       ruleIds: steer.ruleIds,
       background: true,
-      ...(generatedEdit ? { generatedEdit: true } : {}),
+      ...(generatedEdit ? { generatedEdit: { violations: steerable, sourceOf } } : {}),
     });
   }
 

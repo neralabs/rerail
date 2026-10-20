@@ -254,6 +254,30 @@ export async function loadPresence() {
   data.presence = body.preferences.find(p => p.repository === "" && p.host === "")?.presence ?? "compact";
 }
 
+/** Settings: the scoped repository's Follow .gitignore; kept for the page only while it still shows that scope. */
+export async function loadFollowGitignore() {
+  const scope = captureScope();
+  const { body } = await get(`/api/repository?${new URLSearchParams(scope.target)}`);
+  if (inScope(scope)) data.followGitignore = body.repository.followGitignore;
+}
+
+/**
+ * Settings: turn the scoped repository's Follow .gitignore on or off. The page shows it at once and puts it back, with
+ * a toast, when the write fails; nothing of the answer lands once the page shows another repository.
+ */
+export async function saveFollowGitignore(follow, { toast, invalidate }) {
+  const scope = captureScope(), was = data.followGitignore;
+  data.followGitignore = follow; invalidate();
+  try {
+    if (!(await sendInScope(scope, "PUT", "/api/repository/follow-gitignore", { followGitignore: follow }))) return;
+    toast(follow ? "Files Git ignores are not checked in sessions started from now on." : "Files Git ignores are checked in sessions started from now on.");
+  } catch (error) {
+    data.followGitignore = was;
+    toast(`Could not save: ${error.message}`);
+  }
+  invalidate();
+}
+
 /**
  * The packs that fit the scoped repository, each with the folder to add it in: W0, Review, and the folder
  * Add pack uses. Reads the repository, so only when the page needs them.
@@ -612,7 +636,7 @@ export function changeScope(scope) {
   Object.assign(data, {
     repository: null, checkout: null, unavailable: [], rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
     activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),
-    sessionFindings: pagedList(), newestSession: null, recommendations: null, loaded: false, missing: false,
+    sessionFindings: pagedList(), newestSession: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
   });
   data.sessionDetail.clear();
   refreshNow();

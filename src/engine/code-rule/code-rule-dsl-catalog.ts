@@ -31,7 +31,7 @@ import { checkoutStatus, parentCheckouts, recordedCheckoutsVersion } from "../ca
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
-import { checkouts, ruleAttachments, ruleSettings } from "../storage/schema.js";
+import { checkouts, repositories, ruleAttachments, ruleSettings } from "../storage/schema.js";
 import { compareDeterministicStrings, stableJsonText } from "../stable-json.js";
 
 export { bundledCodeRuleDslDirectory };
@@ -347,6 +347,14 @@ export class CheckoutCatalogs {
 
   eligibility(root: string): CheckoutEligibility {
     return this.#entry(root).eligibility;
+  }
+
+  /** Whether audits in `root` leave out files Git ignores: its repository's setting, on for a checkout not recorded. */
+  followsGitignore(root: string): boolean {
+    const repositoryKey = this.#entry(root).checkout?.repositoryKey;
+    if (repositoryKey === undefined) return true;
+    return this.database.select({ followGitignore: repositories.followGitignore }).from(repositories)
+      .where(eq(repositories.repositoryKey, repositoryKey)).get()?.followGitignore ?? true;
   }
 
   /** The checkout and its recorded parent checkouts, whose settings apply in it. */

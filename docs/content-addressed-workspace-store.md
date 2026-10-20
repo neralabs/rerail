@@ -36,8 +36,9 @@ Background garbage collection also runs in Rust.
 Repository-scope audits of a Git checkout run `indexRepositoryAsync()` on the audit workspace,
 one bounded chunk per call. Rust walks the workspace root exactly as the JavaScript walk does
 (workspace-root-relative regular files with the host's source languages and code-rule scopes, never
-through a symlink, outside the host's ignored directories); `.gitignore`, `.rerailignore` and the
-built-in ignores decide only which clean files it may restore, never which files it evaluates.
+through a symlink, outside the host's ignored directories, and, when the repository follows `.gitignore` (the default),
+outside what Git ignores); `.rerailignore` and the built-in ignores decide only which clean files it may restore, never
+which files it evaluates.
 It restores every completed clean directory from the store, then reads one batch per chunk from
 the worktree without following symlinks, publishes it and releases its sources and tapes before
 the chunk returns. Listing and restoring evaluate nothing, so they run without the process-wide

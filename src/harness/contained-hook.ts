@@ -1,8 +1,9 @@
 /**
  * How long a tool hook or a stop hold may wait on Rerail. OMP and Pi fail a `tool_call` handler that throws, or that
  * overruns OMP's 30 s budget, closed: the tool is blocked with `Extension … failed` / `timed out` (pi-coding-agent
- * 18.0.4 `ExtensionRunner.emitToolCall`, Pi 0.87 `agent-session`). The daemon client waits up to 30 s for an answer,
- * so a wedged daemon would otherwise cost the tool call itself.
+ * 18.0.4 `ExtensionRunner.emitToolCall`, Pi 0.87 `agent-session`). The daemon client waits for as long as a live daemon
+ * is still working on the event (a turn's audits can take minutes), so a busy or wedged daemon would otherwise cost the
+ * tool call itself.
  */
 export const HOOK_BUDGET_MS = 25_000;
 
