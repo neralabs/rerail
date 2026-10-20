@@ -1218,6 +1218,26 @@ impl<'p> Lowerer<'p> {
                         .collect();
                     return Ok((Op::Kinds(kinds), bound.clone()));
                 }
+                // Where no branch reads or binds a capture, which branch holds a row is not
+                // observable: the plain kind branches are one kind test, run first, and the
+                // others run on the rows it leaves (the depth walks' stop rule: 12 of its 18
+                // branches are kinds, each an anti-join over the rows the earlier ones left).
+                let kinds: Vec<u16> = items
+                    .iter()
+                    .filter_map(|item| match item {
+                        AstMatcher::Kind(kind) => Some(kind_id(kind)),
+                        _ => None,
+                    })
+                    .collect();
+                if kinds.len() > 1 && self.exclude.is_none() && items.iter().all(capture_free) {
+                    let mut ops = vec![Op::Kinds(kinds)];
+                    for item in items {
+                        if !matches!(item, AstMatcher::Kind(_)) {
+                            ops.push(self.lower(item, scope, bound)?.0);
+                        }
+                    }
+                    return Ok((Op::Any(ops), bound.clone()));
+                }
                 let mut ops = Vec::with_capacity(items.len());
                 let mut out = bound.clone();
                 for item in items {
