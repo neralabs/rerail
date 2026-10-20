@@ -77,6 +77,11 @@ log: { type: stdout, level: warn }
   # keeps the dashboard link from opening a browser on the runner.
   $env:BROWSER = "none"
   [IO.File]::WriteAllText("$sandbox\.npmrc", "@neralabs:registry=$registry/`n")
+  # Set-up first asks, once per computer, whether Rerail may read coding agent sessions, and stops there until it is
+  # answered. This sandbox has said yes already (what set-up writes on an `allow` answer), so the one run reaches
+  # "start"; the question itself is covered by test/cli/setup-json.test.ts.
+  New-Item -ItemType Directory -Force "$sandbox\.rerail" | Out-Null
+  [IO.File]::WriteAllText("$sandbox\.rerail\consent.json", '{"sessions":{"approvedAt":"2026-10-20T00:00:00.000Z"}}')
   $daemonPort = Get-FreePort
   $start = New-Object Diagnostics.ProcessStartInfo($node)
   $start.Arguments = "`"$npxCli`" --yes @neralabs/rerail@latest setup --repo `"$project`" --answer start --port $daemonPort"
