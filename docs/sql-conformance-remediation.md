@@ -714,14 +714,20 @@ Commit `c90da557` is the completed focused red commit for isolated utility-frame
 Commit `89ee5bb4` is the completed focused red commit for typed utility-limit SQL.
 Commit `e5197b32` is the completed focused red commit for parsed-document SQL behavior.
 Commit `dd3e38c1` is its TDD-green implementation.
+Commit `e63f33be` is the completed focused red commit for generated-document mapping.
+Commit `24e32bed` is its TDD-green implementation.
+Commit `c2358ea9` is the active red commit for exact Phase 5 SQL and terminal catalogs.
 
 Phase 5 is in progress.
 Parsed literals, relational host predicates, and exported parsed captures now execute through bounded
-parse-fact descriptors and SQL composition. Their final paths and spans equal the committed oracles.
-Generated-document identities, document-map rows, invalid-map rejection, and authored Phase 5 SQL
-and catalog contracts remain incomplete.
+parse-fact descriptors and SQL composition. Generated results cross typed document-map rows in SQL.
+Missing maps, invalid spans, and overlaps fail closed before registration. Mapped spans equal the
+committed oracle for the generated-document contract.
 
-The next required package is generated-document mapping.
+Authored Phase 5 SQL and catalog contracts remain incomplete. Source-path identity assertions and
+atomic parse-capacity failure tests also remain incomplete.
+
+The next required package is exact Phase 5 SQL and ordered terminal catalogs.
 Do not change the completed Phase 2 through Phase 4 contracts to accommodate later work.
 All 39 Phase 2 through Phase 4 catalogs pass exact, repeated, and concurrent compilation checks.
 
