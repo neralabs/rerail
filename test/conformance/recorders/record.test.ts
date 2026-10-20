@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
 
 import type { CorpusFile } from "../../../conformance/port-readiness/corpus.js";
 import { readGatesManifest, recordedRuntimes } from "../../../conformance/port-readiness/manifest.js";
+import type { CommandRunner } from "../../../conformance/port-readiness/process.js";
 import { gatesCorpusSchema, gatesRecordingSchema, recordingText, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
 import { readCachedRecording, recordingLockSchema, recordingLockText, writeCachedRecording } from "../../../conformance/port-readiness/recording/store.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
 import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
-import { RUNTIMES_DIRECTORY, unpinnedNpmDependencies, unpinnedPythonDependencies } from "../../../conformance/recorders/port-readiness/runtimes.js";
+import { RUNTIMES_DIRECTORY, unpinnedNpmDependencies, unpinnedPythonDependencies, uvRuntime } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 
 const MANIFEST = `adapter: bandit
@@ -261,5 +262,50 @@ test("every committed runtime pins its direct dependencies exactly, and has no l
     for (const lockfile of ["package-lock.json", "uv.lock"]) assert.ok(!existsSync(join(directory, lockfile)), `${runtime}/${lockfile}`);
     if (existsSync(join(directory, "package.json"))) assert.deepEqual(unpinnedNpmDependencies(JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as { dependencies?: Record<string, string> }), [], runtime);
     if (existsSync(join(directory, "pyproject.toml"))) assert.deepEqual(unpinnedPythonDependencies(readFileSync(join(directory, "pyproject.toml"), "utf8")), [], runtime);
+  }
+});
+
+test("a cached uv runtime whose interpreter link dangles is installed again, and one whose interpreter resolves is reused", async () => {
+  // uv links the environment's bin/python to its managed interpreter, which in CI is outside the restored runtimes cache.
+  const root = mkdtempSync(join(tmpdir(), "port-readiness-uv-"));
+  try {
+    const interpreters = join(root, "uv-python-dir");
+    const syncs: string[] = [];
+    const runner: CommandRunner = {
+      run: async (argv, options) => {
+        if (argv[0] === "uv" && argv[1] === "sync") {
+          const environment = options?.env?.UV_PROJECT_ENVIRONMENT;
+          assert.ok(environment !== undefined);
+          syncs.push(environment);
+          mkdirSync(join(environment, "lib", "python3.13", "site-packages"), { recursive: true });
+          writeFileSync(join(environment, "lib", "python3.13", "site-packages", "ruff.py"), "");
+          mkdirSync(interpreters, { recursive: true });
+          writeFileSync(join(interpreters, "python3.13"), "");
+          mkdirSync(join(environment, "bin"), { recursive: true });
+          symlinkSync(join(interpreters, "python3.13"), join(environment, "bin", "python"));
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (argv[0]!.endsWith(join(".venv", "bin", "python")) && argv[1] === "--version") {
+          if (!existsSync(argv[0]!)) throw Object.assign(new Error(`spawn ${argv[0]} ENOENT`), { code: "ENOENT" });
+          return { exitCode: 0, stdout: "Python 3.13.12\n", stderr: "" };
+        }
+        throw new Error(`unexpected command: ${argv.join(" ")}`);
+      },
+    };
+    const cacheRoot = join(root, "cache");
+    const first = await uvRuntime("ruff-0.16.9", cacheRoot, runner);
+    assert.equal(syncs.length, 1);
+    assert.equal((await uvRuntime("ruff-0.16.9", cacheRoot, runner)).version, "Python 3.13.12");
+    assert.equal(syncs.length, 1, "a cached runtime whose interpreter resolves is reused");
+
+    // A later run restores the runtimes cache, but not uv's interpreters: the environment is intact, its link dangles.
+    rmSync(interpreters, { recursive: true, force: true });
+    assert.ok(!existsSync(first.python));
+    const restored = await uvRuntime("ruff-0.16.9", cacheRoot, runner);
+    assert.equal(syncs.length, 2, "a cached runtime whose interpreter is gone is installed again");
+    assert.ok(existsSync(restored.python));
+    assert.equal(restored.version, "Python 3.13.12");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

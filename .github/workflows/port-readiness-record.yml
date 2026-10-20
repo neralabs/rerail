@@ -307,16 +307,20 @@ jobs:
       # The recorder runs the pinned upstream linters: uv installs their Python runtimes from the committed pins. No
       # lockfile is committed, so a transitive release that changes upstream's answers shows up as drift here.
       # uv's cache holds what the runtimes install from, and the runtimes cache trusts a runtime on the `.tree.sha256`
-      # written beside it after the install, so it is saved under the same rule as the caches above.
+      # written beside it after the install, so it is saved under the same rule as the caches above. A Python runtime's
+      # .venv/bin/python links to uv's interpreter under UV_PYTHON_INSTALL_DIR ($RUNNER_TEMP), which no cache keeps, so
+      # the recorder installs a restored Python runtime again when that link no longer resolves (in CI, on every
+      # restored run).
       - name: Set up uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           save-cache: ${{ needs.authorize.outputs.pr == '' }}
 
       # Restored only here; saved below only by a run that took nothing from a pull request. A cached runtime is trusted
-      # on the `.tree.sha256` stored beside it in the same cache. upload/ is left out — `recordings/*` lists the
-      # directory's children, so the negation drops upload/ (a bare `recordings` would archive all of it, upload/
-      # included) — and publish takes only the two recordings the lock names, whatever an earlier run left there.
+      # on the `.tree.sha256` stored beside it in the same cache, and a cached Python runtime only while its interpreter
+      # resolves. upload/ is left out — `recordings/*` lists the directory's children, so the negation drops upload/ (a
+      # bare `recordings` would archive all of it, upload/ included) — and publish takes only the two recordings the
+      # lock names, whatever an earlier run left there.
       - name: Restore the upstream runtimes, checkouts, corpus and recordings
         uses: actions/cache/restore@v6
         with:

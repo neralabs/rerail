@@ -104,10 +104,14 @@ export async function checkoutUpstream(
   };
 }
 
-/** Reuse `directory` only while its recorded digest of `tree` holds; otherwise rebuild it with `install`. */
-async function cachedInstall(directory: string, tree: string, install: () => Promise<void>): Promise<void> {
+/**
+ * Reuse `directory` only while its recorded digest of `tree` holds and every path in `resolves` resolves (through any
+ * link); otherwise rebuild it with `install`.
+ */
+async function cachedInstall(directory: string, tree: string, install: () => Promise<void>, resolves: readonly string[] = []): Promise<void> {
   const record = `${directory}.tree.sha256`;
-  const intact = existsSync(tree) && existsSync(record) && (await readFile(record, "utf8")).trim() === treeDigest(tree);
+  const intact = existsSync(tree) && existsSync(record) && resolves.every((path) => existsSync(path))
+    && (await readFile(record, "utf8")).trim() === treeDigest(tree);
   if (intact) return;
   await rm(directory, { recursive: true, force: true });
   await mkdir(directory, { recursive: true });
@@ -229,7 +233,9 @@ export interface PythonRuntime {
 /**
  * A Python environment installed with `uv sync` from `runtimes/<runtime>/` (pyproject.toml, every dependency `==` an
  * exact version, and .python-version, which pins the interpreter). uv fetches the interpreter on first use. The tree it
- * resolved is in the cache directory's uv.lock.
+ * resolved is in the cache directory's uv.lock. The environment's bin/python is a link to that interpreter, which lives
+ * outside the cache (in CI, under setup-uv's UV_PYTHON_INSTALL_DIR), so a cached environment whose link no longer
+ * resolves is installed again.
  */
 export async function uvRuntime(runtime: string, cacheRoot: string, runner: CommandRunner): Promise<PythonRuntime> {
   const files = UV_PINS;
@@ -237,14 +243,14 @@ export async function uvRuntime(runtime: string, cacheRoot: string, runner: Comm
   const unpinned = unpinnedPythonDependencies(await readFile(join(source, "pyproject.toml"), "utf8"));
   if (unpinned.length > 0) throw new Error(`runtimes/${runtime}/pyproject.toml must pin every dependency with == at an exact version: ${unpinned.join(", ")}`);
   const environment = join(directory, ".venv");
+  const python = join(environment, "bin", "python");
   await cachedInstall(directory, join(environment, "lib"), async () => {
     for (const file of files) await copyFile(join(source, file), join(directory, file));
     // Only uv's own interpreter builds: a system or Homebrew Python of the same minor version is not the pinned one.
     const env: NodeJS.ProcessEnv = { ...process.env, UV_PROJECT_ENVIRONMENT: environment, UV_PYTHON_PREFERENCE: "only-managed" };
     delete env.VIRTUAL_ENV;
     await runChecked(runner, ["uv", "sync", "--no-install-project", "--quiet"], { cwd: directory, env });
-  });
-  const python = join(environment, "bin", "python");
+  }, [python]);
   const version = (await runChecked(runner, [python, "--version"])).trim();
   const pinned = (await readFile(join(source, ".python-version"), "utf8")).trim();
   if (!/^\d+\.\d+\.\d+$/u.test(pinned)) throw new Error(`runtimes/${runtime}/.python-version must pin an exact interpreter, found ${pinned}`);
