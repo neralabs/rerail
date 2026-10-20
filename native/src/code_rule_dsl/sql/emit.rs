@@ -33,6 +33,12 @@ use std::fmt::Write;
 use std::rc::Rc;
 
 #[cfg(feature = "unbounded-work")]
+mod fusion;
+#[cfg(feature = "unbounded-work")]
+mod inline;
+#[cfg(feature = "unbounded-work")]
+mod shared_search;
+#[cfg(feature = "unbounded-work")]
 mod spike;
 
 /// Where the driver substitutes the statement's whole files (`n.file IN (…)` of the root frame).
@@ -295,6 +301,14 @@ impl Emitted {
         self.statements.push(sql);
         self.effects.push(effect);
     }
+
+    fn finish(self) -> Self {
+        #[cfg(feature = "unbounded-work")]
+        if super::diagnostics::fuse_frames() {
+            return inline::fuse(self);
+        }
+        self
+    }
 }
 
 /// The slots of the clause's own scope: those a clause's last statement selects.
@@ -323,7 +337,7 @@ pub(super) fn clause(statement: &Statement) -> Emitted {
         format!("SELECT file, node{columns} FROM {out}{known} ORDER BY file, node"),
         Reads::join(&[&out]).writes(Writes::None),
     );
-    emitter.out
+    emitter.out.finish()
 }
 
 /// A clause's statements under `violation.each` (the enumerated capture's scope-0 node slot is
@@ -421,7 +435,7 @@ pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Emitte
         ),
         Reads::join(&[&eo]).writes(Writes::None),
     );
-    emitter.out
+    emitter.out.finish()
 }
 
 /// A stage's statements: the last selects the distinct `(file, node)` its rule matches; in a
@@ -439,7 +453,7 @@ pub(super) fn stage(statement: &Statement, three: bool) -> Emitted {
         format!("SELECT DISTINCT file, node FROM {out}")
     };
     emitter.push(select, Reads::join(&[&out]).writes(Writes::None));
-    emitter.out
+    emitter.out.finish()
 }
 
 /// The slots a frame must hold for what reads it after an operator (`Emitter::op`): the slots
@@ -1026,6 +1040,12 @@ impl<'s> Emitter<'s> {
 
     /// `op` on `input` (`Emitter::op`), in the output frame's layout.
     fn apply(&mut self, op: &Op, input: &str, live: &Live) -> String {
+        #[cfg(feature = "unbounded-work")]
+        if super::diagnostics::shared_search()
+            && let Some(out) = self.shared_search(op, input, live)
+        {
+            return out;
+        }
         #[cfg(feature = "unbounded-work")]
         if let Some(out) = self.try_first_probe(op, input, live) {
             return out;

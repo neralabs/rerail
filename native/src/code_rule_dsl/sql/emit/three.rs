@@ -80,6 +80,16 @@ impl Emitter<'_> {
         let mut current = input.to_owned();
         for ((index, term), after) in terms.iter().enumerate().zip(&lives) {
             let first = index == 0;
+            #[cfg(feature = "unbounded-work")]
+            if super::super::diagnostics::fuse_filters()
+                && (first || !term.checked)
+                && let Some(next) = self.fused_filter(&term.op, &current, first, after)
+            {
+                self.inherit(&current, &next, &BTreeSet::new());
+                self.same_space(&current, &next);
+                current = next;
+                continue;
+            }
             // The rows that reach the term with a capture it mentions withheld.
             let held = (!first && term.checked)
                 .then(|| {
@@ -112,6 +122,21 @@ impl Emitter<'_> {
             self.inherit(&current, &run, &BTreeSet::new());
             self.same_space(&current, &run);
             let out = self.op(&term.op, &run, after);
+            #[cfg(feature = "unbounded-work")]
+            if first
+                && super::super::diagnostics::fuse_filters()
+                && (!term.withholds
+                    || term.binds.iter().all(|&bits| bits == 0)
+                    || matches!(
+                        term.op,
+                        Op::Kinds(_) | Op::Regex(_) | Op::Pattern { .. } | Op::Never
+                    ))
+            {
+                // Every operator emits a zero withheld mask. A first term that cannot add
+                // mask bits already has the conjunction's complete initial metadata.
+                current = out;
+                continue;
+            }
             let (term_slots, passed_slots) =
                 self.within(after, |this| (this.physical_of("o"), this.physical_of("p")));
             let mut select = if first {

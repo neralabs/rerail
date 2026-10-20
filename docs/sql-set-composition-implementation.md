@@ -5,6 +5,7 @@ The measured compiler optimizations and batch transactions are also enabled in p
 The first-candidate probe remains opt-in because it regresses the real Python policy scan.
 The enabled changes reduce demand cardinality, but leave a substantial gap from native execution.
 The subsequent [root-cause analysis](sql-set-composition-root-cause.md) measures the remaining generated work and a quadratic first-match defect.
+The [compiler spike results](sql-set-composition-compiler-spike.md) describe the next experimental passes.
 
 ## Implemented defaults
 
@@ -103,7 +104,7 @@ This avoids a frame allocation and its `INSERT SELECT` copy.
 The experiment does not reorder captures or fuse terminal calls into correlated SQL.
 It currently runs only for two-valued statements.
 
-## Measurements
+## Measurements before promotion
 
 The workload contains the same 135 supported Python policies, 146 clauses, and 32 pinned data-layer files.
 It includes the two newly shipped rule guards.
@@ -116,7 +117,7 @@ The initial complete sweep gives these median apply CPU times:
 
 | Variant | CPU seconds | Change from control |
 | --- | ---: | ---: |
-| Promoted defaults | 8.116 | — |
+| Defaults at `235dde6a` | 8.116 | — |
 | Integer pattern keys | 8.266 | 1.8% slower |
 | Root guards | 7.342 | 9.5% less CPU |
 | Kind-copy elimination | 8.037 | 1.0% less CPU |
@@ -130,7 +131,7 @@ A separate 138-file scan contains 106 files outside the tuning subset:
 | Variant | CPU seconds | Wall seconds |
 | --- | ---: | ---: |
 | Native | 7.772 | 4.268 |
-| Promoted SQL defaults | 46.596 | 29.548 |
+| SQL defaults at `235dde6a` | 46.596 | 29.548 |
 | Combined prototype | 41.389 | 22.702 |
 
 All three runs preserve the same 580 full finding objects with zero failures and zero blind files.
@@ -141,7 +142,7 @@ They do not reproduce Tim's missing external 818-clause catalog.
 
 The demand trace explains the smaller gain:
 
-| Counter | Promoted defaults | Combined prototype | Reduction |
+| Counter | Defaults at `235dde6a` | Combined prototype | Reduction |
 | --- | ---: | ---: | ---: |
 | Inserted demand keys | 708,699 | 465,150 | 34.4% |
 | Inserted keys carrying captures | 253,104 | 156,872 | 38.0% |

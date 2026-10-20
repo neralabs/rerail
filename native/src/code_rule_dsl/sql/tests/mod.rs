@@ -1,6 +1,7 @@
 //! Differential tests of the SQL engine against the native matcher, the parity oracle.
 
 mod census;
+mod compiler_spikes;
 mod differential;
 mod hard_cases;
 mod keyed;
@@ -215,6 +216,26 @@ fn a_walk_s_candidates_hold_only_the_slots_read_after_them() {
         let grammars: Vec<_> = grammar_matchers(rule).iter().collect();
         let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
         let statements: Vec<&String> = program.statements().collect();
+        let selected = statements
+            .last()
+            .and_then(|statement| {
+                statement
+                    .rsplit_once("SELECT file, node")
+                    .map(|(_, tail)| tail)
+            })
+            .and_then(|rest| rest.split_once(" FROM "))
+            .expect("the clause's select")
+            .0
+            .matches(", s")
+            .count();
+        // Shared first-match composition carries only the returned captures in its eligible
+        // relation. The original candidate path below must satisfy the same width bound.
+        if let Some(eligible) = statements
+            .iter()
+            .find(|statement| statement.contains("PRIMARY KEY(file, node)) WITHOUT ROWID"))
+        {
+            return (eligible.matches(", s").count(), selected);
+        }
         let walk = statements
             .iter()
             .find(|statement| statement.contains("c.id <= fn.\"last\""))
@@ -225,14 +246,6 @@ fn a_walk_s_candidates_hold_only_the_slots_read_after_them() {
             .expect("a candidate row")
             .0;
         let copied = carried.matches(", f.s").count() + carried.matches(", c.s").count();
-        let selected = statements
-            .iter()
-            .find_map(|statement| statement.strip_prefix("SELECT file, node"))
-            .and_then(|rest| rest.split_once(" FROM "))
-            .expect("the clause's select")
-            .0
-            .matches(", s")
-            .count();
         (copied, selected)
     };
     let wide = json!({ "pattern": "$F($A, $B, $C, $D)" });

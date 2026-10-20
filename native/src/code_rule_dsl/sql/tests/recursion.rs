@@ -1099,6 +1099,17 @@ fn a_recursion_level_runs_a_bounded_number_of_statements_per_batch() {
     eprintln!("statements per recursion level: {passes:?}");
     // Each unit's tables include the dirty-key index (`emit::unit_tables`), one statement more
     // per demanding site inside the loop.
+    #[cfg(feature = "unbounded-work")]
+    if crate::code_rule_dsl::sql::diagnostics::fuse_frames() {
+        assert_eq!(passes.len(), 2);
+        assert!(
+            passes
+                .iter()
+                .zip([65, 44])
+                .all(|(&count, ceiling)| count > 0 && count <= ceiling)
+        );
+        return;
+    }
     assert_eq!(passes, [65, 44]);
 }
 

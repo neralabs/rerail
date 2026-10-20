@@ -94,6 +94,18 @@ pub(super) fn first_probe_all() -> bool {
     std::env::var("RERAIL_SQL_FIRST_PROBE").is_ok_and(|value| value == "all")
 }
 
+pub(super) fn fuse_filters() -> bool {
+    std::env::var("RERAIL_SQL_FUSE_FILTERS").is_ok_and(|value| value == "1")
+}
+
+pub(super) fn fuse_frames() -> bool {
+    std::env::var("RERAIL_SQL_FUSE_FRAMES").is_ok_and(|value| value == "1")
+}
+
+pub(super) fn shared_search() -> bool {
+    std::env::var("RERAIL_SQL_SHARED_SEARCH").is_ok_and(|value| value == "1")
+}
+
 pub(super) fn joined_diff() -> bool {
     std::env::var("RERAIL_SQL_ANSWER_DIFF").is_ok_and(|value| value == "join")
 }
