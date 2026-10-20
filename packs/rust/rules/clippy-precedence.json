@@ -1,0 +1,25 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-precedence",
+  "revision": 3,
+  "mode": "steer",
+  "description": "Port of Clippy 0.1.99's precedence lint: reports a shift or bitwise operation whose operand is an unparenthesized arithmetic (+ - * / %) operation, at every nesting depth, and a method call whose receiver is an unparenthesized closure (spanning the call); macro expansion and type/value semantics are not modelled.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shift-with-arithmetic",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "binary_expression", "has": { "field": "operator", "regex": "^(?:<<|>>)$" }, "any": [ { "has": { "field": "left", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[-+*/%]$" } } }, { "has": { "field": "right", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[-+*/%]$" } } } ] } } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::precedence", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "precedence", "message": "Add parentheses around the arithmetic in this shift, e.g. (a + b) << c, to make the order explicit." }
+    },
+    {
+      "id": "bitwise-with-arithmetic",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "binary_expression", "has": { "field": "operator", "regex": "^[&^|]$" }, "any": [ { "has": { "field": "left", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[-+*/%]$" } } }, { "has": { "field": "right", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[-+*/%]$" } } } ] } } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::precedence", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "precedence", "message": "Add parentheses around the arithmetic in this bitwise expression, e.g. (a + b) & mask, to make the order explicit." }
+    },
+    {
+      "id": "closure-block-call",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "call_expression", "has": { "field": "function", "kind": "field_expression", "has": { "field": "value", "kind": "closure_expression" } } } } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::precedence", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "precedence", "message": "Wrap this closure in parentheses so it's clear the method call applies to the closure, not its body." }
+    }
+  ]
+}

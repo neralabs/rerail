@@ -21,16 +21,16 @@
   },
   "files": {
     "recording.json": {
-      "sha256": "8f7f0662452d97b8c42e8dd46d91731b48c69724016cf13a7064e436bf35d709",
-      "size": 1033595,
+      "sha256": "6775145721eaeeb6f0d5aa7d7e4e19eaee4e4cd9f8c110defb9509c266d64ce3",
+      "size": 1163285,
       "format": "rerail.port-readiness-recording/v2",
-      "asset": "sql-sqlfluff-recording-8f7f0662452d97b8c42e8dd46d91731b48c69724016cf13a7064e436bf35d709.json.gz"
+      "asset": "sql-sqlfluff-recording-6775145721eaeeb6f0d5aa7d7e4e19eaee4e4cd9f8c110defb9509c266d64ce3.json.gz"
     },
     "corpus.json": {
-      "sha256": "f084d45929861814e4920bc60363cc6974cbcc6cf5555c1278fbd4411fce3d13",
-      "size": 610922,
+      "sha256": "50a00c5af8d6dc3ce3d2e3e088a11246984c14e493616572dfdb9b09ddc7ce97",
+      "size": 88404,
       "format": "rerail.port-readiness-corpus/v2",
-      "asset": "sql-sqlfluff-corpus-f084d45929861814e4920bc60363cc6974cbcc6cf5555c1278fbd4411fce3d13.json.gz"
+      "asset": "sql-sqlfluff-corpus-50a00c5af8d6dc3ce3d2e3e088a11246984c14e493616572dfdb9b09ddc7ce97.json.gz"
     }
   }
 }

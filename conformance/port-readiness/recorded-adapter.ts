@@ -413,6 +413,7 @@ export function createRecordedAdapter(
     keywords: new Set(recording.keywords),
     commentVocabulary: new Set(recording.commentVocabulary),
     inScopeSamples: inScopeSamples(recording.inScopeSamples, manifest.rerail.in_scope),
+    ...(manifest.rerail.in_scope === undefined ? {} : { inScopeTypes: manifest.rerail.in_scope }),
     cases(name): UpstreamCase[] {
       return (recording.rules[name]?.cases ?? []).map((testCase) => ({
         fixture: testCase.fixture,

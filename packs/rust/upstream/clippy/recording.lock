@@ -16,16 +16,16 @@
   },
   "files": {
     "recording.json": {
-      "sha256": "94aca4c92d9b5703a93129c413b039e42db14ce6ddfdc1efa5106adc73d6dca8",
-      "size": 1051439,
+      "sha256": "6a41abf74fc6e2a7859026946a6a096bd65bc691f5d6cfaffef9e17a64f1f3be",
+      "size": 1064165,
       "format": "rerail.port-readiness-recording/v2",
-      "asset": "rust-clippy-recording-94aca4c92d9b5703a93129c413b039e42db14ce6ddfdc1efa5106adc73d6dca8.json.gz"
+      "asset": "rust-clippy-recording-6a41abf74fc6e2a7859026946a6a096bd65bc691f5d6cfaffef9e17a64f1f3be.json.gz"
     },
     "corpus.json": {
-      "sha256": "2be5704611d053805213142c14928d9f3f01f1a85353c6a0f67091bed5411532",
-      "size": 276586,
+      "sha256": "a69f59eb021c21661f1fe5be0ae00da7c908cb3735734573727940ecf37fa5c3",
+      "size": 61866,
       "format": "rerail.port-readiness-corpus/v2",
-      "asset": "rust-clippy-corpus-2be5704611d053805213142c14928d9f3f01f1a85353c6a0f67091bed5411532.json.gz"
+      "asset": "rust-clippy-corpus-a69f59eb021c21661f1fe5be0ae00da7c908cb3735734573727940ecf37fa5c3.json.gz"
     }
   }
 }

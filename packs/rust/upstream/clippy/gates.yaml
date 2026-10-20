@@ -1,5 +1,7 @@
 adapter: clippy
 # Clippy's documents in rerail's rust pack (NER-1894).
+# goldens.tsv is not imported from NRV, which pins no Rust tool: it is the files where a rule and Clippy differed when
+# rerail still ran Gate 6 itself (#141, before #85 moved Gate 6 to NRV). Finding new ones needs an NRV pin (NER-1891).
 rerail:
   pack: rust
   project: clippy
@@ -32,8 +34,10 @@ upstream:
   #   defaults they deliberately differ from.
   # - Positions are each diagnostic's primary span, start and end, in rustc's 1-based lines and character columns.
   # - The corpus is ripgrep and tokio at conformance.json's pins, run as `cargo +1.99.0 clippy --keep-going --locked
-  #   --workspace --all-targets --all-features` on the recorder's host; a file no compiled unit read is excluded. tokio
-  #   commits no Cargo.lock: it is resolved with `cargo generate-lockfile --publish-time <its commit's time>`.
+  #   --workspace --all-targets --all-features` on the recorder's host; a file no compiled unit read is excluded, and so
+  #   is a file whose leading `#![cfg(…)]` is false in every unit that read it (tokio's `tokio_unstable` tests, say):
+  #   rustc dropped its contents, so Clippy linted none of it. tokio commits no Cargo.lock: it is resolved with
+  #   `cargo generate-lockfile --publish-time <its commit's time>`.
   recommended_configs:
     - default
 popularity:

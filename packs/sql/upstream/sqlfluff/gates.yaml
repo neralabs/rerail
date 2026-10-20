@@ -1,5 +1,7 @@
 adapter: sqlfluff
 # SQLFluff's documents in rerail's sql pack (NER-1940, NER-1886).
+# goldens.tsv is not imported from NRV, which pins no SQL tool: it is the files where a rule and SQLFluff differed when
+# rerail still ran Gate 6 itself (#141, before #85 moved Gate 6 to NRV). Finding new ones needs an NRV pin (NER-1885).
 rerail:
   pack: sql
   project: sqlfluff
@@ -33,19 +35,4 @@ popularity:
   evidence:
     - "PyPI: 2,391,178 downloads of sqlfluff in the last week and 9,355,581 in the last month, without mirrors (pypistats.org/api/packages/sqlfluff/recent, 2026-10-19)"
     - "GitHub: sqlfluff/sqlfluff has 9,984 stars and 1,238 forks and is not archived (gh api repos/sqlfluff/sqlfluff, 2026-10-19)"
-known_gaps:
-  - id: postgres-create-policy
-    probe: CREATE POLICY policy_1 ON table_1
-    fixtures:
-      - test/fixtures/rules/std_rule_cases/RF01.yml#test_fail_postgres_create_policy_unreferenced_table
-      - test/fixtures/rules/std_rule_cases/RF01.yml#test_pass_postgres_create_policy_no_table_reference
-      - test/fixtures/rules/std_rule_cases/RF01.yml#test_pass_postgres_create_policy_using_target_table
-      - test/fixtures/rules/std_rule_cases/RF01.yml#test_pass_postgres_create_policy_with_check_target_table
-    reason: tree-sitter-sql reads no CREATE POLICY statement, which PostgreSQL's parser accepts.
-  - id: postgres-alter-policy
-    probe: |
-      ALTER POLICY policy_1 ON table_1
-      WITH CHECK (table_1.col_1 = current_user AND table_1.col_2 > 0)
-    fixtures:
-      - test/fixtures/rules/std_rule_cases/RF01.yml#test_pass_postgres_alter_policy_target_table
-    reason: tree-sitter-sql reads no ALTER POLICY statement, which PostgreSQL's parser accepts.
+known_gaps: []

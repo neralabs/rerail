@@ -3,7 +3,7 @@
   "id": "rust",
   "name": "Rust",
   "category": "language",
-  "covers": "7 Clippy 0.1.99 lints ported to Rerail, 5 of them on and 2 off until turned on, each scored against Clippy's own recorded findings on its UI tests; 27 more ports are candidates until they pass the port readiness gates.",
+  "covers": "18 Clippy 0.1.99 lints ported to Rerail, 13 of them on and 5 off until turned on, each scored against Clippy's own recorded findings on its UI tests; 16 more ports are candidates until they pass the port readiness gates.",
   "reason": "matches Rust",
   "match": {
     "any": [
@@ -59,6 +59,75 @@
       "title": "Clippy many_single_char_names: Too many single character bindings",
       "group": "Clippy",
       "on": false
+    },
+    {
+      "id": "clippy-builtin-type-shadow",
+      "document": "rules/clippy-builtin-type-shadow.json",
+      "title": "Clippy builtin_type_shadow: Shadowing a builtin type",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-inconsistent-digit-grouping",
+      "document": "rules/clippy-inconsistent-digit-grouping.json",
+      "title": "Clippy inconsistent_digit_grouping: Integer literals with digits grouped inconsistently",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-int-plus-one",
+      "document": "rules/clippy-int-plus-one.json",
+      "title": "Clippy int_plus_one: Instead of using `x >= y + 1`, use `x > y`",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-large-digit-groups",
+      "document": "rules/clippy-large-digit-groups.json",
+      "title": "Clippy large_digit_groups: Grouping digits into groups that are too large",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-mixed-case-hex-literals",
+      "document": "rules/clippy-mixed-case-hex-literals.json",
+      "title": "Clippy mixed_case_hex_literals: Hex literals whose letter digits are not consistently upper- or lowercased",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-partial-pub-fields",
+      "document": "rules/clippy-partial-pub-fields.json",
+      "title": "Clippy partial_pub_fields: Partial fields of a struct are public",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-precedence",
+      "document": "rules/clippy-precedence.json",
+      "title": "Clippy precedence: Operations where precedence may be unclear",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-precedence-bits",
+      "document": "rules/clippy-precedence-bits.json",
+      "title": "Clippy precedence_bits: Operations mixing bit shifting with bit combining/masking",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-unneeded-wildcard-pattern",
+      "document": "rules/clippy-unneeded-wildcard-pattern.json",
+      "title": "Clippy unneeded_wildcard_pattern: Tuple and struct patterns with a wildcard pattern (`_`) is next to a rest pattern (`..`)",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-unusual-byte-groupings",
+      "document": "rules/clippy-unusual-byte-groupings.json",
+      "title": "Clippy unusual_byte_groupings: Binary or hex literals that aren't grouped by four",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-zero-prefixed-literal",
+      "document": "rules/clippy-zero-prefixed-literal.json",
+      "title": "Clippy zero_prefixed_literal: Integer literals starting with `0`",
+      "group": "Clippy"
     }
   ]
 }

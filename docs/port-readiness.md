@@ -26,7 +26,7 @@ report shows every failure, not only the first.
 
 | Gate | What it checks | Blocks |
 | --- | --- | --- |
-| `loads` | The document is written for the current rule contract (`rerail.policy/v1`, one `mode`, no severity), passes the duplicate-key check, the policy schema and the engine compile (as written and as stable JSON), loads through the bundled-rule loader, has no `llm` clause, and its scope covers every file type upstream lints, or the ones the tool-pack's `gates.yaml` narrows it to (`rerail.in_scope`: typescript-eslint's ports cover TypeScript files only, since JavaScript files are the javascript pack's). | yes |
+| `loads` | The document is written for the current rule contract (`rerail.policy/v1`, one `mode`, no severity), passes the duplicate-key check, the policy schema and the engine compile (as written and as stable JSON), loads through the bundled-rule loader, has no `llm` clause, and its scope covers every file type upstream lints, or the ones the tool-pack's `gates.yaml` narrows it to (`rerail.in_scope`: typescript-eslint's ports cover TypeScript files only, since JavaScript files are the javascript pack's, and eslint-plugin-vue's cover `.vue` files only). The narrowing holds for the other gates too: `matches-upstream-tests` does not score an upstream test case of a type `in_scope` leaves out (eslint-plugin-vue's `.js` cases), reports it as not scored, "outside the tool-pack's rerail.in_scope (.js)", counts it in the identical-results detail and lists it under the rule's `outOfScope`, and `fires` and `stays-silent` must be met by in-scope cases alone. | yes |
 | `not-overfit` | No word the rule hardcodes (patterns, fixes, regexes, names, static values) appears in upstream's tests unless upstream's own code explains it (the rule's implementation, its imports and helpers, the names upstream's regexes match) or it is a language keyword. Catches ports that pass upstream's tests by naming their fixtures. The regexes are not run over stress tests of upstream's own engine (a test text over 20,000 characters with fewer than one identifier per 1,000, such as ESLint's 1,000,000-backslash strings), which Rerail does not run. | yes |
 | `compact` | A document over 15 KiB is inspected: it fails when a third or more of its clauses is the same structure written out over and over, or one node kind nests three or more times along one path. Catches rules that list cases instead of expressing the logic. | yes |
 | `matches-upstream-tests` | Upstream, configured as upstream recommends, is the expected answer on its own tests for the rule. The rule must report the same findings at the same start and end positions, in both directions (`identical-results`), leaving out only an end part upstream does not report on every finding of the rule (when any finding of an ESLint rule on its own tests has no end, the rule is compared on starts alone; the report lists every rule compared without an end); reproduce at least one upstream finding (`fires`); agree on at least one case where upstream reports nothing, in its tests or its goldens (`stays-silent`); agree with upstream on every golden (`identical-on-goldens`, `engine-reads-goldens`); and not be listed as a real-code gap (`no-real-code-gap`). See "Goldens" below. | yes |
@@ -402,8 +402,12 @@ case source or text comes from an upstream path a pack's `licenses/<project>/UPS
 recording that would hold such a file's text inline.
 
 Independent parsers (two TypeScript versions and Babel for the ESLint family; CPython and libcst for Python; `php -l` on
-the pinned PHP and nikic/php-parser for PHP) read every
-case source and every corpus file, so a file the engine cannot parse can be told from a file that is not valid source.
+the pinned PHP and nikic/php-parser for PHP; libpg_query for SQL; the pinned rustc for Rust) read every case source and
+every corpus file, so a file the engine cannot parse can be told from a file that is not valid source. A `.sql` file is
+a psql script, so libpg_query reads the SQL psql would send for it: psql's meta-commands (`\echo`, `\gset`, `\if`, ...)
+and the rows of `COPY ... FROM STDIN` become whitespace, a meta-command that sends the query buffer becomes `;`, and a
+variable psql has defined becomes a stand-in of the same length (`sqlfluff_driver.py`'s `psql_sent_sql`), so the error
+positions are the file's.
 Nine of ten corpus files are source every parser accepts, and writing the same silent verdict list on each of them was
 most of both recordings, so a recording names its parsers once in `parsers` and leaves `verdicts` off an entry no
 parser objected to. The entry itself stays, with its path and its sha256: an entry with no `verdicts` means every
