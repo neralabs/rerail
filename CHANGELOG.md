@@ -4,6 +4,10 @@
 
 First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.
 
+### Internal testing
+
+- The release is code rules in `log` or `steer` mode, the dashboard, and the `/rerail` commands. Full-repository scanning (`rerail scan`, explicit audit requests, the automatic first repository audit, repository audit baselines), conversation rules (cosine and command), `/cosine-rules` and the `conversation_rules` tool, the `rerail_mark`/`select`/`project`/`relate` tools, `block` mode, activation profiles and `rerail events` stay in the code for internal testing: each is tagged `Internal testing:` where it is defined, and its CLI usage, MCP tool, and OMP and Pi tool and command descriptions start with `[Internal testing]`. README.md's Internal testing section lists them.
+
 ### Rules
 
 - Two rule kinds: `code` rules, `rerail.policy/v1` documents whose clauses each report a violation, and `conversation` rules, which match the live conversation semantically or structurally.

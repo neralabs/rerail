@@ -311,7 +311,7 @@ rerail daemon stop       # stop the background daemon
 rerail status            # whether Rerail is started here, otherwise daemon/database/kernel
 rerail manage            # opens the rules page (--print only prints the URL)
 rerail session claude-code ID --open  # this session's status line and page URL; --open opens it
-rerail scan --session ID --scope repository --wait  # inspect findings in Sessions
+rerail scan --session ID --scope repository --wait  # internal testing: inspect findings in Sessions
 rerail settings --session ID --mode log             # save this workspace's default
 rerail update check      # is a newer version on the channel?
 rerail update            # install it; `rerail update rollback` undoes it

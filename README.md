@@ -90,23 +90,38 @@ Relate parallel implementation results to shared requirements and integration co
 
 Rerail currently ships the local inspection kernel and host adapters:
 
-- Native Model2Vec embeddings and cosine matching.
+- Native Model2Vec embeddings and cosine matching ([internal testing](#internal-testing)).
 - Resident compiled rule references.
 - User-input, streamed assistant-text, and tool-event inspection.
 - Sentence, message, turn, and tool-call boundaries.
 - Stateful repeat policies with session replay.
-- One rule mode on every rule: `log` records, `steer` delivers guidance, and `block` steers until block enforcement lands.
+- One rule mode on every rule: `log` records, `steer` delivers guidance, and `block` steers until block enforcement lands (`block` is in [internal testing](#internal-testing)).
 - OMP and Pi extensions.
 - Transport-neutral Claude Code, Codex, and Cursor lifecycle adapters.
-- A persistent `RERAIL-EVENTS/1` stream for out-of-process harnesses.
-- Generic `mark`, `select`, `project`, and `relate` primitives for custom semantic workflows.
+- A persistent `RERAIL-EVENTS/1` stream for out-of-process harnesses ([internal testing](#internal-testing)).
+- Generic `mark`, `select`, `project`, and `relate` primitives for custom semantic workflows ([internal testing](#internal-testing)).
 - A bundled, pinned INT8 model that makes no network requests at runtime.
 
-Repository-level semantic rules are usable now. Shared team assertions, cross-session synchronization, ownership routing, acknowledgements, and coordination actions remain product direction rather than current behavior.
+Repository-level semantic rules work today, in internal testing. Shared team assertions, cross-session synchronization, ownership routing, acknowledgements, and coordination actions remain product direction rather than current behavior.
+
+## Internal testing
+
+Rerail 0.1.0 releases code rules in `log` or `steer` mode, the dashboard, and the `/rerail` commands. The features below stay in the code for internal testing and are not part of that release. Each is tagged with an `Internal testing:` comment where it is defined, and every description a person or a coding agent reads for one (CLI usage, MCP tools, OMP and Pi tools and commands) starts with `[Internal testing]`, through `internalTesting()` in `src/engine/internal-testing.ts`.
+
+| Feature | Where it surfaces |
+| --- | --- |
+| Full-repository scanning | `rerail scan`; the `audit_requests_create`, `audit_requests_list`, `repository_audits_list` and `repository_audit_entries_list` operations; the automatic first repository audit at session start |
+| Conversation rules, cosine (similarity) and command (tool-call) alike | `kind: "conversation"` rules; `/cosine-rules` and the `conversation_rules` tool in OMP and Pi; `/rerail-create`'s command rules |
+| Semantic tools | `rerail_mark`, `rerail_select`, `rerail_project` and `rerail_relate` in OMP and Pi |
+| Block mode | `mode: "block"`, stored and delivered exactly like `steer`; the dashboard shows it as not in this version |
+| Activation profiles | `rerail activate`, `rerail activation request`, `rerail profile` and `--profile` |
+| Event stream | `rerail events` |
+
+`rerail settings` and the `audit_settings_*` operations are not tagged yet: their 0.1.0 scope is still being decided.
 
 ## How rules work
 
-A conversation rule is a standing semantic query over one event source and boundary. The reference describes the concept to detect; the action contains the context to deliver.
+Conversation rules are in [internal testing](#internal-testing). A conversation rule is a standing semantic query over one event source and boundary. The reference describes the concept to detect; the action contains the context to deliver.
 
 The Rerail database (`$RERAIL_HOME/rerail.sqlite`) is the source of truth for rule configuration. A repository owns its configuration: rule packs, By Rerail rules and rules created by you are attached to it per folder, and rule settings turn rules or packs on or off, set their mode, and choose whether linters' suppression comments (`eslint-disable`, `noqa`, ...) silence them, for the repository or one checkout; a setting can also give a By Rerail code rule its option values. Each file is judged by the checkout that owns it; conversation rules come from the folder the session started in. OMP and Pi load the conversation rules at session start and re-read the configuration before every ingested event, and every runtime compiles the code rules into the kernel and re-reads them before each audit, so a change made through the daemon, the dashboard or MCP applies on the next event or tool call; the Rust kernel only loads and evaluates what the database hands it. Rules come only from the repository's configuration: there are no rule files in the working tree. See [Rule scoping](docs/rule-scoping.md).
 
@@ -149,7 +164,7 @@ A code rule is a `rerail.policy/v1` document: a path `scope` and a list of regex
 
 - `log` records a match for review and never sends guidance.
 - `steer` sends the rule's guidance to the agent.
-- `block` is stored and reported as `block`; until block enforcement lands, it is delivered exactly like `steer`.
+- `block` is stored and reported as `block`; until block enforcement lands, it is delivered exactly like `steer`. It is in [internal testing](#internal-testing).
 
 `match.operator` is:
 
@@ -242,7 +257,7 @@ Host entrypoints:
 
 - OMP: `dist/hosts/omp/default-extension.js`, declared in the package's `omp` manifest.
 - Pi: `dist/hosts/pi/pi-extension.js`, declared in the package's `pi` manifest and loadable with `pi -e`.
-- Persistent event stream: `dist/harness/event-stream.js` or `rerail events`.
+- Persistent event stream: `dist/harness/event-stream.js` or `rerail events` ([internal testing](#internal-testing)).
 - Claude Code and Codex: `createClaudeEventHandler(...)` and `createCodexEventHandler(...)` for harness-owned hook registration.
 - Cursor: `.cursor-plugin/plugin.json`, backed by `dist/hosts/cursor/cursor-hook.js`.
 
@@ -250,7 +265,7 @@ Lifecycle ingestion is not an MCP tool surface. OMP and Pi own a session-scoped 
 
 ## Activate
 
-Bind a machine to a signed customer profile:
+Bind a machine to a signed customer profile. Activation profiles are in [internal testing](#internal-testing).
 
 ```sh
 rerail --profile acme activate \
@@ -351,12 +366,12 @@ The daemon owns the resident kernel execution service and exposes the Rerail dat
 | `work_links_add`              | `PUT /api/sessions/{sessionId}/work-links`                            | `{ kind, reference, url? }`; re-linking updates the url.                                                                                                                                         |
 | `audit_settings_get`          | `GET /api/sessions/{sessionId}/audit-settings`                        | Ongoing audit defaults (`scope`, run `mode`) and the first `repositoryAudit` for the session's canonical workspace, with its `repositoryAuditRecord`.                                          |
 | `audit_settings_update`       | `PATCH /api/sessions/{sessionId}/audit-settings`                      | Update the ongoing defaults; `mode` is `steer` or `log`.                                                                                                                                         |
-| `audit_requests_create`       | `POST /api/sessions/{sessionId}/audit-requests`                       | Queue an explicit audit for one session.                                                                                                                                                         |
-| `audit_requests_list`         | `GET /api/sessions/{sessionId}/audit-requests`                        | `{ auditRequests }`: the session's explicit audit requests and the `auditIds` they produced.                                                                                                     |
+| `audit_requests_create`       | `POST /api/sessions/{sessionId}/audit-requests`                       | Internal testing. Queue an explicit audit for one session.                                                                                                                                       |
+| `audit_requests_list`         | `GET /api/sessions/{sessionId}/audit-requests`                        | Internal testing. `{ auditRequests }`: the session's explicit audit requests and the `auditIds` they produced.                                                                                   |
 | `audits_list`                 | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=`            | `{ audits, total }`: durable audit records with their `violations` and failures; `mode` filters the run mode (`steer` or `log`).                                                                 |
 | `violations_list`             | `GET /api/violations?since=&ruleId=&sessionId=&limit=&cursor=`        | Individual violations newest first, each with its `ruleId`, `clauseId`, session, `host`, and `auditId`; `total`, and `nextCursor` for the next page. |
-| `repository_audits_list`      | `GET /api/repository-audits`                                          | One full repository audit per historically audited repository: its `repositoryAudit` and latest `audit` summary with `violationCount`.                                                          |
-| `repository_audit_entries_list` | `GET /api/repository-audits/{auditId}/entries?kind=&mode=&code=&path=&q=` | Paginated violations and failures of one repository audit; `kind` is `violation` or `failure`, `mode` is the producing rule's mode.                                                    |
+| `repository_audits_list`      | `GET /api/repository-audits`                                          | Internal testing. One full repository audit per historically audited repository: its `repositoryAudit` and latest `audit` summary with `violationCount`.                                        |
+| `repository_audit_entries_list` | `GET /api/repository-audits/{auditId}/entries?kind=&mode=&code=&path=&q=` | Internal testing. Paginated violations and failures of one repository audit; `kind` is `violation` or `failure`, `mode` is the producing rule's mode.                                  |
 
 Every operation is defined once (`src/api/operations.ts`, with the repository and rule operations in `src/api/repository-operations.ts`: id, route, zod schemas for params/query/body/output, handler). `src/api/http.ts` mounts them with Hono and emits the OpenAPI document; `src/api/mcp.ts` registers the same definitions as MCP tools, so a new operation appears in all three places with no further wiring. Validation failures return `400 { error: "invalid-request", issues }`; handler errors carry a status and a code (`rule-not-found`, `rule-id-mismatch`, `rule-conflict`, `repository-audit-not-found`, `target-required`, `target-mismatch`, `agent-not-permitted`, `invalid-cursor`). `rerail install` (and `rerail setup`) registers the endpoint with OMP by writing a `rerail` entry into `~/.omp/agent/mcp.json` next to the extension symlink: a stdio server that runs the installed `rerail mcp-bridge` (`{ "command": "<node>", "args": ["<install>/dist/cli/cli.js", "mcp-bridge"] }`); `--remove` takes only that entry out again. The bridge relays each request to the daemon that `daemon.json` (below) records, so it follows a daemon that took a free port, was started with `--port`, or restarted, and the entry never needs editing. It checks each `daemon.json` once, sending nothing to its daemon until that daemon's `/healthz` answers with the recorded pid, so a bridge that starts after a crash or a reboot left `daemon.json` behind answers "Rerail daemon is not running" instead of reaching whatever now holds the port. After that check a request costs one file read, and the bridge checks again only when a request fails to connect: if a daemon it already checked is killed with SIGKILL, its pid is reused and another daemon takes its port before the next request, that request reaches the other daemon. OMP lists it under `/mcp`; run `/mcp reload` if the daemon came up after the session did. Other harnesses can run the same bridge command, or read the daemon's URL from `daemon.json`.
 
@@ -375,6 +390,8 @@ Native tool-call IDs correlate edits with their results, including concurrent ca
 OMP uses its awaited `tool_call` hook to capture pre-edit source before the tool runs and `tool_result` to submit post-edit source for background evaluation. The asynchronous `tool_execution_start` and `tool_execution_end` notifications are not execution barriers and are not used for edit correlation.
 
 ### Scan and settings controls
+
+Full-repository scanning (`rerail scan`, explicit audit requests, the automatic first repository audit and the repository audit operations) is in [internal testing](#internal-testing).
 
 An audit has three scopes and two independent run modes:
 
@@ -569,6 +586,8 @@ A missing native addon does not stop the daemon: `status`, `/healthz`, and the U
 
 ## Operate
 
+The `conversation_rules` tool and `/cosine-rules` are in [internal testing](#internal-testing).
+
 The `conversation_rules` tool in OMP and Pi supports:
 
 - `add`
@@ -590,6 +609,8 @@ The `/cosine-rules` command supports:
 Use `test` to tune references and thresholds against representative positive and negative examples before enabling delivery.
 
 ## Semantic workspace
+
+The semantic workspace and its OMP and Pi tools are in [internal testing](#internal-testing).
 
 The lower-level programmatic interface separates four operations:
 
