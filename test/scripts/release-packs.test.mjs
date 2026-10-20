@@ -1,5 +1,6 @@
-// scripts/release/packs.mjs: what a pack release run publishes, the lockfile sync after `changeset version`, the
-// publish gate's reading of the pack validation, and the patch-only bumps of packs below 1.0.0.
+// scripts/release/packs.mjs: what a pack release run publishes, what a promotion moves to `latest`, the lockfile sync
+// after `changeset version`, the publish gate's reading of the pack validation, and the patch-only bumps of packs below
+// 1.0.0.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -8,6 +9,9 @@ import {
   listPacks,
   packIds,
   planPacks,
+  planPromotions,
+  promotePacks,
+  promotionRequest,
   readChangesets,
   releasePacks,
   syncPackLockfile,
@@ -20,6 +24,106 @@ describe("planPacks", () => {
     const packs = [pack("bumped", "0.2.0"), pack("released", "0.1.0"), pack("new", "0.1.0")];
     const tags = ["@neralabs/rerail-pack-bumped@0.1.0", "@neralabs/rerail-pack-released@0.1.0", "@neralabs/rerail-pack-newer@0.1.0"];
     expect(planPacks(packs, tags)).toEqual({ publish: ["bumped"], first: ["new"] });
+  });
+});
+
+describe("promotionRequest", () => {
+  const packs = [pack("python", "0.1.4"), pack("react", "0.1.3")];
+
+  it("asks for every pack with no id, and for one pack, at its own version unless given one, with an id", () => {
+    expect(promotionRequest(packs, undefined, undefined)).toEqual({ packs, named: false });
+    expect(promotionRequest(packs, "react", undefined)).toEqual({ packs: [{ ...pack("react", "0.1.3"), hold: false }], named: true });
+  });
+
+  it("holds a pack named at an older version than its own, which puts it back on purpose", () => {
+    expect(promotionRequest(packs, "python", "0.1.3").packs).toEqual([{ ...pack("python", "0.1.3"), hold: true }]);
+  });
+
+  it("refuses an id that is not a pack, and a version without the pack it is for", () => {
+    expect(() => promotionRequest(packs, "pyhton", undefined)).toThrow("pyhton is not a pack under packs/");
+    expect(() => promotionRequest(packs, undefined, "0.1.3")).toThrow("version 0.1.3 needs the pack it is for");
+  });
+});
+
+describe("planPromotions", () => {
+  const name = (id) => `@neralabs/rerail-pack-${id}`;
+  const tags = ["behind@0.1.3", "current@0.1.2", "untagged@0.1.1", "fresh@0.1.0", "unread@0.1.2", "held@0.1.4", "stale@0.1.4"].map((tag) => name(tag));
+  const distTags = {
+    [name("behind")]: { latest: "0.1.2", next: "0.1.3" },
+    [name("current")]: { latest: "0.1.2" },
+    [name("fresh")]: {},
+    [name("unread")]: null,
+    [name("held")]: { latest: "0.1.3", held: "0.1.3", next: "0.1.4" },
+    [name("stale")]: { latest: "0.1.3", held: "0.1.2", next: "0.1.4" },
+  };
+  const promoted = (plan) => plan.promote.map(({ id, version, latest, hold, release }) => ({ id, version, latest, hold, release }));
+
+  it("sweeps every released version not latest yet, leaving out one held where it was put back, and one npm could not read", () => {
+    const asked = [];
+    const plan = planPromotions(
+      [pack("behind", "0.1.3"), pack("current", "0.1.2"), pack("untagged", "0.1.2"), pack("fresh", "0.1.0"), pack("unread", "0.1.2"), pack("held", "0.1.4"), pack("stale", "0.1.4")],
+      tags,
+      (packageName) => (asked.push(packageName), distTags[packageName]),
+    );
+
+    expect(promoted(plan)).toEqual([
+      { id: "behind", version: "0.1.3", latest: "0.1.2", hold: false, release: false },
+      { id: "fresh", version: "0.1.0", latest: null, hold: false, release: false },
+      // Held somewhere `latest` no longer is: the hold is out of date, and this promotion clears it.
+      { id: "stale", version: "0.1.4", latest: "0.1.3", hold: false, release: true },
+    ]);
+    expect(plan.held.map(({ id, latest }) => [id, latest])).toEqual([["held", "0.1.3"]]);
+    expect(plan.unreleased.map(({ id, version }) => [id, version])).toEqual([["untagged", "0.1.2"]]);
+    expect(plan.unreadable.map(({ id }) => id)).toEqual(["unread"]);
+    // npm is not asked about a version that cannot be promoted.
+    expect(asked).not.toContain(name("untagged"));
+  });
+
+  it("promotes a held pack when it is named, releasing the hold", () => {
+    const plan = planPromotions([{ ...pack("held", "0.1.4"), hold: false }], tags, (packageName) => distTags[packageName], { named: true });
+    expect(promoted(plan)).toEqual([{ id: "held", version: "0.1.4", latest: "0.1.3", hold: false, release: true }]);
+  });
+
+  it("puts a named older version back and holds it, and does nothing once it is held there", () => {
+    const rollback = { ...pack("behind", "0.1.2"), hold: true };
+    const before = planPromotions([rollback], [...tags, name("behind@0.1.2")], () => ({ latest: "0.1.3" }), { named: true });
+    expect(promoted(before)).toEqual([{ id: "behind", version: "0.1.2", latest: "0.1.3", hold: true, release: false }]);
+
+    const after = planPromotions([rollback], [...tags, name("behind@0.1.2")], () => ({ latest: "0.1.2", held: "0.1.2" }), { named: true });
+    expect(after.promote).toEqual([]);
+  });
+});
+
+describe("promotePacks", () => {
+  const promotion = (id, version, flags = {}) => ({ name: `@neralabs/rerail-pack-${id}`, version, ...flags });
+
+  it("promotes the rest when one fails, holds and releases as told, and returns each failure, a version never released included", () => {
+    const calls = [];
+    const failures = promotePacks(
+      [promotion("a", "0.1.3"), promotion("b", "0.1.3"), promotion("c", "0.1.2", { hold: true }), promotion("e", "0.1.4", { release: true }), promotion("d", "9.9.9")],
+      ["a@0.1.3", "b@0.1.3", "c@0.1.2", "e@0.1.4"].map((tag) => `@neralabs/rerail-pack-${tag}`),
+      {
+        promote: (name, version) => {
+          if (name.endsWith("-b")) throw new Error("npm error code E403");
+          calls.push(`latest ${name}@${version}`);
+        },
+        hold: (name, version) => void calls.push(`held ${name}@${version}`),
+        release: (name) => void calls.push(`release ${name}`),
+        log: () => {},
+      },
+    );
+
+    expect(calls).toEqual([
+      "latest @neralabs/rerail-pack-a@0.1.3",
+      "latest @neralabs/rerail-pack-c@0.1.2",
+      "held @neralabs/rerail-pack-c@0.1.2",
+      "latest @neralabs/rerail-pack-e@0.1.4",
+      "release @neralabs/rerail-pack-e",
+    ]);
+    expect(failures).toEqual([
+      "@neralabs/rerail-pack-b@0.1.3: npm error code E403",
+      "@neralabs/rerail-pack-d@9.9.9: it was never released from this repository (no such git tag)",
+    ]);
   });
 });
 
