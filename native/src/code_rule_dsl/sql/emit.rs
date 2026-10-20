@@ -43,8 +43,9 @@ pub(super) const EACH: &str = "/*EACH*/";
 /// (the rest of the `UNTIL` statement) counts a dirty key, checked before every pass (`exec`).
 pub(super) const LOOP: &str = "/*LOOP*/";
 pub(super) const UNTIL: &str = "/*UNTIL*/";
-/// A query after a loop: the recursive reads of its last pass, `(unit, key, unit, key)`, which
-/// the driver accepts only where they form no cycle (`recursion`).
+/// A query after a statement's operator: the recursive reads every loop's last pass and the
+/// statement's own rows recorded from their needed rows, `(unit, key, unit, key, inner)`, which
+/// the driver accepts only where those it reaches from the statement form no cycle (`exec`).
 pub(super) const ACYCLIC: &str = "/*ACYCLIC*/";
 /// A recursion component's loop is emitted once, as a block: `BLOCK<scc>` … `END` at its first
 /// reference site, which runs it there, and `RUN<scc>` at every later one, which runs the same
@@ -68,6 +69,12 @@ fn demand_table(unit: usize) -> String {
 /// A unit's answer table: `(id, c0…)`, the bindings after the body for the keys it matched.
 fn answer_table(unit: usize) -> String {
     format!("{NAMESPACE}a{unit}")
+}
+
+/// A statement's recursive reads from its own rows, outside every unit's body: `(-1, 0, unit,
+/// key)`, the keys the recursion check starts from (`Emitter::acyclic`).
+fn start_table() -> String {
+    format!("{NAMESPACE}ex")
 }
 
 /// The table a stage's rows are stored in for the batch.
@@ -618,7 +625,36 @@ impl<'s> Emitter<'s> {
         self.out.root = Some(root.clone());
         // One row per root: a file's roots are either all its nodes or the selected ones.
         self.keyed_by(&root, vec![BTreeSet::new()]);
-        self.op(op, &root)
+        if self.units.is_empty() {
+            return self.op(op, &root);
+        }
+        // The keys the clause's own needed rows demand: where the recursion check starts.
+        self.create(&start_table(), "su, s, du, d");
+        self.member_start(&root);
+        let out = self.op(op, &root);
+        self.member_end();
+        self.acyclic();
+        out
+    }
+
+    /// Accepts the statement's recursion (`exec::acyclic`): every read recorded from a needed row,
+    /// `(unit, key, unit, key, inner)`, `inner` where both units are of one component, the
+    /// clause's own as from unit `-1`'s key `0` (`start_table`).
+    fn acyclic(&mut self) {
+        let mut query = format!("{ACYCLIC}SELECT su, s, du, d, 0 FROM {}", start_table());
+        for &scc in &self.blocks {
+            let members: Vec<String> = (0..self.units.len())
+                .filter(|&unit| self.units[unit].scc == scc)
+                .map(|unit| unit.to_string())
+                .collect();
+            write!(
+                query,
+                " UNION ALL SELECT su, s, du, d, du IN ({}) FROM {NAMESPACE}e{scc}",
+                members.join(", ")
+            )
+            .expect("write to a string");
+        }
+        self.push(query, Effect::default());
     }
 
     /// `op` on `input`: per distinct key where it walks over a frame that may repeat a key
@@ -1009,22 +1045,25 @@ impl<'s> Emitter<'s> {
         let scc = units[unit].scc;
         if !self.emitting.contains(&scc) {
             self.shared_loop(scc);
-        } else if let (Some(&from), Some(origin)) = (self.evaluating.last(), self.origin)
-            && units[from].scc == scc
-        {
-            // A read inside the component's own loop: recorded for the acyclicity check, from
-            // the rows the matcher evaluates (`lineage`).
-            let reads = format!("{NAMESPACE}e{scc}");
-            self.record_read(
-                &reads,
-                input,
-                &demand,
-                format!(
-                    "INSERT INTO {reads} SELECT DISTINCT {from}, f.s{origin}, {unit}, d.id FROM {input} f"
-                ),
-                format!(" JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched}"),
-            );
         }
+        // The reference, for the recursion check: from the key of the unit whose body it lies in,
+        // into that unit's component's reads, or from the statement's own rows; recorded from the
+        // rows the matcher evaluates (`lineage`). Without an origin slot to name the key, it
+        // counts as the statement's own, which only starts the check at more keys.
+        let (reads, source) = match (self.evaluating.last(), self.origin) {
+            (Some(&from), Some(origin)) => (
+                format!("{NAMESPACE}e{}", units[from].scc),
+                format!("{from}, f.s{origin}"),
+            ),
+            _ => (start_table(), "-1, 0".to_owned()),
+        };
+        self.record_read(
+            &reads,
+            input,
+            &demand,
+            format!("INSERT INTO {reads} SELECT DISTINCT {source}, {unit}, d.id FROM {input} f"),
+            format!(" JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched}"),
+        );
         let overrides: Vec<(String, String)> = site_columns
             .iter()
             .enumerate()
@@ -1201,10 +1240,6 @@ impl<'s> Emitter<'s> {
             .collect::<Vec<_>>()
             .join(" + ");
         self.push(format!("{UNTIL}SELECT {dirty}"), Effect::default());
-        self.push(
-            format!("{ACYCLIC}SELECT su, s, du, d FROM {reads}"),
-            Effect::default(),
-        );
         self.looping -= 1;
         self.emitting.pop();
     }

@@ -526,6 +526,36 @@ fn count_nth_child_and_not_over_a_self_call_still_read_its_loop() {
     }
 }
 
+/// `a` and `b` call each other, so `reach` loops between them, but only `main` is a root, and
+/// the matcher stops `main`'s search at `h()`, which reaches `g`: it never evaluates `a(1)`, nor
+/// `a` or `b`. The set evaluation demands their keys from that cut candidate; no needed row
+/// reaches them, so their loop is not checked (the start set of `exec::acyclic`).
+#[test]
+fn a_loop_only_a_cut_candidate_reaches_is_not_checked() {
+    let ast = json!({
+        "rule": { "kind": "function_definition", "regex": "^def main", "matches": "reach" },
+        "utils": {
+            "reach": { "kind": "function_definition", "any": [
+                { "has": { "stopBy": "end", "pattern": "g($$$)" } },
+                { "has": { "stopBy": "end", "kind": "call", "matches": "edge" } },
+            ] },
+            "edge": { "kind": "call", "has": { "field": "function", "kind": "identifier",
+                "resolves": { "binding": { "site": { "matches": "reach" } } } } },
+        },
+    });
+    let source = "def a(x):\n    b(x)\n\ndef b(x):\n    a(x)\n\ndef h():\n    g(1)\n\ndef main():\n    h()\n    a(1)\n";
+    let found = agreed("python", ast.clone(), None, source);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].starts_with("def main"), "{found:?}");
+    // Where `main` calls `a` first, the matcher evaluates the loop.
+    let first = source.replace("    h()\n    a(1)\n", "    a(1)\n    h()\n");
+    let reason = refused("python", ast, &first);
+    assert!(
+        reason.contains("Unsupported(recursion whose reads loop back)"),
+        "{reason}"
+    );
+}
+
 /// A `matches` of a capture-free utility, recursive or not, kind-less or not, runs on the keys its
 /// frame demands: no per-batch stage evaluates it over every node of its root kinds.
 #[test]

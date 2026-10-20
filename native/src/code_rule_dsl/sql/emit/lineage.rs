@@ -15,12 +15,14 @@
 //! its input's space, its parent, recorded in the frame: a relation's, a count's or
 //! `redefines.every`'s candidates and an `nthChild` probe's siblings carry `pk`, the parent's `k`;
 //! a keyed operator's distinct keys (`keyed`) come from every input row with the key's columns.
-//! A unit's demanded keys (`u`) are the root: a row is a key the pass evaluates.
+//! A unit's demanded keys (`u`) are the root of its body's spaces: a row is a key the pass
+//! evaluates. A statement's root frame (`r`, every root of the clause) is the root of its own.
 //!
 //! # Needed rows
 //!
-//! A row is needed where the matcher, evaluating the row's key, reaches it:
-//! - a key: always (the start set: every key demanded, see below);
+//! A row is needed where the matcher, evaluating the row's key (or the clause at its root),
+//! reaches it:
+//! - a key, a root: always (which keys the check starts from is below);
 //! - a first-match search's candidate: where its parent is, and no candidate before it in walk
 //!   order (`ord`) matched: true, or, in a strict search, unknown; a non-strict one passes over
 //!   unknown candidates, so only true ones end it. A candidate past that first one is cut. Equal
@@ -32,8 +34,11 @@
 //!
 //! Every other operator decides a row from its own row alone: `all` passes the rows its earlier
 //! terms kept, `any` gives each branch the rows no earlier branch decided, as the matcher tests
-//! them. A pass computes, after a unit's body, each needed table from its parent's, in creation
-//! order, and records a recursive read from the site's row only where that row is needed.
+//! them. After a unit's body (and after the statement's operator, for its own rows) each needed
+//! table is computed from its parent's, in creation order, and every recursive reference is
+//! recorded, from the site's row's key to the key it demands, only where that row is needed:
+//! into the reads of the referring unit's component (`e{scc}`), or, from the statement's own
+//! rows, into its start table (`ex`).
 //! Which tables it computes is static; a space under no first-match search has every row needed
 //! and no table. A space whose rows' derivation is not recorded (a fresh frame this module does
 //! not know of keeps no space, and every frame under it none either) has its reads recorded
@@ -41,27 +46,29 @@
 //!
 //! # Why the needed reads decide
 //!
-//! The pass's answers `A` satisfy `A = T(A)`, and its needed reads form an acyclic graph `N`
-//! (`exec::acyclic`). By induction over an order of the keys where each comes after every key it
+//! The keys the check holds are those the recorded reads reach from the statement's own needed
+//! rows (`exec::acyclic`): each demanded by a needed row of the clause, or of a key already held,
+//! whatever component it is in. A key no needed row of a held key or of the clause reads, the
+//! matcher never evaluates; its answer reaches no output.
+//!
+//! The pass's answers `A` satisfy `A = T(A)`, and the reads among the held keys form an acyclic
+//! graph `N`. By induction over an order of the held keys where each comes after every key it
 //! reads in `N`: at a key, the needed rows read keys before it, whose answers are the matcher's,
 //! so each needed row's verdict and bindings are the matcher's (by induction over the body's
 //! operators, each a function of its own row). A first-match search's first matched candidate
 //! is then the matcher's too: every candidate before it is needed and false (or unknown in a
 //! non-strict search), as the matcher finds it. Its verdict and bindings read that candidate
 //! alone, so the cut candidates, and whatever they read, decide nothing: the key's answer is
-//! the matcher's, which reads only needed rows, so it terminates within `N`'s depth.
+//! the matcher's, which reads only needed rows, so it terminates within `N`'s depth. The clause's
+//! own needed rows read held keys alone, so its answers are the matcher's the same way.
 //!
 //! The semi-naive loop marks a key dirty where a key it read changed (`Emitter::recursion_loop`),
 //! now over the needed reads: a key whose needed reads keep their answers evaluates its needed
 //! rows alike, so it finds the same first matches and the same answer again, whatever the cut
-//! rows would read. Its cut rows may demand keys no needed row reads: their answers decide
-//! nothing either.
-//!
-//! The start set is every demanded key, as before: the keys a cut row alone demanded are
-//! evaluated, their needed reads checked, though the matcher never evaluates them. That only
-//! refuses more (a key of those whose needed reads loop refuses the batch); their answers reach
-//! no output, since no needed row reads them. The exact start set, the keys the clause's own
-//! needed rows demand, would need the same lineage outside the loops.
+//! rows would read. Its cut rows may demand keys no needed row reads: those are evaluated too,
+//! but not held, and their answers decide nothing. A key outside the held ones whose loop does
+//! not settle still runs the loop to its pass limit, which refuses the batch: that only refuses
+//! more.
 
 use super::{Emitter, Reads};
 use crate::code_rule_dsl::sql::plan::Walk;
