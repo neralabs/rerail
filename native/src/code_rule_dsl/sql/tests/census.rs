@@ -342,8 +342,12 @@ fn run_corpus() {
             };
             let clause_started = std::time::Instant::now();
             crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE.set(Some(Default::default()));
+            crate::code_rule_dsl::sql::exec::LOOP_PROFILE.set(Some(Default::default()));
             let sql = evaluate("sql");
             let profile = crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE
+                .take()
+                .unwrap_or_default();
+            let loops = crate::code_rule_dsl::sql::exec::LOOP_PROFILE
                 .take()
                 .unwrap_or_default();
             if let Err(reason) = &sql
@@ -401,6 +405,24 @@ fn run_corpus() {
                     total as f64 / 1e9,
                     profile.len()
                 );
+                // The recursion loops: their passes, and the statements run in them.
+                let (entries, passes) = loops
+                    .loops
+                    .values()
+                    .fold((0, 0), |(e, p), (entries, passes, _)| {
+                        (e + entries, p + passes)
+                    });
+                let (nanos, rows, runs) = loops
+                    .statements
+                    .values()
+                    .fold((0, 0, 0), |(n, r, s), (nanos, rows, runs)| {
+                        (n + nanos, r + rows, s + runs)
+                    });
+                eprintln!(
+                    "  loops: {} loops, {entries} entries, {passes} passes; in loops {:.3}s over {runs} statement runs ({rows} rows)",
+                    loops.loops.len(),
+                    nanos as f64 / 1e9,
+                );
                 let mut costly: Vec<_> = profile.iter().collect();
                 costly.sort_by_key(|(_, (nanos, _, _))| std::cmp::Reverse(*nanos));
                 // `RERAIL_CORPUS_PROFILE_DIR`: every statement's numbers, one JSON file a clause.
@@ -416,6 +438,25 @@ fn run_corpus() {
                         Value::from(rows).to_string(),
                     )
                     .expect("a profile file");
+                    let per_loop: Vec<Value> = loops
+                        .loops
+                        .iter()
+                        .map(|(until, (entries, passes, steps))| {
+                            json!({ "until": until, "entries": entries, "passes": passes, "steps": steps })
+                        })
+                        .collect();
+                    let looped: Vec<Value> = loops
+                        .statements
+                        .iter()
+                        .map(|(statement, (nanos, rows, runs))| {
+                            json!({ "sql": statement, "nanos": nanos, "rows": rows, "runs": runs })
+                        })
+                        .collect();
+                    std::fs::write(
+                        format!("{dir}/{}.loops.json", name.replace('/', "__")),
+                        json!({ "loops": per_loop, "statements": looped }).to_string(),
+                    )
+                    .expect("a loop profile file");
                 }
                 for (statement, (nanos, rows, runs)) in costly.into_iter().take(6) {
                     eprintln!(
