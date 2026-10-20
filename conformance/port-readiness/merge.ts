@@ -106,12 +106,12 @@ export interface MergeResult {
 /**
  * The sha256 of this checkout's native binary, the one the gates would load (`configured`, by default
  * RERAIL_ENGINE_PATH, or else native/'s), or undefined when there is none, as in CI's report job. A RERAIL_ENGINE_PATH
- * that names no file is an error.
+ * that names no file is an error. `resolve` finds the binary; a test passes its own for a checkout with none in native/.
  */
-export function checkoutBinary(configured: string | undefined = process.env.RERAIL_ENGINE_PATH): string | undefined {
+export function checkoutBinary(configured: string | undefined = process.env.RERAIL_ENGINE_PATH, resolve = resolveNativeBindingPath): string | undefined {
   let path: string;
   try {
-    path = resolveNativeBindingPath(configured);
+    path = resolve(configured);
   } catch (error) {
     // Without RERAIL_ENGINE_PATH, the one way to fail is a checkout with no binary in native/.
     if (configured === undefined) return undefined;

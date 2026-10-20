@@ -163,6 +163,22 @@ describe("merge", () => {
     assert.equal(checkoutBinary(), createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex"));
   });
 
+  it("with RERAIL_ENGINE_PATH unset and no binary in native/, as in CI's report job, the checkout has no binary", () => {
+    // resolveNativeBindingPath looks in this checkout's native/, which has a binary: this answers as it does in one without.
+    const unbuilt = (configured?: string): string => {
+      throw new Error(configured === undefined ? "Unsupported platform or missing native addon: rerail_engine.node" : `RERAIL_ENGINE_PATH does not exist: ${configured}`);
+    };
+    const configured = process.env.RERAIL_ENGINE_PATH;
+    delete process.env.RERAIL_ENGINE_PATH;
+    try {
+      assert.equal(checkoutBinary(undefined, unbuilt), undefined);
+    } finally {
+      if (configured !== undefined) process.env.RERAIL_ENGINE_PATH = configured;
+    }
+    // Only an unset RERAIL_ENGINE_PATH makes a missing binary no binary: one that names no file is still an error.
+    assert.throws(() => checkoutBinary("missing.node", unbuilt), /^Error: RERAIL_ENGINE_PATH does not exist: missing\.node$/u);
+  });
+
   it("a shard that took every result from the cache merges with one that judged: both carry the same corpus-complete", () => {
     const complete = { id: "corpus-complete", ok: true, detail: "all 3 recorded corpus file(s) were fetched with their recorded sha256" };
     const withCheck = (part: GatesReport, check: typeof complete) => ({ ...part, toolPackChecks: { pass: true, checks: [check] } });
