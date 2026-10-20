@@ -731,6 +731,40 @@ fn production_contract_phase_four_semantic_facts_lower_completely() {
 }
 
 #[test]
+fn production_contract_phase_four_authored_sql_has_one_complete_physical_boundary() {
+    let statements = authored_sql_goldens();
+    let packed = "WITH packed AS MATERIALIZED (SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence FROM rerail_matches WHERE batch = :batch)";
+    let families = [
+        ("batch_status", 1),
+        ("producer_status", 2),
+        ("terminal_match", 3),
+        ("capture", 4),
+        ("navigation", 5),
+        ("fact", 6),
+        ("document_map", 7),
+    ];
+    let mut failures = Vec::new();
+    for name in PHASE_FOUR_CASES {
+        let sql = &statements[*name];
+        if !sql.starts_with(packed) {
+            failures.push(format!("{name}: incomplete packed projection"));
+        }
+        if sql.matches("rerail_matches").count() != 1 {
+            failures.push(format!("{name}: packed scan count"));
+        }
+        for (family, row_kind) in families {
+            let expected = format!(
+                "{family} AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = {row_kind})"
+            );
+            if !sql.contains(&expected) {
+                failures.push(format!("{name}: missing {family}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
 fn production_contract_phase_four_calls_through_consumes_bounded_target_facts() {
     let statements = authored_sql_goldens();
     let sql = &statements["semantic-calls-through"];
