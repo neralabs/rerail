@@ -62,7 +62,11 @@ rerail-query-parity *args:
 rerail-data-layer *args:
     @node --import tsx benchmark/data-layer/data-layer.ts {{ args }}
 
-# The SQL engine's speed loop: build the `loop` profile addon (target-loop/), then the reporting clauses in cost-planned units on SQL and native over benchmark/data-layer/loop-subset.json, longest first over up to 14 processes within a memory budget: SQL/native CPU ratio, parity, TIMEOUT and ERROR rows, projection; then the mutation stage, native against SQL on the recorded mutations (--mutations selected|all|off, default selected: benchmark/data-layer/loop-mutations.json over the subset) (benchmark/README.md). RERAIL_BENCH_LOCK=<command> prefixes the timed run (e.g. ~/rerail-bench/bench-lock).
+# The loop's benchmark home from your own clones: --data-layer <nera-data-layer clone> --nera-landing <nera-landing clone> [--home <dir>, default RERAIL_BENCH_HOME or ~/rerail-bench] [--addon <addon>]. Adds the corpus worktree at loop-subset.json's commit, converts the 12 Tempo ports beside their oracles, checks them against loop-subset.json's policy hashes, and prints the loop and gate commands; a second run only checks (benchmark/README.md).
+rerail-bench-setup *args:
+    @benchmark/data-layer/setup/setup.sh {{ args }}
+
+# The SQL engine's speed loop: build the `loop` profile addon (target-loop/), then the reporting clauses in cost-planned units on SQL and native over benchmark/data-layer/loop-subset.json, longest first over up to 14 processes within a memory budget: SQL/native CPU ratio, parity, TIMEOUT and ERROR rows, projection; then the mutation stage, native against SQL on the recorded mutations (--mutations selected|all|off, default selected: benchmark/data-layer/loop-mutations.json over the subset) (benchmark/README.md). Reads and records under RERAIL_BENCH_HOME (default ~/rerail-bench; `just rerail-bench-setup`). RERAIL_BENCH_LOCK=<command> prefixes the timed run (e.g. benchmark/data-layer/setup/bench-lock).
 rerail-sql-loop *args:
     #!/usr/bin/env bash
     set -euo pipefail

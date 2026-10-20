@@ -172,8 +172,8 @@ fn touched(op: &Op, names: &Names, out: &mut BTreeSet<SlotId>) {
         Op::EachRoot { root } => {
             out.insert(*root);
         }
-        Op::Excluded { name, root } => {
-            out.insert(*name);
+        Op::Excluded { binding, root } => {
+            out.extend(binding.slots());
             out.insert(*root);
         }
         Op::NthCommit { nth, commit } => {

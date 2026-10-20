@@ -13,10 +13,11 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
-# The smallest differential that kills all 21 mutants at the seed below: mutant 5's first killing case is
-# case 1238, the last of the mutants' first kills; mutant 20 dies in the differential's own following
-# cases (`following_cases`), which every run draws whatever the case count. A generator change moves
-# it: re-measure with RERAIL_SQL_DIFF_KEEP under each mutant, and re-check with --mutants.
+# A differential that kills all 22 mutants at the seed below: the latest of the mutants' first kills is
+# mutant 4's, case 734 (mutant 5's moved from case 1238 to 373 when the generator's `parse_each` shape
+# came in; the count stayed); mutant 20 dies in the differential's own following cases
+# (`following_cases`), which every run draws whatever the case count. A generator change moves them:
+# re-measure with RERAIL_SQL_DIFF_KEEP under each mutant, and re-check with --mutants.
 cases=${RERAIL_SQL_GATE_CASES:-1239}
 seed=0x5e7c0de
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-6}

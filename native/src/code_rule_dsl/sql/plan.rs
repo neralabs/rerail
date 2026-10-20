@@ -427,10 +427,10 @@ pub(super) enum Op {
     EachRoot {
         root: SlotId,
     },
-    /// `violation.each`: drops a row whose binding of the enumerated capture (`name`, in the
+    /// `violation.each`: drops a row whose binding of the enumerated capture (`binding`, in the
     /// current scope) has a range already reported for its root.
     Excluded {
-        name: SlotId,
+        binding: Excluding,
         root: SlotId,
     },
     /// `nthChild` with a binding `ofRule` while `violation.each` excludes: the position comes from
@@ -490,6 +490,38 @@ pub(super) struct Export {
     pub(super) from: SlotId,
     pub(super) to: SlotId,
     pub(super) term: usize,
+}
+
+/// Where `Op::Excluded` reads the enumerated capture's range in the host file, as
+/// `each::binding_range` reads it.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Excluding {
+    /// A host node's range (`node`), or where none is bound, the host range of a capture a parsed
+    /// tree exported into the host text slot `exported`.
+    Host {
+        node: Option<SlotId>,
+        exported: Option<SlotId>,
+    },
+    /// A parsed tree's node (`node`): its host range, which the `Exported` terminal `term` gives
+    /// for the tree `tree` holds, in the host file `file` holds (`parse`'s `HostRanges`).
+    Tree {
+        node: SlotId,
+        tree: SlotId,
+        file: SlotId,
+        term: usize,
+    },
+}
+
+impl Excluding {
+    /// The slots it reads.
+    pub(super) fn slots(&self) -> Vec<SlotId> {
+        match *self {
+            Self::Host { node, exported } => node.into_iter().chain(exported).collect(),
+            Self::Tree {
+                node, tree, file, ..
+            } => vec![node, tree, file],
+        }
+    }
 }
 
 impl Op {
