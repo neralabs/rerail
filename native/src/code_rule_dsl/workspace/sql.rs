@@ -26,8 +26,7 @@ pub(super) const SQL_UNSUPPORTED: &str = "sql-unsupported";
 pub(super) const SQL_UNSUPPORTED_MESSAGE: &str =
     "the SQL engine does not lower this clause (see the workspace's engine report)";
 
-/// Files per batch when the workspace's options set none.
-pub(super) const DEFAULT_BATCH_SIZE: usize = 64;
+use crate::code_rule_dsl::sql::DEFAULT_BATCH_SIZE;
 
 /// How a workspace matches its AST clauses: the engine and, on SQL, the files per batch.
 #[derive(Clone, Copy, Debug)]

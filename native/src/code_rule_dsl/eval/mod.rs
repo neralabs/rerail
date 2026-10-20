@@ -14,8 +14,8 @@ pub(super) use output::{
     violation_ids,
 };
 pub(super) use query::{
-    Engine, WitnessError, evaluate_query, file_language, grammar_matcher, witness_from_match,
-    witnesses_from_match,
+    Engine, WitnessError, evaluate_files, evaluate_query, file_language, grammar_matcher,
+    witness_from_match, witnesses_from_match,
 };
 #[cfg(test)]
 pub(super) use query::{reset_shared_group_lookups, shared_group_lookups};
@@ -289,35 +289,29 @@ fn stateless_rows(
                     .as_ref()
                     .is_none_or(|domain| domain.matches(&file.path))
         })
+        .cloned()
         .collect::<Vec<_>>();
     files.sort_by(|left, right| left.path.cmp(&right.path));
-    for file in files {
-        let single = Snapshot {
-            revision: snapshot.revision,
-            files: vec![file.clone()],
-        };
-        let mut partial = BTreeMap::new();
-        let mut util_limit = None;
-        let mut file_metrics = Metrics::default();
-        let witnesses = evaluate_query(
-            &ast.query,
-            &single,
-            &BTreeMap::new(),
-            &code_rule.scope,
-            &mut file_metrics,
-            limits,
-            false,
-            &mut partial,
-            Some(&violation),
-            &mut util_limit,
-            engine,
-        )?;
-        metrics.visited_nodes += file_metrics.visited_nodes;
-        match witnesses {
+    // Each file alone, its failure its own; on SQL, every file's matches from one program.
+    let scoped = Snapshot {
+        revision: snapshot.revision,
+        files,
+    };
+    let evaluations = evaluate_files(
+        &ast.query,
+        &scoped,
+        &code_rule.scope,
+        limits,
+        Some(&violation),
+        engine,
+    )?;
+    for (file, evaluation) in scoped.files.iter().zip(evaluations) {
+        metrics.visited_nodes += evaluation.metrics.visited_nodes;
+        match evaluation.witnesses {
             Ok(witnesses)
-                if util_limit.is_none()
-                    && partial.is_empty()
-                    && file_metrics.witnesses <= limits.max_witnesses =>
+                if evaluation.util_limit.is_none()
+                    && evaluation.partial.is_empty()
+                    && evaluation.metrics.witnesses <= limits.max_witnesses =>
             {
                 rows.witnesses.extend(witnesses);
             }
