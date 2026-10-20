@@ -1451,6 +1451,7 @@ impl Builder {
 
     fn finish(self) -> Result<SqlCatalogPlan, LoweringError> {
         let mut clause_irs = self.clause_irs;
+        let recursive = clause_irs.iter().any(RelationalIr::requires_recursive_cte);
         let mut clauses = String::new();
         for (ordinal, ir) in clause_irs.iter_mut().enumerate() {
             ir.operation(SqlOperation::Projection);
@@ -1480,12 +1481,18 @@ impl Builder {
             )
             .expect("write SQL");
         }
+        let with = if recursive { "WITH RECURSIVE" } else { "WITH" };
+        let clause_union = (0..clause_irs.len())
+            .map(|ordinal| format!("SELECT * FROM clause_{ordinal}"))
+            .collect::<Vec<_>>()
+            .join(" UNION ALL ");
+        let clause_union = if clause_irs.len() == 1 {
+            clause_union
+        } else {
+            format!("SELECT * FROM ({clause_union})")
+        };
         let sql = format!(
-            "WITH RECURSIVE packed AS MATERIALIZED (\n  SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence FROM rerail_matches WHERE batch = :batch\n),\nbatch_status AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 1\n),\nproducer_status AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 2\n),\nterminal_match AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 3\n),\ncapture AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 4\n),\nnavigation AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 5\n),\nfact AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 6\n),\ndocument_map AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 7\n)\n{clauses}\nSELECT * FROM ({})\nORDER BY clause_ordinal, file_index, node, choice_order, producer_id, match_index, capture_index",
-            (0..clause_irs.len())
-                .map(|ordinal| format!("SELECT * FROM clause_{ordinal}"))
-                .collect::<Vec<_>>()
-                .join(" UNION ALL ")
+            "{with} packed AS MATERIALIZED (\n  SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence FROM rerail_matches WHERE batch = :batch\n),\nbatch_status AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 1\n),\nproducer_status AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 2\n),\nterminal_match AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 3\n),\ncapture AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 4\n),\nnavigation AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 5\n),\nfact AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 6\n),\ndocument_map AS MATERIALIZED (\n  SELECT * FROM packed WHERE row_kind = 7\n)\n{clauses}\n{clause_union}\nORDER BY clause_ordinal, file_index, node, choice_order, producer_id, match_index, capture_index"
         );
         Ok(SqlCatalogPlan {
             terminals: self.terminals,

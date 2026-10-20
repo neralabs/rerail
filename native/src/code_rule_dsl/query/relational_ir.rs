@@ -924,6 +924,17 @@ impl SqlRenderer {
         if inputs.len() < 2 {
             return Err("ordered conjunction requires at least two operands".to_owned());
         }
+        if let [source, RelationNode::Semantic { spec }] = inputs
+            && spec.rules.is_empty()
+            && spec.argument_labels.is_empty()
+            && let RelationNode::Apply {
+                operation: SqlOperation::ScanTerminal,
+                inputs: terminal_inputs,
+            } = source
+            && let [RelationNode::Producer(producer)] = terminal_inputs.as_slice()
+        {
+            return self.render_simple_semantic_gate(producer.producer_id()?, spec.producer);
+        }
         let relations = inputs
             .iter()
             .map(|input| self.render(input))
@@ -1051,6 +1062,36 @@ impl SqlRenderer {
         sql.push_str("\n)");
         self.ctes.push(sql);
         Ok(name)
+    }
+
+    fn render_simple_semantic_gate(
+        &mut self,
+        source_producer: usize,
+        fact_producer: usize,
+    ) -> Result<String, String> {
+        let source = self.next_name("source");
+        let source_columns = qualified_row_columns_with_verdict("match", "1");
+        self.ctes.push(format!(
+            "{source} AS (\n  SELECT {source_columns}, COALESCE((\n    SELECT json_group_array(json_object('label', captured.capture_label, 'occurrence', captured.capture_occurrence, 'node', captured.node, 'text', captured.source_text, 'structure', captured.structural_key, 'leaf', captured.named_leaf, 'kind', captured.capture_kind, 'named', captured.capture_named, 'equality_occurrence', captured.equality_occurrence))\n    FROM capture captured\n    WHERE captured.producer_id = match.producer_id AND captured.file_index = match.file_index\n      AND captured.match_index = match.match_index AND captured.capture_label <> 'match'\n    ORDER BY captured.capture_index\n  ), json('[]')) AS bindings, '' AS choice_order\n  FROM terminal_match match\n  INNER JOIN producer_status status USING (producer_id, file_index)\n  WHERE match.producer_id = {source_producer} AND status.complete = 1\n    AND NOT EXISTS (\n      SELECT 1 FROM capture first\n      JOIN capture repeated ON repeated.producer_id = first.producer_id AND repeated.file_index = first.file_index\n        AND repeated.match_index = first.match_index AND repeated.capture_label = first.capture_label\n        AND repeated.capture_index > first.capture_index\n      WHERE first.producer_id = match.producer_id AND first.file_index = match.file_index\n        AND first.match_index = match.match_index AND first.capture_label <> 'match'\n        AND first.capture_kind = 1 AND repeated.capture_kind = 1\n        AND NOT {}\n    )\n)",
+            Self::capture_equality("first", "repeated")
+        ));
+        let gate = self.next_name("semantic_gate");
+        let gate_columns = qualified_row_columns_with_verdict(
+            "gate",
+            "CASE WHEN gate.verdict < 0 THEN NULL ELSE gate.verdict END",
+        );
+        self.ctes.push(format!(
+            "{gate} AS (\n  SELECT {gate_columns}, COALESCE((SELECT json_group_array(json(value)) FROM (SELECT json_object('label', input.output_label, 'occurrence', input.capture_occurrence, 'node', input.related_node, 'text', input.source_text, 'structure', input.structural_key, 'leaf', input.named_leaf, 'kind', input.capture_kind, 'named', input.capture_named, 'equality_occurrence', input.equality_occurrence) AS value FROM fact input WHERE input.producer_id = gate.producer_id AND input.file_index = gate.file_index AND input.node = gate.node AND input.fact_kind = 17 AND input.match_index = gate.match_index)), json('[]')) AS bindings, '' AS choice_order FROM fact gate\n  JOIN producer_status status USING (producer_id, file_index)\n  WHERE gate.producer_id = {fact_producer} AND gate.fact_kind = 0 AND status.complete = 1 AND gate.verdict <> 0\n)"
+        ));
+        let resolved = self.next_name("resolved");
+        let verdict = "CASE WHEN source.verdict = 0 OR semantic.verdict = 0 THEN 0 WHEN source.verdict IS NULL OR semantic.verdict IS NULL THEN NULL ELSE 1 END";
+        let columns = qualified_row_columns_with_verdict("source", verdict);
+        let merged = Self::merged_bindings(&["source".to_owned(), "semantic".to_owned()]);
+        let compatible = Self::binding_compatibility("source", "semantic");
+        self.ctes.push(format!(
+            "{resolved} AS (\n  SELECT {columns}, {merged} AS bindings, source.choice_order || semantic.choice_order AS choice_order FROM {source} source\n  INNER JOIN {gate} semantic\n    ON semantic.file_index = source.file_index AND semantic.node = source.node\n    AND {compatible}\n)"
+        ));
+        Ok(resolved)
     }
 
     fn render_any(&mut self, inputs: &[RelationNode]) -> Result<String, String> {
@@ -2305,6 +2346,10 @@ impl RelationalIr {
     #[cfg(test)]
     pub(super) fn operations(&self) -> &[SqlOperation] {
         &self.operations
+    }
+
+    pub(super) fn requires_recursive_cte(&self) -> bool {
+        self.operations.contains(&SqlOperation::RecursiveCte)
     }
 
     pub(super) fn render_clause_relations(

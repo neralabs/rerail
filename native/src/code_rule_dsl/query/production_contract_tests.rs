@@ -145,6 +145,57 @@ fn normalized_sql(sql: &str) -> String {
     sql.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn exact_sql(sql: &str) -> String {
+    let mut tokens = Vec::new();
+    let mut chars = sql.char_indices().peekable();
+    while let Some((start, character)) = chars.next() {
+        if character.is_whitespace() {
+            continue;
+        }
+        if character == '\'' {
+            let mut end = start + character.len_utf8();
+            while let Some((index, quoted)) = chars.next() {
+                end = index + quoted.len_utf8();
+                if quoted == '\'' {
+                    if chars.peek().is_some_and(|(_, next)| *next == '\'') {
+                        let (index, escaped) = chars.next().expect("an escaped quote exists");
+                        end = index + escaped.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            tokens.push(sql[start..end].to_owned());
+            continue;
+        }
+        if character.is_ascii_alphanumeric() || matches!(character, '_' | ':' | '.') {
+            let mut end = start + character.len_utf8();
+            while let Some(&(index, next)) = chars.peek() {
+                if next.is_ascii_alphanumeric() || matches!(next, '_' | ':' | '.') {
+                    chars.next();
+                    end = index + next.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            tokens.push(sql[start..end].to_owned());
+            continue;
+        }
+        let mut token = character.to_string();
+        if let Some(&(_, next)) = chars.peek()
+            && matches!(
+                (character, next),
+                ('<', '=') | ('>', '=') | ('<', '>') | ('!', '=') | ('|', '|')
+            )
+        {
+            chars.next();
+            token.push(next);
+        }
+        tokens.push(token);
+    }
+    tokens.join(" ")
+}
+
 fn terminal_kind(kind: super::relational::TerminalKind) -> String {
     format!("{kind:?}").to_ascii_lowercase()
 }
@@ -507,7 +558,8 @@ fn production_contract_phase_four_resolves_matches_authored_sql() {
     let expected = authored_sql_goldens();
     let actual = actual_implementation_golden(&case);
     assert_eq!(
-        actual.normalized_sql, expected[&case.name],
+        exact_sql(&actual.normalized_sql),
+        exact_sql(&expected[&case.name]),
         "resolution must use the authored semantic-gate SQL contract"
     );
 }
@@ -532,7 +584,8 @@ fn production_contract_phases_two_to_four_match_authored_sql_statements() {
     {
         let actual = actual_implementation_golden(&case);
         assert_eq!(
-            actual.normalized_sql, expected[&case.name],
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
             "{} exact authored SQL",
             case.name
         );
