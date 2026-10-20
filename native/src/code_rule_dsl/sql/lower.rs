@@ -8,8 +8,8 @@ mod three;
 
 use super::emit;
 use super::plan::{
-    CallReturn, CallSlot, MASK_BITS, Mask, Need, NodeSet, OfRule, Op, Shape, Slot, SlotId,
-    SlotKind, Source, Statement, Stop, Unit, Unsupported, Walk, mask,
+    CallReturn, CallSlot, Excluding, MASK_BITS, Mask, Need, NodeSet, OfRule, Op, Shape, Slot,
+    SlotId, SlotKind, Source, Statement, Stop, Unit, Unsupported, Walk, mask,
 };
 use super::recursion::{self, Cycle, Recursion, UtilKey, util_key};
 use super::terminals::{
@@ -661,29 +661,51 @@ impl<'p> Lowerer<'p> {
     }
 
     /// `op` followed by `Excluded` where `violation.each` excludes here and the enumerated
-    /// capture has a node slot in `scope`: where no slot exists, no row binds it here.
-    fn excluding(&self, scope: usize, op: Op) -> Op {
+    /// capture has a slot in `scope`: where none exists, no row binds it here. In a parsed
+    /// tree, a node of the tree, excluded by its host range (`each::binding_range`); elsewhere a
+    /// host node, or a capture a parsed tree exported, by its host range.
+    fn excluding(&mut self, scope: usize, op: Op) -> Op {
         let (Some(name), Some(root)) = (&self.exclude, self.root) else {
             return op;
         };
-        match self.existing(scope, name, SlotKind::Node) {
-            Some(slot) => Op::All(vec![op, Op::Excluded { name: slot, root }]),
-            None => op,
-        }
+        let node = self.existing(scope, name, SlotKind::Node);
+        let binding = match self.tree {
+            Some(context) => {
+                let Some(node) = node else {
+                    return op;
+                };
+                let (tree, file) = context.host_file();
+                Excluding::Tree {
+                    node,
+                    tree,
+                    file,
+                    term: self.exported_term(),
+                }
+            }
+            None => {
+                let exported = self.existing(scope, name, SlotKind::Text);
+                if node.is_none() && exported.is_none() {
+                    return op;
+                }
+                Excluding::Host { node, exported }
+            }
+        };
+        Op::All(vec![op, Op::Excluded { binding, root }])
     }
 
     /// Whether a rule lowered here, in a three-valued clause, may run on a binding of the capture
-    /// `violation.each` excludes (its node slot may be bound on entry): its choice points then
-    /// pass over every true candidate where that binding was reported, which a stage, matched
-    /// once excluding nothing, cannot stand for (`emit/each.rs`).
+    /// `violation.each` excludes (its node or exported slot may be bound on entry): its choice
+    /// points then pass over every true candidate where that binding was reported, which a
+    /// stage, matched once excluding nothing, cannot stand for (`emit/each.rs`).
     fn excluding_bound(&self, scope: usize, bound: &Bound) -> bool {
         self.three
             && self.root.is_some()
-            && self
-                .exclude
-                .as_ref()
-                .and_then(|name| self.existing(scope, name, SlotKind::Node))
-                .is_some_and(|slot| bound.contains(&slot))
+            && self.exclude.as_ref().is_some_and(|name| {
+                [SlotKind::Node, SlotKind::Text]
+                    .into_iter()
+                    .filter_map(|kind| self.existing(scope, name, kind))
+                    .any(|slot| bound.contains(&slot))
+            })
     }
 
     /// `walk_leak` for a relation's rule, also through a recursive unit: a relation in a context
