@@ -8,7 +8,9 @@ use crate::code_rule_dsl::language::{GrammarDialect, label};
 use crate::code_rule_dsl::matcher::{
     AstMatcher, MAX_UTIL_DEPTH, Semantic, StopBy, UtilCall, UtilRef,
 };
-use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Query, RegexSource};
+use crate::code_rule_dsl::model::{
+    ClauseKind, CompiledCodeRule, ProjectionSource, Query, RegexSource,
+};
 use crate::code_rule_dsl::packed::Program;
 use crate::code_rule_dsl::transducer::sql_backend::{
     FileFactDescriptor, ParseFactDescriptor, ProducerKind, SemanticFactDescriptor,
@@ -122,6 +124,88 @@ impl SqlCatalogPlan {
         for (rule_index, code_rule) in code_rules.iter().enumerate() {
             for (clause_index, clause) in code_rule.clauses.iter().enumerate() {
                 let clause_at = format!("{}/{}", code_rule.id, clause.id);
+                builder.current_clause = (rule_index, clause_index);
+                builder.current_result_limit =
+                    u32::try_from(code_rule.capabilities.limits.max_witnesses).unwrap_or(u32::MAX);
+                builder.current_max_work = code_rule.capabilities.limits.max_visited_nodes;
+                if let ClauseKind::Forbid(Query::SelectWhen { .. }) = &clause.kind {
+                    let (terminals, ir) = builder.lower_clause_query(
+                        match &clause.kind {
+                            ClauseKind::Forbid(query) => query,
+                            _ => unreachable!(),
+                        },
+                        &clause_at,
+                    );
+                    builder.clause_terminal_ids.push(terminals);
+                    builder.clause_irs.push(ir);
+                    continue;
+                }
+                if let ClauseKind::RequireEach { subject, evidence } = &clause.kind {
+                    let (mut terminals, subject_ir) = builder
+                        .lower_clause_query(&subject.ast.query, &format!("{clause_at}/subject"));
+                    let (evidence_terminals, evidence_ir) = builder
+                        .lower_clause_query(&evidence.ast.query, &format!("{clause_at}/evidence"));
+                    terminals.extend(evidence_terminals);
+                    terminals.sort_unstable();
+                    terminals.dedup();
+                    let keys = subject
+                        .ast
+                        .project
+                        .iter()
+                        .filter_map(|left| {
+                            evidence
+                                .ast
+                                .project
+                                .iter()
+                                .find(|right| right.field == left.field)
+                                .map(|right| {
+                                    (
+                                        Builder::projection_sql(&left.source, "subject"),
+                                        Builder::projection_sql(&right.source, "evidence"),
+                                    )
+                                })
+                        })
+                        .collect();
+                    let ir = RelationalIr::require_each(subject_ir, evidence_ir, keys)
+                        .unwrap_or_else(|error| {
+                            builder.unsupported.push(format!("{clause_at}: {error}"));
+                            RelationalIr::empty_relation()
+                        });
+                    builder.clause_terminal_ids.push(terminals);
+                    builder.clause_irs.push(ir);
+                    continue;
+                }
+                if let ClauseKind::Budget {
+                    query,
+                    group_by,
+                    maximum,
+                    distinct,
+                } = &clause.kind
+                {
+                    let (terminals, source) =
+                        builder.lower_clause_query(&query.ast.query, &format!("{clause_at}/query"));
+                    let fields = |names: &[String]| {
+                        names
+                            .iter()
+                            .filter_map(|name| {
+                                name.split_once('.')
+                                    .and_then(|(_, field)| {
+                                        query.ast.project.iter().find(|item| item.field == field)
+                                    })
+                                    .map(|item| Builder::projection_sql(&item.source, "usage"))
+                            })
+                            .collect()
+                    };
+                    let ir =
+                        RelationalIr::budget(source, fields(group_by), fields(distinct), *maximum)
+                            .unwrap_or_else(|error| {
+                                builder.unsupported.push(format!("{clause_at}: {error}"));
+                                RelationalIr::empty_relation()
+                            });
+                    builder.clause_terminal_ids.push(terminals);
+                    builder.clause_irs.push(ir);
+                    continue;
+                }
                 if let ClauseKind::Forbid(Query::Regex { regex, source }) = &clause.kind {
                     builder.current_clause = (rule_index, clause_index);
                     builder.current_result_limit =
@@ -147,7 +231,6 @@ impl SqlCatalogPlan {
                     let language = label(matcher.language).unwrap_or("unknown");
                     let at = format!("{clause_at}/{language}/rule");
                     let mut terminals = Vec::new();
-                    builder.current_clause = (rule_index, clause_index);
                     builder.current_calls = calls
                         .iter()
                         .map(|term| (Arc::clone(&term.key), Arc::clone(term)))
@@ -1554,6 +1637,78 @@ impl Builder {
         });
         self.terminal_ids.insert(identity, id);
         id
+    }
+
+    fn projection_sql(source: &ProjectionSource, row: &str) -> String {
+        match source {
+            ProjectionSource::Capture(label) => format!(
+                "(SELECT json_extract(binding.value, '$.text') FROM json_each({row}.bindings) binding WHERE json_extract(binding.value, '$.label') = '{}')",
+                label.replace('\'', "''")
+            ),
+            ProjectionSource::Path
+            | ProjectionSource::Directory
+            | ProjectionSource::Name
+            | ProjectionSource::Stem
+            | ProjectionSource::Module
+            | ProjectionSource::Package => format!("CAST({row}.file_index AS TEXT)"),
+        }
+    }
+
+    fn lower_clause_query(&mut self, query: &Query, at: &str) -> (Vec<usize>, RelationalIr) {
+        match query {
+            Query::Regex { regex, source } => {
+                let id = self.file_terminal(regex, *source);
+                let mut ir = RelationalIr::empty();
+                ir.terminal_spec(TerminalKind::File, format!("terminal:{id}"));
+                ir.operation(SqlOperation::ScanTerminal);
+                (vec![id], ir)
+            }
+            Query::Ast { matchers, calls } => {
+                self.current_calls = calls
+                    .iter()
+                    .map(|term| (Arc::clone(&term.key), Arc::clone(term)))
+                    .collect();
+                let mut terminals = Vec::new();
+                let mut relations = Vec::new();
+                for matcher in matchers.iter().filter(|matcher| matcher.applies) {
+                    let mut ir = RelationalIr::empty();
+                    self.lower_matcher(
+                        &matcher.matcher,
+                        matcher.language,
+                        at,
+                        &mut terminals,
+                        &mut ir,
+                    );
+                    relations.push(ir);
+                }
+                let ir = if relations.is_empty() {
+                    RelationalIr::empty_relation()
+                } else if relations.len() == 1 {
+                    relations.pop().expect("one relation")
+                } else {
+                    RelationalIr::union_all(relations).unwrap_or_else(|error| {
+                        self.unsupported.push(format!("{at}: {error}"));
+                        RelationalIr::empty_relation()
+                    })
+                };
+                terminals.sort_unstable();
+                terminals.dedup();
+                (terminals, ir)
+            }
+            Query::SelectWhen { select, exists } => {
+                let (mut terminals, select) =
+                    self.lower_clause_query(select, &format!("{at}/select"));
+                let (more, exists) = self.lower_clause_query(exists, &format!("{at}/exists"));
+                terminals.extend(more);
+                terminals.sort_unstable();
+                terminals.dedup();
+                let ir = RelationalIr::select_when(select, exists).unwrap_or_else(|error| {
+                    self.unsupported.push(format!("{at}: {error}"));
+                    RelationalIr::empty_relation()
+                });
+                (terminals, ir)
+            }
+        }
     }
 
     fn file_terminal(&mut self, regex: &regex::Regex, source: RegexSource) -> usize {

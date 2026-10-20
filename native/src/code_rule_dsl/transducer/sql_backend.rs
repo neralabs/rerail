@@ -513,7 +513,12 @@ impl PackedDemand {
                     if let Some(found) = descriptor.regex.find(haystack) {
                         let root = self.anchors[file][program].first().copied().unwrap_or(0);
                         let span = if descriptor.path {
-                            self.files[file].transducer_span(root)
+                            let source = self.files[file].transducer_source();
+                            let end = source
+                                .iter()
+                                .rposition(|byte| !byte.is_ascii_whitespace())
+                                .map_or(0, |end| end + 1);
+                            0..end
                         } else {
                             found.range()
                         };

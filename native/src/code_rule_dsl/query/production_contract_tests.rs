@@ -1824,6 +1824,34 @@ fn production_contract_phase_five_has_complete_authored_sql_and_catalogs() {
 }
 
 #[test]
+fn production_contract_phase_six_file_and_select_clauses_equal_oracles() {
+    for (name, source, ranges) in [
+        ("clause-forbid-content-regex", "unsafe call\n", vec![(0, 6)]),
+        ("clause-forbid-path-regex", "safe\n", vec![(0, 4)]),
+        (
+            "clause-select-when-exists",
+            "import os\nprint(value)\n",
+            vec![(10, 22)],
+        ),
+        ("clause-select-when-absent", "print(value)\n", vec![(0, 12)]),
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the Phase 6 contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("Phase 6 policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome(&compiled, source);
+        assert_eq!(outcome.ranges, ranges, "{name}: SQL ranges");
+        assert!(outcome.errors.is_empty(), "{name}: SQL failures");
+    }
+}
+
+#[test]
 fn production_contract_phase_six_clauses_lower_completely() {
     for name in [
         "clause-forbid-content-regex",

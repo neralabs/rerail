@@ -1169,7 +1169,9 @@ fn sql_outcome_with_failure(
         .terminals()
         .iter()
         .map(|terminal| {
-            if terminal.kind() == TerminalKind::Navigation {
+            if terminal.kind() == TerminalKind::File {
+                Vec::new()
+            } else if terminal.kind() == TerminalKind::Navigation {
                 vec![0]
             } else {
                 roots.clone()
@@ -1277,6 +1279,8 @@ fn sql_outcome_with_failure(
                 get_optional("document_id")?,
                 get_optional("mapped_document_id")?,
                 get_optional("node")?,
+                get_optional("start_byte")?,
+                get_optional("end_byte")?,
                 named("error_code")
                     .map(|index| row.get::<_, Option<String>>(index))
                     .transpose()?
@@ -1346,54 +1350,63 @@ fn sql_outcome_with_failure(
     let anchor = &compiled.inner.clauses[0].violation.anchor;
     let mut errors = rows
         .iter()
-        .filter(|(row_kind, _, _, _, _, _, _, _)| *row_kind == 8)
-        .map(|(_, _, _, _, _, error, _, _)| error.clone().expect("a failure row has an error code"))
+        .filter(|(row_kind, _, _, _, _, _, _, _, _, _)| *row_kind == 8)
+        .map(|(_, _, _, _, _, _, _, error, _, _)| {
+            error.clone().expect("a failure row has an error code")
+        })
         .collect::<Vec<_>>();
     errors.sort();
     errors.dedup();
     let mut file_indices = rows
         .iter()
-        .filter(|(row_kind, _, _, _, _, _, _, _)| *row_kind != 8)
-        .map(|(_, file, _, _, _, _, _, _)| file.expect("a violation row has a file"))
+        .filter(|(row_kind, _, _, _, _, _, _, _, _, _)| *row_kind != 8)
+        .map(|(_, file, _, _, _, _, _, _, _, _)| file.expect("a violation row has a file"))
         .collect::<Vec<_>>();
     file_indices.sort_unstable();
     let mut document_ids = rows
         .iter()
-        .filter(|(row_kind, _, _, _, _, _, _, _)| *row_kind != 8)
-        .filter_map(|(_, _, document, mapped, _, _, _, _)| {
+        .filter(|(row_kind, _, _, _, _, _, _, _, _, _)| *row_kind != 8)
+        .filter_map(|(_, _, document, mapped, _, _, _, _, _, _)| {
             Some((document.as_ref().copied()?, mapped.as_ref().copied()?))
         })
         .collect::<Vec<_>>();
     document_ids.sort_unstable();
     let mut ranges = rows
         .into_iter()
-        .filter(|(row_kind, _, _, _, _, _, _, _)| *row_kind != 8)
-        .map(|(_, _, _, _, node, _, bindings, argument_node)| {
-            let node = node.expect("a violation row has a node");
-            if let Anchor::Capture(label) = anchor {
-                let bindings = serde_json::from_str::<serde_json::Value>(&bindings)
-                    .expect("JSON binding environment");
-                let binding = bindings
-                    .as_array()
-                    .expect("binding array")
-                    .iter()
-                    .find(|binding| binding["label"] == *label && binding["kind"] == 1);
-                if let Some(binding) = binding
-                    && let (Some(start), Some(end)) =
-                        (binding["start_byte"].as_u64(), binding["end_byte"].as_u64())
-                {
-                    return (start as usize, end as usize);
+        .filter(|(row_kind, _, _, _, _, _, _, _, _, _)| *row_kind != 8)
+        .map(
+            |(_, _, _, _, node, start, end, _, bindings, argument_node)| {
+                let node = node.expect("a violation row has a node");
+                if let Anchor::Capture(label) = anchor {
+                    let bindings = serde_json::from_str::<serde_json::Value>(&bindings)
+                        .expect("JSON binding environment");
+                    let binding = bindings
+                        .as_array()
+                        .expect("binding array")
+                        .iter()
+                        .find(|binding| binding["label"] == *label && binding["kind"] == 1);
+                    if let Some(binding) = binding
+                        && let (Some(start), Some(end)) =
+                            (binding["start_byte"].as_u64(), binding["end_byte"].as_u64())
+                    {
+                        return (start as usize, end as usize);
+                    }
+                    let node = binding
+                        .and_then(|binding| binding["node"].as_i64())
+                        .or(argument_node)
+                        .unwrap_or(node);
+                    let span = &spans[node as usize];
+                    return (span.start, span.end);
                 }
-                let node = binding
-                    .and_then(|binding| binding["node"].as_i64())
-                    .or(argument_node)
-                    .unwrap_or(node);
-                let span = &spans[node as usize];
-                return (span.start, span.end);
-            }
-            let span = &spans[node as usize];
-            (span.start, span.end)
-        })
+                match (start, end) {
+                    (Some(start), Some(end)) => (start as usize, end as usize),
+                    _ => {
+                        let span = &spans[node as usize];
+                        (span.start, span.end)
+                    }
+                }
+            },
+        )
         .collect::<Vec<_>>();
     ranges.sort_unstable();
     SqlOutcome {
@@ -1521,7 +1534,9 @@ fn sql_single_bindings(
         .terminals()
         .iter()
         .map(|terminal| {
-            if terminal.kind() == TerminalKind::Navigation {
+            if terminal.kind() == TerminalKind::File {
+                Vec::new()
+            } else if terminal.kind() == TerminalKind::Navigation {
                 vec![0]
             } else {
                 roots.clone()

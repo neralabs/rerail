@@ -307,6 +307,21 @@ enum RelationNode {
     Parsed {
         spec: ParseFactSpec,
     },
+    SelectWhen {
+        select: Box<RelationNode>,
+        exists: Box<RelationNode>,
+    },
+    RequireEach {
+        subject: Box<RelationNode>,
+        evidence: Box<RelationNode>,
+        keys: Vec<(String, String)>,
+    },
+    Budget {
+        source: Box<RelationNode>,
+        group_by: Vec<String>,
+        distinct: Vec<String>,
+        maximum: usize,
+    },
     Utility {
         spec: UtilitySpec,
         source: Box<RelationNode>,
@@ -488,7 +503,13 @@ impl RelationNode {
                             .is_some_and(|relation| relation.roots.iter().any(Self::can_bind))
                     })
             }
-            Self::Compare { source, .. } | Self::Value { source, .. } => source.can_bind(),
+            Self::Compare { source, .. }
+            | Self::Value { source, .. }
+            | Self::Budget { source, .. } => source.can_bind(),
+            Self::SelectWhen { select, exists } => select.can_bind() || exists.can_bind(),
+            Self::RequireEach {
+                subject, evidence, ..
+            } => subject.can_bind() || evidence.can_bind(),
             Self::Utility { source, body, .. } => source.can_bind() || body.can_bind(),
             Self::UtilityFrame { source, body, .. } => source.can_bind() || body.can_bind(),
             Self::RecursiveUtility { source, bases, .. } => {
@@ -569,7 +590,19 @@ impl RelationNode {
                     constraint.collect_terminals(terminals);
                 }
             }
-            Self::Compare { source, .. } => source.collect_terminals(terminals),
+            Self::Compare { source, .. } | Self::Budget { source, .. } => {
+                source.collect_terminals(terminals)
+            }
+            Self::SelectWhen { select, exists } => {
+                select.collect_terminals(terminals);
+                exists.collect_terminals(terminals);
+            }
+            Self::RequireEach {
+                subject, evidence, ..
+            } => {
+                subject.collect_terminals(terminals);
+                evidence.collect_terminals(terminals);
+            }
             Self::Parsed { .. } => {
                 if !terminals.contains(&TerminalKind::Parse) {
                     terminals.push(TerminalKind::Parse);
@@ -772,6 +805,24 @@ impl RelationNode {
                     }
                 }
             }
+            Self::SelectWhen { select, exists } => {
+                select.collect_operations(operations);
+                exists.collect_operations(operations);
+                operations.push(SqlOperation::Exists);
+            }
+            Self::RequireEach {
+                subject, evidence, ..
+            } => {
+                subject.collect_operations(operations);
+                evidence.collect_operations(operations);
+                operations.push(SqlOperation::AntiJoin);
+                operations.push(SqlOperation::CrossFileJoin);
+            }
+            Self::Budget { source, .. } => {
+                source.collect_operations(operations);
+                operations.push(SqlOperation::GroupBy);
+                operations.push(SqlOperation::Having);
+            }
             Self::Seed | Self::Empty | Self::Producer(_) | Self::Rendered(_) => {}
         }
     }
@@ -835,6 +886,50 @@ impl SqlRenderer {
                 RelationNode::Value { spec, source } => self.render_value(spec, source),
                 RelationNode::Semantic { spec } => self.render_semantic(spec),
                 RelationNode::Parsed { spec } => self.render_parsed(spec),
+                RelationNode::SelectWhen { select, exists } => {
+                    let select = self.render(select)?;
+                    let exists = self.render(exists)?;
+                    let name = self.next_name("select_when");
+                    self.ctes.push(format!("{name} AS (\n  SELECT selected.* FROM {select} selected WHERE EXISTS (SELECT 1 FROM {exists} required WHERE required.file_index = selected.file_index)\n)"));
+                    Ok(name)
+                }
+                RelationNode::RequireEach {
+                    subject,
+                    evidence,
+                    keys,
+                } => {
+                    let subject = self.render(subject)?;
+                    let evidence = self.render(evidence)?;
+                    let equal = keys
+                        .iter()
+                        .map(|(left, right)| format!("{left} = {right}"))
+                        .collect::<Vec<_>>()
+                        .join(" AND ");
+                    let name = self.next_name("require_each");
+                    self.ctes.push(format!("{name} AS (\n  SELECT subject.* FROM {subject} subject WHERE NOT EXISTS (SELECT 1 FROM {evidence} evidence WHERE {equal})\n)"));
+                    Ok(name)
+                }
+                RelationNode::Budget {
+                    source,
+                    group_by,
+                    distinct,
+                    maximum,
+                } => {
+                    let source = self.render(source)?;
+                    let groups = if group_by.is_empty() {
+                        "'all'".to_owned()
+                    } else {
+                        group_by.join(", ")
+                    };
+                    let count = if distinct.is_empty() {
+                        "count(*)".to_owned()
+                    } else {
+                        format!("count(DISTINCT json_array({}))", distinct.join(", "))
+                    };
+                    let name = self.next_name("budget");
+                    self.ctes.push(format!("{name} AS (\n  SELECT usage.* FROM {source} usage GROUP BY {groups} HAVING {count} > {maximum}\n)"));
+                    Ok(name)
+                }
                 RelationNode::Utility { spec, source, body } => {
                     self.render_utility(spec, source, body)
                 }
@@ -2437,6 +2532,71 @@ impl RelationalIr {
         Ok(relation)
     }
 
+    pub(super) fn union_all(relations: Vec<Self>) -> Result<Self, String> {
+        let roots = relations
+            .into_iter()
+            .map(Self::one_root)
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut relation = Self {
+            roots: vec![RelationNode::MergeChoices(roots)],
+            terminal_kinds: Vec::new(),
+            operations: Vec::new(),
+        };
+        relation.refresh_explanation();
+        Ok(relation)
+    }
+
+    pub(super) fn select_when(select: Self, exists: Self) -> Result<Self, String> {
+        let mut relation = Self {
+            roots: vec![RelationNode::SelectWhen {
+                select: Box::new(select.one_root()?),
+                exists: Box::new(exists.one_root()?),
+            }],
+            terminal_kinds: Vec::new(),
+            operations: Vec::new(),
+        };
+        relation.refresh_explanation();
+        Ok(relation)
+    }
+
+    pub(super) fn require_each(
+        subject: Self,
+        evidence: Self,
+        keys: Vec<(String, String)>,
+    ) -> Result<Self, String> {
+        let mut relation = Self {
+            roots: vec![RelationNode::RequireEach {
+                subject: Box::new(subject.one_root()?),
+                evidence: Box::new(evidence.one_root()?),
+                keys,
+            }],
+            terminal_kinds: Vec::new(),
+            operations: Vec::new(),
+        };
+        relation.refresh_explanation();
+        Ok(relation)
+    }
+
+    pub(super) fn budget(
+        source: Self,
+        group_by: Vec<String>,
+        distinct: Vec<String>,
+        maximum: usize,
+    ) -> Result<Self, String> {
+        let mut relation = Self {
+            roots: vec![RelationNode::Budget {
+                source: Box::new(source.one_root()?),
+                group_by,
+                distinct,
+                maximum,
+            }],
+            terminal_kinds: Vec::new(),
+            operations: Vec::new(),
+        };
+        relation.refresh_explanation();
+        Ok(relation)
+    }
+
     pub(super) fn terminal_spec(
         &mut self,
         terminal: TerminalKind,
@@ -2599,7 +2759,16 @@ impl RelationalIr {
                     .iter()
                     .any(|input| contains(input, kind, semantic_key)),
                 RelationNode::PrefixChoice { source, .. }
-                | RelationNode::Compare { source, .. } => contains(source, kind, semantic_key),
+                | RelationNode::Compare { source, .. }
+                | RelationNode::Budget { source, .. } => contains(source, kind, semantic_key),
+                RelationNode::SelectWhen { select, exists } => {
+                    contains(select, kind, semantic_key) || contains(exists, kind, semantic_key)
+                }
+                RelationNode::RequireEach {
+                    subject, evidence, ..
+                } => {
+                    contains(subject, kind, semantic_key) || contains(evidence, kind, semantic_key)
+                }
                 RelationNode::Value { spec, source } => {
                     (kind == TerminalKind::Value
                         && semantic_key == format!("terminal:{}", spec.producer))
