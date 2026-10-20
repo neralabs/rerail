@@ -433,6 +433,129 @@ fn a_recursion_whose_reads_loop_back_is_refused() {
     );
 }
 
+/// `reach` walks from a call up to its function and down to the calls in it, its own among them,
+/// as a function that calls itself is reached through its own definition: `rule` with `has` as
+/// the walk down.
+fn reach(down: Value) -> Value {
+    json!({
+        "rule": { "kind": "call", "matches": "reach" },
+        "utils": { "reach": { "any": [
+            { "pattern": "g($$$)" },
+            { "inside": { "stopBy": "end", "kind": "function_definition", "has": down } },
+        ] } },
+    })
+}
+
+/// The matcher stops `has` at its first match, `g(x)`, before it reaches the self-call `f(x)`;
+/// the set evaluation tests `f(x)` too, which reads `f(x)`'s own key. That read is from a
+/// candidate past the first match, which the read graph leaves out (`emit::lineage`).
+#[test]
+fn a_self_call_past_the_first_match_reads_no_loop() {
+    let down = json!({ "stopBy": "end", "kind": "call", "matches": "reach" });
+    assert_eq!(
+        agreed("python", reach(down), None, "def f(x):\n    g(x)\n    f(x)\n"),
+        ["f(x)", "g(x)"]
+    );
+}
+
+/// Where the self-call comes first, the matcher reads `f(x)`'s key evaluating it: a loop.
+#[test]
+fn a_self_call_before_the_first_match_is_refused() {
+    let down = json!({ "stopBy": "end", "kind": "call", "matches": "reach" });
+    let reason = refused("python", reach(down), "def f(x):\n    f(x)\n    g(x)\n");
+    assert!(
+        reason.contains("Unsupported(recursion whose reads loop back)"),
+        "{reason}"
+    );
+}
+
+/// A strict search (its rule binds `$C`) ends at its first unknown candidate, `u(x)`
+/// (`testUnknown`), before the self-call: `f(x)` is unknown, not matched, and its own key is read
+/// past the end of the search. Where the self-call comes first, the search reads it.
+#[test]
+fn a_strict_search_ending_unknown_before_a_self_call_reads_no_loop() {
+    let down = json!({ "stopBy": "end", "any": [
+        { "kind": "call", "pattern": "$C($$$)", "regex": "^u", "testUnknown": "^u" },
+        { "kind": "call", "matches": "reach" },
+    ] });
+    assert!(
+        crate::code_rule_dsl::test_support::grammar_matchers(&compile(
+            "python",
+            reach(down.clone()),
+            None
+        ))[0]
+            .three_valued
+    );
+    assert_eq!(
+        agreed("python", reach(down.clone()), None, "def f(x):\n    u(x)\n    f(x)\ng(1)\n"),
+        ["g(1)"]
+    );
+    let reason = refused("python", reach(down), "def f(x):\n    f(x)\n    u(x)\ng(1)\n");
+    assert!(
+        reason.contains("Unsupported(recursion whose reads loop back)"),
+        "{reason}"
+    );
+}
+
+/// A `count` tests every candidate, an `nthChild` probe every named sibling, and a `not` decides
+/// its row whole: past a candidate that matched, each still reads the self-call's key, as the
+/// matcher does, so the loop is refused (the `not`'s answer flips every pass: it never settles).
+#[test]
+fn count_nth_child_and_not_over_a_self_call_still_read_its_loop() {
+    let downs = [
+        (
+            json!({ "stopBy": "end", "kind": "block", "count": { "has": { "stopBy": "end", "kind": "call", "matches": "reach" }, "min": 1 } }),
+            "def f(x):\n    g(x)\n    f(x)\n",
+        ),
+        (
+            json!({ "stopBy": "end", "kind": "argument_list", "has": { "kind": "call", "nthChild": { "position": 1, "ofRule": { "matches": "reach" } } } }),
+            "def f(x):\n    h(g(x), f(x))\n",
+        ),
+        (
+            json!({ "stopBy": "end", "kind": "call", "not": { "matches": "reach" } }),
+            "def f(x):\n    g(x)\n    f(x)\n",
+        ),
+    ];
+    for (down, source) in downs {
+        let reason = refused("python", reach(down.clone()), source);
+        assert!(
+            reason.contains("Unsupported(recursion whose reads loop back)")
+                || reason.contains("Unsupported(recursion deeper than 256 levels)"),
+            "{down}: {reason}"
+        );
+    }
+}
+
+/// `a` and `b` call each other, so `reach` loops between them, but only `main` is a root, and
+/// the matcher stops `main`'s search at `h()`, which reaches `g`: it never evaluates `a(1)`, nor
+/// `a` or `b`. The set evaluation demands their keys from that cut candidate; no needed row
+/// reaches them, so their loop is not checked (the start set of `exec::acyclic`).
+#[test]
+fn a_loop_only_a_cut_candidate_reaches_is_not_checked() {
+    let ast = json!({
+        "rule": { "kind": "function_definition", "regex": "^def main", "matches": "reach" },
+        "utils": {
+            "reach": { "kind": "function_definition", "any": [
+                { "has": { "stopBy": "end", "pattern": "g($$$)" } },
+                { "has": { "stopBy": "end", "kind": "call", "matches": "edge" } },
+            ] },
+            "edge": { "kind": "call", "has": { "field": "function", "kind": "identifier",
+                "resolves": { "binding": { "site": { "matches": "reach" } } } } },
+        },
+    });
+    let source = "def a(x):\n    b(x)\n\ndef b(x):\n    a(x)\n\ndef h():\n    g(1)\n\ndef main():\n    h()\n    a(1)\n";
+    let found = agreed("python", ast.clone(), None, source);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].starts_with("def main"), "{found:?}");
+    // Where `main` calls `a` first, the matcher evaluates the loop.
+    let first = source.replace("    h()\n    a(1)\n", "    a(1)\n    h()\n");
+    let reason = refused("python", ast, &first);
+    assert!(
+        reason.contains("Unsupported(recursion whose reads loop back)"),
+        "{reason}"
+    );
+}
+
 /// A `matches` of a capture-free utility, recursive or not, kind-less or not, runs on the keys its
 /// frame demands: no per-batch stage evaluates it over every node of its root kinds.
 #[test]

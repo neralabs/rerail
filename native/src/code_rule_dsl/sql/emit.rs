@@ -16,6 +16,7 @@
 mod each;
 mod keyed;
 mod leaves;
+mod lineage;
 mod three;
 
 use super::lower::{INTERNAL, ORIGIN};
@@ -43,8 +44,9 @@ pub(super) const EACH: &str = "/*EACH*/";
 /// (the rest of the `UNTIL` statement) counts a dirty key, checked before every pass (`exec`).
 pub(super) const LOOP: &str = "/*LOOP*/";
 pub(super) const UNTIL: &str = "/*UNTIL*/";
-/// A query after a loop: the recursive reads of its last pass, `(unit, key, unit, key)`, which
-/// the driver accepts only where they form no cycle (`recursion`).
+/// A query after a statement's operator: the recursive reads every loop's last pass and the
+/// statement's own rows recorded from their needed rows, `(unit, key, unit, key, inner)`, which
+/// the driver accepts only where those it reaches from the statement form no cycle (`exec`).
 pub(super) const ACYCLIC: &str = "/*ACYCLIC*/";
 /// A recursion component's loop is emitted once, as a block: `BLOCK<scc>` … `END` at its first
 /// reference site, which runs it there, and `RUN<scc>` at every later one, which runs the same
@@ -68,6 +70,12 @@ fn demand_table(unit: usize) -> String {
 /// A unit's answer table: `(id, c0…)`, the bindings after the body for the keys it matched.
 fn answer_table(unit: usize) -> String {
     format!("{NAMESPACE}a{unit}")
+}
+
+/// A statement's recursive reads from its own rows, outside every unit's body: `(-1, 0, unit,
+/// key)`, the keys the recursion check starts from (`Emitter::acyclic`).
+fn start_table() -> String {
+    format!("{NAMESPACE}ex")
 }
 
 /// The table a stage's rows are stored in for the batch.
@@ -389,6 +397,12 @@ struct Emitter<'s> {
     unique: HashMap<String, Vec<BTreeSet<SlotId>>>,
     /// The slots each operator names, by its address (`keyed::touched`).
     touched_slots: HashMap<usize, Rc<BTreeSet<SlotId>>>,
+    /// The k-space of each frame in a unit's body (`lineage`), by name.
+    space_of: HashMap<String, usize>,
+    spaces: Vec<lineage::Space>,
+    /// The unit bodies being emitted, innermost last, and the next one's id.
+    members: Vec<lineage::Member>,
+    next_member: usize,
 }
 
 /// `An+B` at a 1-based position `index`, as `nth_child::Position::holds` computes it.
@@ -437,6 +451,10 @@ impl<'s> Emitter<'s> {
                 .position(|slot| slot.scope == INTERNAL && slot.name == ORIGIN),
             unique: HashMap::new(),
             touched_slots: HashMap::new(),
+            space_of: HashMap::new(),
+            spaces: Vec::new(),
+            members: Vec::new(),
+            next_member: 0,
         }
     }
 
@@ -630,7 +648,36 @@ impl<'s> Emitter<'s> {
         self.out.root = Some(root.clone());
         // One row per root: a file's roots are either all its nodes or the selected ones.
         self.keyed_by(&root, vec![BTreeSet::new()]);
-        self.op(op, &root)
+        if self.units.is_empty() {
+            return self.op(op, &root);
+        }
+        // The keys the clause's own needed rows demand: where the recursion check starts.
+        self.create(&start_table(), "su, s, du, d");
+        self.member_start(&root);
+        let out = self.op(op, &root);
+        self.member_end();
+        self.acyclic();
+        out
+    }
+
+    /// Accepts the statement's recursion (`exec::acyclic`): every read recorded from a needed row,
+    /// `(unit, key, unit, key, inner)`, `inner` where both units are of one component, the
+    /// clause's own as from unit `-1`'s key `0` (`start_table`).
+    fn acyclic(&mut self) {
+        let mut query = format!("{ACYCLIC}SELECT su, s, du, d, 0 FROM {}", start_table());
+        for &scc in &self.blocks {
+            let members: Vec<String> = (0..self.units.len())
+                .filter(|&unit| self.units[unit].scc == scc)
+                .map(|unit| unit.to_string())
+                .collect();
+            write!(
+                query,
+                " UNION ALL SELECT su, s, du, d, du IN ({}) FROM {NAMESPACE}e{scc}",
+                members.join(", ")
+            )
+            .expect("write to a string");
+        }
+        self.push(query, Effect::default());
     }
 
     /// `op` on `input`: per distinct key where it walks over a frame that may repeat a key
@@ -642,6 +689,7 @@ impl<'s> Emitter<'s> {
         };
         let changed = self.touched(op);
         self.inherit(input, &out, &changed);
+        self.same_space(input, &out);
         out
     }
 
@@ -707,6 +755,7 @@ impl<'s> Emitter<'s> {
                             Reads::anti(&rest, &[&out]),
                         );
                         self.inherit(&rest, &next, &BTreeSet::new());
+                        self.same_space(&rest, &next);
                         rest = next;
                     }
                     outs.push(out);
@@ -745,7 +794,9 @@ impl<'s> Emitter<'s> {
                 kinds,
             } => {
                 let candidates = self.candidates(*walk, kinds.as_deref(), input);
+                self.first_match(&candidates, *walk, false);
                 let matched = self.op(sub, &candidates);
+                self.first_matched(&candidates, &matched);
                 if *binds {
                     // `ord` is the walk order (negated ids for descending walks): its minimum
                     // is the first match.
@@ -833,8 +884,10 @@ impl<'s> Emitter<'s> {
                         ),
                         Reads::join(&[&current]),
                     );
+                    self.same_space(&current, &passed);
+                    self.same_space(&current, &captured);
                     let checked = self.op(constraint, &captured);
-                    current = self.frame(
+                    let next = self.frame(
                         "x",
                         &format!(
                             "SELECT {} FROM {checked} c JOIN {current} f ON f.k = c.k UNION ALL SELECT {} FROM {passed} p",
@@ -843,6 +896,8 @@ impl<'s> Emitter<'s> {
                         ),
                         Reads::union(&[&checked, &passed]),
                     );
+                    self.same_space(&current, &next);
+                    current = next;
                 }
                 current
             }
@@ -916,6 +971,7 @@ impl<'s> Emitter<'s> {
                     ),
                     Reads::join(&[input, &positioned]),
                 );
+                self.same_space(input, &passed);
                 let committed = self.op(commit, &passed);
                 let overrides: Vec<(String, String)> = self
                     .physical
@@ -1017,20 +1073,25 @@ impl<'s> Emitter<'s> {
         let scc = units[unit].scc;
         if !self.emitting.contains(&scc) {
             self.shared_loop(scc);
-        } else if let (Some(&from), Some(origin)) = (self.evaluating.last(), self.origin)
-            && units[from].scc == scc
-        {
-            // A read inside the component's own loop: recorded for the acyclicity check.
-            let reads = format!("{NAMESPACE}e{scc}");
-            self.insert(
-                &reads,
-                format!(
-                    "INSERT INTO {reads} SELECT DISTINCT {from}, f.s{origin}, {unit}, d.id FROM {input} f \
-                     JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched}"
-                ),
-                Reads::join(&[input, &demand]),
-            );
         }
+        // The reference, for the recursion check: from the key of the unit whose body it lies in,
+        // into that unit's component's reads, or from the statement's own rows; recorded from the
+        // rows the matcher evaluates (`lineage`). Without an origin slot to name the key, it
+        // counts as the statement's own, which only starts the check at more keys.
+        let (reads, source) = match (self.evaluating.last(), self.origin) {
+            (Some(&from), Some(origin)) => (
+                format!("{NAMESPACE}e{}", units[from].scc),
+                format!("{from}, f.s{origin}"),
+            ),
+            _ => (start_table(), "-1, 0".to_owned()),
+        };
+        self.record_read(
+            &reads,
+            input,
+            &demand,
+            format!("INSERT INTO {reads} SELECT DISTINCT {source}, {unit}, d.id FROM {input} f"),
+            format!(" JOIN {demand} d ON d.file = f.file AND d.node = f.node{matched}"),
+        );
         let overrides: Vec<(String, String)> = site_columns
             .iter()
             .enumerate()
@@ -1138,7 +1199,9 @@ impl<'s> Emitter<'s> {
                 Reads::join(&[&reads, &keys]).writes(Writes::Delete(reads.clone())),
             );
             self.evaluating.push(unit);
+            self.member_start(&keys);
             let out = self.op(&units[unit].body, &keys);
+            self.member_end();
             self.evaluating.pop();
             let fresh = format!("{NAMESPACE}n{unit}");
             let width = key_columns.len();
@@ -1205,10 +1268,6 @@ impl<'s> Emitter<'s> {
             .collect::<Vec<_>>()
             .join(" + ");
         self.push(format!("{UNTIL}SELECT {dirty}"), Effect::default());
-        self.push(
-            format!("{ACYCLIC}SELECT su, s, du, d FROM {reads}"),
-            Effect::default(),
-        );
         self.looping -= 1;
         self.emitting.pop();
     }
@@ -1287,11 +1346,19 @@ impl<'s> Emitter<'s> {
     /// candidate and the row's bindings, plus `pk` (the row's `k`) and `ord` (the walk order:
     /// ids, negated for descending walks). With `kinds`, only the walk's nodes of those kinds
     /// (the sub-rule's root kinds, `Op::Relation`), read from the kind postings before a
-    /// candidate's row is built.
+    /// candidate's row is built. A k-space whose rows are all needed where their parent is
+    /// (`lineage`); a first-match search says it stops at its first match.
     pub(super) fn candidates(&mut self, walk: Walk, kinds: Option<&[u16]>, input: &str) -> String {
-        if let Some(candidates) = self.leaf_candidates(walk, input) {
-            return candidates;
-        }
+        let candidates = match self.leaf_candidates(walk, input) {
+            Some(candidates) => candidates,
+            None => self.tree_candidates(walk, kinds, input),
+        };
+        self.open_space(&candidates, input, lineage::Derive::Probe);
+        candidates
+    }
+
+    /// `candidates` of a walk over the tree.
+    fn tree_candidates(&mut self, walk: Walk, kinds: Option<&[u16]>, input: &str) -> String {
         // Mutant 15: a field relation walks as its plain relation.
         let walk = match walk {
             Walk::FieldHas(_, stop) if super::mutant(15) => Walk::Has(stop),
@@ -1557,6 +1624,7 @@ impl<'s> Emitter<'s> {
                     ),
                     Reads::join(&[input]),
                 );
+                self.open_space(&siblings, input, lineage::Derive::Probe);
                 let matched = self.op(rule, &siblings);
                 let with = format!(
                     "WITH r AS (SELECT g.pk AS pk, g.node AS node, \
@@ -1613,6 +1681,7 @@ impl<'s> Emitter<'s> {
             &format!("SELECT {} FROM {input} f", self.select("f", &overrides)),
             Reads::copy(input),
         );
+        self.same_space(input, &framed);
         let bound = self.op(body, &framed);
         if returns.is_empty() {
             return bound;

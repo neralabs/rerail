@@ -8,20 +8,23 @@
 //! `(file, node, bindings it reads)` is the bindings after its body, or no match. The driver runs
 //! every unit's body of one component over all keys demanded so far, each recursive reference
 //! reading the answers of the keys it demands as they stand (none at first), and repeats until a
-//! pass changes no answer and demands no key. Every reference a body makes in that last pass is
-//! recorded, from the key being evaluated to the key read: the pass's read graph. The driver
-//! accepts the answers only where that graph is acyclic (`exec`); a cycle, or a pass count past the
-//! matcher's depth limit, refuses the batch.
+//! pass changes no answer and demands no key. The reads a body makes in that last pass from the
+//! rows the matcher evaluates are recorded, from the key being evaluated to the key read: the
+//! pass's read graph. A relation's candidates past its first match in walk order are not such
+//! rows, nor is anything derived from them (`emit::lineage`, which also shows why their reads
+//! decide nothing). The driver accepts the answers only where that graph is acyclic (`exec`); a
+//! cycle, or a pass count past the matcher's depth limit, refuses the batch.
 //!
 //! Accepted answers are the matcher's. Let `A` be the last pass's answers: `A = T(A)`, `T` the
 //! bodies, and its read graph `G` is acyclic. Take the keys in an order where each comes after
 //! every key it reads in `G` (one exists, `G` being acyclic and finite) and argue by induction. A
-//! key's body reads only its successors in `G`, whose answers in `A` are the matcher's by
-//! induction. The matcher, evaluating the same body at the same key, reads a subset of them (it
-//! stops at a relation's first match and at an `all`'s first false term, where the set evaluation
-//! tests every candidate; `any` and `all` read the same keys in both), so it terminates and, given
-//! the same answers, reaches the same verdict and bindings: every operator's lowering is the
-//! matcher's semantics over its input frame. So the key's answer in `A` is the matcher's too.
+//! key's body reads, from the rows the matcher evaluates, only its successors in `G`, whose
+//! answers in `A` are the matcher's by induction. The matcher, evaluating the same body at the
+//! same key, evaluates those rows alone (it stops at a relation's first match, which is the set
+//! evaluation's then, and at an `all`'s first false term, where `all` passes on only the rows its
+//! terms kept; `any` and `all` read the same keys in both), so it terminates and, given the same
+//! answers, reaches the same verdict and bindings: every operator's lowering is the matcher's
+//! semantics over its input frame. So the key's answer in `A` is the matcher's too.
 //!
 //! That holds whatever the body applies to its recursive answers: a negation, a count or a
 //! first-match argmin over a recursive reference reads answers that are final for the keys it

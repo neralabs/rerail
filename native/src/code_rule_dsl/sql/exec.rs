@@ -391,30 +391,53 @@ pub(in crate::code_rule_dsl) fn census(
 /// depth limit, which no recursion over real code reaches with its limits lifted.
 const MAX_LEVELS: usize = 256;
 
-/// Accepts a recursion loop's last pass (`recursion`): its recursive reads (`query`'s rows,
-/// `(unit, key, unit, key)`) must form no cycle, and no chain of them may be longer than the
-/// matcher's utility depth limit.
+/// Accepts a statement's recursion (`recursion`): `query`'s rows are the recursive reads its
+/// units' last passes and its own rows made from their needed rows (`emit::lineage`), `(unit,
+/// key, unit, key, inner)`, the statement's own from unit `-1`'s key `0`, `inner` where both keys
+/// are of one component. Over the keys those reads reach from the statement's own, the inner
+/// reads must form no cycle, and no chain of them may be longer than the matcher's utility depth
+/// limit. A key they do not reach is read by no row the matcher evaluates: its answer decides
+/// nothing, so it is not checked.
 fn acyclic(connection: &Connection, query: &str) -> Result<(), SqlError> {
     let mut nodes: HashMap<(i64, i64), usize> = HashMap::new();
+    // Every read, and the inner reads alone.
+    let mut reads: Vec<Vec<usize>> = Vec::new();
     let mut edges: Vec<Vec<usize>> = Vec::new();
-    let mut node = |key: (i64, i64), edges: &mut Vec<Vec<usize>>| -> usize {
+    let mut node = |key: (i64, i64), reads: &mut Vec<Vec<usize>>, edges: &mut Vec<Vec<usize>>| {
         *nodes.entry(key).or_insert_with(|| {
+            reads.push(Vec::new());
             edges.push(Vec::new());
             edges.len() - 1
         })
     };
+    let start = node((-1, 0), &mut reads, &mut edges);
     let mut prepared = connection.prepare(query)?;
     let mut rows = prepared.query([])?;
     while let Some(row) = rows.next()? {
-        let from = node((row.get(0)?, row.get(1)?), &mut edges);
-        let to = node((row.get(2)?, row.get(3)?), &mut edges);
-        edges[from].push(to);
+        let from = node((row.get(0)?, row.get(1)?), &mut reads, &mut edges);
+        let to = node((row.get(2)?, row.get(3)?), &mut reads, &mut edges);
+        reads[from].push(to);
+        if row.get::<_, i64>(4)? != 0 {
+            edges[from].push(to);
+        }
     }
-    // Iterative depth-first search: `depth` is a key's longest chain of reads, `None` while the
-    // key is on the search path (reaching it again closes a cycle).
+    let mut reached = vec![false; edges.len()];
+    reached[start] = true;
+    let mut frontier = vec![start];
+    while let Some(key) = frontier.pop() {
+        for &to in &reads[key] {
+            if !reached[to] {
+                reached[to] = true;
+                frontier.push(to);
+            }
+        }
+    }
+    // Iterative depth-first search over the inner reads of the reached keys: `depth` is a key's
+    // longest chain of reads, `None` while the key is on the search path (reaching it again
+    // closes a cycle).
     let mut depth: Vec<Option<Option<usize>>> = vec![None; edges.len()];
     for start in 0..edges.len() {
-        if depth[start].is_some() {
+        if depth[start].is_some() || !reached[start] {
             continue;
         }
         depth[start] = Some(None);
