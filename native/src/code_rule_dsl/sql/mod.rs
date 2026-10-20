@@ -14,14 +14,18 @@ mod nodes;
 mod plan;
 mod recursion;
 pub(super) mod select_when;
+mod shapes;
 mod skip;
 mod terminals;
 #[cfg(test)]
 mod tests;
+mod texts;
 mod timing;
 
 #[cfg(test)]
 pub(super) use exec::{compile, compile_each};
+#[cfg(test)]
+pub(super) use shapes::VERIFY as VERIFY_SHAPES;
 pub(super) use exec::{
     ClauseRun, CompilePhases, Compiled, FileContext, ProgramCompiler, Session, SqlError,
     SqlMatch, Stats, compile_enumerating, environment,

@@ -144,6 +144,8 @@ A batch runs every compiled statement of every clause, most of them over empty f
 
 Frame names are allocated like registers. Clauses run one after another and a clause's tables are emptied when it ends, so an operator's temporary frame is live only from its first mention to its last, extended through every loop that mentions it and to each `RUN` of a block that mentions it. Each temporary takes the lowest free frame name of its declaration's class, and a name taken a second time in one clause is emptied before its new temporary's first mention. Clauses therefore share frame names, and statements that differed only in them share one text and one prepared statement. A recursion unit's demand, answer and reads tables keep names of their own, and so do a stage's frames, which live until the batch ends.
 
+The plan stores its statements by shape (`sql/shapes.rs`, `sql/texts.rs`). Clauses alike differ only in their own numbers (namespace, run id, terminal ids), their own tables and their recursion blocks' marks, so a stage's or clause's statements are a shape, shared by every stage or clause alike, bound to what is its own: each text is a skeleton of phrases stored once, with holes for its own numbers, and a step's effect is an interned action whose own tables are offsets into its own. A session writes a step's text from its skeleton into a buffer as it runs it; the texts are byte for byte those its own planning drafted (every test build checks each binding). On the data-layer policies, the 2.85M steps of the stages and clauses share 411 shapes, and 175 MiB of distinct texts are stored in 15 MiB.
+
 The engine is selected at runtime (`engine: native|sql` in the evaluation options) so a single build can A/B and run differential tests. That switch is removed when native leaves production; native remains only as a `cfg(test)` oracle.
 
 ## Code layout
@@ -155,6 +157,7 @@ The engine is selected at runtime (`engine: native|sql` in the evaluation option
 - `emit.rs`: IR → SQL;
 - `terminals/`: one module per terminal family;
 - `exec.rs`: batch driver and host loops;
+- `shapes.rs`, `texts.rs`: the plan's stages and clauses stored by shape, and its texts as skeletons of shared phrases;
 - `skip.rs`: the per-batch row counts and the emptiness rules the driver skips statements by;
 - `tests/`.
 

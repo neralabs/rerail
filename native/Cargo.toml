@@ -27,6 +27,10 @@ ast-grep-language = { version = "=0.50.0", default-features = false, features = 
 foldhash = "=0.2.0"
 gix = { version = "=0.84.0", default-features = false, features = ["status", "parallel", "sha1", "sha256"] }
 globset = "=0.4.20"
+# The SQL plan's interned texts and shapes (`sql/texts.rs`, `sql/shapes.rs`): a table of ids
+# hashed by the content they index, which is stored once, elsewhere. The version indexmap and
+# rusqlite's hashlink build already.
+hashbrown = { version = "=0.17.1", default-features = false }
 model2vec-rs = { version = "0.3.0", default-features = false, features = ["fancy-regex", "local-only"] }
 napi = { version = "3.0", default-features = false, features = ["napi8", "dyn-symbols"] }
 napi-derive = "3.0"

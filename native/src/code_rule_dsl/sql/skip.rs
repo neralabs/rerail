@@ -27,7 +27,7 @@
 //! is exactly its input (`CopyOf`, an anti-join whose probes are empty) changed another number;
 //! `0`, runs everything (the counts are kept, unread).
 
-use super::emit::{Effect, Rule, Writes};
+use super::emit::{Rule, Writes};
 use super::frames::FrameStore;
 use std::sync::{Arc, LazyLock};
 
@@ -99,8 +99,8 @@ impl Counts {
     }
 
     /// The rows of `tables`, summed.
-    pub(super) fn sum(&self, tables: &[usize]) -> i64 {
-        tables.iter().map(|&table| self.rows(table)).sum()
+    pub(super) fn sum(&self, tables: impl IntoIterator<Item = usize>) -> i64 {
+        tables.into_iter().map(|table| self.rows(table)).sum()
     }
 }
 
@@ -123,17 +123,17 @@ fn exactly(rows: i64) -> Outcome {
     }
 }
 
-/// The dispatch from an effect's rule to what the statement will change, over the rows each
-/// counted table holds (`rows`).
-pub(super) fn outcome(effect: &Effect<usize>, rows: impl Fn(usize) -> i64) -> Outcome {
-    let empty = |table: &usize| rows(*table) == 0;
-    match effect.rule {
+/// The dispatch from a statement's rule over its `inputs` (`emit::Effect`) to what it will
+/// change, over the rows each counted table holds (`rows`).
+pub(super) fn outcome<T: Copy>(rule: Rule, inputs: &[T], rows: impl Fn(T) -> i64) -> Outcome {
+    let empty = |table: &T| rows(*table) == 0;
+    match rule {
         // A root frame, a seed, a marker: reads only what the session does not count.
         Rule::AlwaysRun => Outcome::Unknown,
         // Joins, semi-joins (`IN`, `EXISTS`), relations, terminals over an input set, and frames
         // derived from their inputs: each output row stems from a row of every input.
         Rule::EmptyIfAnyInputEmpty => {
-            if effect.inputs.iter().any(empty) {
+            if inputs.iter().any(empty) {
                 Outcome::Empty
             } else {
                 Outcome::Unknown
@@ -141,7 +141,7 @@ pub(super) fn outcome(effect: &Effect<usize>, rows: impl Fn(usize) -> i64) -> Ou
         }
         // A union whose branches each read one input: some branch has rows where any input does.
         Rule::EmptyIfAllInputsEmpty => {
-            if !effect.inputs.is_empty() && effect.inputs.iter().all(empty) {
+            if !inputs.is_empty() && inputs.iter().all(empty) {
                 Outcome::Empty
             } else {
                 Outcome::Unknown
@@ -151,7 +151,7 @@ pub(super) fn outcome(effect: &Effect<usize>, rows: impl Fn(usize) -> i64) -> Ou
         // probes do not remove. An empty primary leaves nothing; empty probes remove nothing, so
         // the output is the whole primary, and the statement still runs to copy it.
         Rule::EmptyIfPrimaryEmpty => {
-            let (primary, probes) = effect.inputs.split_first().expect("a primary input");
+            let (primary, probes) = inputs.split_first().expect("a primary input");
             if empty(primary) {
                 Outcome::Empty
             } else if probes.iter().all(empty) {
@@ -166,7 +166,7 @@ pub(super) fn outcome(effect: &Effect<usize>, rows: impl Fn(usize) -> i64) -> Ou
             }
         }
         // The input's rows, each once.
-        Rule::CopyOf => exactly(rows(effect.inputs[0])),
+        Rule::CopyOf => exactly(rows(inputs[0])),
     }
 }
 
@@ -188,18 +188,10 @@ pub(super) fn check(sql: &str, outcome: Outcome, changed: usize) {
 mod tests {
     use super::*;
 
-    fn effect(rule: Rule, inputs: &[usize]) -> Effect<usize> {
-        Effect {
-            rule,
-            inputs: inputs.to_vec(),
-            writes: Writes::None,
-        }
-    }
-
     #[test]
     fn each_rule_reads_its_inputs_rows() {
         let rows = [0, 3, 5];
-        let of = |rule, inputs: &[usize]| outcome(&effect(rule, inputs), |table| rows[table]);
+        let of = |rule, inputs: &[usize]| outcome(rule, inputs, |table| rows[table]);
         assert_eq!(of(Rule::AlwaysRun, &[0]), Outcome::Unknown);
         assert_eq!(of(Rule::EmptyIfAnyInputEmpty, &[1, 0]), Outcome::Empty);
         assert_eq!(of(Rule::EmptyIfAnyInputEmpty, &[1, 2]), Outcome::Unknown);
@@ -222,9 +214,9 @@ mod tests {
         counts.wrote(&Writes::None, 9);
         assert_eq!((counts.rows(0), counts.rows(1)), (3, 2));
         counts.wrote(&Writes::Clear(1), 2);
-        assert_eq!(counts.sum(&[0, 1]), 3);
+        assert_eq!(counts.sum([0, 1]), 3);
         counts.reset();
-        assert_eq!(counts.sum(&[0, 1]), 0);
+        assert_eq!(counts.sum([0, 1]), 0);
     }
 
     #[test]
