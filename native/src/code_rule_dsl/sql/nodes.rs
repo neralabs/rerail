@@ -237,7 +237,7 @@ impl NodeFacts {
 
     /// Shared by every requesting clause in this immutable batch. Each requested kind is
     /// hashed once. Composite nodes are included: native leaf unification compares their text.
-    pub(super) fn value_nodes(&self, kind: u16, hash: i64) -> Arc<[u32]> {
+    pub(super) fn value_nodes(&self, kind: u16, hash: i64) -> Option<Arc<[u32]>> {
         let mut values = self.values.lock();
         let postings = values.entry(kind).or_insert_with(|| {
             let mut by_value: HashMap<i64, Vec<u32>> = HashMap::new();
@@ -257,10 +257,7 @@ impl NodeFacts {
                 .map(|(key, ids)| (key, ids.into()))
                 .collect()
         });
-        postings
-            .get(&hash)
-            .cloned()
-            .unwrap_or_else(|| Arc::from([]))
+        postings.get(&hash).cloned()
     }
 
     pub(super) fn named(&self, id: u32) -> bool {
@@ -797,7 +794,9 @@ impl NodeCursor<'_> {
             Source::Done
         } else if let Some(hash) = filter.text_hash.filter(|_| filter.kinds) {
             if let [kind] = self.kinds[..] {
-                let ids = facts.value_nodes(kind, hash);
+                let Some(ids) = facts.value_nodes(kind, hash) else {
+                    return;
+                };
                 let next = ids.partition_point(|&id| id < lo);
                 let end = ids.partition_point(|&id| id < hi);
                 self.source = Source::Values { ids, next, end };
@@ -805,7 +804,9 @@ impl NodeCursor<'_> {
             }
             self.ids.clear();
             for &kind in &self.kinds {
-                let ids = facts.value_nodes(kind, hash);
+                let Some(ids) = facts.value_nodes(kind, hash) else {
+                    continue;
+                };
                 let from = ids.partition_point(|&id| id < lo);
                 let to = ids.partition_point(|&id| id < hi);
                 self.ids.extend_from_slice(&ids[from..to]);

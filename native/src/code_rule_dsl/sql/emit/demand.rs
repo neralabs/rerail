@@ -1,9 +1,13 @@
 //! Conservative capture restrictions before candidate allocation. A text hash is a necessary
 //! condition only; native unification remains the final check, including hash collisions.
 
-use super::{Emitter, Op, Reads};
-use crate::code_rule_dsl::sql::plan::{Need, SlotId, SlotKind, Stop, Unit, Walk};
-use std::collections::{BTreeMap, BTreeSet};
+use super::{Emitter, Op};
+use crate::code_rule_dsl::sql::plan::{Need, SlotId, Unit};
+#[cfg(test)]
+use crate::code_rule_dsl::sql::plan::{Stop, Walk};
+#[cfg(test)]
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 fn required_capture(op: &Op, units: &[Unit], visiting: &mut BTreeSet<usize>) -> Option<SlotId> {
     match op {
@@ -71,53 +75,13 @@ impl Emitter<'_> {
         narrowed.capture = required_capture(sub, self.units, &mut BTreeSet::new());
         narrowed
     }
-
-    /// Demand a recursive key only if a mandatory leaf witness can occur in its subtree.
-    /// This retains occurrence keys: semantic atoms are not substituted into general memo keys.
-    pub(super) fn supported_demand(
-        &mut self,
-        unit: usize,
-        site: Option<&[SlotId]>,
-        input: &str,
-    ) -> Option<String> {
-        let key = &self.units[unit].key;
-        let proof = key
-            .iter()
-            .enumerate()
-            .filter(|(_, slot)| self.slots[**slot].kind == SlotKind::Node)
-            .find_map(|(index, &slot)| {
-                let kinds = subtree_support(
-                    &self.units[unit].body,
-                    slot,
-                    None,
-                    0,
-                    self.units,
-                    &mut BTreeMap::new(),
-                )?;
-                (!kinds.is_empty()).then(|| (site.map_or(slot, |site| site[index]), kinds))
-            });
-        let (slot, kinds) = proof?;
-        let kinds = kinds
-            .into_iter()
-            .map(|kind| kind.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-        let output = self.frame("ds", &format!(
-            "SELECT {} FROM {input} f LEFT JOIN node needle ON needle.file = f.file AND needle.id = f.s{slot} AND needle.leaf = 1 \
-             CROSS JOIN node anchor ON anchor.file = f.file AND anchor.id = f.node \
-             WHERE needle.id IS NULL OR EXISTS (SELECT 1 FROM node hit WHERE hit.file = f.file \
-             AND hit.id >= f.node AND hit.id <= anchor.\"last\" AND hit.kind IN ({kinds}) AND hit.thash = needle.thash)",
-            self.cols("f")), Reads::join(&[input]));
-        self.inherit(input, &output, &BTreeSet::new());
-        self.same_space(input, &output);
-        Some(output)
-    }
 }
 
 /// A positive, strictly descending recursive proof. Every successful or unknown evaluation needs
 /// an equal-text witness of the returned kinds in the node's subtree. A revisited unit contributes
 /// no new base case only after a strict descent; same-node cycles and other axes are barriers.
 /// Kind restrictions are required so lookups use bounded value postings, not all-node hashes.
+#[cfg(test)]
 fn subtree_support(
     op: &Op,
     slot: SlotId,
@@ -181,6 +145,7 @@ fn subtree_support(
     }
 }
 
+#[cfg(test)]
 fn support_all<'a>(
     items: impl Iterator<Item = &'a Op>,
     slot: SlotId,
@@ -207,6 +172,7 @@ fn support_all<'a>(
     None
 }
 
+#[cfg(test)]
 fn support_any<'a>(
     items: impl Iterator<Item = &'a Op>,
     slot: SlotId,

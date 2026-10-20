@@ -1430,8 +1430,6 @@ impl<'s> Emitter<'s> {
         context: Option<SlotId>,
         input: &str,
     ) -> String {
-        let supported = self.supported_demand(unit, site, input);
-        let input = supported.as_deref().unwrap_or(input);
         let units = self.units;
         let key = &units[unit].key;
         let unit_columns = self.key_columns(key);

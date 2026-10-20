@@ -175,7 +175,7 @@ fn capture_postings_reduce_materialized_candidates_in_both_verdict_modes() {
 }
 
 #[test]
-fn subtree_demand_support_preserves_recursive_capture_occurrences() {
+fn recursive_search_preserves_capture_occurrences() {
     let source = "f(a);\ng(z);\nh(a + b);\nf(f(a), f(a));\n";
     for three in [false, true] {
         let mut terms = vec![json!({ "pattern": "$F($$$)" })];
