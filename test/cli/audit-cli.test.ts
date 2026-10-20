@@ -323,9 +323,7 @@ describe("rerail scan and settings CLI", () => {
     // The session audits the 25 edits on its own; the scan must come after them to be the session's latest audit.
     await vi.waitFor(async () => {
       const { audits } = await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json();
-      // Every file is read in part; an edit the session found during its initial discovery adds its own preimage failure.
-      expect(audits[0]).toMatchObject({ scope: "ai-output", status: "failed" });
-      expect(audits[0].failureCount).toBeGreaterThanOrEqual(25);
+      expect(audits[0]).toMatchObject({ scope: "ai-output", status: "failed", failureCount: 25 });
     }, { timeout: 20_000, interval: 50 });
     let output = "";
     expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {

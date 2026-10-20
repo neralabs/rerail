@@ -1052,8 +1052,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     unreported: () => void,
   ): Promise<void> {
     const failures = result.failures.map((item) => ({ ...item, stage: "evaluate" as const }));
-    const scopeFailure = this.#scopeFailureForEdit(stored.scope, path, edit);
-    if (scopeFailure !== undefined) this.#readFailures.set(path, scopeFailure);
     // Touched-files scope reports every source the edit gave another `package` (`#apply`). Any other scope reports each
     // edit's own generated lines, so such a source is reported again only where the findings in its own edit's
     // generated lines changed; the others keep their earlier findings and steers.
@@ -1067,13 +1065,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         reported.set(source.path, findings);
     }
     const base = stored.scope === "ai-output" ? this.#reportBase(path, edit) : edit;
-    const own = scopeFailure === undefined ? this.#selectViolations(stored.scope, edit, result.violations, base) : [];
-    this.#finishAudit(
-      stored.auditId,
-      scopeFailure === undefined && result.status === "completed" ? "completed" : "failed",
-      [...own, ...[...reported.values()].flat()],
-      scopeFailure === undefined ? failures : [...failures, scopeFailure],
-    );
+    const own = this.#selectViolations(stored.scope, edit, result.violations, base);
+    this.#finishAudit(stored.auditId, result.status === "completed" ? "completed" : "failed", [...own, ...[...reported.values()].flat()], failures);
     if (this.#versions.get(path) !== stored.revision || this.#replacement !== undefined) {
       if (stored.scope === "ai-output") this.#unreported.set(path, { base, published: false });
       unreported();
@@ -1130,16 +1123,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       await this.#publish(revision, group.sources, group.violations, group.mode, true);
   }
 
-  #scopeFailureForEdit(
-    scope: AuditScope,
-    path: string,
-    edit: CodeRuleEdit,
-  ): AuditFailure | undefined {
-    return scope === "ai-output" && edit.previousReadError !== undefined
-      ? failure("preimage", "source-incomplete", edit.previousReadError, path, "scope")
-      : undefined;
-  }
-
   async #recordPendingEvaluationError(path: string, stored: StoredEdit, error: unknown): Promise<void> {
     if (this.#closing) return;
     const problem = failure("worker", "adapter-error", errorMessage(error), path, "evaluate");
@@ -1160,7 +1143,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   }
   /**
    * An edit's violations: in touched-files scope its file's, otherwise those in the lines it generated since `base`
-   * (its own preimage unless given; none where that earlier text was unreadable).
+   * (its own preimage unless given). Where that earlier text is unknown (a shell write to a file the session never
+   * saw change and Git cannot supply), the generated lines are unknown too, so the edit reports its whole file.
    */
   #selectViolations(
     scope: AuditScope,
@@ -1169,8 +1153,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     base: ReportBase = edit,
   ): CodeRuleViolation[] {
     const pathViolations = violations.filter((violation) => violation.path === edit.path);
-    if (scope === "touched-files" || edit.deleted || edit.generatedText === undefined) return pathViolations;
-    if (base.previousReadError !== undefined) return [];
+    if (scope === "touched-files" || edit.deleted || edit.generatedText === undefined || base.previousReadError !== undefined)
+      return pathViolations;
     const ranges = generatedRanges(base.previousText ?? "", edit.generatedText);
     return pathViolations.filter((violation) => intersectsGeneratedRange(violation, ranges));
   }

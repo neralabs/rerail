@@ -626,9 +626,6 @@ describe("source-scoped steers", () => {
       const runtime = new RerailRuntime({
         storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
         discoveryWaitMs: 50,
-        // A begin drained after the open restores no preimage, which ai-output reports as a scope failure: whole files
-        // keep the steer whose delivery this lifecycle is about.
-        auditSettings: { scope: "touched-files" },
         createAuditor: options => new NativeCodeRuleEnforcer(needleCatalog(), options),
       });
       const audits = new SqliteAuditStore(databasePath);
@@ -676,7 +673,7 @@ describe("source-scoped steers", () => {
         // Opened: the call that began before the evaluator did is begun and finished, so its edit is audited and steered.
         expect(await test.steers()).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
         expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual(expect.arrayContaining([
-          expect.objectContaining({ scope: "touched-files", status: "completed", paths: ["edited.py"] }),
+          expect.objectContaining({ scope: "ai-output", status: "completed", paths: ["edited.py"] }),
         ]));
       } finally { await test.close(); }
     });
