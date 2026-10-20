@@ -27,7 +27,7 @@
 //! context, so its keys repeat as before, and the cycle check (`exec::acyclic`) refuses it: the
 //! matcher recurses there until its depth limit.
 
-use super::{Effect, Emitter, NAMESPACE, Reads};
+use super::{Effect, Emitter, Live, NAMESPACE, Reads};
 use crate::code_rule_dsl::sql::plan::{Op, SlotId};
 use std::collections::BTreeSet;
 
@@ -35,16 +35,22 @@ use std::collections::BTreeSet;
 const ELEMENT: usize = 65536;
 
 impl Emitter<'_> {
-    /// `Op::Follow` on `input`: `sub` on the rows whose context (`base`) does not hold the
-    /// node's `(node, rule)`, with `out` holding that context with it added.
+    /// `Op::Follow` (`follow`) on `input`: `sub` on the rows whose context (`base`) does not hold
+    /// the node's `(node, rule)`, with `out` holding that context with it added; its output holds
+    /// `live`.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn follow(
         &mut self,
+        follow: &Op,
         rule: usize,
         base: SlotId,
         out: SlotId,
         sub: &Op,
         input: &str,
+        live: &Live,
     ) -> String {
+        // The rows `sub` runs on hold what it reads, and `base` and `out`.
+        let held = self.live_before(follow, live);
         assert!(rule < ELEMENT, "a statement numbers its guarded sub-rules below {ELEMENT}");
         let sets = format!("{NAMESPACE}fs");
         let members = format!("{NAMESPACE}fm");
@@ -65,11 +71,13 @@ impl Emitter<'_> {
                 "NOT EXISTS (SELECT 1 FROM {members} m WHERE m.id = f.s{base} AND m.x = {element})"
             )
         };
-        let entered = self.frame(
-            "y",
-            &format!("SELECT {} FROM {input} f WHERE {guard}", self.cols("f")),
-            Reads::anti(input, &[&members]),
-        );
+        let entered = self.within(&held, |this| {
+            this.frame(
+                "y",
+                &format!("SELECT {} FROM {input} f WHERE {guard}", this.cols("f")),
+                Reads::anti(input, &[&members]),
+            )
+        });
         self.inherit(input, &entered, &BTreeSet::new());
         self.same_space(input, &entered);
         // Each distinct (context, element) entered, and the key of the context with it added.
@@ -109,17 +117,19 @@ impl Emitter<'_> {
             ),
             Reads::join(&[&fresh, &sets]),
         );
-        let following = self.frame(
-            "y",
-            &format!(
-                "SELECT {} FROM {entered} f JOIN {added} a ON a.b IS f.s{base} AND a.x = {element} \
-                 JOIN {sets} s ON s.key = a.key",
-                self.select("f", &[(format!("s{out}"), "s.id".to_owned())])
-            ),
-            Reads::join(&[&entered, &added, &sets]),
-        );
+        let following = self.within(&held, |this| {
+            this.frame(
+                "y",
+                &format!(
+                    "SELECT {} FROM {entered} f JOIN {added} a ON a.b IS f.s{base} AND a.x = {element} \
+                     JOIN {sets} s ON s.key = a.key",
+                    this.select("f", &[(format!("s{out}"), "s.id".to_owned())])
+                ),
+                Reads::join(&[&entered, &added, &sets]),
+            )
+        });
         self.inherit(&entered, &following, &BTreeSet::from([out]));
         self.same_space(&entered, &following);
-        self.op(sub, &following)
+        self.op(sub, &following, live)
     }
 }

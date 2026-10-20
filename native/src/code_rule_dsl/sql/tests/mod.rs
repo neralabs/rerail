@@ -186,6 +186,57 @@ fn walks_read_their_sub_rule_kinds_and_a_double_negation_is_a_semi_join() {
     }
 }
 
+/// A frame holds only the slots read after it (`emit`'s liveness), as `spt-022`'s walks from a
+/// statement of many captures do: a walk's candidates carry the slots its sub-rule reads and
+/// those it returns to the row, not every capture of the clause. A semi-join's carry none; a
+/// first match that binds `$X` carries `$X` alone. Both engines agree.
+#[test]
+fn a_walk_s_candidates_hold_only_the_slots_read_after_them() {
+    use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
+    let source = "function g() { f(a, b, c, d); h(x, 2); }\nf(x, y, z, w);\n";
+    // The candidates' slot columns of the has-end walk, and the clause's own.
+    let widths = |rule: &CompiledCodeRuleDsl| -> (usize, usize) {
+        let grammars: Vec<_> = grammar_matchers(rule).iter().collect();
+        let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
+        let statements: Vec<&String> = program.statements().collect();
+        let walk = statements
+            .iter()
+            .find(|statement| statement.contains("c.id <= fn.\"last\""))
+            .expect("a has-end walk");
+        let copied = walk
+            .split_once("SELECT NULL, c.file, c.node")
+            .and_then(|(_, rest)| rest.split_once(", c.pk"))
+            .expect("a candidate row")
+            .0
+            .matches(", f.s")
+            .count();
+        let selected = statements
+            .iter()
+            .find_map(|statement| statement.strip_prefix("SELECT file, node"))
+            .and_then(|rest| rest.split_once(" FROM "))
+            .expect("the clause's select")
+            .0
+            .matches(", s")
+            .count();
+        (copied, selected)
+    };
+    let wide = json!({ "pattern": "$F($A, $B, $C, $D)" });
+    let cases = [
+        (json!({ "stopBy": "end", "kind": "identifier", "regex": "^x$" }), 0),
+        (json!({ "stopBy": "end", "kind": "identifier", "pattern": "$X" }), 1),
+    ];
+    for (has, carried) in cases {
+        let rule = compiled(json!({ "rule": {
+            "kind": "call_expression",
+            "all": [wide.clone(), { "inside": { "stopBy": "end", "kind": "program", "has": has } }],
+        } }));
+        same(&rule, &snapshot(&[("typescript", "a.ts", source)]));
+        let (copied, selected) = widths(&rule);
+        assert_eq!(copied, carried, "the walk's candidates carry {copied} slots");
+        assert!(selected > carried + 4, "the clause selects {selected} slots");
+    }
+}
+
 /// A stop set or `ofRule` set whose rule is a capture-free `not R` is `R`'s stage read as its
 /// complement: no stage holds the negation's many nodes, and every reader (`nearest`, the
 /// field walk's stop, `nthChild`'s ranks) inverts membership. So is one whose rule is an `any`

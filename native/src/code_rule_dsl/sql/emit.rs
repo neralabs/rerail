@@ -1,9 +1,10 @@
 //! Emission from the frame IR to SQLite statements. Every frame is a TEMP table with the columns
-//! `k, file, node` and then each slot's physical columns, in slot order; an operator is one
-//! `INSERT … SELECT` from its input frame's table (with CTEs of its own), so frames combine with
-//! `UNION ALL`. Relations are joins with `node` on the axis; a first-match binding is an argmin
-//! per `k` (`MIN` with bare columns); terminals are read once per statement through
-//! `MATERIALIZED` CTEs or an uncorrelated `IN` subquery.
+//! `k, file, node` and then the physical columns of the slots it holds, in slot order: the slots
+//! a later operator reads or the statement emits (`Emitter::op`'s `live`), so a frame carries no
+//! slot nothing reads after it. An operator is one `INSERT … SELECT` from its input frame's table
+//! (with CTEs of its own), so frames combine with `UNION ALL`. Relations are joins with `node` on
+//! the axis; a first-match binding is an argmin per `k` (`MIN` with bare columns); terminals are
+//! read once per statement through `MATERIALIZED` CTEs or an uncorrelated `IN` subquery.
 //!
 //! Frames are tables rather than one statement's CTEs because SQLite copies a CTE's whole
 //! definition into every reference (`resolveFromTermToCte`), CTEs it references included: a rule
@@ -292,11 +293,18 @@ impl Emitted {
     }
 }
 
+/// The slots of the clause's own scope: those a clause's last statement selects.
+fn clause_slots(statement: &Statement) -> BTreeSet<SlotId> {
+    (0..statement.slots.len())
+        .filter(|&id| statement.slots[id].scope == 0)
+        .collect()
+}
+
 /// A clause's statements: the last selects its matching roots and the clause-scope bindings of
 /// each, `(file, node, columns of every scope-0 slot)`, ordered by file and root.
 pub(super) fn clause(statement: &Statement) -> Emitted {
     let mut emitter = Emitter::new(statement);
-    let out = emitter.statement(statement);
+    let out = emitter.statement(statement, clause_slots(statement));
     let columns: String = statement
         .slots
         .iter()
@@ -321,7 +329,9 @@ pub(super) fn clause(statement: &Statement) -> Emitted {
 /// round the matches that bound a fresh range.
 pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Emitted {
     let mut emitter = Emitter::new(statement);
-    let out = emitter.statement(statement);
+    let mut emitted = clause_slots(statement);
+    emitted.extend(name);
+    let out = emitter.statement(statement, emitted);
     let columns: Vec<String> = statement
         .slots
         .iter()
@@ -416,7 +426,7 @@ pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Emitte
 /// cannot be unknown) fills with 0.
 pub(super) fn stage(statement: &Statement, three: bool) -> Emitted {
     let mut emitter = Emitter::new(statement);
-    let out = emitter.statement(statement);
+    let out = emitter.statement(statement, BTreeSet::new());
     let select = if emitter.three {
         format!("SELECT file, node, MIN(unk) FROM {out} GROUP BY file, node")
     } else if three {
@@ -428,20 +438,34 @@ pub(super) fn stage(statement: &Statement, three: bool) -> Emitted {
     emitter.out
 }
 
+/// The slots a frame must hold for what reads it after an operator (`Emitter::op`): the slots
+/// later operators read or bind, and those the statement emits.
+pub(super) type Live = Rc<BTreeSet<SlotId>>;
+
+/// A frame's physical columns: those of the slots it holds, in slot order (`Emitter::layout`).
+#[derive(Clone, Default)]
+struct Layout {
+    columns: Rc<[String]>,
+    /// The columns comma-led: `, s0, s1a…`.
+    list: Rc<str>,
+}
+
 struct Emitter<'s> {
     slots: &'s [Slot],
     units: &'s [Unit],
     /// The terminals' related-node walks (`Walk::Related`).
     sources: &'s [Source],
-    /// Every slot's physical columns, in order.
-    physical: Vec<String>,
-    /// What every frame of the statement lists, fixed once it is configured (`configure`): the
-    /// physical columns comma-led (`, s0, s1a…`), the three-valued columns after them (`, unk,
-    /// wh0…`) and their values in a true row (`, 0, 0…`), and a frame's declared columns.
-    physical_list: String,
+    /// The layout of the frames being written: the output frame of the operator being emitted
+    /// (`Emitter::op`), or of an inner frame (`Emitter::within`). Every row a statement selects
+    /// lists these columns (`cols`, `select`…), read from frames that hold them all.
+    layout: Layout,
+    /// Each slot set's layout, made once.
+    layouts: HashMap<BTreeSet<SlotId>, Layout>,
+    /// What every frame of the statement lists after its slots, fixed once it is configured
+    /// (`configure`): the three-valued columns (`, unk, wh0…`) and their values in a true row
+    /// (`, 0, 0…`).
     extra_list: String,
     zeros: String,
-    frame_columns: String,
     /// The statements so far, each with its effect.
     out: Emitted,
     next: usize,
@@ -496,20 +520,14 @@ fn list<T: ToString>(items: &[T]) -> String {
 impl<'s> Emitter<'s> {
     fn new(statement: &'s Statement) -> Self {
         let slots = &statement.slots;
-        let physical = slots
-            .iter()
-            .enumerate()
-            .flat_map(|(id, slot)| slot.columns(id))
-            .collect();
         let mut emitter = Self {
             slots,
             units: &statement.units,
             sources: &statement.sources,
-            physical,
-            physical_list: String::new(),
+            layout: Layout::default(),
+            layouts: HashMap::new(),
             extra_list: String::new(),
             zeros: String::new(),
-            frame_columns: String::new(),
             out: Emitted::default(),
             next: 0,
             three: false,
@@ -533,14 +551,9 @@ impl<'s> Emitter<'s> {
         emitter
     }
 
-    /// Fixes the column lists every frame reads (`physical_list`…) for the statement's columns
-    /// and valuedness.
+    /// Fixes the columns every frame lists after its slots (`extra_list`, `zeros`) for the
+    /// statement's valuedness.
     fn fix_columns(&mut self) {
-        let mut physical = String::with_capacity(self.physical.iter().map(|c| c.len() + 2).sum());
-        for column in &self.physical {
-            physical.push_str(", ");
-            physical.push_str(column);
-        }
         let mut extra = String::new();
         let mut zeros = String::new();
         if self.three {
@@ -550,10 +563,106 @@ impl<'s> Emitter<'s> {
             }
             zeros = ", 0".repeat(1 + self.masks);
         }
-        self.frame_columns = format!("k INTEGER PRIMARY KEY, file, node{physical}{extra}");
-        self.physical_list = physical;
         self.extra_list = extra;
         self.zeros = zeros;
+    }
+
+    /// The layout of a frame holding `slots`.
+    fn layout_of(&mut self, slots: &BTreeSet<SlotId>) -> Layout {
+        if let Some(layout) = self.layouts.get(slots) {
+            return layout.clone();
+        }
+        let columns: Vec<String> = slots
+            .iter()
+            .flat_map(|&slot| self.slots[slot].columns(slot))
+            .collect();
+        let mut list = String::with_capacity(columns.iter().map(|c| c.len() + 2).sum());
+        for column in &columns {
+            list.push_str(", ");
+            list.push_str(column);
+        }
+        let layout = Layout {
+            columns: columns.into(),
+            list: list.into(),
+        };
+        self.layouts.insert(slots.clone(), layout.clone());
+        layout
+    }
+
+    /// Runs `emit` with the frames it writes holding `slots` (`layout`).
+    fn within<R>(&mut self, slots: &BTreeSet<SlotId>, emit: impl FnOnce(&mut Self) -> R) -> R {
+        let layout = self.layout_of(slots);
+        let outer = std::mem::replace(&mut self.layout, layout);
+        let result = emit(self);
+        self.layout = outer;
+        result
+    }
+
+    /// `live` and the slots `op` names (`keyed::touched`, which holds every slot it reads or
+    /// binds): what `op`'s input must hold for its output to hold `live`. No slot an operator
+    /// binds is dropped from its input: it may leave a row's binding as it was.
+    fn live_before(&mut self, op: &Op, live: &Live) -> Live {
+        let touched = self.touched(op);
+        if touched.is_subset(live) {
+            return Rc::clone(live);
+        }
+        Rc::new(live.union(&touched).copied().collect())
+    }
+
+    /// The slots of `live` that `op` names: those of its output it may have rebound, which a
+    /// walk's sub-rule returns to the row it walked from.
+    fn rebound(&mut self, op: &Op, live: &BTreeSet<SlotId>) -> Live {
+        let touched = self.touched(op);
+        Rc::new(live.intersection(&touched).copied().collect())
+    }
+
+    /// What each of `ops`, run one after another, must leave in its output for the rest and
+    /// `live` after them: the `live` of each, in order.
+    fn pipeline<'o>(&mut self, ops: impl DoubleEndedIterator<Item = &'o Op>, live: &Live) -> Vec<Live> {
+        let mut lives = Vec::new();
+        let mut after = Rc::clone(live);
+        for op in ops.rev() {
+            lives.push(Rc::clone(&after));
+            after = self.live_before(op, &after);
+        }
+        lives.reverse();
+        lives
+    }
+
+    /// What the rows left to each of an `any`'s `branches`, in the order they run, hold: what it
+    /// and every later branch reads, and `live`, which each branch's output holds.
+    fn remainders<'o>(
+        &mut self,
+        branches: impl DoubleEndedIterator<Item = &'o Op>,
+        live: &Live,
+    ) -> Vec<Live> {
+        let mut left = Vec::new();
+        let mut after = Rc::clone(live);
+        for op in branches.rev() {
+            after = self.live_before(op, &after);
+            left.push(Rc::clone(&after));
+        }
+        left.reverse();
+        left
+    }
+
+    /// What the rows of a query's `constraints` hold, with `live` after the last: before the
+    /// first, and after each, in order. A constraint reads its capture's slot.
+    fn constrained_lives(
+        &mut self,
+        constraints: &[(SlotId, Op)],
+        live: &Live,
+    ) -> (Live, Vec<Live>) {
+        let mut lives = Vec::with_capacity(constraints.len());
+        let mut before = Rc::clone(live);
+        for (slot, constraint) in constraints.iter().rev() {
+            lives.push(Rc::clone(&before));
+            let mut held = (*self.live_before(constraint, &before)).clone();
+            held.insert(*slot);
+            before = Rc::new(held);
+        }
+        lives.reverse();
+        (before, lives)
     }
 
     /// Emits `sql`, which does `effect`.
@@ -586,14 +695,14 @@ impl<'s> Emitter<'s> {
         format!("{TEMP}{prefix}{}", self.next)
     }
 
-    /// The physical columns, comma-led: `, s0, s1a…`.
+    /// The physical columns of the layout, comma-led: `, s0, s1a…`.
     fn physical_list(&self) -> &str {
-        &self.physical_list
+        &self.layout.list
     }
 
     /// Appends the physical columns of `alias` to `out`, comma-led: `, alias.s0…`.
     fn push_physical_of(&self, out: &mut String, alias: &str) {
-        for column in &self.physical {
+        for column in self.layout.columns.iter() {
             out.push_str(", ");
             out.push_str(alias);
             out.push('.');
@@ -603,9 +712,17 @@ impl<'s> Emitter<'s> {
 
     /// The physical columns of `alias`, comma-led: `, alias.s0…`.
     fn physical_of(&self, alias: &str) -> String {
-        let mut out = String::with_capacity(self.physical_list.len() * 2);
+        let mut out = String::with_capacity(self.layout.list.len() * 2);
         self.push_physical_of(&mut out, alias);
         out
+    }
+
+    /// The declared columns of a frame of the layout.
+    fn frame_columns(&self) -> String {
+        format!(
+            "k INTEGER PRIMARY KEY, file, node{}{}",
+            self.layout.list, self.extra_list
+        )
     }
 
     /// Emits `sql`, an `INSERT` into `table`, empty as `reads` says.
@@ -617,9 +734,8 @@ impl<'s> Emitter<'s> {
     /// as `reads` says.
     fn frame_with(&mut self, prefix: &str, with: &str, select: &str, reads: Reads) -> String {
         let name = self.name(prefix);
-        let columns = std::mem::take(&mut self.frame_columns);
+        let columns = self.frame_columns();
         self.create(&name, &columns);
-        self.frame_columns = columns;
         let mut sql = String::with_capacity(with.len() + name.len() + select.len() + 13);
         sql.push_str(with);
         sql.push_str("INSERT INTO ");
@@ -648,7 +764,7 @@ impl<'s> Emitter<'s> {
     /// The frame columns of `alias`.
     fn cols(&self, alias: &str) -> String {
         let mut out = String::with_capacity(
-            3 * alias.len() + 16 + self.physical_list.len() * 2 + self.zeros.len(),
+            3 * alias.len() + 16 + self.layout.list.len() * 2 + self.zeros.len(),
         );
         out.push_str(alias);
         out.push_str(".k, ");
@@ -665,7 +781,7 @@ impl<'s> Emitter<'s> {
     /// `alias` or its expression in `overrides`.
     fn overridden(&self, alias: &str, overrides: &[(String, String)]) -> String {
         let mut select = String::with_capacity(
-            3 * alias.len() + 16 + self.physical_list.len() * 2 + self.zeros.len(),
+            3 * alias.len() + 16 + self.layout.list.len() * 2 + self.zeros.len(),
         );
         select.push_str(alias);
         select.push_str(".k, ");
@@ -673,7 +789,7 @@ impl<'s> Emitter<'s> {
         select.push_str(".file, ");
         select.push_str(alias);
         select.push_str(".node");
-        for column in &self.physical {
+        for column in self.layout.columns.iter() {
             select.push_str(", ");
             match overrides.iter().find(|(name, _)| name == column) {
                 Some((_, expr)) => select.push_str(expr),
@@ -694,9 +810,10 @@ impl<'s> Emitter<'s> {
         select
     }
 
-    /// Every physical column replaced by `alias`'s.
-    fn all_from(&self, alias: &str) -> Vec<(String, String)> {
-        self.physical
+    /// The physical columns of `slots` replaced by `alias`'s.
+    fn all_from(&mut self, slots: &BTreeSet<SlotId>, alias: &str) -> Vec<(String, String)> {
+        self.layout_of(slots)
+            .columns
             .iter()
             .map(|column| (column.clone(), format!("{alias}.{column}")))
             .collect()
@@ -744,9 +861,15 @@ impl<'s> Emitter<'s> {
         }
     }
 
-    fn statement(&mut self, statement: &Statement) -> String {
+    /// The statement's operator on its roots, its output holding `emitted`, the slots its last
+    /// statement selects.
+    fn statement(&mut self, statement: &Statement, emitted: BTreeSet<SlotId>) -> String {
         let op = self.configure(statement);
-        let nulls: String = self.physical.iter().map(|_| ", NULL").collect();
+        let live = Rc::new(emitted);
+        let held = self.live_before(op, &live);
+        let layout = self.layout_of(&held);
+        self.layout = layout;
+        let nulls: String = self.layout.columns.iter().map(|_| ", NULL").collect();
         let kinds = match &statement.kinds {
             None => String::new(),
             Some(kinds) if kinds.is_empty() => " AND 0".to_owned(),
@@ -770,12 +893,12 @@ impl<'s> Emitter<'s> {
         // One row per root: a file's roots are either all its nodes or the selected ones.
         self.keyed_by(&root, vec![BTreeSet::new()]);
         if self.units.is_empty() {
-            return self.op(op, &root);
+            return self.op(op, &root, &live);
         }
         // The keys the clause's own needed rows demand: where the recursion check starts.
         self.create(&start_table(), "su, s, du, d");
         self.member_start(&root);
-        let out = self.op(op, &root);
+        let out = self.op(op, &root, &live);
         self.member_end();
         self.acyclic();
         out
@@ -801,13 +924,14 @@ impl<'s> Emitter<'s> {
         self.push(query, Effect::default());
     }
 
-    /// `op` on `input`: per distinct key where it walks over a frame that may repeat a key
-    /// (`keyed`), else directly.
-    fn op(&mut self, op: &Op, input: &str) -> String {
-        let out = match self.keyed(op, input) {
+    /// `op` on `input`, its output holding `live` (every frame of it holds those slots, `input`
+    /// those and every slot `op` names): per distinct key where it walks over a frame that may
+    /// repeat a key (`keyed`), else directly.
+    fn op(&mut self, op: &Op, input: &str, live: &Live) -> String {
+        let out = self.within(live, |this| match this.keyed(op, input, live) {
             Some(out) => out,
-            None => self.apply(op, input),
-        };
+            None => this.apply(op, input, live),
+        });
         let changed = self.touched(op);
         self.inherit(input, &out, &changed);
         self.same_space(input, &out);
@@ -817,7 +941,14 @@ impl<'s> Emitter<'s> {
     /// `op` on a tree walk's `candidates`, which hold only `need`'s kinds (`tree_candidates`): a
     /// leading kind test those kinds pass is not run again (a walk to `kind: call` would
     /// otherwise copy every candidate row once more to re-test its kind).
-    fn on_candidates(&mut self, op: &Op, walk: Walk, candidates: &str, need: &Need) -> String {
+    fn on_candidates(
+        &mut self,
+        op: &Op,
+        walk: Walk,
+        candidates: &str,
+        need: &Need,
+        live: &Live,
+    ) -> String {
         let tree = !matches!(walk, Walk::Slot(_) | Walk::Related(_));
         let implied = |kinds: &[u16]| {
             tree && need
@@ -828,22 +959,24 @@ impl<'s> Emitter<'s> {
         match op {
             Op::Kinds(kinds) if implied(kinds) => candidates.to_owned(),
             Op::All(items) if matches!(items.first(), Some(Op::Kinds(kinds)) if implied(kinds)) => {
+                let lives = self.pipeline(items[1..].iter(), live);
                 let mut current = candidates.to_owned();
-                for item in &items[1..] {
-                    current = self.op(item, &current);
+                for (item, live) in items[1..].iter().zip(&lives) {
+                    current = self.op(item, &current, live);
                 }
                 let changed = self.touched(op);
                 self.inherit(candidates, &current, &changed);
                 self.same_space(candidates, &current);
                 current
             }
-            _ => self.op(op, candidates),
+            _ => self.op(op, candidates, live),
         }
     }
 
-    fn apply(&mut self, op: &Op, input: &str) -> String {
+    /// `op` on `input` (`Emitter::op`), in the output frame's layout.
+    fn apply(&mut self, op: &Op, input: &str, live: &Live) -> String {
         if self.three
-            && let Some(out) = self.op3(op, input)
+            && let Some(out) = self.op3(op, input, live)
         {
             return out;
         }
@@ -878,32 +1011,38 @@ impl<'s> Emitter<'s> {
                 reads,
             } => self.pattern(*term, *env, vars, reads, input),
             Op::All(items) => {
+                let lives = self.pipeline(items.iter(), live);
                 let mut current = input.to_owned();
-                for item in items {
-                    current = self.op(item, &current);
+                for (item, live) in items.iter().zip(&lives) {
+                    current = self.op(item, &current, live);
                 }
                 current
             }
             // One branch is that branch: no union copies its rows.
-            Op::Any(branches) if branches.len() == 1 => self.op(&branches[0], input),
+            Op::Any(branches) if branches.len() == 1 => self.op(&branches[0], input, live),
             Op::Any(branches) => {
-                let mut rest = input.to_owned();
-                let mut outs = Vec::new();
                 // Mutant 2: the branches last first.
                 let flip = super::mutant(2);
-                for index in 0..branches.len() {
-                    let branch = &branches[if flip { branches.len() - 1 - index } else { index }];
-                    let out = self.op(branch, &rest);
-                    if index + 1 < branches.len() {
+                let order: Vec<&Op> = (0..branches.len())
+                    .map(|index| &branches[if flip { branches.len() - 1 - index } else { index }])
+                    .collect();
+                let left = self.remainders(order.iter().copied(), live);
+                let mut rest = input.to_owned();
+                let mut outs = Vec::new();
+                for (index, branch) in order.iter().enumerate() {
+                    let out = self.op(branch, &rest, live);
+                    if index + 1 < order.len() {
                         // `rest` without the rows the branch matched: all of it where none did.
-                        let next = self.frame(
-                            "y",
-                            &format!(
-                                "SELECT {} FROM {rest} f WHERE f.k NOT IN (SELECT k FROM {out})",
-                                self.cols("f")
-                            ),
-                            Reads::anti(&rest, &[&out]),
-                        );
+                        let next = self.within(&left[index + 1], |this| {
+                            this.frame(
+                                "y",
+                                &format!(
+                                    "SELECT {} FROM {rest} f WHERE f.k NOT IN (SELECT k FROM {out})",
+                                    this.cols("f")
+                                ),
+                                Reads::anti(&rest, &[&out]),
+                            )
+                        });
                         self.inherit(&rest, &next, &BTreeSet::new());
                         self.same_space(&rest, &next);
                         rest = next;
@@ -922,7 +1061,7 @@ impl<'s> Emitter<'s> {
                 if let Op::Not(rule) = &**inner {
                     return self.holds_at(rule, input);
                 }
-                let out = self.op(inner, input);
+                let out = self.op(inner, input, &Live::default());
                 self.frame(
                     "x",
                     &format!(
@@ -943,22 +1082,31 @@ impl<'s> Emitter<'s> {
                 binds,
                 need,
             } => {
-                let candidates = self.candidates(*walk, need, input);
+                // A binding first match returns the slots of `live` the walk may rebind; a
+                // semi-join, none.
+                let back = if *binds {
+                    self.rebound(op, live)
+                } else {
+                    Live::default()
+                };
+                let held = self.live_before(op, &back);
+                let candidates = self.candidates(*walk, need, input, &held);
                 self.first_match(&candidates, *walk, false);
-                let matched = self.on_candidates(sub, *walk, &candidates, need);
+                let matched = self.on_candidates(sub, *walk, &candidates, need, &back);
                 self.first_matched(&candidates, &matched);
                 if *binds {
                     // `ord` is the walk order (negated ids for descending walks): its minimum
                     // is the first match.
                     // Mutant 1: any match, not the first.
                     let first = if super::mutant(1) { "g.ord" } else { "MIN(g.ord)" };
+                    let returned = self.within(&back, |this| this.physical_of("s"));
                     let with = format!(
-                        "WITH w AS (SELECT g.pk AS pk, {first} AS o{} FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk) ",
-                        self.physical_of("s")
+                        "WITH w AS (SELECT g.pk AS pk, {first} AS o{returned} FROM {matched} s JOIN {candidates} g ON g.k = s.k GROUP BY g.pk) "
                     );
+                    let overrides = self.all_from(&back, "w");
                     let select = format!(
                         "SELECT {} FROM {input} f JOIN w ON w.pk = f.k",
-                        self.select("f", &self.all_from("w"))
+                        self.select("f", &overrides)
                     );
                     self.frame_with("x", &with, &select, Reads::join(&[input, &matched, &candidates]))
                 } else {
@@ -980,8 +1128,9 @@ impl<'s> Emitter<'s> {
                 bind,
                 need,
             } => {
-                let candidates = self.candidates(*walk, need, input);
-                let matched = self.op(sub, &candidates);
+                let held = self.live_before(op, &Live::default());
+                let candidates = self.candidates(*walk, need, input, &held);
+                let matched = self.op(sub, &candidates, &Live::default());
                 let counts = self.grouped(
                     "n",
                     &format!(
@@ -1008,44 +1157,53 @@ impl<'s> Emitter<'s> {
                 offset,
                 reverse,
                 of_rule,
-            } => self.nth_child(*step, *offset, *reverse, of_rule.as_ref(), input),
+            } => self.nth_child(op, *step, *offset, *reverse, of_rule.as_ref(), input, live),
             Op::Call {
                 entry,
                 body,
                 returns,
-            } => self.call(entry, body, returns, input),
+            } => self.call(entry, body, returns, input, live),
             Op::Constrained { rule, constraints } => {
-                let mut current = self.op(rule, input);
-                for (slot, constraint) in constraints {
+                let (before, lives) = self.constrained_lives(constraints, live);
+                let mut current = self.op(rule, input, &before);
+                for ((slot, constraint), after) in constraints.iter().zip(&lives) {
                     let column = format!("s{slot}");
-                    let passed = self.frame(
-                        "y",
-                        &format!(
-                            "SELECT {} FROM {current} f WHERE f.{column} IS NULL",
-                            self.cols("f")
-                        ),
-                        Reads::join(&[&current]),
-                    );
-                    let captured = self.frame(
-                        "g",
-                        &format!(
-                            "SELECT f.k, f.file, f.{column}{} FROM {current} f WHERE f.{column} IS NOT NULL",
-                            self.physical_of("f")
-                        ),
-                        Reads::join(&[&current]),
-                    );
+                    let passed = self.within(after, |this| {
+                        this.frame(
+                            "y",
+                            &format!(
+                                "SELECT {} FROM {current} f WHERE f.{column} IS NULL",
+                                this.cols("f")
+                            ),
+                            Reads::join(&[&current]),
+                        )
+                    });
+                    let held = self.live_before(constraint, after);
+                    let captured = self.within(&held, |this| {
+                        this.frame(
+                            "g",
+                            &format!(
+                                "SELECT f.k, f.file, f.{column}{} FROM {current} f WHERE f.{column} IS NOT NULL",
+                                this.physical_of("f")
+                            ),
+                            Reads::join(&[&current]),
+                        )
+                    });
                     self.same_space(&current, &passed);
                     self.same_space(&current, &captured);
-                    let checked = self.op(constraint, &captured);
-                    let next = self.frame(
-                        "x",
-                        &format!(
-                            "SELECT {} FROM {checked} c JOIN {current} f ON f.k = c.k UNION ALL SELECT {} FROM {passed} p",
-                            self.select("f", &self.all_from("c")),
-                            self.cols("p")
-                        ),
-                        Reads::union(&[&checked, &passed]),
-                    );
+                    let checked = self.op(constraint, &captured, after);
+                    let overrides = self.all_from(after, "c");
+                    let next = self.within(after, |this| {
+                        this.frame(
+                            "x",
+                            &format!(
+                                "SELECT {} FROM {checked} c JOIN {current} f ON f.k = c.k UNION ALL SELECT {} FROM {passed} p",
+                                this.select("f", &overrides),
+                                this.cols("p")
+                            ),
+                            Reads::union(&[&checked, &passed]),
+                        )
+                    });
                     self.same_space(&current, &next);
                     current = next;
                 }
@@ -1057,9 +1215,9 @@ impl<'s> Emitter<'s> {
                 at_node,
                 binds,
             } => self.fact(*term, reads, *at_node, binds, input),
-            Op::Seq(items) => self.seq(items, input),
+            Op::Seq(items) => self.seq(items, input, live),
             Op::Gate(slot) => self.gate(*slot, input),
-            Op::Every { walk, sub } => self.every(*walk, sub, input),
+            Op::Every { walk, sub } => self.every(op, *walk, sub, input),
             Op::Parse {
                 term,
                 inner,
@@ -1088,7 +1246,7 @@ impl<'s> Emitter<'s> {
                 base,
                 out,
                 sub,
-            } => self.follow(*rule, *base, *out, sub, input),
+            } => self.follow(op, *rule, *base, *out, sub, input, live),
             // The root is bound only where some range is reported for it: elsewhere `Excluded`
             // drops nothing whatever the root, so leaving it unbound keeps the roots out of the
             // distinct keys of the sub-rules (`keyed`) and recursive units, which would otherwise
@@ -1122,19 +1280,23 @@ impl<'s> Emitter<'s> {
                 Reads::anti(input, &[&format!("{EACH}x")]),
             ),
             Op::NthCommit { nth, commit } => {
-                let positioned = self.op(nth, input);
-                let passed = self.frame(
-                    "y",
-                    &format!(
-                        "SELECT {} FROM {input} f WHERE f.k IN (SELECT k FROM {positioned})",
-                        self.cols("f")
-                    ),
-                    Reads::join(&[input, &positioned]),
-                );
+                let positioned = self.op(nth, input, &Live::default());
+                let held = self.live_before(commit, live);
+                let passed = self.within(&held, |this| {
+                    this.frame(
+                        "y",
+                        &format!(
+                            "SELECT {} FROM {input} f WHERE f.k IN (SELECT k FROM {positioned})",
+                            this.cols("f")
+                        ),
+                        Reads::join(&[input, &positioned]),
+                    )
+                });
                 self.same_space(input, &passed);
-                let committed = self.op(commit, &passed);
+                let committed = self.op(commit, &passed, live);
                 let overrides: Vec<(String, String)> = self
-                    .physical
+                    .layout
+                    .columns
                     .iter()
                     .map(|column| {
                         (
@@ -1353,22 +1515,27 @@ impl<'s> Emitter<'s> {
             let following = units[unit].following.map(|slot| format!("s{slot}"));
             let demand = demand_table(unit);
             let answer = answer_table(unit);
-            let mut select = String::from("d.id, d.file, d.node");
-            for column in &self.physical {
-                let value = match key_columns.iter().position(|key| key == column) {
-                    Some(index) => format!("d.c{index}"),
-                    None if Some(column) == origin.as_ref() => "d.id".to_owned(),
-                    None if Some(column) == following.as_ref() => "d.cf".to_owned(),
-                    None => "NULL".to_owned(),
-                };
-                write!(select, ", {value}").expect("write to a string");
-            }
-            select.push_str(self.zeros());
-            let keys = self.frame(
-                "u",
-                &format!("SELECT {select} FROM {demand} d WHERE d.dirty = 1"),
-                Reads::join(&[&demand]),
-            );
+            // The body's output holds the key, its answer; its keys what the body reads too.
+            let answered: Live = Rc::new(key.iter().copied().collect());
+            let held = self.live_before(&units[unit].body, &answered);
+            let keys = self.within(&held, |this| {
+                let mut select = String::from("d.id, d.file, d.node");
+                for column in this.layout.columns.iter() {
+                    let value = match key_columns.iter().position(|key| key == column) {
+                        Some(index) => format!("d.c{index}"),
+                        None if Some(column) == origin.as_ref() => "d.id".to_owned(),
+                        None if Some(column) == following.as_ref() => "d.cf".to_owned(),
+                        None => "NULL".to_owned(),
+                    };
+                    write!(select, ", {value}").expect("write to a string");
+                }
+                select.push_str(this.zeros());
+                this.frame(
+                    "u",
+                    &format!("SELECT {select} FROM {demand} d WHERE d.dirty = 1"),
+                    Reads::join(&[&demand]),
+                )
+            });
             // One row per demanded key (its following context with it), and one per demand row
             // (its origin).
             let mut demanded: BTreeSet<SlotId> = key.iter().copied().collect();
@@ -1386,7 +1553,7 @@ impl<'s> Emitter<'s> {
             );
             self.evaluating.push(unit);
             self.member_start(&keys);
-            let out = self.op(&units[unit].body, &keys);
+            let out = self.op(&units[unit].body, &keys, &answered);
             self.member_end();
             self.evaluating.pop();
             let fresh = format!("{NAMESPACE}n{unit}");
@@ -1513,7 +1680,7 @@ impl<'s> Emitter<'s> {
     /// drop the rule's), as one semi-join. Three-valued, unknown where `rule` is unknown, as two
     /// negations of it are.
     pub(super) fn holds_at(&mut self, rule: &Op, input: &str) -> String {
-        let out = self.op(rule, input);
+        let out = self.op(rule, input, &Live::default());
         let select = if self.three {
             format!(
                 "SELECT {} FROM {input} f JOIN {out} o ON o.k = f.k",
@@ -1529,16 +1696,22 @@ impl<'s> Emitter<'s> {
     }
 
     /// A relation's candidates from each row of `input`: a frame table with a fresh `k` per
-    /// candidate and the row's bindings, plus `pk` (the row's `k`) and `ord` (the walk order:
-    /// ids, negated for descending walks). Only those `need` admits (`plan::Need`): the walk reads
-    /// its kinds from the kind postings, and tests its shape on each candidate before the
-    /// candidate's row is built. A k-space whose rows are all needed where their parent is
+    /// candidate and the row's bindings of `held`, plus `pk` (the row's `k`) and `ord` (the walk
+    /// order: ids, negated for descending walks). Only those `need` admits (`plan::Need`): the
+    /// walk reads its kinds from the kind postings, and tests its shape on each candidate before
+    /// the candidate's row is built. A k-space whose rows are all needed where their parent is
     /// (`lineage`); a first-match search says it stops at its first match.
-    pub(super) fn candidates(&mut self, walk: Walk, need: &Need, input: &str) -> String {
-        let candidates = match self.leaf_candidates(walk, input) {
+    pub(super) fn candidates(
+        &mut self,
+        walk: Walk,
+        need: &Need,
+        input: &str,
+        held: &BTreeSet<SlotId>,
+    ) -> String {
+        let candidates = self.within(held, |this| match this.leaf_candidates(walk, input) {
             Some(candidates) => candidates,
-            None => self.tree_candidates(walk, need, input),
-        };
+            None => this.tree_candidates(walk, need, input),
+        });
         self.open_space(&candidates, input, lineage::Derive::Probe);
         candidates
     }
@@ -1738,13 +1911,16 @@ impl<'s> Emitter<'s> {
         name
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn nth_child(
         &mut self,
+        op: &Op,
         step: i32,
         offset: i32,
         reverse: bool,
         of_rule: Option<&OfRule>,
         input: &str,
+        live: &Live,
     ) -> String {
         match of_rule {
             None => {
@@ -1801,36 +1977,42 @@ impl<'s> Emitter<'s> {
                 self.frame_with("x", &with, &select, Reads::join(&reads))
             }
             Some(OfRule::Frame(rule)) => {
+                // The probe returns the slots of `live` the rule may rebind.
+                let back = self.rebound(op, live);
+                let held = self.live_before(op, &back);
                 let siblings = self.name("g");
-                let columns = format!(
-                    "k INTEGER PRIMARY KEY, file, node{}, pk, ord{}",
-                    self.physical_list(),
-                    self.extra_list()
-                );
-                self.create(&siblings, &columns);
-                self.insert(
-                    &siblings,
-                    format!(
-                        "INSERT INTO {siblings} SELECT NULL, c.file, c.id{}, f.k, c.id{} FROM {input} f \
-                         JOIN node fn ON fn.file = f.file AND fn.id = f.node \
-                         JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
-                        self.physical_of("f"),
-                        self.zeros()
-                    ),
-                    Reads::join(&[input]),
-                );
+                self.within(&held, |this| {
+                    let columns = format!(
+                        "k INTEGER PRIMARY KEY, file, node{}, pk, ord{}",
+                        this.physical_list(),
+                        this.extra_list()
+                    );
+                    this.create(&siblings, &columns);
+                    this.insert(
+                        &siblings,
+                        format!(
+                            "INSERT INTO {siblings} SELECT NULL, c.file, c.id{}, f.k, c.id{} FROM {input} f \
+                             JOIN node fn ON fn.file = f.file AND fn.id = f.node \
+                             JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
+                            this.physical_of("f"),
+                            this.zeros()
+                        ),
+                        Reads::join(&[input]),
+                    );
+                });
                 self.open_space(&siblings, input, lineage::Derive::Probe);
-                let matched = self.op(rule, &siblings);
+                let matched = self.op(rule, &siblings, &back);
+                let returned = self.within(&back, |this| this.physical_of("s"));
                 let with = format!(
                     "WITH r AS (SELECT g.pk AS pk, g.node AS node, \
                      ROW_NUMBER() OVER (PARTITION BY g.pk ORDER BY g.node) AS r, \
-                     COUNT(*) OVER (PARTITION BY g.pk) AS cnt{} FROM {matched} s JOIN {siblings} g ON g.k = s.k) ",
-                    self.physical_of("s")
+                     COUNT(*) OVER (PARTITION BY g.pk) AS cnt{returned} FROM {matched} s JOIN {siblings} g ON g.k = s.k) "
                 );
                 let index = if reverse { "(r.cnt - r.r + 1)" } else { "r.r" };
+                let overrides = self.all_from(&back, "r");
                 let select = format!(
                     "SELECT {} FROM {input} f JOIN r ON r.pk = f.k AND r.node = f.node WHERE {}",
-                    self.select("f", &self.all_from("r")),
+                    self.select("f", &overrides),
                     holds(index, step, offset)
                 );
                 self.frame_with("x", &with, &select, Reads::join(&[input, &matched]))
@@ -1849,6 +2031,7 @@ impl<'s> Emitter<'s> {
         body: &Op,
         returns: &[CallReturn],
         input: &str,
+        live: &Live,
     ) -> String {
         let mut overrides = Vec::new();
         for copy in entry {
@@ -1870,20 +2053,34 @@ impl<'s> Emitter<'s> {
                 }
             }
         }
+        // The body leaves `live` and what the return reads: every caller and parameter slot.
+        let returned: Live = if returns.is_empty() {
+            Rc::clone(live)
+        } else {
+            let mut returned = (**live).clone();
+            for ret in returns {
+                returned.insert(ret.caller);
+                returned.extend(ret.params.iter().copied());
+            }
+            Rc::new(returned)
+        };
         // The input's rows, each under its own `k`, the parameters bound: the input itself where
         // no parameter is copied, rather than a copy of every row.
         let framed = if overrides.is_empty() {
             input.to_owned()
         } else {
-            let framed = self.frame(
-                "i",
-                &format!("SELECT {} FROM {input} f", self.select("f", &overrides)),
-                Reads::copy(input),
-            );
+            let held = self.live_before(body, &returned);
+            let framed = self.within(&held, |this| {
+                this.frame(
+                    "i",
+                    &format!("SELECT {} FROM {input} f", this.select("f", &overrides)),
+                    Reads::copy(input),
+                )
+            });
             self.same_space(input, &framed);
             framed
         };
-        let bound = self.op(body, &framed);
+        let bound = self.op(body, &framed, &returned);
         if returns.is_empty() {
             return bound;
         }

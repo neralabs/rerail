@@ -38,7 +38,7 @@
 //! candidates are not. Where the input is unique on a subset of the key, it already holds one row
 //! per key and is evaluated directly.
 
-use super::{Effect, Emitter, Reads};
+use super::{Effect, Emitter, Live, Reads};
 use crate::code_rule_dsl::sql::plan::{Export, OfRule, Op, SlotId, Source, Unit, Walk};
 use std::collections::BTreeSet;
 use std::fmt::Write;
@@ -302,61 +302,65 @@ impl Emitter<'_> {
     }
 
     /// `op` on `input` per distinct key (the module doc), where it walks and `input` may hold
-    /// several rows of one key; `None` where it is evaluated directly.
-    pub(super) fn keyed(&mut self, op: &Op, input: &str) -> Option<String> {
+    /// several rows of one key, its output holding `live`; `None` where it is evaluated directly.
+    pub(super) fn keyed(&mut self, op: &Op, input: &str, live: &Live) -> Option<String> {
         if !keyed_operator(op) {
             return None;
         }
-        let key = self.touched(op);
+        let touched = self.touched(op);
         if self
             .unique
             .get(input)
-            .is_some_and(|sets| sets.iter().any(|set| set.is_subset(&key)))
+            .is_some_and(|sets| sets.iter().any(|set| set.is_subset(&touched)))
         {
             return None;
         }
         // Mutant 13: the key omits its first slot.
         let key = if crate::code_rule_dsl::sql::mutant(13) {
-            Rc::new(key.iter().skip(1).copied().collect())
+            Rc::new(touched.iter().skip(1).copied().collect())
         } else {
-            key
+            Rc::clone(&touched)
         };
         let columns: Vec<String> = key.iter().flat_map(|&slot| self.columns(slot)).collect();
-        // The key frame: one row per distinct key, the other slots unbound.
+        // The key frame: one row per distinct key, the other slots the operator names unbound.
+        // Its rows return the key's slots of `live`.
         let keys = self.name("q");
-        let frame = format!(
-            "k INTEGER PRIMARY KEY, file, node{}{}",
-            self.physical_list(),
-            self.extra_list()
-        );
-        self.create(&keys, &frame);
-        let indexed: String = columns.iter().map(|column| format!(", {column}")).collect();
-        self.push(
-            format!("CREATE INDEX IF NOT EXISTS {keys}_key ON {keys}(file, node{indexed})"),
-            Effect::default(),
-        );
-        let mut values = String::new();
-        for column in &self.physical {
-            if columns.contains(column) {
-                write!(values, ", {column}")
-            } else {
-                values.write_str(", NULL")
+        let back = self.rebound(op, live);
+        self.within(&touched, |this| {
+            let frame = format!(
+                "k INTEGER PRIMARY KEY, file, node{}{}",
+                this.physical_list(),
+                this.extra_list()
+            );
+            this.create(&keys, &frame);
+            let indexed: String = columns.iter().map(|column| format!(", {column}")).collect();
+            this.push(
+                format!("CREATE INDEX IF NOT EXISTS {keys}_key ON {keys}(file, node{indexed})"),
+                Effect::default(),
+            );
+            let mut values = String::new();
+            for column in this.layout.columns.iter() {
+                if columns.contains(column) {
+                    write!(values, ", {column}")
+                } else {
+                    values.write_str(", NULL")
+                }
+                .expect("write to a string");
             }
-            .expect("write to a string");
-        }
-        let distinct: String = columns
-            .iter()
-            .map(|column| format!(", f.{column} AS {column}"))
-            .collect();
-        self.insert(
-            &keys,
-            format!(
-                "INSERT INTO {keys} SELECT NULL, file, node{values}{} FROM \
-                 (SELECT DISTINCT f.file AS file, f.node AS node{distinct} FROM {input} f)",
-                self.zeros()
-            ),
-            Reads::join(&[input]),
-        );
+            let distinct: String = columns
+                .iter()
+                .map(|column| format!(", f.{column} AS {column}"))
+                .collect();
+            this.insert(
+                &keys,
+                format!(
+                    "INSERT INTO {keys} SELECT NULL, file, node{values}{} FROM \
+                     (SELECT DISTINCT f.file AS file, f.node AS node{distinct} FROM {input} f)",
+                    this.zeros()
+                ),
+                Reads::join(&[input]),
+            );
+        });
         self.keyed_by(&keys, vec![(*key).clone()]);
         self.open_space(
             &keys,
@@ -366,7 +370,7 @@ impl Emitter<'_> {
                 columns: columns.clone(),
             },
         );
-        let out = self.op(op, &keys);
+        let out = self.op(op, &keys, &back);
         // Each input row takes its key's verdict: the key's slots as the operator left them.
         let overrides: Vec<(String, String)> = columns
             .iter()
