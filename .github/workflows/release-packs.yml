@@ -11,8 +11,9 @@ name: Release packs
 #   the run reports it and fails after publishing the others.
 # A pull request touching packs runs the validation and packing as a dry run and publishes nothing.
 # `workflow_dispatch` promotes released pack versions from `next` to `latest`: with no inputs, every pack whose
-# released version is not `latest` yet. The promote-plan job lists them in the run summary before the promote job,
-# which needs the `release` environment's approval, moves them all.
+# released version is not `latest` yet, less any pack held where someone put it back. The promote-plan job lists them
+# in the run summary before the promote job, which needs the `release` environment's approval, moves them all. Naming
+# a pack promotes it alone; naming an older version puts it back and holds it there (docs/pack-format.md, "Release").
 
 on:
   push:
@@ -33,7 +34,7 @@ on:
         default: ""
         type: string
       version:
-        description: Version of that pack to promote; empty for the one in packs/<id>/package.json on this branch
+        description: Version of that pack to promote; empty for the one in packs/<id>/package.json on this branch. An older version puts the pack back and holds it there until it is promoted by name again
         required: false
         default: ""
         type: string
@@ -41,10 +42,11 @@ on:
 permissions:
   contents: read
 
-# GitHub keeps one pending run per group and cancels the older one, so a promotion gets its own group (per pack, or
-# `all`): it can neither cancel a publish queued behind a release run nor be cancelled by one.
+# GitHub keeps one pending run per group and cancels the older one. Every promotion shares one group, so two never
+# move the same pack's `latest` at once, while a promotion can neither cancel a publish queued behind a release run
+# nor be cancelled by one.
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && format('release-packs-promote-{0}', inputs.pack || 'all') || format('release-packs-{0}', github.event.pull_request.number || github.ref) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && 'release-packs-promote' || format('release-packs-{0}', github.event.pull_request.number || github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -200,8 +202,9 @@ jobs:
           echo "::error::Never published, so not published by this run: ${FIRST}. Publish each by hand and configure its trusted publisher (docs/publishing-a-new-pack.md)."
           exit 1
 
-  # Reads each pack's `latest` from npm, which for these restricted packs needs the read-only NPM_PACKS_READ_TOKEN
-  # (as ci.yml's installed-packs job does), and lists what the promote job will move.
+  # Reads each pack's dist-tags from npm, which for these restricted packs needs the read-only NPM_PACKS_READ_TOKEN
+  # (as ci.yml's installed-packs job does), and lists what the promote job will move. A pack it cannot read fails
+  # this job but is only left out: the promote job still moves the others.
   promote-plan:
     name: Packs to promote
     if: github.event_name == 'workflow_dispatch'
@@ -235,7 +238,7 @@ jobs:
         run: printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
 
       - id: plan
-        name: List released pack versions not yet latest
+        name: List released pack versions to promote
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -247,7 +250,7 @@ jobs:
   promote:
     name: Promote to latest
     needs: promote-plan
-    if: github.event_name == 'workflow_dispatch' && needs.promote-plan.outputs.promote != ''
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && needs.promote-plan.outputs.promote != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release
@@ -271,12 +274,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # PROMOTE is the plan's space-separated `<id>@<version>` list: one argument each.
+      # PROMOTE is the plan's JSON list of `{ id, version, hold, release }`.
       - name: Point latest at each version
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PROMOTE: ${{ needs.promote-plan.outputs.promote }}
-        run: |
-          read -r -a promotions <<< "$PROMOTE"
-          node scripts/release/packs-promote.mjs "${promotions[@]}"
+        run: node scripts/release/packs-promote.mjs
