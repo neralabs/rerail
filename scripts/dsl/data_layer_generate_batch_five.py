@@ -46,7 +46,7 @@ def C(id,rule,code,each=None,anchor='witness.span',paths=None,transform=None):
  if transform:q['transform']=transform
  return {'id':id,'forbid':{'ast':q},'violation':{'code':code,'anchor':anchor,'message':code+': '+id,**({'each':each} if each else {})}}
 def W(name,clauses,utils=None,options=None,roots=None,mode='block',exclude=None):
- if name=='async_sync_delegation':
+ if name in ('async_sync_delegation','public_api_triples','internal_dead_code'):
   # Repeated rule expressions share authored utilities and native memo entries.
   frequencies=Counter()
   rule_keys={'all','any','not','has','inside','precedes','follows','matches','kind','regex','pattern','compare','count','filePath','value','arguments','layout'}
@@ -54,7 +54,7 @@ def W(name,clauses,utils=None,options=None,roots=None,mode='block',exclude=None)
    if isinstance(value,dict):
     if set(value)<=rule_keys and set(value)&rule_keys:
      key=json.dumps(value,sort_keys=True,separators=(',',':'))
-     if len(key)>=1500:frequencies[key]+=1
+     if len(key)>=(1500 if name=='async_sync_delegation' else 300):frequencies[key]+=1
     for child in value.values():collect(child)
    elif isinstance(value,list):
     for child in value:collect(child)
@@ -72,7 +72,7 @@ def W(name,clauses,utils=None,options=None,roots=None,mode='block',exclude=None)
    if isinstance(value,list):return [factor(v) for v in value]
    return value
   clauses=factor(clauses)
-  utils={**factor(utils),**definitions}
+  utils={**(factor(utils) or {}),**definitions}
  definition={'options':{'oracleAnalyzer':{'type':'boolean','default':False},'sourceGate':{'type':'boolean','default':True},**(options or {})}}
  if utils:definition.update(language='python',utils=utils)
  document={'format':'rerail.policy/v1','id':'data-layer-'+name.replace('_','-'),'revision':1,'mode':mode,
@@ -292,9 +292,14 @@ graph_function=A(fn(),N(I(fn())),P('SYMBOL_NODE'),F('name',P('SYMBOL_NAME')),O(
    O(A(one_binding,I(A(K('class_definition'),one_binding),K('class_definition'))),
      N(M('later-method-symbol',NAME='SYMBOL_NAME',CURRENT='SYMBOL_NODE',GROUP='SYMBOL_CLASS'))))))
 seed=A(graph_function,O(direct,signature))
+legacy_links=[
+ {'decorator':r'(?:legacy_sync|legacy_module_sync|direct_legacy_module_sync)$','name':{'replace':'$','by':'_lazy'}},
+ {'decorator':r'(?:legacy_async|legacy_module_async|direct_legacy_module_async)$','name':{'replace':'(?:_async)?$','by':'_lazy'}},
+]
 clauses=[C('direct-execution',A(graph_function,direct),'direct_execution'),
  C('eager-signature',A(graph_function,N(direct),signature),'eager_signature'),
- C('caller',A(graph_function,N(direct),N(signature),{'calls':{'graph':'references','at':'definition','through':'any',**seed}}),'calls_imperative')]
+ C('caller',A(graph_function,N(direct),N(signature),{'calls':{'graph':'references','at':'definition','through':'any','siblingLinks':legacy_links,
+  'constructorFields':{'fieldToParameter':{'replace':'^_+','by':''}},**seed}}),'calls_imperative')]
 W('imperative_private_functions',clauses,graph_utils,mode='log',roots=production_roots)
 
 from data_layer_predicate_compile import compile_allowlist
@@ -484,3 +489,22 @@ for mode in ['legacy_sync','legacy_async','legacy_module_sync','legacy_module_as
  for requirement in ['missing-lazy','missing-pair']:
   merge_alternatives({mode+'-'+owner+'-'+requirement for owner in ['module','class']},mode+'-'+requirement)
 W('async_sync_delegation',clauses,utils,roots=[p for p in production_roots if p!='api/**/*.py'])
+
+from data_layer_relational_five import public_api_clause
+from scripts.lint_lib import symbol_graph as source_symbol_graph
+W('public_api_triples',[public_api_clause(modules['public_api_triples'],source_symbol_graph)],options={'executionOnly':{'type':'boolean','default':True}},roots=production_roots,mode='log')
+
+from data_layer_relational_five import dead_code_clause
+def reference_contract(value):
+ if isinstance(value,dict):
+  if value.get('calls',{}).get('graph')=='references':return {key:value['calls'][key] for key in ('siblingLinks','constructorFields') if key in value['calls']}
+  for child in value.values():
+   found=reference_contract(child)
+   if found is not None:return found
+ elif isinstance(value,list):
+  for child in value:
+   found=reference_contract(child)
+   if found is not None:return found
+ return None
+contract=reference_contract(json.loads((args.output/'data-layer-imperative-private-functions.json').read_text()))
+W('internal_dead_code',[dead_code_clause(modules['internal_dead_code'],source_symbol_graph,contract)],roots=production_roots,mode='log')

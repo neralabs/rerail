@@ -2327,6 +2327,28 @@
                   "graph": "references",
                   "at": "definition",
                   "through": "any",
+                  "siblingLinks": [
+                    {
+                      "decorator": "(?:legacy_sync|legacy_module_sync|direct_legacy_module_sync)$",
+                      "name": {
+                        "replace": "$",
+                        "by": "_lazy"
+                      }
+                    },
+                    {
+                      "decorator": "(?:legacy_async|legacy_module_async|direct_legacy_module_async)$",
+                      "name": {
+                        "replace": "(?:_async)?$",
+                        "by": "_lazy"
+                      }
+                    }
+                  ],
+                  "constructorFields": {
+                    "fieldToParameter": {
+                      "replace": "^_+",
+                      "by": ""
+                    }
+                  },
                   "all": [
                     {
                       "all": [

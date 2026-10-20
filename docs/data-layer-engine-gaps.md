@@ -138,3 +138,22 @@ The host adapter verifies the original signed allowlist before evaluating the ru
 All escape-hatch reporter observations now enter comparison, including counts at 16 and 17 and invalid signatures.
 The [batch report](data-layer-batch-four.md#aggregate-reporter-completion) records the full contract.
 This feature is implemented on the branch. No new Linear issue is needed or created.
+
+## Fifth-batch implementation
+
+The [fifth-batch report](data-layer-batch-five.md) records ten more source-detection candidates and full repository parity.
+Actual ports proved two further execution shapes, now implemented on this branch:
+
+1. Declared-reference graphs support authored sibling links, constructor field conventions, imports, annotations, inheritance, and callbacks.
+2. Relational clauses join projected source facts, group exported families, and compute recursive reachability with native reference edges.
+
+The report links the motivating source analyzers and records the reduced positive and clean cases.
+The engine contains no data-layer-specific detector or naming convention.
+The native source corpus has 312 comparisons; the repository gate compares 23,835 findings.
+Both incremental result checks also pass.
+
+The complete candidate set remains slower than the Python oracle in the measured sample.
+Repeated fact extraction and global query rebuilding remain performance work.
+The retained model adapters and signed reporters remain integration work.
+These observations do not establish an additional missing engine feature for representing the completed rule shapes.
+No new Linear issue was created or amended.

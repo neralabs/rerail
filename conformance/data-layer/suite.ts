@@ -30,6 +30,17 @@ let revision = 0;
 const send = async (batchFiles: typeof files, deferGlobal: boolean): Promise<void> => {
   await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: ++revision, files: batchFiles, removed: [], quiet: true, deferGlobal }));
 };
+const collect = async (): Promise<{ violations: z.infer<typeof pageSchema>["violations"]; failures: unknown[] }> => {
+  const violations: z.infer<typeof pageSchema>["violations"] = [], failures: unknown[] = [];
+  for (let cursor = 0; ;) {
+    const page = pageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
+    violations.push(...page.violations); failures.push(...page.failures);
+    if (page.done) return { violations, failures };
+    if (page.cursor <= cursor) throw new Error("Native result cursor did not advance");
+    cursor = page.cursor;
+  }
+};
+const findingKeys = (rows: z.infer<typeof pageSchema>["violations"]): string[] => rows.map(f => JSON.stringify([f.ruleId, f.path, f.span.startLine + 1, f.code])).sort();
 try {
   const compileStarted = performance.now();
   for (const event of recording.events) {
@@ -54,30 +65,34 @@ try {
   }
   if (batch.length > 0) await send(batch, true);
   await send([], false);
-  const violations: z.infer<typeof pageSchema>["violations"] = [], failures: unknown[] = [];
-  for (let cursor = 0; ;) {
-    const page = pageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
-    violations.push(...page.violations); failures.push(...page.failures);
-    if (page.done) break;
-    if (page.cursor <= cursor) throw new Error("Native result cursor did not advance");
-    cursor = page.cursor;
-  }
+  const { violations, failures } = await collect();
   const coldMs = performance.now() - started;
   const file = files.find(file => file.path === "impl/common/l2200_sql_dialect/sql_connection.py") ?? files[0]!;
   const resendStarted = performance.now();
   await send([file], false);
+  const unchangedResult = await collect();
   const unchangedFileMs = performance.now() - resendStarted;
   const editStarted = performance.now();
   await send([{ ...file, source: file.source + "\n" }], false);
+  const editedResult = await collect();
   const editedFileMs = performance.now() - editStarted;
   const expected = recording.events.flatMap(event => event.findings.map(f => JSON.stringify([`data-layer-${event.check.replaceAll("_", "-")}`, f.path, f.line, f.code]))).sort();
-  const actual = violations.map(f => JSON.stringify([f.ruleId, f.path, f.span.startLine + 1, f.code])).sort();
+  const actual = findingKeys(violations);
   const difference = (a: string[], b: string[]) => { const rest = [...b]; return a.filter(key => { const at = rest.indexOf(key); if (at < 0) return true; rest.splice(at, 1); return false; }); };
+  const incrementalDifferences = [
+    { phase: "unchanged", result: unchangedResult }, { phase: "trailing-newline-edit", result: editedResult },
+  ].flatMap(({ phase, result }) => {
+    const keys = findingKeys(result.violations);
+    const falsePositives = difference(keys, expected), falseNegatives = difference(expected, keys);
+    return falsePositives.length + falseNegatives.length + result.failures.length === 0 ? []
+      : [{ phase, falsePositives, falseNegatives, failures: result.failures }];
+  });
   const report = { commit: recording.commit, files: files.length, bytes: files.reduce((sum, file) => sum + Buffer.byteLength(file.source), 0),
     oracleMs: recording.oracle_ms, oracleWorkers: recording.workers, policyDigests, policyCompilationMs, compilationMs, coldMs, unchangedFileMs, editedFileMs, editedPath: file.path,
+    incrementalDifferences,
     expected: expected.length, actual: actual.length, falsePositives: difference(actual, expected), falseNegatives: difference(expected, actual), failures,
     allocator: values.allocator, policies: values.policies, nativeSha256: createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex"), nativeWorkers: 4 };
   writeFileSync(values.output, JSON.stringify(report, null, 2) + "\n");
-  console.log(JSON.stringify({ ...report, falsePositives: report.falsePositives.length, falseNegatives: report.falseNegatives.length, failures: failures.length }, null, 2));
-  if (report.falsePositives.length + report.falseNegatives.length + failures.length !== 0) process.exitCode = 1;
+  console.log(JSON.stringify({ ...report, falsePositives: report.falsePositives.length, falseNegatives: report.falseNegatives.length, failures: failures.length, incrementalDifferences: incrementalDifferences.length }, null, 2));
+  if (report.falsePositives.length + report.falseNegatives.length + failures.length + incrementalDifferences.length !== 0) process.exitCode = 1;
 } finally { workspace.close(); }

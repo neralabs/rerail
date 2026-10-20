@@ -107,6 +107,18 @@ def main() -> None:
     events = []
     reporter_results = []
     for result in results:
+        if result.name == 'public_api_triples':
+            reporter_results.append({'check':result.name, 'contract':'signed total baseline reporter; retained upstream',
+                'findings':[{'path':v.path.as_posix(),'line':v.line,'code':v.code,'message':v.message} for v in result.violations]})
+            raw_items=[]
+            for bundle in captured[0].files.values():
+                survey=bundle.facts.get(graph_module.SYMBOL_GRAPH_SURVEY_EXTRACTOR.extractor_id)
+                if isinstance(survey,dict):raw_items=survey.get('public_api_triples',[]);break
+            events.append({'test':'suite:'+result.name,'call':1,'check':result.name,'entry':'graph-analyzer',
+                'upstream_passed':True,'input_mode':'suite','production_scope':True,
+                'scope':{'include':['**/*.py'],'exclude':[]},'file_set':'suite',
+                'findings':[{'path':v['path'],'line':v['line'],'column':None,'code':v['issue'],'message':v['detail']} for v in raw_items]})
+            continue
         if result.name in ("swallowed_exceptions", "async_sync_delegation"):
             reporter_results.append({"check": result.name, "contract": "signed aggregate baseline reporter; retained upstream",
                                      "findings": [{"path": v.path.as_posix(), "line": v.line, "code": v.code, "message": v.message} for v in result.violations]})
