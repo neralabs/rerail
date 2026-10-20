@@ -1079,6 +1079,7 @@ pub(super) struct SqlOutcome {
     pub(super) errors: Vec<String>,
     pub(super) facts: Vec<SqlFactRow>,
     pub(super) statuses: Vec<SqlProducerStatusRow>,
+    pub(super) columns: Vec<String>,
 }
 
 pub(super) fn sql_outcome(
@@ -1224,9 +1225,15 @@ fn sql_outcome_with_failure(
     let registry = Arc::new(MatchRegistry::default());
     register_module(&connection, Arc::clone(&registry)).expect("packed virtual table");
     let token = registry.register(demand);
-    let rows = connection
+    let mut statement = connection
         .prepare(statement.unwrap_or_else(|| plan.sql()))
-        .expect("executable SQL plan")
+        .expect("executable SQL plan");
+    let columns = statement
+        .column_names()
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let rows = statement
         .query_map([token], |row| {
             let named = |name| row.as_ref().column_index(name).ok();
             let get_optional = |name| {
@@ -1342,6 +1349,7 @@ fn sql_outcome_with_failure(
         errors,
         facts,
         statuses,
+        columns,
     }
 }
 

@@ -731,6 +731,90 @@ fn production_contract_phase_four_semantic_facts_lower_completely() {
 }
 
 #[test]
+fn production_contract_phase_four_authored_sql_has_common_clause_output() {
+    let statements = authored_sql_goldens();
+    let expected_columns = [
+        "batch",
+        "row_kind",
+        "producer_id",
+        "file_index",
+        "task_index",
+        "match_index",
+        "capture_index",
+        "capture_occurrence",
+        "capture_sequence_start",
+        "capture_sequence_count",
+        "node",
+        "related_node",
+        "axis_kind",
+        "axis_order",
+        "fact_kind",
+        "document_id",
+        "mapped_document_id",
+        "start_ordinal",
+        "output_label",
+        "capture_label",
+        "text_value",
+        "start_byte",
+        "end_byte",
+        "verdict",
+        "complete",
+        "work_used",
+        "error_code",
+        "field_id",
+        "related_named",
+        "source_text",
+        "structural_key",
+        "named_leaf",
+        "capture_kind",
+        "capture_named",
+        "equality_occurrence",
+        "bindings",
+        "choice_order",
+        "clause_ordinal",
+    ];
+    for case in cases()
+        .into_iter()
+        .filter(|case| PHASE_FOUR_CASES.contains(&case.name.as_str()))
+    {
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let dialect = match case.workspace.files[0].language.as_str() {
+            "python" => crate::code_rule_dsl::language::GrammarDialect::Python,
+            "typescript" => crate::code_rule_dsl::language::GrammarDialect::TypeScript,
+            other => panic!("{} has unsupported dialect `{other}`", case.name),
+        };
+        let sql = &statements[&case.name];
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            dialect,
+            sql,
+        );
+        assert_eq!(outcome.columns, expected_columns, "{} schema", case.name);
+        assert!(
+            sql.contains("CROSS JOIN batch_status batch"),
+            "{} batch guard",
+            case.name
+        );
+        assert!(
+            sql.contains("FROM producer_status failed"),
+            "{} failure union",
+            case.name
+        );
+        assert!(
+            sql.ends_with("ORDER BY clause_ordinal, file_index, node, choice_order, producer_id, match_index, capture_index"),
+            "{} stable order",
+            case.name
+        );
+    }
+}
+
+#[test]
 fn production_contract_phase_four_authored_sql_has_one_complete_physical_boundary() {
     let statements = authored_sql_goldens();
     let packed = "WITH packed AS MATERIALIZED (SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence FROM rerail_matches WHERE batch = :batch)";
