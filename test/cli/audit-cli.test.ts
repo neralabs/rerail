@@ -181,7 +181,7 @@ describe("rerail scan and settings CLI", () => {
     });
     expect(automaticAuditRequests).toEqual([{ sessionId: "s1", scope: "repository", mode: "log" }]);
     expect(await (await fetch(new URL("/api/sessions/s2/audit-settings", daemon.url))).json()).toMatchObject({
-      settings: { scope: "touched-files", mode: "steer" },
+      settings: { scope: "ai-output", mode: "steer" },
       repositoryAudit: { status: "completed" },
       repositoryAuditRecord: { sessionId: "s1", scope: "repository", mode: "log" },
     });
@@ -304,8 +304,8 @@ describe("rerail scan and settings CLI", () => {
 
   it("keeps how many failures a scan had past the 20 it lists, and reports them with the session", async () => {
     // An AST rule on files with syntax errors fails on each (`source-partial`), while the regex rule reads them, so
-    // no file is blind: 25 files read in part, five past the list's 20. A touched-files audit fails on them; a
-    // repository scan lists them and completes.
+    // no file is blind: 25 files read in part, five past the list's 20. The session's own audit of them fails on them;
+    // a repository scan lists them and completes.
     const PRINT_CALL = codeRuleSchema.parse({
       format: "rerail.policy/v1", id: "test:print-call", revision: 1, mode: "log",
       scope: { include: ["api/**/*.py"], exclude: [] },
@@ -323,7 +323,9 @@ describe("rerail scan and settings CLI", () => {
     // The session audits the 25 edits on its own; the scan must come after them to be the session's latest audit.
     await vi.waitFor(async () => {
       const { audits } = await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json();
-      expect(audits[0]).toMatchObject({ scope: "touched-files", status: "failed", failureCount: 25 });
+      // Every file is read in part; an edit the session found during its initial discovery adds its own preimage failure.
+      expect(audits[0]).toMatchObject({ scope: "ai-output", status: "failed" });
+      expect(audits[0].failureCount).toBeGreaterThanOrEqual(25);
     }, { timeout: 20_000, interval: 50 });
     let output = "";
     expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
@@ -375,7 +377,7 @@ describe("rerail scan and settings CLI", () => {
       expect(delivered).toEqual([]);
       expect(await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json()).toMatchObject({
         audits: expect.arrayContaining([expect.objectContaining({
-          scope: "touched-files", mode: "log", violations: expect.arrayContaining([expect.objectContaining({ code: "PRINT" })]),
+          scope: "ai-output", mode: "log", violations: expect.arrayContaining([expect.objectContaining({ code: "PRINT" })]),
         })]),
       });
     } finally {

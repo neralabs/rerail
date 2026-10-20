@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 
 /** Where a system Git is looked for; PATH is deliberately not consulted. */
@@ -58,4 +58,64 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
 export function gitText(cwd: string, args: readonly string[]): string | undefined {
   const result = runGit(cwd, args);
   return result.status === 0 ? result.stdout.trim() : undefined;
+}
+
+/**
+ * The contents of `revisions` (revision expressions such as `:./src/a.ts` or `HEAD:./src/a.ts`, relative to `cwd`),
+ * read by one `git cat-file --batch` under `runGit`'s safe configuration. A revision Git does not resolve to a blob is
+ * absent; without Git, outside a repository, past `maxBytes` of output or past the timeout the map is empty. A
+ * revision containing a newline cannot be asked for and is skipped.
+ */
+export async function readGitBlobs(
+  cwd: string,
+  revisions: readonly string[],
+  options: { maxBytes: number; timeout?: number },
+): Promise<Map<string, Buffer>> {
+  const asked = revisions.filter(revision => !/[\r\n]/u.test(revision));
+  const blobs = new Map<string, Buffer>();
+  if (asked.length === 0) return blobs;
+  let executable: string;
+  try {
+    executable = gitExecutable();
+  } catch {
+    return blobs;
+  }
+  const { promise, resolve: settle } = Promise.withResolvers<Buffer | undefined>();
+  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch"], {
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    stdio: ["pipe", "pipe", "ignore"],
+    timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,
+  });
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  let overflowed = false;
+  child.stdout.on("data", (chunk: Buffer) => {
+    bytes += chunk.length;
+    if (bytes > options.maxBytes) {
+      overflowed = true;
+      child.kill();
+      return;
+    }
+    chunks.push(chunk);
+  });
+  child.on("error", () => settle(undefined));
+  child.on("close", status => settle(status === 0 && !overflowed ? Buffer.concat(chunks) : undefined));
+  // Git exits before reading every line when it cannot start in `cwd`; the close status says so.
+  child.stdin.on("error", () => undefined);
+  child.stdin.end(asked.map(revision => `${revision}\n`).join(""));
+  const output = await promise;
+  if (output === undefined) return blobs;
+  let offset = 0;
+  for (const revision of asked) {
+    const end = output.indexOf(0x0a, offset);
+    if (end === -1) break;
+    const header = output.toString("utf8", offset, end).split(" ");
+    offset = end + 1;
+    // `<oid> <type> <size>` then the object and a newline; anything else (`<revision> missing`) has no body.
+    if (header.length !== 3 || !/^[0-9a-f]+$/u.test(header[0]!)) continue;
+    const size = Number(header[2]);
+    if (header[1] === "blob") blobs.set(revision, output.subarray(offset, offset + size));
+    offset += size + 1;
+  }
+  return blobs;
 }

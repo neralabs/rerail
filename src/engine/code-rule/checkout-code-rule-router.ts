@@ -23,6 +23,7 @@ import type {
 } from "./code-rule.js";
 import type { CheckoutCatalogs, CheckoutEligibility } from "./code-rule-dsl-catalog.js";
 import type { AuditRecorder, AuditMode } from "../audit/audit.js";
+import { DEFAULT_AUDIT_SETTINGS } from "../audit/audit-control-schema.js";
 
 export interface CheckoutCodeRuleRouterOptions {
   /** The session's folder, physical; edit and audit paths are relative to it. */
@@ -66,7 +67,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   constructor(options: CheckoutCodeRuleRouterOptions) {
     this.#options = options;
     this.#sessionRoot = resolve(options.sessionRoot);
-    this.#settings = { scope: options.scope ?? "touched-files", mode: options.mode ?? "steer" };
+    this.#settings = { scope: options.scope ?? DEFAULT_AUDIT_SETTINGS.scope, mode: options.mode ?? DEFAULT_AUDIT_SETTINGS.mode };
   }
 
   /** Interrupts the session's earlier runs once, then opens the starting checkout's lane. */

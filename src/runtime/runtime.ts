@@ -17,7 +17,8 @@ import { BOUNDARY_DISCOVERY_WAIT_MS, CodeRuleBridge, generatedEditPaths, type So
 import type { AuditorCloseOptions, CodeRuleAuditor, AuditSettings, RuleSteerDelivery, RepositoryAuditHooks } from "../engine/code-rule/code-rule.js";
 import type { AuditRecorder, AuditRecord } from "../engine/audit/audit.js";
 import { SqliteAuditStore } from "../engine/audit/audit-store.js";
-import { DEFAULT_AUDIT_SETTINGS, SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
+import { SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
+import { DEFAULT_AUDIT_SETTINGS } from "../engine/audit/audit-control-schema.js";
 import { CheckoutCatalogs, configurationSignatureOf, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
 import { realpathSync } from "node:fs";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";

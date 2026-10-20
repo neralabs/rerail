@@ -46,6 +46,7 @@ import {
 } from "../audit/audit.js";
 import { defaultRerailDatabasePath } from "../storage/database.js";
 import { SqliteAuditStore } from "../audit/audit-store.js";
+import { DEFAULT_AUDIT_SETTINGS } from "../audit/audit-control-schema.js";
 import { RULE_MODES, steers } from "../catalog/rule-mode.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
@@ -564,8 +565,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#catalog = catalog;
     this.#workspaceRoot = resolve(options.workspaceRoot);
     this.#steerDelivery = options.steerDelivery;
-    this.#scope = options.scope ?? "touched-files";
-    this.#mode = options.mode ?? "steer";
+    this.#scope = options.scope ?? DEFAULT_AUDIT_SETTINGS.scope;
+    this.#mode = options.mode ?? DEFAULT_AUDIT_SETTINGS.mode;
     this.#responseMode = this.#mode;
     this.#presentPath = options.presentPath ?? (path => path);
     this.#nestedCheckouts = options.nestedCheckouts ?? (() => []);

@@ -133,7 +133,7 @@ describe("source-scoped steers", () => {
         toolCallId: "write", toolName: "write", output: "written",
       });
       await vi.waitFor(() => expect(audits.list({ sessionId: session.sessionId }).audits).toEqual(expect.arrayContaining([
-        expect.objectContaining({ scope: "touched-files", status: "completed" }),
+        expect.objectContaining({ scope: "ai-output", status: "completed" }),
         expect.objectContaining({ scope: "repository", status: "running" }),
       ])));
       expect(editDeliveries).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
@@ -154,7 +154,7 @@ describe("source-scoped steers", () => {
       expect(await runtime.ingest({
         kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "done",
       })).toEqual([]);
-      expect(audits.list({ sessionId: session.sessionId }).audits.filter(audit => audit.scope === "touched-files").flatMap(audit => audit.paths).sort())
+      expect(audits.list({ sessionId: session.sessionId }).audits.filter(audit => audit.scope === "ai-output").flatMap(audit => audit.paths).sort())
         .toEqual(["edited.py", "shell.py"]);
     } finally {
       gate.resolve();
@@ -257,7 +257,7 @@ describe("source-scoped steers", () => {
       await turnEnd;
       expect(audits.list({ sessionId: session.sessionId }).audits).toEqual(expect.arrayContaining([
         expect.objectContaining({ scope: "repository", status: "running" }),
-        expect.objectContaining({ scope: "touched-files", status: "completed", paths: ["edited.py"] }),
+        expect.objectContaining({ scope: "ai-output", status: "completed", paths: ["edited.py"] }),
       ]));
     } finally {
       for (const workspace of attachments.workspaces) workspace.release();
@@ -557,7 +557,7 @@ describe("source-scoped steers", () => {
         toolCallId: "write", toolName: "write", output: "written",
       })).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
       expect(audits.list({ sessionId: session.sessionId }).audits).toEqual(expect.arrayContaining([
-        expect.objectContaining({ scope: "touched-files", status: "completed", paths: ["edited.py"] }),
+        expect.objectContaining({ scope: "ai-output", status: "completed", paths: ["edited.py"] }),
       ]));
       expect(audits.list({ sessionId: session.sessionId }).audits.filter(audit => audit.status === "interrupted")).toEqual([]);
     } finally {
@@ -626,6 +626,9 @@ describe("source-scoped steers", () => {
       const runtime = new RerailRuntime({
         storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
         discoveryWaitMs: 50,
+        // A begin drained after the open restores no preimage, which ai-output reports as a scope failure: whole files
+        // keep the steer whose delivery this lifecycle is about.
+        auditSettings: { scope: "touched-files" },
         createAuditor: options => new NativeCodeRuleEnforcer(needleCatalog(), options),
       });
       const audits = new SqliteAuditStore(databasePath);
@@ -785,7 +788,7 @@ describe("source-scoped steers", () => {
         await test.evaluators[0]!.interrupted.promise;
         expect(test.audits.get(orphan)).toMatchObject({ status: "interrupted" });
         expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual(expect.arrayContaining([
-          expect.objectContaining({ scope: "touched-files", status: "interrupted", paths: ["edited.py"] }),
+          expect.objectContaining({ scope: "ai-output", status: "interrupted", paths: ["edited.py"] }),
         ]));
         expect(test.audits.list({ sessionId: test.session.sessionId }).audits.filter(audit => audit.status === "running")).toEqual([]);
       } finally { await test.close(); }
@@ -808,13 +811,13 @@ describe("source-scoped steers", () => {
         await test.evaluators[0]!.interrupted.promise;
         expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual(expect.arrayContaining([
           expect.objectContaining({ scope: "repository", status: "running" }),
-          expect.objectContaining({ scope: "touched-files", status: "interrupted", paths: ["edited.py"] }),
+          expect.objectContaining({ scope: "ai-output", status: "interrupted", paths: ["edited.py"] }),
         ]));
         expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toHaveLength(2);
         test.attachments.workspaces[3]!.release();
         await vi.waitFor(() => expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual(expect.arrayContaining([
           expect.objectContaining({ scope: "repository", status: "completed" }),
-          expect.objectContaining({ scope: "touched-files", status: "interrupted" }),
+          expect.objectContaining({ scope: "ai-output", status: "interrupted" }),
         ])));
       } finally { await test.close(); }
     });
@@ -838,7 +841,7 @@ describe("source-scoped steers", () => {
         await expect(closeSpy.mock.results[0]!.value).resolves.toBeUndefined();
         const recorded = test.audits.list({ sessionId: test.session.sessionId }).audits;
         expect(recorded).toEqual(expect.arrayContaining([
-          expect.objectContaining({ scope: "touched-files", status: "interrupted", paths: ["edited.py"] }),
+          expect.objectContaining({ scope: "ai-output", status: "interrupted", paths: ["edited.py"] }),
         ]));
         expect(recorded.filter(audit => audit.status === "running")).toEqual([]);
       } finally {

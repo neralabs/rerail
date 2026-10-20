@@ -14,6 +14,7 @@ import type {
   CodeRuleSourceLanguage,
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
+import { readGitBlobs } from "../git.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { languageOfPath, SOURCE_LANGUAGES } from "./code-rule-languages.js";
 
@@ -208,6 +209,11 @@ export class CodeRuleBridge {
   /** Command tool calls whose results must reconcile shell writes. */
   readonly #commands = new Set<string>();
   readonly #observed = new Map<string, ObservedSource>();
+  /**
+   * The text each source this session changed was last seen with: the preimage of its next change made without one
+   * captured, once its digest proves it (`#recoverPreimages`). Only changed sources are kept, never the baseline.
+   */
+  readonly #texts = new Map<string, string>();
   #lastResponse = emptyResponse(0);
   #sessionId: string | undefined;
   #revision = 0;
@@ -248,6 +254,7 @@ export class CodeRuleBridge {
       this.#pending.clear();
       this.#commands.clear();
       this.#observed.clear();
+      this.#texts.clear();
       this.#discovery = undefined;
       const root = await realpath(this.#cwd);
       await this.#auditor.openWorkspace(sessionId);
@@ -298,8 +305,8 @@ export class CodeRuleBridge {
       this.#pending.delete(toolCallId);
       if (pending === undefined || failed) return [];
       this.refreshCodeRules();
-      const edits = await this.#readEdits(discovery, pending.paths, pending.preimages);
-      return edits.length === 0 ? [] : [await this.#auditEdits(edits, ["edit", "function"])];
+      const { edits, uncaptured } = await this.#readEdits(discovery, pending.paths, pending.preimages);
+      return edits.length === 0 ? [] : [await this.#auditEdits(discovery, edits, ["edit", "function"], uncaptured)];
     });
   }
 
@@ -375,6 +382,7 @@ export class CodeRuleBridge {
       this.#pending.clear();
       this.#commands.clear();
       this.#observed.clear();
+      this.#texts.clear();
       this.#discovery = undefined;
       await this.#auditor.close(options);
     });
@@ -396,21 +404,27 @@ export class CodeRuleBridge {
     return preimages;
   }
 
+  /** The tool call's edits, and the digest each source had before it where the call's start captured no preimage. */
   async #readEdits(
     discovery: SourceDiscovery,
     paths: readonly string[],
     preimages: ReadonlyMap<string, Preimage>,
-  ): Promise<CodeRuleEdit[]> {
+  ): Promise<{ edits: CodeRuleEdit[]; uncaptured: Map<string, string> }> {
     const root = await realpath(this.#cwd);
     const edits: CodeRuleEdit[] = [];
+    const uncaptured = new Map<string, string>();
     for (const configuredPath of [...paths].sort(compareDeterministicStrings)) {
       const source = await this.#readSource(root, configuredPath);
       if (source === undefined) continue;
       this.#touchSource(discovery, source.path);
-      const edit = this.#readEdit(source, preimages.get(source.path));
-      if (edit !== undefined) edits.push(edit);
+      const preimage = preimages.get(source.path);
+      const before = this.#observed.get(source.path)?.digest;
+      const edit = this.#readEdit(source, preimage);
+      if (edit === undefined) continue;
+      edits.push(edit);
+      if (preimage === undefined && before !== undefined && edit.generatedText !== undefined) uncaptured.set(edit.path, before);
     }
-    return edits;
+    return { edits, uncaptured };
   }
 
   /** Queues a pass for `checkpoint` and resolves once the walk is idle, i.e. every pass requested so far has run. */
@@ -481,10 +495,11 @@ export class CodeRuleBridge {
     if (discovery.cancelled || this.#discovery !== discovery) return;
     await this.#enqueue(async () => {
       if (discovery.cancelled || this.#discovery !== discovery) return;
-      const edits = this.#discoverEdits(discovery, scan.sources, previous, versions, baseline);
+      const uncaptured = new Map<string, string>();
+      const edits = this.#discoverEdits(discovery, scan.sources, previous, versions, baseline, uncaptured);
       try {
         if (edits.length > 0)
-          await this.#auditEdits(edits, discoveryCheckpoints(strongerCheckpoint(checkpoint, discovery.requested)));
+          await this.#auditEdits(discovery, edits, discoveryCheckpoints(strongerCheckpoint(checkpoint, discovery.requested)), uncaptured);
       } catch (error) {
         // A rejected evaluator submission is not an observation we have enforced.
         // Restore these baselines so the next requested scan can retry the changes.
@@ -504,12 +519,14 @@ export class CodeRuleBridge {
     if (baseline && discovery.requested === undefined) discovery.requested = checkpoint;
   }
 
+  /** The changes the walk found; `uncaptured` receives the digest each changed source was observed with before. */
   #discoverEdits(
     discovery: SourceDiscovery,
     current: ReadonlyMap<string, Source>,
     previous: ReadonlyMap<string, ObservedSource>,
     versions: ReadonlyMap<string, number>,
     baseline: boolean,
+    uncaptured: Map<string, string>,
   ): CodeRuleEdit[] {
     const pendingPaths = new Set<string>();
     for (const pending of this.#pending.values())
@@ -521,7 +538,11 @@ export class CodeRuleBridge {
       // A begin/finish after scan launch wins even when its bytes happen to match the old snapshot.
       if (discovery.versions.get(path) !== versions.get(path) || pendingPaths.has(path)) continue;
       const edit = this.#discoveredEdit(discovery, path, previous.get(path), current.get(path), baseline);
-      if (edit !== undefined) edits.push(edit);
+      if (edit === undefined) continue;
+      edits.push(edit);
+      const before = previous.get(path)?.digest;
+      if (edit.previousReadError !== undefined && edit.generatedText !== undefined && before !== undefined && !baseline)
+        uncaptured.set(path, before);
     }
     return edits;
   }
@@ -738,13 +759,60 @@ export class CodeRuleBridge {
     };
   }
 
-  async #auditEdits(edits: CodeRuleEditBatch["edits"], checkpoints: CodeRuleCheckpoint[]): Promise<CodeRuleResponse> {
+  async #auditEdits(
+    discovery: SourceDiscovery,
+    captured: CodeRuleEditBatch["edits"],
+    checkpoints: CodeRuleCheckpoint[],
+    uncaptured: ReadonlyMap<string, string>,
+  ): Promise<CodeRuleResponse> {
     const sessionId = this.#requireSession();
+    const edits = await this.#recoverPreimages(discovery.root, captured, uncaptured);
+    for (const edit of edits) {
+      if (edit.generatedText !== undefined) this.#texts.set(edit.path, edit.generatedText);
+      else if (edit.deleted) this.#texts.delete(edit.path);
+    }
     const paths = edits.map(edit => edit.path).sort(compareDeterministicStrings);
     this.#revision += 1;
     this.#onRevision?.(sessionId, this.#revision, paths);
     this.#lastResponse = await this.#auditor.auditGeneratedEdits(sessionId, { revision: this.#revision, checkpoints, edits });
     return this.#lastResponse;
+  }
+
+  /**
+   * Gives each edit `uncaptured` names (made with no preimage captured: a shell write, a tool call whose start was not
+   * seen) the source it changed, where that is known exactly: the text this session last saw the file with, else its
+   * Git index or `HEAD` blob, each taken only when its SHA-256 is the digest observed before the change. Any other
+   * keeps its `previousReadError`, so the generated lines stay unknown rather than guessed.
+   */
+  async #recoverPreimages(
+    root: string,
+    edits: CodeRuleEditBatch["edits"],
+    uncaptured: ReadonlyMap<string, string>,
+  ): Promise<CodeRuleEditBatch["edits"]> {
+    if (uncaptured.size === 0) return edits;
+    const recovered = new Map<string, string>();
+    const unresolved: string[] = [];
+    for (const [path, digest] of uncaptured) {
+      const text = this.#texts.get(path);
+      if (text !== undefined && createHash("sha256").update(text).digest("hex") === digest) recovered.set(path, text);
+      else unresolved.push(path);
+    }
+    if (unresolved.length > 0) {
+      const revisions = unresolved.flatMap(path => [`:./${path}`, `HEAD:./${path}`]);
+      // Each blob is at most a source's size; the headers are a few dozen bytes.
+      const blobs = await readGitBlobs(root, revisions, { maxBytes: revisions.length * (MAX_SOURCE_BYTES + 256) });
+      for (const path of unresolved) {
+        const blob = [blobs.get(`:./${path}`), blobs.get(`HEAD:./${path}`)]
+          .find(candidate => candidate !== undefined && createHash("sha256").update(candidate).digest("hex") === uncaptured.get(path));
+        if (blob !== undefined) recovered.set(path, blob.toString("utf8"));
+      }
+    }
+    return edits.map(edit => {
+      const previousText = recovered.get(edit.path);
+      if (previousText === undefined) return edit;
+      const { previousReadError: _uncaptured, ...rest } = edit;
+      return { ...rest, previousText };
+    });
   }
 
   #touchSource(discovery: SourceDiscovery, path: string): void {
