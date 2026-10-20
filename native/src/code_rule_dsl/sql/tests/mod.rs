@@ -320,3 +320,66 @@ fn a_walk_tests_its_sub_rule_s_capture_free_shape_on_each_candidate() {
         );
     }
 }
+
+/// Clauses alike, differing only in their patterns, share one shape: each runs its own texts (its
+/// own terminals' ids, namespace and run id), which binding the shape gives back byte for byte
+/// (`shapes::verify`, run on every stage and clause a test build binds), and finds on one session
+/// what it finds compiled alone.
+#[test]
+fn clauses_alike_share_one_shape_and_find_what_each_finds_alone() {
+    use crate::code_rule_dsl::language::GrammarDialect;
+    use crate::code_rule_dsl::sql::{ClauseRun, FileContext, compile_each};
+    use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
+    crate::code_rule_dsl::sql::VERIFY_SHAPES.store(true, std::sync::atomic::Ordering::Relaxed);
+    let source = "function g(a) { console.log(a); f(1); return a; }\nfunction h() { console.warn(2); f(3); f(4); }\nconsole.log(5);\n";
+    let mut rules = Vec::new();
+    for pattern in ["console.log($A)", "console.warn($A)", "f($A)"] {
+        rules.push(compiled(json!({ "rule": {
+            "pattern": pattern,
+            "inside": { "kind": "function_declaration", "stopBy": "end", "has": { "pattern": "return $R", "stopBy": "end" } },
+        } })));
+        rules.push(compiled(json!({ "rule": {
+            "kind": "function_declaration",
+            "count": { "has": { "pattern": pattern, "stopBy": "end" }, "min": 1, "as": "N" },
+        } })));
+    }
+    let grammars: Vec<_> = rules
+        .iter()
+        .map(|rule| &grammar_matchers(rule)[0])
+        .collect();
+    let doc = differential::tape(GrammarDialect::TypeScript, source);
+    let (program, outcomes) = compile_each(
+        &grammars
+            .iter()
+            .map(|grammar| (*grammar, None))
+            .collect::<Vec<_>>(),
+    );
+    let (instances, shapes, verified) = program.shared();
+    assert_eq!(
+        verified, instances,
+        "every stage and clause gives its draft back"
+    );
+    assert!(
+        shapes + 4 <= instances,
+        "the three clauses of each form share a shape: {shapes} shapes of {instances}"
+    );
+    let runs: Vec<ClauseRun> = outcomes
+        .iter()
+        .map(|outcome| ClauseRun {
+            statement: *outcome.as_ref().expect("compiles"),
+            files: vec![(0, None)],
+        })
+        .collect();
+    let mut session = program.session().expect("a session");
+    let found = session
+        .run(vec![(doc.clone(), FileContext::default())], &runs)
+        .expect("runs");
+    let mut matched = 0;
+    for (grammar, found) in grammars.iter().zip(found) {
+        let together: Vec<u32> = found[0].iter().map(|found| found.root).collect();
+        let (alone, ..) = probe_sql(grammar, std::slice::from_ref(&doc), 1);
+        assert_eq!(together, alone[0], "a clause finds what it finds alone");
+        matched += together.len();
+    }
+    assert!(matched > 0, "the clauses find something");
+}

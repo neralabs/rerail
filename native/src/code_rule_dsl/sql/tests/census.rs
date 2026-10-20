@@ -800,3 +800,78 @@ fn run_footprint() {
         }
     }
 }
+
+/// Clauses share a shape only exactly: over every benchmark policy compiled into one program, as
+/// the workspace compiles them (`compile_each`), each stage and clause bound to its shape gives
+/// back, byte for byte, the texts its own planning drafted, with the same effects, blocks, root
+/// and tables (`shapes::verify`, which the test build runs as it binds each); and shapes are
+/// shared. Run by hand:
+/// `cargo test --release --lib sql::tests::census::the_benchmark_policies_share_shapes_exactly -- --ignored --nocapture`.
+#[test]
+#[ignore = "reads the data-layer benchmark's policies from outside the repository"]
+fn the_benchmark_policies_share_shapes_exactly() {
+    std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(run_shapes)
+        .expect("a shapes thread")
+        .join()
+        .expect("the shapes");
+}
+
+fn run_shapes() {
+    use crate::code_rule_dsl::sql::{VERIFY_SHAPES, compile_each};
+    VERIFY_SHAPES.store(true, std::sync::atomic::Ordering::Relaxed);
+    let home = std::env::var("HOME").expect("HOME");
+    let root = std::env::var("RERAIL_BENCH_POLICIES")
+        .unwrap_or_else(|_| format!("{home}/rerail-bench/data-layer/policies"));
+    let mut policies: Vec<_> = std::fs::read_dir(&root)
+        .expect("policies")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("policy.json"))
+        .filter(|path| path.exists())
+        .collect();
+    policies.sort();
+    assert_eq!(policies.len(), 12, "the twelve benchmark policies");
+    let runtimes: Vec<_> = policies
+        .iter()
+        .map(|path| {
+            CodeRuleDslRuntime::compile(
+                std::fs::read_to_string(path).expect("policy"),
+                "json".to_owned(),
+                CAPABILITIES.to_owned(),
+            )
+            .unwrap_or_else(|error| panic!("{}: {}", path.display(), error.reason))
+        })
+        .collect();
+    let grammars: Vec<_> = runtimes
+        .iter()
+        .flat_map(|compiled| &compiled.inner.clauses)
+        .flat_map(|clause| match &clause.kind {
+            ClauseKind::Forbid(Query::Ast { matchers, .. }) => matchers
+                .iter()
+                .map(|grammar| (grammar, clause.violation.each.as_deref()))
+                .collect(),
+            _ => Vec::new(),
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let (program, outcomes) = compile_each(&grammars);
+    let (instances, shapes, verified) = program.shared();
+    let census = program.census();
+    eprintln!(
+        "{} grammar matchers ({} lower): {instances} stages and clauses, {verified} given back byte for byte, {shapes} shapes; {} steps, {} distinct texts ({:.1} MiB) in {} skeletons ({:.1} MiB stored), {:.2}s",
+        grammars.len(),
+        outcomes.iter().filter(|outcome| outcome.is_ok()).count(),
+        census.steps,
+        census.texts,
+        census.bytes as f64 / 1048576.0,
+        census.skeletons,
+        census.stored as f64 / 1048576.0,
+        started.elapsed().as_secs_f64(),
+    );
+    assert_eq!(
+        verified, instances,
+        "every stage and clause gives its draft back"
+    );
+    assert!(shapes < instances, "clauses alike share a shape");
+}

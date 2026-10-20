@@ -409,13 +409,17 @@ impl SqlEngine {
                 "skippedClears": stats.skipped_clears,
             },
             // The program as sessions run it: its steps, their distinct texts and those texts'
-            // bytes, and its tables.
+            // bytes, and its tables; and as it is stored: its stages' and clauses' distinct
+            // shapes, and its texts' distinct skeletons and the bytes they are stored in.
             "program": {
                 "steps": census.steps,
                 "texts": census.texts,
                 "bytes": census.bytes,
                 "frames": census.frames,
                 "btrees": census.btrees,
+                "shapes": census.shapes,
+                "skeletons": census.skeletons,
+                "storedBytes": census.stored,
             },
             // The program's compile, as the workspace's rules were registered (`finish` on
             // first use): lowering, emitting the statements (the stages' among them), planning
@@ -661,14 +665,28 @@ mod tests {
         eprintln!("sessions {}", report["sessions"]);
     }
 
+    /// The bytes jemalloc holds allocated now, in MiB (0 where it is not the allocator).
+    fn allocated_mib() -> f64 {
+        #[cfg(not(windows))]
+        {
+            let _ = tikv_jemalloc_ctl::epoch::advance();
+            tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) as f64 / 1048576.0
+        }
+        #[cfg(windows)]
+        0.0
+    }
+
     /// What registering every benchmark policy on a SQL workspace costs: their native compile,
     /// then their SQL compile as `add_code_rule` runs it, by phase (`compile` of the engine
-    /// report), with peak and current RSS after each, and a first apply's session. Run by hand:
+    /// report), with peak and current RSS and the bytes allocated after each, and a first
+    /// apply's session. The test build's check of each shape (`sql::VERIFY_SHAPES`) is off: it is
+    /// no cost of the compile. Run by hand:
     /// `cargo test --release --lib workspace::sql::tests::the_sql_program_compile -- --ignored
     /// --nocapture`.
     #[test]
     #[ignore = "reads the data-layer benchmark's policies from outside the repository"]
     fn the_sql_program_compile() {
+        crate::code_rule_dsl::sql::VERIFY_SHAPES.store(false, std::sync::atomic::Ordering::Relaxed);
         let home = std::env::var("HOME").expect("HOME");
         let policies = std::env::var("RERAIL_BENCH_POLICIES")
             .unwrap_or_else(|_| format!("{home}/rerail-bench/data-layer/policies"));
@@ -697,29 +715,32 @@ mod tests {
             })
             .collect();
         eprintln!(
-            "native compile {:.2}s, peak {:.0} MiB, resident {:.0} MiB",
+            "native compile {:.2}s, peak {:.0} MiB, resident {:.0} MiB, allocated {:.0} MiB",
             started.elapsed().as_secs_f64(),
             peak_mib(),
-            resident_mib()
+            resident_mib(),
+            allocated_mib(),
         );
         let started = std::time::Instant::now();
         for compiled in &compiled {
             workspace.add_code_rule(compiled, None).expect("a code rule");
         }
         eprintln!(
-            "add rules (SQL compile) {:.2}s, peak {:.0} MiB, resident {:.0} MiB",
+            "add rules (SQL compile) {:.2}s, peak {:.0} MiB, resident {:.0} MiB, allocated {:.0} MiB",
             started.elapsed().as_secs_f64(),
             peak_mib(),
-            resident_mib()
+            resident_mib(),
+            allocated_mib(),
         );
         let started = std::time::Instant::now();
         let report: Value =
             serde_json::from_str(&workspace.engine_report().expect("a report")).expect("JSON");
         eprintln!(
-            "finish {:.2}s, peak {:.0} MiB, resident {:.0} MiB",
+            "finish {:.2}s, peak {:.0} MiB, resident {:.0} MiB, allocated {:.0} MiB",
             started.elapsed().as_secs_f64(),
             peak_mib(),
-            resident_mib()
+            resident_mib(),
+            allocated_mib(),
         );
         eprintln!("compile {}", report["compile"]);
         eprintln!("program {}", report["program"]);
