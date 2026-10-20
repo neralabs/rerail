@@ -15,10 +15,11 @@ export interface Golden {
 
 /**
  * A tool-pack's goldens, by document id: a reviewed list the gates read and never write. A rule's goldens are the files
- * NRV's real-code gate found it differing on (NRV's validation/goldens/<pack>.tsv, under its id there), and, when no
- * upstream test file proves a shipped rule stays silent, a file where upstream reports nothing. A candidate keeps its
- * goldens until it agrees there, unless it differs on so many files that they only restate that it is wrong throughout:
- * then gates.yaml lists it under real_code_gaps instead (SYSTEMATIC_FILES).
+ * NRV's real-code gate found it differing on (NRV's validation/goldens/<pack>.tsv, under its id there), plus, for a
+ * rule with no other case where upstream stays silent and the rule agrees, one file where upstream reports nothing,
+ * which NRV also writes. A candidate keeps its goldens until it agrees there, unless it differs on so many files that
+ * they only restate that it is wrong throughout: then gates.yaml lists it under real_code_gaps instead
+ * (SYSTEMATIC_FILES).
  */
 export type Goldens = Map<string, Golden[]>;
 

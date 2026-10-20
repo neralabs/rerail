@@ -233,7 +233,7 @@ test("negative evidence needs one case where upstream reports nothing and the ru
   assert.match(none.detail, /^no case where upstream reports nothing and the rule agrees.*add a golden/u);
   assert.equal(staysSilentCheck([agree(2), { expected: 0, status: "mismatch" }], [{ expected: 0, status: "mismatch" }]).ok, false);
   assert.equal(staysSilentCheck([agree(0)], []).ok, true);
-  // A rule whose upstream test files all have findings (Ruff's) stays silent on a golden where upstream reports nothing.
+  // A rule whose upstream test files all have findings (most of Ruff's) stays silent on a golden where upstream reports nothing.
   const check = staysSilentCheck([agree(1)], [agree(0), agree(3)]);
   assert.equal(check.id, "stays-silent");
   assert.equal(check.ok, true);

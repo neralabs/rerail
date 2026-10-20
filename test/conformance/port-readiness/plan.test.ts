@@ -205,4 +205,11 @@ describe("the corpus cache", () => {
     assert.equal(prune.if, save.if);
     assert.ok(steps.findIndex((step) => step.id === "gates") < steps.indexOf(prune));
   });
+
+  // The prune step's comment relies on this: a failed prune leaves the leg's result to the gates.
+  it("is pruned before it is saved, by a step that cannot fail the leg", () => {
+    const prune = steps.find((step) => String(step.run ?? "").includes("port-readiness -- prune"));
+    assert.equal(prune["continue-on-error"], true);
+    assert.ok(steps.indexOf(prune) < steps.indexOf(save));
+  });
 });
