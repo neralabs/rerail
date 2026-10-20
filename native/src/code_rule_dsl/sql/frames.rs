@@ -3,8 +3,9 @@
 //! the session owns, instead of TEMP B-trees. A statement appends to a frame through `xUpdate`
 //! (`INSERT … SELECT`) and reads it through `xFilter`: a scan in the table's key order, or an
 //! equality lookup through an index built on the frame's first read constrained on those columns
-//! and kept until the frame is written again. The driver empties a frame directly (`CLEAR`), and
-//! an emptied frame keeps its buffers for the next batch, up to `RETAIN` rows.
+//! and kept until the frame is written again. The driver empties a frame directly (`CLEAR`),
+//! keeping its buffers for the rest of the batch; when the batch ends, every frame is emptied and
+//! its buffers freed (`FrameStore::release`).
 //!
 //! Each frame is an eponymous virtual table: a module registered under the frame's name, whose
 //! declaration the module's data carries (`FrameStore::register`). Creating one writes nothing to
@@ -53,10 +54,6 @@ pub(super) const FRAME: &str = "/*FRAME*/";
 
 /// The most rows a session's frames hold at once: a batch that would hold more fails.
 pub(super) const BUDGET: usize = 1 << 26;
-
-/// The rows a frame's buffers keep across batches; a frame that held more frees the rest when
-/// the batch ends.
-const RETAIN: usize = 1 << 16;
 
 /// The `xBestIndex` cost of a full scan: a stat-less B-tree's row estimate, so that plans weigh
 /// a frame as they weighed its table.
@@ -239,22 +236,25 @@ impl FrameStore {
         self.frames.lock().get(name).map(|shared| shared.get().len)
     }
 
-    /// Frees what emptied frames keep beyond `RETAIN` rows: a large batch does not keep its
-    /// memory for the batches after it.
-    pub(super) fn trim(&self) {
+    /// Empties every frame and frees its buffers, when a batch ends. A program has tens of
+    /// thousands of frames and a batch runs a few of them, so buffers kept for the next batch add
+    /// up to every frame's largest batch (1.2 GiB over four sessions on the data-layer policies),
+    /// where a session freeing them holds only the batch that runs. The next batch fills a frame
+    /// before it reads it, as a new session's first batch does.
+    pub(super) fn release(&self) {
         for shared in self.frames.lock().values() {
             // SAFETY: as in `clear`.
             let frame = unsafe { shared.get_mut() };
-            if frame.len == 0 {
-                for column in &mut frame.columns {
-                    column.trim();
-                }
+            self.live.fetch_sub(frame.len, Atomic::Relaxed);
+            frame.clear();
+            for column in &mut frame.columns {
+                column.release();
             }
         }
     }
 
-    /// The bytes the frames' column buffers hold allocated, rows or not (an emptied frame keeps up
-    /// to `RETAIN` rows' worth); a text or blob value's own bytes are not counted.
+    /// The bytes the frames' column buffers hold allocated, rows or not (between batches, none:
+    /// `release`); a text or blob value's own bytes are not counted.
     pub(super) fn bytes(&self) -> usize {
         self.frames
             .lock()
@@ -629,15 +629,9 @@ impl Column {
         self.nulls.clear();
     }
 
-    fn trim(&mut self) {
-        if let Data::Narrow(values) = &mut self.data
-            && values.capacity() > RETAIN
-        {
-            values.shrink_to(RETAIN);
-        }
-        if self.nulls.capacity() > RETAIN / 64 {
-            self.nulls.shrink_to(RETAIN / 64);
-        }
+    fn release(&mut self) {
+        self.data = Data::Narrow(Vec::new());
+        self.nulls = Vec::new();
     }
 }
 

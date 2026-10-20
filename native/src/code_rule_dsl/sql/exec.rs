@@ -2071,19 +2071,12 @@ impl Session {
         drop(scopes);
         *self.slot.current.write() = None;
         if result.is_err() {
+            // The frames are emptied below, as after every batch.
             for (table, made) in self.plan.tables.iter().zip(&self.made) {
-                if !made {
-                    continue;
-                }
-                match table.make {
-                    Make::Frame(_) => {
-                        self.frames.clear(&table.name);
-                    }
-                    Make::BTree(_) => {
-                        self.connection
-                            .prepare_cached(&format!("DELETE FROM {}", table.name))?
-                            .execute([])?;
-                    }
+                if *made && matches!(table.make, Make::BTree(_)) {
+                    self.connection
+                        .prepare_cached(&format!("DELETE FROM {}", table.name))?
+                        .execute([])?;
                 }
             }
             for clear in [CLEAR_RUNS, CLEAR_ROOTS] {
@@ -2091,7 +2084,7 @@ impl Session {
             }
             self.counts.reset();
         }
-        self.frames.trim();
+        self.frames.release();
         result
     }
 
