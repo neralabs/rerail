@@ -1085,6 +1085,149 @@ pub(super) struct SqlOutcome {
     pub(super) columns: Vec<String>,
 }
 
+pub(super) fn sql_workspace_ranges(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    files: &[(String, String)],
+) -> (Vec<(usize, usize, usize)>, Vec<String>) {
+    let plan =
+        SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("workspace SQL lowering");
+    let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
+    let mut tapes = Vec::new();
+    let mut anchors = Vec::new();
+    for (_, source) in files {
+        let source = Arc::new(source.clone());
+        let image = TapeImage::parse(&grammar, &source, &|| false)
+            .expect("parser completed")
+            .expect("tape image");
+        let tape = TapeDoc::restore(Arc::clone(&source), grammar.clone(), &image, &|| false)
+            .expect("restored tape");
+        let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+        anchors.push(
+            plan.terminals()
+                .iter()
+                .map(|terminal| {
+                    if terminal.kind() == TerminalKind::File {
+                        Vec::new()
+                    } else if terminal.kind() == TerminalKind::Navigation {
+                        vec![0]
+                    } else {
+                        roots.clone()
+                    }
+                })
+                .collect(),
+        );
+        tapes.push(tape);
+    }
+    let producer_kinds = plan
+        .terminals()
+        .iter()
+        .map(|terminal| terminal.producer_kind())
+        .collect::<Vec<_>>();
+    let demand = PackedDemand::new(
+        ExecutionBackend::CpuJit,
+        plan.terminals()
+            .iter()
+            .map(|terminal| terminal.program().clone())
+            .collect(),
+        tapes,
+        anchors,
+        vec![vec![true; plan.terminals().len()]; files.len()],
+        plan.terminals()
+            .iter()
+            .map(|terminal| terminal.result_limit())
+            .collect(),
+    )
+    .and_then(|demand| demand.with_producer_kinds(producer_kinds))
+    .and_then(|demand| {
+        demand.with_value_facts(
+            plan.terminals()
+                .iter()
+                .map(|terminal| terminal.value_fact())
+                .collect(),
+        )
+    })
+    .and_then(|demand| {
+        demand.with_semantic_facts(
+            plan.terminals()
+                .iter()
+                .map(|terminal| terminal.semantic_fact())
+                .collect(),
+        )
+    })
+    .and_then(|demand| {
+        demand.with_file_facts(
+            plan.terminals()
+                .iter()
+                .map(|terminal| terminal.file_fact())
+                .collect(),
+            files.iter().map(|(path, _)| path.clone()).collect(),
+        )
+    })
+    .and_then(|demand| {
+        demand.with_parse_facts(
+            plan.terminals()
+                .iter()
+                .map(|terminal| terminal.parse_fact())
+                .collect(),
+        )
+    })
+    .and_then(|demand| demand.with_document_maps(Vec::new(), false))
+    .expect("immutable workspace demand");
+    let connection = Connection::open_in_memory().expect("in-memory SQLite");
+    let registry = Arc::new(MatchRegistry::default());
+    register_module(&connection, Arc::clone(&registry)).expect("packed virtual table");
+    let token = registry.register(demand);
+    let mut statement = connection
+        .prepare(plan.sql())
+        .expect("workspace SQL statement");
+    let columns = statement
+        .column_names()
+        .iter()
+        .map(|name| name.to_string())
+        .collect::<Vec<_>>();
+    let column = |name: &str| columns.iter().position(|column| column == name);
+    let file = column("file_index").expect("file column");
+    let start = column("start_byte").expect("start column");
+    let end = column("end_byte").expect("end column");
+    let error = column("error_code");
+    let rows = statement
+        .query_map([token], |row| {
+            Ok((
+                row.get::<_, Option<i64>>(file)?,
+                row.get::<_, Option<i64>>(start)?,
+                row.get::<_, Option<i64>>(end)?,
+                error
+                    .map(|column| row.get::<_, Option<String>>(column))
+                    .transpose()?
+                    .flatten(),
+            ))
+        })
+        .expect("workspace query")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("workspace rows");
+    let mut ranges = rows
+        .iter()
+        .filter_map(|(file, start, end, error)| {
+            if error.is_none() {
+                Some((
+                    usize::try_from((*file)?).ok()?,
+                    usize::try_from((*start)?).ok()?,
+                    usize::try_from((*end)?).ok()?,
+                ))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut errors = rows
+        .into_iter()
+        .filter_map(|(_, _, _, error)| error)
+        .collect::<Vec<_>>();
+    ranges.sort_unstable();
+    errors.sort();
+    (ranges, errors)
+}
+
 pub(super) fn sql_outcome(
     compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
     source: &str,

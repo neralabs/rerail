@@ -1,0 +1,1 @@
+-- Independently authored Phase 6 clause-level SQL contracts.

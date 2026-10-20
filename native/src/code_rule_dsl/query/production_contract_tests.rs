@@ -180,6 +180,30 @@ fn phase_five_authored_sql_goldens() -> std::collections::BTreeMap<String, Strin
         .collect()
 }
 
+fn phase_six_authored_sql_goldens() -> std::collections::BTreeMap<String, String> {
+    include_str!("../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_6.sql")
+        .split("-- fixture: ")
+        .skip(1)
+        .map(|section| {
+            let (name, body) = section
+                .split_once('\n')
+                .expect("a Phase 6 SQL fixture name");
+            let start = body.find("WITH ").expect("a Phase 6 SQL statement");
+            (
+                name.trim().to_owned(),
+                normalized_sql(body[start..].trim().trim_end_matches(';')),
+            )
+        })
+        .collect()
+}
+
+fn phase_six_implementation_goldens() -> ImplementationGoldenFile {
+    serde_json::from_str(include_str!(
+        "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_6.json"
+    ))
+    .expect("the Phase 6 implementation goldens have the strict schema")
+}
+
 fn phase_five_implementation_goldens() -> ImplementationGoldenFile {
     serde_json::from_str(include_str!(
         "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_5.json"
@@ -1824,6 +1848,55 @@ fn production_contract_phase_five_has_complete_authored_sql_and_catalogs() {
 }
 
 #[test]
+fn production_contract_phase_six_has_complete_authored_sql_and_catalogs() {
+    let names = [
+        "clause-forbid-content-regex",
+        "clause-forbid-path-regex",
+        "clause-select-when-exists",
+        "clause-select-when-absent",
+        "clause-require-each",
+        "clause-budget-maximum",
+        "clause-budget-distinct",
+        "clause-budget-group",
+        "clause-file-condition",
+        "clause-syntax-error-unknown",
+    ];
+    let sql = phase_six_authored_sql_goldens();
+    let catalogs = phase_six_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|case| (case.name.clone(), case))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(
+        sql.len(),
+        names.len(),
+        "complete authored Phase 6 SQL inventory"
+    );
+    assert_eq!(
+        catalogs.len(),
+        names.len(),
+        "complete authored Phase 6 catalog inventory"
+    );
+    for name in names {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("Phase 6 contract");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            sql.get(name),
+            Some(&actual.normalized_sql),
+            "{name}: authored SQL"
+        );
+        assert_eq!(
+            catalogs.get(name).map(|case| &case.terminal_catalog),
+            Some(&actual.terminal_catalog),
+            "{name}: authored catalog"
+        );
+    }
+}
+
+#[test]
 fn production_contract_phase_six_file_and_select_clauses_equal_oracles() {
     for (name, source, ranges) in [
         ("clause-forbid-content-regex", "unsafe call\n", vec![(0, 6)]),
@@ -1848,6 +1921,55 @@ fn production_contract_phase_six_file_and_select_clauses_equal_oracles() {
         let outcome = super::policy_lowering_tests::sql_outcome(&compiled, source);
         assert_eq!(outcome.ranges, ranges, "{name}: SQL ranges");
         assert!(outcome.errors.is_empty(), "{name}: SQL failures");
+    }
+}
+
+#[test]
+fn production_contract_phase_six_cross_file_clauses_equal_oracles() {
+    let contracts = [
+        (
+            "clause-require-each",
+            vec![
+                ("contract.py", "subject(a)\n"),
+                ("second.py", "subject(a)\n"),
+            ],
+            vec![(0, 0, 10), (1, 0, 10)],
+        ),
+        (
+            "clause-budget-maximum",
+            vec![("contract.py", "a\nb\n"), ("second.py", "a\nb\n")],
+            vec![(0, 0, 4)],
+        ),
+        (
+            "clause-budget-distinct",
+            vec![("contract.py", "a\na\nb\n"), ("second.py", "a\na\nb\n")],
+            vec![(0, 0, 6)],
+        ),
+        (
+            "clause-budget-group",
+            vec![("contract.py", "a\nb\n"), ("second.py", "a\nb\n")],
+            vec![(0, 0, 4), (1, 0, 4)],
+        ),
+    ];
+    for (name, files, expected) in contracts {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the Phase 6 contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("Phase 6 policy compiles");
+        let files = files
+            .into_iter()
+            .map(|(path, source)| (path.to_owned(), source.to_owned()))
+            .collect::<Vec<_>>();
+        let (ranges, errors) =
+            super::policy_lowering_tests::sql_workspace_ranges(&compiled, &files);
+        assert_eq!(ranges, expected, "{name}: SQL ranges");
+        assert!(errors.is_empty(), "{name}: SQL failures: {errors:?}");
     }
 }
 
