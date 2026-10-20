@@ -214,6 +214,7 @@ pub(super) struct SemanticFactSpec {
     pub(super) producer: usize,
     pub(super) argument_labels: Vec<String>,
     pub(super) rules: Vec<SemanticRuleSpec>,
+    pub(super) require_all_candidates: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -936,7 +937,11 @@ impl SqlRenderer {
             && let Some(source_producer) = Self::terminal_producer(source)?
         {
             if spec.rules.is_empty() {
-                return self.render_simple_semantic_gate(source_producer, spec.producer);
+                return self.render_simple_semantic_gate(
+                    source_producer,
+                    spec.producer,
+                    spec.require_all_candidates,
+                );
             }
             if let [rule] = spec.rules.as_slice() {
                 if let Some(target_kind) = rule.target_kind {
@@ -1117,6 +1122,7 @@ impl SqlRenderer {
         &mut self,
         source_producer: usize,
         fact_producer: usize,
+        require_all_candidates: bool,
     ) -> Result<String, String> {
         let source = self.render_terminal_producer(source_producer, "source")?;
         let gate = self.next_name("semantic_gate");
@@ -1124,8 +1130,13 @@ impl SqlRenderer {
             "gate",
             "CASE WHEN gate.verdict < 0 THEN NULL ELSE gate.verdict END",
         );
+        let candidate_guard = if require_all_candidates {
+            "\n    AND NOT EXISTS (SELECT 1 FROM fact candidate WHERE candidate.producer_id = gate.producer_id AND candidate.file_index = gate.file_index AND candidate.node = gate.node AND candidate.match_index = gate.match_index AND candidate.fact_kind = 8 AND candidate.verdict IS NOT 1)"
+        } else {
+            ""
+        };
         self.ctes.push(format!(
-            "{gate} AS (\n  SELECT {gate_columns}, COALESCE((SELECT json_group_array(json(value)) FROM (SELECT json_object('label', input.output_label, 'occurrence', input.capture_occurrence, 'node', input.related_node, 'text', input.source_text, 'structure', input.structural_key, 'leaf', input.named_leaf, 'kind', input.capture_kind, 'named', input.capture_named, 'equality_occurrence', input.equality_occurrence) AS value FROM fact input WHERE input.producer_id = gate.producer_id AND input.file_index = gate.file_index AND input.node = gate.node AND input.fact_kind = 17 AND input.match_index = gate.match_index)), json('[]')) AS bindings, '' AS choice_order FROM fact gate\n  JOIN producer_status status USING (producer_id, file_index)\n  WHERE gate.producer_id = {fact_producer} AND gate.fact_kind = 0 AND status.complete = 1 AND gate.verdict <> 0\n)"
+            "{gate} AS (\n  SELECT {gate_columns}, COALESCE((SELECT json_group_array(json(value)) FROM (SELECT json_object('label', input.output_label, 'occurrence', input.capture_occurrence, 'node', input.related_node, 'text', input.source_text, 'structure', input.structural_key, 'leaf', input.named_leaf, 'kind', input.capture_kind, 'named', input.capture_named, 'equality_occurrence', input.equality_occurrence) AS value FROM fact input WHERE input.producer_id = gate.producer_id AND input.file_index = gate.file_index AND input.node = gate.node AND input.fact_kind = 17 AND input.match_index = gate.match_index)), json('[]')) AS bindings, '' AS choice_order FROM fact gate\n  JOIN producer_status status USING (producer_id, file_index)\n  WHERE gate.producer_id = {fact_producer} AND gate.fact_kind = 0 AND status.complete = 1 AND gate.verdict <> 0{candidate_guard}\n)"
         ));
         let resolved = self.next_name("resolved");
         let verdict = "CASE WHEN source.verdict = 0 OR semantic.verdict = 0 THEN 0 WHEN source.verdict IS NULL OR semantic.verdict IS NULL THEN NULL ELSE 1 END";

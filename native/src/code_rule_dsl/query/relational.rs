@@ -472,6 +472,11 @@ impl Builder {
                 .collect(),
             _ => Vec::new(),
         };
+        let require_all_candidates = matches!(
+            semantic,
+            Semantic::Binds(test)
+                if test.redefines.as_ref().is_some_and(|redefines| redefines.every)
+        );
         let argument_labels = match semantic {
             Semantic::Arguments(arguments) => arguments
                 .bind
@@ -540,6 +545,7 @@ impl Builder {
             producer: id,
             argument_labels,
             rules,
+            require_all_candidates,
         });
     }
 

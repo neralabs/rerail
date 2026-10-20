@@ -648,6 +648,47 @@ fn production_contract_phase_four_redefinitions_match_authored_sql() {
 }
 
 #[test]
+fn production_contract_phase_four_every_redefinition_rejects_non_true_candidates() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-redefines-every")
+        .expect("the every-redefinition contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("the every-redefinition policy compiles");
+    let statements = authored_sql_goldens();
+    let sql = &statements[&case.name];
+    let original = "fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6)";
+    for (state, verdict) in [("false", "0"), ("unknown", "NULL")] {
+        let columns = format!(
+            "batch, 6, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, 8, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, {verdict}, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence"
+        );
+        let injected = format!(
+            "fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6 UNION ALL SELECT {columns} FROM packed gate WHERE gate.row_kind = 6 AND gate.fact_kind = 0)"
+        );
+        let sql = sql.replacen(original, &injected, 1);
+        assert_ne!(sql, statements[&case.name], "candidate injection applied");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::TypeScript,
+            &sql,
+        );
+        assert!(
+            outcome.ranges.is_empty(),
+            "a {state} slot-8 candidate prevents every-redefinition truth"
+        );
+        assert!(
+            outcome.errors.is_empty(),
+            "candidate {state} is not a producer failure"
+        );
+    }
+}
+
+#[test]
 fn production_contract_phases_two_to_four_match_authored_sql_statements() {
     let expected = authored_sql_goldens();
     let expected_names = PHASE_TWO_CASES
