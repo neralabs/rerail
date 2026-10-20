@@ -171,11 +171,14 @@ fn walks_read_their_sub_rule_kinds_and_a_double_negation_is_a_semi_join() {
         let grammars: Vec<_> = grammar_matchers(&rule).iter().collect();
         let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
         let statements: Vec<&String> = program.statements().collect();
+        // With kinds, one `nearest` filter over the input's nodes (`nearest::descendants`).
         let walk = statements
             .iter()
-            .find(|statement| statement.contains("c.id <= fn.\"last\""))
+            .find(|statement| {
+                statement.contains("c.id <= fn.\"last\"") || statement.contains("c.srcs IN (")
+            })
             .expect("a has-end walk");
-        assert_eq!(walk.contains("c.kind IN ("), narrowed, "{walk}");
+        assert_eq!(walk.contains("c.kinds = '"), narrowed, "{walk}");
         if sub.get("all").is_some_and(|all| all[0] == calls) {
             assert!(
                 !statements
@@ -213,9 +216,12 @@ fn walks_test_field_shapes_skip_implied_kind_tests_and_key_without_unbound_slots
     let statements: Vec<&String> = program.statements().collect();
     let walk = statements
         .iter()
-        .find(|statement| statement.contains("c.id <= fn.\"last\""))
-        .expect("a has-end walk");
-    assert!(walk.contains(".field = "), "the walk tests the field shape: {walk}");
+        .find(|statement| statement.contains("c.srcs IN ("))
+        .expect("a has-end walk with kinds");
+    assert!(
+        walk.contains("c.shape = 'F") && !walk.contains("ffirst"),
+        "the walk tests the field shape natively: {walk}"
+    );
     assert!(
         !statements.iter().any(|statement| statement
             .contains("JOIN node n ON n.file = f.file AND n.id = f.node WHERE n.kind")),
@@ -249,8 +255,8 @@ fn a_walk_s_candidates_hold_only_the_slots_read_after_them() {
         let statements: Vec<&String> = program.statements().collect();
         let walk = statements
             .iter()
-            .find(|statement| statement.contains("c.id <= fn.\"last\""))
-            .expect("a has-end walk");
+            .find(|statement| statement.contains("c.srcs IN ("))
+            .expect("a has-end walk with kinds");
         // Each held slot's column: copied from the row, or `NULL` where no row binds it.
         let copied = walk
             .split_once("SELECT NULL, c.file, c.node")
