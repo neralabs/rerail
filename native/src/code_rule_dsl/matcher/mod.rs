@@ -57,7 +57,7 @@ pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
 pub(crate) use nth_child::{named_sibling_visits, reset_named_sibling_visits};
 pub(crate) use parse::{HostTest, ParseTest};
 use regex::Regex;
-pub(super) use relation::{FieldRelation, Related, StopBy, may_bind, stop_rule};
+pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
 #[cfg(test)]
 pub(super) use relation::{set_answers_off, set_same_key_off};
 pub(crate) use resolve::SubTables;

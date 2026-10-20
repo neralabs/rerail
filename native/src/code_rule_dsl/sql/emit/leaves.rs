@@ -316,7 +316,7 @@ impl Emitter<'_> {
             }
             .expect("write to a string");
         }
-        entry.push_str(&self.zeros());
+        entry.push_str(self.zeros());
         let roots = self.frame(
             "i",
             &format!(
@@ -381,7 +381,7 @@ impl Emitter<'_> {
             }
             .expect("write to a string");
         }
-        select.push_str(&self.zeros());
+        select.push_str(self.zeros());
         let at_host = self.frame_with(
             "h",
             &with,

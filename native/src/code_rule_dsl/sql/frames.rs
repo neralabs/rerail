@@ -75,15 +75,15 @@ fn table_after<'s>(sql: &'s str, prefix: &str) -> Option<&'s str> {
 /// `INDEX (…)` entries of its declaration (the plans weigh them as before; a frame builds an
 /// index on its first read on those columns), and emptying it whole becomes a `CLEAR` step.
 pub(super) fn rewrite(statements: Vec<String>) -> Vec<String> {
-    let mut mutated = std::collections::HashSet::new();
+    let mut mutated: std::collections::HashSet<String> = std::collections::HashSet::new();
     // Each table's indexed columns, as `INDEX (…)` arguments.
-    let mut indexes: HashMap<&str, String> = HashMap::new();
+    let mut indexes: HashMap<String, String> = HashMap::new();
     for sql in &statements {
-        mutated.extend(table_after(sql, "UPDATE "));
+        mutated.extend(table_after(sql, "UPDATE ").map(str::to_owned));
         if let Some(name) = table_after(sql, "DELETE FROM ")
             && sql.len() > "DELETE FROM ".len() + name.len()
         {
-            mutated.insert(name);
+            mutated.insert(name.to_owned());
         }
         if sql.starts_with("CREATE INDEX ")
             && let Some((_, on)) = sql.split_once(" ON ")
@@ -91,14 +91,14 @@ pub(super) fn rewrite(statements: Vec<String>) -> Vec<String> {
         {
             let columns = columns.trim_end().trim_end_matches(')');
             indexes
-                .entry(name.trim())
+                .entry(name.trim().to_owned())
                 .or_default()
                 .push_str(&format!(", INDEX ({columns})"));
         }
     }
     let mut frames = std::collections::HashSet::new();
     let mut rewritten = Vec::with_capacity(statements.len());
-    for sql in &statements {
+    for sql in statements {
         if let Some(rest) = sql.strip_prefix("CREATE TEMP TABLE ") {
             let rest = rest.strip_prefix("IF NOT EXISTS ").unwrap_or(rest);
             if let (Some(open), Some(close)) = (rest.find('('), rest.rfind(')'))
@@ -107,12 +107,13 @@ pub(super) fn rewrite(statements: Vec<String>) -> Vec<String> {
                 let name = rest[..open].trim();
                 // A column default keeps the B-tree: SQLite passes an omitted column as NULL.
                 if !mutated.contains(name) && !rest.contains(" DEFAULT ") {
-                    frames.insert(name.to_owned());
-                    rewritten.push(format!(
+                    let frame = format!(
                         "{FRAME}{name}({}{})",
                         &rest[open + 1..close],
                         indexes.get(name).map_or("", String::as_str)
-                    ));
+                    );
+                    frames.insert(name.to_owned());
+                    rewritten.push(frame);
                     continue;
                 }
             }
@@ -130,7 +131,7 @@ pub(super) fn rewrite(statements: Vec<String>) -> Vec<String> {
             rewritten.push(format!("{CLEAR}{name}"));
             continue;
         }
-        rewritten.push(sql.clone());
+        rewritten.push(sql);
     }
     rewritten
 }

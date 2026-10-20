@@ -45,7 +45,7 @@ use super::plan::{SlotKind, Unsupported};
 use super::terminals::pattern_vars;
 use crate::code_rule_dsl::matcher::{AstMatcher, Semantic, UtilRef, stop_rule};
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// A utility's identity: its table and index.
 pub(super) type UtilKey = (usize, usize);
@@ -227,23 +227,23 @@ impl Cycle {
 /// Which utilities are recursive, worked out once per utility.
 #[derive(Default)]
 pub(super) struct Recursion {
-    cycles: HashMap<UtilKey, Option<Rc<Cycle>>>,
+    cycles: HashMap<UtilKey, Option<Arc<Cycle>>>,
     /// Per utility table: the captures each utility's scope holds (`scope_kinds`).
-    scopes: HashMap<usize, Rc<Vec<Held>>>,
+    scopes: HashMap<usize, Arc<Vec<Held>>>,
 }
 
 impl Recursion {
     /// The cycle `util` belongs to; `None` where it is not recursive.
-    pub(super) fn cycle(&mut self, util: &UtilRef) -> Option<Rc<Cycle>> {
+    pub(super) fn cycle(&mut self, util: &UtilRef) -> Option<Arc<Cycle>> {
         let key = util_key(util);
         if let Some(known) = self.cycles.get(&key) {
             return known.clone();
         }
-        let cycle = Cycle::of(util).map(Rc::new);
+        let cycle = Cycle::of(util).map(Arc::new);
         match &cycle {
             Some(cycle) => {
                 for member in &cycle.keys {
-                    self.cycles.insert(*member, Some(Rc::clone(cycle)));
+                    self.cycles.insert(*member, Some(Arc::clone(cycle)));
                 }
             }
             None => {
@@ -262,11 +262,11 @@ impl Recursion {
         };
         let address = util.table.as_ptr() as usize;
         let scopes = match self.scopes.get(&address) {
-            Some(scopes) => Rc::clone(scopes),
+            Some(scopes) => Arc::clone(scopes),
             None => {
                 let rules = table.rules.get().or_else(|| table.draft.get());
-                let scopes = Rc::new(rules.map_or_else(Vec::new, |rules| table_scopes(rules)));
-                self.scopes.insert(address, Rc::clone(&scopes));
+                let scopes = Arc::new(rules.map_or_else(Vec::new, |rules| table_scopes(rules)));
+                self.scopes.insert(address, Arc::clone(&scopes));
                 scopes
             }
         };

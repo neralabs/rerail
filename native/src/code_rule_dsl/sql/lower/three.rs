@@ -3,7 +3,7 @@
 //! relations as strict or open searches.
 
 use super::{Bound, Lowerer};
-use crate::code_rule_dsl::matcher::{AstMatcher, CaptureAnalysis, may_bind, reads_values};
+use crate::code_rule_dsl::matcher::AstMatcher;
 use crate::code_rule_dsl::sql::plan::{AllTerm, Op, Unsupported, Walk};
 use std::collections::BTreeSet;
 
@@ -18,18 +18,24 @@ impl Lowerer<'_> {
         scope: usize,
         bound: &Bound,
     ) -> Result<(Op, Bound), Unsupported> {
-        let mut analysis = CaptureAnalysis::default();
+        let analysis = &mut self.program.analysis;
+        let mut analyses = Vec::with_capacity(items.len());
+        for item in items {
+            analyses.push((
+                analysis.captures.mentions(item),
+                analysis.captures.binds(item),
+                !item.binds_nothing() && analysis.reads_values(item),
+            ));
+        }
         let mut current = bound.clone();
         let mut held = BTreeSet::new();
         let mut lowered = Vec::with_capacity(items.len());
-        for item in items {
+        for (item, (mentions, binds, unknown_binds)) in items.iter().zip(analyses) {
             let (op, out) = self.lower(item, scope, &current)?;
             current = out;
-            let mentions = analysis.mentions(item);
-            let binds = analysis.binds(item);
             let checked = !mentions.is_disjoint(&held);
             let withholds = !item.binds_nothing();
-            if checked || (withholds && reads_values(item, &mut BTreeSet::new())) {
+            if checked || unknown_binds {
                 held.extend(binds.iter().cloned());
             }
             lowered.push((op, mentions, binds, withholds, checked));
@@ -62,7 +68,8 @@ impl Lowerer<'_> {
         let mut out = bound.clone();
         for item in items {
             let (op, branch) = self.lower(item, scope, bound)?;
-            branches.push((self.excluding(scope, op), may_bind(item)));
+            let may_bind = self.program.analysis.may_bind(item);
+            branches.push((self.excluding(scope, op), may_bind));
             out.extend(branch);
         }
         Ok((Op::AnyOpen(branches), out))
@@ -100,7 +107,7 @@ impl Lowerer<'_> {
                 walk,
                 sub: Box::new(sub),
                 binds,
-                strict: may_bind(rule),
+                strict: self.program.analysis.may_bind(rule),
                 kinds: self.walk_kinds(rule),
             },
             out,

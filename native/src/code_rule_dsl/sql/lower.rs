@@ -15,6 +15,7 @@ use super::recursion::{self, Cycle, Recursion, UtilKey, util_key};
 use super::terminals::{
     FACT_COLUMNS, FactTerm, Leaf, PATTERN_COLUMNS, PatternTerm, Terminal, Verdicts,
 };
+use super::timing::{Timing, timed};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::{
     AstMatcher, CaptureAnalysis, GrammarMatcher, Related, Semantic, StopBy, UtilRef, reads_values,
@@ -63,9 +64,76 @@ pub(super) struct ProgramBuilder {
     /// When set, an operator the engine does not lower is recorded here and lowered as `Never`,
     /// so a census reads every refusal of a clause, not only its first.
     pub(super) census: Option<Vec<Unsupported>>,
+    /// What lowering asks of the matchers, once per matcher over the program's clauses.
+    analysis: Analysis,
+    /// The time emitting the stages took, as lowering reached them.
+    pub(super) stage_emission: Timing,
+}
+
+/// The capture and value analyses lowering reads (`CaptureAnalysis`, `reads_values`,
+/// `may_bind`), each a function of the matcher alone, memoized over the whole program by the
+/// matcher's address: the program's rules outlive it. The capture analysis's utility summaries
+/// are keyed by which compilation of a utility they read, so one analysis spans every rule.
+#[derive(Default)]
+pub(super) struct Analysis {
+    captures: CaptureAnalysis,
+    values: HashMap<usize, bool>,
+    binding: HashMap<usize, bool>,
+}
+
+impl Analysis {
+    /// `matcher::reads_values`, with no utility seen yet.
+    fn reads_values(&mut self, matcher: &AstMatcher) -> bool {
+        *self
+            .values
+            .entry(std::ptr::from_ref(matcher) as usize)
+            .or_insert_with(|| reads_values(matcher, &mut BTreeSet::new()))
+    }
+
+    /// `relation::may_bind`: whether the matcher binds or counts a capture.
+    fn may_bind(&mut self, matcher: &AstMatcher) -> bool {
+        let key = std::ptr::from_ref(matcher) as usize;
+        if let Some(&binds) = self.binding.get(&key) {
+            return binds;
+        }
+        let binds =
+            !self.captures.binds(matcher).is_empty() || !self.captures.counts(matcher).is_empty();
+        self.binding.insert(key, binds);
+        binds
+    }
+
+    /// Whether a rule reads, binds or counts no capture: its verdict at a node is the node's
+    /// alone.
+    fn capture_free(&mut self, rule: &AstMatcher) -> bool {
+        self.captures.mentions(rule).is_empty() && self.captures.counts(rule).is_empty()
+    }
 }
 
 impl ProgramBuilder {
+    /// `clause_each`, leaving the program as it was where the engine refuses the clause: a
+    /// refused clause leaves no stage or terminal in the program. Lowering only appends to the
+    /// terminals and the stages, and the indexes it adds point past what was there before; the
+    /// analyses it memoizes are of the matchers alone.
+    pub(super) fn clause_or_nothing(
+        &mut self,
+        grammar: &GrammarMatcher,
+        each: Option<&str>,
+    ) -> Result<Statement, Unsupported> {
+        let (terminals, stages) = (self.terminals.len(), self.stages.len());
+        let lowered = self.clause_each(grammar, each);
+        if lowered.is_err() {
+            self.terminals.truncate(terminals);
+            self.stages.truncate(stages);
+            self.stage_index.retain(|_, stage| *stage < stages);
+            self.stage_rules.retain(|_, stage| *stage < stages);
+            self.regexes.retain(|_, term| *term < terminals);
+            self.fresh_patterns.retain(|_, term| *term < terminals);
+            self.leaves.retain(|_, term| *term < terminals);
+            self.in_progress.clear();
+        }
+        lowered
+    }
+
     /// Lowers one clause's grammar matcher to its statement; under `violation.each` (`each`, the
     /// enumerated capture), the statement records each row's root and excludes the ranges the
     /// driver reports per root (`Op::EachRoot`, `Op::Excluded`).
@@ -143,12 +211,6 @@ fn unsupported<T>(operator: &str) -> Result<T, Unsupported> {
     Err(Unsupported(operator.to_owned()))
 }
 
-/// Whether a rule reads, binds or counts no capture: its verdict at a node is the node's alone.
-fn capture_free(rule: &AstMatcher) -> bool {
-    let mut analysis = CaptureAnalysis::default();
-    analysis.mentions(rule).is_empty() && analysis.counts(rule).is_empty()
-}
-
 /// The kinds a node must have for a rule to match it: at a node of any other kind the rule is
 /// false, and three-valued not unknown either (`None` where any kind may). A relation's walk reads
 /// only its sub-rule's kinds (`Op::Relation::kinds`); a stage holds only its rule's.
@@ -160,7 +222,6 @@ fn capture_free(rule: &AstMatcher) -> bool {
 /// recursive reference) may match any kind.
 pub(super) struct RootKinds {
     three: bool,
-    captures: CaptureAnalysis,
     /// Each utility's rule's kinds, by the rule's address.
     utilities: HashMap<usize, Option<BTreeSet<u16>>>,
     /// The utilities being analysed.
@@ -171,13 +232,16 @@ impl RootKinds {
     pub(super) fn new(three: bool) -> Self {
         Self {
             three,
-            captures: CaptureAnalysis::default(),
             utilities: HashMap::new(),
             visiting: HashSet::new(),
         }
     }
 
-    pub(super) fn of(&mut self, rule: &AstMatcher) -> Option<BTreeSet<u16>> {
+    pub(super) fn of(
+        &mut self,
+        rule: &AstMatcher,
+        analysis: &mut Analysis,
+    ) -> Option<BTreeSet<u16>> {
         match rule {
             AstMatcher::Pattern(pattern) => pattern
                 .potential_kinds()
@@ -188,7 +252,7 @@ impl RootKinds {
             AstMatcher::Any(items) => {
                 let mut kinds = BTreeSet::new();
                 for item in items {
-                    kinds.extend(self.of(item)?);
+                    kinds.extend(self.of(item, analysis)?);
                 }
                 Some(kinds)
             }
@@ -198,17 +262,15 @@ impl RootKinds {
                 let mut held = BTreeSet::new();
                 for item in items {
                     if self.three {
-                        let checked = !self.captures.mentions(item).is_disjoint(&held);
-                        if checked
-                            || (!item.binds_nothing() && reads_values(item, &mut BTreeSet::new()))
-                        {
-                            held.extend(self.captures.binds(item));
+                        let checked = !analysis.captures.mentions(item).is_disjoint(&held);
+                        if checked || (!item.binds_nothing() && analysis.reads_values(item)) {
+                            held.extend(analysis.captures.binds(item));
                         }
                         if checked {
                             continue;
                         }
                     }
-                    if let Some(own) = self.of(item) {
+                    if let Some(own) = self.of(item, analysis) {
                         kinds = Some(match kinds {
                             Some(kinds) => kinds.intersection(&own).copied().collect(),
                             None => own,
@@ -218,18 +280,23 @@ impl RootKinds {
                 kinds
             }
             AstMatcher::Not(inner) => match &**inner {
-                AstMatcher::Not(rule) => self.of(rule),
+                AstMatcher::Not(rule) => self.of(rule, analysis),
                 _ => None,
             },
-            AstMatcher::Constrained(core) => self.of(&core.rule),
-            AstMatcher::Util(util) => util.with_target(|rule| self.utility(rule)).flatten(),
-            AstMatcher::Call(call) => call.util.with_target(|rule| self.utility(rule)).flatten(),
+            AstMatcher::Constrained(core) => self.of(&core.rule, analysis),
+            AstMatcher::Util(util) => util
+                .with_target(|rule| self.utility(rule, analysis))
+                .flatten(),
+            AstMatcher::Call(call) => call
+                .util
+                .with_target(|rule| self.utility(rule, analysis))
+                .flatten(),
             AstMatcher::Never => Some(BTreeSet::new()),
             _ => None,
         }
     }
 
-    fn utility(&mut self, rule: &AstMatcher) -> Option<BTreeSet<u16>> {
+    fn utility(&mut self, rule: &AstMatcher, analysis: &mut Analysis) -> Option<BTreeSet<u16>> {
         let key = std::ptr::from_ref(rule) as usize;
         if let Some(kinds) = self.utilities.get(&key) {
             return kinds.clone();
@@ -237,7 +304,7 @@ impl RootKinds {
         if !self.visiting.insert(key) {
             return None;
         }
-        let kinds = self.of(rule);
+        let kinds = self.of(rule, analysis);
         self.visiting.remove(&key);
         self.utilities.insert(key, kinds.clone());
         kinds
@@ -411,7 +478,7 @@ impl<'p> Lowerer<'p> {
         let three = self.three;
         self.kinds
             .get_or_insert_with(|| RootKinds::new(three))
-            .of(rule)
+            .of(rule, &mut self.program.analysis)
             .map(|kinds| kinds.into_iter().collect())
     }
 
@@ -556,7 +623,7 @@ impl<'p> Lowerer<'p> {
         if params.is_none() && !super::mutant(18) {
             let held_names: BTreeSet<&str> = held.iter().map(|(name, _)| name.as_str()).collect();
             let read: BTreeSet<String> = util
-                .with_target(|rule| CaptureAnalysis::default().mentions(rule))
+                .with_target(|rule| self.program.analysis.captures.mentions(rule))
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|name| !held_names.contains(name.as_str()))
@@ -806,7 +873,7 @@ impl<'p> Lowerer<'p> {
 
     fn stage_of(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
         let kinds = RootKinds::new(self.three)
-            .of(rule)
+            .of(rule, &mut self.program.analysis)
             .map(|kinds| kinds.into_iter().collect());
         let statement = {
             let mut lowerer = Lowerer::new(self.program, self.dialect);
@@ -816,7 +883,7 @@ impl<'p> Lowerer<'p> {
             let op = lowerer.unknowable(op);
             lowerer.finish(kinds, op)
         };
-        let sql = emit::stage(&statement);
+        let sql = timed(&mut self.program.stage_emission, || emit::stage(&statement));
         let digest = format!("{}:{}", self.dialect, sql.statements.join(";\n"));
         if let Some(&existing) = self.program.stage_index.get(&digest) {
             return Ok(existing);
@@ -843,7 +910,7 @@ impl<'p> Lowerer<'p> {
                 let stage = self.stage(rule)?;
                 // A stop rule unknown at a node ends the walk there and leaves it open.
                 if self.three
-                    && reads_values(rule, &mut BTreeSet::new())
+                    && self.program.analysis.reads_values(rule)
                     && !self.open.contains(&stage)
                 {
                     self.open.push(stage);
@@ -1049,7 +1116,7 @@ impl<'p> Lowerer<'p> {
                 let (of_rule, out) = match &nth.of_rule {
                     None => (None, bound.clone()),
                     Some(rule)
-                        if capture_free(rule)
+                        if self.program.analysis.capture_free(rule)
                             && self.tree.is_none()
                             && !recursion::reaches(rule, &self.program.in_progress) =>
                     {
@@ -1069,7 +1136,7 @@ impl<'p> Lowerer<'p> {
                         // `NthChild::index` re-matches `ofRule` at the node excluding, and drops
                         // its verdict: an unknown re-match leaves `UNKNOWN` set on a true or a
                         // false `nthChild` (see `emit/each.rs`), which no frame verdict is.
-                        if self.three && reads_values(rule, &mut BTreeSet::new()) {
+                        if self.three && self.program.analysis.reads_values(rule) {
                             return unsupported(
                                 "three-valued nthChild whose excluding commit may be unknown",
                             );
@@ -1175,7 +1242,7 @@ impl<'p> Lowerer<'p> {
                         recursion::refusal(&cycle)?;
                         Some(cycle)
                     }
-                    None => self.shared_unit(&call.util).map(std::rc::Rc::new),
+                    None => self.shared_unit(&call.util).map(std::sync::Arc::new),
                 };
                 let (body, returned): (Op, Option<Bound>) = match cycle {
                     Some(cycle) => {
@@ -1306,7 +1373,7 @@ impl<'p> Lowerer<'p> {
             // `compare` reads the bindings of its sides (or of a transform variable's roots) and
             // never the node.
             AstMatcher::Compare(_) => {
-                let reads = CaptureAnalysis::default().reads(matcher);
+                let reads = self.program.analysis.captures.reads(matcher);
                 self.leaf(matcher, scope, &reads, false, bound)
             }
             AstMatcher::Semantic(Semantic::Value(_)) => {

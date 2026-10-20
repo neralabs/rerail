@@ -11,7 +11,9 @@ use super::plan::{SlotKind, Statement, Unsupported};
 use super::skip::{self, Counts, MODE, Mode, Outcome};
 use super::terminals::{
     BatchScopes, FactTable, PatternRow, PatternTable, PatternTerm, Terminal, TextTable, fresh_match,
+    take_fact_time,
 };
+use super::timing::{Started, Timing, timed};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::GrammarMatcher;
 use crate::code_rule_dsl::tape::TapeDoc;
@@ -25,7 +27,7 @@ use rusqlite::Connection;
 use rusqlite::types::Value;
 use rusqlite::vtab::Module;
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// One file of a batch.
@@ -355,28 +357,79 @@ pub(in crate::code_rule_dsl) fn compile_enumerating(
     Ok(Compiled::new(builder, planner, Some(clauses)))
 }
 
-/// Compiles every one of `grammars` the engine lowers into one program, each with the capture its
-/// `violation.each` enumerates. Per grammar: its clause index in the program, or why the engine
-/// refuses it. A refused grammar leaves nothing in the program (no stage or terminal of it runs):
-/// each is lowered alone first, and lowering is deterministic, so one that lowers alone lowers in
-/// the shared program.
+/// Compiles every one of `grammars` the engine lowers into one program (`ProgramCompiler`).
+#[cfg(test)]
 pub(in crate::code_rule_dsl) fn compile_each(
     grammars: &[(&GrammarMatcher, Option<&str>)],
 ) -> (Compiled, Vec<Result<usize, Unsupported>>) {
-    let mut builder = ProgramBuilder::default();
-    let mut planner = Planner::default();
-    let mut planned = 0;
+    let mut compiler = ProgramCompiler::default();
     let outcomes = grammars
         .iter()
-        .map(|&(grammar, each)| {
-            ProgramBuilder::default().clause_each(grammar, each)?;
-            let statement = builder.clause_each(grammar, each)?;
-            planner.clause(&mut ClauseSql::of(&statement, each), false);
-            planned += 1;
-            Ok(planned - 1)
-        })
+        .map(|&(grammar, each)| compiler.clause(grammar, each))
         .collect();
-    (Compiled::new(builder, planner, None), outcomes)
+    (compiler.finish().0, outcomes)
+}
+
+/// Where compiling a program's clauses went: lowering, emitting their statements (a stage's too,
+/// which lowering emits as it reaches the stage), planning each clause's statements (frames,
+/// registers, effects), and planning the stages once every clause is.
+#[derive(Clone, Copy, Debug, Default)]
+pub(in crate::code_rule_dsl) struct CompilePhases {
+    pub(in crate::code_rule_dsl) lower: Timing,
+    pub(in crate::code_rule_dsl) emit: Timing,
+    pub(in crate::code_rule_dsl) plan: Timing,
+    pub(in crate::code_rule_dsl) finish: Timing,
+}
+
+/// A program compiled one clause at a time, as its rules are registered: each clause is lowered
+/// into the shared program, emitted and planned, then its emitted statements are freed.
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct ProgramCompiler {
+    builder: ProgramBuilder,
+    planner: Planner,
+    clauses: usize,
+    phases: CompilePhases,
+}
+
+impl ProgramCompiler {
+    /// Compiles `grammar`'s clause, with the capture its `violation.each` enumerates: its clause
+    /// index in the program, or why the engine refuses it. A refused clause leaves nothing in the
+    /// program (no stage or terminal of it runs).
+    pub(in crate::code_rule_dsl) fn clause(
+        &mut self,
+        grammar: &GrammarMatcher,
+        each: Option<&str>,
+    ) -> Result<usize, Unsupported> {
+        let emitted_before = self.builder.stage_emission;
+        let mut lower = Timing::default();
+        let lowered = timed(&mut lower, || self.builder.clause_or_nothing(grammar, each));
+        // The stages it reached were emitted as they were lowered.
+        let stages = self.builder.stage_emission.since(emitted_before);
+        self.phases.lower.add(lower.since(stages));
+        self.phases.emit.add(stages);
+        let statement = lowered?;
+        let mut clause = timed(&mut self.phases.emit, || ClauseSql::of(&statement, each));
+        drop(statement);
+        timed(&mut self.phases.plan, || {
+            self.planner.clause(&mut clause, false);
+        });
+        self.clauses += 1;
+        Ok(self.clauses - 1)
+    }
+
+    /// The program of every clause compiled, and where its compile went.
+    pub(in crate::code_rule_dsl) fn finish(self) -> (Compiled, CompilePhases) {
+        let Self {
+            builder,
+            planner,
+            mut phases,
+            ..
+        } = self;
+        let compiled = timed(&mut phases.finish, || {
+            Compiled::new(builder, planner, None)
+        });
+        (compiled, phases)
+    }
 }
 
 /// Every operator the engine would refuse in `grammar`'s clause (`each`: its `violation.each`),
@@ -650,10 +703,11 @@ impl Compiled {
 }
 
 /// What a session's statements did: how many ran, the rows they wrote (or, a clause's last,
-/// returned), and where the time went. `nanos` covers every stage and clause statement; of it,
-/// `stage_nanos` the stages' and `select_nanos` the clauses' last statements (the rest is frames).
-/// `input_nanos` is the batch's own rows (`runs`, `roots`) and emptying the tables; `facts_nanos`
-/// the node facts of the batch's files.
+/// returned), and where the time went, each timer in wall and thread CPU time (`Timing`). `time`
+/// covers every stage and clause statement; of it, `stages` the stages' and `select` the clauses'
+/// last statements (the rest is frames), and `facts` the fact terminals' native evaluation
+/// (`terminals::fact`) inside them. `input` is the batch's own rows (`runs`, `roots`) and
+/// emptying the tables; `node_facts` the node facts of the batch's files (`Batch::of`).
 ///
 /// `skipped` counts the statements the emptiness rules passed over (`skip`): one at a time, in a
 /// stage or clause run whose root frame was empty (`skipped_runs` such runs: every statement
@@ -661,7 +715,7 @@ impl Compiled {
 /// (`skipped_blocks` such runs: each of the block's statements once). `skipped_clears`: the
 /// tables left as they were because they were empty already.
 ///
-/// `sessions` counts the sessions made and `setup_nanos` the time their setup took: making the
+/// `sessions` counts the sessions made and `setup` the time their setup took: making the
 /// connection, then each stage's and clause's tables on its first run (`Session::activate`).
 /// `texts` is the statement texts the sessions' caches were sized for (each a distinct text of a
 /// stage or clause that ran), `tables` the tables they made.
@@ -669,17 +723,18 @@ impl Compiled {
 pub(in crate::code_rule_dsl) struct Stats {
     pub(in crate::code_rule_dsl) statements: usize,
     pub(in crate::code_rule_dsl) rows: usize,
-    pub(in crate::code_rule_dsl) nanos: u64,
-    pub(in crate::code_rule_dsl) stage_nanos: u64,
-    pub(in crate::code_rule_dsl) select_nanos: u64,
-    pub(in crate::code_rule_dsl) input_nanos: u64,
-    pub(in crate::code_rule_dsl) facts_nanos: u64,
+    pub(in crate::code_rule_dsl) time: Timing,
+    pub(in crate::code_rule_dsl) stages: Timing,
+    pub(in crate::code_rule_dsl) select: Timing,
+    pub(in crate::code_rule_dsl) input: Timing,
+    pub(in crate::code_rule_dsl) node_facts: Timing,
+    pub(in crate::code_rule_dsl) facts: Timing,
     pub(in crate::code_rule_dsl) skipped: usize,
     pub(in crate::code_rule_dsl) skipped_runs: usize,
     pub(in crate::code_rule_dsl) skipped_blocks: usize,
     pub(in crate::code_rule_dsl) skipped_clears: usize,
     pub(in crate::code_rule_dsl) sessions: usize,
-    pub(in crate::code_rule_dsl) setup_nanos: u64,
+    pub(in crate::code_rule_dsl) setup: Timing,
     pub(in crate::code_rule_dsl) texts: usize,
     pub(in crate::code_rule_dsl) tables: usize,
 }
@@ -689,17 +744,18 @@ impl Stats {
     pub(in crate::code_rule_dsl) fn add_since(&mut self, after: &Self, before: &Self) {
         self.statements += after.statements - before.statements;
         self.rows += after.rows - before.rows;
-        self.nanos += after.nanos - before.nanos;
-        self.stage_nanos += after.stage_nanos - before.stage_nanos;
-        self.select_nanos += after.select_nanos - before.select_nanos;
-        self.input_nanos += after.input_nanos - before.input_nanos;
-        self.facts_nanos += after.facts_nanos - before.facts_nanos;
+        self.time.add(after.time.since(before.time));
+        self.stages.add(after.stages.since(before.stages));
+        self.select.add(after.select.since(before.select));
+        self.input.add(after.input.since(before.input));
+        self.node_facts.add(after.node_facts.since(before.node_facts));
+        self.facts.add(after.facts.since(before.facts));
         self.skipped += after.skipped - before.skipped;
         self.skipped_runs += after.skipped_runs - before.skipped_runs;
         self.skipped_blocks += after.skipped_blocks - before.skipped_blocks;
         self.skipped_clears += after.skipped_clears - before.skipped_clears;
         self.sessions += after.sessions - before.sessions;
-        self.setup_nanos += after.setup_nanos - before.setup_nanos;
+        self.setup.add(after.setup.since(before.setup));
         self.texts += after.texts - before.texts;
         self.tables += after.tables - before.tables;
     }
@@ -1015,7 +1071,7 @@ impl Planner {
             &mut self.texts,
             &mut self.classes,
             &mut self.marks,
-            &emitted,
+            emitted.into_owned(),
             (&format!("c{index}_"), "", &each),
             run_id(None, index),
         )?;
@@ -1044,7 +1100,7 @@ impl Planner {
                 &mut self.texts,
                 &mut self.classes,
                 &mut self.marks,
-                &taken(&mut stage.sql, keep),
+                taken(&mut stage.sql, keep).into_owned(),
                 (&namespace, &namespace, ""),
                 run_id(Some(index), 0),
             )?;
@@ -1111,16 +1167,28 @@ impl Plan {
     }
 }
 
-/// How many statements `steps` hold, each block's run counting the block's: the markers and the
-/// loops' queries are not statements.
+/// How many statements `steps` hold, each once: a block's (its nested blocks' included) count at
+/// its first run, not at every run, so blocks run at several sites, nested in each other, count
+/// their statements once rather than once per path to them. The markers and the loops' queries
+/// are not statements.
 fn size(steps: &[Step], blocks: &[Block]) -> usize {
-    steps
-        .iter()
-        .map(|step| match step.sql.strip_prefix(emit::RUN) {
-            Some(index) => blocks[index.parse::<usize>().expect("a block index")].size,
-            None => usize::from(!step.sql.starts_with("/*")),
-        })
-        .sum()
+    fn count(steps: &[Step], blocks: &[Block], counted: &mut HashSet<usize>) -> usize {
+        steps
+            .iter()
+            .map(|step| match step.sql.strip_prefix(emit::RUN) {
+                Some(index) => {
+                    let index = index.parse::<usize>().expect("a block index");
+                    if counted.insert(index) {
+                        count(&blocks[index].steps, blocks, counted)
+                    } else {
+                        0
+                    }
+                }
+                None => usize::from(!step.sql.starts_with("/*")),
+            })
+            .sum()
+    }
+    count(steps, blocks, &mut HashSet::new())
 }
 
 /// Moves each block of `steps` (`emit::BLOCK<id>` … `emit::END`, blocks nested in it too) into
@@ -1175,22 +1243,28 @@ fn temporary(rest: &str) -> &str {
 /// Where one temporary of a stage's or clause's statements is mentioned (`registers`): its
 /// mentions' span, each extended to its outermost loop; its declaration (`frames::FRAME`), its
 /// first clear (a loop's `create` empties it on every pass) and the span of its other mentions,
-/// unextended; and where each `emit::RUN` of a block that mentions it is, and the outermost loop
-/// it is in.
+/// unextended; and the blocks that mention it, whose every `emit::RUN` does (`BlockRuns`).
 #[derive(Default)]
 struct Uses {
     span: Option<(usize, usize)>,
     declared: usize,
     cleared: Option<usize>,
     mentions: Option<(usize, usize)>,
-    runs: Vec<(usize, (usize, usize))>,
+    blocks: Vec<usize>,
 }
 
-/// Where a temporary is live (`Uses::live`): one span, and the runs of its blocks, which write it
-/// anew there.
+/// Where a block's `emit::RUN`s are (`registers`): their positions in order, and the span of
+/// the outermost loops they are in (or their own positions), where it has a run.
+#[derive(Default)]
+struct BlockRuns {
+    at: Vec<usize>,
+    reach: Option<(usize, usize)>,
+}
+
+/// Where a temporary is live (`Uses::live`): one span, and the blocks whose runs write it anew.
 struct Live {
     span: (usize, usize),
-    runs: Vec<usize>,
+    blocks: Vec<usize>,
 }
 
 impl Uses {
@@ -1215,9 +1289,9 @@ impl Uses {
     /// Where it is live. A pass's own temporary (declared, then emptied, then mentioned only
     /// within one loop: `inner`, each item's innermost) is written anew by every pass before it
     /// is read: it is live from its declaration to its last mention, and dead between its
-    /// block's runs, where it is written anew (`Live::runs`). Any other temporary is live over
+    /// blocks' runs, where it is written anew (`Live::blocks`). Any other temporary is live over
     /// its mentions' span extended to their loops, and from there to its blocks' last run.
-    fn live(self, inner: &[Option<(usize, usize)>]) -> Live {
+    fn live(self, inner: &[Option<(usize, usize)>], runs: &[BlockRuns]) -> Live {
         let span = self.span.expect("a declared temporary");
         let own = self.cleared.and_then(|cleared| {
             let (first, last) = self.mentions.unwrap_or((cleared, cleared));
@@ -1230,16 +1304,17 @@ impl Uses {
         match own {
             Some(last) => Live {
                 span: (self.declared, last),
-                runs: self.runs.into_iter().map(|(at, _)| at).collect(),
+                blocks: self.blocks,
             },
             None => Live {
                 span: self
-                    .runs
+                    .blocks
                     .iter()
-                    .fold(span, |(start, end), &(_, (from, to))| {
+                    .filter_map(|&block| runs[block].reach)
+                    .fold(span, |(start, end), (from, to)| {
                         (start.min(from), end.max(to))
                     }),
-                runs: Vec::new(),
+                blocks: Vec::new(),
             },
         }
     }
@@ -1306,77 +1381,120 @@ fn registers(
         }
     }
     let mut uses: Vec<Uses> = names.iter().map(|_| Uses::default()).collect();
-    // The temporaries each block mentions, nested blocks' included: the open blocks' so far,
-    // innermost last, and the closed blocks', by id.
-    let mut blocks: HashMap<&str, Vec<usize>> = HashMap::new();
-    let mut inside: Vec<(&str, Vec<usize>)> = Vec::new();
+    // Per block (each `emit::BLOCK` … `emit::END`, by its order of closing): the temporaries it
+    // mentions, those of the blocks nested in it or run in it included, and its runs. The open
+    // blocks, innermost last, keep the temporaries they mention and the blocks they hold or
+    // run; every `emit::RUN<id>` runs the block `id` last closed.
+    let mut members: Vec<Vec<usize>> = Vec::new();
+    let mut runs: Vec<BlockRuns> = Vec::new();
+    let mut named: HashMap<&str, usize> = HashMap::new();
+    let mut inside: Vec<(&str, Vec<usize>, Vec<usize>)> = Vec::new();
     let mut mentioned = Vec::new();
     for (at, item) in items.iter().enumerate() {
-        mentioned.clear();
         if let Some(id) = item.strip_prefix(emit::BLOCK) {
-            inside.push((id, Vec::new()));
+            inside.push((id, Vec::new(), Vec::new()));
             continue;
         }
         if item == emit::END {
-            let (id, mut temporaries) = inside.pop().expect("an open block");
+            let (id, mut temporaries, mut held) = inside.pop().expect("an open block");
+            held.sort_unstable();
+            held.dedup();
+            for &block in &held {
+                temporaries.extend_from_slice(&members[block]);
+            }
             temporaries.sort_unstable();
             temporaries.dedup();
-            if let Some((_, outer)) = inside.last_mut() {
-                outer.extend_from_slice(&temporaries);
+            let block = members.len();
+            members.push(temporaries);
+            runs.push(BlockRuns::default());
+            if let Some((_, _, outer)) = inside.last_mut() {
+                outer.push(block);
             }
-            blocks.insert(id, temporaries);
+            named.insert(id, block);
             continue;
         }
         let span = outer[at].unwrap_or((at, at));
         if let Some(id) = item.strip_prefix(emit::RUN) {
-            mentioned.extend(blocks.get(id).into_iter().flatten().copied());
-            for &temporary in &mentioned {
-                uses[temporary].runs.push((at, span));
+            if let Some(&block) = named.get(id) {
+                let run = &mut runs[block];
+                run.at.push(at);
+                let (from, to) = run.reach.get_or_insert(span);
+                *from = (*from).min(span.0);
+                *to = (*to).max(span.1);
+                if let Some((_, _, held)) = inside.last_mut() {
+                    held.push(block);
+                }
             }
-        } else {
-            for (found, _) in item.match_indices(emit::TEMP) {
-                let name = temporary(&item[found + emit::TEMP.len()..]);
-                mentioned.extend(temporaries.get(name).copied());
-            }
-            for &temporary in &mentioned {
-                uses[temporary].mention(item, at, span);
-            }
+            continue;
         }
-        if let Some((_, block)) = inside.last_mut() {
+        mentioned.clear();
+        for found in temporaries_in(item) {
+            let name = temporary(&item[found + emit::TEMP.len()..]);
+            mentioned.extend(temporaries.get(name).copied());
+        }
+        for &temporary in &mentioned {
+            uses[temporary].mention(item, at, span);
+        }
+        if let Some((_, block, _)) = inside.last_mut() {
             block.extend_from_slice(&mentioned);
         }
     }
-    let live: Vec<Live> = uses.into_iter().map(|uses| uses.live(&inner)).collect();
+    // A block run nowhere writes and extends nothing.
+    for (block, temporaries) in members.iter().enumerate() {
+        if !runs[block].at.is_empty() {
+            for &temporary in temporaries {
+                uses[temporary].blocks.push(block);
+            }
+        }
+    }
+    let live: Vec<Live> = uses
+        .into_iter()
+        .map(|uses| uses.live(&inner, &runs))
+        .collect();
     let mut order: Vec<usize> = (0..names.len()).collect();
     order.sort_by_key(|&temporary| (live[temporary].span.0, temporary));
-    // Per class, each register's spans held, by start, and where blocks' runs write it.
-    let mut held: HashMap<usize, Vec<(BTreeMap<usize, usize>, BTreeSet<usize>)>> = HashMap::new();
+    // Per class, its registers. Temporaries come in the order of their spans' starts, so every
+    // span a register held starts before the current one, and the last it took ends last (held
+    // spans do not overlap): a register is free where that span ends before the current one
+    // starts and no block's run writes it within the current span. A write before the current
+    // start matters to no later temporary.
+    let mut held: HashMap<usize, ClassRegisters> = HashMap::new();
     let mut allocated = HashMap::with_capacity(names.len());
     let mut clears = Vec::new();
     for temporary in order {
         let class = class_of[temporary];
         let Live {
             span: (start, end),
-            ref runs,
+            ref blocks,
         } = live[temporary];
-        let registers = held.entry(class).or_default();
-        // The span overlaps one held where the last held span starting before its end ends at
-        // its start or after: held spans do not overlap.
-        let free = |(spans, written): &(BTreeMap<usize, usize>, BTreeSet<usize>)| {
-            spans
-                .range(..=end)
-                .next_back()
-                .is_none_or(|(_, &until)| until < start)
-                && written.range(start..=end).next().is_none()
+        let ClassRegisters {
+            registers,
+            busy,
+            idle,
+        } = held.entry(class).or_default();
+        while let Some(&(until, register)) = busy.first()
+            && until < start
+        {
+            busy.pop_first();
+            idle.insert(register);
+        }
+        let free = idle
+            .iter()
+            .copied()
+            .find(|&register| registers[register].unwritten(start, end));
+        let reused = free.is_some();
+        let register = match free {
+            Some(register) => {
+                idle.remove(&register);
+                register
+            }
+            None => {
+                registers.push(Register::default());
+                registers.len() - 1
+            }
         };
-        let register = registers.iter().position(free).unwrap_or_else(|| {
-            registers.push(Default::default());
-            registers.len() - 1
-        });
-        let (spans, written) = &mut registers[register];
-        let reused = !spans.is_empty();
-        spans.insert(start, end);
-        written.extend(runs.iter().copied());
+        busy.insert((end, register));
+        registers[register].written_by(blocks, &runs, start);
         let name = format!("{prefix}f{class}_{register}");
         if reused {
             clears.push((start, name.clone()));
@@ -1384,6 +1502,56 @@ fn registers(
         allocated.insert(names[temporary].to_owned(), name);
     }
     (allocated, clears)
+}
+
+/// One declaration class's registers as `registers` allocates them: those holding a span not yet
+/// ended (by its end), and the others.
+#[derive(Default)]
+struct ClassRegisters {
+    registers: Vec<Register>,
+    busy: BTreeSet<(usize, usize)>,
+    idle: BTreeSet<usize>,
+}
+
+/// A register's writes (`registers`): the blocks whose runs write it, and where those runs are
+/// from the last start it was asked about on, in order, from `next`.
+#[derive(Default)]
+struct Register {
+    writers: Vec<usize>,
+    writes: Vec<usize>,
+    next: usize,
+}
+
+impl Register {
+    /// Whether no block's run writes it within `start..=end`; `start` never decreases.
+    fn unwritten(&mut self, start: usize, end: usize) -> bool {
+        while self.writes.get(self.next).is_some_and(|&at| at < start) {
+            self.next += 1;
+        }
+        self.writes.get(self.next).is_none_or(|&at| at > end)
+    }
+
+    /// The runs of `blocks` write it too, from `start` on.
+    fn written_by(&mut self, blocks: &[usize], runs: &[BlockRuns], start: usize) {
+        let new: Vec<usize> = blocks
+            .iter()
+            .copied()
+            .filter(|block| !self.writers.contains(block))
+            .collect();
+        if new.is_empty() {
+            return;
+        }
+        let mut writes = self.writes.split_off(self.next);
+        for &block in &new {
+            let at = &runs[block].at;
+            writes.extend_from_slice(&at[at.partition_point(|&at| at < start)..]);
+        }
+        writes.sort_unstable();
+        writes.dedup();
+        self.writes = writes;
+        self.next = 0;
+        self.writers.extend(new);
+    }
 }
 
 /// `emitted`, taken out of its stage or clause unless the program is to `keep` it: what is taken
@@ -1396,15 +1564,38 @@ fn taken(emitted: &mut Emitted, keep: bool) -> std::borrow::Cow<'_, Emitted> {
     }
 }
 
-/// `sql` with every `(from, to)` substituted; `sql` itself where it holds none.
-fn substitute(sql: &str, substitutions: &[(&str, &str)]) -> String {
-    let mut sql = sql.to_owned();
-    for (from, to) in substitutions {
-        if sql.contains(from) {
-            sql = sql.replace(from, to);
+/// `sql` with every `(from, to)` substituted, in one pass: each `from` is a marker (`/*…*/`, no
+/// one a prefix of another) and no `to` holds one; `sql` itself where it holds none.
+fn substitute(sql: String, substitutions: &[(&str, &str)]) -> String {
+    let bytes = sql.as_bytes();
+    let mut out: Option<String> = None;
+    let mut copied = 0;
+    for at in memchr::memchr_iter(b'/', bytes) {
+        if at < copied || bytes.get(at + 1) != Some(&b'*') {
+            continue;
+        }
+        let rest = &sql[at..];
+        if let Some((from, to)) = substitutions.iter().find(|(from, _)| rest.starts_with(from)) {
+            let out = out.get_or_insert_with(|| String::with_capacity(sql.len() + 64));
+            out.push_str(&sql[copied..at]);
+            out.push_str(to);
+            copied = at + from.len();
         }
     }
-    sql
+    match out {
+        None => sql,
+        Some(mut out) => {
+            out.push_str(&sql[copied..]);
+            out
+        }
+    }
+}
+
+/// Where `emit::TEMP` starts in `sql`, each place.
+fn temporaries_in(sql: &str) -> memchr::memmem::FindIter<'_, 'static> {
+    static TEMPORARY: std::sync::LazyLock<memchr::memmem::Finder<'static>> =
+        std::sync::LazyLock::new(|| memchr::memmem::Finder::new(emit::TEMP));
+    TEMPORARY.find_iter(sql.as_bytes())
 }
 
 /// Fixes the text of `emitted`'s statements, loops' markers included (`Runner::steps`), with
@@ -1419,7 +1610,7 @@ fn plan(
     texts: &mut Texts,
     classes: &mut HashMap<String, usize>,
     marks: &mut usize,
-    emitted: &Emitted,
+    emitted: Emitted,
     (namespace, prefix, each): (&str, &str, &str),
     run: i64,
 ) -> Result<Prepared, String> {
@@ -1431,9 +1622,13 @@ fn plan(
         (emit::FILES, files.as_str()),
         (emit::ROOTS, roots.as_str()),
     ];
-    let statements: Vec<String> = emitted
-        .statements
-        .iter()
+    let Emitted {
+        statements,
+        effects,
+        root,
+    } = emitted;
+    let statements: Vec<String> = statements
+        .into_iter()
         .map(|statement| substitute(statement, &substitutions))
         .collect();
     // `rewrite` keeps every statement but the schema's in order (a frame's clear for its
@@ -1441,7 +1636,7 @@ fn plan(
     let schema = |sql: &str| sql.starts_with("CREATE ");
     let mut effects = statements
         .iter()
-        .zip(&emitted.effects)
+        .zip(effects)
         .filter(|(sql, _)| !schema(sql))
         .map(|(_, effect)| effect)
         .collect::<Vec<_>>()
@@ -1457,19 +1652,23 @@ fn plan(
         }
     };
     let rename = |sql: String| -> String {
-        if !sql.contains(emit::TEMP) {
+        let mut found = temporaries_in(&sql).peekable();
+        if found.peek().is_none() {
             return sql;
         }
         let mut out = String::with_capacity(sql.len());
-        let mut rest = sql.as_str();
-        while let Some(at) = rest.find(emit::TEMP) {
-            out.push_str(&rest[..at]);
-            let after = &rest[at + emit::TEMP.len()..];
+        let mut copied = 0;
+        for at in found {
+            if at < copied {
+                continue;
+            }
+            out.push_str(&sql[copied..at]);
+            let after = &sql[at + emit::TEMP.len()..];
             let name = temporary(after);
             temporary_name(name, &mut out);
-            rest = &after[name.len()..];
+            copied = at + emit::TEMP.len() + name.len();
         }
-        out.push_str(rest);
+        out.push_str(&sql[copied..]);
         out
     };
     let mut clears = clears.into_iter().peekable();
@@ -1499,10 +1698,7 @@ fn plan(
             let name = table.split(['(', ' ']).next().unwrap_or_default();
             (name.to_owned(), Make::BTree(sql.clone()))
         } else {
-            steps.push((
-                sql,
-                effects.next().expect("an effect per statement").clone(),
-            ));
+            steps.push((sql, effects.next().expect("an effect per statement")));
             continue;
         };
         let frame = matches!(make, Make::Frame(_));
@@ -1513,6 +1709,8 @@ fn plan(
         }
     }
     assert!(effects.next().is_none(), "a statement per effect");
+    stages.sort_unstable();
+    stages.dedup();
     // The stages' tables the statements read: a clause is planned before the stages.
     for &stage in &stages {
         catalog.stage(stage)?;
@@ -1525,7 +1723,7 @@ fn plan(
                 temporary_name(name, &mut out);
                 out
             }
-            None => substitute(name, &substitutions[..2]),
+            None => substitute(name.to_owned(), &substitutions[..2]),
         }
     };
     // Once every table is added: a block's marker names its units' demand tables, which the
@@ -1546,7 +1744,7 @@ fn plan(
         texts,
     );
     let last = steps.pop().expect("a final select");
-    let root = emitted.root.as_ref().map(|root| {
+    let root = root.as_ref().map(|root| {
         let table = catalog.id(&resolve(root));
         let at = steps
             .iter()
@@ -1571,21 +1769,24 @@ fn plan(
     })
 }
 
-/// The stages `sql` reads: each `stage_<index>` it names.
+/// The stages `sql` reads, added to `stages`: each `stage_<index>` it names.
 fn stages_read(sql: &str, stages: &mut Vec<usize>) {
-    let prefix = emit::stage_table(0);
-    let prefix = prefix.trim_end_matches('0');
-    for (at, _) in sql.match_indices(prefix) {
-        let digits: String = sql[at + prefix.len()..]
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect();
-        if let Ok(stage) = digits.parse() {
+    static STAGE: std::sync::LazyLock<(String, memchr::memmem::Finder<'static>)> =
+        std::sync::LazyLock::new(|| {
+            let prefix = emit::stage_table(0).trim_end_matches('0').to_owned();
+            let finder = memchr::memmem::Finder::new(prefix.as_bytes()).into_owned();
+            (prefix, finder)
+        });
+    let (prefix, finder) = &*STAGE;
+    for at in finder.find_iter(sql.as_bytes()) {
+        let digits = sql[at + prefix.len()..]
+            .bytes()
+            .take_while(u8::is_ascii_digit)
+            .count();
+        if let Ok(stage) = sql[at + prefix.len()..at + prefix.len() + digits].parse() {
             stages.push(stage);
         }
     }
-    stages.sort_unstable();
-    stages.dedup();
 }
 
 /// The run id a stage's or clause's root frame reads its files and roots under.
@@ -1630,7 +1831,7 @@ pub(in crate::code_rule_dsl) struct Session {
 
 impl Session {
     fn new(compiled: &Compiled) -> Result<Self, SqlError> {
-        let started = std::time::Instant::now();
+        let started = Started::now();
         let plan = compiled.plan()?;
         let slot = Arc::new(BatchSlot::default());
         let connection = connect(&slot)?;
@@ -1659,7 +1860,7 @@ impl Session {
             capacity: BATCH_STATEMENTS,
             stats: Stats {
                 sessions: 1,
-                setup_nanos: started.elapsed().as_nanos() as u64,
+                setup: started.elapsed(),
                 ..Stats::default()
             },
             plan,
@@ -1672,7 +1873,7 @@ impl Session {
     /// before, and sizes the statement cache for their texts: a `violation.each` clause's rounds
     /// run three statements of their own.
     fn activate(&mut self, mut pending: Vec<usize>) -> Result<(), SqlError> {
-        let started = std::time::Instant::now();
+        let started = Started::now();
         let plan = Arc::clone(&self.plan);
         let capacity = self.capacity;
         while let Some(index) = pending.pop() {
@@ -1708,7 +1909,7 @@ impl Session {
                 .set_prepared_statement_cache_capacity(self.capacity);
             self.stats.texts += self.capacity - capacity;
         }
-        self.stats.setup_nanos += started.elapsed().as_nanos() as u64;
+        self.stats.setup.add(started.elapsed());
         Ok(())
     }
 
@@ -1798,12 +1999,15 @@ impl Session {
                 .map(|run| stages + run.statement)
                 .collect(),
         )?;
-        let started = std::time::Instant::now();
+        let started = Started::now();
         let batch = Batch::of(docs, Arc::clone(&self.program));
-        self.stats.facts_nanos += started.elapsed().as_nanos() as u64;
+        self.stats.node_facts.add(started.elapsed());
         *self.slot.current.write() = Some(Arc::clone(&batch));
         let scopes = BatchScopes::begin();
+        let facts = take_fact_time();
         let result = self.run_batch(&batch, runs);
+        self.stats.facts.add(take_fact_time());
+        debug_assert_eq!(facts, Timing::default(), "a fact terminal's time outside a batch");
         drop(scopes);
         *self.slot.current.write() = None;
         if result.is_err() {
@@ -1853,7 +2057,7 @@ impl Session {
             counts,
             at: ("", 0),
         };
-        let inputs = std::time::Instant::now();
+        let inputs = Started::now();
         connection.prepare_cached(CLEAR_RUNS)?.execute([])?;
         connection.prepare_cached(CLEAR_ROOTS)?.execute([])?;
         // Each stage runs over the whole files of the clauses that read it, directly or not.
@@ -1901,9 +2105,9 @@ impl Session {
                 }
             }
         }
-        runner.stats.input_nanos += inputs.elapsed().as_nanos() as u64;
+        runner.stats.input.add(inputs.elapsed());
         // Stages in index order: a stage only reads stages made before it.
-        let started = std::time::Instant::now();
+        let started = Started::now();
         for (stage, (_, prepared)) in stages.iter().enumerate() {
             if stage_files[stage].is_empty() {
                 continue;
@@ -1914,7 +2118,7 @@ impl Session {
                 runner.statement(&prepared.last, !ran)?;
             }
         }
-        runner.stats.stage_nanos += started.elapsed().as_nanos() as u64;
+        runner.stats.stages.add(started.elapsed());
         let mut results = Vec::with_capacity(runs.len());
         let mut position: Vec<usize> = vec![usize::MAX; batch.files.len()];
         for run in runs {
@@ -1948,7 +2152,7 @@ impl Session {
                         runner.stats.skipped += 1;
                     }
                     if !skipped {
-                        let started = std::time::Instant::now();
+                        let started = Started::now();
                         let mut statement = connection.prepare_cached(&prepared.last.sql)?;
                         let mut rows = statement.query([])?;
                         let mut count = 0;
@@ -1966,21 +2170,21 @@ impl Session {
                         }
                         drop(rows);
                         drop(statement);
-                        let elapsed = started.elapsed().as_nanos() as u64;
+                        let elapsed = started.elapsed();
                         let stats = &mut *runner.stats;
                         stats.statements += 1;
                         stats.rows += count;
-                        stats.nanos += elapsed;
-                        stats.select_nanos += elapsed;
+                        stats.time.add(elapsed);
+                        stats.select.add(elapsed);
                         #[cfg(any(test, feature = "unbounded-work"))]
-                        record(&prepared.last.sql, elapsed, count);
+                        record(&prepared.last.sql, elapsed.wall, count);
                         if *MODE == Mode::Check {
                             skip::check(&prepared.last.sql, outcome, count);
                         }
                     }
-                    let started = std::time::Instant::now();
+                    let started = Started::now();
                     runner.clear(prepared)?;
-                    runner.stats.input_nanos += started.elapsed().as_nanos() as u64;
+                    runner.stats.input.add(started.elapsed());
                     let Some(each) = &prepared.each else {
                         break;
                     };
@@ -2028,14 +2232,14 @@ impl Session {
                     .collect(),
             );
         }
-        let started = std::time::Instant::now();
+        let started = Started::now();
         for (stage, (_, prepared)) in stages.iter().enumerate() {
             if !stage_files[stage].is_empty() {
                 runner.at = ("stage", stage);
                 runner.clear(prepared)?;
             }
         }
-        runner.stats.input_nanos += started.elapsed().as_nanos() as u64;
+        runner.stats.input.add(started.elapsed());
         Ok(results)
     }
 }
@@ -2227,14 +2431,14 @@ impl Runner<'_> {
             self.stats.skipped += 1;
             return Ok(());
         }
-        let started = std::time::Instant::now();
+        let started = Started::now();
         let rows = self.connection.prepare_cached(&step.sql)?.execute([])?;
-        let nanos = started.elapsed().as_nanos() as u64;
+        let elapsed = started.elapsed();
         self.stats.statements += 1;
         self.stats.rows += rows;
-        self.stats.nanos += nanos;
+        self.stats.time.add(elapsed);
         #[cfg(any(test, feature = "unbounded-work"))]
-        record(&step.sql, nanos, rows);
+        record(&step.sql, elapsed.wall, rows);
         if *MODE == Mode::Check {
             skip::check(&step.sql, outcome, rows);
         }

@@ -199,11 +199,12 @@ fn probe() {
         );
         totals.statements += stats.statements;
         totals.rows += stats.rows;
-        totals.nanos += stats.nanos;
-        totals.stage_nanos += stats.stage_nanos;
-        totals.select_nanos += stats.select_nanos;
-        totals.input_nanos += stats.input_nanos;
-        totals.facts_nanos += stats.facts_nanos;
+        totals.time.add(stats.time);
+        totals.stages.add(stats.stages);
+        totals.select.add(stats.select);
+        totals.input.add(stats.input);
+        totals.node_facts.add(stats.node_facts);
+        totals.facts.add(stats.facts);
     }
     eprintln!(
         "probe total, clause by clause: native {native_total:.2?}, sql {sql_total:.2?}, ratio {:.2}",
@@ -315,17 +316,18 @@ fn breakdown(stats: &crate::code_rule_dsl::sql::Stats) {
     let ms = |nanos: u64| nanos as f64 / 1e6;
     eprintln!(
         "  {} statements, {} rows ({:.1} rows/statement), {:.1} us/statement; statements {:.0} ms \
-         (stages {:.0}, frames {:.0}, final selects {:.0}); batch inputs and clears {:.0} ms; \
-         node facts {:.0} ms",
+         (stages {:.0}, frames {:.0}, final selects {:.0}; fact terminals {:.0}); batch inputs and \
+         clears {:.0} ms; node facts {:.0} ms",
         stats.statements,
         stats.rows,
         stats.rows as f64 / stats.statements.max(1) as f64,
-        stats.nanos as f64 / 1e3 / stats.statements.max(1) as f64,
-        ms(stats.nanos),
-        ms(stats.stage_nanos),
-        ms(stats.nanos - stats.stage_nanos - stats.select_nanos),
-        ms(stats.select_nanos),
-        ms(stats.input_nanos),
-        ms(stats.facts_nanos),
+        stats.time.wall as f64 / 1e3 / stats.statements.max(1) as f64,
+        ms(stats.time.wall),
+        ms(stats.stages.wall),
+        ms(stats.time.wall - stats.stages.wall - stats.select.wall),
+        ms(stats.select.wall),
+        ms(stats.facts.wall),
+        ms(stats.input.wall),
+        ms(stats.node_facts.wall),
     );
 }
