@@ -12,7 +12,7 @@
 
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::model::{ClauseKind, Query};
-use crate::code_rule_dsl::sql::frames::FrameStore;
+use crate::code_rule_dsl::sql::frames::{Declaration, FrameStore};
 use crate::code_rule_dsl::test_support::CAPABILITIES;
 use rusqlite::Connection;
 use std::sync::Arc;
@@ -51,11 +51,12 @@ fn tables_made_alone() {
         let store = Arc::new(FrameStore::default());
         let started = Instant::now();
         for table in 0..n {
+            let declaration = Declaration::parse(&format!(
+                "t{table}(k INTEGER PRIMARY KEY, file, node, s0, s1)"
+            ))
+            .expect("a declaration");
             store
-                .register(
-                    &connection,
-                    &format!("t{table}(k INTEGER PRIMARY KEY, file, node, s0, s1)"),
-                )
+                .register(&connection, &Arc::new(declaration))
                 .expect("a frame");
         }
         // A frame's table is connected on first use: read each once.
