@@ -821,6 +821,23 @@ fn production_contract_phase_four_failure_matches_authored_sql() {
 }
 
 #[test]
+fn production_contract_phase_two_node_values_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["node-value-positive", "node-value-unknown"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the node-value contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored completion-aware value SQL contract"
+        );
+    }
+}
+
+#[test]
 fn production_contract_phases_two_and_three_have_complete_physical_sql_contracts() {
     let statements = authored_sql_goldens();
     for name in PHASE_TWO_CASES.iter().chain(PHASE_THREE_CASES) {
