@@ -30,10 +30,14 @@ declared divergence or scored as a syntax-error file.
 | `src/grammar.json` | generated from the patched `grammar.js` |
 | `src/scanner.c` | upstream, with patches 11, 22, 23, 24, 25 and 29 |
 | `src/tree_sitter/{alloc,array,parser}.h` | written by `tree-sitter generate` 0.27.0 |
+| `src/parser.generated.c.gz` | the parser, generated from `src/grammar.json` by `scripts/generate/grammars/committed-parsers.mjs` (Git LFS) |
 | `rerail.patch` | the patches: `git diff` of `grammar.js`, `src/scanner.c`, `test/corpus/` and `queries/highlights.scm` |
 
-Upstream ships no `src/grammar.json` or `src/parser.c`; `native/build.rs` generates the parser from
-`grammar.json` with tree-sitter-generate 0.27.0, as it does the other vendored grammars.
+Upstream ships no `src/grammar.json` or `src/parser.c`. `native/build.rs` generates the other vendored grammars'
+parsers from their `grammar.json` on every build, but this grammar's generation takes 7 to 10 minutes optimised
+(half an hour as a build script, which timed CI's native jobs out), so its generated parser is committed,
+gzipped. Its first line names the `grammar.json` sha256, grammar version and tree-sitter-generate it was generated
+from, and the build refuses it when they are not the ones it builds with.
 
 ## Regenerating
 
@@ -46,7 +50,8 @@ tree-sitter generate   # tree-sitter-cli 0.27.0
 tree-sitter test       # 502 of 502 (1 case skipped, below)
 ```
 
-then copy `src/grammar.json`, `src/scanner.c` and `src/tree_sitter/*.h` here.
+then copy `src/grammar.json`, `src/scanner.c` and `src/tree_sitter/*.h` here, run
+`node scripts/generate/grammars/committed-parsers.mjs`, and commit `src/parser.generated.c.gz`.
 
 The parse table holds 49,835 actions (tree-sitter caps it at 65,535) in 31,027 states. An external token in a
 state's lookahead keeps tree-sitter from merging that state with any state that lacks it, so the grammar keeps

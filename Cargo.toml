@@ -8,3 +8,9 @@ codegen-units = 1
 # Never strip through rustc: on Xcode 27 the linker-side strip rewrites LINKEDIT so
 # dyld rejects the cdylib ("mis-aligned LINKEDIT string pool"). Unstripped costs ~1 MB.
 strip = "none"
+
+# The build script generates the vendored grammars' parsers (native/build.rs): tree-sitter-generate runs several times
+# faster optimised (TypeScript's parser in 1 s rather than 7 s), and regenerating SQL's committed parser takes 7 to 10
+# minutes rather than half an hour.
+[profile.release.build-override]
+opt-level = 3
