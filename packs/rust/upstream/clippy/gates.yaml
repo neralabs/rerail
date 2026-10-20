@@ -1,7 +1,5 @@
 adapter: clippy
 # Clippy's documents in rerail's rust pack (NER-1894).
-# goldens.tsv is not imported from NRV, which pins no Rust tool: it is the files where a rule and Clippy differed when
-# rerail still ran Gate 6 itself (#141, before #85 moved Gate 6 to NRV). Finding new ones needs an NRV pin (NER-1891).
 rerail:
   pack: rust
   project: clippy

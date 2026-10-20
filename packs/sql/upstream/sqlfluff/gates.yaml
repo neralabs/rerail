@@ -1,7 +1,5 @@
 adapter: sqlfluff
 # SQLFluff's documents in rerail's sql pack (NER-1940, NER-1886).
-# goldens.tsv is not imported from NRV, which pins no SQL tool: it is the files where a rule and SQLFluff differed when
-# rerail still ran Gate 6 itself (#141, before #85 moved Gate 6 to NRV). Finding new ones needs an NRV pin (NER-1885).
 rerail:
   pack: sql
   project: sqlfluff

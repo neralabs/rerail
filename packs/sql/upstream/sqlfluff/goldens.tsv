@@ -1,4 +1,5 @@
-# matches-upstream-tests goldens, imported from NRV and reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.
+# matches-upstream-tests goldens, reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.
+# Source: not NRV's, which pins no SQLFluff: every file where a rule and SQLFluff differed on this pack's pinned corpora and the SWE tasks' solutions, found by rerail's own real-code gate (#85's matches-real-code at f7d18209, `npm run port-readiness -- --write`) in #141, before #85 moved Gate 6 to NRV.
 sqlfluff-al04-aliasing-unique-table
 	rerail:anki
 		rslib/src/storage/card/congrats.sql	d9f370b32743b426f96d9f9c540f2ffda6b813f6166e9939c4118168c0b679d9
