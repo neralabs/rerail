@@ -821,6 +821,22 @@ fn production_contract_phase_four_failure_matches_authored_sql() {
 }
 
 #[test]
+fn production_contract_phase_two_disabled_query_matches_authored_sql() {
+    let expected = authored_sql_goldens();
+    let name = "disabled-when";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the disabled query contract exists");
+    let actual = actual_implementation_golden(&case);
+    assert_eq!(
+        exact_sql(&actual.normalized_sql),
+        exact_sql(&expected[&case.name]),
+        "a disabled query must use the authored producer-free SQL contract"
+    );
+}
+
+#[test]
 fn production_contract_phase_two_nested_truth_matches_authored_sql() {
     let expected = authored_sql_goldens();
     let name = "nested-all-any-not";
