@@ -838,6 +838,44 @@ fn production_contract_phase_two_node_values_match_authored_sql() {
 }
 
 #[test]
+fn production_contract_phase_two_authored_node_values_equal_oracles() {
+    let statements = authored_sql_goldens();
+    for name in ["node-value-positive", "node-value-unknown"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the node-value contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the node-value policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: authored SQL ranges");
+        assert!(outcome.errors.is_empty(), "{name}: authored SQL failures");
+    }
+}
+
+#[test]
 fn production_contract_phases_two_and_three_have_complete_physical_sql_contracts() {
     let statements = authored_sql_goldens();
     for name in PHASE_TWO_CASES.iter().chain(PHASE_THREE_CASES) {

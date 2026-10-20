@@ -1440,6 +1440,8 @@ impl SqlRenderer {
                 spec.producer
             ));
             name
+        } else if let Some(producer) = Self::terminal_producer(source)? {
+            self.render_terminal_producer(producer, "source")?
         } else {
             self.render(source)?
         };
