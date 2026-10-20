@@ -57,6 +57,7 @@ pub(super) struct NodeFacts {
     postings: OnceLock<Postings>,
     values: parking_lot::Mutex<ValuePostings>,
     positions: OnceLock<Positions>,
+    atoms: OnceLock<Vec<u32>>,
 }
 
 type ValuePostings = HashMap<u16, HashMap<i64, Arc<[u32]>>>;
@@ -145,7 +146,35 @@ impl NodeFacts {
             postings: OnceLock::new(),
             values: Default::default(),
             positions: OnceLock::new(),
+            atoms: OnceLock::new(),
         }
+    }
+
+    fn atom(&self, id: u32) -> u32 {
+        self.atoms.get_or_init(|| {
+            let mut atoms = Vec::with_capacity(self.len as usize);
+            #[cfg(test)]
+            count_bytes(self.len as usize * size_of::<u32>());
+            let mut names = HashMap::new();
+            match &self.tree {
+                Tree::Tape(root) => {
+                    let doc = root.root().get_doc();
+                    for id in 0..self.len {
+                        let leaf = doc
+                            .transducer_children(id)
+                            .all(|child| doc.transducer_flags(child) & 1 == 0);
+                        let atom = if leaf {
+                            *names.entry(doc.transducer_text_str(id)).or_insert(id)
+                        } else {
+                            id
+                        };
+                        atoms.push(atom);
+                    }
+                }
+                Tree::Sub(_) => atoms.extend(0..self.len),
+            }
+            atoms
+        })[id as usize]
     }
 
     pub(super) fn len(&self) -> u32 {
@@ -272,6 +301,16 @@ impl NodeFacts {
     }
 
     /// Where the nodes of `kind` are among the postings (`posted`).
+    pub(super) fn kind_ids(&self, kinds: &[u16]) -> Vec<u32> {
+        let mut ids = kinds
+            .iter()
+            .flat_map(|&kind| self.kind_range(kind).map(|at| self.posted(at)))
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+
     fn kind_range(&self, kind: u16) -> std::ops::Range<usize> {
         let postings = self.postings_built();
         match postings
@@ -357,6 +396,7 @@ impl NodeFacts {
         let node = |value: u32| (value != NONE).then_some(i64::from(value));
         let flag = |set: bool| Some(i64::from(set));
         match column {
+            COL_ATOM => Some(i64::from(self.atom(id))),
             COL_ID => Some(i64::from(id)),
             COL_LAST => Some(i64::from(self.last(id))),
             COL_PARENT => node(self.parent(id)),
@@ -432,8 +472,9 @@ const COL_ANEXT: c_int = 19;
 const COL_APREV: c_int = 20;
 const COL_WPAR: c_int = 21;
 const COL_FFIRST: c_int = 22;
+const COL_ATOM: c_int = 23;
 
-const SCHEMA: &CStr = c"CREATE TABLE x(file, id, \"last\", parent, kind, field, named, leaf, extra, missing, error, named_ix, named_n, prev, next, start, \"end\", thash, nsib, anext, aprev, wpar, ffirst)";
+const SCHEMA: &CStr = c"CREATE TABLE x(file, id, \"last\", parent, kind, field, named, leaf, extra, missing, error, named_ix, named_n, prev, next, start, \"end\", thash, nsib, anext, aprev, wpar, ffirst, atom)";
 
 /// One constraint `xBestIndex` consumed, in argv order (`idx_str`, one letter pair each).
 #[derive(Clone, Copy, PartialEq)]

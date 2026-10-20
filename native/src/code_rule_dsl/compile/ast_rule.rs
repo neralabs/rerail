@@ -8,7 +8,7 @@ use super::utils::{UtilIds, UtilScope, is_metavariable_name};
 use crate::code_rule_dsl::json::{
     bounded_text, invalid, non_empty_str, object, reject_unknown, required_str,
 };
-use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
+use crate::code_rule_dsl::language::{GrammarDialect, PatternSource};
 use crate::code_rule_dsl::matcher::{
     AstMatcher, CallArgs, CompareText, Count, FieldRelation, Reading, Related, StopBy, UtilCall,
     UtilRef,
@@ -409,7 +409,7 @@ pub(crate) fn compile_ast_rule(
                 },
             )
         };
-        terms.push(match rule_pattern(source, language) {
+        terms.push(match super::artifacts::pattern(source, language) {
             Ok((compiled, parsed_as)) if !compiled.has_error() => {
                 match literal_dollar_name(&compiled, written, parsed_as) {
                     Some(name) => grammar_gap(

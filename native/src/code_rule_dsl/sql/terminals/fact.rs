@@ -338,7 +338,7 @@ fn environment<'t, D: Doc>(
 
 /// One answered key: each of its rows.
 struct FactRow {
-    ek: String,
+    ek: Value,
     unknown: bool,
     values: Vec<Value>,
 }
@@ -352,10 +352,10 @@ fn key_values<'k>(term: &FactTerm, ek: &'k str) -> Result<Vec<&'k str>> {
     Ok(values)
 }
 
-fn answered(rows: &mut Vec<FactRow>, ek: &str, verdicts: Vec<Verdict>) {
+fn answered(rows: &mut Vec<FactRow>, ek: &Value, verdicts: Vec<Verdict>) {
     for verdict in verdicts {
         rows.push(FactRow {
-            ek: ek.to_owned(),
+            ek: ek.clone(),
             unknown: verdict.unknown,
             values: verdict.values,
         });
@@ -382,8 +382,9 @@ pub(in crate::code_rule_dsl::sql) fn tree_file(
 }
 
 /// Evaluates `keys` of `term`, file by file.
+type Inputs = BTreeMap<usize, Vec<(Value, u32, Vec<String>)>>;
 fn evaluate(batch: &Arc<Batch>, term: &FactTerm, keys: BTreeSet<String>) -> Result<Vec<FactRow>> {
-    let mut by_file: BTreeMap<usize, Vec<(String, u32)>> = BTreeMap::new();
+    let mut by_file: Inputs = BTreeMap::new();
     for ek in keys {
         let mut parts = ek.splitn(3, ',');
         let (Some(Ok(file)), Some(Ok(node))) = (
@@ -392,19 +393,29 @@ fn evaluate(batch: &Arc<Batch>, term: &FactTerm, keys: BTreeSet<String>) -> Resu
         ) else {
             continue;
         };
-        by_file.entry(file).or_default().push((ek, node));
+        let values = key_values(term, &ek)?
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        by_file
+            .entry(file)
+            .or_default()
+            .push((Value::Text(ek), node, values));
     }
+    evaluate_inputs(batch, term, by_file)
+}
+fn evaluate_inputs(batch: &Arc<Batch>, term: &FactTerm, by_file: Inputs) -> Result<Vec<FactRow>> {
     let limit = |limit: String| Error::ModuleError(format!("fact: limit {limit}"));
     let mut rows = Vec::new();
     for (index, keys) in by_file {
         if let Some(file) = batch.files.get(index) {
             EVALUATING.set(Some((Arc::clone(batch), index)));
             let answered_all = with_scopes(index, file, || -> Result<()> {
-                for (ek, node) in keys {
+                for (ek, node, values) in keys {
                     if node >= file.facts.len() {
                         continue;
                     }
-                    let values = key_values(term, &ek)?;
+                    let values: Vec<_> = values.iter().map(String::as_str).collect();
                     let Some(env) = environment(
                         &file.facts,
                         |id| node_at(&file.root, id),
@@ -431,11 +442,11 @@ fn evaluate(batch: &Arc<Batch>, term: &FactTerm, keys: BTreeSet<String>) -> Resu
             let at = |id: u32| root.adopt(root.root().get_doc().node(id));
             let _tables = sub.table.clone().map(SubTables::enter);
             let answered_all = with_scopes(sub.host, host, || -> Result<()> {
-                for (ek, node) in keys {
+                for (ek, node, values) in keys {
                     if node >= sub.facts.len() {
                         continue;
                     }
-                    let values = key_values(term, &ek)?;
+                    let values: Vec<_> = values.iter().map(String::as_str).collect();
                     let Some(env) = environment(&sub.facts, at, &term.reads, &values) else {
                         continue;
                     };
@@ -453,12 +464,16 @@ fn evaluate(batch: &Arc<Batch>, term: &FactTerm, keys: BTreeSet<String>) -> Resu
 const COL_TERM: c_int = 0;
 const COL_EK: c_int = 1;
 const COL_UNK: c_int = 2;
+const COL_NK: c_int = 3 + FACT_COLUMNS as c_int;
 
 static SCHEMA: LazyLock<std::ffi::CString> = LazyLock::new(|| {
     let values = (0..FACT_COLUMNS)
         .map(|index| format!(", v{index}"))
         .collect::<String>();
-    std::ffi::CString::new(format!("CREATE TABLE x(term HIDDEN, ek, unk{values})")).expect("no NUL")
+    std::ffi::CString::new(format!(
+        "CREATE TABLE x(term HIDDEN, ek, unk{values}, nk HIDDEN)"
+    ))
+    .expect("no NUL")
 });
 
 #[repr(C)]
@@ -493,6 +508,7 @@ unsafe impl<'vtab> VTab<'vtab> for FactTable {
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
         let mut term = None;
         let mut ek = None;
+        let mut nk = None;
         for (index, constraint) in info.constraints().enumerate() {
             if !constraint.is_usable()
                 || constraint.operator() != IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
@@ -503,13 +519,16 @@ unsafe impl<'vtab> VTab<'vtab> for FactTable {
                 COL_TERM => {
                     term.get_or_insert(index);
                 }
+                COL_NK => {
+                    nk.get_or_insert(index);
+                }
                 COL_EK => {
                     ek.get_or_insert(index);
                 }
                 _ => {}
             }
         }
-        let (Some(term), Some(ek)) = (term, ek) else {
+        let (Some(term), Some(ek)) = (term, nk.or(ek)) else {
             info.set_estimated_cost(f64::MAX);
             info.set_estimated_rows(i64::MAX);
             info.set_idx_num(0);
@@ -521,7 +540,7 @@ unsafe impl<'vtab> VTab<'vtab> for FactTable {
             usage.set_argv_index(argv as c_int + 1);
             usage.set_omit(true);
         }
-        info.set_idx_num(if list { 3 } else { 1 });
+        info.set_idx_num((if list { 3 } else { 1 }) | if nk.is_some() { 4 } else { 0 });
         info.set_estimated_cost(100.0);
         info.set_estimated_rows(100);
         Ok(true)
@@ -570,19 +589,44 @@ unsafe impl VTabCursor for FactCursor<'_> {
         else {
             return Err(Error::ModuleError(format!("fact: no fact term {term_id}")));
         };
-        let mut keys = BTreeSet::new();
-        if idx_num & 2 != 0 {
-            let mut items = args.in_values(1)?;
-            while let Some(item) = items.next()? {
-                if let ValueRef::Text(text) = item {
-                    keys.insert(String::from_utf8_lossy(text).into_owned());
-                }
-            }
-        } else if let Value::Text(text) = args.get::<Value>(1)? {
-            keys.insert(text);
-        }
         let started = Started::now();
-        self.rows = evaluate(&batch, term, keys)?;
+        self.rows = if idx_num & 4 != 0 {
+            if !term.reads.is_empty() {
+                return Err(Error::ModuleError(
+                    "fact: packed keys require no capture reads".into(),
+                ));
+            }
+            let mut keys = BTreeSet::new();
+            if idx_num & 2 != 0 {
+                let mut items = args.in_values(1)?;
+                while let Some(item) = items.next()? {
+                    keys.extend(integer(item));
+                }
+            } else {
+                keys.extend(integer(ValueRef::from(&args.get::<Value>(1)?)));
+            }
+            let mut inputs: Inputs = BTreeMap::new();
+            for key in keys {
+                inputs
+                    .entry((key >> 32) as u32 as usize)
+                    .or_default()
+                    .push((Value::Integer(key), key as u32, Vec::new()));
+            }
+            evaluate_inputs(&batch, term, inputs)?
+        } else {
+            let mut keys = BTreeSet::new();
+            if idx_num & 2 != 0 {
+                let mut items = args.in_values(1)?;
+                while let Some(item) = items.next()? {
+                    if let ValueRef::Text(text) = item {
+                        keys.insert(String::from_utf8_lossy(text).into_owned());
+                    }
+                }
+            } else if let Value::Text(text) = args.get::<Value>(1)? {
+                keys.insert(text);
+            }
+            evaluate(&batch, term, keys)?
+        };
         FACT_TIME.set(FACT_TIME.get().plus(started.elapsed()));
         #[cfg(test)]
         super::calls::UNKNOWN_VERDICTS.set(
@@ -607,7 +651,7 @@ unsafe impl VTabCursor for FactCursor<'_> {
         let row = &self.rows[self.pos];
         match column {
             COL_TERM => context.set_result(&self.term),
-            COL_EK => context.set_result(&row.ek),
+            COL_EK | COL_NK => context.set_result(&row.ek),
             COL_UNK => context.set_result(&i64::from(row.unknown)),
             other => {
                 let index = (other - 3) as usize;

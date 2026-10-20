@@ -260,6 +260,171 @@ fn support_any<'a>(
     Some(union)
 }
 
+/// Every read of this leaf-valued input uses unification text. With `exports`, successful
+/// returns must also preserve the caller occurrence. Negation/count discard inner bindings.
+fn value_only(
+    op: &Op,
+    slot: SlotId,
+    exports: bool,
+    units: &[Unit],
+    visiting: &mut BTreeSet<(usize, SlotId, bool)>,
+    fuel: &mut usize,
+) -> bool {
+    let Some(left) = fuel.checked_sub(1) else {
+        return false;
+    };
+    *fuel = left;
+    match op {
+        Op::Kinds(_) | Op::Regex(_) | Op::Never => true,
+        Op::Pattern { vars, .. } => !exports || !vars.contains(&slot),
+        Op::All(items) | Op::Any(items) | Op::Seq(items) => items
+            .iter()
+            .all(|op| value_only(op, slot, exports, units, visiting, fuel)),
+        Op::AllOpen(items) => items
+            .iter()
+            .all(|t| value_only(&t.op, slot, exports, units, visiting, fuel)),
+        Op::AnyOpen(items) => items
+            .iter()
+            .all(|(op, _)| value_only(op, slot, exports, units, visiting, fuel)),
+        Op::Not(inner) => value_only(inner, slot, false, units, visiting, fuel),
+        Op::Unknowable { op, .. } => value_only(op, slot, exports, units, visiting, fuel),
+        Op::Relation { walk, sub, .. } | Op::Search { walk, sub, .. } | Op::Every { walk, sub } => {
+            !matches!(walk, Walk::Slot(_) | Walk::Related(_))
+                && value_only(sub, slot, exports, units, visiting, fuel)
+        }
+        Op::Count {
+            walk, sub, bind, ..
+        } => {
+            !matches!(walk, Walk::Slot(_) | Walk::Related(_))
+                && bind.is_none_or(|(bound, _)| !exports || bound != slot)
+                && value_only(sub, slot, false, units, visiting, fuel)
+        }
+        Op::Fact { reads, binds, .. } => {
+            !reads.contains(&slot) && (!exports || !binds.contains(&slot))
+        }
+        Op::Recur {
+            unit,
+            slots,
+            context,
+        } => {
+            if *context == Some(slot) || units[*unit].following == Some(slot) {
+                return false;
+            }
+            let callee = match slots {
+                None => slot,
+                Some(site) => match site.iter().position(|&s| s == slot) {
+                    None => return true,
+                    Some(i) => units[*unit].key[i],
+                },
+            };
+            let key = (*unit, callee, exports);
+            if visiting.contains(&key) {
+                return true;
+            }
+            visiting.insert(key);
+            let result = value_only(&units[*unit].body, callee, exports, units, visiting, fuel);
+            visiting.remove(&key);
+            result
+        }
+        // These operators may inspect occurrence, scope, exclusion, or exported source spans.
+        _ => false,
+    }
+}
+/// Every successful path replaces this input with a candidate occurrence. Unknown answers
+/// still preserve the caller. A recursive success must eventually take a finite base path.
+fn rebinds(
+    op: &Op,
+    slot: SlotId,
+    units: &[Unit],
+    visiting: &mut BTreeSet<(usize, SlotId)>,
+    fuel: &mut usize,
+) -> bool {
+    let Some(left) = fuel.checked_sub(1) else {
+        return false;
+    };
+    *fuel = left;
+    match op {
+        Op::Pattern {
+            single_capture: Some(bound),
+            ..
+        } => *bound == slot,
+        Op::Never => true,
+        Op::All(items) | Op::Seq(items) => items
+            .iter()
+            .any(|op| rebinds(op, slot, units, visiting, fuel)),
+        Op::AllOpen(items) => items
+            .iter()
+            .any(|t| rebinds(&t.op, slot, units, visiting, fuel)),
+        Op::Any(items) => items
+            .iter()
+            .all(|op| rebinds(op, slot, units, visiting, fuel)),
+        Op::AnyOpen(items) => items
+            .iter()
+            .all(|(op, _)| rebinds(op, slot, units, visiting, fuel)),
+        Op::Relation { sub, .. } | Op::Search { sub, .. } => {
+            rebinds(sub, slot, units, visiting, fuel)
+        }
+        Op::Unknowable { op, .. } => rebinds(op, slot, units, visiting, fuel),
+        Op::Recur { unit, slots, .. } => {
+            let callee = match slots {
+                None => slot,
+                Some(site) => match site.iter().position(|&s| s == slot) {
+                    Some(i) => units[*unit].key[i],
+                    None => return false,
+                },
+            };
+            if !units[*unit].key.contains(&callee) {
+                return false;
+            }
+            let key = (*unit, callee);
+            if visiting.contains(&key) {
+                return true;
+            }
+            visiting.insert(key);
+            let result = rebinds(&units[*unit].body, callee, units, visiting, fuel);
+            visiting.remove(&key);
+            result
+        }
+        _ => false,
+    }
+}
+impl Emitter<'_> {
+    /// Value equivalence with a fixed return contract: false preserves the caller, true
+    /// returns a newly bound candidate. Mixed paths retain occurrence keys.
+    pub(super) fn value_keys(&self, unit: usize) -> BTreeMap<SlotId, bool> {
+        self.units[unit]
+            .key
+            .iter()
+            .copied()
+            .filter_map(|slot| {
+                if self.slots[slot].kind != SlotKind::Node {
+                    return None;
+                }
+                let body = &self.units[unit].body;
+                if value_only(
+                    body,
+                    slot,
+                    true,
+                    self.units,
+                    &mut BTreeSet::new(),
+                    &mut 4096,
+                ) {
+                    return Some((slot, false));
+                }
+                (value_only(
+                    body,
+                    slot,
+                    false,
+                    self.units,
+                    &mut BTreeSet::new(),
+                    &mut 4096,
+                ) && rebinds(body, slot, self.units, &mut BTreeSet::new(), &mut 4096))
+                .then_some((slot, true))
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +456,78 @@ mod tests {
         }];
         subtree_support(&units[0].body, 0, None, 0, &units, &mut BTreeMap::new())
     }
+    #[test]
+    fn value_keys_distinguish_uniform_rebinding_from_mixed_return_paths() {
+        let descent = || Op::Relation {
+            walk: Walk::Has(Stop::Neighbor),
+            sub: Box::new(reference()),
+            binds: true,
+            need: Need::default(),
+        };
+        let definite = |body| {
+            let units = [Unit {
+                key: vec![0],
+                body,
+                scc: 0,
+                following: None,
+            }];
+            rebinds(&units[0].body, 0, &units, &mut BTreeSet::new(), &mut 4096)
+        };
+        assert!(definite(Op::Any(vec![witness(), descent()])));
+        assert!(!definite(Op::Any(vec![witness(), Op::Kinds(vec![7])])));
+        assert!(!definite(Op::Not(Box::new(witness()))));
+        assert!(!definite(Op::Pattern {
+            term: 0,
+            env: true,
+            vars: vec![0],
+            reads: vec![0],
+            single_capture: None
+        }));
+    }
+
+    #[test]
+    fn semantic_key_proof_rejects_occurrence_reads_and_exported_bindings() {
+        let allowed = |body| {
+            let units = [Unit {
+                key: vec![0],
+                body,
+                scc: 0,
+                following: None,
+            }];
+            value_only(
+                &units[0].body,
+                0,
+                true,
+                &units,
+                &mut BTreeSet::new(),
+                &mut 4096,
+            )
+        };
+        assert!(!allowed(witness()));
+        assert!(allowed(Op::Not(Box::new(witness()))));
+        assert!(allowed(Op::All(vec![
+            Op::Not(Box::new(witness())),
+            reference()
+        ])));
+        assert!(!allowed(Op::All(vec![witness(), reference()])));
+        assert!(!allowed(Op::Fact {
+            term: 0,
+            reads: vec![0],
+            at_node: true,
+            binds: vec![]
+        }));
+        assert!(!allowed(Op::Relation {
+            walk: Walk::Slot(0),
+            sub: Box::new(Op::Kinds(vec![7])),
+            need: Need::default(),
+            binds: false
+        }));
+        assert!(!allowed(Op::Constrained {
+            rule: Box::new(Op::Kinds(vec![7])),
+            constraints: vec![(0, Op::Kinds(vec![7]))]
+        }));
+    }
+
     #[test]
     fn only_positive_strictly_descending_cycles_have_subtree_support() {
         let descend = Op::Relation {

@@ -86,6 +86,13 @@ pub(super) struct Program {
 /// A pattern terminal's fresh-env matches tested so far in a batch, by key (`file << 32 | node`):
 /// the capture columns, `None` where the pattern does not match.
 type FreshMatches = HashMap<i64, Option<Arc<[Option<i64>]>>>;
+type PatternInputs = (usize, u32, u32, Box<[Option<i64>]>);
+#[derive(Default)]
+pub(super) struct BoundPatterns {
+    pub(super) values: HashMap<PatternInputs, Option<Arc<[Option<i64>]>>>,
+    pub(super) bytes: usize,
+}
+
 /// A file to run: its tape, the statement (by index into the compiled grammars) that matches it,
 /// if any, with its selected roots, and what its scopes read beyond the tape.
 pub(in crate::code_rule_dsl) type RunFile =
@@ -97,6 +104,7 @@ pub(super) struct Batch {
     pub(super) files: Vec<BatchFile>,
     pub(super) program: Arc<Program>,
     fresh: Vec<parking_lot::Mutex<FreshMatches>>,
+    pub(super) bound_patterns: parking_lot::Mutex<BoundPatterns>,
     subfiles: parking_lot::Mutex<SubFiles>,
 }
 
@@ -133,6 +141,7 @@ impl Batch {
                 .map(|_| Default::default())
                 .collect(),
             program,
+            bound_patterns: Default::default(),
             subfiles: parking_lot::Mutex::default(),
         })
     }
@@ -2560,16 +2569,29 @@ impl Runner<'_> {
             bound.text(step, &mut text);
         }
         let started = Started::now();
+        let selected = self.frames.select(self.connection, &text)?;
         let mut statement = self.connection.prepare_cached(&text)?;
-        let rows = statement.execute([])?;
+        let rows = match selected {
+            Some(rows) => rows,
+            None => statement.execute([])?,
+        };
         let elapsed = started.elapsed();
         #[cfg(feature = "unbounded-work")]
         if super::diagnostics::enabled(&text) {
-            let counters = super::diagnostics::counters(&statement);
+            let selection = frames::take_selection_trace();
+            let mut counters = super::diagnostics::counters(&statement);
+            if let Some((_, query_counters)) = &selection {
+                for (counter, query) in counters.iter_mut().zip(query_counters) {
+                    *counter += query;
+                }
+            }
             drop(statement);
             super::diagnostics::record(
                 self.connection,
-                &text,
+                selection
+                    .as_ref()
+                    .filter(|_| selected.is_some())
+                    .map_or(text.as_str(), |(query, _)| query.as_str()),
                 elapsed,
                 rows,
                 counters,

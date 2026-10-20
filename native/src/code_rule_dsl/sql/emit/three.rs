@@ -705,10 +705,23 @@ impl Emitter<'_> {
                 overrides.push((column, format!("t.v{}", overrides.len())));
             }
         }
-        let with = format!(
-            "WITH e AS MATERIALIZED (SELECT f.k AS k, {key} AS ek FROM {input} f), \
+        let (with, joins) = if reads.is_empty() {
+            let packed = format!("f.file * 4294967296 + {node}");
+            (
+                format!(
+                    "WITH t AS MATERIALIZED (SELECT ek, unk{values} FROM fact WHERE term = {term} AND nk IN (SELECT {packed} FROM {input} f)) "
+                ),
+                format!("JOIN t ON t.ek = {packed}"),
+            )
+        } else {
+            (
+                format!(
+                    "WITH e AS MATERIALIZED (SELECT f.k AS k, {key} AS ek FROM {input} f), \
              t AS MATERIALIZED (SELECT ek, unk{values} FROM fact WHERE term = {term} AND ek IN (SELECT ek FROM e)) "
-        );
+                ),
+                "JOIN e ON e.k = f.k JOIN t ON t.ek = e.ek".into(),
+            )
+        };
         let (select, known) = if self.three {
             (self.verdict("f", &overrides, "t.unk"), "")
         } else {
@@ -717,9 +730,7 @@ impl Emitter<'_> {
         self.frame_with(
             "x",
             &with,
-            &format!(
-                "SELECT {select} FROM {input} f JOIN e ON e.k = f.k JOIN t ON t.ek = e.ek{known}"
-            ),
+            &format!("SELECT {select} FROM {input} f {joins}{known}"),
             Reads::join(&[input]),
         )
     }

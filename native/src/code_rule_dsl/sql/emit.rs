@@ -23,6 +23,7 @@ mod inline;
 mod keyed;
 mod leaves;
 mod lineage;
+mod scan;
 mod shared_search;
 mod three;
 
@@ -1022,6 +1023,9 @@ impl<'s> Emitter<'s> {
 
     /// `op` on `input` (`Emitter::op`), in the output frame's layout.
     fn apply(&mut self, op: &Op, input: &str, live: &Live) -> String {
+        if let Some(out) = self.scan(op, input, live) {
+            return out;
+        }
         if let Some(out) = self.shared_search(op, input, live) {
             return out;
         }
@@ -1440,6 +1444,27 @@ impl<'s> Emitter<'s> {
             Some(site) => self.key_columns(site),
             None => unit_columns.clone(),
         };
+        let equivalent = self.value_keys(unit);
+        let canonical: std::collections::BTreeMap<String, bool> = key
+            .iter()
+            .enumerate()
+            .filter(|(_, slot)| equivalent.contains_key(slot))
+            .map(|(i, slot)| {
+                (
+                    format!("s{}", site.map_or(key[i], |site| site[i])),
+                    equivalent[slot],
+                )
+            })
+            .collect();
+        let key_value = |column: &String| {
+            if canonical.contains_key(column) {
+                format!(
+                    "COALESCE((SELECT atom FROM node WHERE file = f.file AND id = f.{column}), f.{column})"
+                )
+            } else {
+                format!("f.{column}")
+            }
+        };
         self.unit_tables(unit);
         let demand = demand_table(unit);
         let answer = answer_table(unit);
@@ -1447,14 +1472,14 @@ impl<'s> Emitter<'s> {
         let mut matched: String = site_columns
             .iter()
             .enumerate()
-            .map(|(index, column)| format!(" AND d.c{index} IS f.{column}"))
+            .map(|(index, column)| format!(" AND d.c{index} IS {}", key_value(column)))
             .collect();
         let mut columns: String = (0..site_columns.len())
             .map(|index| format!(", c{index}"))
             .collect();
         let mut values: String = site_columns
             .iter()
-            .map(|column| format!(", f.{column}"))
+            .map(|column| format!(", {}", key_value(column)))
             .collect();
         if units[unit].following.is_some() {
             let passed = context.map_or_else(|| "NULL".to_owned(), |slot| format!("f.s{slot}"));
@@ -1501,7 +1526,15 @@ impl<'s> Emitter<'s> {
         let overrides: Vec<(String, String)> = site_columns
             .iter()
             .enumerate()
-            .map(|(index, column)| (column.clone(), format!("r.c{index}")))
+            .filter(|(_, column)| canonical.get(*column) != Some(&false))
+            .map(|(index, column)| {
+                let value = if self.three && canonical.get(column) == Some(&true) {
+                    format!("CASE WHEN r.unk = 0 THEN r.c{index} ELSE f.{column} END")
+                } else {
+                    format!("r.c{index}")
+                };
+                (column.clone(), value)
+            })
             .collect();
         let select = if self.three {
             self.verdict("f", &overrides, "r.unk")

@@ -43,6 +43,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as Atomic};
 
+#[cfg(feature = "unbounded-work")]
+thread_local! { static SELECTION_TRACE: RefCell<Option<(String, [i64; 4])>> = const { RefCell::new(None) }; }
+#[cfg(feature = "unbounded-work")]
+pub(super) fn take_selection_trace() -> Option<(String, [i64; 4])> {
+    SELECTION_TRACE.take()
+}
+
 /// A step that empties the frame it names (`CLEAR` then the table's name): the driver runs it on
 /// the frame's buffers instead of a `DELETE`.
 pub(super) const CLEAR: &str = "/*CLEAR*/";
@@ -149,6 +156,8 @@ pub(super) struct FrameStore {
     live: AtomicUsize,
     /// The most rows held at once since the store was made.
     peak: AtomicUsize,
+    retained: Arc<AtomicUsize>,
+    selections: parking_lot::Mutex<HashMap<String, Option<Selection>>>,
 }
 
 /// The `frame` module: every frame is an eponymous table of its own registration of it.
@@ -183,7 +192,216 @@ fn arguments(text: &str) -> Vec<&str> {
     parts
 }
 
+/// A projection that preserves source row keys. SQLite still evaluates the predicate.
+/// No joins, expressions, generated keys, affinity changes, or duplicate rows enter this path.
+struct Selection {
+    target: String,
+    source: String,
+    columns: Vec<String>,
+    query: String,
+}
+impl Selection {
+    fn parse(sql: &str) -> Option<Self> {
+        let (target, select) = sql.strip_prefix("INSERT INTO ")?.split_once(" SELECT ")?;
+        let (columns, from) = select.split_once(" FROM ")?;
+        let (source, tail) = from.split_once(' ')?;
+        let alias = tail.split_whitespace().next()?;
+        if !tail[alias.len()..].is_empty() && !tail[alias.len()..].starts_with(" WHERE ") {
+            return None;
+        }
+        if [
+            " JOIN ", " UNION ", " GROUP ", " ORDER ", " LIMIT ", "SELECT ",
+        ]
+        .iter()
+        .any(|part| from.contains(part))
+        {
+            return None;
+        }
+        let columns = columns
+            .split(", ")
+            .map(|column| {
+                let name = column.strip_prefix(&format!("{alias}."))?;
+                name.bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || c == b'_')
+                    .then(|| name.to_owned())
+            })
+            .collect::<Option<Vec<_>>>()?;
+        if columns.first().map(String::as_str) != Some("k") {
+            return None;
+        }
+        Some(Self {
+            target: target.into(),
+            source: source.into(),
+            columns,
+            query: format!("SELECT {alias}.rowid FROM {from}"),
+        })
+    }
+}
+
+impl Column {
+    fn view(
+        &mut self,
+        selected: &Arc<[u32]>,
+        retained: &Arc<AtomicUsize>,
+        composed: &mut HashMap<usize, Arc<[u32]>>,
+    ) -> Option<Self> {
+        if !matches!(self.data, Data::View(..)) {
+            let bytes = self.nulls.capacity() * 8
+                + match &self.data {
+                    Data::Narrow(v) => v.capacity() * 4,
+                    Data::Wide(v) => v.capacity() * 8,
+                    Data::Any(v) => {
+                        v.capacity() * std::mem::size_of::<Value>()
+                            + v.iter()
+                                .map(|v| match v {
+                                    Value::Text(s) => s.capacity(),
+                                    Value::Blob(b) => b.capacity(),
+                                    _ => 0,
+                                })
+                                .sum::<usize>()
+                    }
+                    Data::View(..) => unreachable!(),
+                };
+            // Bound pages retained by selections after the producing register is cleared.
+            retained
+                .fetch_update(Atomic::Relaxed, Atomic::Relaxed, |n| {
+                    n.checked_add(bytes).filter(|n| *n <= BUDGET * 8)
+                })
+                .ok()?;
+            let empty = Self::new(self.integer, self.default);
+            let column = std::mem::replace(self, empty);
+            self.data = Data::View(
+                Arc::new(Page {
+                    column,
+                    retained: Arc::clone(retained),
+                    bytes,
+                }),
+                None,
+            );
+        }
+        let Data::View(page, rows) = &self.data else {
+            unreachable!()
+        };
+        let rows = match rows {
+            None => Arc::clone(selected),
+            Some(rows) => Arc::clone(
+                composed
+                    .entry(Arc::as_ptr(rows) as *const u32 as usize)
+                    .or_insert_with(|| {
+                        selected
+                            .iter()
+                            .map(|&row| rows[row as usize])
+                            .collect::<Vec<_>>()
+                            .into()
+                    }),
+            ),
+        };
+        Some(Self {
+            data: Data::View(Arc::clone(page), Some(rows)),
+            nulls: Vec::new(),
+            integer: self.integer,
+            default: self.default,
+        })
+    }
+}
+
 impl FrameStore {
+    /// Execute a proved key-preserving projection as a selection over immutable pages.
+    /// Returns None for SQL shapes or frame states that require ordinary insertion.
+    pub(super) fn select(&self, connection: &Connection, sql: &str) -> Result<Option<usize>> {
+        #[cfg(feature = "unbounded-work")]
+        SELECTION_TRACE.set(None);
+        let mut cached = self.selections.lock();
+        if !cached.contains_key(sql) {
+            cached.insert(sql.to_owned(), Selection::parse(sql));
+        }
+        let Some(selection) = cached.get(sql).and_then(Option::as_ref) else {
+            return Ok(None);
+        };
+        let frames = self.frames.lock();
+        let (Some(source), Some(target)) =
+            (frames.get(&selection.source), frames.get(&selection.target))
+        else {
+            return Ok(None);
+        };
+        if Arc::ptr_eq(source, target) {
+            return Ok(None);
+        }
+        let (source, target) = (Arc::clone(source), Arc::clone(target));
+        drop(frames);
+        let input = source.get();
+        let output = target.get();
+        if input.key != Key::Rowid(0)
+            || output.key != Key::Rowid(0)
+            || output.len != 0
+            || output.columns.len() != selection.columns.len()
+            || !input.ascending
+        {
+            return Ok(None);
+        }
+        let Some(columns) = selection
+            .columns
+            .iter()
+            .map(|name| input.names.iter().position(|c| c == name))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Ok(None);
+        };
+        if columns.iter().zip(&output.columns).any(|(&i, out)| {
+            input.columns[i].integer != out.integer || input.columns[i].default != out.default
+        }) {
+            return Ok(None);
+        }
+        let mut statement = connection.prepare_cached(&selection.query)?;
+        let keys = statement
+            .query_map([], |row| row.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>>>()?;
+        #[cfg(feature = "unbounded-work")]
+        if super::diagnostics::enabled(sql) {
+            SELECTION_TRACE.set(Some((
+                selection.query.clone(),
+                super::diagnostics::counters(&statement),
+            )));
+        }
+        drop(statement);
+        if keys.is_empty() {
+            return Ok(Some(0));
+        }
+        if self.live.load(Atomic::Relaxed).saturating_add(keys.len()) > BUDGET {
+            return Err(Error::ModuleError("frame: row budget exceeded".into()));
+        }
+        let rows: Arc<[u32]> = keys
+            .iter()
+            .map(|&key| partition(input.len, |row| input.columns[0].integer(row) < key) as u32)
+            .collect::<Vec<_>>()
+            .into();
+        if rows.iter().any(|&row| row as usize >= input.len) {
+            return Err(Error::ModuleError("frame: invalid selection key".into()));
+        }
+        // SAFETY: the SELECT and all its cursors have completed. The frames differ.
+        let input = unsafe { source.get_mut() };
+        let mut projected = Vec::with_capacity(columns.len());
+        let mut composed = HashMap::new();
+        for column in columns {
+            let Some(view) = input.columns[column].view(&rows, &self.retained, &mut composed)
+            else {
+                return Ok(None);
+            };
+            projected.push(view);
+        }
+        let output = unsafe { target.get_mut() };
+        output.lookups.get_mut().clear();
+        *output.order.get_mut() = None;
+        output.columns = projected;
+        output.len = keys.len();
+        output.ascending = keys.windows(2).all(|p| p[0] < p[1]);
+        output.dense = keys.windows(2).all(|p| p[1].checked_sub(p[0]) == Some(1));
+        output.largest = keys.iter().copied().max().unwrap_or(0).max(0);
+        let live = self.live.fetch_add(keys.len(), Atomic::Relaxed) + keys.len();
+        self.peak.fetch_max(live, Atomic::Relaxed);
+        Ok(Some(keys.len()))
+    }
+
     /// Reads typed pattern inputs by frame key, without a SQL-side environment copy.
     /// The callback cannot retain a reference into the frame or execute SQL on this connection.
     pub(super) fn pattern_inputs(
@@ -601,9 +819,21 @@ fn compare_mixed(integer: i64, real: f64) -> Ordering {
 
 /// One column's values: integers packed while they fit, any value once one does not.
 enum Data {
+    View(Arc<Page>, Option<Arc<[u32]>>),
     Narrow(Vec<i32>),
     Wide(Vec<i64>),
     Any(Vec<Value>),
+}
+
+struct Page {
+    column: Column,
+    retained: Arc<AtomicUsize>,
+    bytes: usize,
+}
+impl Drop for Page {
+    fn drop(&mut self) {
+        self.retained.fetch_sub(self.bytes, Atomic::Relaxed);
+    }
 }
 
 struct Column {
@@ -635,6 +865,9 @@ impl Column {
 
     fn get(&self, row: usize) -> ValueRef<'_> {
         match &self.data {
+            Data::View(page, rows) => page
+                .column
+                .get(rows.as_ref().map_or(row, |rows| rows[row] as usize)),
             Data::Narrow(values) if !self.is_null(row) => ValueRef::Integer(values[row].into()),
             Data::Wide(values) if !self.is_null(row) => ValueRef::Integer(values[row]),
             Data::Any(values) => ValueRef::from(&values[row]),
@@ -655,7 +888,7 @@ impl Column {
             match &self.data {
                 Data::Narrow(values) => return values[a].cmp(&values[b]),
                 Data::Wide(values) => return values[a].cmp(&values[b]),
-                Data::Any(_) => {}
+                Data::Any(_) | Data::View(..) => {}
             }
         }
         Probe::of(self.get(a)).compare(Probe::of(self.get(b)))
@@ -672,6 +905,13 @@ fn owned(value: ValueRef<'_>) -> Value {
 
 impl Column {
     fn push(&mut self, row: usize, value: ValueRef<'_>) {
+        if matches!(self.data, Data::View(..)) {
+            let mut owned = Self::new(self.integer, self.default);
+            for at in 0..row {
+                owned.push(at, self.get(at));
+            }
+            *self = owned;
+        }
         let value = match (value, self.default) {
             (ValueRef::Null, Some(default)) => ValueRef::Integer(default),
             (value, _) => value,
@@ -687,7 +927,7 @@ impl Column {
                 match data {
                     Data::Narrow(values) => values.push(0),
                     Data::Wide(values) => values.push(0),
-                    Data::Any(_) => unreachable!("matched above"),
+                    Data::Any(_) | Data::View(..) => unreachable!("matched above or materialized"),
                 }
             }
             (ValueRef::Integer(value), Data::Narrow(values)) => match i32::try_from(value) {
@@ -1305,6 +1545,95 @@ unsafe impl VTabCursor for FrameCursor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selections_share_pages_across_clear_reuse_and_appends() {
+        let (db, store) = connection(
+            "/*FRAME*/a(k INTEGER PRIMARY KEY, x, y); /*FRAME*/b(k INTEGER PRIMARY KEY, y, x); /*FRAME*/c(k INTEGER PRIMARY KEY, x, y); INSERT INTO a VALUES (1, NULL, 9223372036854775807), (2, 'text', x'1234'), (3, 1.5, -8)",
+        );
+        let select = "INSERT INTO b SELECT f.k, f.y, f.x FROM a f WHERE f.k >= 2";
+        let expected = rows(&db, "SELECT k, y, x FROM a WHERE k >= 2");
+        assert_eq!(store.select(&db, select).unwrap(), Some(2));
+        assert_eq!(rows(&db, "SELECT * FROM b"), expected);
+        assert!(store.retained.load(Atomic::Relaxed) > 0);
+        assert_eq!(
+            store
+                .select(
+                    &db,
+                    "INSERT INTO c SELECT f.k, f.x, f.y FROM b f WHERE f.k = 3"
+                )
+                .unwrap(),
+            Some(1)
+        );
+        store.clear("a");
+        db.execute_batch(
+            "INSERT INTO a VALUES (9, 'reuse', NULL); INSERT INTO b VALUES (4, 42, 'append')",
+        )
+        .unwrap();
+        assert_eq!(
+            rows(&db, "SELECT * FROM c"),
+            vec![vec![
+                Value::Integer(3),
+                Value::Real(1.5),
+                Value::Integer(-8)
+            ]]
+        );
+        assert_eq!(
+            rows(&db, "SELECT x FROM b WHERE k = 2"),
+            vec![vec![Value::Text("text".into())]]
+        );
+        store.clear("b");
+        store.clear("c");
+        assert_eq!(store.retained.load(Atomic::Relaxed), 0);
+        assert_eq!(store.live.load(Atomic::Relaxed), 1);
+    }
+
+    #[test]
+    fn selection_publication_invalidates_an_index_built_while_empty() {
+        let (db, store) = connection(
+            "/*FRAME*/a(k INTEGER PRIMARY KEY, x); /*FRAME*/b(k INTEGER PRIMARY KEY, x, INDEX (x)); INSERT INTO a VALUES (1, 7), (2, 'text')",
+        );
+        assert!(rows(&db, "SELECT k FROM b WHERE x = 7").is_empty());
+        assert!(
+            !store
+                .frames
+                .lock()
+                .get("b")
+                .unwrap()
+                .get()
+                .lookups
+                .borrow()
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .select(&db, "INSERT INTO b SELECT f.k, f.x FROM a f")
+                .unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            rows(&db, "SELECT k FROM b WHERE x = 7"),
+            vec![vec![Value::Integer(1)]]
+        );
+        assert_eq!(
+            rows(&db, "SELECT k FROM b WHERE x = 'text'"),
+            vec![vec![Value::Integer(2)]]
+        );
+    }
+
+    #[test]
+    fn selection_budget_fallback_keeps_source_and_target_valid() {
+        let (db, store) = connection(
+            "/*FRAME*/a(k INTEGER PRIMARY KEY, x); /*FRAME*/b(k INTEGER PRIMARY KEY, x); INSERT INTO a VALUES (1, 7)",
+        );
+        store.retained.store(BUDGET * 8, Atomic::Relaxed);
+        let sql = "INSERT INTO b SELECT f.k, f.x FROM a f";
+        assert_eq!(store.select(&db, sql).unwrap(), None);
+        assert_eq!(store.rows("b"), Some(0));
+        db.execute_batch(sql).unwrap();
+        assert_eq!(rows(&db, "SELECT * FROM b"), rows(&db, "SELECT * FROM a"));
+        store.retained.store(0, Atomic::Relaxed);
+    }
 
     /// A connection and its frame store, with `sql` run on it: its statements in order, a
     /// `FRAME` step registered.

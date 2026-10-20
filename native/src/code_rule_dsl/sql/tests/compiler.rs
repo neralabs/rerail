@@ -146,7 +146,8 @@ fn capture_demand_does_not_cross_binding_or_an_optional_branch() {
 
 #[cfg(feature = "unbounded-work")]
 #[test]
-fn capture_postings_reduce_materialized_candidates_in_both_verdict_modes() {
+fn capture_postings_bound_work_in_both_verdict_modes() {
+    use crate::code_rule_dsl::sql::terminals::scan::PROBES;
     let calls = 100;
     let source = format!("f({}f);\n", "a, ".repeat(128)).repeat(calls);
     for three in [false, true] {
@@ -158,6 +159,7 @@ fn capture_postings_reduce_materialized_candidates_in_both_verdict_modes() {
             "stopBy": "end", "kind": "identifier", "pattern": "$F"
         } } }));
         let rule = compile("typescript", json!({ "rule": { "all": terms } }));
+        PROBES.set(0);
         STATEMENT_PROFILE.set(Some(Default::default()));
         let result = same(&rule, &snapshot(&[("typescript", "a.ts", &source)]));
         assert_eq!(result["violations"].as_array().map(Vec::len), Some(calls));
@@ -167,9 +169,11 @@ fn capture_postings_reduce_materialized_candidates_in_both_verdict_modes() {
             .filter(|(sql, _)| sql.contains("needle.leaf"))
             .map(|(_, (_, rows, _))| rows)
             .sum();
+        let work = narrowed + PROBES.get();
         assert!(
-            narrowed > 0 && narrowed <= calls * 3,
-            "three={three}: {narrowed} restricted rows"
+            work > 0 && work <= calls * 3,
+            "three={three}: {narrowed} rows, {} packed probes",
+            PROBES.get()
         );
     }
 }
@@ -223,6 +227,96 @@ fn recursive_demand_insert_rejects_subtrees_without_a_capture_witness() {
         assert!(
             rows > 0 && rows < pairs * 10,
             "three={three}: {rows} demands"
+        );
+    }
+}
+
+#[test]
+fn progressive_walks_preserve_first_capture_and_exact_or_threshold_counts() {
+    let source = "f(a, b, a);\ng(b, a);\nh(c);\n";
+    for three in [false, true] {
+        for axis in ["has", "inside", "precedes", "follows"] {
+            for stop in ["neighbor", "end"] {
+                let mut rule = json!({"pattern":"$F($$$)", axis:{"stopBy":stop,"kind":"identifier","pattern":"$X"}});
+                if three {
+                    rule["all"] = json!([{"testUnknown":"^never$"}]);
+                }
+                agreed("typescript", json!({"rule":rule}), source);
+            }
+        }
+        for min in 0..=3 {
+            for max in [None, Some(0), Some(2), Some(5)] {
+                if (min == 0 && max.is_none()) || max.is_some_and(|max| max < min) {
+                    continue;
+                }
+                for exact in [false, true] {
+                    let mut count = json!({"min":min,"has":{"stopBy":"end","kind":"identifier","pattern":"$F"}});
+                    if let Some(max) = max {
+                        count["max"] = json!(max);
+                    }
+                    if exact {
+                        count["as"] = json!("N");
+                        count["offset"] = json!(-2);
+                    }
+                    let mut rule = json!({"pattern":"$F($$$)","count":count});
+                    if three {
+                        rule["all"] = json!([{"testUnknown":"^never$"}]);
+                    }
+                    agreed("typescript", json!({"rule":rule}), source);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn value_only_demands_preserve_each_callers_capture_occurrence() {
+    for three in [false, true] {
+        let mut rule = json!({"pattern":"$F($$$)", "any":[{"inside":{"stopBy":"end", "kind":"program", "matches":"absent"}},{"kind":"call_expression"}]});
+        if three {
+            rule["all"] = json!([{"testUnknown":"^never$"}]);
+        }
+        let ast = json!({"rule":rule,"utils":{
+            "absent":{"all":[{"not":{"pattern":"$F"}},{"not":{"has":{"matches":"absent"}}}]}
+        }});
+        let got = agreed("typescript", ast, "f(a);\nf(b);\ng(c);\n");
+        assert_eq!(got, ["f(a) F=f", "f(b) F=f", "g(c) F=g"]);
+    }
+}
+
+#[test]
+fn progressive_pattern_terminals_stop_before_the_rest_of_a_large_candidate_domain() {
+    use crate::code_rule_dsl::sql::terminals::scan::PROBES;
+    let source = format!("f(a{});", ", b".repeat(2048));
+    for count in [false, true] {
+        let ast = if count {
+            json!({"rule":{"pattern":"f($$$)","count":{"min":3,"has":{"stopBy":"end","kind":"identifier","pattern":"$X"}}}})
+        } else {
+            json!({"rule":{"pattern":"f($$$)","has":{"stopBy":"end","kind":"identifier","pattern":"$X"}}})
+        };
+        PROBES.set(0);
+        let got = agreed("typescript", ast, &source);
+        assert_eq!(got.len(), 1);
+        assert!(
+            PROBES.get() > 0 && PROBES.get() <= 3,
+            "{} probes",
+            PROBES.get()
+        );
+    }
+}
+
+#[test]
+fn shared_value_demands_return_the_winning_candidate_occurrence() {
+    for three in [false, true] {
+        let mut rule = json!({"pattern":"$F($$$)","inside":{"stopBy":"end","kind":"program","matches":"find"}});
+        if three {
+            rule["all"] = json!([{"testUnknown":"^never$"}]);
+        }
+        let ast = json!({"rule":rule,"utils":{"find":{"any":[{"kind":"identifier","pattern":"$F"},{"has":{"matches":"find"}}]}}});
+        // `same` inside `agreed` compares complete spans, including the shared first `f`.
+        assert_eq!(
+            agreed("typescript", ast, "f(a);\nf(b);\ng(c);\n"),
+            ["f(a) F=f", "f(b) F=f", "g(c) F=g"]
         );
     }
 }

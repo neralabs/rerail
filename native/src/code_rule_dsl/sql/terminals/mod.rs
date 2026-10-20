@@ -4,6 +4,7 @@
 mod fact;
 mod leaves;
 mod pattern;
+pub(super) mod scan;
 mod text;
 
 use super::plan::SlotKind;
@@ -37,7 +38,7 @@ pub(super) enum Terminal {
 /// kinds its root can match (`None`: any), and which of its captures an env-input statement
 /// passes in (`reads`, indices into `vars`).
 pub(super) struct PatternTerm {
-    pub(super) pattern: Pattern,
+    pub(super) pattern: std::sync::Arc<Pattern>,
     pub(super) dialect: GrammarDialect,
     pub(super) vars: Vec<(String, SlotKind)>,
     pub(super) kinds: Option<Vec<u16>>,
@@ -47,8 +48,12 @@ pub(super) struct PatternTerm {
 }
 
 impl PatternTerm {
-    pub(super) fn new(pattern: Pattern, dialect: GrammarDialect) -> Self {
+    pub(super) fn new(
+        pattern: impl Into<std::sync::Arc<Pattern>>,
+        dialect: GrammarDialect,
+    ) -> Self {
         use ast_grep_core::matcher::Matcher;
+        let pattern = pattern.into();
         let mut vars = Vec::new();
         collect_vars(&pattern.node, &mut vars);
         vars.sort();

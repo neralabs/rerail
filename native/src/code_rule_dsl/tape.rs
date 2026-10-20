@@ -1486,7 +1486,6 @@ impl TapeDoc {
         self.data[node as usize].kind
     }
 
-    #[cfg(test)]
     fn kind_alias(&self, node: u32) -> Option<&(String, bool)> {
         self.kind_overrides
             .binary_search_by_key(&node, |&(index, _)| index)
@@ -1494,7 +1493,6 @@ impl TapeDoc {
             .map(|slot| &self.kind_aliases[self.kind_overrides[slot].1 as usize])
     }
 
-    #[cfg(test)]
     fn node_is_named(&self, node: u32) -> bool {
         self.kind_alias(node).map_or_else(
             || self.grammar.kind_is_named(self.data[node as usize].kind),
@@ -1506,7 +1504,6 @@ impl TapeDoc {
         self.data[node as usize].field
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_flags(&self, node: u32) -> u8 {
         let rec = &self.data[node as usize];
         u8::from(self.node_is_named(node))
@@ -1541,7 +1538,6 @@ impl TapeDoc {
         (parent != NONE).then_some(parent)
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_children(&self, node: u32) -> impl Iterator<Item = u32> + '_ {
         let mut next = self.data[node as usize].first;
         std::iter::from_fn(move || {

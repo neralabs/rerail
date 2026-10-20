@@ -486,3 +486,207 @@ The historical control binary needs its former three compiler settings enabled.
 Current builds require none of those settings.
 The benchmark uses the same allocator override and optimized build configuration as the earlier reports.
 Tim's external 818-clause catalog remains unavailable.
+
+## Integrated execution experiments, 20 October 2026
+
+This continuation connects the representation experiments to the SQL engine.
+The compiler selects each specialization automatically.
+No environment setting selects a compiler variant.
+
+### Shared frame selections
+
+A key-preserving projection can retain immutable source columns and a shared selection vector.
+SQLite evaluates the predicate and returns source row IDs.
+The frame store publishes the selected columns after that query completes.
+Projection columns retain their SQLite types, nulls, wide integers, text, blobs, and real values.
+Indexes and native input readers use the same column interface.
+
+A later selection composes its row vector once per distinct source vector.
+The source register can clear or receive new rows while a selection retains its pages.
+A write to a shared column first copies its current values.
+A clear releases that register's page references.
+The last reference releases the page and its retained-byte charge.
+
+The selected specialization requires an empty destination, an ascending integer source key, and direct column projections with identical affinity.
+It supports filters over one source frame.
+Joins, expression projections, generated keys, duplicates, and changed affinity use normal frame insertion.
+A retained-page limit of 512 MiB bounds pages that survive register reuse.
+The existing logical row budget also applies.
+Exhausting the retained-page limit uses normal insertion without changing the result.
+Trace counters include the actual selection query's VM work.
+
+### Progressive packed pattern walks
+
+The compiler recognizes a total pattern body with kind and regex tests.
+It supports child, descendant, ancestor, previous-sibling, and next-sibling walks with fixed neighbor or end stops.
+One virtual-table call receives all input roots through integer frame handles.
+Persistent cursors advance unresolved roots in phases of 32 candidates.
+A winner ends a first-match cursor immediately.
+A count ends after its minimum when it has no maximum or returned count.
+Exceeding a maximum ends that cursor as false.
+A returned count consumes the entire candidate domain.
+
+Descendant cursors share kind postings within the input set.
+A supported bound root capture also reads the shared value postings.
+The Smart root-capture kernel reads the current tape directly.
+General structural patterns use native unification within the same terminal.
+Every successful pattern returns its candidate capture occurrences.
+
+Unknown-producing bodies, recursive reads, semantic effects, field walks, and rule-based stops remain in the relational driver.
+These operations require its complete dependency and unknown-stop logic.
+The compiler proof prevents the packed cursor from bypassing those contracts.
+The existing three-valued and recursive comparisons exercise both sides of that boundary.
+The general recursive frontier spike remains a design experiment.
+A full integration needs persistent lineage snapshots for each request phase.
+Reusing temporary frames can otherwise erase earlier failed or unknown reads before the driver records their dependency edges.
+The selected compiler keeps those operations in the existing driver.
+
+### Shared producers and capture identities
+
+A new proof identifies utility input captures that affect evaluation only through leaf-text unification.
+A fixed return contract must also hold on every successful path.
+The first contract preserves the original caller occurrence.
+The second contract always returns a newly bound candidate.
+The rebinding proof accepts mandatory named root captures and recursive paths that reach such a capture.
+Mixed return paths keep their occurrence keys.
+The proof follows recursive references and crosses negation or count only with their binding-discard rules.
+Semantic reads, occurrence walks, exports, constraints, and uncertain operations block the proof.
+The analysis has a fixed 4,096-visit limit.
+
+For a proved slot, equal-text leaf inputs use one canonical node in the demand key.
+The node index compares exact source strings and does not treat a hash collision as equality.
+Composite inputs retain their original identity.
+A preserving call keeps its own original capture occurrence.
+A rebinding call returns the winning candidate occurrence.
+An unknown answer keeps the caller occurrence under both contracts.
+Dependency edges still identify the shared demand and its answer.
+Utilities with uncertain binding behavior retain their original memo keys.
+
+General pattern producers share results only for identical typed input tuples within the immutable batch.
+Their cache retains at most 65,536 entries and approximately 32 MiB of payload.
+The direct packed root-capture kernel avoids that cache because its own comparison is small.
+
+### Integer fact keys and compiler artifacts
+
+Capture-free facts now receive packed integer file/node keys.
+Their SQL statements omit environment-string construction and its extra key frame.
+Capture-bearing facts retain their full environment keys.
+Both representations preserve distinct-key evaluation, file scopes, parsed trees, and unknown verdicts.
+
+Policy compilation shares immutable patterns through a scoped singleflight cache.
+The cache key includes language, context, and selector.
+It also retains source errors during that compilation.
+Matcher graphs, utility instances, and recursive component numbers remain local to each query.
+The cache releases its map after compilation, while the compiled matchers retain shared patterns.
+SQL lowering shares terminals by artifact, dialect, and input-read shape.
+
+The current nearest-node table already builds reverse owner groups in linear passes.
+The owner-posting experiment therefore needs no second index in this branch.
+Its separate expressivity-worktree opportunity remains specific to that implementation.
+
+### Validation scope and rejected candidate
+
+The final integrated build passes 1,425 code-rule tests, including 3,000 generated native/SQL comparisons with no differences.
+Its 138-file run preserves all 580 native findings.
+The SQL plan audit covers 722 clauses and 33,005 statements.
+
+A broader selection candidate initially retained an index built while its destination was empty.
+It lost three findings on the 138-file catalog and failed recursive differential cases.
+The corrected build restores all findings and passes the complete differential set.
+Selection publication now invalidates destination lookup indexes and scan order, as ordinary insertion does.
+A regression case populates a selection after an indexed empty read.
+The incorrect candidate remains only in the external measurement artifacts.
+Its timing is not an accepted performance result.
+
+### Selection experiments and configuration choice
+
+The broader projection experiment supports joined filters and constant metadata columns.
+It shares 1,833,103 logical rows and reduces the complete trace to 252,243,463 VM steps.
+The selected narrow projection shares 190,187 rows and uses 266,576,348 VM steps.
+The published build uses 271,112,090 VM steps.
+These counters include the selection queries that replace ordinary insertion.
+
+A direct three-round comparison on 138 files gives 26.607 CPU seconds for narrow selections and 27.238 seconds for broader selections.
+The broader selection reduces maximum RSS from 746 MB to 641 MB in that comparison, but increases median CPU time by 2.4 percent.
+A separate variant copies keys and traversal metadata into contiguous columns.
+In another three-round comparison, that variant takes 37.813 CPU seconds against 31.336 seconds for narrow selections.
+The compiler therefore retains narrow selections as its single configuration.
+The broader variants remain external experimental binaries.
+
+The same confirmation compares narrow selections with the published branch: 31.336 against 32.002 CPU seconds, a 2.1 percent gain.
+An earlier single-round 138-file comparison reports an 11.7 percent gain.
+That larger timing gain is not stable across repetitions on this shared host.
+The initial three-round 32-file comparison reports a 6.8 percent gain.
+
+Before uniform rebinding, demand volume remains 447,253 rows, including 138,975 capture-bearing rows.
+The preserving proof alone applies to 12,284 inserted rows but removes no further demand rows in this catalog.
+That initial complete trace retains 93,896 inserts into B023's `c68_d1` producer.
+This complete total includes trace fragments beyond the earlier single-fragment count of 86,498.
+The scan terminal runs 12 times in the 32-file trace.
+Its statement CPU time is about one millisecond.
+The capture-free fact path contributes the clearest measured reduction: about 889 to 495 milliseconds in the first comparable traces.
+
+The remaining multi-second cost still comes from millions of relational rows and hundreds of millions of VM steps.
+The integrated spikes do not establish native-speed SQL execution.
+Tim's unavailable external 818-clause catalog remains outside this comparison.
+
+### Uniform rebinding and final results
+
+The final compiler also proves a uniform rebinding contract for mandatory named root captures.
+Each successful recursive path must return such a candidate capture.
+The caller retains its own input occurrence on an unknown answer.
+A mixed preserving/rebinding disjunction blocks the proof.
+Structured patterns without this root-capture guarantee also block the rebinding proof.
+
+This specialization applies to the B023 producer that the preserving proof alone cannot share.
+The complete 32-file traces give:
+
+| Counter | Published `d5321267` | Final compiler |
+| --- | ---: | ---: |
+| Executed statements | 29,568 | 29,417 |
+| Affected rows | 7,017,058 | 6,790,242 |
+| VM steps | 271,112,090 | 265,045,566 |
+| Demand rows | 447,253 | 406,898 |
+| Capture-bearing demand rows | 138,975 | 98,620 |
+| B023 `c68_d1` demand rows | 93,896 | 58,607 |
+
+Capture-bearing demands decrease by 29.0 percent, and the B023 producer decreases by 37.6 percent.
+Total demand volume decreases by 9.0 percent.
+Overall VM work decreases by only 2.2 percent.
+This smaller reduction limits the application gain.
+
+An initial three-round 32-file comparison reports 5.497 CPU seconds for the published branch and 4.559 seconds for the final compiler.
+A five-round confirmation gives a smaller improvement:
+
+| Comparison | Published CPU seconds | Final CPU seconds | Improvement |
+| --- | ---: | ---: | ---: |
+| 32 files, five-round medians | 4.447 | 4.316 | 2.9% |
+| 138 files, one round | 25.461 | 24.961 | 2.0% |
+
+The larger initial timing gain is not stable.
+The final compiler preserves all 33 findings on 32 files and all 580 findings on 138 files.
+Every accepted application run reports zero failures and zero blind files.
+The host runs other workloads, so these CPU timings need their interleaved controls.
+
+The final source passes 1,425 code-rule tests with zero failures and 40 ignored measurement or external-corpus tests.
+Its 3,000 generated native/SQL comparisons report zero differences.
+A separate skip-count check passes 141 SQL tests, including 500 generated comparisons.
+The final source also passes Clippy with warnings denied and the ordinary production release compilation.
+A reused session agrees with fresh native and SQL sessions after an unsupported recursive batch and a source repair.
+
+The selected code includes narrow shared selections, progressive packed pattern walks, proved producer sharing, integer capture-free fact keys, and immutable compiler artifacts.
+The existing nearest-node index already supplies reverse owner groups.
+General recursive scheduling remains a test-only spike because request phases need persistent lineage and atomic dependency publication.
+The compiler retains the existing recursive driver for those operations.
+No opt-in or opt-out setting selects these compiler paths.
+
+Configurations, source hashes, binary hashes, full output oracles, and traces are under:
+
+```text
+/tmp/rerail-integrated-spikes-20261020
+```
+
+The final artifacts use the `uniform-` prefix.
+The five-round timing confirmation is `uniform-confirmation.json`.
+The final compiler still takes roughly four times the native CPU time on this catalog.
+These spikes reduce specific costs and establish their semantic contracts, but they do not close the complete SQL performance gap.

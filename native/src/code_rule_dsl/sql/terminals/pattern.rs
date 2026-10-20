@@ -37,6 +37,14 @@ pub(in crate::code_rule_dsl::sql) struct PatternRow {
 }
 
 impl PatternRow {
+    pub(super) fn answer(file: u32, node: u32, key: i64, values: Arc<[Option<i64>]>) -> Self {
+        Self {
+            file,
+            node,
+            ek: Some(key),
+            values,
+        }
+    }
     /// A fresh-env match at `node` of `file`, binding `values`.
     pub(in crate::code_rule_dsl::sql) fn fresh(
         file: u32,
@@ -135,12 +143,16 @@ fn root_capture(
     if node >= entry.facts.len() {
         return Some(None);
     }
-    let candidate = node_at(&entry.root, node);
-    if !candidate.is_named()
+    let doc = entry.root.root().get_doc();
+    let named_leaf = |id| {
+        doc.transducer_children(id)
+            .all(|child| doc.transducer_flags(child) & 1 == 0)
+    };
+    if doc.transducer_flags(node) & 1 == 0
         || term
             .kinds
             .as_ref()
-            .is_some_and(|kinds| !kinds.contains(&candidate.kind_id()))
+            .is_some_and(|kinds| !kinds.contains(&doc.transducer_kind(node)))
     {
         return Some(None);
     }
@@ -154,11 +166,10 @@ fn root_capture(
                 return Some(None);
             }
             if bound != node {
-                let bound = node_at(&entry.root, bound);
-                if !bound.is_named_leaf() && !candidate.is_named_leaf() {
+                if !named_leaf(bound) && !named_leaf(node) {
                     return None;
                 }
-                if bound.text() != candidate.text() {
+                if doc.transducer_text_str(bound) != doc.transducer_text_str(node) {
                     return Some(None);
                 }
             }
@@ -196,7 +207,7 @@ pub(in crate::code_rule_dsl::sql) fn fresh_match(
 }
 
 /// The frame owns the input tuple; only its integer row key crosses SQLite.
-fn typed_match(
+pub(super) fn typed_match(
     batch: &Batch,
     term: &PatternTerm,
     file: u32,
@@ -206,7 +217,22 @@ fn typed_match(
     if let Some(result) = root_capture(batch, term, file as usize, node, inputs) {
         return result;
     }
-    general_match(batch, term, file, node, inputs)
+    let key = (std::ptr::from_ref(term) as usize, file, node, inputs.into());
+    let mut shared = batch.bound_patterns.lock();
+    if let Some(result) = shared.values.get(&key) {
+        return result.clone();
+    }
+    let result = general_match(batch, term, file, node, inputs);
+    let bytes = 64
+        + std::mem::size_of_val(inputs)
+        + result
+            .as_ref()
+            .map_or(0, |values| std::mem::size_of_val(&**values));
+    if shared.values.len() < 65_536 && shared.bytes.saturating_add(bytes) <= 32 * 1024 * 1024 {
+        shared.bytes += bytes;
+        shared.values.insert(key, result.clone());
+    }
+    result
 }
 
 fn general_match(
@@ -270,13 +296,15 @@ const IDX_EK_LIST: c_int = 4;
 const IDX_NK: c_int = 8;
 const IDX_NK_LIST: c_int = 16;
 const IDX_FRAME: c_int = 32;
+const IDX_SCAN: c_int = 64;
+const COL_SCAN: c_int = COL_FRAME + 1;
 
 static SCHEMA: LazyLock<std::ffi::CString> = LazyLock::new(|| {
     let values = (0..PATTERN_COLUMNS)
         .map(|index| format!(", v{index}"))
         .collect::<String>();
     std::ffi::CString::new(format!(
-        "CREATE TABLE x(term HIDDEN, ek HIDDEN, nk HIDDEN, file, node{values}, frame HIDDEN)"
+        "CREATE TABLE x(term HIDDEN, ek HIDDEN, nk HIDDEN, file, node{values}, frame HIDDEN, scan HIDDEN)"
     ))
     .expect("no NUL")
 });
@@ -316,6 +344,7 @@ unsafe impl<'vtab> VTab<'vtab> for PatternTable {
         let mut ek = None;
         let mut nk = None;
         let mut frame = None;
+        let mut scan = None;
         for (index, constraint) in info.constraints().enumerate() {
             if !constraint.is_usable()
                 || constraint.operator() != IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
@@ -331,6 +360,9 @@ unsafe impl<'vtab> VTab<'vtab> for PatternTable {
                 }
                 COL_NK => {
                     nk.get_or_insert(index);
+                }
+                COL_SCAN => {
+                    scan.get_or_insert(index);
                 }
                 COL_FRAME => {
                     frame.get_or_insert(index);
@@ -359,8 +391,14 @@ unsafe impl<'vtab> VTab<'vtab> for PatternTable {
             usage.set_argv_index(3);
             usage.set_omit(true);
         }
+        if let Some(scan) = scan {
+            let mut usage = info.constraint_usage(scan);
+            usage.set_argv_index(4);
+            usage.set_omit(true);
+        }
         info.set_idx_num(
-            IDX_TERM
+            if scan.is_some() { IDX_SCAN } else { 0 }
+                | IDX_TERM
                 | if is_list { list } else { one }
                 | if frame.is_some() { IDX_FRAME } else { 0 },
         );
@@ -444,10 +482,15 @@ unsafe impl VTabCursor for PatternCursor<'_> {
                 keys.sort_unstable();
                 keys.dedup();
                 let mut rows = Vec::new();
+                let mut scanned = Vec::new();
                 self.slot.frames.pattern_inputs(
                     &descriptor,
                     &keys,
                     |key, file, node, inputs| {
+                        if idx_num & IDX_SCAN != 0 {
+                            scanned.push((key, file, node, inputs.to_vec()));
+                            return;
+                        }
                         if let Some(values) = typed_match(&batch, term, file, node, inputs) {
                             rows.push(PatternRow {
                                 file,
@@ -458,7 +501,13 @@ unsafe impl VTabCursor for PatternCursor<'_> {
                         }
                     },
                 )?;
-                rows
+                if idx_num & IDX_SCAN != 0 {
+                    let scan: super::scan::Scan = serde_json::from_str(&args.get::<String>(3)?)
+                        .map_err(|e| Error::ModuleError(e.to_string()))?;
+                    super::scan::run(&batch, term, &scan, scanned)?
+                } else {
+                    rows
+                }
             }
         } else {
             return Err(Error::ModuleError(
@@ -485,7 +534,7 @@ unsafe impl VTabCursor for PatternCursor<'_> {
             COL_NK => context.set_result(&(i64::from(row.file) << 32 | i64::from(row.node))),
             COL_FILE => context.set_result(&i64::from(row.file)),
             COL_NODE => context.set_result(&i64::from(row.node)),
-            COL_FRAME => context.set_result(&Value::Null),
+            COL_FRAME | COL_SCAN => context.set_result(&Value::Null),
             other => {
                 let index = (other - COL_VALUES) as usize;
                 context.set_result(&row.values.get(index).copied().flatten())

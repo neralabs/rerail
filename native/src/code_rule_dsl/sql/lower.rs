@@ -73,7 +73,7 @@ pub(super) struct ProgramBuilder {
     #[allow(clippy::vec_box)]
     derived: Vec<Box<AstMatcher>>,
     regexes: HashMap<(String, String), usize>,
-    fresh_patterns: HashMap<usize, usize>,
+    patterns: HashMap<(usize, GrammarDialect, Vec<usize>), usize>,
     /// Leaf fact terminals by the leaf's address and the captures their keys carry: lowering a
     /// stage again (to key it by its SQL) reuses them.
     leaves: HashMap<(usize, Vec<(String, SlotKind)>), usize>,
@@ -146,7 +146,7 @@ impl ProgramBuilder {
             self.stage_index.retain(|_, stage| *stage < stages);
             self.stage_rules.retain(|_, set| set.stage < stages);
             self.regexes.retain(|_, term| *term < terminals);
-            self.fresh_patterns.retain(|_, term| *term < terminals);
+            self.patterns.retain(|_, term| *term < terminals);
             self.leaves.retain(|_, term| *term < terminals);
             self.in_progress.clear();
         }
@@ -1238,15 +1238,17 @@ impl<'p> Lowerer<'p> {
                     } if env && vars.len() == 1 && reads.len() == 1 => Some(vars[0]),
                     _ => None,
                 };
-                let key = std::ptr::from_ref(pattern) as usize;
-                let id = match (env, self.program.fresh_patterns.get(&key)) {
-                    (false, Some(&id)) => id,
+                let key = (
+                    std::sync::Arc::as_ptr(pattern) as usize,
+                    self.dialect,
+                    term.reads.clone(),
+                );
+                let id = match self.program.patterns.get(&key) {
+                    Some(&id) => id,
                     _ => {
                         let id = self.program.terminals.len();
                         self.program.terminals.push(Terminal::Pattern(term));
-                        if !env {
-                            self.program.fresh_patterns.insert(key, id);
-                        }
+                        self.program.patterns.insert(key, id);
                         id
                     }
                 };

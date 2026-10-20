@@ -1,4 +1,5 @@
 mod arguments;
+mod artifacts;
 mod ast_rule;
 #[cfg(test)]
 mod binding_tests;
@@ -38,7 +39,7 @@ use super::model::{
 };
 use super::soundness::sound_under_errors;
 use super::violations;
-use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
+use crate::code_rule_dsl::language::{GrammarDialect, PatternSource};
 pub(super) use ast_rule::compile_ast_rule;
 use ast_rule::validate_ast_rule;
 use compare::{binding_site_index, bound_elsewhere, compare_sites, frame_scope};
@@ -260,6 +261,7 @@ pub(super) fn compile_document(
     document: &Value,
     capabilities: &Capabilities,
 ) -> Result<(String, RuleMode, CodeRuleScope, Vec<CompiledClause>, Value)> {
+    let _artifacts = artifacts::scope();
     let (resolved, options) = config::resolve(document)?;
     let document = &resolved;
     let root = object(document, "/")?;
@@ -968,13 +970,15 @@ fn compile_query_as(
                                     .unwrap_or_default(),
                             },
                         };
-                        rule_pattern(source, *language).ok().map(|(compiled, _)| {
-                            compiled
-                                .defined_vars()
-                                .into_iter()
-                                .map(str::to_owned)
-                                .collect()
-                        })
+                        artifacts::pattern(source, *language)
+                            .ok()
+                            .map(|(compiled, _)| {
+                                compiled
+                                    .defined_vars()
+                                    .into_iter()
+                                    .map(str::to_owned)
+                                    .collect()
+                            })
                     })
                     .unwrap_or_default()
             };
@@ -1313,13 +1317,15 @@ fn declared_captures(
                                         .unwrap_or_default(),
                                 },
                             };
-                            rule_pattern(source, *language).ok().map(|(compiled, _)| {
-                                compiled
-                                    .defined_vars()
-                                    .into_iter()
-                                    .map(str::to_owned)
-                                    .collect::<Vec<_>>()
-                            })
+                            artifacts::pattern(source, *language)
+                                .ok()
+                                .map(|(compiled, _)| {
+                                    compiled
+                                        .defined_vars()
+                                        .into_iter()
+                                        .map(str::to_owned)
+                                        .collect::<Vec<_>>()
+                                })
                         });
                         found.extend(
                             vars.unwrap_or_default()
