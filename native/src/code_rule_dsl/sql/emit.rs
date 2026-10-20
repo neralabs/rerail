@@ -23,7 +23,8 @@ mod three;
 use super::lower::{INTERNAL, ORIGIN};
 use super::nearest;
 use super::plan::{
-    CallReturn, CallSlot, OfRule, Op, Slot, SlotId, SlotKind, Source, Statement, Stop, Unit, Walk,
+    CallReturn, CallSlot, NodeSet, OfRule, Op, Slot, SlotId, SlotKind, Source, Statement, Stop,
+    Unit, Walk,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
@@ -87,6 +88,22 @@ fn start_table() -> String {
 /// The table a stage's rows are stored in for the batch.
 pub(super) fn stage_table(stage: usize) -> String {
     format!("stage_{stage}")
+}
+
+/// Whether node `node` of file `file` (SQL expressions) is in `set`, as an SQL condition: a row of
+/// its stage, or (a complement) none.
+pub(super) fn in_set(set: NodeSet, file: &str, node: &str) -> String {
+    format!(
+        "{}EXISTS (SELECT 1 FROM {} st WHERE st.file = {file} AND st.node = {node})",
+        if set.complement { "NOT " } else { "" },
+        stage_table(set.stage)
+    )
+}
+
+/// The tables a statement reading `set` for its members only reads whose emptiness empties it
+/// (`Reads::join`): its stage's, unless a complement, which an empty stage leaves whole.
+pub(super) fn set_inputs(set: NodeSet) -> Option<String> {
+    (!set.complement).then(|| stage_table(set.stage))
 }
 
 /// When a statement's output is empty, read from the rows its `Effect`'s inputs hold for the
@@ -1482,8 +1499,7 @@ impl<'s> Emitter<'s> {
                  WHERE fc.field = {field} AND fc.ffirst = 1"
             )),
             // The field child, then its children where it is not in `S`.
-            Walk::FieldHas(field, Stop::Rule(stage)) => {
-                let table = stage_table(stage);
+            Walk::FieldHas(field, Stop::Rule(set)) => {
                 with = format!(
                     "WITH q AS (SELECT f.k AS pk, c.file AS file, c.id AS node FROM {input} f \
                      JOIN node c ON c.file = f.file AND c.parent = f.node WHERE c.field = {field} AND c.ffirst = 1) "
@@ -1497,8 +1513,8 @@ impl<'s> Emitter<'s> {
                 };
                 format!(
                     "{first} UNION ALL SELECT x.pk, c.file, c.id FROM q x \
-                     LEFT JOIN {table} st ON st.file = x.file AND st.node = x.node \
-                     JOIN node c ON c.file = x.file AND c.parent = x.node{c} WHERE st.node IS NULL"
+                     JOIN node c ON c.file = x.file AND c.parent = x.node{c} WHERE NOT {}",
+                    in_set(set, "x.file", "x.node")
                 )
             }
             Walk::FieldInside(field, Stop::Neighbor) => simple(&format!(
@@ -1530,9 +1546,9 @@ impl<'s> Emitter<'s> {
             | Walk::FieldInside(_, Stop::Rule(stage))
                 if super::mutant(9) =>
             {
-                let table = stage_table(stage);
                 format!(
-                    "SELECT * FROM ({source}) WHERE (file, node) NOT IN (SELECT file, node FROM {table})"
+                    "SELECT * FROM ({source}) m WHERE NOT {}",
+                    in_set(stage, "m.file", "m.node")
                 )
             }
             _ => source,
@@ -1596,18 +1612,18 @@ impl<'s> Emitter<'s> {
                     Reads::join(&[input]),
                 )
             }
-            Some(OfRule::Stage(stage)) => {
+            Some(OfRule::Stage(set)) => {
                 // Ranks among the named children `ofRule` holds at, of the input's parents alone:
                 // a node's rank reads its parent's children, never the rest of the stage, which
                 // can hold most nodes of the batch.
-                let table = stage_table(*stage);
                 let with = if super::mutant(19) {
                     // Mutant 19: ranks over the whole stage, not the input's parents' children.
                     format!(
                         "WITH r AS (SELECT n.file AS file, n.id AS node, \
                          ROW_NUMBER() OVER (PARTITION BY n.file ORDER BY n.id) AS r, \
-                         COUNT(*) OVER (PARTITION BY n.file) AS cnt FROM {table} st \
-                         JOIN node n ON n.file = st.file AND n.id = st.node WHERE n.named = 1 AND n.parent IS NOT NULL) "
+                         COUNT(*) OVER (PARTITION BY n.file) AS cnt FROM {} st \
+                         JOIN node n ON n.file = st.file AND n.id = st.node WHERE n.named = 1 AND n.parent IS NOT NULL) ",
+                        stage_table(set.stage)
                     )
                 } else {
                     format!(
@@ -1617,7 +1633,8 @@ impl<'s> Emitter<'s> {
                          ROW_NUMBER() OVER (PARTITION BY c.file, c.parent ORDER BY c.id) AS r, \
                          COUNT(*) OVER (PARTITION BY c.file, c.parent) AS cnt FROM p \
                          JOIN node c ON c.file = p.file AND c.parent = p.parent \
-                         JOIN {table} st ON st.file = c.file AND st.node = c.id WHERE c.named = 1) "
+                         WHERE c.named = 1 AND {}) ",
+                        in_set(*set, "c.file", "c.id")
                     )
                 };
                 let index = if reverse { "(r.cnt - r.r + 1)" } else { "r.r" };
@@ -1626,7 +1643,10 @@ impl<'s> Emitter<'s> {
                     self.cols("f"),
                     holds(index, step, offset)
                 );
-                self.frame_with("x", &with, &select, Reads::join(&[input, &table]))
+                let table = set_inputs(*set);
+                let mut reads = vec![input];
+                reads.extend(table.as_deref());
+                self.frame_with("x", &with, &select, Reads::join(&reads))
             }
             Some(OfRule::Frame(rule)) => {
                 let siblings = self.name("g");

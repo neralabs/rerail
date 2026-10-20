@@ -1,7 +1,8 @@
 //! The `nearest` virtual table: a structural primitive over a node set `S`, no DSL operator. A
-//! statement names `S` as a stage's rows, `stage = n AND member IN (SELECT -1 UNION ALL SELECT
-//! file * 4294967296 + node FROM stage_n)` (the `-1` keeps the list non-empty), and reads one row
-//! per node of a file with, relative to `S`:
+//! statement names `S` by a stage's rows, `stage = n AND complement = c AND member IN (SELECT -1
+//! UNION ALL SELECT file * 4294967296 + node FROM stage_n)` (the `-1` keeps the list non-empty):
+//! `S` is those rows, or with `complement = 1` every other node of the file (`plan::NodeSet`).
+//! It reads one row per node of a file with, relative to `S`:
 //! - `anc`: the node's nearest proper ancestor in `S`, `-1` where none is;
 //! - `base`: the node itself where it is in `S`, else `anc`;
 //! - `nxt`: the first node in `S` of the chain from the node along structural next siblings (the
@@ -21,6 +22,7 @@
 
 use super::exec::{Batch, BatchSlot, SubFile};
 use super::nodes::{NONE, NodeFacts, facts_of, integer};
+use super::plan::NodeSet;
 use rusqlite::fallible_iterator::FallibleIterator;
 use rusqlite::types::{Value, ValueRef};
 use rusqlite::vtab::{
@@ -42,17 +44,20 @@ const COL_BASE: c_int = 4;
 const COL_NXT: c_int = 5;
 const COL_PRV: c_int = 6;
 const COL_STAGE: c_int = 7;
-const COL_MEMBER: c_int = 8;
+const COL_COMPLEMENT: c_int = 8;
+const COL_MEMBER: c_int = 9;
 
-const SCHEMA: &CStr =
-    c"CREATE TABLE x(file, id, \"last\", anc, base, nxt, prv, stage HIDDEN, member HIDDEN)";
+const SCHEMA: &CStr = c"CREATE TABLE x(file, id, \"last\", anc, base, nxt, prv, stage HIDDEN, complement HIDDEN, member HIDDEN)";
 
-/// The SQL naming stage `stage`'s rows as the set of a `nearest` table aliased `alias`, in file
-/// `file` (an SQL expression): the constraints to put in its join.
-pub(super) fn set_of(alias: &str, stage: usize, file: &str) -> String {
+/// The SQL naming `set` as the set of a `nearest` table aliased `alias`, in file `file` (an SQL
+/// expression): the constraints to put in its join. A complement passes its stage's rows, which
+/// the table leaves out.
+pub(super) fn set_of(alias: &str, set: NodeSet, file: &str) -> String {
     format!(
-        "{alias}.stage = {stage} AND {alias}.member IN (SELECT -1 UNION ALL SELECT file * 4294967296 + node FROM {}) AND {alias}.file = {file}",
-        super::emit::stage_table(stage)
+        "{alias}.stage = {} AND {alias}.complement = {} AND {alias}.member IN (SELECT -1 UNION ALL SELECT file * 4294967296 + node FROM {}) AND {alias}.file = {file}",
+        set.stage,
+        i64::from(set.complement),
+        super::emit::stage_table(set.stage)
     )
 }
 
@@ -70,18 +75,25 @@ struct FileNearest {
 }
 
 impl FileNearest {
-    /// `members`: the file's members, ascending and distinct.
-    fn of(facts: &NodeFacts, members: &[u32]) -> Self {
+    /// `listed`: the file's listed nodes, ascending and distinct. The members are them, or
+    /// (`complement`) every other node of the file.
+    fn of(facts: &NodeFacts, listed: &[u32], complement: bool) -> Self {
         let len = facts.len() as usize;
+        let mut member = vec![complement; len];
+        for &id in listed {
+            if (id as usize) < len {
+                member[id as usize] = !complement;
+            }
+        }
         let mut rank = vec![NONE; len];
         let mut count = 0u32;
-        for &member in members {
-            if (member as usize) < len {
-                rank[member as usize] = count;
+        for (id, &is) in member.iter().enumerate() {
+            if is {
+                rank[id] = count;
                 count += 1;
             }
         }
-        let is_member = |id: u32| rank[id as usize] != NONE;
+        let is_member = |id: u32| member[id as usize];
         // A parent and a previous sibling come before a node in preorder; a next sibling after.
         let mut anc = vec![NONE; len];
         let mut prv = vec![NONE; len];
@@ -181,9 +193,10 @@ struct Cache {
 }
 
 struct StageSet {
-    /// Each file's members, ascending and distinct.
-    members: HashMap<u32, Vec<u32>>,
-    files: HashMap<u32, Arc<FileNearest>>,
+    /// Each file's rows of the stage, ascending and distinct.
+    listed: HashMap<u32, Vec<u32>>,
+    /// Each file's columns, for the stage's rows and for their complement.
+    files: HashMap<(u32, bool), Arc<FileNearest>>,
 }
 
 #[repr(C)]
@@ -198,6 +211,7 @@ pub(super) struct NearestTable {
 #[derive(Clone, Copy)]
 enum Used {
     Stage,
+    Complement,
     Member,
     File,
     IdEq,
@@ -212,6 +226,7 @@ impl Used {
     fn code(self) -> &'static str {
         match self {
             Self::Stage => "s=",
+            Self::Complement => "c=",
             Self::Member => "m*",
             Self::File => "f=",
             Self::IdEq => "i=",
@@ -226,6 +241,7 @@ impl Used {
     fn parse(code: &[u8]) -> Option<Self> {
         Some(match code {
             b"s=" => Self::Stage,
+            b"c=" => Self::Complement,
             b"m*" => Self::Member,
             b"f=" => Self::File,
             b"i=" => Self::IdEq,
@@ -266,7 +282,8 @@ unsafe impl<'vtab> VTab<'vtab> for NearestTable {
 
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
         use IndexConstraintOp as Op;
-        let (mut stage, mut member, mut file, mut id_eq, mut anc) = (None, None, None, None, None);
+        let (mut stage, mut complement, mut member, mut file) = (None, None, None, None);
+        let (mut id_eq, mut anc) = (None, None);
         let (mut lo, mut hi) = (None, None);
         for (index, constraint) in info.constraints().enumerate() {
             if !constraint.is_usable() {
@@ -275,6 +292,9 @@ unsafe impl<'vtab> VTab<'vtab> for NearestTable {
             match (constraint.column(), constraint.operator()) {
                 (COL_STAGE, Op::SQLITE_INDEX_CONSTRAINT_EQ) => {
                     stage.get_or_insert(index);
+                }
+                (COL_COMPLEMENT, Op::SQLITE_INDEX_CONSTRAINT_EQ) => {
+                    complement.get_or_insert(index);
                 }
                 (COL_MEMBER, Op::SQLITE_INDEX_CONSTRAINT_EQ) => {
                     member.get_or_insert(index);
@@ -303,12 +323,15 @@ unsafe impl<'vtab> VTab<'vtab> for NearestTable {
                 _ => {}
             }
         }
-        // The set must come whole in one `xFilter` (an `IN` list), with its stage and one file.
+        // The set must come whole in one `xFilter` (an `IN` list), with its stage, whether it is
+        // the stage's complement, and one file.
         let whole = match member {
             Some(index) => info.is_in_constraint(index)? && info.set_in_constraint(index, true)?,
             None => false,
         };
-        let (Some(stage), Some(member), Some(file), true) = (stage, member, file, whole) else {
+        let (Some(stage), Some(complement), Some(member), Some(file), true) =
+            (stage, complement, member, file, whole)
+        else {
             info.set_estimated_cost(f64::MAX);
             info.set_estimated_rows(i64::MAX);
             info.set_idx_str("");
@@ -316,6 +339,7 @@ unsafe impl<'vtab> VTab<'vtab> for NearestTable {
         };
         let mut used = vec![
             (stage, Used::Stage),
+            (complement, Used::Complement),
             (member, Used::Member),
             (file, Used::File),
         ];
@@ -417,9 +441,9 @@ unsafe impl VTabCursor for NearestCursor<'_> {
             .current()
             .ok_or_else(|| Error::ModuleError("nearest: no batch installed".into()))?;
         let codes = idx_str.unwrap_or("");
-        if !codes.starts_with("s=m*f=") {
+        if !codes.starts_with("s=c=m*f=") {
             return Err(Error::ModuleError(
-                "nearest requires a stage, its set and a file".into(),
+                "nearest requires a stage, whether it is complemented, its rows and a file".into(),
             ));
         }
         let value = |argv: usize| -> Result<Option<i64>> {
@@ -427,6 +451,9 @@ unsafe impl VTabCursor for NearestCursor<'_> {
         };
         let stage = value(0)?
             .ok_or_else(|| Error::ModuleError("nearest: stage must be an integer".into()))?;
+        let complement = value(1)?
+            .ok_or_else(|| Error::ModuleError("nearest: complement must be an integer".into()))?
+            != 0;
         let mut cache = self.cache.lock();
         let current = Arc::downgrade(&batch);
         if !cache.batch.ptr_eq(&current) {
@@ -434,24 +461,24 @@ unsafe impl VTabCursor for NearestCursor<'_> {
             cache.stages.clear();
         }
         if !cache.stages.contains_key(&stage) {
-            let mut members: HashMap<u32, Vec<u32>> = HashMap::new();
-            let mut items = args.in_values(1)?;
+            let mut listed: HashMap<u32, Vec<u32>> = HashMap::new();
+            let mut items = args.in_values(2)?;
             while let Some(item) = items.next()? {
                 if let Some(key) = integer(item).filter(|&key| key >= 0) {
-                    members
+                    listed
                         .entry((key >> 32) as u32)
                         .or_default()
                         .push((key & 0xffff_ffff) as u32);
                 }
             }
-            for nodes in members.values_mut() {
+            for nodes in listed.values_mut() {
                 nodes.sort_unstable();
                 nodes.dedup();
             }
             cache.stages.insert(
                 stage,
                 StageSet {
-                    members,
+                    listed,
                     files: HashMap::new(),
                 },
             );
@@ -460,7 +487,7 @@ unsafe impl VTabCursor for NearestCursor<'_> {
         self.columns = None;
         self.source = Source::Done;
         self.current = None;
-        let Some(file) = value(2)?
+        let Some(file) = value(3)?
             .and_then(|file| u32::try_from(file).ok())
             .filter(|&file| (file as usize) < batch.documents())
         else {
@@ -468,13 +495,13 @@ unsafe impl VTabCursor for NearestCursor<'_> {
         };
         let set = cache.stages.get_mut(&stage).expect("read above");
         let sub = batch.subfile(file as usize);
-        let columns = match set.files.get(&file) {
+        let columns = match set.files.get(&(file, complement)) {
             Some(columns) => Arc::clone(columns),
             None => {
                 let facts = facts_of(&batch, &sub, file);
-                let members = set.members.get(&file).map_or(&[][..], Vec::as_slice);
-                let columns = Arc::new(FileNearest::of(facts, members));
-                set.files.insert(file, Arc::clone(&columns));
+                let listed = set.listed.get(&file).map_or(&[][..], Vec::as_slice);
+                let columns = Arc::new(FileNearest::of(facts, listed, complement));
+                set.files.insert((file, complement), Arc::clone(&columns));
                 columns
             }
         };
@@ -483,7 +510,7 @@ unsafe impl VTabCursor for NearestCursor<'_> {
         let (mut lo, mut hi) = (0i64, i64::from(len) - 1);
         let mut id_eq = None;
         let mut ancestor = None;
-        for (argv, code) in codes.as_bytes().chunks(2).enumerate().skip(3) {
+        for (argv, code) in codes.as_bytes().chunks(2).enumerate().skip(4) {
             let used = Used::parse(code)
                 .ok_or_else(|| Error::ModuleError(format!("nearest: bad plan {codes}")))?;
             let Some(value) = value(argv)? else {
@@ -498,7 +525,9 @@ unsafe impl VTabCursor for NearestCursor<'_> {
                 Used::IdLt => hi = hi.min(value.saturating_sub(1)),
                 Used::IdLe => hi = hi.min(value),
                 Used::Anc => ancestor = Some(value),
-                Used::Stage | Used::Member | Used::File => unreachable!("the first three"),
+                Used::Stage | Used::Complement | Used::Member | Used::File => {
+                    unreachable!("the first four")
+                }
             }
         }
         if let Some(id) = id_eq {

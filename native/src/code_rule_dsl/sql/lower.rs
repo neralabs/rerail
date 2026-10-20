@@ -8,8 +8,8 @@ mod three;
 
 use super::emit;
 use super::plan::{
-    CallReturn, CallSlot, MASK_BITS, Mask, OfRule, Op, Slot, SlotId, SlotKind, Source, Statement,
-    Stop, Unit, Unsupported, Walk, mask,
+    CallReturn, CallSlot, MASK_BITS, Mask, NodeSet, OfRule, Op, Slot, SlotId, SlotKind, Source,
+    Statement, Stop, Unit, Unsupported, Walk, mask,
 };
 use super::recursion::{self, Cycle, Recursion, UtilKey, util_key};
 use super::terminals::{
@@ -851,22 +851,36 @@ impl<'p> Lowerer<'p> {
         )
     }
 
-    /// A stage for `rule`, matched in a fresh environment: lowered, emitted and keyed by its SQL.
-    /// Not one that reaches back into the following cycle being lowered: the matcher matches it
-    /// with the binding sub-rules in progress, which a per-batch stage does not know.
-    fn stage(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
+    /// The per-batch set of the nodes `rule` matches in a fresh environment: a stage lowered,
+    /// emitted and keyed by its SQL. A capture-free `not R` that cannot be unknown is `R`'s set
+    /// complemented: a negation holds at most nodes of the batch, `R` at few. Not one that
+    /// reaches back into the following cycle being lowered: the matcher matches it with the
+    /// binding sub-rules in progress, which a per-batch stage does not know.
+    fn stage(&mut self, rule: &AstMatcher) -> Result<NodeSet, Unsupported> {
         if let Some(following) = &self.following
             && recursion::reaches(rule, &following.keys)
         {
             return unsupported("per-batch stage reaching back into a following recursion");
         }
-        let address = (std::ptr::from_ref(rule) as usize, self.stage_key());
-        if let Some(&stage) = self.program.stage_rules.get(&address) {
-            return Ok(stage);
+        if let AstMatcher::Not(inner) = rule
+            && capture_free(inner)
+            && !(self.three && reads_values(inner, &mut BTreeSet::new()))
+        {
+            return Ok(self.stage(inner)?.complemented());
         }
-        let stage = self.stage_of(rule)?;
-        self.program.stage_rules.insert(address, stage);
-        Ok(stage)
+        let address = (std::ptr::from_ref(rule) as usize, self.stage_key());
+        let stage = match self.program.stage_rules.get(&address) {
+            Some(&stage) => stage,
+            None => {
+                let stage = self.stage_of(rule)?;
+                self.program.stage_rules.insert(address, stage);
+                stage
+            }
+        };
+        Ok(NodeSet {
+            stage,
+            complement: false,
+        })
     }
 
     fn stage_of(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
@@ -905,15 +919,16 @@ impl<'p> Lowerer<'p> {
                 if self.tree.is_some() {
                     return unsupported("stopBy rule inside parse");
                 }
-                let stage = self.stage(rule)?;
-                // A stop rule unknown at a node ends the walk there and leaves it open.
+                let set = self.stage(rule)?;
+                // A stop rule unknown at a node ends the walk there and leaves it open (never a
+                // complement: that rule cannot be unknown).
                 if self.three
                     && reads_values(rule, &mut BTreeSet::new())
-                    && !self.open.contains(&stage)
+                    && !self.open.contains(&set.stage)
                 {
-                    self.open.push(stage);
+                    self.open.push(set.stage);
                 }
-                Stop::Rule(stage)
+                Stop::Rule(set)
             }
         })
     }
