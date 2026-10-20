@@ -223,7 +223,7 @@ export async function runMutations(options: MutationOptions): Promise<MutationRu
 
 const coverSchema = z.looseObject({ clauses: z.array(z.looseObject({ clause: z.string(), hit: z.string().nullable() })) });
 
-/** The clauses (`linter/clause`) the subset has a finding file for: `hit` in the distillation's `cover.json`. */
+/** The clauses (`linter/clause`) the subset has a finding file for: `hit` in a distillation's `cover.json` (`--cover`). */
 export function readSubsetHits(path: string): Set<string> {
   return new Set(coverSchema.parse(JSON.parse(readFileSync(path, "utf8"))).clauses.flatMap(entry => (entry.hit === null ? [] : [entry.clause])));
 }
