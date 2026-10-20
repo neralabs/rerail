@@ -74,3 +74,7 @@ rerail-sql-loop *args:
 # The loop's other commands: costs (per (clause, file) SQL times) | select (writes loop-subset.json) | calibrate (SQL per clause on the full corpus against the projection). Re-calibrate after every select.
 rerail-sql-loop-tool *args:
     @${RERAIL_BENCH_LOCK:-} node --import tsx benchmark/data-layer/loop.ts {{ args }}
+
+# The SQL engine's correctness gate on the `loop` profile (target-gate/): every `sql::` test, with the replayed cases (native/src/code_rule_dsl/sql/tests/replay.jsonl) and the differential at the case count that kills every seeded mutant. --mutants runs the replay and that differential on the clean build and under each mutant (RERAIL_SQL_MUTANT), and fails unless the clean build passes and every mutant is killed by both.
+rerail-sql-gate *args:
+    @scripts/check/rerail-sql-gate.sh {{ args }}

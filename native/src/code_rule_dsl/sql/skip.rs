@@ -155,7 +155,12 @@ pub(super) fn outcome(effect: &Effect<usize>, rows: impl Fn(usize) -> i64) -> Ou
             if empty(primary) {
                 Outcome::Empty
             } else if probes.iter().all(empty) {
-                Outcome::Exactly(rows(*primary))
+                // Mutant 16: empty probes taken for an empty output.
+                if super::mutant(16) {
+                    Outcome::Empty
+                } else {
+                    Outcome::Exactly(rows(*primary))
+                }
             } else {
                 Outcome::Unknown
             }

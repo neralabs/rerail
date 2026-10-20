@@ -113,3 +113,23 @@ the timed run with a command, set `RERAIL_BENCH_LOCK=<command>`, for example a l
   every `select`.
 - **`costs`** times every subset file on SQL with every clause in one program, one file per apply, each capped by
   `--cap`. The profile gives each (clause, file) its statement time. It writes `~/rerail-bench/data-layer/loop-costs.json`.
+
+### The SQL engine's gate
+
+`just rerail-sql-gate` is the correctness check to run after an edit under `native/src/code_rule_dsl/sql/`. It
+builds the `loop` profile's test binary into `target-gate/`, then runs every `sql::` test. Two of them carry the
+gate:
+
+- `replayed_cases_agree` replays `native/src/code_rule_dsl/sql/tests/replay.jsonl`. Each case kills at least one
+  seeded mutant, and every case must be compared and agree.
+- The differential runs at the gate's case count (seed `0x5e7c0de`, 1001 cases), the smallest count whose cases
+  kill every seeded mutant.
+
+The seeded mutants are plausible regressions of the engine's hard constructs, a few lines each, listed with
+`sql::mutant`. `RERAIL_SQL_MUTANT=<n>` selects one in test builds and under the never-shipped `sql-mutants`
+feature. `just rerail-sql-gate --mutants` runs the replay and the differential on the clean build and under each
+mutant. It fails unless the clean build passes and both checks kill every mutant.
+
+A generator change moves the cases. To re-measure the count, run the differential under each mutant with
+`RERAIL_SQL_DIFF_KEEP=<file>`, which logs every differing case with its index. The count is the largest first
+index plus one. A differing case's line is a replay case.
