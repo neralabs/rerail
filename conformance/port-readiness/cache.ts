@@ -12,8 +12,9 @@ import { shardName, type Shard } from "./shard.js";
  * graph reads by path (corpus-tasks.json), and cli.ts, which chooses the run's options. Left out is what no cached
  * verdict depends on: what only the report job runs or reads (the summary, the pull request comment, the shard merge,
  * the not-gated and pending lists), report rendering (a leg renders report.md from a finished report), what only the
- * recorder runs (recording/diff.ts), the leg plan (plan.mjs, which picks the legs, not what they find) and the README,
- * so changing them re-judges nothing;
+ * recorder runs (recording/diff.ts), the leg plan (plan.mjs, which picks the legs, not what they find), the record plan
+ * (recording/record-plan.mjs, which picks the tool-packs a label records) and the README, so changing them re-judges
+ * nothing;
  * cache.test.ts checks that run.ts's import graph reaches none of them. An excluded module must stay free of top-level
  * side effects, because cli.ts imports it in every leg.
  */
@@ -30,6 +31,8 @@ export const GATE_CODE = [
   ":(exclude)conformance/port-readiness/recording/diff.ts",
   ":(exclude)conformance/port-readiness/plan.mjs",
   ":(exclude)conformance/port-readiness/plan.d.mts",
+  ":(exclude)conformance/port-readiness/recording/record-plan.mjs",
+  ":(exclude)conformance/port-readiness/recording/record-plan.d.mts",
 ] as const;
 
 /**

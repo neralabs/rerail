@@ -8,7 +8,9 @@ name: Port readiness (record)
 #
 # Started two ways, both by someone who can write here:
 #   * the `record-port-readiness` label on a pull request (removed again when the run starts, so a second label re-runs
-#     it), which records the head commit the label was put on;
+#     it), which records the head commit the label was put on, and of main's TOOL_PACKS only the tool-packs whose
+#     recorder inputs the pull request changes (conformance/port-readiness/recording/record-plan.mjs); when that is
+#     none, authorize says why on the pull request and nothing records;
 #   * workflow_dispatch from main, with a pack and a tool (empty for every one), and either a pull request and the head
 #     sha you reviewed, or neither, to record main itself.
 # Only a run from main, for main or a pull request into main, records: port-readiness.yml takes a recording only with the
@@ -19,7 +21,8 @@ name: Port readiness (record)
 #
 # Three jobs, so that nothing a pull request chose runs where a write token is:
 #   authorize  checks who started the run and fixes what it records: the pull request's head commit, the base
-#              commit the recorder comes from, the tool-packs, and the release the recordings go to;
+#              commit the recorder comes from, the tool-packs, and the release the recordings go to. It runs the base
+#              commit's code alone, and reads the pull request's head only as git objects, to choose the tool-packs;
 #   record     one read-only leg per tool-pack: it runs the recorder over the pull request's packs/ at that head and
 #              uploads what the recorder wrote (the lock, the case sources it copied, the rows it added to UPSTREAM.md,
 #              the two recordings) as an artifact;
@@ -77,7 +80,7 @@ jobs:
     name: Authorize
     if: github.event_name != 'pull_request_target' || github.event.label.name == 'record-port-readiness'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: write
@@ -157,9 +160,50 @@ jobs:
             echo "base-sha=$base_sha"
           } >> "$GITHUB_OUTPUT"
 
+      # The base commit every leg records against, so record-plan.mjs below is main's, whatever the pull request
+      # changed; whole history, so it can find the merge base with the pull request's head.
+      - name: Checkout the base branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.target.outputs.base-sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # record-plan.mjs imports only node: builtins, so no npm ci.
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      # The labelled head as git objects only, for record-plan.mjs to diff and read with git: nothing of it is checked
+      # out or run in this job, which can write to pull requests. A push after the label fails here, as every record
+      # leg's check below would.
+      - name: Fetch the pull request's head, without checking it out
+        if: github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.target.outputs.pr }}
+          HEAD_SHA: ${{ steps.target.outputs.head }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" \
+            fetch --no-tags origin "refs/pull/$PR/head:refs/remotes/pr/head"
+          moved="$(git rev-parse refs/remotes/pr/head)"
+          if [ "$moved" != "$HEAD_SHA" ]; then
+            echo "::error::pull request #$PR moved from $HEAD_SHA to $moved after it was labelled: review it and record again"
+            exit 1
+          fi
+
+      # Under the label, the tool-packs whose recorder inputs the pull request changes, diffed from its merge base with
+      # the base commit; a dispatch keeps its pack and tool filter. The comment says what records and why, or why
+      # nothing does, and goes to the run's summary.
       - id: legs
         name: Choose the tool-packs to record
         env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ steps.target.outputs.base-sha }}
+          HEAD_SHA: ${{ steps.target.outputs.head }}
           WANT_PACK: ${{ inputs.pack }}
           WANT_TOOL: ${{ inputs.tool }}
           # Every gated tool-pack, as conformance/port-readiness/plan.mjs finds them but without its shards, since
@@ -178,13 +222,19 @@ jobs:
             ]
         run: |
           set -euo pipefail
-          legs="$(jq -c --arg pack "$WANT_PACK" --arg tool "$WANT_TOOL" \
-            '[.[] | select(($pack == "" or .pack == $pack) and ($tool == "" or .tool == $tool))]' <<< "$TOOL_PACKS")"
-          if [ "$legs" = "[]" ]; then
-            echo "::error::no gated tool-pack is pack '$WANT_PACK', tool '$WANT_TOOL'"
-            exit 1
-          fi
-          echo "legs=$legs" >> "$GITHUB_OUTPUT"
+          node conformance/port-readiness/recording/record-plan.mjs --event "$EVENT" --base "$BASE_SHA" \
+            --head "$HEAD_SHA" --pack "$WANT_PACK" --tool "$WANT_TOOL" --tool-packs "$TOOL_PACKS" \
+            --comment "$RUNNER_TEMP/record-plan.md"
+          cat "$RUNNER_TEMP/record-plan.md" >> "$GITHUB_STEP_SUMMARY"
+
+      # authorize removed the label, so without this a label that records nothing would leave no sign it was read.
+      - name: Say on the pull request why nothing records
+        if: github.event_name == 'pull_request_target' && steps.legs.outputs.legs == '[]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.target.outputs.pr }}
+        run: gh api "repos/$REPO/issues/$PR/comments" -F body=@"$RUNNER_TEMP/record-plan.md" > /dev/null
 
       # The recorder writes this release into every lock, and publish uploads to it and nowhere else. It is the newest
       # `port-readiness-recordings[-<n>]`, or the next one once the newest holds RELEASE_ROLL_AT assets; a lock keeps
@@ -212,9 +262,11 @@ jobs:
           fi
           echo "release=$release" >> "$GITHUB_OUTPUT"
 
+  # No leg when a label selects no tool-pack (an empty matrix is an error), and so no publish either.
   record:
     name: Record (${{ matrix.pack }} · ${{ matrix.tool }})
     needs: authorize
+    if: needs.authorize.outputs.legs != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     # Read-only: this job runs upstream's code and reads the pull request's packs/, so the write token is publish's.

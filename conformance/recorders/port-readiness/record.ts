@@ -661,7 +661,16 @@ export async function writeRecording(root: string, pack: string, tool: string, r
   // lock the report says it is a first recording; with one whose recording cannot be read, that what moved is unknown.
   const before = readLockedPair(root, options.cacheRoot, pack, tool);
   const texts = { [RECORDING_FILE]: recordingText(recorded.recording), [CORPUS_FILE]: recordingText(recorded.corpus) };
-  const lock = buildRecordingLock(pack, tool, options.release ?? DEFAULT_RELEASE, recorderVersion(root), recorded.recording.pins, recorded.recording.runtimes, texts);
+  // `recorder` is the package version that first recorded the bytes the lock names: a re-record that writes exactly
+  // the two recordings the committed lock names, by sha256, into the same release keeps that lock's, so the lock is
+  // left byte for byte as it is (pins, runtimes and sizes all come from those texts) and a version bump alone rewrites
+  // no lock. A corpus.json diffRecording lets stand as a superset is other bytes, and takes this version.
+  const release = options.release ?? DEFAULT_RELEASE;
+  const lockPath = join(directory, RECORDING_LOCK);
+  const committed = existsSync(lockPath) ? recordingLockSchema.safeParse(JSON.parse(readFileSync(lockPath, "utf8"))) : null;
+  const unchanged = committed?.success === true && committed.data.release === release
+    && ([RECORDING_FILE, CORPUS_FILE] as const).every((file) => committed.data.files[file].sha256 === sha256(Buffer.from(texts[file], "utf8")));
+  const lock = buildRecordingLock(pack, tool, release, unchanged ? committed.data.recorder : recorderVersion(root), recorded.recording.pins, recorded.recording.runtimes, texts);
   for (const text of Object.values(texts)) await writeCachedRecording(options.cacheRoot, text);
   await writeFile(join(directory, RECORDING_LOCK), recordingLockText(lock));
 

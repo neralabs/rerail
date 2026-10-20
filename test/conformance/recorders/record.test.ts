@@ -159,6 +159,54 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
   }
 });
 
+test("a re-record of the bytes the lock names leaves the lock as it is, whatever the package version; other bytes take the version that recorded them", async () => {
+  const root = mkdtempSync(join(tmpdir(), "port-readiness-record-"));
+  try {
+    mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
+    mkdirSync(join(root, "packs/demo/licenses/bandit"), { recursive: true });
+    writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), MANIFEST);
+    writeFileSync(join(root, "packs/demo/licenses/bandit/UPSTREAM.md"), "# Bandit\n\n| File | Upstream path | Copy |\n|---|---|---|\n| `upstream/bandit/fixtures/assert.py` | `examples/assert.py` | verbatim |\n");
+    writeFileSync(join(root, "packs/demo/conformance.json"), JSON.stringify({ rules: [{ id: "bandit-b301", upstream: { tool: "bandit", rule: "B301" }, policy: "rules/bandit-b301.json" }] }));
+    const corpusFile: CorpusFile = { task: "demo-task", repository: "demo/demo", path: "app.py", source: SOURCE, sha256: "b".repeat(64) };
+    const cacheRoot = join(root, "cache");
+    const record = (files: CorpusFile[]) => recordToolPack({
+      root, pack: "demo", tool: "bandit", cacheRoot, runner: { run: () => Promise.reject(new Error("no commands")) },
+      adapters: { bandit: fakeAdapter },
+      upstreamBytes: () => Buffer.from(SOURCE, "utf8"),
+      corpusFiles: async () => files,
+      tasksSha256: "c".repeat(64),
+      runtimeDigests: () => ({ "pyproject.toml": "d".repeat(64) }),
+    });
+    const version = (value: string) => writeFileSync(join(root, "package.json"), `${JSON.stringify({ name: "rerail", version: value })}\n`);
+    const lockPath = join(root, "packs/demo/upstream/bandit/recording.lock");
+
+    version("0.1.0-next.2");
+    await writeRecording(root, "demo", "bandit", await record([corpusFile]), { cacheRoot });
+    const first = readFileSync(lockPath, "utf8");
+    assert.equal(recordingLockSchema.parse(JSON.parse(first)).recorder, "0.1.0-next.2");
+
+    // A package version bump alone: the same two recordings in the same release, so the lock stays byte for byte.
+    version("0.1.0-next.3");
+    const same = await writeRecording(root, "demo", "bandit", await record([corpusFile]), { cacheRoot });
+    assert.equal(readFileSync(lockPath, "utf8"), first);
+    assert.equal(same.lock.recorder, "0.1.0-next.2");
+
+    // Other bytes (here corpus.json alone) are the version that recorded them.
+    const other = await writeRecording(root, "demo", "bandit", await record([{ ...corpusFile, path: "other.py" }]), { cacheRoot });
+    assert.notEqual(other.lock.files["corpus.json"].sha256, same.lock.files["corpus.json"].sha256);
+    assert.equal(other.lock.files["recording.json"].sha256, same.lock.files["recording.json"].sha256);
+    assert.equal(recordingLockSchema.parse(JSON.parse(readFileSync(lockPath, "utf8"))).recorder, "0.1.0-next.3");
+
+    // The same bytes in another release are a lock that changes anyway, so it takes the version too.
+    version("0.1.0-next.4");
+    const moved = await writeRecording(root, "demo", "bandit", await record([{ ...corpusFile, path: "other.py" }]), { cacheRoot, release: "port-readiness-recordings-2" });
+    assert.equal(moved.lock.files["corpus.json"].sha256, other.lock.files["corpus.json"].sha256);
+    assert.equal(moved.lock.recorder, "0.1.0-next.4");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a case from an upstream path the pack's UPSTREAM.md lists as not copied is skipped and never committed", async () => {
   const root = mkdtempSync(join(tmpdir(), "port-readiness-record-"));
   try {

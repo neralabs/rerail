@@ -221,7 +221,10 @@ the real-code files the goldens name — is generated, large, and rewritten whol
 them were 71 MB, and git keeps every version of each forever, so a pack re-recorded after an upstream bump cost
 another few megabytes of history nobody can read. They live in a GitHub release instead, and each tool-pack commits a
 `recording.lock` of a few hundred bytes naming exactly the one its rules are judged against: its sha256, its size, its
-format, the pins it was made at and the release that holds it.
+format, the pins it was made at, the release that holds it, and `recorder`, the package version that first recorded
+those bytes. A re-record that writes the same two recordings, by sha256, into the same release keeps the committed
+lock's `recorder`, so it leaves the lock byte for byte as it is, and a version bump alone rewrites no lock. No check
+reads `recorder`; it dates a recording for a reader.
 
 Release assets rather than Git LFS, because every public clone and every fork would draw on the repository's LFS
 bandwidth quota and going over it blocks LFS for the whole repository; rather than Actions artifacts, because those
@@ -274,6 +277,27 @@ from its head (so the goldens it records answers for are the head's); a fork may
 `gates.yaml` pins (repository, commit, runtime, tests), only `popularity`, `known_gaps` and `real_code_gaps`. Only a run from `main`, for `main` or a pull request into `main`, is attested, and the
 gates take no other recording, so `authorize` refuses any other before a leg records: one started by hand from another
 branch, and a stacked pull request, which is recorded once it targets `main`.
+
+**A label records only the tool-packs whose recorder inputs the pull request changes.** `authorize` diffs the labelled
+head against its merge base with `main` (`conformance/port-readiness/recording/record-plan.mjs`, run from `main`'s
+checkout with the head fetched as git objects and never checked out) and, of the tool-packs in
+`port-readiness-record.yml`'s `TOOL_PACKS`, records one when the pull request changes its `gates.yaml`, a file under
+its `fixtures/` or its `goldens.tsv`, or the upstream rules of its tool that the pack's `conformance.json` and
+`candidates/conformance.json` name; every tool-pack of a pack when it changes the `corpora` those manifests pin, or the
+`- Not copied:` lines of the pack's `licenses/*/UPSTREAM.md`; and every tool-pack when it changes
+`conformance/port-readiness/corpus-tasks.json`. Each is compared as the recorder reads it, so a rule promoted out of
+`candidates/`, an edit to another field of a manifest, or a row the recorder adds to an `UPSTREAM.md` table records
+nothing. A tool-pack whose `gates.yaml` is gone at the head is not recorded; a manifest that does not parse records
+every tool-pack of its pack, and a diff git cannot read every tool-pack, each with a warning. When the label selects
+nothing, no leg runs, and `authorize`, which removed the label, says why in a comment on the pull request; the run's
+summary has what was selected and why either way. A dispatch records what its `pack` and `tool` name, every tool-pack
+when both are empty, whatever the pull request changes, so it is how a maintainer records a tool-pack anyway.
+
+A label records with `main`'s recorder, runtimes and `TOOL_PACKS`, so it cannot record a pull request's change to any
+of them. A pull request that changes the runtimes (`conformance/recorders/port-readiness/runtimes/`) or the rest of
+the recorder, or adds a tool-pack's `gates.yaml` that `TOOL_PACKS` does not list, gets a warning for it instead, and
+nothing is recorded for that change: it lands on `main` first (a new tool-pack with its `TOOL_PACKS` entry), and then
+a maintainer records `main`.
 
 The run has three jobs, so nothing a pull request chose runs where a write token is. `authorize` checks who started
 it and fixes the commits, the tool-packs and the release. One read-only `record` leg per tool-pack runs the recorder

@@ -70,8 +70,11 @@ export const recordingLockSchema = z.strictObject({
   /** The release tag holding both assets. */
   release: nonEmpty,
   /**
-   * The recorder that wrote it: the repository version it ran from. It dates a recording for a reader without
-   * deciding anything — no check reads it, so it cannot make a gate pass or fail.
+   * The package version that first recorded the bytes this lock names: the repository version the recorder ran from
+   * when the lock last named another recording.json, corpus.json or release. A re-record that writes the same two
+   * recordings, by sha256, into the same release keeps the committed lock's (writeRecording in the recorder), so it
+   * leaves the lock byte for byte as it is, and a version bump alone rewrites no lock. It dates a recording for a
+   * reader without deciding anything — no check reads it, so it cannot make a gate pass or fail.
    */
   recorder: nonEmpty,
   /**
