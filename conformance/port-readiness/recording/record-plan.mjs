@@ -46,8 +46,9 @@ const firstOf = (items) => `${items[0]}${items.length === 1 ? "" : ` (and ${item
 const listed = (items) => `${items.slice(0, 5).join(", ")}${items.length > 5 ? ` and ${items.length - 5} more` : ""}`;
 const plural = (count) => `${count} tool-pack${count === 1 ? "" : "s"}`;
 /**
- * Text the pull request chose (a path, a parse error quoting its file), control characters escaped: a file named with
- * a newline must not start a workflow command on stdout or a Markdown block in the comment.
+ * Text the pull request chose (a path, an upstream rule name, a parse error quoting its file), control characters
+ * escaped: a file or rule named with a newline must not start a workflow command on stdout or a Markdown block in the
+ * comment.
  */
 const shown = (text) => text.replace(/[\u0000-\u001f\u007f]/gu, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
 
@@ -221,7 +222,7 @@ export function labelPlan(toolPacks, base, head, root = ROOT) {
         const is = after.names(entry.tool);
         const added = is.filter((name) => !was.includes(name));
         const removed = was.filter((name) => !is.includes(name));
-        const delta = [...(added.length === 0 ? [] : [`added ${listed(added)}`]), ...(removed.length === 0 ? [] : [`removed ${listed(removed)}`])];
+        const delta = [...(added.length === 0 ? [] : [`added ${listed(added.map(shown))}`]), ...(removed.length === 0 ? [] : [`removed ${listed(removed.map(shown))}`])];
         if (delta.length > 0) add([entry], `the ${entry.tool} rules ${where} name changed (${delta.join("; ")})`);
       }
       if (before.corpora.join("\n") !== after.corpora.join("\n")) add(ofPack(pack), `the corpora ${where} pin changed`);

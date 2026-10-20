@@ -295,9 +295,10 @@ when both are empty, whatever the pull request changes, so it is how a maintaine
 
 A label records with `main`'s recorder, runtimes and `TOOL_PACKS`, so it cannot record a pull request's change to any
 of them. A pull request that changes the runtimes (`conformance/recorders/port-readiness/runtimes/`) or the rest of
-the recorder, or adds a tool-pack's `gates.yaml` that `TOOL_PACKS` does not list, gets a warning for it instead, and
-nothing is recorded for that change: it lands on `main` first (a new tool-pack with its `TOOL_PACKS` entry), and then
-a maintainer records `main`.
+the recorder, or adds a tool-pack's `gates.yaml` that `TOOL_PACKS` does not list, gets a warning for it instead, in the
+run's annotations and summary, and in the comment on the pull request only when the label records nothing; nothing is
+recorded for that change: it lands on `main` first (a new tool-pack with its `TOOL_PACKS` entry), and then a
+maintainer records `main`.
 
 The run has three jobs, so nothing a pull request chose runs where a write token is. `authorize` checks who started
 it and fixes the commits, the tool-packs and the release. One read-only `record` leg per tool-pack runs the recorder

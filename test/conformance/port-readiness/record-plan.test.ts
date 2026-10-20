@@ -214,6 +214,14 @@ describe("the tool-packs a label records", () => {
     assert.deepEqual(planned.warnings.map((warning) => warning.split(" changed:")[0]), ["conformance/recorders/port-readiness/runtimes/x\\u000d\\u000a::error::y"]);
   });
 
+  // So is an upstream rule name a manifest at the head gives: the reason quotes it.
+  it("a rule name with a control character selects as any other, and is printed escaped", () => {
+    const planned = planFor({ "packs/python/conformance.json": manifest([...PACK_RULES, { id: "ruff-f841", tool: "ruff", rule: "F841\n::error title=x::y" }], [CORPUS]) });
+    assert.deepEqual(names(planned), [RUFF]);
+    assert.deepEqual(planned.lines, ["python/ruff: the ruff rules packs/python/conformance.json and candidates/conformance.json name changed (added F841\\u000a::error title=x::y)"]);
+    assert.match(commentBody(planned), /^- `python\/ruff`: .*\(added F841\\u000a::error title=x::y\)$/mu);
+  });
+
   it("the regex is the recorder's, and reads an UPSTREAM.md as the recorder does", () => {
     const literal = /^const NOT_COPIED = (\/.*\/[a-z]*);$/mu.exec(readFileSync(join(ROOT, "conformance", "recorders", "port-readiness", "record.ts"), "utf8"))?.[1];
     assert.equal(literal, String(NOT_COPIED));
@@ -275,6 +283,16 @@ describe("the command", () => {
     assert.match(comment, /`gates\.yaml`, a file under its `fixtures\/`, or its `goldens\.tsv`/u);
     assert.match(comment, /^- conformance\/recorders\/port-readiness\/runtimes\/ruff-0\.16\.9\/pyproject\.toml changed: a label records with main's runtimes/mu);
     assert.match(comment, /To record a tool-pack anyway, run `port-readiness-record\.yml` from `main` by hand/u);
+  });
+
+  it("starts no line of its stdout or its comment with what the pull request wrote", () => {
+    const head = pullRequest({ "packs/python/conformance.json": manifest([...PACK_RULES, { id: "ruff-f841", tool: "ruff", rule: "F841\r\n::error title=x::y" }], [CORPUS]) });
+    const { status, stdout, output, comment } = run("--event", "pull_request_target", "--base", MAIN, "--head", head);
+    assert.equal(status, 0, stdout);
+    assert.equal(output, 'legs=[{"pack":"python","tool":"ruff"}]\n');
+    assert.doesNotMatch(stdout, /^::error/mu);
+    assert.doesNotMatch(comment, /^::error/mu);
+    assert.match(stdout, /^python\/ruff: .*\(added F841\\u000d\\u000a::error title=x::y\)$/mu);
   });
 
   it("records every tool-pack when git cannot compare, with a warning", () => {
