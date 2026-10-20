@@ -1140,6 +1140,63 @@ impl Generator<'_> {
                 { second: { "stopBy": "end", "matches": "v0" } },
             ]);
         }
+        // Now and then a parameterized utility reached as one unit that reads a parameter it
+        // never holds: a `compare` of the parameter against a capture of the utility's own frame
+        // (bound by its pattern or by a nested call). A call's body draws every capture from its
+        // parameters (`single`), so elsewhere a parameter a compare reads is one a pattern of the
+        // body binds too. Called twice from the rule, or once through a wrapper that calls it
+        // twice: either makes it a unit, whose frame must hold the parameter as the call passes it.
+        if self.rng.chance(8) {
+            let caller = self.single();
+            let own = *self.rng.pick(&["R", "S"]);
+            let op = *self.rng.pick(&["eq", "ne"]);
+            let text = *self.rng.pick(&["node", "source", "structure"]);
+            let compare = json!({ "left": own, "op": op, "right": "P", "text": text });
+            let mut reader = if self.rng.chance(30) {
+                utils.insert(
+                    "c1".into(),
+                    json!({ "params": ["T"], "rule": { "pattern": "$T" } }),
+                );
+                json!({ "all": [
+                    { "matches": { "c1": { "T": format!("${own}") } } },
+                    { "compare": compare },
+                ] })
+            } else {
+                json!({ "pattern": format!("${own}"), "compare": compare })
+            };
+            if self.rng.chance(50) {
+                reader["kind"] = json!(self.rng.pick(&self.vocabulary.kinds));
+            }
+            utils.insert("c0".into(), json!({ "params": ["P"], "rule": reader }));
+            let keys = ["inside", "has", "precedes", "follows"];
+            let (first, second) = (*self.rng.pick(&keys), *self.rng.pick(&keys));
+            let walks = if self.rng.chance(30) {
+                utils.insert(
+                    "c2".into(),
+                    json!({ "params": ["P"], "rule": { "any": [
+                        { "matches": { "c0": { "P": "$P" } } },
+                        { first: { "stopBy": "end", "matches": { "c0": { "P": "$P" } } } },
+                    ] } }),
+                );
+                vec![json!({ second: { "stopBy": "end", "matches": { "c2": { "P": format!("${caller}") } } } })]
+            } else {
+                let call = json!({ "c0": { "P": format!("${caller}") } });
+                vec![
+                    json!({ first: { "stopBy": "end", "matches": call } }),
+                    json!({ second: { "stopBy": "end", "matches": call } }),
+                ]
+            };
+            if !rule["pattern"]
+                .as_str()
+                .is_some_and(|pattern| pattern.contains(&format!("${caller}")))
+            {
+                rule["pattern"] = json!(format!("${caller}"));
+            }
+            match rule["all"].as_array_mut() {
+                Some(terms) => terms.extend(walks),
+                None => rule["all"] = json!(walks),
+            }
+        }
         self.recursive = serde_json::to_string(&rule).is_ok_and(|text| text.contains("\"r0\""));
         let rule_text = rule.to_string();
         ast.insert("rule".into(), rule);

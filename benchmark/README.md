@@ -138,7 +138,7 @@ gate:
 
 - `replayed_cases_agree` replays `native/src/code_rule_dsl/sql/tests/replay.jsonl`. Each case kills at least one
   seeded mutant, and every case must be compared and agree.
-- The differential runs at the gate's case count (seed `0x5e7c0de`, 1001 cases), the smallest count whose cases
+- The differential runs at the gate's case count (seed `0x5e7c0de`, 1239 cases), the smallest count whose cases
   kill every seeded mutant.
 
 The seeded mutants are plausible regressions of the engine's hard constructs, a few lines each, listed with
