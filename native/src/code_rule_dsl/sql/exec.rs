@@ -233,7 +233,8 @@ const PROGRAM_MODULE: Module<'static, super::terminals::ProgramTable> =
 const FACT_MODULE: Module<'static, FactTable> = Module::eponymous_only_module();
 const NEAREST_MODULE: Module<'static, NearestTable> = Module::eponymous_only_module();
 
-/// An in-memory connection whose virtual tables read `slot`'s batch.
+/// An in-memory connection whose virtual tables read `slot`'s batch, with `emit::PSEUDO_KEY`:
+/// each call a key of a recursion's pseudo-node no call on the connection returned before.
 fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
     let connection = Connection::open_in_memory()?;
     connection.create_module(c"node", &NODE_MODULE, Some(Arc::clone(slot)))?;
@@ -242,6 +243,13 @@ fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
     connection.create_module(c"program_match", &PROGRAM_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"fact", &FACT_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"nearest", &NEAREST_MODULE, Some(Arc::clone(slot)))?;
+    let issued = std::sync::atomic::AtomicI64::new(0);
+    connection.create_scalar_function(
+        emit::PSEUDO_KEY_FUNCTION,
+        0,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+        move |_| Ok(issued.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1),
+    )?;
     Ok(connection)
 }
 
@@ -489,16 +497,19 @@ const MAX_LEVELS: usize = 256;
 /// are of one component. Over the keys those reads reach from the statement's own, the inner
 /// reads must form no cycle, and no chain of them may be longer than the matcher's utility depth
 /// limit. A key they do not reach is read by no row the matcher evaluates: its answer decides
-/// nothing, so it is not checked.
+/// nothing, so it is not checked. A pseudo-node (`emit::PSEUDO`) stands for the reads of the
+/// rows that reach it: a path through one is a read, and a read into one is no level.
 fn acyclic(connection: &Connection, query: &str) -> Result<(), SqlError> {
     let mut nodes: HashMap<(i64, i64), usize> = HashMap::new();
-    // Every read, and the inner reads alone.
+    // Every read, and the inner reads alone; whether each node is a pseudo-node.
     let mut reads: Vec<Vec<usize>> = Vec::new();
     let mut edges: Vec<Vec<usize>> = Vec::new();
+    let mut pseudo: Vec<bool> = Vec::new();
     let mut node = |key: (i64, i64), reads: &mut Vec<Vec<usize>>, edges: &mut Vec<Vec<usize>>| {
         *nodes.entry(key).or_insert_with(|| {
             reads.push(Vec::new());
             edges.push(Vec::new());
+            pseudo.push(key.0 == emit::PSEUDO);
             edges.len() - 1
         })
     };
@@ -551,9 +562,10 @@ fn acyclic(connection: &Connection, query: &str) -> Result<(), SqlError> {
             }
             let longest = edges[key]
                 .iter()
-                .filter_map(|&to| depth[to].flatten())
+                .filter_map(|&to| depth[to].flatten().map(|longest| (to, longest)))
+                .map(|(to, longest)| longest + usize::from(!pseudo[to]))
                 .max()
-                .map_or(0, |longest| longest + 1);
+                .unwrap_or(0);
             if longest > MAX_LEVELS {
                 return Err(SqlError::unsupported("recursion deeper than 256 levels"));
             }

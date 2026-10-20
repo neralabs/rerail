@@ -474,6 +474,67 @@ fn a_self_call_before_the_first_match_is_refused() {
     );
 }
 
+/// Whether the program of `ast`'s clause numbers pseudo-nodes (`emit::keyed`): some operator is
+/// keyed apart from the keys it is evaluated for.
+fn keys_by_pseudo_node(ast: Value) -> bool {
+    let compiled = compile("python", ast, None);
+    let crate::code_rule_dsl::model::ClauseKind::Forbid(crate::code_rule_dsl::model::Query::Ast {
+        matchers,
+        ..
+    }) = &compiled.inner.clauses[0].kind
+    else {
+        panic!("an AST clause")
+    };
+    let program = crate::code_rule_dsl::sql::compile(&[&matchers[0]]).expect("a program");
+    program.statements().any(|statement| {
+        statement.contains(&format!(
+            "{}()",
+            crate::code_rule_dsl::sql::emit::PSEUDO_KEY_FUNCTION
+        ))
+    })
+}
+
+/// Two self-calls in one function reach the same function definition, up the tree: the walk
+/// down from it, reaching two references, is evaluated once for both keys, a pseudo-node
+/// (`emit::keyed`), and each key's read of the first self-call passes through it. Where the
+/// self-call comes first, that path is a loop the matcher makes, and it is still refused; where
+/// `g(x)` comes first, the candidate past the first match reads nothing, through the pseudo-node
+/// too. A walk down reaching one reference keeps the origin in its key.
+#[test]
+fn a_loop_through_a_factored_candidate_is_still_refused() {
+    let one = json!({ "stopBy": "end", "kind": "call", "matches": "reach" });
+    assert!(
+        !keys_by_pseudo_node(reach(one)),
+        "one reference: keyed with its origin"
+    );
+    let down = json!({ "stopBy": "end", "kind": "call", "all": [
+        { "matches": "reach" },
+        { "matches": "reach" },
+    ] });
+    assert!(
+        keys_by_pseudo_node(reach(down.clone())),
+        "the walk down is keyed by candidate"
+    );
+    let reason = refused(
+        "python",
+        reach(down.clone()),
+        "def f(x):\n    f(x)\n    f(x)\n    g(x)\n",
+    );
+    assert!(
+        reason.contains("Unsupported(recursion whose reads loop back)"),
+        "{reason}"
+    );
+    assert_eq!(
+        agreed(
+            "python",
+            reach(down),
+            None,
+            "def f(x):\n    g(x)\n    f(x)\n    f(x)\n"
+        ),
+        ["f(x)", "f(x)", "g(x)"]
+    );
+}
+
 /// A strict search (its rule binds `$C`) ends at its first unknown candidate, `u(x)`
 /// (`testUnknown`), before the self-call: `f(x)` is unknown, not matched, and its own key is read
 /// past the end of the search. Where the self-call comes first, the search reads it.
