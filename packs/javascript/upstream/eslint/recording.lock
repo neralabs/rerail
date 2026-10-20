@@ -2,7 +2,6 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "eslint",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/eslint/eslint",
     "commit": "3c0b7c6e1fe2dec778b97a996018126f22d437ae",

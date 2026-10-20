@@ -243,14 +243,23 @@ Each gate leg fetches its own tool-pack and nothing else, and a job that runs no
 cached by its own digest, so a re-run on the same commit downloads nothing, and a download whose sha256 is not the
 one the lock names is not taken.
 
-**A leg records what the release does not hold.** When the fetch fails — the lock names a recording the release does
-not have, or one no attested run made — the leg records the tool-pack itself: it installs the pinned runtimes, runs
-`port-readiness:record` with this commit's recorder, and fails unless the recorder wrote exactly the lock, case sources
-and `UPSTREAM.md` the commit has. A new tool-pack, a new port or a pin bump therefore goes green on its own pull
-request, with nobody to start a recording: the commit's lock is checked against upstream run in CI, and what records
-the answers (the recorder, its adapters and runtimes) is in the pull request's diff, as the gate code that judges them
-is. A lock pointed at a recording of the pull request's own making fails the same way, since CI's recording does not
-match it. The attested release stays the fast path: a leg that fetches records nothing.
+**A leg records what the release does not hold.** When the lock names a recording the release does not have (the
+fetch exits 3), the leg records the tool-pack itself: it installs the pinned runtimes, runs `port-readiness:record`
+with this commit's recorder and the release the lock names, and fails unless the recorder wrote exactly the lock, case
+sources and `UPSTREAM.md` the commit has. The lock names no recorder version, so a release of rerail leaves it as it
+was. Any other fetch failure (the releases API, a download, a digest, an attestation) fails the leg: only a recording
+that was never uploaded is recorded instead. A new tool-pack, a new port or a pin bump therefore goes green on its own
+pull request, with nobody to start a recording: the commit's lock is checked against upstream run in CI, and what
+records the answers (the recorder, its adapters and runtimes) is in the pull request's diff, as the gate code that
+judges them is. A lock pointed at a recording of the pull request's own making fails the same way, since CI's
+recording does not match it. The attested release stays the fast path: a leg that fetches records nothing.
+
+A fork's pull request records against the upstream its base pins, as `port-readiness-record.yml` does: the leg
+refuses a fork's change to `gates.yaml`'s repository, commit, runtime or tests (only `popularity`, `known_gaps`,
+`real_code_gaps` and comments may differ), since CI would otherwise run the upstream the fork chose and match the lock
+the fork committed. And because the recordings are not in the diff, the leg writes the per-rule summary the record
+workflow posts (`--changes`, below), against the recording the base's lock names (a first recording when the base has
+none), into its job summary and its report artifact.
 
 A matching digest only says the asset is the one the lock names. Anyone who can write to the repository, and any
 workflow with a write token, can upload to the release, so the fetch also requires the GitHub artifact attestation
@@ -295,7 +304,8 @@ the run records **only that commit**: if the pull request has moved on since, it
 push. The recorder and the runtimes come **from the base branch**, and only the pull request's `packs/` and rule list
 from its head (so the goldens it records answers for are the head's); a fork may not change the upstream its
 `gates.yaml` pins (repository, commit, runtime, tests), only `popularity`, `known_gaps` and `real_code_gaps`. Only a run from `main`, for `main` or a pull request into `main`, is attested, and the
-gates take no other recording, so `authorize` refuses any other before a leg records: one started by hand from another
+gates fetch no other recording (an asset without that attestation fails the leg; only one the release lacks is
+recorded in the leg instead), so `authorize` refuses any other before a leg records: one started by hand from another
 branch, and a stacked pull request, which is recorded once it targets `main`.
 
 The run has three jobs, so nothing a pull request chose runs where a write token is. `authorize` checks who started
@@ -359,8 +369,11 @@ the pack: the recording lists each one with its sha256, and the gates fetch them
 (sparse, cached like the corpus), so Ruff's GPL-derived fixtures are read in place and never committed. Test text that
 is not a file of its own (Ruff's test-module strings, the `code` of each ESLint RuleTester case) is kept verbatim in
 `recording.json` (`fixtureTexts.inline`). That makes the recording partly upstream's material, so it carries
-upstream's LICENSE text (`licenseText`, whose sha256 is `licenseSha256`) wherever the release asset is downloaded, and
-the upstream's `UPSTREAM.md` records it as excerpts under upstream's licence and Apache-2.0 — in the note under the
+upstream's licence text (`licenseText`, whose sha256 is `licenseSha256`) wherever the release asset is downloaded. The
+licence is every file at upstream's root named `LICENSE` or `LICENCE`, in any letter case and with any extension or
+suffix (`licence.txt`, `license.md`, `LICENSE-MIT`), their bytes one after another in name order; the pack keeps the
+same files under `licenses/<project>/`, and `license-sha256` holds them to the recorded digest. The
+upstream's `UPSTREAM.md` records the recording as excerpts under upstream's licence and Apache-2.0 — in the note under the
 file table, not in the table itself, which pack check 6 reads as the files the pack carries and the recording is no
 longer one of them. `REUSE.toml` cannot annotate a file that is not here and says so where the annotations were. No
 case source or text comes from an upstream path a pack's `licenses/<project>/UPSTREAM.md` lists as "Not copied"

@@ -2,7 +2,6 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "ruff",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/astral-sh/ruff",
     "commit": "0be08a206f9c3180afd3e93bcc792ed5cb1f4db1",

@@ -1,10 +1,10 @@
 name: Port readiness (record)
 
 # The only workflow that uploads a port readiness recording to the release, attested, so that later gate legs fetch it
-# instead of recording. A gate leg in port-readiness.yml records a tool-pack whose lock names no attested recording
-# itself, with the commit's own recorder, and fails unless that recorder writes the lock the commit has; this workflow
-# makes the recording that leg can then fetch, in a run a maintainer starts, with the recorder and the runtimes from the
-# base branch.
+# instead of recording. A gate leg in port-readiness.yml records a tool-pack whose lock names a recording the release
+# does not hold itself, with the commit's own recorder, and fails unless that recorder writes the lock the commit has;
+# this workflow makes the recording that leg can then fetch, in a run a maintainer starts, with the recorder and the
+# runtimes from the base branch.
 #
 # Started two ways, both by someone who can write here:
 #   * the `record-port-readiness` label on a pull request (removed again when the run starts, so a second label re-runs

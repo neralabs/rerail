@@ -2,7 +2,6 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "eslint-plugin-vitest",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/vitest-dev/eslint-plugin-vitest",
     "commit": "aad57d121647efe764463c37414a8cd67ec9cf92",

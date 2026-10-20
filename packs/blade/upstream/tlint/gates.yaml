@@ -3,8 +3,6 @@ adapter: tlint
 rerail:
   pack: blade
   project: tlint
-  # tlint's licence file is LICENSE.md, kept verbatim as packs/blade/licenses/tlint/LICENSE.md.
-  license: LICENSE.md
 upstream:
   name: tighten/tlint
   repository: https://github.com/tighten/tlint

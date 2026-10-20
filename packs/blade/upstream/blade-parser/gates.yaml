@@ -3,8 +3,6 @@ adapter: blade-parser
 rerail:
   pack: blade
   project: blade-parser
-  # stillat/blade-parser's licence file is license.md, kept verbatim as packs/blade/licenses/blade-parser/license.md.
-  license: license.md
 upstream:
   name: stillat/blade-parser
   repository: https://github.com/stillat/blade-parser

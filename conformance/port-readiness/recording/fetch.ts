@@ -7,8 +7,10 @@
  * after the repository is public: with the job's token while it is private, and with no token at all once it is not.
  * Nothing here is trusted on its word — the asset is checked against the lock's sha256 and must carry the record
  * workflow's attestation before it is cached, and an asset the release does not have is a failure, never an empty
- * recording. Checking the attestation runs `gh attestation verify`, which needs a signed-in GitHub CLI or a token
- * whatever the repository's visibility.
+ * recording. That one failure is a MissingRecordingError, which the fetch command exits 3 on: it is the one a gate leg
+ * answers by recording the tool-pack itself (port-readiness.yml), where any other fails the leg. Checking the
+ * attestation runs `gh attestation verify`, which needs a signed-in GitHub CLI or a token whatever the repository's
+ * visibility.
  */
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -63,7 +65,19 @@ interface ReleaseAsset {
   size: number;
 }
 
-async function githubJson<T>(url: string, token: string | undefined): Promise<T> {
+/**
+ * The lock names a recording the release does not hold: never uploaded, or a release that does not exist. Not a
+ * download, API or attestation failure, which are thrown as plain errors.
+ */
+export class MissingRecordingError extends Error {
+  constructor(release: string, repository: string, asset: string) {
+    super(`the release ${release} of ${repository} has no asset ${asset}: the recording this commit names was never uploaded (a gate leg records it from this commit instead; port-readiness-record.yml uploads it, so later runs fetch it)`);
+    this.name = "MissingRecordingError";
+  }
+}
+
+/** GET a GitHub API url as JSON; null when it answers 404. */
+async function githubJson<T>(url: string, token: string | undefined): Promise<T | null> {
   const response = await fetch(url, {
     headers: {
       accept: "application/vnd.github+json",
@@ -71,6 +85,7 @@ async function githubJson<T>(url: string, token: string | undefined): Promise<T>
       ...(token === undefined || token === "" ? {} : { authorization: `Bearer ${token}` }),
     },
   });
+  if (response.status === 404) return null;
   if (!response.ok) throw new Error(`GET ${url} answered ${response.status} ${response.statusText}`);
   return (await response.json()) as T;
 }
@@ -83,10 +98,8 @@ async function githubJson<T>(url: string, token: string | undefined): Promise<T>
 async function downloadAsset(asset: LockedFile, lock: RecordingLock, options: FetchOptions): Promise<Buffer> {
   const repository = options.repository ?? DEFAULT_REPOSITORY;
   const release = await githubJson<{ assets?: ReleaseAsset[] }>(`https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(lock.release)}`, options.token);
-  const found = (release.assets ?? []).find((entry) => entry.name === asset.asset);
-  if (found === undefined) {
-    throw new Error(`the release ${lock.release} of ${repository} has no asset ${asset.asset}: the recording this commit names was never uploaded (a pull request cannot supply its own; see port-readiness-record.yml)`);
-  }
+  const found = (release?.assets ?? []).find((entry) => entry.name === asset.asset);
+  if (found === undefined) throw new MissingRecordingError(lock.release, repository, asset.asset);
   const response = await fetch(found.url, {
     headers: {
       accept: "application/octet-stream",

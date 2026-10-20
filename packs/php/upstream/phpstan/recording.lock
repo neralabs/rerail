@@ -2,7 +2,6 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "phpstan",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.3",
   "pins": {
     "repository": "https://github.com/phpstan/phpstan-src",
     "commit": "08e3736efd29631ab8f32596c5dd2362dec8dc26",

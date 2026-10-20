@@ -4,6 +4,7 @@ import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
+import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
 import { bladeParserSpan, BLADE_PARSER_SPAN_PARTS, validationSpan } from "../../../port-readiness/span-units/blade-parser.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createBladeToolkit } from "../languages/blade.js";
@@ -29,8 +30,8 @@ import { checkoutUpstream, filesUnder, treeDigest } from "../runtimes.js";
 const DRIVER = fileURLToPath(new URL("./blade_parser_driver.php", import.meta.url));
 /** The reader of upstream's validator tests, shared with the Blade pack's conformance recorder (generate.py). */
 const READ_TESTS = fileURLToPath(new URL("./blade_parser_tests.php", import.meta.url));
-/** Upstream's sources, its default configuration, the validator tests with the Pest file they load, and its licence. */
-const SPARSE_PATHS = ["/src/", "/config/", "/tests/Pest.php", "/tests/Validation/", "/license.md", "/composer.json"];
+/** Upstream's sources, its default configuration, and the validator tests with the Pest file they load (checkoutUpstream adds its licence). */
+const SPARSE_PATHS = ["/src/", "/config/", "/tests/Pest.php", "/tests/Validation/", "/composer.json"];
 const VALIDATOR_TESTS = "tests/Validation";
 /** The namespace of upstream's classes, under src/ (composer.json's psr-4). */
 const NAMESPACE = "Stillat\\BladeParser\\";
@@ -67,9 +68,8 @@ interface TestRun {
 interface Template { validator: string; test: string; number: number; source: string }
 
 export async function createBladeParserAdapter(pack: PackManifest, names: string[], cacheRoot: string, runner: CommandRunner): Promise<PackAdapter> {
-  // stillat/blade-parser publishes its Composer package from the repository at the release tag, `v<version>`. The
-  // checkout is named for the repository, as the recorder and the gates find it (upstreamCheckoutDirectory).
-  const upstream = await checkoutUpstream(cacheRoot, "blade-parser", pack.upstream, `v${pack.upstream.version}`, "src", SPARSE_PATHS, runner);
+  // stillat/blade-parser publishes its Composer package from the repository at the release tag, `v<version>`.
+  const upstream = await checkoutUpstream(cacheRoot, pack.upstream, `v${pack.upstream.version}`, "src", SPARSE_PATHS, runner);
   const blade = await createBladeToolkit(cacheRoot, runner);
   const runtime = blade.runtime;
   const ask = async <T>(request: object): Promise<T> =>
@@ -218,7 +218,7 @@ export async function createBladeParserAdapter(pack: PackManifest, names: string
           : `${disagreements.length} expectation(s) of upstream's tests differ from the validators' output: ${disagreements.slice(0, 3).join("; ")}`,
       },
     ],
-    licenseText: readFileSync(join(upstream.directory, pack.rerail.license ?? "LICENSE"), "utf8"),
+    licenseText: upstreamLicenseText(upstream.directory),
     rule,
 
     implementationNames(name: string): Set<string> {

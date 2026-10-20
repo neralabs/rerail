@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
+import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
 import { psalmSpan, PSALM_SPAN_PARTS } from "../../../port-readiness/span-units/psalm.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPhpToolkit, phpRegex, type PhpLiterals } from "../languages/php.js";
@@ -31,8 +32,8 @@ import { checkoutUpstream, composerRuntime, filesUnder, treeDigest } from "../ru
  */
 
 const DRIVER = fileURLToPath(new URL("./psalm_driver.php", import.meta.url));
-/** Upstream's sources, the stubs and call maps its analysis reads, its tests, and its licence. */
-const SPARSE_PATHS = ["/src/", "/stubs/", "/dictionaries/", "/tests/", "/LICENSE", "/composer.json"];
+/** Upstream's sources, the stubs and call maps its analysis reads, and its tests (checkoutUpstream adds its licence). */
+const SPARSE_PATHS = ["/src/", "/stubs/", "/dictionaries/", "/tests/", "/composer.json"];
 /** What the release carries of Psalm's analysis; `dictionaries/scripts` is left out of it (`export-ignore` in upstream's .gitattributes). */
 const RELEASE_TREES = ["src", "stubs", "dictionaries"];
 const RELEASE_IGNORED = /^dictionaries\/scripts\//u;
@@ -132,9 +133,8 @@ async function pooled<T, R>(items: T[], limit: number, work: (item: T) => Promis
 }
 
 export async function createPsalmAdapter(pack: PackManifest, names: string[], cacheRoot: string, runner: CommandRunner): Promise<PackAdapter> {
-  // Psalm publishes its Composer package from the repository at the release tag, which is the bare version. The
-  // checkout is named for the repository, as the recorder and the gates find it (upstreamCheckoutDirectory).
-  const upstream = await checkoutUpstream(cacheRoot, "psalm", pack.upstream, pack.upstream.version, "src", SPARSE_PATHS, runner);
+  // Psalm publishes its Composer package from the repository at the release tag, which is the bare version.
+  const upstream = await checkoutUpstream(cacheRoot, pack.upstream, pack.upstream.version, "src", SPARSE_PATHS, runner);
   const runtime = await composerRuntime(pack.upstream.runtime, cacheRoot, runner);
   const php = await createPhpToolkit(cacheRoot, runner);
   const fromCheckout = (path: string) => relative(upstream.directory, path).split(sep).join("/");
@@ -316,7 +316,7 @@ export async function createPsalmAdapter(pack: PackManifest, names: string[], ca
           : `${disagreements.length} case(s) differ from upstream's tests: ${disagreements.slice(0, 3).join("; ")}`,
       },
     ],
-    licenseText: readFileSync(join(upstream.directory, pack.rerail.license ?? "LICENSE"), "utf8"),
+    licenseText: upstreamLicenseText(upstream.directory),
     rule,
 
     implementationNames(name: string): Set<string> {

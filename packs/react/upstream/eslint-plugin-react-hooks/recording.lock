@@ -2,7 +2,6 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "eslint-plugin-react-hooks",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/facebook/react",
     "commit": "d1727fbf987392749b374f3afe62227d2c70fc41",

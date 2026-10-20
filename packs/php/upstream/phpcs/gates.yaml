@@ -3,8 +3,6 @@ adapter: phpcs
 rerail:
   pack: php
   project: php_codesniffer
-  # PHP_CodeSniffer's licence file is licence.txt, kept verbatim as packs/php/licenses/php_codesniffer/licence.txt.
-  license: licence.txt
   # PHP_CodeSniffer checks .php and .inc files (Config's default extensions). Rerail routes `.php` to PHP and has no
   # dialect for `.inc`, so the ports cover `.php` alone; upstream's own `.inc` unit test files are read as PHP at
   # `<file>.inc.php`, as PHP_CodeSniffer reads them.

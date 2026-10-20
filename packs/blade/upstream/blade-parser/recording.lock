@@ -2,7 +2,6 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "blade-parser",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.3",
   "pins": {
     "repository": "https://github.com/stillat/blade-parser",
     "commit": "23a962f99bca451f8738ed2475a70129fb33f07c",

@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
+import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
 import { bladestanSpan, templateLineSpan, BLADESTAN_SPAN_PARTS } from "../../../port-readiness/span-units/bladestan.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createBladeToolkit } from "../languages/blade.js";
@@ -32,8 +33,8 @@ import { checkoutUpstream, composerRuntime, filesUnder, PHP_INI, treeDigest } fr
  */
 
 const DRIVER = fileURLToPath(new URL("./bladestan_driver.php", import.meta.url));
-/** Upstream's sources, its configuration and bootstrap, its tests with their application, and its licence. */
-const SPARSE_PATHS = ["/src/", "/config/", "/tests/", "/bootstrap.php", "/testbench.yaml", "/LICENSE", "/composer.json"];
+/** Upstream's sources, its configuration and bootstrap, and its tests with their application (checkoutUpstream adds its licence). */
+const SPARSE_PATHS = ["/src/", "/config/", "/tests/", "/bootstrap.php", "/testbench.yaml", "/composer.json"];
 /** What the package runs: its sources, its PHPStan configuration and the bootstrap that configuration loads. */
 const RUNNING_CODE = /^(?:src|config)\/|^bootstrap\.php$/u;
 /** The templates of the test's application, and the fixtures and classes BladeRuleTest analyses them with. */
@@ -81,9 +82,8 @@ const isPorted = (name: string, error: BladestanError): boolean => {
 };
 
 export async function createBladestanAdapter(pack: PackManifest, names: string[], cacheRoot: string, runner: CommandRunner): Promise<PackAdapter> {
-  // Bladestan publishes its Composer package from the repository at the release tag, which is the bare version. The
-  // checkout is named for the repository, as the recorder and the gates find it (upstreamCheckoutDirectory).
-  const upstream = await checkoutUpstream(cacheRoot, "bladestan", pack.upstream, pack.upstream.version, "src", SPARSE_PATHS, runner);
+  // Bladestan publishes its Composer package from the repository at the release tag, which is the bare version.
+  const upstream = await checkoutUpstream(cacheRoot, pack.upstream, pack.upstream.version, "src", SPARSE_PATHS, runner);
   const runtime = await composerRuntime(pack.upstream.runtime, cacheRoot, runner);
   const blade = await createBladeToolkit(cacheRoot, runner);
   const fromCheckout = (path: string) => relative(upstream.directory, path).split(sep).join("/");
@@ -248,7 +248,7 @@ export async function createBladestanAdapter(pack: PackManifest, names: string[]
           : `${disagreements.length} fixture(s) differ from upstream's test: ${disagreements.slice(0, 3).join("; ")}`,
       },
     ],
-    licenseText: readFileSync(join(upstream.directory, pack.rerail.license ?? "LICENSE"), "utf8"),
+    licenseText: upstreamLicenseText(upstream.directory),
     rule,
 
     implementationNames(name: string): Set<string> {

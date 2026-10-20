@@ -2,7 +2,6 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "bladestan",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.3",
   "pins": {
     "repository": "https://github.com/TomasVotruba/bladestan",
     "commit": "ceb0823cd4b4f400b64a008cace0d91e786a2859",

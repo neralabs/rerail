@@ -738,7 +738,7 @@ export async function writeRecording(root: string, pack: string, tool: string, r
   // lock the report says it is a first recording; with one whose recording cannot be read, that what moved is unknown.
   const before = readLockedPair(root, options.cacheRoot, pack, tool);
   const texts = { [RECORDING_FILE]: recordingText(recorded.recording), [CORPUS_FILE]: recordingText(recorded.corpus) };
-  const lock = buildRecordingLock(pack, tool, options.release ?? DEFAULT_RELEASE, recorderVersion(root), recorded.recording.pins, recorded.recording.runtimes, texts);
+  const lock = buildRecordingLock(pack, tool, options.release ?? DEFAULT_RELEASE, recorded.recording.pins, recorded.recording.runtimes, texts);
   for (const text of Object.values(texts)) await writeCachedRecording(options.cacheRoot, text);
   await writeFile(join(directory, RECORDING_LOCK), recordingLockText(lock));
 
@@ -787,11 +787,4 @@ export function readLockedPair(root: string, cacheRoot: string, pack: string, to
   const corpus = gatesCorpusSchema.safeParse(JSON.parse(texts[1]!));
   if (!recording.success || !corpus.success) return { unavailable: "the cached recording does not parse" };
   return { recording: recording.data, corpus: corpus.data };
-}
-
-/** The repository version the recorder ran from, written into the lock so a reader can date a recording. */
-function recorderVersion(root: string): string {
-  const path = join(root, "package.json");
-  if (!existsSync(path)) return "0.0.0";
-  return (JSON.parse(readFileSync(path, "utf8")) as { version?: string }).version ?? "0.0.0";
 }

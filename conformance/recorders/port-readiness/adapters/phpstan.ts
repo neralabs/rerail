@@ -6,6 +6,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
+import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
 import { errorSpan, phpstanSpan, PHPSTAN_SPAN_PARTS } from "../../../port-readiness/span-units/phpstan.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPhpToolkit, phpRegex, type PhpLiterals } from "../languages/php.js";
@@ -31,8 +32,8 @@ import { checkoutUpstream, composerRuntime, filesUnder, PHP_INI } from "../runti
  */
 
 const DRIVER = fileURLToPath(new URL("./phpstan_driver.php", import.meta.url));
-/** Upstream's sources, its tests (rule tests under tests/PHPStan/Rules/, and the analyser data some of them analyse) and its licence. */
-const SPARSE_PATHS = ["/src/", "/tests/PHPStan/", "/LICENSE", "/composer.json"];
+/** Upstream's sources and its tests: rule tests under tests/PHPStan/Rules/, and the analyser data some of them analyse (checkoutUpstream adds its licence). */
+const SPARSE_PATHS = ["/src/", "/tests/PHPStan/", "/composer.json"];
 /** Where phpstan-src keeps its tests; a test file's case path is its repository path. */
 const TESTS = "tests/PHPStan";
 /** The rule tests: every file of them is upstream's test text. */
@@ -83,9 +84,8 @@ async function pooled<T, R>(items: T[], limit: number, work: (item: T) => Promis
 }
 
 export async function createPhpstanAdapter(pack: PackManifest, names: string[], cacheRoot: string, runner: CommandRunner): Promise<PackAdapter> {
-  // phpstan/phpstan's phar is built from phpstan-src at the release tag, which is the bare version. The checkout is named
-  // for the repository, as the recorder and the gates find it (upstreamCheckoutDirectory).
-  const upstream = await checkoutUpstream(cacheRoot, "phpstan-src", pack.upstream, pack.upstream.version, "src", SPARSE_PATHS, runner);
+  // phpstan/phpstan's phar is built from phpstan-src at the release tag, which is the bare version.
+  const upstream = await checkoutUpstream(cacheRoot, pack.upstream, pack.upstream.version, "src", SPARSE_PATHS, runner);
   const runtime = await composerRuntime(pack.upstream.runtime, cacheRoot, runner);
   const php = await createPhpToolkit(cacheRoot, runner);
   const packageDirectory = resolve(runtime.directory, "vendor", "phpstan", "phpstan");
@@ -268,7 +268,7 @@ export async function createPhpstanAdapter(pack: PackManifest, names: string[], 
         detail: `the installed package declares ${facts.license || "no license"}; the pack records ${pack.upstream.license}`,
       },
     ],
-    licenseText: readFileSync(join(upstream.directory, pack.rerail.license ?? "LICENSE"), "utf8"),
+    licenseText: upstreamLicenseText(upstream.directory),
     rule,
 
     implementationNames(name: string): Set<string> {

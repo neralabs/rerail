@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseToml } from "smol-toml";
 
 import { runChecked, type CommandRunner } from "../../port-readiness/process.js";
+import { LICENSE_SPARSE_PATTERNS, upstreamCheckoutDirectory } from "../../port-readiness/recorded-adapter.js";
 import type { Check } from "../../port-readiness/types.js";
 
 /**
@@ -50,18 +51,20 @@ export interface UpstreamCheckout {
 /**
  * Upstream's repository at the pinned commit, sparse and shallow, plus the release tag the runtime was published from.
  * `releasePath` is the source tree the published package is built from: a tool-pack check compares it at the pinned
- * commit and at the release tag, so the runtime that produces expected answers is the code the pack pins.
+ * commit and at the release tag, so the runtime that produces expected answers is the code the pack pins. The checkout
+ * is named for the repository (upstreamCheckoutDirectory), where the recorder and the gates find it, and holds every
+ * licence file at upstream's root besides `paths` (LICENSE_SPARSE_PATTERNS), which upstreamLicenseText reads.
  */
 export async function checkoutUpstream(
   cacheRoot: string,
-  name: string,
   upstream: { repository: string; commit: string },
   tag: string,
   releasePath: string,
-  sparsePaths: string[],
+  paths: string[],
   runner: CommandRunner,
 ): Promise<UpstreamCheckout> {
-  const directory = resolve(cacheRoot, "upstream", name, upstream.commit);
+  const directory = upstreamCheckoutDirectory(cacheRoot, upstream);
+  const sparsePaths = [...paths, ...LICENSE_SPARSE_PATTERNS.filter((pattern) => !paths.includes(pattern))];
   const git = (...args: string[]) => runChecked(runner, ["git", "-C", directory, ...args]).then((out) => out.trim());
   const pristine = async () => existsSync(join(directory, ".git"))
     && (await git("rev-parse", "HEAD").catch(() => "")) === upstream.commit

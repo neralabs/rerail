@@ -13,7 +13,7 @@
  *
  * Each PackAdapter member and where its recorded answer is:
  *   identity → `identity`; packChecks → `packChecks`; licenseText → `licenseText` and its digest `licenseSha256` (the kept
- *   `licenses/<project>/LICENSE` is checked against the digest); rule(name) → `rules[name].facts`, undefined for a name
+ *   licence under `licenses/<project>/`, every LICENSE or LICENCE file, is checked against the digest); rule(name) → `rules[name].facts`, undefined for a name
  *   in `absent`; implementationNames / sharedImplementationNames / implementationRegexes → `rules[name].names` with
  *   `nameSets`; fixtureWords → `fixtureWords`; fixtureTexts → `fixtureTexts`: upstream's files fetched at the
  *   pinned commit (each checked against its sha256) and the inline texts, or, in a recording without it, the
@@ -305,7 +305,7 @@ export const gatesRecordingSchema = z.strictObject({
   identity: z.record(nonEmpty, z.string()),
   /** packChecks: the tool-pack checks only the live adapter can make, as they stood when the recorder ran. */
   packChecks: z.array(checkSchema),
-  /** licenseText's sha256 (UTF-8): upstream's licence at the pinned commit; the kept copy (recorded-adapter.ts's keptLicensePath) must match it. */
+  /** licenseText's sha256 (UTF-8): upstream's licence at the pinned commit; the kept copy (recorded-adapter.ts's licenseBytes over keptLicenseDirectory) must match it. */
   licenseSha256: sha256,
   /**
    * licenseText itself: upstream's copyright and permission notice, which must accompany the excerpts of its tests this

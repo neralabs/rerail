@@ -2,7 +2,6 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "psalm",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.3",
   "pins": {
     "repository": "https://github.com/vimeo/psalm",
     "commit": "e2ca44251c1f1aa2e35452d426895746b47de64e",

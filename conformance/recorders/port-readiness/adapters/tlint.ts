@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
+import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
 import { lintSpan, tlintSpan, TLINT_SPAN_PARTS } from "../../../port-readiness/span-units/tlint.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createBladeToolkit } from "../languages/blade.js";
@@ -28,8 +29,8 @@ import { checkoutUpstream, composerRuntime, filesUnder, treeDigest } from "../ru
  */
 
 const DRIVER = fileURLToPath(new URL("./tlint_driver.php", import.meta.url));
-/** Upstream's sources, its tests and its licence. */
-const SPARSE_PATHS = ["/src/", "/tests/", "/LICENSE.md", "/composer.json"];
+/** Upstream's sources and its tests (checkoutUpstream adds its licence). */
+const SPARSE_PATHS = ["/src/", "/tests/", "/composer.json"];
 /** Where tlint keeps its linter tests, one `<Lint>Test.php` per linter. */
 const LINTER_TESTS = "tests/Linting/Linters";
 
@@ -63,9 +64,8 @@ interface LintResult { lints: Record<string, { lint: string; line: number }[]>; 
 interface Template { fixture: string; owner: string; test: string; path: string; source: string }
 
 export async function createTlintAdapter(pack: PackManifest, names: string[], cacheRoot: string, runner: CommandRunner): Promise<PackAdapter> {
-  // tlint publishes its Composer package from the repository at the release tag, `v<version>`. The checkout is named
-  // for the repository, as the recorder and the gates find it (upstreamCheckoutDirectory).
-  const upstream = await checkoutUpstream(cacheRoot, "tlint", pack.upstream, `v${pack.upstream.version}`, "src", SPARSE_PATHS, runner);
+  // tlint publishes its Composer package from the repository at the release tag, `v<version>`.
+  const upstream = await checkoutUpstream(cacheRoot, pack.upstream, `v${pack.upstream.version}`, "src", SPARSE_PATHS, runner);
   const runtime = await composerRuntime(pack.upstream.runtime, cacheRoot, runner);
   const blade = await createBladeToolkit(cacheRoot, runner);
   const ask = async <T>(request: object): Promise<T> =>
@@ -224,7 +224,7 @@ export async function createTlintAdapter(pack: PackManifest, names: string[], ca
           : `${disagreements.length} test method(s) fail: ${disagreements.slice(0, 3).join("; ")}`,
       },
     ],
-    licenseText: readFileSync(join(upstream.directory, pack.rerail.license ?? "LICENSE"), "utf8"),
+    licenseText: upstreamLicenseText(upstream.directory),
     rule,
 
     implementationNames(name: string): Set<string> {

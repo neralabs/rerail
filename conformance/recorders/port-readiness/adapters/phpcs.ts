@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
+import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
 import { messageSpan, phpcsSpan, PHPCS_SPAN_PARTS } from "../../../port-readiness/span-units/phpcs.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPhpToolkit, phpRegex, type PhpLiterals } from "../languages/php.js";
@@ -26,8 +27,8 @@ import { checkoutUpstream, composerRuntime, filesUnder, treeDigest } from "../ru
  */
 
 const DRIVER = fileURLToPath(new URL("./phpcs_driver.php", import.meta.url));
-/** Upstream's sources, its unit tests (under src/Standards/<Standard>/Tests/) and its licence. */
-const SPARSE_PATHS = ["/src/", "/licence.txt", "/composer.json"];
+/** Upstream's sources and its unit tests, under src/Standards/<Standard>/Tests/ (checkoutUpstream adds its licence). */
+const SPARSE_PATHS = ["/src/", "/composer.json"];
 /** A unit test's directory: release archives leave it out (`export-ignore` in upstream's .gitattributes). */
 const TESTS_DIRECTORY = /(?:^|\/)Tests\//u;
 /** Files in a Tests directory that are no test file of a sniff: the test classes, and the fixer's expected output (AbstractSniffTestCase's ignoreExtensions). */
@@ -60,8 +61,7 @@ const sniffOf = (source: string): string => source.split(".").slice(0, 3).join("
 
 export async function createPhpcsAdapter(pack: PackManifest, names: string[], cacheRoot: string, runner: CommandRunner): Promise<PackAdapter> {
   // PHP_CodeSniffer publishes its Composer package from the repository at the release tag, which is the bare version.
-  // The checkout is named for the repository, as the recorder and the gates find it (upstreamCheckoutDirectory).
-  const upstream = await checkoutUpstream(cacheRoot, "PHP_CodeSniffer", pack.upstream, pack.upstream.version, "src", SPARSE_PATHS, runner);
+  const upstream = await checkoutUpstream(cacheRoot, pack.upstream, pack.upstream.version, "src", SPARSE_PATHS, runner);
   const runtime = await composerRuntime(pack.upstream.runtime, cacheRoot, runner);
   const php = await createPhpToolkit(cacheRoot, runner);
   const ask = async <T>(request: object): Promise<T> =>
@@ -199,7 +199,7 @@ export async function createPhpcsAdapter(pack: PackManifest, names: string[], ca
           : `${disagreements.length} line(s) differ from upstream's unit tests: ${disagreements.slice(0, 3).join("; ")}`,
       },
     ],
-    licenseText: readFileSync(join(upstream.directory, pack.rerail.license ?? "LICENSE"), "utf8"),
+    licenseText: upstreamLicenseText(upstream.directory),
     rule,
 
     implementationNames(name: string): Set<string> {
