@@ -80,14 +80,65 @@ pub(super) fn stage_namespace(stage: usize) -> String {
     format!("s{stage}_")
 }
 
-/// A unit's demand table: `(id, file, node, c0…)`, the keys asked for.
-fn demand_table(unit: usize) -> String {
-    format!("{TEMP}ud{unit}")
+/// A unit's demand table: `(id, file, node, c0…)`, the keys asked for. A unit's tables are its
+/// statement's: temporaries the driver names (`TEMP`) and empties when the statement ends. Those
+/// of a unit whose answers are the batch's (`Unit::shared`) are named by its utility's memo term
+/// (`MEMO`), the identity the native memo shares a utility's verdicts under across clauses
+/// (`UtilRef::memo_term`), and the driver empties them once per batch, after every clause ran,
+/// never between clauses (`exec::Plan::memos`). Every stage and clause of the batch reaching an
+/// equal utility reads and extends the same two tables: its demand adds the keys no earlier one
+/// demanded, its loop evaluates only those (a key demanded before is clean), and each key keeps
+/// the answer the first one to demand it computed.
+///
+/// That is exact in any order of the clauses, whichever keys each demands, because the unit's
+/// answer at a key does not depend on what demanded it:
+/// - it is capture-free: its key is `(file, node)` alone, its body starts from no binding and its
+///   answer carries none;
+/// - it is context-free (`UtilRef::scope`): no term it reaches reads its clause's state (a
+///   semantic leaf, a value or a transform's comparison), only the batch's trees, the same for
+///   every clause; nor is it run excluding a `violation.each` range or in a following context;
+/// - the memo term digests the utility and every utility it reaches (`UtilOrigin`), so two
+///   clauses' units of one term evaluate one rule, and every clause sharing them is two-valued;
+/// - it is not recursive, and every recursion it reaches is monotone (`Recursion::well_founded`:
+///   its members read each other only strictly above, or only strictly below, the node, as the
+///   spt depth chain's `fact-class` reads its enclosing classes), so its read graph has no cycle
+///   at any key, and every answer of it is the matcher's whether a clause's rows read it or not
+///   (`recursion`'s argument holds over the whole graph; a chain of reads past the matcher's
+///   depth limit, which `exec::acyclic` refuses only where a statement reads it, is past the
+///   limits the engines lift). Another recursion's answers are accepted only at the keys a
+///   statement reads (`exec::acyclic`): an answer resting on one that its clause demanded and
+///   never read would be unchecked where a later clause reads it.
+///
+/// So an answer stored by an earlier clause is the one a later clause would compute at that key,
+/// and a later clause that demands keys an earlier one did not evaluates exactly those. Keys are
+/// batch-local (a file is its index in the batch): the next batch starts with the tables empty.
+fn demand_table(units: &[Unit], unit: usize) -> String {
+    match units[unit].shared {
+        Some(term) => format!("{}d", memo_tables(term)),
+        None => format!("{TEMP}ud{unit}"),
+    }
 }
 
-/// A unit's answer table: `(id, c0…)`, the bindings after the body for the keys it matched.
-fn answer_table(unit: usize) -> String {
-    format!("{TEMP}ua{unit}")
+/// A unit's answer table: `(id, c0…)`, the bindings after the body for the keys it matched; a
+/// batch's (`demand_table`) where the unit's answers are.
+fn answer_table(units: &[Unit], unit: usize) -> String {
+    match units[unit].shared {
+        Some(term) => format!("{}a", memo_tables(term)),
+        None => format!("{TEMP}ua{unit}"),
+    }
+}
+
+/// The prefix of the batch's unit tables (`demand_table`), which no other table's name has.
+pub(super) const MEMO: &str = "memo_";
+
+/// The prefix of the tables of the units whose answers are the batch's under memo term `term`.
+fn memo_tables((high, low): (usize, usize)) -> String {
+    format!("{MEMO}{high:x}_{low:x}_")
+}
+
+/// Whether `table` holds a unit's answers for the batch (`answer_table`), not its demand.
+pub(super) fn memo_answers(table: &str) -> bool {
+    table.starts_with(MEMO) && table.ends_with("_a")
 }
 
 /// A statement's recursive reads from its own rows, outside every unit's body: `(-1, 0, unit,
@@ -1481,8 +1532,8 @@ impl<'s> Emitter<'s> {
         } else {
             ""
         };
-        let demand = demand_table(unit);
-        let answer = answer_table(unit);
+        let demand = demand_table(self.units, unit);
+        let answer = answer_table(self.units, unit);
         let unk = if self.three { ", unk" } else { "" };
         self.push(
             format!(
@@ -1543,8 +1594,8 @@ impl<'s> Emitter<'s> {
             None => unit_columns.clone(),
         };
         self.unit_tables(unit);
-        let demand = demand_table(unit);
-        let answer = answer_table(unit);
+        let demand = demand_table(units, unit);
+        let answer = answer_table(units, unit);
         let mut matched: String = site_columns
             .iter()
             .enumerate()
@@ -1633,7 +1684,7 @@ impl<'s> Emitter<'s> {
         let units = self.units;
         let demand: Vec<String> = (0..units.len())
             .filter(|&unit| units[unit].scc == scc)
-            .map(demand_table)
+            .map(|unit| demand_table(units, unit))
             .collect();
         let marker = Effect {
             inputs: demand,
@@ -1697,8 +1748,8 @@ impl<'s> Emitter<'s> {
             let key = &units[unit].key;
             let key_columns = self.key_columns(key);
             let following = units[unit].following.map(|slot| format!("s{slot}"));
-            let demand = demand_table(unit);
-            let answer = answer_table(unit);
+            let demand = demand_table(units, unit);
+            let answer = answer_table(units, unit);
             // The body's output holds the key, its answer; its keys what the body reads too.
             let answered: Live = Rc::new(key.iter().copied().collect());
             let held = self.live_before(&units[unit].body, &answered);
@@ -1800,7 +1851,7 @@ impl<'s> Emitter<'s> {
         }
         (self.pseudo, self.pseudo_levels) = outer;
         for &unit in &members {
-            let demand = demand_table(unit);
+            let demand = demand_table(units, unit);
             self.push(
                 format!(
                     "UPDATE {demand} SET dirty = 1 WHERE id IN (SELECT e.s FROM {reads} e JOIN {changed} c \
@@ -1818,7 +1869,7 @@ impl<'s> Emitter<'s> {
             .map(|&unit| {
                 format!(
                     "(SELECT count(*) FROM {} WHERE dirty = 1)",
-                    demand_table(unit)
+                    demand_table(units, unit)
                 )
             })
             .collect::<Vec<_>>()

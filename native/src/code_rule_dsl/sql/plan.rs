@@ -309,6 +309,9 @@ pub(super) struct Unit {
     pub(super) scc: usize,
     /// The slot holding the following context its body starts from, where it is keyed by one.
     pub(super) following: Option<SlotId>,
+    /// Where its answers are the batch's, not the statement's (`emit::demand_table`): the memo
+    /// term of its utility (`UtilRef::shared_memo_term`), which names its tables.
+    pub(super) shared: Option<(usize, usize)>,
 }
 
 #[derive(Debug)]

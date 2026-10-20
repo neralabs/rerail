@@ -79,6 +79,92 @@ pub(super) struct Cycle {
     /// (`following_rules`): the matcher guards it (`binding::FOLLOWING`), so its units are keyed
     /// by their following context.
     pub(super) following: bool,
+    /// Whether every member reads the cycle's members only strictly above the node it is
+    /// matched at, or every one only strictly below it (`steps`): its read graph, ordered by
+    /// depth in the tree, has no cycle at any key, read or not.
+    pub(super) monotone: bool,
+}
+
+/// Where a matcher is matched relative to the node its rule is matched at (`steps`): there,
+/// strictly above it (past an `inside`), strictly below it (past a `has`), or anywhere.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Step {
+    Here,
+    Above,
+    Below,
+    Anywhere,
+}
+
+impl Step {
+    fn up(self) -> Self {
+        match self {
+            Self::Here | Self::Above => Self::Above,
+            Self::Below | Self::Anywhere => Self::Anywhere,
+        }
+    }
+
+    fn down(self) -> Self {
+        match self {
+            Self::Here | Self::Below => Self::Below,
+            Self::Above | Self::Anywhere => Self::Anywhere,
+        }
+    }
+}
+
+/// Where `rule`, matched at a node reached by `at`, refers to each of `members`, relative to the
+/// node its walk started from: `inside` (a field's included) steps up, `has` down, and a
+/// sibling walk, a semantic leaf's related nodes, `nthChild`'s siblings or a constraint's
+/// capture anywhere.
+fn steps(rule: &AstMatcher, members: &HashSet<UtilKey>, at: Step, out: &mut Vec<Step>) {
+    let anywhere = |rule: &AstMatcher, out: &mut Vec<Step>| {
+        walk(rule, false, &mut |util, _| {
+            if members.contains(&util_key(util)) {
+                out.push(Step::Anywhere);
+            }
+        });
+    };
+    let related = |rule: &AstMatcher, stop: Option<&AstMatcher>, at: Step, out: &mut Vec<Step>| {
+        steps(rule, members, at, out);
+        if let Some(stop) = stop {
+            steps(stop, members, at, out);
+        }
+    };
+    match rule {
+        AstMatcher::All(items) | AstMatcher::Any(items) => {
+            for item in items {
+                steps(item, members, at, out);
+            }
+        }
+        AstMatcher::Not(item) => steps(item, members, at, out),
+        AstMatcher::Inside(item, by) => related(item.rule(), stop_rule(by), at.up(), out),
+        AstMatcher::Has(item, by) => related(item.rule(), stop_rule(by), at.down(), out),
+        AstMatcher::Field(relation) => {
+            let at = if relation.inside { at.up() } else { at.down() };
+            related(&relation.rule, stop_rule(&relation.stop), at, out);
+        }
+        AstMatcher::Count(count) => steps(&count.relation, members, at, out),
+        AstMatcher::Constrained(core) => {
+            steps(&core.rule, members, at, out);
+            for (_, constraint) in &core.constraints {
+                anywhere(constraint, out);
+            }
+        }
+        AstMatcher::Util(util) if members.contains(&util_key(util)) => out.push(at),
+        AstMatcher::Call(call) if members.contains(&util_key(&call.util)) => out.push(at),
+        AstMatcher::Precedes(..)
+        | AstMatcher::Follows(..)
+        | AstMatcher::NthChild(_)
+        | AstMatcher::Semantic(_) => anywhere(rule, out),
+        AstMatcher::Util(_)
+        | AstMatcher::Call(_)
+        | AstMatcher::Pattern(_)
+        | AstMatcher::Kind(_)
+        | AstMatcher::Regex(_)
+        | AstMatcher::Compare(_)
+        | AstMatcher::Never => {}
+        #[cfg(test)]
+        AstMatcher::TestUnknown(_) => {}
+    }
 }
 
 /// The utility references a rule holds, without following them.
@@ -265,6 +351,7 @@ impl Cycle {
         // the cycle would need the cycle's answers before they exist.
         let mut in_stop = false;
         let mut guarded = Vec::new();
+        let mut reads = Vec::new();
         for member in &members {
             member.with_target(|rule| {
                 walk(rule, false, &mut |util, stop| {
@@ -273,12 +360,17 @@ impl Cycle {
                 let mut rules = Vec::new();
                 following_rules(rule, &mut rules);
                 guarded.push(rules.into_iter().any(|rule| reaches(rule, &set)));
+                steps(rule, &set, Step::Here, &mut reads);
             });
         }
+        let monotone = [Step::Above, Step::Below]
+            .into_iter()
+            .any(|direction| reads.iter().all(|&read| read == direction));
         Some(Self {
             keys,
             refused: in_stop.then_some("recursive utility in a stop rule"),
             following: guarded.into_iter().any(|guarded| guarded),
+            monotone,
         })
     }
 }
@@ -287,6 +379,8 @@ impl Cycle {
 #[derive(Default)]
 pub(super) struct Recursion {
     cycles: HashMap<UtilKey, Option<Arc<Cycle>>>,
+    /// Per utility: whether every recursion it reaches is well-founded (`well_founded`).
+    founded: HashMap<UtilKey, bool>,
     /// Per utility table: the captures each utility's scope holds (`scope_kinds`).
     scopes: HashMap<usize, Arc<Vec<Held>>>,
 }
@@ -310,6 +404,44 @@ impl Recursion {
             }
         }
         cycle
+    }
+
+    /// Whether every recursion `util` belongs to or reaches is monotone (`Cycle::monotone`),
+    /// accepted and keyed by no following context: the answers of its units are the matcher's
+    /// at every key they evaluate, read or not, so none rests on a recursion check
+    /// (`exec::acyclic`), which accepts the answers at the keys a statement reads alone.
+    pub(super) fn well_founded(&mut self, util: &UtilRef) -> bool {
+        let key = util_key(util);
+        if let Some(&known) = self.founded.get(&key) {
+            return known;
+        }
+        // Its component's members, and the utilities they refer to outside it: those lie in
+        // components it reaches and none reaching it, so the walk through them ends.
+        let cycle = self.cycle(util);
+        let inside: HashSet<UtilKey> = cycle.as_ref().map_or_else(
+            || HashSet::from([key]),
+            |cycle| cycle.keys.iter().copied().collect(),
+        );
+        let (mut component, mut outside) = (vec![util.clone()], Vec::new());
+        let mut seen = HashSet::from([key]);
+        while let Some(member) = component.pop() {
+            for edge in edges_of(&member) {
+                let edge_key = util_key(&edge);
+                if !inside.contains(&edge_key) {
+                    outside.push(edge);
+                } else if seen.insert(edge_key) {
+                    component.push(edge);
+                }
+            }
+        }
+        let founded = cycle
+            .as_ref()
+            .is_none_or(|cycle| cycle.monotone && cycle.refused.is_none() && !cycle.following)
+            && outside.iter().all(|edge| self.well_founded(edge));
+        for member in inside {
+            self.founded.insert(member, founded);
+        }
+        founded
     }
 
     /// The captures (name and kind) a utility's rule may hold in the scope it runs in: those its

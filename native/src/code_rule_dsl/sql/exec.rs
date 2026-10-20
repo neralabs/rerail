@@ -965,6 +965,9 @@ struct Plan {
     /// such a stage is materialized for one consumer, so it runs inside that clause's run, after
     /// its root frame, and not where the clause's root frame is empty (`Runner::prepared_with`).
     sole: Vec<Option<usize>>,
+    /// The tables of the units whose answers are the batch's (`emit::demand_table`): emptied
+    /// once per batch, after every stage and clause ran.
+    memos: Vec<usize>,
     marks: usize,
     census: ShapeCensus,
     /// How many stages and clauses binding checked against their drafts (`shapes::verify`).
@@ -1139,6 +1142,9 @@ impl Planner {
             .into_iter()
             .map(|(count, clause)| clause.filter(|_| count == 1))
             .collect();
+        let memos = (self.catalog.tables.iter().enumerate())
+            .filter_map(|(id, table)| table.name.starts_with(emit::MEMO).then_some(id))
+            .collect();
         let declarations = self
             .catalog
             .tables
@@ -1157,6 +1163,7 @@ impl Planner {
             stages: planned_stages,
             clauses: self.clauses,
             sole,
+            memos,
             marks: self.marks,
             census,
             #[cfg(test)]
@@ -1840,6 +1847,13 @@ fn plan(
     for ((name, _), id) in made.iter().zip(ids) {
         if cleared.insert(id) {
             tables.push(id);
+            // A unit's answers for the batch outlive the statement (`emit::demand_table`).
+            // Mutant 24: the batch's answer tables are emptied when each statement ends, their
+            // demand tables only per batch, so a later clause reads its keys demanded before as
+            // matching nothing.
+            if name.starts_with(emit::MEMO) && !(super::mutant(24) && emit::memo_answers(name)) {
+                continue;
+            }
             let buffered = catalog.tables[id].make.buffered();
             clear.push(clear_step(id, name, buffered));
         }
@@ -2505,6 +2519,12 @@ impl Session {
             if !files.is_empty() {
                 runner.at = ("stage", stage);
                 runner.clear(plan.prepared(stage))?;
+            }
+        }
+        // The units' answers for the batch, once every stage and clause read them.
+        for &table in &plan.memos {
+            if let Some(rows) = runner.recs.clear(runner.counts.name(table)) {
+                runner.counts.wrote(&Writes::Clear(table), rows);
             }
         }
         runner.stats.input.add(started.elapsed());
