@@ -101,6 +101,8 @@ pub(super) fn compile_relation(
                             "" => ProjectionSource::Capture(capture.to_owned()),
                             "startByte" => ProjectionSource::CaptureStart(capture.to_owned()),
                             "startLine" => ProjectionSource::CaptureLine(capture.to_owned()),
+                            "endByte" => ProjectionSource::CaptureEnd(capture.to_owned()),
+                            "kind" => ProjectionSource::CaptureKind(capture.to_owned()),
                             "text" => ProjectionSource::CaptureText(capture.to_owned()),
                             _ => {
                                 return Err(invalid(format!(

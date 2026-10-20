@@ -93,6 +93,8 @@ export async function replay(recordingPath: string | string[], outputPath: strin
   const validated = new Map<string, z.infer<typeof codeRuleSchema>>();
   const rows: ReplayRow[] = [];
   const started = performance.now();
+  loadNativeBinding();
+  const nativeSha256 = createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex");
   let compilationMs = 0;
   for (const event of recording.events) {
     if (event.retained_reason !== undefined || !event.upstream_passed) continue;
@@ -204,7 +206,7 @@ export async function replay(recordingPath: string | string[], outputPath: strin
       positive: rows.filter(row => row.check === check && row.execution === "native" && row.positive).length,
       clean: rows.filter(row => row.check === check && row.execution === "native" && !row.positive).length,
     })),
-    nativeSha256: createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex"), dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded"],
+    nativeSha256, dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded"],
     format: "rerail.data-layer-parity/v1", commit: recording.commit, recordings: paths,
     collectedTests: recording.collected_tests, replayedCalls: rows.length,
     positiveCalls: rows.filter(row => row.positive).length, cleanCalls: rows.filter(row => !row.positive).length,

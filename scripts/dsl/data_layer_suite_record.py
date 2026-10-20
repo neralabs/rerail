@@ -17,6 +17,7 @@ from data_layer_batch_two import BATCH_TWO
 from data_layer_batch_three import BATCH_THREE
 from data_layer_batch_four import BATCH_FOUR
 from data_layer_batch_five import BATCH_FIVE, MODULES as BATCH_FIVE_MODULES
+from data_layer_batch_six import BATCH_SIX
 
 
 def main() -> None:
@@ -26,7 +27,7 @@ def main() -> None:
     parser.add_argument("--revision", default="2b1504adc4291daaf080b2e932962b134da1a69a")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--batches", default="1", help="Comma-separated batch numbers, currently 1 through 5.")
+    parser.add_argument("--batches", default="1", help="Comma-separated batch numbers, currently 1 through 6.")
     parser.add_argument("--checks", help="Optional comma-separated subset of the selected batches")
     args = parser.parse_args()
     root = args.source.resolve()
@@ -37,9 +38,9 @@ def main() -> None:
 
     plugins, extractors = [], serverplan_fact_extractors(root)
     batch_ids = [int(value) for value in args.batches.split(",")]
-    if any(value not in (1, 2, 3, 4, 5) for value in batch_ids) or len(set(batch_ids)) != len(batch_ids):
-        parser.error("--batches requires distinct batch numbers from 1,2,3,4,5")
-    batches = {1: BATCH_ONE, 2: BATCH_TWO, 3: BATCH_THREE, 4: BATCH_FOUR, 5:BATCH_FIVE}
+    if any(value not in (1, 2, 3, 4, 5, 6) for value in batch_ids) or len(set(batch_ids)) != len(batch_ids):
+        parser.error("--batches requires distinct batch numbers from 1,2,3,4,5,6")
+    batches = {1: BATCH_ONE, 2: BATCH_TWO, 3: BATCH_THREE, 4: BATCH_FOUR, 5:BATCH_FIVE, 6:BATCH_SIX}
     names = [name for value in batch_ids for name in batches[value]]
     if args.checks:
         selected_checks = args.checks.split(',')
@@ -57,10 +58,11 @@ def main() -> None:
         module = importlib.import_module(BATCH_FIVE_MODULES.get(name,"scripts.lint_" + name))
         if name == "rust_sql_grammar_boundary":
             continue
-        factory = getattr(module, name + "_plugin")
+        plugin_name={"serverplan_target_architecture":"target_architecture","serverplan_dispatch_architecture":"dispatch_architecture"}.get(name,name)
+        factory = getattr(module, plugin_name + "_plugin")
         plugins.append(factory() if name == "serverplan_grammar_surface" else factory(root))
         extractor_name = {"transaction_patterns": "transaction_pattern", "transaction_callback_wrappers": "transaction_callback_wrapper",
-                          "transaction_closures": "transaction_closure"}.get(name, name)
+                          "transaction_closures": "transaction_closure","serverplan_target_architecture":"target_architecture","serverplan_dispatch_architecture":"dispatch"}.get(name, name)
         factory = getattr(module, extractor_name + "_fact_extractors", None)
         if factory is not None:
             extractors.update(factory(root))

@@ -712,24 +712,118 @@ enum FileOutcome {
     Limit(UtilLimit),
 }
 
-/// A file's tape, as the workspace stores it, and its line table.
+#[derive(Clone)]
+struct CachedTape {
+    language: GrammarDialect,
+    source: Arc<String>,
+    doc: crate::code_rule_dsl::tape::TapeDoc,
+    lines: Arc<LineTable>,
+}
+
+#[derive(Default)]
+struct TapeCache {
+    active: bool,
+    entry: Option<CachedTape>,
+}
+
+thread_local! {
+    static EVALUATION_TAPE: RefCell<TapeCache> = RefCell::new(TapeCache::default());
+}
+
+pub(crate) struct TapeCacheSlot(bool);
+
+impl TapeCacheSlot {
+    pub(crate) fn install() -> Self {
+        let outer = EVALUATION_TAPE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let outer = !cache.active;
+            cache.active = true;
+            outer
+        });
+        Self(outer)
+    }
+
+    pub(crate) fn seed(
+        language: GrammarDialect,
+        file: &FileInput,
+        image: &crate::code_rule_dsl::tape::TapeImage,
+    ) -> Result<()> {
+        let (doc, lines) = restore_file_tape(language, file, image)?;
+        cache_tape(language, file, &doc, &lines);
+        Ok(())
+    }
+}
+
+impl Drop for TapeCacheSlot {
+    fn drop(&mut self) {
+        if self.0 {
+            EVALUATION_TAPE.with(|cache| *cache.borrow_mut() = TapeCache::default());
+        }
+    }
+}
+
+/// A file's tape and line table, reused only within the current evaluation.
 pub(super) fn file_tape(
     language: GrammarDialect,
     file: &FileInput,
 ) -> Result<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)> {
+    if let Some(cached) = EVALUATION_TAPE.with(|cache| {
+        cache
+            .borrow()
+            .entry
+            .as_ref()
+            .filter(|cached| {
+                cached.language == language && Arc::ptr_eq(&cached.source, &file.source)
+            })
+            .cloned()
+    }) {
+        return Ok((cached.doc, cached.lines));
+    }
     use crate::code_rule_dsl::tape;
     let never = || false;
     let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
     let image = tape::TapeImage::parse(&tape_grammar, &file.source, &never)
         .ok_or_else(|| invalid("file could not be parsed"))?
         .map_err(invalid)?;
+    let (doc, lines) = restore_file_tape(language, file, &image)?;
+    cache_tape(language, file, &doc, &lines);
+    Ok((doc, lines))
+}
+
+fn cache_tape(
+    language: GrammarDialect,
+    file: &FileInput,
+    doc: &crate::code_rule_dsl::tape::TapeDoc,
+    lines: &Arc<LineTable>,
+) {
+    EVALUATION_TAPE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.active {
+            cache.entry = Some(CachedTape {
+                language,
+                source: Arc::clone(&file.source),
+                doc: doc.clone(),
+                lines: Arc::clone(lines),
+            });
+        }
+    });
+}
+
+fn restore_file_tape(
+    language: GrammarDialect,
+    file: &FileInput,
+    image: &crate::code_rule_dsl::tape::TapeImage,
+) -> Result<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)> {
+    use crate::code_rule_dsl::tape;
+    let never = || false;
+    let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
     let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
     #[cfg(test)]
     crate::code_rule_dsl::matcher::note_line_table_construction();
     let doc = tape::TapeDoc::restore_with_lines(
         Arc::clone(&file.source),
         tape_grammar,
-        &image,
+        image,
         Arc::clone(&lines),
         &never,
     )
@@ -891,4 +985,30 @@ pub(crate) fn grammar_matcher<'a>(
                 condition.holds(&file.path, file.module.as_deref(), file.package.as_deref())
             })
     })
+}
+
+#[cfg(test)]
+mod tape_cache_tests {
+    use super::*;
+
+    #[test]
+    fn a_scoped_evaluation_reuses_its_tape_and_rejects_an_edited_source() {
+        let language = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let mut file = FileInput::new(
+            "a.py".into(),
+            "python".into(),
+            Arc::new("def first(): pass\n".into()),
+            None,
+            None,
+            "test",
+        )
+        .unwrap();
+        let _slot = TapeCacheSlot::install();
+        let (_, first) = file_tape(language, &file).unwrap();
+        let (_, same) = file_tape(language, &file).unwrap();
+        assert!(Arc::ptr_eq(&first, &same));
+        file.source = Arc::new("def second(): pass\n".into());
+        let (_, edited) = file_tape(language, &file).unwrap();
+        assert!(!Arc::ptr_eq(&first, &edited));
+    }
 }

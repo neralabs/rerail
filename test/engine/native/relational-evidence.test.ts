@@ -19,6 +19,51 @@ const query = `SELECT f.__path AS path, f.__start AS start_byte, f.__end AS end_
   WHERE f.name NOT LIKE '%_async' AND g.name IS NULL`;
 const compile = (document: unknown) => native.CodeRuleDslRuntime.compile(JSON.stringify(document), "json", capabilities);
 
+it.each([{ locations: ["missing.py"] }, { references: { language: "python" } }])("rejects project-only inputs on file partitions: %j", extra => {
+  const base = policy(query);
+  const document = { ...base, clauses: [{ ...base.clauses[0], relational: { ...base.clauses[0]!.relational, partitionBy: "file", ...extra } }] };
+  expect(codeRuleSchema.safeParse(document).success).toBe(false);
+  expect(() => compile(document)).toThrow("file partitions cannot declare references or locations");
+});
+
+it("partitions a declared local relation by file on snapshot, edit, and removal", async () => {
+  const base = policy(query);
+  const document = { ...base, clauses: [{ ...base.clauses[0], relational: { ...base.clauses[0]!.relational, partitionBy: "file" } }] };
+  expect(codeRuleSchema.safeParse(document).success).toBe(true);
+  const rule = compile(document);
+  const files = [
+    { path: "a.py", language: "python", source: "def read(): pass\n" },
+    { path: "b.py", language: "python", source: "def read_async(): pass\n" },
+  ];
+  const evaluate = (current: typeof files) => JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: current }), "report"));
+  const initial = evaluate(files);
+  expect(initial.failures).toEqual([]); expect(initial.violations).toHaveLength(1);
+  expect(initial.violations[0].path).toBe("a.py");
+  const workspace = new native.CodeRuleDslWorkspace();
+  try {
+    workspace.addCodeRule(rule);
+    const apply = async (revision: number, changed: typeof files, removed: string[] = []) => JSON.parse(await workspace.applyAsync(JSON.stringify({ revision, files: changed, removed }))).evaluation;
+    expect(await apply(1, files)).toMatchObject({ failures: [], violations: initial.violations });
+    files[1] = { ...files[1]!, source: "def other(): pass\n" };
+    expect(await apply(2, [files[1]!])).toMatchObject({ failures: [], violations: evaluate(files).violations });
+    expect(await apply(3, [], ["a.py"])).toMatchObject({ failures: [], violations: evaluate([files[1]!]).violations });
+  } finally { workspace.close(); }
+});
+
+it("validates a deep stage graph without expanding earlier stages as nested views", () => {
+  const stages = Array.from({ length: 20 }, (_, index) => {
+    const previous = index === 0 ? "functions" : `level_${index - 1}`;
+    return { name: `level_${index}`, query: `SELECT a.* FROM ${previous} a
+      JOIN ${previous} b ON b.__path=a.__path AND b.__start=a.__start AND b.__end=a.__end` };
+  });
+  const document = policy("SELECT __path AS path,__start AS start_byte,__end AS end_byte,name AS family,'deep' AS issue FROM level_19");
+  const withStages = { ...document, clauses: [{ ...document.clauses[0], relational: { ...document.clauses[0]!.relational, stages } }] };
+  const rule = compile(withStages);
+  const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0,
+    files: [{ path: "a.py", language: "python", source: "def read(): pass\n" }] }), "report"));
+  expect(result.failures).toEqual([]); expect(result.violations).toHaveLength(1);
+});
+
 it("joins projected source rows and invalidates an unchanged file when its companion changes", async () => {
   const document = policy(query);
   expect(codeRuleSchema.safeParse(document).success).toBe(true);
@@ -126,4 +171,69 @@ it("keeps direct module attributes separate from attributes of reexported module
   const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files }), "report"));
   expect(result.failures).toEqual([]);
   expect(result.violations.map((v: { span: { startLine: number } }) => v.span.startLine)).toEqual([3]);
+});
+
+it("reports an authored missing-file location before any source exists and repairs it incrementally", async () => {
+  const document = policy(`SELECT 'contract.py' AS path,0 AS start_byte,0 AS end_byte,
+    'required' AS family,'missing_contract' AS issue
+    WHERE NOT EXISTS(SELECT 1 FROM functions WHERE __path='contract.py' AND name='required')`);
+  Object.assign(document.clauses[0]!.relational, { locations: ["contract.py"] });
+  expect(codeRuleSchema.safeParse(document).success).toBe(true);
+  const rule = compile(document);
+  const expected = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: [] }), "report"));
+  expect(expected.failures).toEqual([]);
+  expect(expected.violations).toEqual([expect.objectContaining({ path: "contract.py", code: "missing_contract",
+    span: { startByte: 0, endByte: 0, startLine: 0, endLine: 0, startColumn: 0, endColumn: 0 } })]);
+  const workspace = new native.CodeRuleDslWorkspace();
+  try {
+    workspace.addCodeRule(rule);
+    const apply = async (revision: number, files: { path: string; source: string; language: string }[], removed: string[] = []) =>
+      JSON.parse(await workspace.applyAsync(JSON.stringify({ revision, files, removed }))).evaluation;
+    expect(await apply(1, [])).toMatchObject({ failures: [], violations: expected.violations });
+    expect(await apply(2, [{ path: "contract.py", language: "python", source: "def required(): pass\n" }])).toMatchObject({ failures: [], violations: [] });
+    expect(await apply(3, [], ["contract.py"])).toMatchObject({ failures: [], violations: expected.violations });
+  } finally { workspace.close(); }
+});
+
+it("refuses undeclared virtual paths and nonzero virtual source offsets", () => {
+  for (const [path, start] of [["other.py", 0], ["contract.py", 1]] as const) {
+    const document = policy(`SELECT '${path}' AS path,${start} AS start_byte,${start} AS end_byte,'required' AS family,'missing' AS issue`);
+    Object.assign(document.clauses[0]!.relational, { locations: ["contract.py"] });
+    const result = JSON.parse(compile(document).evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: [] }), "report"));
+    expect(result.violations).toEqual([]);
+    expect(result.failures).toEqual([expect.objectContaining({ code: "relational-failed", message: expect.stringContaining("input witness span") })]);
+  }
+});
+
+it("projects same-node regex positions and uses the selected evidence anchor", async () => {
+  const document = policy(`SELECT __path AS path,__start AS start_byte,__end AS end_byte,
+    position AS family,'positioned' AS issue,line FROM functions WHERE position=__start AND line IN (1,2)`);
+  document.clauses[0]!.relational.inputs.functions = { evidence: { as: "f", query: { ast: { language: "python",
+    rule: { kind: "module", regex: "(?P<TOKEN>target)" },
+  } }, each: "TOKEN", anchor: "capture.TOKEN", project: { line: "capture.TOKEN.startLine", position: "capture.TOKEN.startByte" } } };
+  const rule = compile(document);
+  const files = [{ path: "a.py", language: "python", source: "# header\nfirst = 'target'\nsecond = 'target'\n" }];
+  const expected = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files }), "report"));
+  expect(expected.failures).toEqual([]);
+  expect(expected.violations.map((v: { span: { startLine: number; startByte: number } }) => [v.span.startLine, v.span.startByte])).toEqual([[1, 18], [2, 36]]);
+  const workspace = new native.CodeRuleDslWorkspace();
+  try {
+    workspace.addCodeRule(rule);
+    expect(JSON.parse(await workspace.applyAsync(JSON.stringify({ revision: 1, files, removed: [] }))).evaluation).toMatchObject({ failures: [], violations: expected.violations });
+  } finally { workspace.close(); }
+});
+
+it("joins typed AST nodes to their immediate parents without matching source text", () => {
+  const document = policy(`SELECT c.__path AS path,c.__start AS start_byte,c.__end AS end_byte,
+    c.name AS family,'owned' AS issue FROM functions c JOIN functions p
+    ON p.__path=c.__path AND p.__start=c.parent_start AND p.__end=c.parent_end AND p.kind=c.parent_kind
+    WHERE c.kind='identifier' AND c.name='row' AND p.kind='assignment'`);
+  document.clauses[0]!.relational.inputs.functions = { evidence: { as: "n", query: { ast: { language: "python", rule: {
+    pattern: "$NODE", any: [{ inside: { pattern: "$PARENT", stopBy: "neighbor" } }, { pattern: "$_" }],
+  } } }, project: { name: "capture.NODE", kind: "capture.NODE.kind", end: "capture.NODE.endByte",
+    parent_start: "capture.PARENT.startByte", parent_end: "capture.PARENT.endByte", parent_kind: "capture.PARENT.kind" } } };
+  const result = JSON.parse(compile(document).evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0,
+    files: [{ path: "a.py", language: "python", source: "row = [1]\n" }] }), "report"));
+  expect(result.failures).toEqual([]); expect(result.violations).toHaveLength(1);
+  expect(result.violations[0].span).toMatchObject({ startByte: 0, endByte: 3 });
 });

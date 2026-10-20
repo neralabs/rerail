@@ -1,5 +1,5 @@
-Current continuation: [batch five](data-layer-batch-five.md) completes ten further source-detection candidates, bringing the total to 50.
-All ten match the pinned repository; retained graph-model and signed reporter contracts remain separate.
+Current continuation: [batch six](data-layer-batch-six.md) adds ten source-detection candidates, bringing the total to 60.
+The 1,259 source comparisons and 40 edit transitions pass; retained integration contracts remain separate.
 The first thirty candidates are committed at `905212f6`.
 
 # Data-layer first-batch execution report

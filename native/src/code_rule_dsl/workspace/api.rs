@@ -206,13 +206,21 @@ impl CodeRuleDslWorkspace {
                             .inputs
                             .iter()
                             .map(|(_, input)| {
-                                compile_relation_producer(
+                                let id = compile_relation_producer(
                                     input,
                                     Side::Counted,
                                     clause,
                                     index,
                                     code_rule,
-                                )
+                                );
+                                if plan.per_file {
+                                    let producer = &mut code_rule.clauses[id.1];
+                                    producer.decision = true;
+                                    producer.violation.project.clear();
+                                    producer.violation.each = None;
+                                    producer.violation.node_regexes.clear();
+                                }
+                                id
                             })
                             .collect();
                         state.relation_plans.insert((index, clause.id.clone()), ids);
@@ -1126,7 +1134,7 @@ impl WorkspaceApplyTask {
             for index in dirty {
                 check_closed(&self.closed)?;
                 let budget = MatchBudget::work(&self.closed, CLAUSE_WORK_BUDGET);
-                let mut evaluation = evaluate_global(&state, index, &snapshot)?;
+                let mut evaluation = evaluate_global(&mut state, index, &snapshot, &self.closed)?;
                 #[cfg(test)]
                 super::pass_deadline_at_test_phase("global-done");
                 // Only exhaustion some step observed cut it short; a finished evaluation is kept.

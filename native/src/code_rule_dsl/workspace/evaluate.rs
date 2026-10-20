@@ -1051,7 +1051,12 @@ fn evaluate_clauses(
                                     return Ok(false);
                                 }
                             };
-                            for witness in found {
+                            for mut witness in found {
+                                if code_rule.clauses[id.1].projected_only {
+                                    witness.span =
+                                        violations::anchored_span(&violation.anchor, &witness).0;
+                                    witness.captures.retain_projection();
+                                }
                                 let witnesses =
                                     file.witnesses.get_mut(&id).expect("eligible check");
                                 if witnesses.len() >= limits.max_witnesses {

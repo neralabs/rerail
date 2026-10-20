@@ -38,7 +38,9 @@ pub(super) const REFERENCE_FIELDS: &[&str] = &[
 
 #[derive(Clone)]
 pub(super) struct Plan {
+    pub(super) per_file: bool,
     pub(super) references: Option<References>,
+    pub(super) locations: BTreeSet<String>,
     pub(super) inputs: Vec<(String, FactQuery)>,
     pub(super) stages: Vec<Stage>,
     pub(super) query: String,
@@ -253,10 +255,16 @@ pub(super) fn create_input(db: &Connection, name: &str, fields: &[String]) -> Re
 pub(super) fn create_stage(db: &Connection, stage: &Stage, materialize: bool) -> Result<()> {
     db.execute(
         &format!(
-            "CREATE TEMP {} {} AS {}",
-            if materialize { "TABLE" } else { "VIEW" },
+            "CREATE TEMP TABLE {} AS {}",
             quote(&stage.name),
-            stage.query
+            if materialize {
+                stage.query.clone()
+            } else {
+                // Runtime stages are tables. Keep that schema boundary while validating:
+                // nested views expand shared dependencies exponentially during prepare.
+                // LIMIT 0 creates the schema without evaluating authored expressions.
+                format!("SELECT * FROM ({}) LIMIT 0", stage.query)
+            }
         ),
         [],
     )
@@ -376,11 +384,12 @@ pub(super) fn evaluate(
                 {
                     return Err(invalid("relational input row budget exceeded"));
                 }
+                let span = super::violations::anchored_span(&input.anchor, witness).0;
                 let projected = witness.captures.projection().and_then(Value::as_object);
                 let mut values = vec![
                     rusqlite::types::Value::Text(witness.path.clone()),
-                    rusqlite::types::Value::Integer(witness.span.start_byte as i64),
-                    rusqlite::types::Value::Integer(witness.span.end_byte as i64),
+                    rusqlite::types::Value::Integer(span.start_byte as i64),
+                    rusqlite::types::Value::Integer(span.end_byte as i64),
                 ];
                 values.extend(fields.iter().map(|field| {
                     sql_value(
@@ -482,18 +491,18 @@ pub(super) fn evaluate(
         let names = columns(&db, &plan.query, &tables)?;
         let mut statement = db.prepare(&plan.query).map_err(sql_error)?;
         let mut query = statement.query([]).map_err(sql_error)?;
-        let anchors = rows
+        let anchors = plan
+            .inputs
             .iter()
-            .flat_map(|rows| rows.witnesses.iter())
-            .map(|witness| {
-                (
+            .zip(rows.iter())
+            .flat_map(|((_, input), rows)| {
+                rows.witnesses.iter().map(|witness| {
+                    let span = super::violations::anchored_span(&input.anchor, witness).0;
                     (
-                        witness.path.as_str(),
-                        witness.span.start_byte,
-                        witness.span.end_byte,
-                    ),
-                    (witness.span, witness.ignored),
-                )
+                        (witness.path.as_str(), span.start_byte, span.end_byte),
+                        (span, witness.ignored),
+                    )
+                })
             })
             .collect::<HashMap<_, _>>();
         let mut findings = Vec::new();
@@ -526,9 +535,16 @@ pub(super) fn evaluate(
                     })
             };
             let (start, end) = (number("start_byte")?, number("end_byte")?);
-            let (span, ignored) = *anchors.get(&(path, start, end)).ok_or_else(|| {
-                invalid("relational results must anchor to an input witness span")
-            })?;
+            let (span, ignored) = anchors
+                .get(&(path, start, end))
+                .copied()
+                .or_else(|| {
+                    (start == 0 && end == 0 && plan.locations.contains(path))
+                        .then_some((super::violations::Span::default(), false))
+                })
+                .ok_or_else(|| {
+                    invalid("relational results must anchor to an input witness span")
+                })?;
             if ignored {
                 continue;
             }

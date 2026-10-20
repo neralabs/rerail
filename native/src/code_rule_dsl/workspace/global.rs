@@ -81,6 +81,8 @@ pub(super) fn compile_relation_producer(
     clause.violation = evidence::producer_violation(template, relation, side);
     clause.kind = ClauseKind::Forbid(ast.query.clone());
     clause.synthetic = true;
+    clause.projected_only =
+        matches!(&template.kind, ClauseKind::Relational(plan) if !plan.per_file);
     code_rule.clauses.push(clause);
     id
 }
@@ -329,14 +331,32 @@ fn evaluate_plan<'s>(
 }
 
 pub(super) fn evaluate_global(
-    state: &WorkspaceState,
+    state: &mut WorkspaceState,
     index: usize,
     snapshot: &Snapshot,
+    closed: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<Evaluation> {
-    let code_rule = &state.code_rules[index];
+    let resident = std::sync::Arc::clone(&state.code_rules[index]);
+    let code_rule = resident.as_ref();
     let _graph = state.crossfile.evaluation_slot();
     let mut evaluation = Evaluation::default();
-    for clause in &state.globals[&index] {
+    for clause in &state.globals[&index].clone() {
+        if let ClauseKind::Relational(plan) = &clause.kind
+            && plan.per_file
+        {
+            let mut result = evaluate_file_relations(
+                state,
+                index,
+                code_rule,
+                clause,
+                snapshot.revision,
+                closed,
+            )?;
+            evaluation.violations.append(&mut result.violations);
+            evaluation.failures.append(&mut result.failures);
+            evaluation.metrics.merge(result.metrics);
+            continue;
+        }
         if let Some(plan) = state.query_plans.get(&(index, clause.id.clone())) {
             let mut partial = BTreeMap::new();
             let result = evaluate_plan(plan, state, code_rule, &mut partial)?;
@@ -397,4 +417,85 @@ pub(super) fn evaluate_global(
         }
     }
     Ok(evaluation)
+}
+
+fn evaluate_file_relations(
+    state: &mut WorkspaceState,
+    index: usize,
+    code_rule: &CompiledCodeRule,
+    clause: &CompiledClause,
+    revision: u32,
+    closed: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<Evaluation> {
+    let paths = state.relation_plans[&(index, clause.id.clone())]
+        .iter()
+        .flat_map(|id| {
+            state
+                .evidence
+                .get(id)
+                .into_iter()
+                .flat_map(|rows| rows.keys().cloned())
+        })
+        .collect::<BTreeSet<_>>();
+    state
+        .file_relation_results
+        .retain(|(owner, name, path), _| {
+            *owner != index || name != &clause.id || paths.contains(path)
+        });
+    let mut result = Evaluation::default();
+    for path in paths {
+        let key = (index, clause.id.clone(), path.clone());
+        let version = super::documents::current_version(state, &path)
+            .ok_or_else(|| invalid(format!("{path} has no current source version")))?;
+        if !state
+            .file_relation_results
+            .get(&key)
+            .is_some_and(|(cached, _)| cached == &version)
+        {
+            let mut input = state
+                .files
+                .get(&path)
+                .map(|file| file.input.clone())
+                .or_else(|| state.evicted_inputs.get(&path).cloned())
+                .ok_or_else(|| invalid(format!("{path} is not a file of this workspace")))?;
+            // Each file is an independent bounded evaluation, like a local AST clause.
+            let budget = crate::code_rule_dsl::budget::MatchBudget::work(
+                closed,
+                super::file_work_budget(input.source.len()),
+            );
+            let (_, document) = super::documents::load(state, &path)?;
+            input.source = std::sync::Arc::clone(&document.source);
+            let _tapes = crate::code_rule_dsl::eval::TapeCacheSlot::install();
+            if let Some(language) = crate::code_rule_dsl::eval::file_language(&input) {
+                crate::code_rule_dsl::eval::TapeCacheSlot::seed(language, &input, &document.image)?;
+            }
+            let snapshot = Snapshot {
+                revision,
+                files: vec![input],
+            };
+            let mut evaluated =
+                evaluate_clauses(code_rule, &snapshot, "report", std::slice::from_ref(clause))?;
+            if budget.observed() {
+                evaluated.failures.push(failure(
+                    &clause.id,
+                    "budget-exceeded",
+                    "file relation work budget exceeded",
+                    Some(&path),
+                ));
+                result.violations.append(&mut evaluated.violations);
+                result.failures.append(&mut evaluated.failures);
+                continue;
+            }
+            state
+                .file_relation_results
+                .insert(key.clone(), (version, evaluated));
+        }
+        let evaluated = &state.file_relation_results[&key].1;
+        result
+            .violations
+            .extend(evaluated.violations.iter().cloned());
+        result.failures.extend(evaluated.failures.iter().cloned());
+        result.metrics.witnesses += evaluated.metrics.witnesses;
+    }
+    Ok(result)
 }

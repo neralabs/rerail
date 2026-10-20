@@ -38,3 +38,11 @@ The ten candidates pass 312 native source comparisons and match all 23,835 repos
 The graph and relational probe files preserve reduced reference, family, and reachability cases.
 The 114 synthetic graph observations remain separate from native source passes.
 See [the fifth-batch report](../../../docs/data-layer-batch-five.md) and `batch-05-evidence.json`.
+
+`batch-06-recording.json` records 1,234 source observations from 933 original tests.
+`batch-06-probes.json` adds twenty-five original-analyzer probes for callbacks, assignments, strategy line limits, executor annotations, and production scope.
+The native gate compares 1,259 calls, with 417 positive and 842 clean observations.
+Seven I/O or behavioral observations and 324 tests without captured analyzer boundaries remain separate.
+Use `data_layer_record.py --batch 6` and `data_layer_probe_six.py` to regenerate the oracle results.
+The incremental harness checks 40 clean and positive transitions in resident workspaces.
+See [the sixth-batch report](../../../docs/data-layer-batch-six.md) and `batch-06-evidence.json`.

@@ -404,6 +404,8 @@ struct WorkspaceState {
     /// A cross-file `require_each` or `budget` clause's evidence producers: subject then evidence,
     /// or the budget's query.
     relation_plans: BTreeMap<(usize, String), Vec<ClauseId>>,
+    /// File-partitioned relations cache final findings, rather than repository-sized syntax rows.
+    file_relation_results: BTreeMap<(usize, String, String), (documents::FileVersion, Evaluation)>,
     /// Per synthetic clause, the files it has evidence in: witnesses, or unknown. It outlives the
     /// files' residency, so eviction keeps cross-file clauses answerable.
     evidence: BTreeMap<ClauseId, BTreeMap<String, Partition>>,
