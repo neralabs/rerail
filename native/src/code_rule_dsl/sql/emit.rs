@@ -821,6 +821,8 @@ impl<'s> Emitter<'s> {
                 }
                 current
             }
+            // One branch is that branch: no union copies its rows.
+            Op::Any(branches) if branches.len() == 1 => self.op(&branches[0], input),
             Op::Any(branches) => {
                 let mut rest = input.to_owned();
                 let mut outs = Vec::new();
