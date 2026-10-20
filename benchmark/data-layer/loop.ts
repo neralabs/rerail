@@ -354,6 +354,28 @@ const clauseResultSchema = z.object({
   /** SQL: the clause's statement time in the profile (its share of the unit's time); null on native. */
   sqlMs: z.number().nullable(),
 });
+/**
+ * Where a unit's CPU went, as far as the harness and `engineReport()` can tell. `programCpuMs`: SQL lowering and
+ * emission (the first engine report builds the program; timed apart, counted in the unit's time); `applyCpuMs`: the
+ * apply (parse, plans, sessions, statements, rendering); the rest is the SQL engine's own timers (wall, summed over
+ * its worker threads), null on native. Parse and per-file plan building have no timer in either engine.
+ */
+const phasesSchema = z.object({
+  ruleCompileMs: z.number(),
+  programCpuMs: z.number(),
+  applyCpuMs: z.number(),
+  sessionSetupMs: z.number().nullable(),
+  statementMs: z.number().nullable(),
+  stageMs: z.number().nullable(),
+  selectMs: z.number().nullable(),
+  inputMs: z.number().nullable(),
+  factsMs: z.number().nullable(),
+  sessions: z.number().nullable(),
+  statementsRun: z.number().nullable(),
+  statementsSkipped: z.number().nullable(),
+});
+type Phases = z.infer<typeof phasesSchema>;
+
 const unitEventSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("ready"), setupMs: z.number(), files: z.number().int(), addon: z.object({ path: z.string(), sha256: z.string(), kernelVersion: z.string(), work: z.string() }), workerThreads: z.number() }),
   /** The request was read: its accepted files. */
@@ -376,6 +398,9 @@ const unitEventSchema = z.discriminatedUnion("kind", [
     clauseFiles: z.array(z.object({ clause: z.string(), path: z.string(), milliseconds: z.number() })),
     /** The child's peak resident set while it ran the unit (sampled every 20 ms). */
     rssBytes: z.number(),
+    phases: phasesSchema,
+    /** SQL: the compiled program's census (`engineReport().program`). */
+    program: z.record(z.string(), z.number()).nullable(),
   }),
   /** Past its CPU cap (per file: on `path`): the child dies right after this event. */
   z.object({ kind: z.literal("timeout"), id: z.number().int(), cpuMs: z.number(), wallMs: z.number(), rssBytes: z.number(), path: z.string().nullable() }),
@@ -477,8 +502,16 @@ async function unitChild(options: Options): Promise<number> {
       const accepted = candidates.filter(file => workspace.accepts(file.path));
       emit({ kind: "start", id: request.id, files: accepted.map(file => file.path) });
       const load = loadavg()[0]!;
-      let wallMs = 0;
-      let cpuMs = 0;
+      // SQL: the program's lowering and emission, which the first engine report (or apply) runs. Timed apart, then
+      // added to the unit's time, so the unit's total is what it was when the apply ran it.
+      const programCpu = process.cpuUsage();
+      const programStarted = performance.now();
+      if (request.engine === "sql") workspace.engineReport();
+      const programWallMs = request.engine === "sql" ? performance.now() - programStarted : 0;
+      const programUsed = process.cpuUsage(programCpu);
+      const programCpuMs = request.engine === "sql" ? (programUsed.user + programUsed.system) / 1000 : 0;
+      let wallMs = programWallMs;
+      let cpuMs = programCpuMs;
       const lines: string[] = [];
       if (request.perFile) {
         if (unit.linter === ALL && request.engine === "sql") {
@@ -502,7 +535,8 @@ async function unitChild(options: Options): Promise<number> {
         current = null;
       } else if (accepted.length > 0) {
         const timed = await workspace.apply(accepted);
-        ({ wallMs, cpuMs } = timed);
+        wallMs += timed.wallMs;
+        cpuMs += timed.cpuMs;
         lines.push(...linesOf(timed.result));
       }
       const rssBytes = watchdog.stop();
@@ -522,6 +556,21 @@ async function unitChild(options: Options): Promise<number> {
         statements: sql?.statements.profile?.slice(0, UNIT_STATEMENTS) ?? [],
         clauseFiles: sql?.profile?.clauseFiles.slice(0, UNIT_CLAUSE_FILES).map(entry => ({ clause: name(entry.ruleId, entry.clauseId), path: entry.path, milliseconds: entry.milliseconds })) ?? [],
         rssBytes,
+        phases: {
+          ruleCompileMs: compileMs,
+          programCpuMs,
+          applyCpuMs: cpuMs - programCpuMs,
+          sessionSetupMs: sql?.sessions?.setupMilliseconds ?? null,
+          statementMs: sql?.statements.milliseconds ?? null,
+          stageMs: sql?.statements.stageMilliseconds ?? null,
+          selectMs: sql?.statements.selectMilliseconds ?? null,
+          inputMs: sql?.statements.inputMilliseconds ?? null,
+          factsMs: sql?.statements.factsMilliseconds ?? null,
+          sessions: sql?.sessions?.count ?? null,
+          statementsRun: sql?.statements.count ?? null,
+          statementsSkipped: sql?.statements.skipped ?? null,
+        },
+        program: sql?.program ?? null,
       });
     } catch (error) {
       emit({ kind: "error", id: request.id, message: error instanceof Error ? error.message : String(error), cpuMs: watchdog.cpuMs(), rssBytes: watchdog.stop() });
@@ -957,6 +1006,9 @@ const unitRecordSchema = z.object({
   cpuMs: z.number().nullable(),
   /** The child's peak resident set over the unit (v4 on). */
   rssBytes: z.number().nullable().optional(),
+  /** Where the unit's CPU went (finished units, from v4 runs with phases). */
+  phases: phasesSchema.nullable().optional(),
+  program: z.record(z.string(), z.number()).nullable().optional(),
   /** Per clause: its SQL statement time (SQL only). */
   sqlMs: z.record(z.string(), z.number()).nullable(),
   detail: z.string().nullable(),
@@ -989,7 +1041,7 @@ function runRecords(): { path: string; record: RunRecord }[] {
 }
 
 const unitRecord = (outcome: UnitOutcome): UnitRecord => outcome.status === "ok"
-  ? { unit: outcome.unit, status: "ok", wallMs: outcome.wallMs, cpuMs: outcome.cpuMs, rssBytes: outcome.rssBytes, detail: null, sqlMs: outcome.clauses.some(clause => clause.sqlMs !== null) ? Object.fromEntries(outcome.clauses.map(clause => [clause.clause, clause.sqlMs ?? 0])) : null }
+  ? { unit: outcome.unit, status: "ok", wallMs: outcome.wallMs, cpuMs: outcome.cpuMs, rssBytes: outcome.rssBytes, phases: outcome.phases, program: outcome.program, detail: null, sqlMs: outcome.clauses.some(clause => clause.sqlMs !== null) ? Object.fromEntries(outcome.clauses.map(clause => [clause.clause, clause.sqlMs ?? 0])) : null }
   : { unit: outcome.unit, status: outcome.status, wallMs: outcome.wallMs, cpuMs: outcome.cpuMs, rssBytes: outcome.rssBytes, sqlMs: null, detail: outcome.detail };
 
 /** What units cost, from previous runs on this subset: the estimates the chunking, the LPT order and the memory budget use. */
@@ -1253,6 +1305,23 @@ async function run(options: Options): Promise<number> {
   for (const entry of clauseTimes.slice(0, options.show)) console.log(`    ${seconds(entry.milliseconds).padStart(9)}${entry.timeout ? " TIMEOUT" : ""}  ${entry.clause}`);
   console.log("  top (clause, file) by SQL time (a batch's time split evenly over its files):");
   for (const entry of clauseFiles.slice(0, 10)) console.log(`    ${seconds(entry.milliseconds).padStart(9)}  ${entry.clause} @ ${entry.path}`);
+  // Where SQL's excess over native goes: the last round's units both engines finished, most SQL − native CPU first.
+  const lastRound = rounds.at(-1)!;
+  const nativeDone = new Map(lastRound.native.flatMap(outcome => (outcome.status === "ok" ? [[unitKey(outcome.unit), outcome] as const] : [])));
+  const excess = lastRound.sql.flatMap(outcome => {
+    const native = nativeDone.get(unitKey(outcome.unit));
+    return outcome.status === "ok" && native !== undefined ? [{ key: unitKey(outcome.unit), sql: outcome, native, excessMs: outcome.cpuMs - native.cpuMs }] : [];
+  }).sort((a, b) => b.excessMs - a.excessMs);
+  const ms = (value: number | null) => (value === null ? "—" : (value / 1000).toFixed(2)).padStart(7);
+  console.log("  top excess by phase (s; SQL engine timers are wall summed over its workers; rest = SQL apply − setup − statements − facts):");
+  console.log(`    ${["excess", "SQL", "native", "rules", "lower", "apply", "setup", "stmts", "facts", "rest", "nat.app", "sess", "run", "skip"].map(text => text.padStart(7)).join(" ")}  unit`);
+  for (const row of excess.slice(0, 15)) {
+    const phases: Phases = row.sql.phases;
+    const rest = phases.applyCpuMs - (phases.sessionSetupMs ?? 0) - (phases.statementMs ?? 0) - (phases.factsMs ?? 0);
+    const counts = [phases.sessions, phases.statementsRun, phases.statementsSkipped].map(count => String(count ?? "—").padStart(7));
+    console.log(`    ${[row.excessMs, row.sql.cpuMs, row.native.cpuMs, phases.ruleCompileMs, phases.programCpuMs, phases.applyCpuMs, phases.sessionSetupMs, phases.statementMs, phases.factsMs, rest, row.native.phases.applyCpuMs].map(ms).join(" ")} ${counts.join(" ")}  ${row.key}`);
+  }
+  console.log("    no timer yet (inside `rest`): parse and tape, per-file plan building (`SqlFile::plan`), match rendering; lowering and emission are one figure (`lower`)");
 
   // Against the previous run on this subset and clause set
   if (previous !== undefined) {
