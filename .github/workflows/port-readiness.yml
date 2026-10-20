@@ -127,16 +127,20 @@ jobs:
         run: npm run port-readiness -- fetch --pack "$PACK" --tool "$TOOL"
 
       # The corpus files the goldens name and upstream's pinned test files are keyed by their pins; a partial
-      # match is reused, since every checkout in them is keyed by commit.
+      # match is reused, since every checkout in them is keyed by commit. Each tool-pack has its own: a pack's
+      # tool-packs fetch different files (typescript-eslint the vscode corpus, eslint-plugin-vitest none of it), and
+      # under one key per pack the first leg to save kept the others from saving theirs. A sharded tool-pack's legs
+      # share one, since each fetches what every golden of the tool-pack names. The `-pins-` after the tool keeps
+      # eslint's prefix from matching eslint-plugin-unicorn's entries.
       - name: Restore the goldens' corpus files and upstream's test files
         uses: actions/cache/restore@v6
         with:
           path: |
             .rerail/port-readiness/corpus
             .rerail/port-readiness/upstream
-          key: port-readiness-corpus-${{ matrix.pack }}-${{ hashFiles('conformance/port-readiness/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack), format('packs/{0}/upstream/*/gates.yaml', matrix.pack)) }}
+          key: port-readiness-corpus-${{ matrix.pack }}-${{ matrix.tool }}-pins-${{ hashFiles('conformance/port-readiness/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack), format('packs/{0}/upstream/*/gates.yaml', matrix.pack)) }}
           restore-keys: |
-            port-readiness-corpus-${{ matrix.pack }}-
+            port-readiness-corpus-${{ matrix.pack }}-${{ matrix.tool }}-pins-
 
       # Each result is keyed by everything the rule's verdict depends on, so a stale entry is never read. The `-run-`
       # after the tool and shard keeps eslint-plugin-react's prefix from matching eslint-plugin-react-hooks' entries.
@@ -161,6 +165,17 @@ jobs:
           npm run port-readiness -- --pack "$PACK" --tool "$TOOL" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/gates" $REFRESH
           echo "status=$?" >> "$GITHUB_OUTPUT"
 
+      # A prefix restore carries forward every checkout an earlier pin left in the corpus cache, so before it is saved
+      # the checkouts of a commit this tool-pack no longer pins are removed, each one logged. A failure leaves the cache
+      # as it was restored, as a failed save does.
+      - name: Prune the checkouts this tool-pack no longer pins
+        if: ${{ always() && github.event_name != 'pull_request' }}
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: npm run port-readiness -- prune --pack "$PACK" --tool "$TOOL"
+        continue-on-error: true
+
       # Pull requests restore main's corpus (by exact key, or by prefix when the pull request changes a pin) and never
       # save their own: it would duplicate main's unchanged corpora (hundreds of MB) into the pull request's own cache
       # scope, where only its own later runs could use it.
@@ -171,7 +186,7 @@ jobs:
           path: |
             .rerail/port-readiness/corpus
             .rerail/port-readiness/upstream
-          key: port-readiness-corpus-${{ matrix.pack }}-${{ hashFiles('conformance/port-readiness/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack), format('packs/{0}/upstream/*/gates.yaml', matrix.pack)) }}
+          key: port-readiness-corpus-${{ matrix.pack }}-${{ matrix.tool }}-pins-${{ hashFiles('conformance/port-readiness/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack), format('packs/{0}/upstream/*/gates.yaml', matrix.pack)) }}
         continue-on-error: true
 
       # Pull request runs save theirs too: GitHub keeps them in the pull request's own cache scope, which main and

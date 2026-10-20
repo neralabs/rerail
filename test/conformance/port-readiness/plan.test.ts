@@ -176,3 +176,33 @@ describe("the command", () => {
     assert.equal(output, 'legs=[{"pack":"javascript","tool":"eslint-plugin-unicorn"},{"pack":"python","tool":"bandit"}]\ntool-packs=["javascript/eslint-plugin-unicorn","python/bandit"]\n');
   });
 });
+
+// port-readiness.yml's corpus cache: each tool-pack's legs restore and save their own, pruned to its pins first.
+describe("the corpus cache", () => {
+  const steps: any[] = workflow("port-readiness.yml").jobs.gates.steps;
+  const corpus = steps.filter((step) => String(step.with?.path ?? "").includes(".rerail/port-readiness/corpus"));
+  const restore = corpus.find((step) => String(step.uses).startsWith("actions/cache/restore@"));
+  const save = corpus.find((step) => String(step.uses).startsWith("actions/cache/save@"));
+  const of = (pattern: string, { pack, tool }: { pack: string; tool: string }): string => pattern.replaceAll("${{ matrix.pack }}", pack).replaceAll("${{ matrix.tool }}", tool);
+
+  it("is keyed by tool-pack, and no tool-pack's restore prefix matches another's key", () => {
+    const prefix = String(restore.with["restore-keys"]).trim();
+    assert.ok(prefix.startsWith("port-readiness-corpus-${{ matrix.pack }}-${{ matrix.tool }}-"), prefix);
+    assert.ok(String(restore.with.key).startsWith(prefix), restore.with.key);
+    assert.equal(save.with.key, restore.with.key);
+    // javascript/eslint's prefix must not restore javascript/eslint-plugin-unicorn's checkouts.
+    for (const mine of TOOL_PACKS) {
+      for (const theirs of TOOL_PACKS.filter((entry) => entry !== mine)) {
+        assert.ok(!of(restore.with.key, theirs).startsWith(of(prefix, mine)), `${mine.pack}/${mine.tool}'s restore prefix matches ${theirs.pack}/${theirs.tool}'s key`);
+      }
+    }
+  });
+
+  it("is pruned to the tool-pack's pins right before it is saved, whenever it is saved", () => {
+    const prune = steps[steps.indexOf(save) - 1];
+    assert.equal(prune.run, 'npm run port-readiness -- prune --pack "$PACK" --tool "$TOOL"');
+    assert.deepEqual(prune.env, { PACK: "${{ matrix.pack }}", TOOL: "${{ matrix.tool }}" });
+    assert.equal(prune.if, save.if);
+    assert.ok(steps.findIndex((step) => step.id === "gates") < steps.indexOf(prune));
+  });
+});

@@ -65,6 +65,7 @@ npm run port-readiness -- --pack python --tool bandit    # one tool-pack
 npm run port-readiness -- --no-cache                     # judge every rule again; read and save no results
 npm run port-readiness -- --refresh-cache                # judge every rule again and save the fresh results (the nightly)
 npm run port-readiness -- --pack javascript --tool eslint --shard 2/4   # one shard: rules with sha256(id) mod 4 = 1
+npm run port-readiness -- prune --pack python --tool ruff   # remove checkouts of commits the tool-pack no longer pins
 npm run port-readiness -- merge .rerail/reports/port-readiness    # join each tool-pack's shard-<i>of<n>/ reports (shard.ts, merge.ts)
 npm run port-readiness -- summary .rerail/reports/port-readiness --base <sha>
 npm run port-readiness -- summary .rerail/reports/port-readiness --planned '["python/ruff"]'   # the others: not judged
@@ -73,7 +74,11 @@ node conformance/port-readiness/plan.mjs [--diff <from> <to>]   # CI's legs: eve
 
 Exit 1 when a shipped rule fails (or the summary has a blocking failure), 2 on an exception. The run needs the built
 native engine; it reads no upstream runtime. It fetches only the pinned corpus files the goldens name (from catalog task
-files and the pack's `conformance.json` corpora), cached under `.rerail/port-readiness/corpus/`.
+files and the pack's `conformance.json` corpora), cached under `.rerail/port-readiness/corpus/`, and upstream's test
+files, under `upstream/`, each from a sparse, shallow, blobless checkout of its pinned commit. `prune` removes, beside
+each checkout a tool-pack pins (`corpus/rerail/<name>/<commit>`, `upstream/<repository name>/<commit>`), every other
+commit; CI runs it on each leg's corpus cache, which is keyed by tool-pack, before saving it, and nothing runs it on a
+local cache.
 
 Per-rule results are cached under `.rerail/port-readiness/results/<pack>/<tool>/<key>.json`, a shard's under
 `<tool>/shard-<i>of<n>/` (`--cache <dir>` moves the root).

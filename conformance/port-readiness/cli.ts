@@ -3,14 +3,17 @@
  * Exit 1 when a shipped rule fails a blocking check (or the summary has a blocking failure), 2 on an exception.
  */
 import { mkdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 import { PACKAGE_ROOT } from "../../src/engine/index.js";
-import { DEFAULT_CACHE_ROOT } from "./corpus.js";
+import { DEFAULT_CACHE_ROOT, pruneCheckouts, readRerailCorpora, rerailCheckoutDirectory } from "./corpus.js";
 import { staleNativeBinary } from "./engine.js";
+import { readGatesManifest } from "./manifest.js";
 import { mergeDirectory } from "./merge.js";
 import { ProcessCommandRunner } from "./process.js";
+import { upstreamCheckoutDirectory } from "./recorded-adapter.js";
 import { fetchToolPackRecordings } from "./recording/fetch.js";
+import { readRecordingLock } from "./recording/store.js";
 import { renderMarkdown } from "./report.js";
 import { blockingFailures, gatedToolPacks, runToolPack } from "./run.js";
 import { parseShard, shardName } from "./shard.js";
@@ -19,6 +22,7 @@ import { parsePlanned, writeSummary } from "./summary.js";
 const USAGE = `usage:
   npm run port-readiness -- [--pack <id>] [--tool <tool>] [--shard <i>/<n>] [--cache dir] [--no-cache | --refresh-cache] [--out dir]
   npm run port-readiness -- fetch [--pack <id>] [--tool <tool>] [--cache dir]
+  npm run port-readiness -- prune [--pack <id>] [--tool <tool>] [--cache dir]
   npm run port-readiness -- merge <dir>
   npm run port-readiness -- summary <dir> [--base <sha>] [--planned <JSON array of "<pack>/<tool>">]
 `;
@@ -102,6 +106,34 @@ async function fetch(args: string[]): Promise<number> {
   return 0;
 }
 
+/**
+ * `gates prune`: remove from the cache the checkouts the selected tool-packs no longer pin, logging each: beside each
+ * pinned corpus's checkout (`corpus/rerail/<name>/<commit>`, every corpus the pack pins) and upstream's test checkout
+ * (`upstream/<repository name>/<commit>`), every other commit (corpus.ts's `pruneCheckouts`). CI runs it on a leg's
+ * restored corpus cache before saving it, since a prefix restore carries every checkout an earlier pin left forward;
+ * that cache holds one tool-pack's checkouts. A local cache holds every tool-pack's, on every branch, and the
+ * recorder's checkouts under `upstream/` too, so a run of the gates never prunes it.
+ */
+async function prune(args: string[]): Promise<number> {
+  const flags = parse(args, ["--pack", "--tool", "--cache"], []);
+  const root = PACKAGE_ROOT;
+  const cacheRoot = resolve(typeof flags["--cache"] === "string" ? flags["--cache"] : DEFAULT_CACHE_ROOT);
+  const selected = gatedToolPacks(root).filter(({ pack, tool }) => (flags["--pack"] === undefined || flags["--pack"] === pack) && (flags["--tool"] === undefined || flags["--tool"] === tool));
+  if (selected.length === 0) throw new Error(`no gated tool-pack matches${flags["--pack"] === undefined ? "" : ` --pack ${String(flags["--pack"])}`}${flags["--tool"] === undefined ? "" : ` --tool ${String(flags["--tool"])}`}`);
+  // The gates check upstream's tests out at the lock's pins, which the recording's must equal; gates.yaml's differ from
+  // them only while the recording is stale, and are kept as well.
+  const pinned: string[] = [];
+  for (const { pack, tool } of selected) {
+    for (const corpus of await readRerailCorpora(root, pack)) pinned.push(rerailCheckoutDirectory(cacheRoot, corpus));
+    pinned.push(upstreamCheckoutDirectory(cacheRoot, readRecordingLock(root, pack, tool).pins), upstreamCheckoutDirectory(cacheRoot, readGatesManifest(root, pack, tool).upstream));
+  }
+  const removed = await pruneCheckouts(cacheRoot, pinned);
+  const toolPacks = selected.map(({ pack, tool }) => `${pack}/${tool}`).join(", ");
+  for (const directory of removed) console.log(`removed ${relative(cacheRoot, directory)}: no longer pinned by ${toolPacks}`);
+  console.log(`pruned ${removed.length} checkout(s) no longer pinned from ${cacheRoot}`);
+  return 0;
+}
+
 async function merge(args: string[]): Promise<number> {
   const [directory, ...rest] = args;
   if (directory === undefined || directory.startsWith("--")) throw new Error(USAGE);
@@ -128,6 +160,7 @@ async function summary(args: string[]): Promise<number> {
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
   if (args[0] === "fetch") return await fetch(args.slice(1));
+  if (args[0] === "prune") return await prune(args.slice(1));
   if (args[0] === "summary") return await summary(args.slice(1));
   if (args[0] === "merge") return await merge(args.slice(1));
   if (args[0] === "--help" || args[0] === "-h") {

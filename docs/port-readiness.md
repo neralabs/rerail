@@ -123,6 +123,14 @@ The engine is this checkout's (`npm run build:native` first). The first run fetc
 name into `.rerail/port-readiness/` (pinned); later runs reuse them and the results of every rule whose inputs did not change.
 `--no-cache` judges every rule again. The command exits 1 when a shipped rule fails, as CI does.
 
+Each repository is fetched as a sparse, shallow, blobless checkout of its pinned commit: a catalog task's base commit
+under `corpus/checkouts/`, a corpus the pack pins under `corpus/rerail/<name>/<commit>/`, upstream's tests under
+`upstream/<repository name>/<commit>/`. Git downloads the commit's trees and only the blobs of the files checked out, so
+a pinned corpus costs the files its goldens name, however large its repository. A golden on another file of it widens
+the cached checkout, which then fetches that file alone. A pin bump leaves the old commit's checkout behind:
+`npm run port-readiness -- prune --pack <id> --tool <tool>` removes, beside each checkout the tool-pack pins, every
+other commit, and logs each one. Nothing prunes a local cache on its own, since every branch shares it.
+
 ### What a cached result is keyed by
 
 A rule's result key covers everything its verdict can depend on: the gate code a cached verdict can read, the npm
@@ -359,6 +367,13 @@ verdict. Pushes to main and the nightly judge every leg.
 node conformance/port-readiness/plan.mjs                                                  # every leg
 node conformance/port-readiness/plan.mjs --diff "$(git merge-base origin/main HEAD)" HEAD  # the legs this branch plans
 ```
+
+Each leg restores its tool-pack's corpus cache (`.rerail/port-readiness/corpus/` and `upstream/`), keyed by the
+tool-pack and by the pins (`corpus-tasks.json`, the pack's `conformance.json` and `gates.yaml` files), or the latest of
+the tool-pack's earlier ones when a pin moved. A pack's tool-packs fetch different files, and only the first leg to save
+a key writes it, so each tool-pack has its own; a sharded tool-pack's legs share one, since each fetches what all of its
+goldens name. Pushes to main and the nightly remove the checkouts of commits the tool-pack no longer pins (`prune`) and
+save it; a pull request restores main's and saves none.
 
 ### Sharding
 

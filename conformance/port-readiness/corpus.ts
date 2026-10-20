@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, matchesGlob, resolve } from "node:path";
+import { mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, matchesGlob, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { tableFromIPC, type Table } from "apache-arrow";
@@ -188,8 +188,9 @@ async function isPristine(directory: string, commit: string, runner: CommandRunn
  */
 export async function checkoutPinned(repository: string, commit: string, directory: string, paths: string[], runner: CommandRunner, options: { blobless?: boolean } = {}): Promise<string> {
   if (await isPristine(directory, commit, runner)) {
-    // A checkout cached with fewer paths only needs its sparse set widened: the shallow fetch holds every file of the
-    // commit. Widened, never narrowed, so tool-packs that share a corpus keep each other's files.
+    // A checkout cached with fewer paths only needs its sparse set widened: a blobless one fetches the blobs of the
+    // added paths as it checks them out, and any other already holds every file of the commit. Widened, never
+    // narrowed, so tool-packs that share a corpus keep each other's files.
     const sparse = (await runChecked(runner, ["git", "-C", directory, "sparse-checkout", "list"]).catch(() => "")).trim().split("\n");
     if (paths.every((path) => sparse.includes(path))) return directory;
     await runChecked(runner, ["git", "-C", directory, "sparse-checkout", "add", ...paths.filter((path) => !sparse.includes(path))]);
@@ -206,6 +207,44 @@ export async function checkoutPinned(repository: string, commit: string, directo
   await git("checkout", "-q", "--force", "FETCH_HEAD");
   if (!(await isPristine(directory, commit, runner))) throw new Error(`checkout of ${repository} ${commit} is not clean after checkout`);
   return directory;
+}
+
+/**
+ * Remove the checkouts a pin bump left behind: beside each checkout in `pinned`, which must be where the gates keep one
+ * (`<cache>/corpus/rerail/<name>/<commit>` or `<cache>/upstream/<repository name>/<commit>`), every other directory
+ * named for a commit. Nothing else is touched: not a name no pinned checkout has (another tool-pack's, or the
+ * recorder's), not an entry that is not a directory, and no link is followed. A pinned checkout anywhere else, or under
+ * a link out of the cache root, is refused before anything is removed. Returns the removed directories, in order.
+ */
+export async function pruneCheckouts(cacheRoot: string, pinned: readonly string[]): Promise<string[]> {
+  const root = resolve(cacheRoot);
+  const kept = new Set(pinned.map((directory) => resolve(directory)));
+  for (const directory of kept) {
+    const inside = relative(root, directory).split(/[\\/]/u);
+    const placed = (inside.length === 4 && inside[0] === "corpus" && inside[1] === "rerail") || (inside.length === 3 && inside[0] === "upstream");
+    if (!placed || !/^[0-9a-f]{40}$/u.test(inside.at(-1)!)) throw new Error(`${directory} is not a checkout under ${join(root, "corpus", "rerail", "<name>")} or ${join(root, "upstream", "<name>")}`);
+  }
+  const realRoot = await realpath(root).catch(() => undefined);
+  if (realRoot === undefined) return [];
+  const parents: string[] = [];
+  for (const parent of [...new Set([...kept].map((directory) => dirname(directory)))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const real = await realpath(parent).catch(() => undefined);
+    if (real === undefined) continue;
+    const within = relative(realRoot, real);
+    if (within.startsWith("..") || isAbsolute(within)) throw new Error(`${parent} leads out of the cache root ${root}`);
+    parents.push(parent);
+  }
+  const removed: string[] = [];
+  for (const parent of parents) {
+    const entries = (await readdir(parent, { withFileTypes: true })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    for (const entry of entries) {
+      const directory = join(parent, entry.name);
+      if (!entry.isDirectory() || !/^[0-9a-f]{40}$/u.test(entry.name) || kept.has(directory)) continue;
+      await rm(directory, { recursive: true, force: true });
+      removed.push(directory);
+    }
+  }
+  return removed;
 }
 
 /** A reference solution that does not apply to its base commit: the same on every run, unlike a failed fetch. */
@@ -388,11 +427,17 @@ export function rerailCorpusId(corpus: RerailCorpus): string {
   return `rerail:${corpus.name}`;
 }
 
+/** Where a pack's pinned corpus is checked out: `<cache>/corpus/rerail/<name>/<commit>`. */
+export function rerailCheckoutDirectory(cacheRoot: string, corpus: { name: string; commit: string }): string {
+  return resolve(cacheRoot, "corpus", "rerail", corpus.name, corpus.commit);
+}
+
 /**
  * The corpus from the corpora a pack pins (its conformance manifests' `corpora`): each repository at its pinned
  * commit, and of the files under the pinned paths of a type the pack's linter reads that no `exclude` glob matches,
- * those `wanted` names, read from a sparse checkout of just them. Each file's task is the corpus id (`rerail:<name>`),
- * so goldens name it like a task's file. A corpus no golden names is not fetched.
+ * those `wanted` names, read from a sparse checkout of just them. The fetch is blobless, so of the commit's files it
+ * downloads only those (and the commit's trees), however large the repository. Each file's task is the corpus id
+ * (`rerail:<name>`), so goldens name it like a task's file. A corpus no golden names is not fetched.
  */
 export async function buildRerailCorpora(corpora: RerailCorpus[], cacheRoot: string, inCorpus: (path: string) => boolean, runner: CommandRunner, wanted: Wanted): Promise<Corpus> {
   const tasks: CorpusTask[] = [];
@@ -407,7 +452,7 @@ export async function buildRerailCorpora(corpora: RerailCorpus[], cacheRoot: str
       tasks.push({ task, substrate: "rerail", repository, baseSha: corpus.commit, patchSha256: null, status: "skipped", reason: "no golden names a file of it", files: 0 });
       continue;
     }
-    const checkout = await checkoutPinned(corpus.repository, corpus.commit, resolve(cacheRoot, "corpus", "rerail", corpus.name, corpus.commit), named.map((path) => `/${path}`), runner);
+    const checkout = await checkoutPinned(corpus.repository, corpus.commit, rerailCheckoutDirectory(cacheRoot, corpus), named.map((path) => `/${path}`), runner, { blobless: true });
     const paths = (await Promise.all(named.map((path) => filesUnder(checkout, path))))
       .flat()
       .filter((path) => inCorpus(path) && !corpus.exclude.some((glob) => matchesGlob(path, glob)))
