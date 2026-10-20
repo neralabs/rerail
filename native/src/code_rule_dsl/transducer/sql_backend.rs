@@ -386,7 +386,6 @@ impl PackedDemand {
         }
         if document_maps.iter().any(|span| {
             span.source_document >= self.files.len()
-                || span.generated_document >= self.files.len()
                 || span.source_start >= span.source_end
                 || span.generated_start >= span.generated_end
                 || span.source_end > self.files[span.source_document].transducer_source().len()
@@ -1191,6 +1190,21 @@ impl PackedDemand {
                         }));
                     }
                 }
+            }
+        }
+        for row in &mut rows {
+            let Some(file) = row.file_index.and_then(|file| usize::try_from(file).ok()) else {
+                continue;
+            };
+            let mut generated = self
+                .document_maps
+                .iter()
+                .filter(|span| span.source_document == file)
+                .map(|span| span.generated_document);
+            if let Some(document) = generated.next()
+                && generated.all(|candidate| candidate == document)
+            {
+                row.document_id = Some(document as i64);
             }
         }
         rows.extend(

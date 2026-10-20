@@ -1908,6 +1908,7 @@ fn production_contract_phase_five_authored_sql_equals_oracles() {
     .expect("the authored generated-document SQL executes");
     assert_eq!(outcome.ranges, [(0, 13)]);
     assert_eq!(outcome.file_indices, [0]);
+    assert_eq!(outcome.document_ids, [(0, 1)]);
     assert!(outcome.errors.is_empty());
 }
 
@@ -2050,7 +2051,12 @@ fn production_contract_phase_five_generated_document_maps_are_required() {
     )
     .expect("the complete document map executes");
     assert_eq!(outcome.ranges, [(0, 13)], "mapped source span");
-    assert_eq!(outcome.file_indices, [0], "mapped source document identity");
+    assert_eq!(outcome.file_indices, [0], "mapped source file identity");
+    assert_eq!(
+        outcome.document_ids,
+        [(0, 1)],
+        "source and generated documents have distinct identities"
+    );
     assert_eq!(
         case.workspace.document_maps[0].source_path, case.expected.oracle.violations[0]["path"],
         "mapped identity resolves to the oracle source path"

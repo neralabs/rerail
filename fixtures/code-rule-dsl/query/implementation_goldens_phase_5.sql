@@ -82,7 +82,7 @@ clause_0_term_0 AS (SELECT match.batch, match.row_kind, match.producer_id, match
 clause_0_mapped_1 AS (
   SELECT generated.batch, generated.row_kind, generated.producer_id, mapping.mapped_document_id AS file_index, generated.task_index, generated.match_index, generated.capture_index, generated.capture_occurrence, generated.capture_sequence_start, generated.capture_sequence_count, generated.node, generated.related_node, generated.axis_kind, generated.axis_order, generated.fact_kind, mapping.mapped_document_id AS document_id, mapping.document_id AS mapped_document_id, generated.start_ordinal, generated.output_label, generated.capture_label, generated.text_value, mapping.node AS start_byte, mapping.related_node AS end_byte, generated.verdict, generated.complete, generated.work_used, generated.error_code, generated.field_id, generated.related_named, generated.source_text, generated.structural_key, generated.named_leaf, generated.capture_kind, generated.capture_named, generated.equality_occurrence, generated.bindings, generated.choice_order
   FROM clause_0_term_0 generated
-  INNER JOIN document_map mapping ON mapping.document_id = generated.file_index
+  INNER JOIN document_map mapping ON mapping.document_id = COALESCE(generated.document_id, generated.file_index)
     AND generated.start_byte >= mapping.start_byte AND generated.end_byte <= mapping.end_byte
   WHERE NOT EXISTS (
     SELECT 1 FROM document_map narrower
