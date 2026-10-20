@@ -691,15 +691,19 @@ Run the architecture checks with structural, semantic, cross-file, negative, and
 
 Phases 1 through 3 have behavioral implementations. Their aggregate conformance gate is not complete.
 Phase 4 has complete focused SQL, catalog, fact-row, failure, and oracle checks.
-The aggregate Phase 2 through Phase 4 gate remains red.
+The aggregate Phase 2 through Phase 4 SQL gate remains red.
+The aggregate ordered terminal-catalog gate is green for all 39 contracts.
 
 The remaining aggregate defects are:
 
 - Thirteen Phase 2 SQL statements lack the complete physical SQL boundary.
 - Ten Phase 3 SQL statements lack the complete physical SQL boundary.
 - The same 23 statements do not equal the compiler output.
-- The 23 Phase 2 and Phase 3 terminal catalogs are absent.
 - `node-value-positive` is the first exact SQL mismatch.
+
+The catalog fixture contains only ordered terminal-catalog data.
+The SQL fixture is the only owner of authored SQL statements.
+This separation prevents two fixtures from assigning different meanings to one SQL contract.
 
 Commit `cd4dbb1d` is the active TDD-red commit for the incomplete Phase 2 and Phase 3 SQL boundaries.
 Do not use compiler output to create the authored SQL or catalog data.
@@ -709,10 +713,11 @@ The next required package is the Phase 2 and Phase 3 conformance package:
 
 1. Add the complete physical boundary to each of the 23 authored statements.
 2. Reconcile each statement with its relational implementation.
-3. Author each ordered terminal catalog from its terminal semantics.
-4. Run repeated and concurrent compilation checks.
-5. Make both aggregate Phase 2 through Phase 4 gates pass.
-6. Run all Phase 2 through Phase 4 behavioral oracle checks.
+3. Run all Phase 2 through Phase 4 behavioral oracle checks.
+4. Make the aggregate Phase 2 through Phase 4 SQL gate pass.
+
+The terminal-catalog work for this package is complete.
+All 39 catalogs pass exact, repeated, and concurrent compilation checks.
 
 Do not start Phase 5 until this package is green.
 
