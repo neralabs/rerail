@@ -1,19 +1,25 @@
 // `just rerail-sql-loop`: the SQL engine's validation loop over a checked-in subset of the corpus (`loop-subset.json`).
-// The reporting clauses run in units: a policy's clauses in chunks, with its `define`s, each unit one workspace over the
-// subset (one parse of each file it accepts), on SQL and on native, spread over `--jobs` long-lived child processes.
-// The chunking is decided up front from the previous runs' recorded costs: a clause that timed out or reached
-// `ISOLATE_MS` runs alone, the others are packed per policy up to `--chunk` CPU seconds; the units run longest first
-// (LPT). A unit past its CPU cap (`--cap` alone, `--group-cap` a chunk) is killed: a TIMEOUT row with its CPU and wall
-// time, never split and retried within the run. The verdict is parity (each clause's SQL lines against native's over
-// the subset, apart from native's budget failures), speed (SQL/native CPU and wall over the units both finished, the
-// costliest statements, clauses and (clause, file)s, against the previous run), a projection to the whole tree, and
-// the whole-program SQL setup (every clause in one program, compiled, and a first session), capped, and the mutation
-// stage (`mutations.ts`: native against SQL over each rule's base and recorded mutations). Native's lines over the
-// subset and its whole-tree time are cached per native source hash (`$RERAIL_BENCH_HOME/data-layer/loop-cache/`, the
-// home defaulting to `~/rerail-bench`); every run is recorded in `$RERAIL_BENCH_HOME/data-layer/loop-runs/`.
+// The headline is the program stage, production's shape: every clause of every policy (with their `define`s) in one
+// workspace per engine, the subset in one apply on the addon's worker threads, a few rounds, each engine in a fresh
+// child process alone on the harness. It reports SQL/native apply wall and CPU, SQL's statement CPU and engine timers,
+// and the parse floor (the native parse baseline over the same files), so matching alone (apply CPU − the floor) shows
+// apart; the projection to the whole tree is native's whole-tree wall time × the stage's wall ratio × the calibration
+// (`calibrate`: the stage over the full corpus against the subset). The reporting clauses also run in units: a
+// policy's clauses in chunks, with its `define`s, each unit one workspace over the subset (one parse of each file it
+// accepts), on SQL and on native, spread over `--jobs` long-lived child processes. Each unit re-parses the subset on
+// both engines, so their SQL/native ratio is parse-diluted: they serve parity and per-clause attribution, not the
+// headline. The chunking is decided up front from the previous runs' recorded costs: a clause that timed out or
+// reached `ISOLATE_MS` runs alone, the others are packed per policy up to `--chunk` CPU seconds; the units run longest
+// first (LPT). A unit past its CPU cap (`--cap` alone, `--group-cap` a chunk) is killed: a TIMEOUT row with its CPU
+// and wall time, never split and retried within the run. The verdict is parity (each clause's SQL lines against
+// native's over the subset, apart from native's budget failures), the program stage and its projection, the units'
+// speed (the costliest statements, clauses and (clause, file)s, against the previous run), and the mutation stage
+// (`mutations.ts`: native against SQL over each rule's base and recorded mutations). Native's lines over the subset
+// and its whole-tree time are cached per native source hash (`$RERAIL_BENCH_HOME/data-layer/loop-cache/`, the home
+// defaulting to `~/rerail-bench`); every run is recorded in `$RERAIL_BENCH_HOME/data-layer/loop-runs/`.
 //
-//   loop.ts run        [--rounds N] [--jobs N] [--memory GiB] [--chunk S] [--replan] [--cap S] [--group-cap S] [--clauses a,b] [--program-cap S] [--mutations selected|all|off] [--show N]
-//   loop.ts calibrate  [--jobs N] [--cap S] [--group-cap S]: the latest run's units over the full corpus, against its projection
+//   loop.ts run        [--rounds N] [--program-rounds N] [--program-cap S] [--jobs N] [--memory GiB] [--chunk S] [--replan] [--cap S] [--group-cap S] [--clauses a,b] [--mutations selected|all|off] [--show N]
+//   loop.ts calibrate  [--program-rounds N] [--program-cap S]: the program stage over the subset and the full corpus; writes their ratio into the manifest
 //   loop.ts costs      [--jobs N] [--cap S] [--files-from list]: each file's SQL time with every clause in one program, per-(clause, file) attribution
 //   loop.ts select     --from <distilled subset.json>: writes loop-subset.json (the files, why, and per-clause native coverage)
 //   loop.ts mutations  [--mutations all|selected] [--select] [--cover cover.json]: the mutation stage alone (default: every mutation over the whole tree)
@@ -22,7 +28,7 @@
 // Caps are CPU seconds (user + system, every thread of the child), so they do not move with the machine's load.
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync, writeSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { cpus, homedir, loadavg, totalmem } from "node:os";
 import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -31,7 +37,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { collectRepository, modulePath } from "./corpus.js";
 import {
-  compareStrings, engineReportSchema, loadEngine, loadRules, rerailRoot, RuleWorkspace, sha256,
+  compareStrings, compileBaselineRule, engineReportSchema, loadEngine, loadRules, nativeMatcher, rerailRoot, RuleWorkspace, sha256,
   type Engine, type Matcher, type PortedRule, type SourceFile,
 } from "./engine.js";
 import {
@@ -59,9 +65,10 @@ const UNKNOWN_CLAUSE_MS = 250;
 const COST_HISTORY = 12;
 /** A child is killed as stuck when its wall time passes this many times its CPU cap (plus a minute) without the cap. */
 const WALL_GUARD = 6;
-/** A unit no previous run measured on an engine, and the whole-program setup: their estimated peak resident sets. */
+/** A unit no previous run measured on an engine: its estimated peak resident set. */
 const UNKNOWN_UNIT_RSS_BYTES = 4 * 2 ** 30;
-const UNKNOWN_PROGRAM_RSS_BYTES = 32 * 2 ** 30;
+/** The program stage's SQL statements reported: its costliest. */
+const PROGRAM_STATEMENTS = 15;
 /** Statements and (clause, file)s a unit reports: its costliest. */
 const UNIT_STATEMENTS = 30;
 const UNIT_CLAUSE_FILES = 40;
@@ -69,6 +76,8 @@ const UNIT_CLAUSE_FILES = 40;
 class UsageError extends Error {}
 
 type EngineName = "native" | "sql";
+/** The program stage's children: every policy on one engine, or the parse floor (`parse`). */
+type ProgramEngine = EngineName | "parse";
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Options
@@ -87,7 +96,8 @@ interface Options {
   capSeconds: number;
   /** A chunk of clauses: its CPU cap in seconds; past it, the chunk is one TIMEOUT row (its clauses run alone next run). */
   groupCapSeconds: number;
-  /** The whole-program SQL setup's CPU cap in seconds; 0 skips it. */
+  /** The program stage: rounds (0 skips it on `run`), and each engine child's CPU cap in seconds. */
+  programRounds: number;
   programCapSeconds: number;
   /** The running units' estimated peak resident sets stay within this many GiB. */
   memoryGib: number;
@@ -109,13 +119,16 @@ interface Options {
   select: boolean;
   /** A distillation's per-clause coverage of the subset (`hit`: a finding file); unset, the subset manifest's `finding`s. */
   cover: string | undefined;
-  // unit children only
+  // unit and program children only
   scope: "subset" | "full" | "list";
+  /** program children: every policy on native or SQL, or the parse floor (the native parse baseline). */
+  programEngine: ProgramEngine;
 }
 
 const valued = [
   "--addon", "--corpus", "--policies", "--subset", "--rounds", "--jobs", "--chunk", "--cap", "--group-cap", "--program-cap",
-  "--memory", "--clauses", "--show", "--from", "--files-from", "--output", "--scope", "--mutations", "--cover",
+  "--program-rounds", "--program-engine", "--memory", "--clauses", "--show", "--from", "--files-from", "--output", "--scope",
+  "--mutations", "--cover",
 ];
 const commands = ["run", "calibrate", "costs", "select", "mutations", "unit-child", "program-child"] as const;
 
@@ -148,7 +161,9 @@ function parseOptions(argv: readonly string[]): Options {
   }
   const scope = values["--scope"] ?? "subset";
   if (scope !== "subset" && scope !== "full" && scope !== "list") throw new UsageError(`--scope takes subset, full or list, not ${scope}`);
-  const defaultCap = command === "calibrate" ? "300" : command === "costs" ? "15" : "60";
+  const defaultCap = command === "costs" ? "15" : "60";
+  const programEngine = values["--program-engine"] ?? "native";
+  if (programEngine !== "native" && programEngine !== "sql" && programEngine !== "parse") throw new UsageError(`--program-engine takes native, sql or parse, not ${programEngine}`);
   const mutations = values["--mutations"] ?? (command === "mutations" ? "all" : "selected");
   if (mutations !== "selected" && mutations !== "all" && mutations !== "off") throw new UsageError(`--mutations takes selected, all or off, not ${mutations}`);
   return {
@@ -162,8 +177,9 @@ function parseOptions(argv: readonly string[]): Options {
     jobs: integer("--jobs", values["--jobs"] ?? "14", 1),
     chunkSeconds: integer("--chunk", values["--chunk"] ?? "10", 1),
     capSeconds: integer("--cap", values["--cap"] ?? defaultCap, 1),
-    groupCapSeconds: integer("--group-cap", values["--group-cap"] ?? (command === "calibrate" ? "600" : "90"), 1),
-    programCapSeconds: integer("--program-cap", values["--program-cap"] ?? "60", 0),
+    groupCapSeconds: integer("--group-cap", values["--group-cap"] ?? "90", 1),
+    programRounds: integer("--program-rounds", values["--program-rounds"] ?? (command === "calibrate" ? "1" : "3"), command === "calibrate" ? 1 : 0),
+    programCapSeconds: integer("--program-cap", values["--program-cap"] ?? (command === "calibrate" ? "900" : "300"), 1),
     memoryGib: integer("--memory", values["--memory"] ?? String(Math.floor(totalmem() / 2 ** 30 / 2)), 1),
     clauses: (values["--clauses"] ?? "").split(",").filter(filter => filter.length > 0),
     show: integer("--show", values["--show"] ?? "12", 0),
@@ -174,6 +190,7 @@ function parseOptions(argv: readonly string[]): Options {
     select: selectMutationSet,
     cover: values["--cover"] === undefined ? undefined : resolve(values["--cover"]),
     scope,
+    programEngine,
   };
 }
 
@@ -192,20 +209,35 @@ const clauseCoverageSchema = z.object({
   crossFile: z.boolean(),
   status: z.enum(["covered", "no-finding-in-full-tree", "finding-only-in-full-run", "no-clean-file"]),
 });
-const calibrationSchema = z.looseObject({
+/** One side of the program stage: the median over its rounds of the apply's wall and process CPU time. */
+const programSideSchema = z.object({ wallMs: z.number(), cpuMs: z.number() });
+/**
+ * The program stage over one scope, medians over its rounds: native and SQL with every policy, and the parse floor
+ * (the native parse baseline over the same files). `matchingCpu`: (SQL apply CPU − the floor) ÷ (native's − the floor).
+ */
+const programSummarySchema = z.object({
+  rounds: z.number().int(),
+  files: z.number().int(),
+  native: programSideSchema,
+  sql: programSideSchema,
+  parse: programSideSchema,
+  /** SQL's statement CPU (thread CPU summed over the workers). */
+  sqlStatementsCpuMs: z.number(),
+  ratio: z.object({ wall: z.number(), cpu: z.number(), matchingCpu: z.number() }),
+});
+type ProgramSummary = z.infer<typeof programSummarySchema>;
+/** `calibrate`: the program stage over the subset and over the full corpus, one after the other. */
+const calibrationSchema = z.object({
+  format: z.literal("rerail.sql-loop-calibration/v3"),
   date: z.string(),
   /** The addon (sha256) and HEAD the calibration measured. */
   addon: z.string(),
   head: z.string(),
-  /** Full-corpus SQL/native CPU ratio ÷ the subset's, over the units both finished: what a run's ratio is multiplied by. */
-  correction: z.number(),
-  /** The corrected projection's error: per policy, its correction taken from the other policies; Σ|error| ÷ Σ actual. */
-  error: z.number(),
-  /** The uncorrected projection's error: the subset ratio ÷ the full-corpus ratio − 1. */
-  totalError: z.number(),
-  units: z.number().int(),
-  /** Units past their cap on the full corpus: not calibrated. */
-  timeouts: z.array(z.string()),
+  subset: programSummarySchema,
+  full: programSummarySchema,
+  /** The full corpus's SQL/native ratio ÷ the subset's: what a run's program-stage ratio is multiplied by. */
+  correction: z.object({ wall: z.number(), cpu: z.number(), matchingCpu: z.number() }),
+  load: z.object({ subset: z.number(), full: z.number() }),
   note: z.string(),
 });
 const subsetSchema = z.object({
@@ -267,7 +299,7 @@ interface Clause {
   crossFile: boolean;
 }
 
-function reportingClauses(rules: readonly PortedRule[], filters: readonly string[] = []): Clause[] {
+function reportingClauses(rules: readonly PortedRule[]): Clause[] {
   return rules.flatMap(rule => documentSchema.parse(rule.document).clauses
     .filter(clause => clause.define === undefined)
     .map(clause => ({
@@ -275,8 +307,7 @@ function reportingClauses(rules: readonly PortedRule[], filters: readonly string
       linter: rule.linter,
       clauseId: clause.id,
       crossFile: clause.require_each !== undefined || clause.budget !== undefined || clause.forbid?.select_when !== undefined,
-    }))
-    .filter(clause => filters.length === 0 || filters.some(filter => clause.name.includes(filter))));
+    })));
 }
 
 /** One workspace's clauses: some reporting clauses of one policy (`linter/clause` names), with its `define`s. */
@@ -656,13 +687,16 @@ interface PairCost {
 }
 
 /**
- * A unit on one engine (`files`: over these files only, `costs`), or another job that takes a slot (the whole-program
- * setup); `estimateMs` orders them, `rssBytes` is the item's estimated peak resident set.
+ * A unit on one engine (`files`: over these files only, `costs`); `estimateMs` orders the queue, `rssBytes` is the
+ * unit's estimated peak resident set.
  */
-type QueueItem = { estimateMs: number; rssBytes?: number } & (
-  | { kind: "unit"; engine: EngineName; unit: Unit; files?: string[] }
-  | { kind: "job"; run: () => Promise<void> }
-);
+interface QueueItem {
+  engine: EngineName;
+  unit: Unit;
+  files?: string[];
+  estimateMs: number;
+  rssBytes?: number;
+}
 
 interface UnitBatch {
   items: readonly QueueItem[];
@@ -703,7 +737,7 @@ async function runUnits(pool: UnitPool, batch: UnitBatch): Promise<{ outcomes: U
     for (;;) {
       if (queue.length === 0) return undefined;
       const fits = (item: QueueItem) => reservedBytes + (item.rssBytes ?? 0) <= (batch.memoryBytes ?? Infinity);
-      const twin = after === undefined ? -1 : queue.findIndex(item => item.kind === "unit" && unitKey(item.unit) === unitKey(after) && fits(item));
+      const twin = after === undefined ? -1 : queue.findIndex(item => unitKey(item.unit) === unitKey(after) && fits(item));
       const index = twin >= 0 ? twin : queue.findIndex(fits);
       if (index >= 0 || running === 0) {
         const [item] = queue.splice(Math.max(0, index), 1);
@@ -725,12 +759,6 @@ async function runUnits(pool: UnitPool, batch: UnitBatch): Promise<{ outcomes: U
     let child: UnitChild | undefined;
     let last: Unit | undefined;
     for (let item = await take(last); item !== undefined; item = await take(last)) {
-      if (item.kind === "job") {
-        await item.run();
-        done(item);
-        last = undefined;
-        continue;
-      }
       const { unit, engine } = item;
       last = unit;
       child ??= await pool.acquire();
@@ -801,11 +829,43 @@ async function runUnits(pool: UnitPool, batch: UnitBatch): Promise<{ outcomes: U
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The whole-program SQL setup: every clause in one program, compiled, and every worker's session
+// The program stage: every clause of every policy in one workspace per engine (production's shape), the scope in one
+// apply on the addon's worker threads, each engine in a fresh child process, alone
 
+const programRunSchema = z.object({
+  engine: z.enum(["native", "sql", "parse"]),
+  /** The scope's files every policy accepts: the one apply's files (the parse floor's too). */
+  files: z.number().int(),
+  /** Compiling every policy (`loadRules`), outside the timings; null on the parse floor. */
+  rulesMs: z.number().nullable(),
+  /**
+   * `new RuleWorkspace(...)` and, on SQL, its first engine report: the SQL program compiles there (in `addCodeRule`)
+   * or at its first use in the apply, by engine version. Outside the headline, as in the whole-tree run.
+   */
+  workspaceWallMs: z.number(),
+  workspaceCpuMs: z.number(),
+  /** The one apply: its wall time and the process's CPU (user + system, every thread) over it. The headline. */
+  applyWallMs: z.number(),
+  applyCpuMs: z.number(),
+  /** The 1-minute load average right before the apply. */
+  load: z.number(),
+  /** The child's peak resident set (sampled every 20 ms). */
+  rssBytes: z.number(),
+  findings: z.number().int(),
+  failures: z.number().int(),
+  /** SQL: every timer of the engine report (`section.name`, as `engineTimers`); empty on native and the parse floor. */
+  timers: z.record(z.string(), z.number()),
+  sessions: z.number().nullable(),
+  statementsRun: z.number().nullable(),
+  statementsSkipped: z.number().nullable(),
+  refused: z.number().int().nullable(),
+  program: z.record(z.string(), z.number().optional()).nullable(),
+  /** SQL: its costliest statements. */
+  statements: z.array(statementSchema),
+});
+type ProgramRun = z.infer<typeof programRunSchema>;
 const programEventSchema = z.discriminatedUnion("kind", [
-  /** `workspaceMs`: `new RuleWorkspace(...)`, where `addCodeRule` compiles every clause into the SQL program. */
-  z.object({ kind: z.literal("program"), compileMs: z.number(), workspaceMs: z.number(), setupMs: z.number(), cpuMs: z.number(), rssBytes: z.number(), clauses: z.number().int() }),
+  programRunSchema.extend({ kind: z.literal("program") }),
   /** Past `--program-cap` CPU seconds: the child dies right after this event. */
   z.object({ kind: z.literal("timeout"), cpuMs: z.number(), wallMs: z.number(), rssBytes: z.number() }),
 ]);
@@ -813,7 +873,8 @@ type ProgramEvent = z.infer<typeof programEventSchema>;
 
 /**
  * A file with the common Python constructs: a session opens only for a batch with candidate roots for some clause
- * (`workspace/evaluate.rs`, `sql_batch`), and every session creates the whole program's tables.
+ * (`workspace/evaluate.rs`, `sql_batch`), and every session creates the whole program's tables (`costs` opens the
+ * whole program's session on it before its timed files).
  */
 const PROGRAM_PROBE_SOURCE = [
   "import os", "from typing import Any", "", "class Store(Base):", "    name: str = 'x'", "",
@@ -823,57 +884,210 @@ const PROGRAM_PROBE_SOURCE = [
   "def resolve(ref, *args, **kwargs):", "    return Store().get(ref.id).result() if ref is not None else ref == 1", "",
 ].join("\n");
 
-async function programChild(options: Options): Promise<number> {
+/**
+ * One program-stage measurement in this process: every policy in one workspace on `--program-engine`, or (`parse`)
+ * the native parse baseline alone (the parse floor: parse, tape and the per-file pipeline without any rule's own
+ * work), over `--files-from` (the files every policy accepts, as the parent listed them) in one apply. The whole
+ * process is capped at `--program-cap` CPU seconds.
+ */
+async function programChild(options: Options): Promise<never> {
+  const engineName = options.programEngine;
   const watchdog = new CpuWatchdog(options.programCapSeconds * 1000, (cpuMs, wallMs) => {
     emitLine({ kind: "timeout", cpuMs, wallMs, rssBytes: watchdog.peakRssBytes } satisfies ProgramEvent);
     process.kill(process.pid, "SIGKILL");
   });
-  const cpu = process.cpuUsage();
   const engine = loadEngine(options.addon);
-  const compileStarted = performance.now();
-  const rules = loadRules(engine, options.policies);
-  const compileMs = performance.now() - compileStarted;
+  if (engine.addon.work !== "unbounded") throw new Error(`${engine.addon.path} is not an unbounded-work build`);
+  if (options.filesFrom === undefined) throw new UsageError("program-child needs --files-from");
+  const accepted = readFiles(engine, options.corpus, readFileSync(options.filesFrom, "utf8").split("\n").filter(path => path.length > 0));
+  const rulesStarted = performance.now();
+  const rules = engineName === "parse" ? [compileBaselineRule(engine, "parse")] : loadRules(engine, options.policies);
+  const rulesMs = engineName === "parse" ? null : performance.now() - rulesStarted;
+  const workspaceCpu = process.cpuUsage();
   const workspaceStarted = performance.now();
-  const workspace = new RuleWorkspace(engine, rules, { engine: "sql" });
-  const workspaceMs = performance.now() - workspaceStarted;
+  const workspace = new RuleWorkspace(engine, rules, engineName === "sql" ? { engine: "sql" } : nativeMatcher);
+  if (engineName === "sql") workspace.engineReport();
+  const workspaceWallMs = performance.now() - workspaceStarted;
+  const workspaceUsed = process.cpuUsage(workspaceCpu);
   try {
-    const started = performance.now();
-    // `serverplan_quality` scopes `**/*.py`: one batch per worker, so the program compiles and every session opens.
-    const dummies = Array.from({ length: engine.workerThreads }, (_, index): SourceFile => ({ path: `__rerail_sql_loop_program_${index}__.py`, language: "python", source: PROGRAM_PROBE_SOURCE }));
-    await workspace.apply(dummies);
-    const setupMs = performance.now() - started;
+    const load = loadavg()[0]!;
+    const timed = await workspace.apply(accepted);
     const rssBytes = watchdog.stop();
-    const used = process.cpuUsage(cpu);
-    emitLine({ kind: "program", compileMs, workspaceMs, setupMs, cpuMs: (used.user + used.system) / 1000, rssBytes, clauses: reportingClauses(rules).length } satisfies ProgramEvent);
+    const report = workspace.engineReport();
+    const sql = report.engine === "sql" ? report : undefined;
+    emitLine({
+      kind: "program", engine: engineName, files: accepted.length, rulesMs,
+      workspaceWallMs, workspaceCpuMs: (workspaceUsed.user + workspaceUsed.system) / 1000,
+      applyWallMs: timed.wallMs, applyCpuMs: timed.cpuMs, load, rssBytes,
+      findings: timed.result.violations.length, failures: timed.result.failures.length,
+      timers: sql === undefined ? {} : engineTimers(sql),
+      sessions: sql?.sessions?.count ?? null,
+      statementsRun: sql?.statements.count ?? null,
+      statementsSkipped: sql?.statements.skipped ?? null,
+      refused: sql?.refused.length ?? null,
+      program: sql?.program ?? null,
+      statements: sql?.statements.profile?.slice(0, PROGRAM_STATEMENTS) ?? [],
+    } satisfies ProgramEvent);
   } finally {
     watchdog.stop();
     workspace.close();
   }
-  return 0;
+  // The addon's worker threads can outlive a whole-program workspace.
+  process.exit(0);
 }
 
-/** The whole-program setup; `rssBytes`: its child's peak resident set. */
-type ProgramOutcome =
-  | { status: "ok"; compileMs: number; workspaceMs: number; setupMs: number; cpuMs: number; rssBytes: number; clauses: number }
-  | { status: "timeout"; cpuMs: number; wallMs: number; rssBytes: number }
-  | { status: "error"; wallMs: number };
+/** A program child's outcome: its run, or killed past its CPU cap (TIMEOUT), or lost without its event (ERROR). */
+type ProgramOutcome = { engine: ProgramEngine } & (
+  | { status: "ok"; run: ProgramRun }
+  | { status: "timeout" | "error"; cpuMs: number | null; wallMs: number; rssBytes: number | null; detail: string }
+);
 
-/** The whole-program setup in its own child, capped at `--program-cap` CPU seconds (and `WALL_GUARD` times that in wall time). */
-async function runProgram(options: Options): Promise<ProgramOutcome> {
+/** One program child, capped at `--program-cap` CPU seconds (and `WALL_GUARD` times that in wall time, plus a minute). */
+async function runProgramChild(options: Options, engine: ProgramEngine, filesFrom: string): Promise<ProgramOutcome> {
   const started = performance.now();
-  const child = spawn(process.execPath, [...process.execArgv, script, "program-child", "--addon", options.addon, "--policies", options.policies, "--program-cap", String(options.programCapSeconds)], { stdio: ["ignore", "pipe", "inherit"] });
+  const args = [
+    ...process.execArgv, script, "program-child", "--program-engine", engine, "--files-from", filesFrom, "--program-cap", String(options.programCapSeconds),
+    "--addon", options.addon, "--corpus", options.corpus, "--policies", options.policies,
+  ];
+  const child = spawn(process.execPath, args, { stdio: ["ignore", "pipe", "inherit"] });
   let found: ProgramEvent | undefined;
   createInterface({ input: child.stdout }).on("line", line => {
     found = programEventSchema.parse(JSON.parse(line));
   });
-  const guard = setTimeout(() => child.kill("SIGKILL"), options.programCapSeconds * 1000 * WALL_GUARD + 60_000);
-  const exited = Promise.withResolvers<void>();
-  child.on("close", () => exited.resolve());
-  await exited.promise;
+  let stuck = false;
+  const guard = setTimeout(() => {
+    stuck = true;
+    child.kill("SIGKILL");
+  }, options.programCapSeconds * 1000 * WALL_GUARD + 60_000);
+  const exited = Promise.withResolvers<number | null>();
+  child.on("close", code => exited.resolve(code));
+  const code = await exited.promise;
   clearTimeout(guard);
-  if (found?.kind === "program") return { status: "ok", compileMs: found.compileMs, workspaceMs: found.workspaceMs, setupMs: found.setupMs, cpuMs: found.cpuMs, rssBytes: found.rssBytes, clauses: found.clauses };
-  if (found?.kind === "timeout") return { status: "timeout", cpuMs: found.cpuMs, wallMs: found.wallMs, rssBytes: found.rssBytes };
-  return { status: "error", wallMs: performance.now() - started };
+  const wallMs = performance.now() - started;
+  if (found?.kind === "program") {
+    const { kind: _kind, ...run } = found;
+    return { engine, status: "ok", run };
+  }
+  if (found?.kind === "timeout") return { engine, status: "timeout", cpuMs: found.cpuMs, wallMs: found.wallMs, rssBytes: found.rssBytes, detail: `killed past the ${options.programCapSeconds} s CPU cap` };
+  return { engine, status: "error", cpuMs: null, wallMs, rssBytes: null, detail: stuck ? `stuck: ${seconds(wallMs)} wall without reaching its CPU cap` : `exited ${code} without a result` };
+}
+
+const programRoundSchema = z.record(z.enum(["native", "sql", "parse"]), z.unknown());
+/** The program stage over one scope, as a run records it. */
+const programStageSchema = z.looseObject({
+  scope: z.enum(["subset", "full"]),
+  load: z.number(),
+  wallMs: z.number(),
+  rounds: z.array(programRoundSchema),
+  summary: programSummarySchema.nullable(),
+  untrusted: z.array(z.string()),
+});
+// A type, not an interface: the run record (`runRecordSchema`, a loose object) takes it.
+type ProgramStage = {
+  scope: "subset" | "full";
+  /** The 1-minute load average before the stage. */
+  load: number;
+  wallMs: number;
+  /** Per round: native, SQL, then the parse floor. */
+  rounds: Record<ProgramEngine, ProgramOutcome>[];
+  /** Medians over the rounds; null when a child did not finish. */
+  summary: ProgramSummary | null;
+  untrusted: string[];
+};
+
+const PROGRAM_ENGINES = ["native", "sql", "parse"] as const;
+
+function formatProgramOutcome(outcome: ProgramOutcome): string {
+  const label = outcome.engine === "parse" ? "parse floor" : outcome.engine === "sql" ? "SQL" : "native";
+  if (outcome.status !== "ok") return `${label} ${outcome.status.toUpperCase()} at ${outcome.cpuMs === null ? "?" : seconds(outcome.cpuMs)} CPU, ${seconds(outcome.wallMs)} wall: ${outcome.detail}`;
+  const { run } = outcome;
+  const statements = run.timers["statements.cpuMilliseconds"];
+  return `${label} ${seconds(run.applyWallMs)} wall, ${seconds(run.applyCpuMs)} CPU${statements === undefined ? "" : ` (statements ${seconds(statements)} CPU)`}; ${run.files} files, load ${run.load.toFixed(1)}`;
+}
+
+/**
+ * The program stage over `scope`: `--program-rounds` rounds of native, SQL and the parse floor, one child after
+ * another so each runs alone, over the scope's files every policy (`rules`) accepts. A round in which a child did not
+ * finish ends the stage.
+ */
+async function programStage(options: Options, engine: Engine, rules: readonly PortedRule[], scope: "subset" | "full"): Promise<ProgramStage> {
+  const started = performance.now();
+  const paths = scope === "full" ? collectRepository(engine, options.corpus).files.map(file => file.path) : readSubset(options.subset).files.map(file => file.path);
+  const accepting = new RuleWorkspace(engine, rules, nativeMatcher);
+  const accepted = paths.filter(path => accepting.accepts(path));
+  accepting.close();
+  const filesFrom = resolve(stateRoot, "loop-program", `${scope}-${process.pid}.txt`);
+  mkdirSync(resolve(stateRoot, "loop-program"), { recursive: true });
+  writeFileSync(filesFrom, `${accepted.join("\n")}\n`);
+  const load = loadavg()[0]!;
+  const rounds: Record<ProgramEngine, ProgramOutcome>[] = [];
+  for (let round = 1; round <= options.programRounds; round += 1) {
+    const outcomes: Partial<Record<ProgramEngine, ProgramOutcome>> = {};
+    for (const engineName of PROGRAM_ENGINES) {
+      outcomes[engineName] = await runProgramChild(options, engineName, filesFrom);
+      process.stderr.write(`  program stage (${scope}) round ${round}: ${formatProgramOutcome(outcomes[engineName])}\n`);
+    }
+    rounds.push(outcomes as Record<ProgramEngine, ProgramOutcome>);
+    if (Object.values(outcomes).some(outcome => outcome.status !== "ok")) break;
+  }
+  rmSync(filesFrom);
+  const finished = rounds.length > 0 && rounds.every(round => PROGRAM_ENGINES.every(engine => round[engine].status === "ok"));
+  const runs = (engine: ProgramEngine) => rounds.map(round => (round[engine] as Extract<ProgramOutcome, { status: "ok" }>).run);
+  const side = (engine: ProgramEngine) => ({ wallMs: median(runs(engine).map(run => run.applyWallMs)), cpuMs: median(runs(engine).map(run => run.applyCpuMs)) });
+  let summary: ProgramSummary | null = null;
+  if (finished) {
+    const native = side("native");
+    const sql = side("sql");
+    const parse = side("parse");
+    summary = {
+      rounds: rounds.length, files: runs("native")[0]!.files, native, sql, parse,
+      sqlStatementsCpuMs: median(runs("sql").map(run => run.timers["statements.cpuMilliseconds"] ?? 0)),
+      ratio: { wall: sql.wallMs / native.wallMs, cpu: sql.cpuMs / native.cpuMs, matchingCpu: (sql.cpuMs - parse.cpuMs) / (native.cpuMs - parse.cpuMs) },
+    };
+  }
+  const untrusted: string[] = [];
+  if (load > LOAD_LIMIT) untrusted.push(`load ${load.toFixed(1)} > ${LOAD_LIMIT} before it`);
+  if (!finished) untrusted.push("a child did not finish");
+  else {
+    if (rounds.length < 2) untrusted.push(`${rounds.length} round: spread unknown`);
+    for (const engine of ["sql", "native"] as const) {
+      for (const key of ["applyWallMs", "applyCpuMs"] as const) {
+        const values = runs(engine).map(run => run[key]);
+        if (spread(values) > SPREAD_LIMIT) untrusted.push(`${engine === "sql" ? "SQL" : "native"} rounds spread ${percent(spread(values))} in ${key === "applyWallMs" ? "wall" : "CPU"}`);
+      }
+    }
+  }
+  return { scope, load, wallMs: performance.now() - started, rounds, summary, untrusted };
+}
+
+/** The stage's console report: per round, the ratios, where SQL's apply CPU goes, and its costliest statements. */
+function printProgramStage(stage: ProgramStage, options: Options, workerThreads: number, clauses: number): void {
+  const trust = stage.untrusted.length > 0 ? ` UNTRUSTED: ${stage.untrusted.join("; ")}` : " trusted";
+  const { summary } = stage;
+  console.log(`PROGRAM STAGE (${stage.scope};${trust}): every policy (${clauses} clauses) in one workspace per engine, ${summary === null ? "the scope" : `${summary.files} files`} in one apply on ${workerThreads} worker threads; ${stage.rounds.length} round(s), each engine in a fresh child, alone; ${seconds(stage.wallMs)} for the stage`);
+  for (const [index, round] of stage.rounds.entries()) console.log(`  round ${index + 1}: ${PROGRAM_ENGINES.map(engine => formatProgramOutcome(round[engine])).join("; ")}`);
+  if (summary === null) return;
+  const { native, sql, parse, ratio } = summary;
+  console.log(`  SQL/native apply (medians of the rounds): wall ${ratio.wall.toFixed(2)}× (${seconds(sql.wallMs)} / ${seconds(native.wallMs)}), CPU ${ratio.cpu.toFixed(2)}× (${seconds(sql.cpuMs)} / ${seconds(native.cpuMs)})`);
+  console.log(`  matching alone (apply CPU − the parse floor ${seconds(parse.cpuMs)} CPU, ${seconds(parse.wallMs)} wall): SQL ${seconds(sql.cpuMs - parse.cpuMs)}, native ${seconds(native.cpuMs - parse.cpuMs)}: ${ratio.matchingCpu.toFixed(2)}×`);
+  // Where SQL's apply CPU goes: the round with the median SQL apply CPU.
+  const sqlRuns = stage.rounds.map(round => (round.sql as Extract<ProgramOutcome, { status: "ok" }>).run).sort((a, b) => a.applyCpuMs - b.applyCpuMs);
+  const middle = sqlRuns[Math.floor((sqlRuns.length - 1) / 2)]!;
+  const cpu = (name: string) => middle.timers[name] ?? 0;
+  const parts: [string, number][] = [
+    ["statements", cpu("statements.cpuMilliseconds")], ["input", cpu("statements.inputCpuMilliseconds")], ["node facts", cpu("statements.nodeFactsCpuMilliseconds")],
+    ["session setup", cpu("sessions.setupCpuMilliseconds")], ["parse", cpu("pipeline.parseCpuMilliseconds")], ["plan", cpu("pipeline.planCpuMilliseconds")], ["render", cpu("pipeline.renderCpuMilliseconds")],
+  ];
+  const rest = middle.applyCpuMs - sum(parts.map(([, value]) => value));
+  console.log(`  SQL apply CPU ${seconds(middle.applyCpuMs)} by phase (the median round; thread CPU summed over the workers): ${parts.map(([label, value]) => `${label} ${seconds(value)}`).join(", ")}, rest ${seconds(rest)}`);
+  console.log(`    inside the statements: stages ${seconds(cpu("statements.stageCpuMilliseconds"))}, select ${seconds(cpu("statements.selectCpuMilliseconds"))}, fact terminals ${seconds(cpu("statements.factsCpuMilliseconds"))}; ${middle.statementsRun ?? "?"} statements run, ${middle.statementsSkipped ?? "?"} skipped, ${middle.sessions ?? "?"} sessions; program compile (lower ${seconds(cpu("compile.lowerCpuMilliseconds"))}, emit ${seconds(cpu("compile.emitCpuMilliseconds"))}, plan ${seconds(cpu("compile.planCpuMilliseconds"))}, finish ${seconds(cpu("compile.finishCpuMilliseconds"))})`);
+  console.log(`    SQL's own parse timer (pipeline.parse: parse and tape) ${seconds(cpu("pipeline.parseCpuMilliseconds"))} CPU against the parse floor's whole apply ${seconds(parse.cpuMs)}`);
+  const first = stage.rounds[0]!;
+  const ok = (engine: ProgramEngine) => (first[engine] as Extract<ProgramOutcome, { status: "ok" }>).run;
+  console.log(`  outside the apply (round 1): workspace construction native ${seconds(ok("native").workspaceCpuMs)} CPU, SQL ${seconds(ok("sql").workspaceCpuMs)} CPU (${seconds(ok("sql").workspaceWallMs)} wall); every policy compiled in ${seconds(ok("sql").rulesMs ?? 0)}; peak resident native ${gib(ok("native").rssBytes)}, SQL ${gib(ok("sql").rssBytes)}, parse floor ${gib(ok("parse").rssBytes)}`);
+  console.log(`  findings: native ${ok("native").findings} (${ok("native").failures} failures), SQL ${ok("sql").findings} (${ok("sql").failures} failures); SQL refused ${ok("sql").refused ?? "?"} clauses`);
+  console.log("  top statements by SQL time (the median round, Σ over workers):");
+  for (const statement of middle.statements.slice(0, Math.min(10, options.show))) console.log(`    ${seconds(statement.milliseconds).padStart(9)} ${String(statement.rows).padStart(10)} rows ${String(statement.runs).padStart(6)} runs  ${statement.sql.replace(/\s+/g, " ").slice(0, 160)}`);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -968,6 +1182,7 @@ const median = (values: readonly number[]) => {
 };
 const spread = (values: readonly number[]) => (values.length < 2 ? 0 : (Math.max(...values) - Math.min(...values)) / Math.min(...values));
 const seconds = (ms: number) => `${(ms / 1000).toFixed(2)} s`;
+const gib = (bytes: number) => `${(bytes / 2 ** 30).toFixed(1)} GiB`;
 const percent = (value: number) => `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
 const sum = (values: Iterable<number>) => {
   let total = 0;
@@ -990,10 +1205,13 @@ const unitRecordSchema = z.object({
   detail: z.string().nullable(),
 });
 type UnitRecord = z.infer<typeof unitRecordSchema>;
-/** v3 rounds ran SQL then native in phases (and split chunks); v4 rounds run both engines' units in one LPT queue. */
+/**
+ * v3 rounds ran SQL then native in phases (and split chunks); v4 rounds run both engines' units in one LPT queue; v5
+ * adds the program stage (`program`; before v5 that field held the whole-program SQL setup, read here as null).
+ */
 const roundRecordSchema = z.looseObject({ sql: z.array(unitRecordSchema), native: z.array(unitRecordSchema) });
 const runRecordSchema = z.looseObject({
-  format: z.enum(["rerail.sql-loop-run/v3", "rerail.sql-loop-run/v4"]),
+  format: z.enum(["rerail.sql-loop-run/v3", "rerail.sql-loop-run/v4", "rerail.sql-loop-run/v5"]),
   started: z.string(),
   addon: z.looseObject({ sha256: z.string() }),
   subsetSha256: z.string(),
@@ -1001,8 +1219,9 @@ const runRecordSchema = z.looseObject({
   rounds: z.array(roundRecordSchema),
   /** Per round, over the units both engines finished. */
   totals: z.object({ sqlCpuMs: z.array(z.number()), sqlWallMs: z.array(z.number()), nativeCpuMs: z.array(z.number()), nativeWallMs: z.array(z.number()) }),
+  /** The units' SQL/native ratio (parse-diluted). */
   ratio: z.object({ wall: z.number(), cpu: z.number() }),
-  program: z.looseObject({ rssBytes: z.number().optional() }).nullable().optional(),
+  program: programStageSchema.nullable().optional().catch(null),
 });
 type RunRecord = z.infer<typeof runRecordSchema>;
 
@@ -1029,7 +1248,6 @@ interface CostModel {
   /** Per engine: the peak resident set of each unit (by key), and of each clause (the largest unit it was in). */
   unitRssBytes: Record<EngineName, Map<string, number>>;
   clauseRssBytes: Record<EngineName, Map<string, number>>;
-  programRssBytes: number;
   runs: number;
 }
 
@@ -1071,7 +1289,6 @@ function costModel(records: readonly RunRecord[]): CostModel {
   return {
     clauses, unitRssBytes, clauseRssBytes,
     overheadMs: { sql: overheadMs.sql ?? 600, native: overheadMs.native ?? 600 },
-    programRssBytes: records.find(record => typeof record.program?.rssBytes === "number")?.program?.rssBytes ?? UNKNOWN_PROGRAM_RSS_BYTES,
     runs: records.length,
   };
 }
@@ -1145,7 +1362,9 @@ async function run(options: Options): Promise<number> {
   const backgroundLoad = loadavg();
   const subset = readSubset(options.subset);
   const engine = loadEngine(options.addon);
-  const clauses = reportingClauses(loadRules(engine, options.policies), options.clauses);
+  const rules = loadRules(engine, options.policies);
+  const allClauses = reportingClauses(rules);
+  const clauses = allClauses.filter(clause => options.clauses.length === 0 || options.clauses.some(filter => clause.name.includes(filter)));
   if (clauses.length === 0) throw new UsageError(`no clause matches --clauses ${options.clauses.join(",")}`);
   const names = clauses.map(clause => clause.name);
   const clauseSetSha = sha256(JSON.stringify(names));
@@ -1154,28 +1373,23 @@ async function run(options: Options): Promise<number> {
   const previous = history.find(({ record }) => record.clauseSetSha256 === clauseSetSha);
   const model = costModel(history.slice(0, COST_HISTORY).map(({ record }) => record));
   // v3 runs split chunks within the run: their units are no plan to keep.
-  const planned = planUnits(clauses, options, model, previous?.record.format === "rerail.sql-loop-run/v4" ? previous.record.rounds[0]!.sql : []);
+  const planned = planUnits(clauses, options, model, previous !== undefined && previous.record.format !== "rerail.sql-loop-run/v3" ? previous.record.rounds[0]!.sql : []);
   const estimated = (engineName: EngineName) => seconds(sum(planned.map(unit => unit.estimateMs[engineName])));
-  const gib = (bytes: number) => `${(bytes / 2 ** 30).toFixed(1)} GiB`;
   const largest = Math.max(...planned.map(unit => unit.rssBytes.sql));
-  console.log(`sql-loop: ${names.length} clauses in ${planned.length} units (${planned.filter(unit => unit.unit.clauses.length === 1).length} alone; chunks ≤ ${options.chunkSeconds} s SQL CPU by the costs of ${model.runs} previous runs) over ${subset.files.length} subset files; estimated CPU SQL ${estimated("sql")}, native ${estimated("native")}; ${options.rounds} round(s), ${options.jobs} jobs within ${options.memoryGib} GiB (largest SQL unit ${gib(largest)}, program ${gib(model.programRssBytes)}), longest first; CPU caps ${options.capSeconds} s alone, ${options.groupCapSeconds} s per chunk; background load ${backgroundLoad.map(value => value.toFixed(1)).join(" ")}`);
+  console.log(`sql-loop: program stage ${options.programRounds === 0 ? "off" : `${options.programRounds} round(s) of every policy (${allClauses.length} clauses) per engine, CPU cap ${options.programCapSeconds} s a child`}; units: ${names.length} clauses in ${planned.length} units (${planned.filter(unit => unit.unit.clauses.length === 1).length} alone; chunks ≤ ${options.chunkSeconds} s SQL CPU by the costs of ${model.runs} previous runs) over ${subset.files.length} subset files; estimated CPU SQL ${estimated("sql")}, native ${estimated("native")}; ${options.rounds} round(s), ${options.jobs} jobs within ${options.memoryGib} GiB (largest SQL unit ${gib(largest)}), longest first; CPU caps ${options.capSeconds} s alone, ${options.groupCapSeconds} s per chunk; background load ${backgroundLoad.map(value => value.toFixed(1)).join(" ")}`);
 
   const key = nativeCacheKey(options, subset);
   const { cache, measured } = await nativeCache(options, subset, key);
   if (measured) console.log(`  native cache: measured (whole tree ${seconds(cache.whole.full.wallMs)} wall)`);
+  // The headline first, alone: no unit runs beside it.
+  const program = options.programRounds === 0 ? undefined : await programStage(options, engine, rules, "subset");
   const pool = new UnitPool(options, "subset");
   const rounds: { sql: UnitOutcome[]; native: UnitOutcome[]; wallMs: number; peakRunning: number }[] = [];
   const timedOut = new Set<string>();
-  let program: ProgramOutcome | undefined;
   for (let round = 1; round <= options.rounds; round += 1) {
     // Both engines' units in one queue, longest first; later rounds leave out the units SQL did not finish.
     const live = planned.filter(unit => !timedOut.has(unitKey(unit.unit)));
-    const items: QueueItem[] = (["sql", "native"] as const).flatMap(engineName => live.map((unit): QueueItem => ({ kind: "unit", engine: engineName, unit: unit.unit, estimateMs: unit.estimateMs[engineName], rssBytes: unit.rssBytes[engineName] })));
-    if (round === 1 && options.programCapSeconds > 0) {
-      items.push({ kind: "job", estimateMs: options.programCapSeconds * 1000, rssBytes: model.programRssBytes, run: async () => {
-        program = await runProgram(options);
-      } });
-    }
+    const items: QueueItem[] = (["sql", "native"] as const).flatMap(engineName => live.map((unit): QueueItem => ({ engine: engineName, unit: unit.unit, estimateMs: unit.estimateMs[engineName], rssBytes: unit.rssBytes[engineName] })));
     const result = await runUnits(pool, { items, capSeconds: options.capSeconds, groupCapSeconds: options.groupCapSeconds, jobs: options.jobs, memoryBytes: options.memoryGib * 2 ** 30, label: `round ${round}` });
     const sql = result.outcomes.filter(outcome => outcome.engine === "sql");
     for (const outcome of sql) if (outcome.status !== "ok") timedOut.add(unitKey(outcome.unit));
@@ -1257,12 +1471,19 @@ async function run(options: Options): Promise<number> {
   if (totals.length < 2) untrusted.push(`${totals.length} round(s): spread unknown`);
   if (notCompared.length > 0) untrusted.push(`${notComparedText} clauses outside the ratio`);
   const unitLoads = rounds.flatMap(round => round.sql.flatMap(outcome => (outcome.status === "ok" ? [outcome.load] : [])));
+  if (program !== undefined) {
+    console.log("");
+    printProgramStage(program, options, engine.workerThreads, allClauses.length);
+    for (const round of program.rounds) {
+      for (const outcome of Object.values(round)) if (outcome.status === "error") problems.push(`program stage: ${outcome.engine} ${outcome.detail}`);
+    }
+  }
   console.log("");
-  console.log(`SPEED${untrusted.length > 0 ? ` (UNTRUSTED: ${untrusted.join("; ")})` : " (trusted)"}`);
+  console.log(`PER-CLAUSE UNITS (parse-diluted: each unit re-parses the subset on both engines; for parity and per-clause attribution, not the headline)${untrusted.length > 0 ? ` (UNTRUSTED: ${untrusted.join("; ")})` : " (trusted)"}`);
   for (const [index, total] of totals.entries()) {
     console.log(`  round ${index + 1}: over ${total.units} units both finished: SQL ${seconds(total.sqlCpuMs)} CPU, ${seconds(total.sqlWallMs)} wall; native ${seconds(total.nativeCpuMs)} CPU, ${seconds(total.nativeWallMs)} wall; TIMEOUT and ERROR units ${seconds(total.timeoutCpuMs)} CPU; round ${seconds(rounds[index]!.wallMs)} wall over ${options.jobs} jobs`);
   }
-  console.log(`  SQL/native: CPU ${ratio.cpu.toFixed(2)}×, wall ${ratio.wall.toFixed(2)}× (medians of the rounds' sums); load during SQL units median ${median(unitLoads).toFixed(1)}, max ${Math.max(0, ...unitLoads).toFixed(1)}`);
+  console.log(`  per-clause units (parse-diluted) SQL/native: CPU ${ratio.cpu.toFixed(2)}×, wall ${ratio.wall.toFixed(2)}× (medians of the rounds' sums); load during SQL units median ${median(unitLoads).toFixed(1)}, max ${Math.max(0, ...unitLoads).toFixed(1)}`);
   const lastOutcomes = new Map<string, UnitOutcome>();
   for (const round of rounds) for (const outcome of round.sql) lastOutcomes.set(unitKey(outcome.unit), outcome);
   const okOutcomes = [...lastOutcomes.values()].filter((outcome): outcome is Extract<UnitOutcome, { status: "ok" }> => outcome.status === "ok");
@@ -1329,12 +1550,21 @@ async function run(options: Options): Promise<number> {
   }
   if (missing.size > 0) console.log(`    missing in this engine: ${[...missing].join(", ")}`);
 
-  // Against the previous run on this subset and clause set
+  // Against the latest previous run on this subset with a program stage
+  const previousProgram = history.find(({ record }) => record.program?.summary != null);
+  if (program?.summary != null && previousProgram !== undefined) {
+    const before = previousProgram.record.program!.summary!;
+    const now = program.summary;
+    console.log("");
+    console.log(`AGAINST (program stage) ${previousProgram.path.replace(homedir(), "~")} (${previousProgram.record.started}): SQL/native wall ${before.ratio.wall.toFixed(2)}× → ${now.ratio.wall.toFixed(2)}×, CPU ${before.ratio.cpu.toFixed(2)}× → ${now.ratio.cpu.toFixed(2)}×, matching alone ${before.ratio.matchingCpu.toFixed(2)}× → ${now.ratio.matchingCpu.toFixed(2)}×; SQL apply wall ${seconds(before.sql.wallMs)} → ${seconds(now.sql.wallMs)} (${percent(now.sql.wallMs / before.sql.wallMs - 1)}), CPU ${seconds(before.sql.cpuMs)} → ${seconds(now.sql.cpuMs)} (${percent(now.sql.cpuMs / before.sql.cpuMs - 1)}); native apply wall ${seconds(before.native.wallMs)} → ${seconds(now.native.wallMs)}`);
+  }
+
+  // Against the previous run on this subset and clause set (the units)
   if (previous !== undefined) {
     const before = previous.record;
     console.log("");
-    console.log(`AGAINST ${previous.path.replace(homedir(), "~")} (${before.started}):`);
-    console.log(`  SQL CPU ${seconds(median(before.totals.sqlCpuMs))} → ${seconds(median(sqlCpu))} (${percent(median(sqlCpu) / median(before.totals.sqlCpuMs) - 1)}); SQL/native CPU ${before.ratio.cpu.toFixed(2)}× → ${ratio.cpu.toFixed(2)}×, wall ${before.ratio.wall.toFixed(2)}× → ${ratio.wall.toFixed(2)}× (over the units both runs' engines finished; the units differ where the chunking moved)`);
+    console.log(`AGAINST (per-clause units) ${previous.path.replace(homedir(), "~")} (${before.started}):`);
+    console.log(`  SQL CPU ${seconds(median(before.totals.sqlCpuMs))} → ${seconds(median(sqlCpu))} (${percent(median(sqlCpu) / median(before.totals.sqlCpuMs) - 1)}); per-clause units (parse-diluted) SQL/native CPU ${before.ratio.cpu.toFixed(2)}× → ${ratio.cpu.toFixed(2)}×, wall ${before.ratio.wall.toFixed(2)}× → ${ratio.wall.toFixed(2)}× (over the units both runs' engines finished; the units differ where the chunking moved)`);
     const old = new Map<string, number>();
     for (const round of before.rounds.slice(-1)) {
       for (const record of round.sql) {
@@ -1350,24 +1580,31 @@ async function run(options: Options): Promise<number> {
     if (newTimeouts.length > 0) console.log(`  newly not compared (TIMEOUT or ERROR): ${newTimeouts.join(", ")}`);
   }
 
-  // Projection: native's whole tree times the subset's SQL/native CPU ratio, corrected by the calibration.
-  const correction = subset.calibration?.correction ?? 1;
-  const projectedRatio = ratio.cpu * correction;
-  const projection = { ratio: projectedRatio, correction, error: subset.calibration?.error ?? null, nativeWholeWallMs: cache.whole.full.wallMs, sqlWholeWallMs: cache.whole.full.wallMs * projectedRatio };
+  // Projection: native's whole-tree wall time × the program stage's SQL/native wall ratio × the calibration's
+  // full-corpus ratio ÷ subset ratio.
+  const { calibration } = subset;
+  const correction = calibration?.correction ?? { wall: 1, cpu: 1, matchingCpu: 1 };
+  const summary = program?.summary ?? null;
+  const projection = summary === null ? null : {
+    ratio: summary.ratio.wall * correction.wall,
+    cpuRatio: summary.ratio.cpu * correction.cpu,
+    matchingCpuRatio: summary.ratio.matchingCpu * correction.matchingCpu,
+    correction,
+    calibrated: calibration !== null,
+    nativeWholeWallMs: cache.whole.full.wallMs,
+    sqlWholeWallMs: cache.whole.full.wallMs * summary.ratio.wall * correction.wall,
+  };
+  const calibrationText = calibration === null
+    ? " — UNCALIBRATED (`just rerail-sql-loop-tool calibrate`)"
+    : ` (calibration: full/subset wall ${correction.wall.toFixed(3)}, CPU ${correction.cpu.toFixed(3)}, matching ${correction.matchingCpu.toFixed(3)}; measured ${calibration.date} at ${calibration.head.slice(0, 9)}${calibration.addon === engine.addon.sha256 ? "" : " on another addon"})`;
   console.log("");
-  console.log(`PROJECTION: whole-tree SQL ≈ ${seconds(projection.sqlWholeWallMs)} wall = native ${seconds(cache.whole.full.wallMs)} × ${projectedRatio.toFixed(2)}${subset.calibration === null ? " — UNCALIBRATED" : ` (subset ratio × correction ${correction.toFixed(2)}, error ±${(subset.calibration.error * 100).toFixed(0)}%, calibrated ${subset.calibration.date})`}; target ≤ 1.10× = ${seconds(cache.whole.full.wallMs * 1.1)}${notCompared.length > 0 ? `; ${notComparedText} clauses not in it (a lower bound)` : ""}; the whole-program setup is not in it (PROGRAM)`);
-  if (program !== undefined) {
-    console.log("");
-    console.log(program.status === "ok"
-      ? `PROGRAM: ${program.clauses} clauses in one SQL program: rules compiled in ${seconds(program.compileMs)}; workspace (SQL program compile, in addCodeRule) ${seconds(program.workspaceMs)}; a first batch per worker (every session's tables) ${seconds(program.setupMs)}; ${seconds(program.cpuMs)} CPU in all, ${gib(program.rssBytes)} resident at the peak`
-      : program.status === "timeout"
-        ? `PROGRAM TIMEOUT: compiling every clause into one SQL program and opening the sessions passed the ${options.programCapSeconds} s CPU cap (${seconds(program.cpuMs)} CPU, ${seconds(program.wallMs)} wall, ${gib(program.rssBytes)} resident by then); the whole-tree run pays this before any file`
-        : `PROGRAM ERROR: compiling every clause into one SQL program and opening the sessions failed after ${seconds(program.wallMs)}`);
-  }
+  console.log(projection === null
+    ? `PROJECTION: none (the program stage ${program === undefined ? "is off" : "did not finish"})`
+    : `PROJECTION: whole-tree SQL ≈ ${seconds(projection.sqlWholeWallMs)} wall = native's whole tree ${seconds(projection.nativeWholeWallMs)} × ${projection.ratio.toFixed(2)}× (the program stage's ${summary!.ratio.wall.toFixed(2)}× × ${correction.wall.toFixed(3)}); CPU ${projection.cpuRatio.toFixed(2)}×, matching alone ${projection.matchingCpuRatio.toFixed(2)}×${calibrationText}; G3 target ≤ 1.10× = ${seconds(projection.nativeWholeWallMs * 1.1)}`);
 
   // Record
   const record = {
-    format: "rerail.sql-loop-run/v4" as const,
+    format: "rerail.sql-loop-run/v5" as const,
     started: startedAt.toISOString(),
     turnaroundMs: performance.now() - started,
     machine: { cpus: cpus().length, model: cpus()[0]?.model, memoryBytes: totalmem(), platform: `${process.platform} ${process.arch}`, node: process.version },
@@ -1378,7 +1615,7 @@ async function run(options: Options): Promise<number> {
     clauseSetSha256: clauseSetSha,
     clauseCount: names.length,
     nativeCache: { path: cachePathOf(key), key, measured: cache.measured, measuredNow: measured },
-    options: { rounds: options.rounds, jobs: options.jobs, memoryGib: options.memoryGib, chunkSeconds: options.chunkSeconds, capSeconds: options.capSeconds, groupCapSeconds: options.groupCapSeconds, clauses: options.clauses, programCapSeconds: options.programCapSeconds },
+    options: { rounds: options.rounds, jobs: options.jobs, memoryGib: options.memoryGib, chunkSeconds: options.chunkSeconds, capSeconds: options.capSeconds, groupCapSeconds: options.groupCapSeconds, clauses: options.clauses, programRounds: options.programRounds, programCapSeconds: options.programCapSeconds },
     plan: { units: planned.length, alone: planned.filter(unit => unit.unit.clauses.length === 1).length, costRuns: model.runs, overheadMs: model.overheadMs, estimateMs: { sql: sum(planned.map(unit => unit.estimateMs.sql)), native: sum(planned.map(unit => unit.estimateMs.native)) } },
     load: { background: backgroundLoad, unitsMedian: median(unitLoads), unitsMax: Math.max(0, ...unitLoads) },
     rounds: rounds.map(round => ({ sql: round.sql.map(unitRecord), native: round.native.map(unitRecord), wallMs: round.wallMs, peakRunning: round.peakRunning })),
@@ -1402,7 +1639,10 @@ async function run(options: Options): Promise<number> {
   for (const problem of problems.slice(0, options.show)) console.log(`PROBLEM: ${problem}`);
   if (problems.length > options.show) console.log(`PROBLEM: … ${problems.length - options.show} more`);
   const verdict = problems.length > 0 ? "ERROR" : differing.length > 0 || mutationsDiffer > 0 ? "FAIL" : "PASS";
-  console.log(`VERDICT ${verdict}: parity ${differing.length === 0 ? "ok" : `${differing.length} clauses differ`}${notCompared.length > 0 ? `, ${notComparedText}` : ""}; mutations ${mutationParity === undefined ? "off" : mutationsDiffer === 0 ? "ok" : `${mutationsDiffer} cases differ`}; SQL/native CPU ${ratio.cpu.toFixed(2)}×, wall ${ratio.wall.toFixed(2)}×${untrusted.length > 0 ? " (untrusted timing)" : ""}; projected whole tree ${projectedRatio.toFixed(2)}×; ${seconds(performance.now() - started)} for the run; record ${recordPath.replace(homedir(), "~")}`);
+  const headline = summary === null
+    ? `program stage ${program === undefined ? "off" : "did not finish"}`
+    : `program SQL/native wall ${summary.ratio.wall.toFixed(2)}×, CPU ${summary.ratio.cpu.toFixed(2)}×, matching alone ${summary.ratio.matchingCpu.toFixed(2)}×${program!.untrusted.length > 0 ? " (untrusted timing)" : ""}; projected whole tree ${projection!.ratio.toFixed(2)}× wall (≈ ${seconds(projection!.sqlWholeWallMs)} against native's ${seconds(projection!.nativeWholeWallMs)}; G3 ≤ 1.10×)${calibration === null ? " UNCALIBRATED" : ""}`;
+  console.log(`VERDICT ${verdict}: parity ${differing.length === 0 ? "ok" : `${differing.length} clauses differ`}${notCompared.length > 0 ? `, ${notComparedText}` : ""}; mutations ${mutationParity === undefined ? "off" : mutationsDiffer === 0 ? "ok" : `${mutationsDiffer} cases differ`}; ${headline}; ${seconds(performance.now() - started)} for the run; record ${recordPath.replace(homedir(), "~")}`);
   return verdict === "PASS" ? 0 : verdict === "FAIL" ? 1 : 3;
 }
 
@@ -1463,93 +1703,54 @@ async function mutations(options: Options): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// calibrate: the latest run's units over the full corpus, SQL and native, against the subset's ratio
+// calibrate: the program stage over the subset and over the full corpus; their ratio calibrates the projection
 
-const calibrationDataSchema = z.object({
-  format: z.literal("rerail.sql-loop-calibration/v2"),
-  addon: z.string(),
-  measured: z.string(),
-  /** Per unit key: its clauses, and SQL and native over the full corpus. */
-  units: z.record(z.string(), z.object({ unit: unitSchema, sql: unitRecordSchema, native: unitRecordSchema.nullable() })),
-});
-
+/**
+ * The program stage over the subset, then over the full corpus (`--program-rounds` each, default 1), on this addon.
+ * The full corpus's SQL/native ratios ÷ the subset's are the correction a run's program-stage ratio is multiplied by;
+ * written into the manifest, and both stages into `$RERAIL_BENCH_HOME/data-layer/loop-calibration/`.
+ */
 async function calibrate(options: Options): Promise<number> {
   const subset = readSubset(options.subset);
   const engine = loadEngine(options.addon);
-  // The subset's times: the latest run of this addon on this subset.
-  const latest = runRecords().find(({ record }) => record.addon.sha256 === engine.addon.sha256 && record.subsetSha256 === subsetSha(subset));
-  if (latest === undefined) throw new UsageError(`no loop run of ${engine.addon.sha256} on this subset: \`loop.ts run --addon ${options.addon}\` first`);
-  const lastRound = latest.record.rounds.at(-1)!;
-  const subsetSql = new Map(latest.record.rounds.flatMap(round => round.sql).filter(record => record.status === "ok").map(record => [unitKey(record.unit), record]));
-  const subsetNative = new Map(lastRound.native.filter(record => record.status === "ok").map(record => [unitKey(record.unit), record]));
-  const units = [...subsetSql.values()].map(record => record.unit).filter(unit => subsetNative.has(unitKey(unit)) && (options.clauses.length === 0 || unit.clauses.some(clause => options.clauses.some(filter => clause.includes(filter)))));
-  const dataPath = resolve(stateRoot, "loop-calibration", `${engine.addon.sha256.slice("sha256:".length, "sha256:".length + 16)}.json`);
-  const data = existsSync(dataPath) ? calibrationDataSchema.parse(JSON.parse(readFileSync(dataPath, "utf8"))) : { format: "rerail.sql-loop-calibration/v2" as const, addon: engine.addon.sha256, measured: "", units: {} };
-  const missing = units.filter(unit => data.units[unitKey(unit)] === undefined);
-  // Longest first by the subset's SQL CPU.
-  const estimateOf = (unit: Unit) => subsetSql.get(unitKey(unit))!.cpuMs ?? 0;
-  console.log(`calibrate: ${units.length} units of ${latest.path.replace(homedir(), "~")}; ${missing.length} to run over the full corpus (${options.jobs} jobs, CPU caps ${options.capSeconds} s alone, ${options.groupCapSeconds} s per chunk); load ${loadavg()[0]!.toFixed(1)}`);
-  if (missing.length > 0) {
-    const pool = new UnitPool(options, "full");
-    const flush = (sqlOutcomes: readonly UnitOutcome[], nativeOutcomes: readonly UnitOutcome[]) => {
-      const nativeByKey = new Map(nativeOutcomes.map(outcome => [unitKey(outcome.unit), outcome]));
-      for (const outcome of sqlOutcomes) {
-        const native = nativeByKey.get(unitKey(outcome.unit));
-        data.units[unitKey(outcome.unit)] = { unit: outcome.unit, sql: unitRecord(outcome), native: native === undefined ? null : unitRecord(native) };
-      }
-      data.measured = new Date().toISOString();
-      mkdirSync(resolve(stateRoot, "loop-calibration"), { recursive: true });
-      writeFileSync(dataPath, `${JSON.stringify(data)}\n`);
-    };
-    // A chunk past its cap is one TIMEOUT unit: it is left out of the calibration.
-    const sql = await runUnits(pool, { items: missing.map(unit => ({ kind: "unit", engine: "sql", unit, estimateMs: estimateOf(unit) })), capSeconds: options.capSeconds, groupCapSeconds: options.groupCapSeconds, jobs: options.jobs, label: "sql full", onUnit: (_pairs, outcomes) => flush(outcomes, []) });
-    const finished = sql.outcomes.filter(outcome => outcome.status === "ok" && missing.some(unit => unitKey(unit) === unitKey(outcome.unit))).map(outcome => outcome.unit);
-    const native = await runUnits(pool, { items: finished.map(unit => ({ kind: "unit", engine: "native", unit, estimateMs: estimateOf(unit) })), capSeconds: options.capSeconds, groupCapSeconds: options.groupCapSeconds, jobs: options.jobs, label: "native full" });
-    pool.close();
-    flush(sql.outcomes.filter(outcome => missing.some(unit => unitKey(unit) === unitKey(outcome.unit))), native.outcomes);
+  const rules = loadRules(engine, options.policies);
+  const clauses = reportingClauses(rules).length;
+  console.log(`calibrate: the program stage (${clauses} clauses) over the subset's ${subset.files.length} files, then over the full corpus's ${subset.corpus.files}; ${options.programRounds} round(s) each, CPU cap ${options.programCapSeconds} s a child; load ${loadavg()[0]!.toFixed(1)}`);
+  const stages = { subset: await programStage(options, engine, rules, "subset"), full: await programStage(options, engine, rules, "full") };
+  for (const stage of Object.values(stages)) {
+    console.log("");
+    printProgramStage(stage, options, engine.workerThreads, clauses);
   }
-  const rows = units.flatMap(unit => {
-    const full = data.units[unitKey(unit)];
-    if (full === undefined) return [];
-    const sub = { sql: subsetSql.get(unitKey(unit))!.cpuMs!, native: subsetNative.get(unitKey(unit))!.cpuMs! };
-    return [{ key: unitKey(unit), unit, policy: unit.linter, ok: full.sql.status === "ok" && full.native?.status === "ok", sub, full: { sql: full.sql.cpuMs ?? full.sql.wallMs, native: full.native?.cpuMs ?? null } }];
-  });
-  const calibrated = rows.filter(row => row.ok);
-  const ratioOf = (selected: typeof calibrated, side: "sub" | "full") => sum(selected.map(row => row[side].sql)) / sum(selected.map(row => row[side].native!));
-  const subsetRatio = ratioOf(calibrated, "sub");
-  const fullRatio = ratioOf(calibrated, "full");
-  const correction = fullRatio / subsetRatio;
-  // Each policy's full-corpus SQL time, projected from its subset ratio with the correction the other policies give.
-  const policies = [...new Set(calibrated.map(row => row.policy))];
-  const parts = policies.map(policy => {
-    const own = calibrated.filter(row => row.policy === policy);
-    const others = calibrated.filter(row => row.policy !== policy);
-    const factor = others.length === 0 ? 1 : ratioOf(others, "full") / ratioOf(others, "sub");
-    return { policy, actualMs: sum(own.map(row => row.full.sql)), projectedMs: ratioOf(own, "sub") * factor * sum(own.map(row => row.full.native!)), subsetRatio: ratioOf(own, "sub"), fullRatio: ratioOf(own, "full") };
-  });
-  const error = sum(parts.map(part => Math.abs(part.projectedMs - part.actualMs))) / sum(parts.map(part => part.actualMs));
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const dataPath = resolve(stateRoot, "loop-calibration", `${stamp}.json`);
+  mkdirSync(resolve(stateRoot, "loop-calibration"), { recursive: true });
+  writeFileSync(dataPath, `${JSON.stringify({ format: "rerail.sql-loop-calibration-run/v1", addon: engine.addon, head: git(rerailRoot, "rev-parse", "HEAD").trim(), stages })}\n`);
+  const sub = stages.subset.summary;
+  const full = stages.full.summary;
+  console.log("");
+  if (sub === null || full === null) {
+    console.log(`calibrate: the program stage did not finish over the ${sub === null ? "subset" : "full corpus"}; the manifest is unchanged; data ${dataPath.replace(homedir(), "~")}`);
+    return 3;
+  }
+  const correction = { wall: full.ratio.wall / sub.ratio.wall, cpu: full.ratio.cpu / sub.ratio.cpu, matchingCpu: full.ratio.matchingCpu / sub.ratio.matchingCpu };
+  const untrusted = [...new Set([...stages.subset.untrusted, ...stages.full.untrusted])];
   const calibration: Calibration = {
+    format: "rerail.sql-loop-calibration/v3",
     date: new Date().toISOString(),
     addon: engine.addon.sha256,
     head: git(rerailRoot, "rev-parse", "HEAD").trim(),
+    subset: sub,
+    full,
     correction,
-    error,
-    totalError: subsetRatio / fullRatio - 1,
-    units: calibrated.length,
-    timeouts: rows.filter(row => !row.ok).map(row => row.key),
-    note: `the units of the run ${latest.record.started} over the full corpus (caps ${options.capSeconds} s alone, ${options.groupCapSeconds} s per chunk): SQL/native CPU ${fullRatio.toFixed(3)} there against ${subsetRatio.toFixed(3)} on the subset`,
-    subsetRatio,
-    fullRatio,
-    policies: parts,
+    load: { subset: stages.subset.load, full: stages.full.load },
+    note: `the program stage (every policy in one workspace per engine, one apply, ${engine.workerThreads} worker threads) over the subset (${sub.files} files) and the full corpus (${full.files} files), ${options.programRounds} round(s) each${untrusted.length > 0 ? `; untrusted: ${untrusted.join("; ")}` : ""}`,
   };
   writeFileSync(options.subset, `${JSON.stringify({ ...readSubset(options.subset), calibration }, null, 2)}\n`);
-  console.log(`calibration over ${calibrated.length} units (${calibration.timeouts.length} past their cap on the full corpus): SQL/native CPU ${subsetRatio.toFixed(3)}× on the subset, ${fullRatio.toFixed(3)}× on the full corpus (${percent(calibration.totalError)}); correction ${correction.toFixed(3)}; error ±${(error * 100).toFixed(1)}% (each policy corrected by the others)`);
-  console.log("  policy                              subset ratio  full ratio   full SQL    projected");
-  for (const part of parts.sort((a, b) => b.actualMs - a.actualMs)) console.log(`  ${part.policy.padEnd(34)} ${part.subsetRatio.toFixed(2).padStart(11)}× ${part.fullRatio.toFixed(2).padStart(10)}× ${seconds(part.actualMs).padStart(10)} ${seconds(part.projectedMs).padStart(12)}`);
-  console.log("  units: subset SQL / native → full SQL / native (CPU)");
-  for (const row of [...rows].sort((a, b) => b.full.sql - a.full.sql).slice(0, options.show)) console.log(`  ${seconds(row.sub.sql).padStart(9)} / ${seconds(row.sub.native).padStart(8)} → ${seconds(row.full.sql).padStart(9)}${row.ok ? " " : "+"} / ${row.full.native === null ? "?" : seconds(row.full.native)}  ${row.key}`);
-  if (calibration.timeouts.length > 0) console.log(`  past the cap on the full corpus: ${calibration.timeouts.join(", ")}`);
-  if (options.output !== undefined) writeFileSync(options.output, `${JSON.stringify({ calibration, rows }, null, 2)}\n`);
+  const row = (label: string, summary: ProgramSummary) => `  ${label.padEnd(12)} native ${seconds(summary.native.wallMs).padStart(9)} wall ${seconds(summary.native.cpuMs).padStart(9)} CPU; SQL ${seconds(summary.sql.wallMs).padStart(9)} wall ${seconds(summary.sql.cpuMs).padStart(9)} CPU (statements ${seconds(summary.sqlStatementsCpuMs)}); parse floor ${seconds(summary.parse.cpuMs)} CPU; SQL/native wall ${summary.ratio.wall.toFixed(2)}×, CPU ${summary.ratio.cpu.toFixed(2)}×, matching ${summary.ratio.matchingCpu.toFixed(2)}×`;
+  console.log("calibration:");
+  console.log(row("subset", sub));
+  console.log(row("full corpus", full));
+  console.log(`  full ÷ subset: wall ${correction.wall.toFixed(3)}, CPU ${correction.cpu.toFixed(3)}, matching ${correction.matchingCpu.toFixed(3)}`);
   console.log(`  wrote the calibration into ${options.subset}; data ${dataPath.replace(homedir(), "~")}`);
   return 0;
 }
@@ -1582,7 +1783,7 @@ async function costs(options: Options): Promise<number> {
   const root = realpathSync(options.corpus);
   const bytes = new Map(paths.map(path => [path, readFileSync(resolve(root, path)).length]));
   const ordered = [...paths].sort((a, b) => bytes.get(b)! - bytes.get(a)! || compareStrings(a, b));
-  const items = Array.from({ length: Math.min(options.jobs, ordered.length) }, (_, job): QueueItem => ({ kind: "unit", engine: "sql", unit: { linter: ALL, clauses: [] }, files: ordered.filter((_, index) => index % options.jobs === job), estimateMs: 0 }));
+  const items = Array.from({ length: Math.min(options.jobs, ordered.length) }, (_, job): QueueItem => ({ engine: "sql", unit: { linter: ALL, clauses: [] }, files: ordered.filter((_, index) => index % options.jobs === job), estimateMs: 0 }));
   console.log(`costs: ${paths.length} files, every clause in one SQL program, ${items.length} jobs, ${options.capSeconds} s CPU cap per file (${options.groupCapSeconds} s for the program setup); load ${loadavg()[0]!.toFixed(1)}`);
   const write = (pairs: readonly PairCost[]) => {
     const file: CostsFile = {
@@ -1685,7 +1886,7 @@ async function select(options: Options): Promise<number> {
   for (const entry of Object.values(coverage)) statuses.set(entry.status, (statuses.get(entry.status) ?? 0) + 1);
   console.log(`select: ${files.length} files (${(sum(files.map(file => file.bytes)) / 1e6).toFixed(2)} MB of ${(repository.bytes / 1e6).toFixed(1)} MB) from ${options.from}; native full ${seconds(full.wallMs)}, subset ${seconds(sub.wallMs)}`);
   console.log(`  clauses: ${[...statuses].map(([status, count]) => `${count} ${status}`).join(", ")}`);
-  console.log(`  wrote ${options.subset}${manifest.calibration === null ? " (uncalibrated: run `loop.ts run`, then `loop.ts calibrate`)" : ""}`);
+  console.log(`  wrote ${options.subset}${manifest.calibration === null ? " (uncalibrated: run `loop.ts calibrate`)" : ""}`);
   return 0;
 }
 

@@ -43,21 +43,46 @@ cost. `npm run build:native:unbounded-work` builds `target/unbounded-work/rerail
 
 ### The SQL engine's loop
 
-`just rerail-sql-loop [args]` takes an edit under `native/src/code_rule_dsl/sql/` to a SQL/native CPU ratio, with
-real-policy parity as a second check, in under five minutes. (Correctness strictness comes from the replay and
-differential gate.) It builds the `loop` cargo profile (release optimisation without LTO, many codegen units for the
-engine crate, incremental, into `target-loop/`), then runs `data-layer/loop.ts run` over the files in
-`data-layer/loop-subset.json`.
+`just rerail-sql-loop [args]` takes an edit under `native/src/code_rule_dsl/sql/` to the SQL/native ratio of design
+goal G3 (whole-tree wall time within 1.10× of native with every policy loaded at once), with real-policy parity as a
+second check. (Correctness strictness comes from the replay and differential gate.) It builds the `loop` cargo
+profile (release optimisation without LTO, many codegen units for the engine crate, incremental, into
+`target-loop/`), then runs `data-layer/loop.ts run` over the files in `data-layer/loop-subset.json`.
 
-The reporting clauses run in units. A unit is one workspace over the subset (one parse of each file it accepts),
-holding some of one policy's clauses with that policy's `define`s. The units are decided before the run from the
-costs the previous runs on the subset recorded:
+The headline is the **program stage**, which has G3's shape. Each engine gets one workspace holding every clause of
+every policy, with their `define`s (818 clauses, as the whole-tree run loads them). The subset's files that the
+policies accept go to it in one apply on the addon's worker threads (4, as in production). A round runs native, then
+SQL, then the parse floor, each in a fresh child process, one after another so each runs alone; no unit runs beside
+them. `--program-rounds` sets the rounds (default 3; 0 skips the stage), and `--program-cap` caps each child at that
+many CPU seconds (default 300). A run takes about five minutes on an M5 Max, three and a half of them in the program
+stage (SQL's subset apply is about 40 s a round at HEAD `3494bc6eb`). The stage reports:
+
+- per engine, the apply's wall time and process CPU, and their SQL/native ratios (medians of the rounds). That wall
+  ratio is the headline;
+- the parse floor: the native parse baseline rule (`compileBaselineRule`: parse, tape and the per-file pipeline with
+  no rule's own work) over the same files. Apply CPU minus the floor is matching alone, so the stage shows SQL/native
+  matching apart from the parse both engines share;
+- where SQL's apply CPU goes, from the engine report's timers (thread CPU summed over the workers): statements (and
+  the stages, selects and fact terminals inside them), input, node facts, session setup, and the pipeline's parse,
+  plan and render; the program compile's phases; and the costliest statements. SQL's own parse timer
+  (`pipeline.parse`) is printed beside the floor;
+- outside the apply: workspace construction (the SQL program compiles in `addCodeRule`), the policies' compile time,
+  peak resident sets, and both engines' finding counts.
+
+The **projection** is native's whole-tree wall time × the stage's SQL/native wall ratio × the calibration's
+correction (the full corpus's ratio ÷ the subset's, from `calibrate`). It is printed against the G3 target.
+
+The reporting clauses also run in **units**, for parity and per-clause attribution. A unit is one workspace over the
+subset (one parse of each file it accepts), holding some of one policy's clauses with that policy's `define`s. Each
+unit re-parses the subset on both engines, and parsing is most of native's time. So the units' SQL/native ratio
+counts the parse on both sides and dilutes the matching cost: it is printed as "per-clause units (parse-diluted)",
+never as the headline. The units are decided before the run from the costs the previous runs on the subset recorded:
 
 - A clause whose SQL CPU reached 5 s, or that timed out, runs alone.
 - Each policy's other clauses are packed, in order, into chunks of up to `--chunk` seconds of estimated SQL CPU
   (default 10). A clause no run measured counts 0.25 s.
 - The units then stay those of the previous run: each unit parses the files once on each engine, which dominates
-  native's time, so the SQL/native CPU ratio depends on the units, and keeping them makes runs comparable. Only a
+  native's time, so the units' SQL/native CPU ratio depends on the units, and keeping them makes runs comparable. Only a
   chunk that did not finish (TIMEOUT or ERROR) splits into its clauses, each alone. A policy whose clauses changed is
   packed afresh; `--replan` packs every policy afresh from the latest costs.
 
@@ -77,20 +102,21 @@ Caps are CPU seconds (user and system, every thread of the child), so the machin
   child goes on with the next unit. A child whose wall time passes six times its cap, plus a minute, is killed as
   stuck, and one that exits is lost: ERROR rows too. A clause whose unit failed runs alone in the next run.
 
-The SQL program compiles, and each worker's session opens, inside the timed apply, as they do in the whole-tree run.
+The SQL program compiles, and each worker's session opens, inside a unit's timed apply, as they do in the program
+stage and the whole-tree run.
 
 The verdict reports:
 
 - **Parity:** each clause's SQL lines against native's over the subset, ignoring files where native ran out of its
   work budget.
-- **Speed:** SQL and native CPU and wall time over the units both engines finished, and their ratio. It lists the
-  TIMEOUT and ERROR rows, the costliest statements, clauses (by the statement time the profile gives each clause) and
-  (clause, file)s. It also shows the change since the previous run on the same subset and clause set.
-- **Projection:** native's whole-tree wall time times the subset's SQL/native CPU ratio, times the calibration's
-  correction.
-- **Program:** the whole-program SQL setup, capped by `--program-cap` (default 60 s CPU), in the same queue. Every
-  clause is compiled into one program, and each worker's session opens. The whole-tree run pays this before it reads
-  any file.
+- **Program stage:** the headline, above. A program child that exits without its result is a PROBLEM; one past its
+  cap is a TIMEOUT, and the stage then has no ratio. It also shows the change since the latest previous run on the
+  subset that had a program stage.
+- **Per-clause units (parse-diluted):** SQL and native CPU and wall time over the units both engines finished, and
+  their ratio. It lists the TIMEOUT and ERROR rows, the costliest statements, clauses (by the statement time the
+  profile gives each clause) and (clause, file)s, and the units with the most SQL CPU over native's, by phase. It also
+  shows the change since the previous run on the same subset and clause set.
+- **Projection:** from the program stage, as above, marked UNCALIBRATED when the manifest has no calibration.
 - **Mutations:** native against SQL on the recorded mutations, after the rounds (`data-layer/mutations.ts`). The
   subset only has findings for the clauses that fire on the clean tree, so for most clauses its parity covers only
   the clean side. Each recorded mutation (`<policies>/<linter>/mutations/`) makes some rule fire. For each rule, one
@@ -103,13 +129,16 @@ The verdict reports:
   differing clause does. A child that fails or passes 540 s, or a selected clause that no longer gets its true
   positive (the selection is stale), is a PROBLEM.
 
-A run is untrusted when:
+`VERDICT` prints parity, the mutation stage, the program stage's SQL/native wall and CPU ratios and matching-alone
+ratio, and the projection derived from them.
 
-- the 1-minute load average before it is above 6;
-- it ran one round, or its rounds differ by more than 10% in CPU time;
-- any clause timed out or failed.
+The program stage is untrusted when the 1-minute load average before it is above 6, when it ran one round, when its
+SQL or native rounds differ by more than 10% in wall or CPU time, or when a child did not finish. The units are
+untrusted when the load before the run is above 6, when they ran one round, when their rounds differ by more than
+10% in CPU time, or when any clause timed out or failed.
 
-`--clauses a,b` keeps only the clauses whose `linter/clause` name contains one of the filters.
+`--clauses a,b` keeps only the units' clauses whose `linter/clause` name contains one of the filters; the program
+stage always loads every policy.
 
 Native's lines over the subset (the oracle) and its whole-tree time are cached per native source hash in
 `$RERAIL_BENCH_HOME/data-layer/loop-cache/`. Each run is recorded in `$RERAIL_BENCH_HOME/data-layer/loop-runs/`. The
@@ -121,9 +150,12 @@ measurements on one machine.
 
 - **`select --from <subset.json>`** writes the manifest from a distilled subset: each file, the reason it is there,
   and each clause's native coverage over the subset.
-- **`calibrate`** runs the latest run's units over the full corpus on SQL and native. It compares the full-corpus
-  SQL/native ratio with the subset's, then writes the correction and its error into the manifest. Run it again after
-  every `select`.
+- **`calibrate`** runs the program stage over the subset and then over the full corpus (`--program-rounds`, default 1
+  each; `--program-cap`, default 900 CPU seconds a child). The full corpus's SQL/native wall, CPU and matching ratios
+  ÷ the subset's are the correction the projection multiplies by. It writes both stages' medians and the correction
+  into the manifest's `calibration`, and both stages' rounds into `$RERAIL_BENCH_HOME/data-layer/loop-calibration/`.
+  Run it again after every `select`, and when the engine's costs move in a way that shifts work between session
+  setup (paid once per worker) and the per-file statements.
 - **`costs`** times every subset file on SQL with every clause in one program, one file per apply, each capped by
   `--cap`. The profile gives each (clause, file) its statement time. It writes `$RERAIL_BENCH_HOME/data-layer/loop-costs.json`.
 - **`mutations`** runs the mutation stage alone, by default `--mutations all` (every mutation over the whole tree).
