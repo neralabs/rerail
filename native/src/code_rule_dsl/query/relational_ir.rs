@@ -1357,10 +1357,15 @@ impl SqlRenderer {
         let [universe, excluded] = inputs else {
             return Err("negation requires universe and excluded operands".to_owned());
         };
+        let excluded_can_bind = excluded.can_bind();
         let universe = self.render(universe)?;
         let excluded = self.render(excluded)?;
         let name = self.next_name("relation");
-        let compatible = Self::binding_compatibility("universe", "excluded");
+        let compatible = if excluded_can_bind {
+            Self::binding_compatibility("universe", "excluded")
+        } else {
+            "1 = 1".to_owned()
+        };
         let verdict = format!(
             "CASE WHEN EXISTS (SELECT 1 FROM {excluded} excluded WHERE excluded.file_index = universe.file_index AND excluded.node = universe.node AND excluded.verdict IS NULL AND {compatible}) THEN NULL ELSE 1 END"
         );
