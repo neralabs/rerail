@@ -12,7 +12,11 @@ import os
 home = os.environ.get("RERAIL_BENCH_HOME", os.path.expanduser("~/rerail-bench"))
 distill = os.path.join(home, "distill")
 cover = json.load(open(os.path.join(distill, "cover.json")))
-constructs = json.load(open(os.path.join(distill, "constructs.json")))
+constructs_path = os.path.join(distill, "constructs.json")
+# The construct census is optional: without it the subset is the clause cover alone.
+constructs = (
+    json.load(open(constructs_path)) if os.path.exists(constructs_path) else {"constructs": {}, "files": {}}
+)
 
 files = {}
 for entry in cover["files"]:
@@ -37,7 +41,7 @@ for path, meta in constructs["files"].items():
 
 subset = {
     "format": "rerail.sql-loop-subset/v2",
-    "sources": ["cover.json", "constructs.json"],
+    "sources": ["cover.json"] + (["constructs.json"] if os.path.exists(constructs_path) else []),
     "oracle": "native run on this subset (not the full-tree oracle): calls/select_when/budget clauses are cross-file",
     "files": [{"path": path, **meta} for path, meta in sorted(files.items())],
 }
