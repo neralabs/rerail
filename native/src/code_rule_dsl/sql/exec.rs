@@ -1841,6 +1841,16 @@ pub(in crate::code_rule_dsl) struct Session {
     texts: Vec<String>,
 }
 
+/// The heap a session holds (`Session::memory`), in bytes: its connection's, by
+/// `sqlite3_db_status`, and its frames' column buffers.
+#[derive(Clone, Copy, Debug, Default)]
+pub(in crate::code_rule_dsl) struct SessionMemory {
+    pub(in crate::code_rule_dsl) schema: usize,
+    pub(in crate::code_rule_dsl) statements: usize,
+    pub(in crate::code_rule_dsl) cache: usize,
+    pub(in crate::code_rule_dsl) frames: usize,
+}
+
 impl Session {
     fn new(compiled: &Compiled) -> Result<Self, SqlError> {
         let started = Started::now();
@@ -1945,6 +1955,38 @@ impl Session {
             }
         }
         count
+    }
+
+    /// The heap the session holds: its connection's schema (the tables and frames the session
+    /// made), prepared statements and page cache (the temporary B-trees' pages), as
+    /// `sqlite3_db_status` reports them (SQLite allocates through the system allocator, outside
+    /// the addon's); and its frames' column buffers (`FrameStore::bytes`).
+    pub(in crate::code_rule_dsl) fn memory(&self) -> SessionMemory {
+        let status = |operation| {
+            let (mut current, mut highwater) = (0, 0);
+            // SAFETY: the connection is open and used by this thread only; the status call only
+            // reads its counters into the two integers.
+            let code = unsafe {
+                rusqlite::ffi::sqlite3_db_status(
+                    self.connection.handle(),
+                    operation,
+                    &mut current,
+                    &mut highwater,
+                    0,
+                )
+            };
+            if code == rusqlite::ffi::SQLITE_OK {
+                usize::try_from(current).unwrap_or(0)
+            } else {
+                0
+            }
+        };
+        SessionMemory {
+            schema: status(rusqlite::ffi::SQLITE_DBSTATUS_SCHEMA_USED),
+            statements: status(rusqlite::ffi::SQLITE_DBSTATUS_STMT_USED),
+            cache: status(rusqlite::ffi::SQLITE_DBSTATUS_CACHE_USED),
+            frames: self.frames.bytes(),
+        }
     }
 
     /// The session's tables: how many are B-trees and how many frames (`frames`).

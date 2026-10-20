@@ -80,7 +80,7 @@ export const IGNORED_DIRECTORIES = new Set([
   "vendor",
 ]);
 /** A repository index honours the walk's bounds, ignored directories and source languages. */
-const REPOSITORY_INDEX_OPTIONS: Omit<NativeRepositoryIndexOptions, "nestedCheckouts"> = {
+export const REPOSITORY_INDEX_OPTIONS: Omit<NativeRepositoryIndexOptions, "nestedCheckouts"> = {
   maxFiles: AUDIT_MAX_FILES,
   maxSourceBytes: AUDIT_MAX_SOURCE_BYTES,
   maxFileBytes: MAX_SOURCE_BYTES,

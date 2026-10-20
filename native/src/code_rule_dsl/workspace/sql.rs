@@ -11,8 +11,8 @@ use crate::code_rule_dsl::eval::Engine;
 use crate::code_rule_dsl::matcher::GrammarMatcher;
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Query};
 use crate::code_rule_dsl::sql::{
-    ClauseRun, CompilePhases, Compiled, FileContext, ProgramCompiler, Session, SqlError, SqlMatch,
-    Stats, Timing,
+    ClauseRun, CompilePhases, Compiled, FileContext, ProgramCompiler, Session, SessionMemory,
+    SqlError, SqlMatch, Stats, Timing,
 };
 #[cfg(feature = "unbounded-work")]
 use crate::code_rule_dsl::sql::{StatementProfile, profiled};
@@ -358,13 +358,20 @@ impl SqlEngine {
     pub(super) fn report(&self) -> Value {
         let stats = *self.stats.lock().unwrap_or_else(|error| error.into_inner());
         let census = self.compiled.census();
-        let prepared: usize = self
+        let (mut prepared, mut memory) = (0, SessionMemory::default());
+        for session in self
             .sessions
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .iter()
-            .map(Session::prepared_statements)
-            .sum();
+        {
+            let held = session.memory();
+            prepared += session.prepared_statements();
+            memory.schema += held.schema;
+            memory.statements += held.statements;
+            memory.cache += held.cache;
+            memory.frames += held.frames;
+        }
         let pipeline = *self
             .pipeline
             .lock()
@@ -435,7 +442,7 @@ impl SqlEngine {
             },
             // The sessions made and their setup (`sql::Session::activate`): the texts their
             // caches were sized for, the tables they made, and the statements the pooled ones
-            // hold prepared.
+            // hold prepared; and the heap the pooled ones hold (`Session::memory`).
             "sessions": {
                 "count": stats.sessions,
                 "setupMilliseconds": stats.setup.wall_milliseconds(),
@@ -443,6 +450,10 @@ impl SqlEngine {
                 "texts": stats.texts,
                 "tables": stats.tables,
                 "prepared": prepared,
+                "schemaBytes": memory.schema,
+                "statementBytes": memory.statements,
+                "cacheBytes": memory.cache,
+                "frameBytes": memory.frames,
             },
             // The native per-file steps around the batches' SQL runs (`Pipeline`).
             "pipeline": {
