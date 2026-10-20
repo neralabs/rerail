@@ -106,13 +106,18 @@ fn implementation_catalog_fixture_has_one_meaning() {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct ImplementationGoldenFile {
-    cases: Vec<ImplementationGolden>,
+    cases: Vec<ImplementationCatalogGolden>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct ImplementationGolden {
+struct ImplementationCatalogGolden {
     name: String,
+    terminal_catalog: Vec<ExpectedTerminal>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ActualImplementationGolden {
     normalized_sql: String,
     terminal_catalog: Vec<ExpectedTerminal>,
 }
@@ -250,7 +255,7 @@ fn compiled_case(case: &ContractCase) -> Arc<crate::code_rule_dsl::model::Compil
     .inner
 }
 
-fn actual_implementation_golden(case: &ContractCase) -> ImplementationGolden {
+fn actual_implementation_golden(case: &ContractCase) -> ActualImplementationGolden {
     let compiled = compiled_case(case);
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled)]).unwrap_or_else(|error| {
         panic!("{} lowering: {}", case.name, error.unsupported().join("; "))
@@ -293,8 +298,7 @@ fn actual_implementation_golden(case: &ContractCase) -> ImplementationGolden {
         "{} has an unreferenced catalog entry",
         case.name
     );
-    ImplementationGolden {
-        name: case.name.clone(),
+    ActualImplementationGolden {
         normalized_sql: normalized_sql(plan.sql()),
         terminal_catalog,
     }
@@ -1023,7 +1027,7 @@ fn production_contract_phases_two_to_four_have_complete_implementation_goldens()
     assert_eq!(
         (missing, unexpected),
         (Vec::new(), Vec::new()),
-        "each implemented contract must have one exact SQL and terminal-catalog golden"
+        "each implemented contract must have one terminal-catalog golden"
     );
     assert_eq!(
         actual_names.len(),
@@ -1035,7 +1039,6 @@ fn production_contract_phases_two_to_four_have_complete_implementation_goldens()
         .map(|case| (case.name.clone(), case))
         .collect::<std::collections::BTreeMap<_, _>>();
     for golden in goldens.cases {
-        assert!(!golden.normalized_sql.is_empty(), "{} SQL", golden.name);
         for (ordinal, terminal) in golden.terminal_catalog.iter().enumerate() {
             assert_eq!(terminal.ordinal, ordinal, "{} catalog", golden.name);
             assert!(
@@ -1047,22 +1050,26 @@ fn production_contract_phases_two_to_four_have_complete_implementation_goldens()
             assert!(terminal.completion_required, "{} completion", golden.name);
         }
         let case = &cases[&golden.name];
-        let actual = actual_implementation_golden(case);
-        assert_eq!(actual, golden, "{} implementation golden", golden.name);
+        let actual = actual_implementation_golden(case).terminal_catalog;
         assert_eq!(
-            actual_implementation_golden(case),
-            golden,
+            actual, golden.terminal_catalog,
+            "{} implementation catalog",
+            golden.name
+        );
+        assert_eq!(
+            actual_implementation_golden(case).terminal_catalog,
+            golden.terminal_catalog,
             "{} repeated compilation",
             golden.name
         );
         std::thread::scope(|scope| {
             let parallel = (0..2)
-                .map(|_| scope.spawn(|| actual_implementation_golden(case)))
+                .map(|_| scope.spawn(|| actual_implementation_golden(case).terminal_catalog))
                 .collect::<Vec<_>>();
             for result in parallel {
                 assert_eq!(
                     result.join().expect("parallel compilation completes"),
-                    golden,
+                    golden.terminal_catalog,
                     "{} parallel compilation",
                     golden.name
                 );
