@@ -34,6 +34,7 @@ See [the fourth-batch report](../../../docs/data-layer-batch-four.md).
 
 `batch-05-recording.json` contains the fifth batch's original observations.
 `batch-05-probe-inputs.json` and `batch-05-probes.json` contain supplemental source inputs and verified oracle results.
-Eight candidates pass the small source corpus. Repository graph parity remains incomplete.
-The two unported checks' source probes do not count as native passes.
-See [the fifth-batch progress report](../../../docs/data-layer-batch-five.md) and `batch-05-evidence.json`.
+The ten candidates pass 312 native source comparisons and match all 23,835 repository findings.
+The graph and relational probe files preserve reduced reference, family, and reachability cases.
+The 114 synthetic graph observations remain separate from native source passes.
+See [the fifth-batch report](../../../docs/data-layer-batch-five.md) and `batch-05-evidence.json`.

@@ -1,157 +1,200 @@
-# Fifth data-layer batch: work in progress
+# Data-layer fifth batch
 
-The source pin is `2b1504adc4291daaf080b2e932962b134da1a69a`.
-This batch is incomplete. It contains eight candidate policies for the next ten checks.
-`public_api_triples` and `internal_dead_code` have source probes but no candidate policy.
-`imperative_private_functions` passes the small corpus but fails repository parity.
-No Linear issues were created.
+All ten fifth-batch checks have native candidate policies.
+This brings the authored candidates to 50 of 142 checks.
+The private pack remains inactive; `packs/data-layer/pack.json` has an empty `rules` list.
+No Linear issues were created or amended.
 
-## Evidence
+The source pin remains `2b1504adc4291daaf080b2e932962b134da1a69a` in `neralabs/nera-data-layer`.
+The [evidence file](../fixtures/host/data-layer-port/batch-05-evidence.json) records policy hashes, coverage, measurements, and remaining integration contracts.
 
-The unchanged upstream suite passes all 646 tests.
-The recorder observes 239 calls and preserves synthetic graph inputs separately.
-Those inputs do not count as native passes.
-Many upstream tests exercise helpers rather than complete analyzers; the recording lists these gaps.
+## Rules and parity
 
-The eight candidate policies pass 180 native comparisons: 94 positive and 86 clean.
-These comparisons cover diagnostic codes, paths, lines, multiplicity, and agreement between execution paths.
-The corpus includes parameter order, annotations, imports, exceptions, decorators, aliases, and real Python source graphs.
-The full batch has 76 supplemental source cases. Thirteen cases cover the two unported graph checks.
-Twelve further cases test declared references. Seven cases preserve unresolved graph behavior and its controls.
-The unresolved cases are outside the passing subset and currently produce three false negatives.
+| Check | Behavior exercised |
+|---|---|
+| `missing_async_pairs` | Companion names, parameter counts, parameter order, and exemptions |
+| `sync_async_signatures` | Transaction and connection modes in paired signatures |
+| `async_sync_delegation` | Thin wrappers, helper families, decorators, and empty bodies |
+| `public_api_triples` | Exports, inherited public methods, family slots, decorators, exemptions, and deduplication |
+| `data_layer_facade_purity` | Facade imports and source structure |
+| `data_layer_compat_aliases` | Compatibility aliases and permitted forms |
+| `layer_violations` | Layer ordering, import modules, paths, and typing-only exemptions |
+| `backend_coupling` | Backend boundaries and configured exceptions |
+| `internal_dead_code` | Export roots, references, annotations, modules, inheritance, protocols, callbacks, and diagnostic categories |
+| `imperative_private_functions` | Direct execution, eager signatures, and declared-reference propagation |
 
-The repository measurement covers 5,914 files and 106,201,417 source bytes.
-Seven detectors match the repository oracle.
-The imperative candidate has 26 false positives, 1,904 false negatives, and no work-limit failures.
-Every diagnostic mismatch concerns `calls_imperative`; direct execution and eager signature detection match.
-The [evidence](../fixtures/host/data-layer-port/batch-05-evidence.json) records the current results and the earlier checkpoint.
+The unchanged upstream suite passes 646 tests.
+Its recorder preserves 239 analyzer observations.
+Of these, 124 observations have source inputs suitable for native evaluation.
+Seventy public-triple observations use synthetic graph models; 44 imperative observations also use synthetic graphs.
+One delegation observation exercises I/O behavior.
+These 115 observations remain separate and do not count as native passes.
+Other original tests exercise helpers without a supported analyzer boundary.
 
-The Python shared engine takes 34.6 seconds with one worker.
-The native workspace takes 15.4 seconds with four workers, plus 516 milliseconds for compilation.
-An unchanged file takes 31 milliseconds; an edited file takes 73 milliseconds.
-These timings measure incomplete semantics. They do not establish a speedup with parity.
-The native build uses the profiling feature and the existing system allocator shim.
+The combined native source gate compares 312 calls: 198 positive and 114 clean.
+Both snapshot and workspace evaluation match the oracle, with no failures or execution-path differences.
+The comparisons include code, relative path, line, multiplicity, and recorded category or backend column.
+Every check has positive and clean coverage.
+The supplemental probes retain unchanged oracle outputs and verified source identities.
+The public-triple rule has positive probes even though the repository detector reports no violations.
 
-## Engine changes
+The full repository gate compares 5,914 files and 106,201,417 UTF-8 bytes.
+All ten detectors match 23,835 findings, with zero false positives, false negatives, or engine failures.
+Unchanged-file resends and a trailing-newline edit also match the oracle.
+The harness now checks their complete paged results, as well as measuring their time.
 
-The rebuilt addon supports these reduced cases:
+## Engine capabilities driven by the ports
 
-- Evidence projections can extract a regular-expression group from a string field.
-  Ordered evidence predicates compare strings in UTF-16 ordinal order.
-  The layer check uses four-digit layer numbers from paths and import modules.
-- Source-text comparisons can read exact relation counts.
-  The missing-pair check compares positional parameter counts and corresponding parameter names.
-- AST rules can test `filePath`, including within a call-graph seed.
-  The imperative check seeds functions from architectural paths.
-- Python supports `calls: {graph: "references", at: "definition", ...seed}`.
-  It follows callbacks, returned functions, imported declarations, and methods selected through declared parameter types.
-  Method references resolve on the declaring class and its bases.
-  Ordinary call queries retain their existing dispatch behavior.
+### Declared references
 
-Invalid extraction groups, invalid patterns, unknown keys, and excessive pattern lengths fail compilation.
-The layer regression checks snapshot evaluation, workspace evaluation, and an edit that removes a finding.
-Reference tests also change a callee while preserving the caller file, and check that its finding changes.
+The [imperative analyzer](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_imperative_private_functions.py#L174) propagates through the source graph's callers.
+The source graph includes callbacks and returned functions, beyond direct calls.
+Python `calls` queries now support `graph: "references"` with `at: "definition"`.
+This mode preserves ordinary call-query behavior and uses declaration semantics for its own graph.
 
-## Porting and speed findings
+The [source resolver](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L1970) motivates the implemented relation shapes:
 
-The recorder originally reduced some source paths to basenames.
-It now preserves relative paths and paths within the pinned source tree.
-The test suite was rerun after that correction.
+- Declared imports, reexports, final function definitions, and module method inventories.
+- Callbacks, returned functions, nested function bodies, and declared parameter receivers.
+- Declaring-class methods, breadth-first base traversal, `super`, and composed mixin lookup.
+- Constructor parameter types and direct class-field annotations.
+- Authored decorator-to-sibling links, including inherited siblings.
 
-The delegation port initially used 29 AST traversals.
-A large upstream file charged approximately 3.7 million nodes and exceeded the snapshot evaluator's work limit.
-Each clause passed in isolation.
-Combining mutually exclusive checks reduced the policy to 13 traversals without changing the limit.
-Factoring repeated expressions into shared utilities reduced source-corpus replay from approximately 30 seconds to three seconds.
-Both execution paths then passed.
+`calls.siblingLinks` declares decorator patterns and sibling-name rewrites.
+`calls.constructorFields.fieldToParameter` declares a field-name rewrite for constructor parameter lookup.
+These contracts are bounded, validated, hashed, and isolated in graph caches.
+No native detector contains data-layer decorator names or naming conventions.
+The policies supply those values from the pinned source constants.
 
-Repository replay exposed further policy defects that small probes missed:
+The source graph deliberately ignores several runtime relations.
+The port preserves its behavior for assignment aliases, quoted receiver annotations, positional-only annotations, conditional field annotations, and indirect module-valued reexports.
+The regression corpus includes positive cases and controls for these distinctions.
+Changes to callees, import inventories, and class-name uniqueness invalidate unchanged callers.
 
-- Production roots include top-level `l####_*` packages and `_internal`.
-- A docstring-only async body is an allowed empty body.
-- Method signature analysis excludes `self` and `cls` annotations.
-- The source graph keeps the final function definition, including after overload declarations.
-- Property setters and deleters do not seed eager signature findings.
-
-These defects were corrected. The remaining imperative mismatches concern graph propagation.
-
-The first declaration-selection optimization caused 131 work-limit failures.
-It built the full Python usage index for a declaration-only question.
-It also counted matching class definitions across the module for every method.
-Declaration-only binding queries now use a cached name-site index and avoid unknown-value matching when their filters need no usage facts.
-The policy checks the class name's binding chain instead of rescanning the module.
-A 700-method class, including an overwritten definition, passes both execution paths at the existing limit.
-The repository no longer has work-limit failures. The limit was not increased.
-
-The full native suite exposed repeated capture analysis during compilation.
-The compiler now shares utility summaries with capture ordering, restoring the linear utility-chain bound.
-Stale count-value, parser-vocabulary, and budget-test expectations were updated.
-
-Policy generation also sorts constant sets before lowering them.
-The eight outputs are identical under two different Python hash seeds.
-
-## Remaining graph work
-
-The [imperative analyzer](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_imperative_private_functions.py#L174) propagates findings through `graph.callers`.
-Its graph includes function references passed as arguments or returned as values.
-The declared-reference mode now handles those shapes, including declared receiver dispatch.
-Reduced oracle probes also distinguish assignment aliases, quoted annotations, and positional-only parameters.
-All twelve probes pass in snapshot and workspace evaluation.
-
-Three further source pairs prove unresolved propagation behavior:
-
-| Required relation | Upstream implementation | Reduced case |
-|---|---|---|
-| Decorator-generated delegation to a named sibling, including inherited siblings | [Legacy decorator edges](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L2262) | `decorator-generated-edge` |
-| Method selection through an annotated instance field and its declaring hierarchy | [Chained receiver resolution](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L2022) | `typed-field-edge` |
-| Method selection through the receiver's base classes | [Super resolution](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L2011) | `super-method-edge` |
-
-The [remaining-graph corpus](../fixtures/host/data-layer-port/batch-05-remaining-graph-probes.json) records each positive case and a control without that edge.
-Native replay misses exactly the three propagated findings and adds no findings on the controls.
-These cases do not explain every remaining repository difference.
-They establish concrete requirements for further porting, without creating Linear tickets.
+### Project relations and recursive queries
 
 The [public-triple analyzer](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_public_api_triples.py#L499) groups exported functions and inherited public methods.
-Its requirements include export aliases, inherited method selection, family slots, parameter agreement, and diagnostic deduplication.
-The source probes exercise exported functions, exported classes, inherited methods, and missing decorators.
+It compares family slots, parameter lists, decorator requirements, and inherited implementation identities.
+A local AST predicate cannot represent those project-wide joins and groups.
 
-The [dead-code graph walk](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L2569) starts from public exports.
-It follows references, annotations, class uses, inheritance, protocol methods, convention-based siblings, and module-level references.
-Source probes cover unused symbols, exported roots, calls, callbacks, annotations, and implicit methods.
-A call-only graph cannot establish parity for this shape.
+The [dead-code walk](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L2569) adds recursive relations.
+Its roots include public exports, imported module initialization, and production dynamic imports.
+It follows references, annotation classes, public methods, dunders, subclasses, mixins, protocols, and convention-named siblings.
+A second annotation expansion has different propagation rules.
+A class can produce two diagnostic categories at one source span.
 
-The signed category/total baseline reporter for `async_sync_delegation` also remains a separate integration contract.
-The suite recorder preserves its upstream output while comparing its raw source detections.
+The engine now supports a general `relational` clause:
+
+- AST evidence supplies named tables with scalar projected fields and exact source anchors.
+- Ordered, materialized SELECT stages supply joins, groups, windows, indexes, and recursive CTEs.
+- An optional native `reference_edges` table supplies declared-reference edges.
+- Final rows select input anchors, diagnostic identity fields, and optional diagnostic codes.
+- Suppression retains facts and removes only covered output findings.
+- Incremental evidence changes and semantic graph changes invalidate dependent global clauses.
+
+Queries cannot access files, metadata, writes, pragmas, attached databases, or nondeterministic functions.
+Compilation checks every query against empty schemas before reading source.
+Evaluation enforces input completeness, stable identities, source-anchor validity, work limits, and interruption checks.
+The work allowance counts input rows, regex text chunks, and calibrated SQLite instruction groups.
+The [DSL reference](code-rule-dsl-reference.html#relational-clause) documents the contract.
+
+## TDD ladders and root causes
+
+The port progressed through reduced source cases, native execution-path comparisons, incremental edits, and the complete repository oracle.
+The [graph corpus](../fixtures/host/data-layer-port/batch-05-remaining-graph-probes.json) contains 51 declaration-resolution cases.
+The [relational corpus](../fixtures/host/data-layer-port/batch-05-relational-probes.json) contains 68 family and reachability cases.
+
+| Failure | Root cause | Correction and regression |
+|---|---|---|
+| Imperative propagation missed repository callers | Runtime call semantics differed from the source's declaration graph | Separate reference mode; callback, import, annotation, inheritance, and sibling-link ladders |
+| Declaration matching exceeded work limits | Declaration-only queries built usage indexes and rescanned whole classes | Cached name-site lookup; a 700-method class passes at existing limits |
+| Utility compilation repeated capture analysis | Shared utilities were summarized repeatedly | Reuse utility summaries; the linear-chain regression passes |
+| Family queries exhausted SQL work | Recursive name resolution used an unfavorable join order; export lookups rescanned literals | Indexed stages, bounded statistics, explicit worklist joins, and filtered execution-call inputs |
+| Module initialization exhausted SQL work | Every identifier used repeated declaration-span scans | Capture AST contexts once; use indexed declaration identities |
+| Dead-code parity had 42 extra and one missing diagnostic | Plain imports vanished through SQL null arithmetic; multiline bases failed normalization; module aliases added a false edge | Import-root, multiline-base, conditional-class, and reexported-module regressions |
+| Dynamic-import probes disagreed | Standalone analysis and the production plugin use different extra roots | Preserve the entry-point distinction; test both paths against the original functions |
+
+No oracle source, expected findings, or existing AST work limit changed to obtain parity.
+Generated policies remain identical across Python hash seeds.
+
+## Speed findings
+
+| Measurement | Result |
+|---|---:|
+| Shared Python oracle, one worker, no fact cache | 47.00 s |
+| Empty native workspace, four workers | 168.78 s |
+| Native policy compilation | 1027.9 ms |
+| Unchanged-file resend, including complete result comparison | 1577.3 ms |
+| Trailing-newline edit, including complete result comparison | 32.25 s |
+
+The native workspace is slower than the Python oracle in this sample.
+The earlier concurrent-validation run took 204.90 seconds cold and 38.52 seconds for the edit.
+The measured dead-code edge stage takes 18.12 seconds; its recursive dispatch stage takes 6.20 seconds.
+These stage timers exclude AST extraction, input insertion, graph linking, and result publication.
+The remaining wall time cannot establish one narrower bottleneck.
+Unchanged input does not rerun SQL stages.
+The whitespace edit reruns both project plans.
+
+The original Python run uses one worker; the native workspace uses four workers.
+The native release build enables profiling, thin LTO, and 256 code-generation units.
+It uses the existing system-allocator shim.
+These shared-machine samples do not establish production throughput or a stable speed ratio.
+
+The two project rules add substantial cost.
+The public-triple candidate gathers declaration and annotation tables before grouping families.
+The dead-code candidate also gathers module-initialization facts and computes recursive reachability.
+Both rebuild materialized SQL stages when their input facts change.
+A small source edit can therefore cause a project-wide query rerun.
+
+Profiling identified concrete costs, rather than a missing detector feature:
+
+1. Recursive joins require indexes and selectivity statistics to avoid repeated scans.
+2. Raw execution-call collection originally retained 388,945 rows; filtering at extraction removes unrelated calls.
+3. Module initialization originally used repeated interval scans; captured contexts reduce that stage to indexed lookups.
+4. Generic relational inputs repeat AST extraction across rule documents.
+5. SQL materialization and recursive dispatch remain visible costs after parity corrections.
+
+Further speed work should measure shared source-fact extraction and incremental relational maintenance against this passing gate.
+It must preserve positive source cases, repository findings, edit results, and existing resource failures.
+Performance work does not justify a new Linear feature issue.
+
+## Remaining integration contracts
+
+These policies establish source-detection parity for the recorded corpus and pinned repository.
+They do not certify every synthetic graph helper or every possible Python program.
+The 114 retained graph-model observations still require a separate model adapter.
+They remain visible in the original recording.
+
+The signed category/total reporter for `async_sync_delegation` remains a separate integration contract.
+The public-triple recorder now compares raw analyzer detections and retains the signed reporter output separately.
+The private pack remains inactive pending migration integration.
 
 ## Validation
 
-All 1,347 native DSL tests pass; 22 tests are ignored.
-The 51 TypeScript regressions pass, including seven fifth-batch capability tests.
-Typechecking, repository checks, native formatting, Clippy, and reference grammar checks pass.
-The unresolved corpus remains a failing parity check with three false negatives.
+All 75 TypeScript regressions pass across eight files, including all data-layer conformance gates.
+All 1,347 native DSL tests pass; 22 tests remain ignored.
+Typechecking, repository checks, native formatting, Clippy, reference grammar, and licensing checks pass.
 
 ## Reproduction
 
-Use the pinned source tree and a Python environment with its dependencies:
+Use the pinned source tree and its Python dependencies:
 
 ```sh
 python scripts/dsl/data_layer_record.py --batch 5 --source SOURCE --repo REPO --output ORIGINAL.json
-python scripts/dsl/data_layer_probe_five.py --source SOURCE --repo REPO \
-  --inputs fixtures/host/data-layer-port/batch-05-probe-inputs.json --output PROBES.json
-python scripts/dsl/data_layer_probe_five.py --source SOURCE --repo REPO \
-  --inputs fixtures/host/data-layer-port/batch-05-graph-probe-inputs.json --output GRAPH.json
 python scripts/dsl/data_layer_generate_batch_five.py --source SOURCE --repo REPO
 npx vitest run test/conformance/data-layer/batch-five.test.ts \
-  test/engine/native/data-layer-batch-five-capabilities.test.ts --maxWorkers=1
+  test/engine/native/data-layer-batch-five-capabilities.test.ts \
+  test/engine/native/relational-evidence.test.ts --maxWorkers=1
 ```
 
-Replay the unresolved cases separately; this command currently exits with three false negatives:
+Regenerate each supplemental recording with `data_layer_probe_five.py`, using its corresponding `*-inputs.json` file.
 
 ```sh
-node --import tsx conformance/data-layer/replay.ts \
-  --recording fixtures/host/data-layer-port/batch-05-remaining-graph-probes.json --output REMAINING.json
+python scripts/dsl/data_layer_suite_record.py --batch 5 --source SOURCE --repo REPO \
+  --workers 1 --output REPOSITORY.json
+node --import tsx conformance/data-layer/suite.ts \
+  --recording REPOSITORY.json --output RESULT.json --allocator ALLOCATOR
 ```
 
-`data_layer_suite_record.py` now accepts batch 5 and an explicit `--checks` subset.
-It includes the symbol survey's project inputs, beyond its sentinel file.
-The current repository snapshot and native result files remain under `/tmp`; they are too large for the fixture corpus.
+The complete source snapshots and repository result files remain under `/tmp` because of their size.
+The committed evidence file contains their measurements and identities.

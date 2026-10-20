@@ -38,6 +38,8 @@ def record(case, source_root):
             from scripts.lint_lib.symbol_graph import build_symbol_graph
             graph = build_symbol_graph(root=root, directories=sorted({f['path'].split('/')[0] for f in files}))
             kwargs = {'execution_only':config.get('options', {}).get('executionOnly', True)} if check == 'public_api_triples' else {}
+            if check == 'internal_dead_code' and config.get('options', {}).get('oracleAnalyzer') is False:
+                kwargs['extra_root_ids'] = module._build_dynamic_import_root_ids(root, sorted({f['path'].split('/')[0] for f in files}), graph)
             raw = getattr(module, {'internal_dead_code':'analyze_dead_code'}.get(check, 'analyze_'+check))(graph, **kwargs)
         elif check == 'missing_async_pairs':raw = module.analyze_file(path, root)
         elif check in ('sync_async_signatures', 'async_sync_delegation'):raw = module.analyze_file(path)
