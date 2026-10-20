@@ -93,6 +93,7 @@ export interface CodeRuleDslDefineClause {
   require_each?: never;
   budget?: never;
   llm?: never;
+  relational?: never;
 }
 
 export interface CodeRuleDslDefine {
@@ -151,6 +152,7 @@ export type CodeRuleDslReportingClause = CodeRuleDslClauseBase & (
       require_each?: never;
       budget?: never;
       llm?: never;
+      relational?: never;
     }
   | {
       forbid?: never;
@@ -160,6 +162,7 @@ export type CodeRuleDslReportingClause = CodeRuleDslClauseBase & (
       };
       budget?: never;
       llm?: never;
+      relational?: never;
     }
   | {
       forbid?: never;
@@ -170,14 +173,28 @@ export type CodeRuleDslReportingClause = CodeRuleDslClauseBase & (
         count: { lte: number; distinct?: string[] };
       };
       llm?: never;
+      relational?: never;
     }
   | {
       forbid?: never;
       require_each?: never;
       budget?: never;
       llm: unknown;
+      relational?: never;
     }
+  | { forbid?: never; require_each?: never; budget?: never; llm?: never; relational: CodeRuleDslRelational }
 );
+
+/** Finite SQL joins and recursive walks over projected native evidence tables. */
+export interface CodeRuleDslRelational {
+  inputs: Record<string, CodeRuleDslRelation>;
+  references?: { language: "python"; siblingLinks?: NonNullable<CodeRuleDslAstRule["calls"]>["siblingLinks"]; constructorFields?: NonNullable<CodeRuleDslAstRule["calls"]>["constructorFields"] };
+  stages?: { name: string; query: string; indexes?: string[][] }[];
+  query: string;
+  key?: string[];
+  code?: string;
+}
+
 
 export type CodeRuleDslQuery =
   | CodeRuleDslRegexQuery
@@ -637,7 +654,9 @@ export interface CodeRuleDslAstRule extends CodeRuleDslSemanticAstRuleFields {
 
 /** A `calls` term: its inner rule's keys, plus how chains pass and what they bind. */
 export type CodeRuleDslCalls = CodeRuleDslAstRule & { through?: "sync" | "any"; chain?: string;
-  graph?: "calls" | "references"; at?: "call" | "definition" };
+  graph?: "calls" | "references"; at?: "call" | "definition";
+  siblingLinks?: { decorator: string; name: { replace: string; by: string } }[];
+  constructorFields?: { fieldToParameter: { replace: string; by: string } } };
 
 /** A count of lines or bytes: exactly `eq`, or from `min` to `max` inclusive (either may be left out). */
 export type CodeRuleDslLineCount = { eq: number } | { min?: number; max?: number };

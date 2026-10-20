@@ -1683,6 +1683,7 @@ fn persisted_summary_bytes_keep_python_and_php_names_unversioned() {
         references: vec![],
         reference_targets: vec![],
         reference_aliases: vec![],
+        reference_decorators: vec![],
         aliases: vec![],
         targets: vec![],
         opaque: vec![],
@@ -1694,15 +1695,15 @@ fn persisted_summary_bytes_keep_python_and_php_names_unversioned() {
     };
     let python = summary(Family::Python, "pkg.f");
     let php = summary(Family::Php, r"\App\f");
-    // Extractor version 11, no module, one name, its length and text, then empty tables.
+    // Extractor version 18, no module, one name, its length and text, then empty tables.
     let bytes = |text: &[u8]| -> Vec<u8> {
         [
-            11, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+            18, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 0, 1, 0, 0, 0,
         ]
         .into_iter()
         .chain(u32::try_from(text.len()).unwrap().to_le_bytes())
         .chain(text.iter().copied())
-        .chain([0; 40])
+        .chain([0; 44])
         .collect()
     };
     let (python_bytes, php_bytes) = (bytes(b"pkg.f"), bytes(br"\App\f"));

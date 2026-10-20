@@ -69,7 +69,7 @@ export const CODE_RULE_FORMAT = "rerail.policy/v1" as const;
 
 export const CODE_RULE_REGEX_SOURCES = ["file.content", "file.path"] as const;
 export type CodeRuleRegexSource = (typeof CODE_RULE_REGEX_SOURCES)[number];
-export const CLAUSE_KINDS = ["forbid", "require_each", "budget", "llm", "define"] as const;
+export const CLAUSE_KINDS = ["forbid", "require_each", "budget", "relational", "llm", "define"] as const;
 export type ClauseKind = (typeof CLAUSE_KINDS)[number];
 export const CODE_RULE_STOP_BY = ["neighbor", "end"] as const;
 export const CODE_RULE_COMPARE_OPS = ["lt", "le", "eq", "ne", "gt", "ge"] as const;
@@ -849,13 +849,20 @@ export const codeRuleCallsSchema: z.ZodType<CodeRuleDslCalls> = z.lazy(
   () =>
     z
       .object({ through: z.enum(["sync", "any"]).optional(), chain: metavariableName.optional(),
-        graph: z.enum(["calls", "references"]).optional(), at: z.enum(["call", "definition"]).optional() })
+        graph: z.enum(["calls", "references"]).optional(), at: z.enum(["call", "definition"]).optional(),
+        siblingLinks: z.array(z.object({ decorator: nonEmptyString,
+          name: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict()).min(1).max(32).optional(),
+        constructorFields: z.object({ fieldToParameter: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict().optional() })
       .passthrough()
       .superRefine((calls, context) => {
         if (calls.graph === "references" && calls.at !== "definition") {
           context.addIssue({ code: "custom", path: ["at"], message: "graph references requires at definition." });
         }
-        const { through: _through, chain: _chain, graph: _graph, at: _at, ...inner } = calls;
+        if ((calls.siblingLinks !== undefined || calls.constructorFields !== undefined) && calls.graph !== "references") {
+          const field = calls.siblingLinks !== undefined ? "siblingLinks" : "constructorFields";
+          context.addIssue({ code: "custom", path: [field], message: `${field} requires graph references.` });
+        }
+        const { through: _through, chain: _chain, graph: _graph, at: _at, siblingLinks: _siblingLinks, constructorFields: _constructorFields, ...inner } = calls;
         const parsed = codeRuleAstRuleSchema.safeParse(inner);
         if (!parsed.success) {
           for (const issue of parsed.error.issues) context.addIssue({ ...issue, code: "custom", message: issue.message });
@@ -1056,7 +1063,7 @@ function visitFormatArgs(rule: CodeRuleDslAstRule, path: RulePath, parsed: Parse
 
 function visitCalls(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGrammar | undefined, issue: RuleIssue, visit: AstRuleVisit): void {
   if (rule.calls === undefined) return;
-  const { through: _through, chain: _chain, graph: _graph, at: _at, ...inner } = rule.calls;
+  const { through: _through, chain: _chain, graph: _graph, at: _at, siblingLinks: _siblingLinks, constructorFields: _constructorFields, ...inner } = rule.calls;
   if (containsCalls(inner)) issue([...path, "calls"], "A calls rule cannot contain calls.");
   visit(inner, [...path, "calls"], parsed);
 }
@@ -1421,6 +1428,15 @@ export const codeRuleClauseSchema = z
       })
       .strict()
       .optional(),
+    relational: z.object({
+      inputs: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), codeRuleRelationSchema),
+      stages: z.array(z.object({ name: nonEmptyString, query: nonEmptyString, indexes: z.array(z.array(nonEmptyString).min(1).max(16)).max(8).optional() }).strict()).max(32).optional(),
+      references: z.object({ language: z.literal("python"),
+        siblingLinks: z.array(z.object({ decorator: nonEmptyString, name: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict()).min(1).max(32).optional(),
+        constructorFields: z.object({ fieldToParameter: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict().optional(),
+      }).strict().optional(),
+      query: nonEmptyString, key: z.array(nonEmptyString).min(1).max(16).optional(), code: nonEmptyString.optional(),
+    }).strict().optional(),
     llm: z.unknown().optional(),
     define: codeRuleDefineSchema.optional(),
   })

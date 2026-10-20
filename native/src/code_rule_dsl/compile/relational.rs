@@ -1,0 +1,203 @@
+//! Compile a relational clause and validate every SQL statement against its
+//! finite table schema before any source is read.
+use super::{define::Defines, evidence::compile_relation};
+use crate::code_rule_dsl::json::{invalid, non_empty_str, object, reject_unknown};
+use crate::code_rule_dsl::model::Capabilities;
+use crate::code_rule_dsl::relational::{self, Plan, Stage};
+use napi::Result;
+use serde_json::Value;
+use std::collections::BTreeSet;
+use std::sync::{Arc, atomic::AtomicUsize};
+
+fn names(value: &Value, path: &str) -> Result<Vec<String>> {
+    let array = value
+        .as_array()
+        .filter(|items| !items.is_empty() && items.len() <= 16)
+        .ok_or_else(|| invalid(format!("{path} must contain 1 to 16 field names")))?;
+    array
+        .iter()
+        .map(|value| non_empty_str(Some(value), path).map(str::to_owned))
+        .collect()
+}
+fn text(value: Option<&Value>, path: &str, limit: usize) -> Result<String> {
+    let text = non_empty_str(value, path)?;
+    if text.len() > limit {
+        return Err(invalid(format!("{path} exceeds maxAstPatternBytes")));
+    }
+    Ok(text.to_owned())
+}
+
+pub(super) fn compile(
+    value: &Value,
+    path: &str,
+    capabilities: &Capabilities,
+    defines: &Defines,
+    required_ast: &mut BTreeSet<(String, String)>,
+) -> Result<Plan> {
+    let spec = object(value, path)?;
+    reject_unknown(
+        spec,
+        &["inputs", "stages", "query", "key", "code", "references"],
+        path,
+    )?;
+    let input_spec = object(
+        spec.get("inputs")
+            .ok_or_else(|| invalid(format!("{path}/inputs is required")))?,
+        &format!("{path}/inputs"),
+    )?;
+    if input_spec.is_empty() || input_spec.len() > 32 {
+        return Err(invalid(format!(
+            "{path}/inputs must contain 1 to 32 relations"
+        )));
+    }
+    let db = relational::connection(
+        capabilities.limits.max_regex_pattern_bytes,
+        Arc::new(AtomicUsize::new(usize::MAX)),
+    )?;
+    let mut tables = BTreeSet::new();
+    let mut inputs = Vec::new();
+    for (name, value) in input_spec {
+        if !relational::identifier(name) {
+            return Err(invalid(format!(
+                "{path}/inputs/{name} is not a relation identifier"
+            )));
+        }
+        let input = compile_relation(
+            value,
+            &format!("{path}/inputs/{name}"),
+            capabilities,
+            defines,
+            required_ast,
+        )?;
+        if input.predicate.is_some() || !input.closure.is_empty() {
+            return Err(invalid(format!(
+                "{path}/inputs/{name}: use SQL WHERE and recursive stages instead of evidence where/closure"
+            )));
+        }
+        let fields = input
+            .ast
+            .project
+            .iter()
+            .map(|project| project.field.clone())
+            .collect::<Vec<_>>();
+        let mut unique = BTreeSet::new();
+        if fields
+            .iter()
+            .any(|name| !relational::identifier(name) || !unique.insert(name.to_ascii_lowercase()))
+        {
+            return Err(invalid(format!(
+                "{path}/inputs/{name}: projected fields must be distinct relation identifiers"
+            )));
+        }
+        relational::create_input(&db, name, &fields)?;
+        tables.insert(name.clone());
+        inputs.push((name.clone(), input));
+    }
+    let references = spec.get("references").map(|value| -> Result<_> {
+        let at = format!("{path}/references");
+        let spec = object(value,&at)?;
+        reject_unknown(spec,&["language","siblingLinks","constructorFields"],&at)?;
+        if spec.get("language").and_then(Value::as_str) != Some("python") { return Err(invalid(format!("{at}/language must be python"))); }
+        if tables.contains("reference_edges") { return Err(invalid("reference_edges is reserved for the native graph")); }
+        let mut calls = spec.clone(); calls.remove("language");
+        calls.insert("graph".to_owned(),Value::String("references".to_owned()));
+        calls.insert("at".to_owned(),Value::String("definition".to_owned()));
+        calls.insert("kind".to_owned(),Value::String("function_definition".to_owned()));
+        calls.insert("not".to_owned(),serde_json::json!({"kind":"function_definition"}));
+        let query = super::compile_query(&serde_json::json!({"ast":{"language":"python","rule":{"kind":"function_definition","calls":calls}}}),&at,capabilities,defines,required_ast)?;
+        let key = query.calls().first().ok_or_else(||invalid("native graph term was not compiled"))?.through.links;
+        relational::create_input(&db,"reference_edges",&relational::REFERENCE_FIELDS.iter().map(|field|(*field).to_owned()).collect::<Vec<_>>())?;
+        tables.insert("reference_edges".to_owned());
+        Ok(relational::References { query,key })
+    }).transpose()?;
+    let mut stages = Vec::new();
+    if let Some(value) = spec.get("stages") {
+        let values = value
+            .as_array()
+            .filter(|items| items.len() <= 32)
+            .ok_or_else(|| invalid(format!("{path}/stages must contain at most 32 stages")))?;
+        for (index, value) in values.iter().enumerate() {
+            let at = format!("{path}/stages/{index}");
+            let spec = object(value, &at)?;
+            reject_unknown(spec, &["name", "query", "indexes"], &at)?;
+            let name = non_empty_str(spec.get("name"), &format!("{at}/name"))?.to_owned();
+            if !relational::identifier(&name)
+                || tables.iter().any(|table| table.eq_ignore_ascii_case(&name))
+            {
+                return Err(invalid(format!(
+                    "{at}/name must be a new relation identifier"
+                )));
+            }
+            let query = text(
+                spec.get("query"),
+                &format!("{at}/query"),
+                capabilities.limits.max_ast_pattern_bytes,
+            )?;
+            let columns = relational::columns(&db, &query, &tables)?;
+            let indexes = spec
+                .get("indexes")
+                .map(|value| {
+                    value
+                        .as_array()
+                        .filter(|items| items.len() <= 8)
+                        .ok_or_else(|| {
+                            invalid(format!("{at}/indexes must contain at most 8 indexes"))
+                        })?
+                        .iter()
+                        .map(|value| {
+                            let fields = names(value, &format!("{at}/indexes"))?;
+                            if fields.iter().any(|field| !columns.contains(field)) {
+                                return Err(invalid(format!(
+                                    "{at}/indexes names an unknown column"
+                                )));
+                            }
+                            Ok(fields)
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?
+                .unwrap_or_default();
+            let stage = Stage {
+                name,
+                query,
+                indexes,
+            };
+            relational::create_stage(&db, &stage, false)?;
+            tables.insert(stage.name.clone());
+            stages.push(stage);
+        }
+    }
+    let query = text(
+        spec.get("query"),
+        &format!("{path}/query"),
+        capabilities.limits.max_ast_pattern_bytes,
+    )?;
+    let columns = relational::columns(&db, &query, &tables)?;
+    for required in ["path", "start_byte", "end_byte"] {
+        if !columns.iter().any(|column| column == required) {
+            return Err(invalid(format!("{path}/query must select {required}")));
+        }
+    }
+    let key = spec
+        .get("key")
+        .map(|value| names(value, &format!("{path}/key")))
+        .transpose()?
+        .unwrap_or_default();
+    let code = spec
+        .get("code")
+        .map(|value| non_empty_str(Some(value), &format!("{path}/code")).map(str::to_owned))
+        .transpose()?;
+    for field in key.iter().chain(code.iter()) {
+        if !columns.contains(field) {
+            return Err(invalid(format!("{path}: unknown output column {field}")));
+        }
+    }
+    Ok(Plan {
+        references,
+        inputs,
+        stages,
+        query,
+        key,
+        code,
+    })
+}

@@ -11,6 +11,7 @@ use crate::code_rule_dsl::query::crossfile::{self, Relation, Requirement};
 use crate::code_rule_dsl::violations::{self, NodeGroup, Witness};
 use ast_grep_core::Doc;
 use ast_grep_core::matcher::NodeMatch;
+use ast_grep_core::replacer::Content;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 
@@ -123,6 +124,11 @@ pub(super) fn project<D: Doc>(
                         })
                         .map_or(Value::Null, |line| json!(line)),
                     ProjectionSource::CaptureText(capture) => exported_text(env, capture)
+                        .or_else(|| {
+                            env.get_transformed(capture).map(|bytes| {
+                                <D::Source as Content>::encode_bytes(bytes).into_owned()
+                            })
+                        })
                         .or_else(|| env.get_match(capture).map(|node| node.text().into_owned()))
                         .map_or(Value::Null, Value::String),
                     ProjectionSource::CaptureStart(capture) => env

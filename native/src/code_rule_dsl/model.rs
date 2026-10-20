@@ -634,6 +634,7 @@ impl Terms {
 #[derive(Clone)]
 pub(super) enum ClauseKind {
     Forbid(Query),
+    Relational(super::relational::Plan),
     RequireEach {
         subject: FactQuery,
         evidence: FactQuery,
@@ -646,6 +647,16 @@ pub(super) enum ClauseKind {
         distinct: Vec<String>,
     },
     Llm,
+}
+
+impl ClauseKind {
+    pub(super) fn calls_query(&self) -> Option<&Query> {
+        match self {
+            Self::Forbid(query) => Some(query),
+            Self::Relational(plan) => plan.references.as_ref().map(|reference| &reference.query),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -708,6 +719,10 @@ impl CompiledCodeRule {
                 subject.ast.query.reads_server_graph() || evidence.ast.query.reads_server_graph()
             }
             ClauseKind::Budget { query, .. } => query.ast.query.reads_server_graph(),
+            ClauseKind::Relational(plan) => plan
+                .inputs
+                .iter()
+                .any(|(_, input)| input.ast.query.reads_server_graph()),
             ClauseKind::Llm => false,
         })
     }

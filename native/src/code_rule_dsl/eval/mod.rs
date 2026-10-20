@@ -400,6 +400,25 @@ pub(super) fn evaluate_clauses(
                     evidence::budget(code_rule, clause, query, rows),
                 );
             }
+            ClauseKind::Relational(plan) => {
+                let rows = plan
+                    .inputs
+                    .iter()
+                    .map(|(_, input)| {
+                        stateless_rows(
+                            code_rule,
+                            clause,
+                            (input, evidence::Side::Counted),
+                            snapshot,
+                            &mut evaluation.metrics,
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                merge(
+                    &mut evaluation,
+                    super::relational::evaluate(code_rule, clause, plan, rows, snapshot),
+                );
+            }
             ClauseKind::Llm => evaluation.failures.push(failure(
                 &clause.id,
                 "missing-capability",
@@ -508,7 +527,7 @@ fn stateless_calls(
 ) -> Result<Option<calls::EvaluationSlot>> {
     let mut terms = Terms::default();
     for clause in clauses {
-        if let ClauseKind::Forbid(query) = &clause.kind {
+        if let Some(query) = clause.kind.calls_query() {
             for term in query.calls() {
                 terms.add(&term);
             }

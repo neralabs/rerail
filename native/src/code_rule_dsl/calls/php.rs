@@ -1053,6 +1053,7 @@ pub(crate) fn extract<D: Doc>(
         references: Vec::new(),
         reference_targets: Vec::new(),
         reference_aliases: Vec::new(),
+        reference_decorators: Vec::new(),
         targets: extractor.targets,
         aliases: Vec::new(),
         opaque: Vec::new(),
