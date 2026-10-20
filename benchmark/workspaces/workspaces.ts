@@ -292,7 +292,10 @@ async function measureWorkspace(
       if (!attachment.attached) throw new Error(`${root}: the content store did not attach: ${attachment.reason ?? "(no reason)"}`);
       attachMs = attachment.discoveryMilliseconds + attachment.publicationMilliseconds;
       while (true) {
-        const chunk = chunkSchema.parse(JSON.parse(await workspace.indexRepositoryAsync({ ...REPOSITORY_INDEX_OPTIONS, nestedCheckouts: [] })));
+        const response = await workspace.indexRepositoryAsync({ ...REPOSITORY_INDEX_OPTIONS, nestedCheckouts: [] }).catch((error: unknown) => {
+          throw new Error(`${root}: repository index chunk ${chunks + 1} (${read} files read before it) failed`, { cause: error });
+        });
+        const chunk = chunkSchema.parse(JSON.parse(response));
         chunks += 1;
         revision = chunk.revision;
         discovered = chunk.discoveredFiles;
@@ -322,8 +325,14 @@ async function measureWorkspace(
       }
     }
     revision += 1;
-    applySchema.parse(JSON.parse(await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: [], removed: [], quiet: true }))));
-    if (options.store) await workspace.completeStorageRevisionAsync();
+    const final = await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: [], removed: [], quiet: true })).catch((error: unknown) => {
+      throw new Error(`${root}: the full scan's final apply failed`, { cause: error });
+    });
+    applySchema.parse(JSON.parse(final));
+    if (options.store)
+      await workspace.completeStorageRevisionAsync().catch((error: unknown) => {
+        throw new Error(`${root}: recording the scanned revision failed`, { cause: error });
+      });
     let violations = 0;
     let cursor = 0;
     let pages = 0;
