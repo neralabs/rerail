@@ -287,6 +287,8 @@ impl Cycle {
 #[derive(Default)]
 pub(super) struct Recursion {
     cycles: HashMap<UtilKey, Option<Arc<Cycle>>>,
+    /// Per utility: whether neither it nor any utility it reaches is recursive (`unfolds`).
+    unfolding: HashMap<UtilKey, bool>,
     /// Per utility table: the captures each utility's scope holds (`scope_kinds`).
     scopes: HashMap<usize, Arc<Vec<Held>>>,
 }
@@ -310,6 +312,20 @@ impl Recursion {
             }
         }
         cycle
+    }
+
+    /// Whether neither `util` nor any utility it reaches is recursive: its verdict at a key reads
+    /// no recursion's answer, so no recursion check stands behind it.
+    pub(super) fn unfolds(&mut self, util: &UtilRef) -> bool {
+        let key = util_key(util);
+        if let Some(&known) = self.unfolding.get(&key) {
+            return known;
+        }
+        // A utility on a cycle answers before its edges are followed, so the walk ends.
+        let unfolds =
+            self.cycle(util).is_none() && edges_of(util).iter().all(|edge| self.unfolds(edge));
+        self.unfolding.insert(key, unfolds);
+        unfolds
     }
 
     /// The captures (name and kind) a utility's rule may hold in the scope it runs in: those its

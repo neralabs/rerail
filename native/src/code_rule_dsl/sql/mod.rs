@@ -74,7 +74,12 @@ pub(super) const DEFAULT_BATCH_SIZE: usize = 64;
 /// 21. a call's unit drops from its key the parameters its body reads and never holds, so it
 ///     reads them unbound (`lower`);
 /// 22. `violation.each` excludes a parsed tree's node by its range in the tree, not in the host
-///     (`emit/each`).
+///     (`emit/each`);
+/// 23. a unit whose answers are the batch's names its tables by its utility's index in its
+///     table, not by its memo term, so unlike utilities of two clauses share answers (`lower`);
+/// 24. the batch's unit answer tables are emptied when each clause ends, their demand tables
+///     only per batch, so a later clause reads a key demanded before as matching nothing
+///     (`exec`).
 ///
 /// `tests/replay.jsonl` (`replayed_cases_agree`) kills each of them; `just rerail-sql-gate
 /// --mutants` checks it does, and that the differential at the gate's case count does too.

@@ -11,6 +11,7 @@ mod pushdown;
 mod recursion;
 mod setops;
 mod setup;
+mod shared;
 mod three_valued;
 
 use crate::code_rule_dsl::CompiledCodeRuleDsl;

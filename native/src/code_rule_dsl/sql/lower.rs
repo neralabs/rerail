@@ -882,12 +882,36 @@ impl<'p> Lowerer<'p> {
         let following = cycle
             .following
             .then(|| self.slot(INTERNAL, FOLLOWING, SlotKind::Count));
+        // A unit whose answer at a node is its utility's alone, whatever demands it, keeps its
+        // answers for the batch under its utility's memo term (`emit::demand_table` says why that
+        // is exact): it reaches no recursion (no recursion check stands behind an answer),
+        // is keyed by the node alone (capture-free), is context-free (the native memo's shared
+        // term), two-valued, and is no call's, no excluded capture's and no parsed tree's.
+        // Mutant 23: the batch's tables are named by the utility's index in its table, not by
+        // its memo term, so the clauses' unlike utilities of one index share answers.
+        let shared = (params.is_none()
+            && exclude.is_none()
+            && key.is_empty()
+            && !self.three
+            && self.tree.is_none()
+            && following.is_none()
+            && self.program.recursion.unfolds(util))
+        .then(|| util.shared_memo_term())
+        .flatten()
+        .map(|term| {
+            if super::mutant(23) {
+                (0, util.index)
+            } else {
+                term
+            }
+        });
         let id = self.units.len();
         self.units.push(Unit {
             key: key.clone(),
             body: Op::Never,
             scc: 0,
             following,
+            shared,
         });
         self.unit_utils.push(util.clone());
         self.unit_index.insert(identity, (id, own));

@@ -15,9 +15,14 @@ use super::snapshot;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{UtilLimit, node_at};
+use crate::code_rule_dsl::matcher::{
+    GrammarMatcher, UtilLimit, node_at, run_clause, with_file_memo,
+};
+use crate::code_rule_dsl::sql::{ClauseRun, FileContext, SqlError, compile_each};
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
-use crate::code_rule_dsl::test_support::{CAPABILITIES, clause_document, compile_document_with};
+use crate::code_rule_dsl::test_support::{
+    CAPABILITIES, clause_document, compile_document_with, grammar_matchers,
+};
 use ast_grep_core::AstGrep;
 use rayon::prelude::*;
 use serde_json::{Map, Value, json};
@@ -1514,6 +1519,124 @@ fn run_case(ast: &Value, violation: &Value, input: &Value, capabilities: &Value)
     }
 }
 
+/// A program of several clauses (`clauses`, ASTs of one language) over `docs`, files of
+/// `dialect`, as a workspace runs it: every clause in one SQL program, the files in batches of
+/// `batch` on one session, each clause over every file of a batch, against each clause alone on
+/// the native matcher. `Same` where every clause finds the same roots in every file; the roots
+/// of every clause, file by file, where not.
+fn run_program(
+    dialect: GrammarDialect,
+    clauses: &[Value],
+    docs: &[TapeDoc],
+    batch: usize,
+    capabilities: &Value,
+) -> Outcome {
+    let violation = json!({ "anchor": "witness.span", "code": "X", "message": "x" });
+    let mut compiled = Vec::with_capacity(clauses.len());
+    for ast in clauses {
+        let document = clause_document(
+            json!({ "id": "ast-match", "forbid": { "ast": ast }, "violation": violation }),
+        );
+        let Ok(rule): napi::Result<CompiledCodeRuleDsl> =
+            compile_document_with(document, capabilities)
+        else {
+            return Outcome::Rejected;
+        };
+        compiled.push(rule);
+    }
+    let mut grammars: Vec<&GrammarMatcher> = Vec::with_capacity(compiled.len());
+    for rule in &compiled {
+        match grammar_matchers(rule)
+            .iter()
+            .find(|grammar| grammar.language == dialect)
+        {
+            Some(grammar) => grammars.push(grammar),
+            None => return Outcome::Rejected,
+        }
+    }
+    let mut native: Vec<Vec<Vec<u32>>> = Vec::with_capacity(grammars.len());
+    for grammar in &grammars {
+        let mut files = Vec::with_capacity(docs.len());
+        for doc in docs {
+            let root = AstGrep::doc(doc.clone());
+            let mut found = Vec::new();
+            let mut work = usize::MAX;
+            let ran = with_file_memo(&root, || {
+                run_clause(&root, grammar, None, usize::MAX, &mut work, |node, _, _| {
+                    found.push(node);
+                    Ok::<_, std::convert::Infallible>(true)
+                })
+            });
+            if !matches!(ran, Ok(Ok(()))) {
+                return Outcome::NativeLimit;
+            }
+            files.push(found);
+        }
+        native.push(files);
+    }
+    let (program, outcomes) = compile_each(
+        &grammars
+            .iter()
+            .map(|grammar| (*grammar, None))
+            .collect::<Vec<_>>(),
+    );
+    let mut statements = Vec::with_capacity(outcomes.len());
+    for outcome in outcomes {
+        match outcome {
+            Ok(statement) => statements.push(statement),
+            Err(reason) => return Outcome::Unsupported(format!("{reason:?}")),
+        }
+    }
+    let failed = |error: SqlError| match error {
+        SqlError::Unsupported(reason) => Outcome::Unsupported(format!("{reason:?}")),
+        SqlError::Sql(message) => Outcome::Differs {
+            native: format!("{native:?}"),
+            sql: message,
+        },
+    };
+    let mut session = match program.session() {
+        Ok(session) => session,
+        Err(error) => return failed(error),
+    };
+    let mut sql: Vec<Vec<Vec<u32>>> = vec![Vec::with_capacity(docs.len()); statements.len()];
+    for chunk in docs.chunks(batch.max(1)) {
+        let runs: Vec<ClauseRun> = statements
+            .iter()
+            .map(|&statement| ClauseRun {
+                statement,
+                files: (0..chunk.len()).map(|file| (file, None)).collect(),
+            })
+            .collect();
+        let files = chunk
+            .iter()
+            .map(|doc| (doc.clone(), FileContext::default()))
+            .collect();
+        let found = match session.run(files, &runs) {
+            Ok(found) => found,
+            Err(error) => return failed(error),
+        };
+        for (clause, found) in sql.iter_mut().zip(found) {
+            clause.extend(
+                found
+                    .into_iter()
+                    .map(|matches| matches.into_iter().map(|found| found.root).collect()),
+            );
+        }
+    }
+    if native == sql {
+        Outcome::Same {
+            found: native.iter().flatten().map(Vec::len).sum(),
+            three: false,
+            unknown: false,
+        }
+    } else {
+        Outcome::Differs {
+            native: format!("{native:?}"),
+            sql: format!("{sql:?}"),
+        }
+    }
+}
+
 /// Counts the operators a rule uses, by key (`stopBy` by its kind, `matches` by its form, a
 /// semantic leaf's keys under its name).
 fn census(value: &Value, counts: &mut std::collections::BTreeMap<String, usize>) {
@@ -1819,15 +1942,187 @@ fn generated_rules_agree_with_the_native_matcher() {
     for failure in following_failures.iter().take(5) {
         eprintln!("following: {failure}");
     }
+    // Programs of clauses sharing their utilities' answers across the batch, which a case of one
+    // clause does not reach.
+    let program_failures = program_failures(seed, &vocabularies, &capabilities);
     assert!(
         differences.is_empty()
             && unsupported.iter().all(|(_, reason)| refused(reason))
-            && following_failures.is_empty(),
-        "{} differences, {} unsupported, {} recursions through a binding's nodes not agreeing",
+            && following_failures.is_empty()
+            && program_failures.is_empty(),
+        "{} differences, {} unsupported, {} recursions through a binding's nodes not agreeing, {} programs not agreeing",
         differences.len(),
         unsupported.len(),
-        following_failures.len()
+        following_failures.len(),
+        program_failures.len()
     );
+}
+
+/// The programs of `program_cases(seed)` over each language's fixture files (`run_program`), in
+/// batches of two files: why each that does not agree does not. Every one is in scope, so none
+/// may be refused.
+fn program_failures(seed: u64, vocabularies: &[Vocabulary], capabilities: &Value) -> Vec<String> {
+    let docs: Vec<(GrammarDialect, Vec<TapeDoc>)> = vocabularies
+        .iter()
+        .map(|vocabulary| {
+            let dialect = dialect_by_label(vocabulary.label).expect("dialect");
+            let docs = (vocabulary.files.iter())
+                .map(|(_, source)| tape(dialect, source))
+                .collect();
+            (dialect, docs)
+        })
+        .collect();
+    let outcomes = program_cases(seed)
+        .into_par_iter()
+        .map(|(language, clauses)| {
+            let at = FIXTURES
+                .iter()
+                .position(|(label, _)| *label == language)
+                .expect("a fixture language");
+            let (dialect, docs) = &docs[at];
+            let outcome = run_program(*dialect, &clauses, docs, 2, capabilities);
+            (clauses, outcome)
+        })
+        .collect::<Vec<_>>();
+    let (mut compared, mut found) = (0usize, 0usize);
+    let mut failures = Vec::new();
+    for (clauses, outcome) in outcomes {
+        let clauses = Value::Array(clauses);
+        match outcome {
+            Outcome::Same { found: roots, .. } => {
+                compared += 1;
+                found += roots;
+            }
+            Outcome::Rejected | Outcome::NativeLimit => {}
+            Outcome::Unsupported(reason) => failures.push(format!("{reason}\n  {clauses}")),
+            Outcome::Differs { native, sql } => failures.push(format!(
+                "difference:\n  clauses: {clauses}\n  native: {}\n  sql: {}",
+                native.chars().take(1500).collect::<String>(),
+                sql.chars().take(1500).collect::<String>()
+            )),
+        }
+    }
+    eprintln!(
+        "programs: {compared} programs of clauses sharing units agree ({found} roots), {} do not",
+        failures.len()
+    );
+    for failure in failures.iter().take(5) {
+        eprintln!("programs: {failure}");
+    }
+    failures
+}
+
+/// Programs of two to four clauses over one language, each clause reaching one of two utilities
+/// twice (so it is a unit) under its own root kind and relations, so each clause demands keys
+/// of its own and keys another demanded first. A utility of one name is one of two rules, so two
+/// clauses' utilities of a name are equal (one memo term, one batch unit) or not; most are
+/// capture-free and context-free (a batch unit), one binds a capture (a statement's unit), and
+/// the second may reach the first. Drawn from a generator of their own, so the cases above stay
+/// as their seed names them.
+fn program_cases(seed: u64) -> Vec<(&'static str, Vec<Value>)> {
+    const CASES: usize = 96;
+    let mut rng = Rng(seed ^ 0x5ba7_ed00_0000_0001);
+    (0..CASES)
+        .map(|index| {
+            let (language, roots, kinds): (&str, &[&str], &[&str]) = if index % 2 == 0 {
+                (
+                    "typescript",
+                    &[
+                        "identifier",
+                        "call_expression",
+                        "member_expression",
+                        "statement_block",
+                        "arguments",
+                        "string",
+                        "number",
+                        "property_identifier",
+                    ],
+                    &[
+                        "program",
+                        "function_declaration",
+                        "class_declaration",
+                        "arrow_function",
+                        "call_expression",
+                        "arguments",
+                        "statement_block",
+                        "return_statement",
+                        "if_statement",
+                        "object",
+                        "pair",
+                        "identifier",
+                        "string",
+                    ],
+                )
+            } else {
+                (
+                    "python",
+                    &[
+                        "identifier",
+                        "call",
+                        "attribute",
+                        "block",
+                        "argument_list",
+                        "string",
+                        "integer",
+                        "expression_statement",
+                    ],
+                    &[
+                        "module",
+                        "function_definition",
+                        "class_definition",
+                        "call",
+                        "argument_list",
+                        "block",
+                        "return_statement",
+                        "if_statement",
+                        "dictionary",
+                        "assignment",
+                        "identifier",
+                        "string",
+                    ],
+                )
+            };
+            let rule = |rng: &mut Rng| -> Value {
+                let kind = *rng.pick(kinds);
+                match rng.below(6) {
+                    0 => json!({ "inside": { "stopBy": "end", "kind": kind } }),
+                    1 => json!({ "has": { "stopBy": "end", "kind": kind } }),
+                    2 => json!({ "inside": { "kind": kind } }),
+                    3 => json!({ "not": { "has": { "kind": kind } } }),
+                    4 => json!({ "any": [{ "kind": kind }, { "inside": { "stopBy": "end", "kind": *rng.pick(kinds) } }] }),
+                    _ => json!({ "kind": kind, "pattern": "$V" }),
+                }
+            };
+            let rules: Vec<[Value; 2]> = (0..2)
+                .map(|_| [rule(&mut rng), rule(&mut rng)])
+                .collect();
+            let clauses = (0..2 + rng.below(3))
+                .map(|_| {
+                    let mut utils = Map::new();
+                    utils.insert("u0".into(), rng.pick(&rules[0]).clone());
+                    let second = rng.pick(&rules[1]).clone();
+                    let second = if rng.chance(40) {
+                        json!({ "any": [second, { "inside": { "stopBy": "end", "matches": "u0" } }] })
+                    } else {
+                        second
+                    };
+                    utils.insert("u1".into(), second);
+                    let name = *rng.pick(&["u0", "u1"]);
+                    let reach = |rng: &mut Rng| match rng.below(4) {
+                        0 => json!({ "matches": name }),
+                        1 => json!({ "has": { "stopBy": "end", "matches": name } }),
+                        2 => json!({ "inside": { "stopBy": "end", "matches": name } }),
+                        _ => json!({ "not": { "matches": name } }),
+                    };
+                    let terms = vec![reach(&mut rng), reach(&mut rng)];
+                    let combined = if rng.chance(50) { "any" } else { "all" };
+                    let rule = json!({ "kind": *rng.pick(roots), combined: terms });
+                    json!({ "language": language, "rule": rule, "utils": utils })
+                })
+                .collect();
+            (language, clauses)
+        })
+        .collect()
 }
 
 /// Recursions through a binding's site or value (`resolves.binding`), which the matcher leaves
@@ -1952,7 +2247,8 @@ fn replayed_cases_agree() {
         )
         .to_owned()
     });
-    let inputs: Vec<(&str, Value)> = FIXTURES
+    // Each language's snapshot, and its files' tapes for the programs (`run_program`).
+    let inputs: Vec<(&str, Value, Vec<TapeDoc>)> = FIXTURES
         .iter()
         .map(|(label, paths)| {
             let vocabulary = Vocabulary::of(label, paths);
@@ -1961,7 +2257,11 @@ fn replayed_cases_agree() {
                 .iter()
                 .map(|(path, source)| (*label, path.as_str(), source.as_str()))
                 .collect();
-            (*label, snapshot(&files))
+            let dialect = dialect_by_label(label).expect("dialect");
+            let docs = (vocabulary.files.iter())
+                .map(|(_, source)| tape(dialect, source))
+                .collect();
+            (*label, snapshot(&files), docs)
         })
         .collect();
     let mut capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
@@ -1970,16 +2270,33 @@ fn replayed_cases_agree() {
     let (mut differ, mut uncompared) = (0, 0);
     for line in std::fs::read_to_string(&path).expect("replay file").lines() {
         let case: Value = serde_json::from_str(line).expect("a JSON case");
-        let (ast, violation) = (&case["ast"], &case["violation"]);
-        let language = ast["language"].as_str().expect("a language");
-        let input = &inputs
+        // A program: several clauses run together in batches of `batch` files.
+        let clauses = case["clauses"].as_array();
+        let (ast, violation) = match clauses {
+            Some(_) => (&case["clauses"], &Value::Null),
+            None => (&case["ast"], &case["violation"]),
+        };
+        let language = match clauses {
+            Some(clauses) => clauses[0]["language"].as_str(),
+            None => ast["language"].as_str(),
+        }
+        .expect("a language");
+        let (_, input, docs) = inputs
             .iter()
-            .find(|(label, _)| *label == language)
-            .expect("a fixture language")
-            .1;
+            .find(|(label, ..)| *label == language)
+            .expect("a fixture language");
         STATEMENT_PROFILE.set(Some(Default::default()));
         LAST_TIMES.set((0.0, 0.0));
-        let outcome = run_case(ast, violation, input, &capabilities);
+        let outcome = match clauses {
+            Some(clauses) => run_program(
+                dialect_by_label(language).expect("dialect"),
+                clauses,
+                docs,
+                case["batch"].as_u64().unwrap_or(2) as usize,
+                &capabilities,
+            ),
+            None => run_case(ast, violation, input, &capabilities),
+        };
         let profile = STATEMENT_PROFILE.take().unwrap_or_default();
         let rows: usize = profile.values().map(|(_, rows, _)| rows).sum();
         let statements: usize = profile.values().map(|(_, _, runs)| runs).sum();

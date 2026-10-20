@@ -407,6 +407,18 @@ impl UtilRef {
         Some(*term)
     }
 
+    /// `memo_term` where it is what the referenced utility compiles from (`UtilOrigin::digest`),
+    /// the utility being context-free: every clause of any query reaching an equal utility
+    /// shares its verdicts under it. `None` where the term is its table's and index (it reads
+    /// its query's context, or has no origin) or its table is gone.
+    pub(crate) fn shared_memo_term(&self) -> Option<(usize, usize)> {
+        let table = self.table.upgrade()?;
+        let origin = table.origins.get(self.index)?.is_some();
+        (origin && self.scope().flatten().is_some())
+            .then(|| self.memo_term())
+            .flatten()
+    }
+
     /// The captures the referenced utility may read or bind, sorted: all its verdict reads of its
     /// caller's bindings. `Some(None)` where it holds a term that reads more (`context_free`),
     /// `None` where its table is gone.
