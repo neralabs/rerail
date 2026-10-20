@@ -62,6 +62,10 @@ rerail-query-parity *args:
 rerail-data-layer *args:
     @node --import tsx benchmark/data-layer/data-layer.ts {{ args }}
 
+# Peak memory over many repositories in one process (G3's memory condition): setup --data-layer <clone> --workspaces <dir> | run --engine native|sql --rules <dir>… --workspaces <dir> --output <file.json> [--store on|off] [--addon <addon>] | compare <native.json> <sql.json> (benchmark/README.md). RERAIL_BENCH_LOCK=<command> prefixes the run.
+rerail-workspaces *args:
+    @${RERAIL_BENCH_LOCK:-} node --import tsx benchmark/workspaces/workspaces.ts {{ args }}
+
 # The loop's benchmark home from your own clones: --data-layer <nera-data-layer clone> --nera-landing <nera-landing clone> [--home <dir>, default RERAIL_BENCH_HOME or ~/rerail-bench] [--addon <addon>]. Adds the corpus worktree at loop-subset.json's commit, converts the 12 Tempo ports beside their oracles, checks them against loop-subset.json's policy hashes, and prints the loop and gate commands; a second run only checks (benchmark/README.md).
 rerail-bench-setup *args:
     @benchmark/data-layer/setup/setup.sh {{ args }}

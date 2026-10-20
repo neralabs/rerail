@@ -1,0 +1,621 @@
+// `just rerail-workspaces <command>`: peak memory and latency of the code-rule workspace over many repositories in one
+// process, on the native or the SQL engine (benchmark/README.md). A port of Tempo's `benchmark:rerailer` (nera-landing
+// PR #2622), which measured native's 564 MiB peak over 47 nera-data-layer workspaces.
+//
+//   setup --data-layer <nera-data-layer clone> --workspaces <dir>   adds SUBSET's checkouts under <dir>
+//   run --engine native|sql --rules <dir> [--rules <dir> …] --workspaces <dir> --output <file.json>
+//   compare <native.json> <sql.json>                                prints the two runs side by side
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { opendir, readFile, stat } from "node:fs/promises";
+import { cpus, loadavg, release, tmpdir } from "node:os";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { performance } from "node:perf_hooks";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
+import { z } from "zod";
+import {
+  encodeCodeRuleWorkspaceRequest,
+  IGNORED_DIRECTORIES,
+  languageFor,
+  loadNativeBinding,
+  type NativeCodeRuleDslWorkspace,
+  type NativeCompiledCodeRuleDsl,
+  REPOSITORY_INDEX_OPTIONS,
+  resolveNativeBindingPath,
+} from "../../src/engine/index.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const rerailRoot = resolve(here, "../..");
+const capabilitiesPath = resolve(rerailRoot, "native/src/code_rule_dsl/capabilities.json");
+const RULE_FORMAT = "rerail.policy/v1";
+/** The page size the enforcer reads a repository audit's results in (`RESULT_PAGE_BYTES`). */
+const RESULT_PAGE_BYTES = 256 * 1024;
+/** The enforcer applies a single small edit inline (`tryApply`) below this many characters. */
+const INLINE_EDIT_CHARACTERS = 4_096;
+/** The enforcer's walk without a content store applies batches of 32 files, closed at 1 MiB of source. */
+const AUDIT_BATCH_FILES = 32;
+const AUDIT_CHUNK_BYTES = 1024 * 1024;
+const SAMPLE_INTERVAL_MS = 10;
+const MIB = 1024 * 1024;
+
+class UsageError extends Error {}
+
+/**
+ * Eight of the 47 nera-data-layer workspaces #2622 measured (each a checkout at the commit given): numbers
+ * 1 + round(k × 46 / 7) for k = 0…7, from the largest workspace (01, 5,726 Python files) to the smallest (47, 5,491).
+ */
+const SUBSET = [
+  { name: "01", commit: "fce4dc7208c0b892c11a549c8be43fc285580d6b" },
+  { name: "08", commit: "820861353124b50c27f2785143951b37ccbcb7ea" },
+  { name: "14", commit: "5a819aee1513df3fac434175b840fde5bab48b8e" },
+  { name: "21", commit: "c9016b4b45546a48d95ee5d3b8311f3be27b1fb6" },
+  { name: "27", commit: "ca6116dbc6cdc066ce8f4ec3e54d8df51e8df1a1" },
+  { name: "34", commit: "c4f94920613706583b39153a26728e2248839590" },
+  { name: "40", commit: "17562322111407ccfdcdf148e4a9e09afc6f1730" },
+  { name: "47", commit: "e99ce662f0e90653a777b321138a0182271bf43d" },
+] as const;
+
+function git(cwd: string, ...args: string[]): string {
+  const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`git -C ${cwd} ${args.join(" ")}: ${result.stderr.trim()}`);
+  return result.stdout.trim();
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Peak RSS: a worker thread samples the process's resident set every SAMPLE_INTERVAL_MS, so a peak inside a long
+// synchronous native call on the main thread (a rule compile, `addCodeRule`) is seen too. Slot 0 is the run's peak,
+// slot 1 the current phase's, which the main thread resets.
+
+class RssSampler {
+  readonly #slots = new BigInt64Array(new SharedArrayBuffer(16));
+  readonly #worker: Worker;
+
+  constructor() {
+    this.#worker = new Worker(
+      `const { workerData } = require("node:worker_threads");
+       const slots = workerData;
+       const sample = () => {
+         const rss = BigInt(process.memoryUsage.rss());
+         for (let slot = 0; slot < 2; slot += 1) if (rss > Atomics.load(slots, slot)) Atomics.store(slots, slot, rss);
+       };
+       sample();
+       setInterval(sample, ${SAMPLE_INTERVAL_MS});`,
+      { eval: true, workerData: this.#slots },
+    );
+    this.#worker.unref();
+  }
+
+  /** Starts a phase; returns the peak of the phase it ends. */
+  phase(): number {
+    const peak = Number(Atomics.load(this.#slots, 1));
+    Atomics.store(this.#slots, 1, BigInt(process.memoryUsage.rss()));
+    return Math.max(peak, process.memoryUsage.rss());
+  }
+
+  get peak(): number {
+    return Math.max(Number(Atomics.load(this.#slots, 0)), process.memoryUsage.rss());
+  }
+
+  async stop(): Promise<void> {
+    await this.#worker.terminate();
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Rules
+
+interface LoadedRules {
+  compiled: NativeCompiledCodeRuleDsl[];
+  ids: string[];
+  /** Rule documents the engine does not compile, with its reason; they are left out of the run. */
+  rejected: Array<{ path: string; id: string; reason: string }>;
+  sha256: string;
+}
+
+function ruleFiles(directory: string): string[] {
+  return readdirSync(directory, { recursive: true, withFileTypes: true })
+    .filter(entry => entry.isFile() && entry.name.endsWith(".json"))
+    .map(entry => join(entry.parentPath, entry.name))
+    .sort();
+}
+
+/** Every `rerail.policy/v1` document under each directory (recursively, other JSON skipped), compiled once. */
+function loadRules(directories: readonly string[]): LoadedRules {
+  const binding = loadNativeBinding();
+  const capabilities = readFileSync(capabilitiesPath, "utf8");
+  const hash = createHash("sha256");
+  const result: LoadedRules = { compiled: [], ids: [], rejected: [], sha256: "" };
+  const seen = new Set<string>();
+  for (const directory of directories)
+    for (const path of ruleFiles(directory)) {
+      const source = readFileSync(path, "utf8");
+      let document: { format?: unknown; id?: unknown };
+      try {
+        document = JSON.parse(source) as typeof document;
+      } catch {
+        continue;
+      }
+      if (document.format !== RULE_FORMAT || typeof document.id !== "string") continue;
+      if (seen.has(document.id)) throw new Error(`Rule ${document.id} appears twice (${path})`);
+      seen.add(document.id);
+      hash.update(source);
+      try {
+        result.compiled.push(binding.CodeRuleDslRuntime.compile(source, "json", capabilities));
+        result.ids.push(document.id);
+      } catch (error) {
+        result.rejected.push({ path, id: document.id, reason: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  if (result.compiled.length === 0) throw new UsageError(`No rule compiled under ${directories.join(", ")}`);
+  result.sha256 = `sha256:${hash.digest("hex")}`;
+  return result;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// One workspace: the enforcer's stored repository audit (attach the content store, index the Git checkout chunk by
+// chunk, the final quiet apply, record the revision, read the result pages), then edits to the resident workspace as
+// the enforcer applies them, then `evictInactive` and an idle wait.
+
+const chunkSchema = z.object({
+  revision: z.number().int(),
+  done: z.boolean(),
+  overBudget: z.boolean(),
+  discoveredFiles: z.number().int(),
+  readFiles: z.number().int(),
+  failures: z.array(z.object({ code: z.string() })),
+}).passthrough();
+const pageSchema = z.object({
+  cursor: z.number().int(),
+  done: z.boolean(),
+  violations: z.array(z.unknown()),
+  failures: z.array(z.object({ code: z.string() }).passthrough()),
+}).passthrough();
+const applySchema = z.object({ revision: z.number().int() }).passthrough();
+
+interface SourceFile {
+  path: string;
+  absolute: string;
+  language: string;
+  sourceBytes: number;
+}
+
+/** The source files the workspace's rules read, walked as the enforcer walks a repository without a content store. */
+async function sourceFiles(workspace: NativeCodeRuleDslWorkspace, root: string): Promise<SourceFile[]> {
+  const files: SourceFile[] = [];
+  const pending = [root];
+  while (pending.length > 0) {
+    const directory = pending.pop()!;
+    for await (const entry of await opendir(directory)) {
+      const absolute = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (!IGNORED_DIRECTORIES.has(entry.name)) pending.push(absolute);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const path = relative(root, absolute).split(sep).join("/");
+      const language = languageFor(path);
+      if (language === undefined || !workspace.acceptsPath(path)) continue;
+      files.push({ path, absolute, language, sourceBytes: (await stat(absolute)).size });
+    }
+  }
+  if (files.length === 0) throw new Error(`No source file under ${root} is in the rules' scope`);
+  return files;
+}
+
+/** Edits go to the Python files at the minimum, median, p95 and maximum size. */
+function editTargets(files: readonly SourceFile[]): Array<SourceFile & { bucket: string }> {
+  const python = files.filter(file => file.path.endsWith(".py"));
+  if (python.length === 0) throw new Error("No Python file is in the rules' scope");
+  python.sort((left, right) => left.sourceBytes - right.sourceBytes || (left.path < right.path ? -1 : 1));
+  const at = (fraction: number) => python[Math.floor((python.length - 1) * fraction)]!;
+  return [
+    { bucket: "minimum", ...at(0) },
+    { bucket: "p50", ...at(0.5) },
+    { bucket: "p95", ...at(0.95) },
+    { bucket: "maximum", ...at(1) },
+  ];
+}
+
+function percentile(values: readonly number[], fraction: number): number {
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)] ?? Number.NaN;
+}
+
+function cpuMs(since: NodeJS.CpuUsage): number {
+  const used = process.cpuUsage(since);
+  return (used.user + used.system) / 1000;
+}
+
+function countCodes(failures: ReadonlyArray<{ code: string }>, into: Record<string, number>): void {
+  for (const { code } of failures) into[code] = (into[code] ?? 0) + 1;
+}
+
+function memorySnapshot(workspace: NativeCodeRuleDslWorkspace) {
+  const node = process.memoryUsage();
+  return {
+    rss: node.rss,
+    heapUsed: node.heapUsed,
+    external: node.external,
+    arrayBuffers: node.arrayBuffers,
+    native: JSON.parse(loadNativeBinding().nativeMemoryProfile()) as unknown,
+    workspace: JSON.parse(workspace.memoryProfile()) as unknown,
+  };
+}
+
+interface RunOptions {
+  engine: "native" | "sql";
+  sqlBatch: number | undefined;
+  /** Whether the scan is the stored repository index (`on`) or the enforcer's walk without a content store (`off`). */
+  store: boolean;
+  edits: number;
+  idleMs: number;
+}
+
+async function measureWorkspace(
+  name: string,
+  root: string,
+  rules: LoadedRules,
+  options: RunOptions,
+  sampler: RssSampler,
+) {
+  const binding = loadNativeBinding();
+  const stores = mkdtempSync(join(tmpdir(), "rerail-workspaces-store-"));
+  const phases: Record<string, number> = {};
+  sampler.phase();
+  const workspaceStarted = performance.now();
+  const workspace = new binding.CodeRuleDslWorkspace({
+    engine: options.engine,
+    ...(options.sqlBatch === undefined ? {} : { sqlBatchSize: options.sqlBatch }),
+  });
+  try {
+    // Registration compiles the SQL program on SQL (`workspace/sql.rs` `register`).
+    for (const compiled of rules.compiled) workspace.addCodeRule(compiled);
+    const registerMs = performance.now() - workspaceStarted;
+    phases.register = sampler.phase();
+    const afterRegister = memorySnapshot(workspace);
+
+    // The walk for the files in scope (the scan without a store reads them; the edits pick from them) is not timed.
+    const files = await sourceFiles(workspace, root);
+    const scanCpu = process.cpuUsage();
+    const scanStarted = performance.now();
+    let revision = 0;
+    let discovered = 0;
+    let read = 0;
+    let chunks = 0;
+    let attachMs = 0;
+    const failureCodes: Record<string, number> = {};
+    if (options.store) {
+      const attachment = await workspace.enableStorageAsync(root, join(stores, "content.sqlite"));
+      if (!attachment.attached) throw new Error(`${root}: the content store did not attach: ${attachment.reason ?? "(no reason)"}`);
+      attachMs = attachment.discoveryMilliseconds + attachment.publicationMilliseconds;
+      while (true) {
+        const chunk = chunkSchema.parse(JSON.parse(await workspace.indexRepositoryAsync({ ...REPOSITORY_INDEX_OPTIONS, nestedCheckouts: [] })));
+        chunks += 1;
+        revision = chunk.revision;
+        discovered = chunk.discoveredFiles;
+        read += chunk.readFiles;
+        countCodes(chunk.failures, failureCodes);
+        if (chunk.overBudget) throw new Error(`${root}: the repository index went over budget`);
+        if (chunk.done) break;
+      }
+    } else {
+      // The enforcer's walk (`#walkAuditSources`): batches of 32 files, closed at 1 MiB, each applied with the
+      // workspace-wide pass deferred to the final apply.
+      discovered = files.length;
+      let batch: Array<{ path: string; language: string; source: string; module?: string | string[] }> = [];
+      let bytes = 0;
+      for (const [index, file] of files.entries()) {
+        const source = await readFile(file.absolute, "utf8");
+        const module = binding.modulePath(file.language, file.absolute);
+        batch.push({ path: file.path, language: file.language, source, ...(module === null ? {} : { module }) });
+        bytes += Buffer.byteLength(source);
+        if (batch.length < AUDIT_BATCH_FILES && bytes < AUDIT_CHUNK_BYTES && index < files.length - 1) continue;
+        revision += 1;
+        applySchema.parse(JSON.parse(await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: batch, removed: [], deferGlobal: true }))));
+        chunks += 1;
+        read += batch.length;
+        batch = [];
+        bytes = 0;
+      }
+    }
+    revision += 1;
+    applySchema.parse(JSON.parse(await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: [], removed: [], quiet: true }))));
+    if (options.store) await workspace.completeStorageRevisionAsync();
+    let violations = 0;
+    let cursor = 0;
+    let pages = 0;
+    while (true) {
+      const page = pageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
+      pages += 1;
+      violations += page.violations.length;
+      countCodes(page.failures, failureCodes);
+      if (page.done) break;
+      if (page.cursor <= cursor) throw new Error("The result stream did not advance");
+      cursor = page.cursor;
+    }
+    const fullScan = {
+      wallMs: performance.now() - scanStarted,
+      cpuMs: cpuMs(scanCpu),
+      attachMs,
+      chunks,
+      discoveredFiles: discovered,
+      readFiles: read,
+      pages,
+      violations,
+      failureCodes,
+    };
+    phases.scan = sampler.phase();
+    const afterScan = memorySnapshot(workspace);
+    const engineReport = JSON.parse(workspace.engineReport()) as unknown;
+
+    const targets = editTargets(files);
+    const edits: Array<{ bucket: string; path: string; sourceBytes: number; inline: boolean; wallMs: number; cpuMs: number }> = [];
+    for (let iteration = 0; iteration < options.edits; iteration += 1) {
+      const target = targets[iteration % targets.length]!;
+      const source = `${await readFile(target.absolute, "utf8")}\n# rerail benchmark edit ${iteration}\n`;
+      const module = binding.modulePath(target.language, target.absolute);
+      const edited = [{ path: target.path, language: target.language, source, ...(module === null ? {} : { module }) }];
+      revision += 1;
+      const editCpu = process.cpuUsage();
+      const editStarted = performance.now();
+      // The enforcer's edit (`#applyRequest`): inline below 4 KiB when the workspace is free, else off the JS thread.
+      const inline = source.length < INLINE_EDIT_CHARACTERS ? workspace.tryApply(JSON.stringify({ revision, files: edited, removed: [] })) : null;
+      const response = inline ?? (await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: edited, removed: [] })));
+      const wallMs = performance.now() - editStarted;
+      const cpu = cpuMs(editCpu);
+      applySchema.parse(JSON.parse(response));
+      workspace.evictInactive();
+      edits.push({ bucket: target.bucket, path: target.path, sourceBytes: target.sourceBytes, inline: inline !== null, wallMs, cpuMs: cpu });
+    }
+    phases.edits = sampler.phase();
+    const beforeEvict = memorySnapshot(workspace);
+    workspace.evictInactive();
+    await sleep(options.idleMs);
+    const afterEvictIdle = memorySnapshot(workspace);
+    phases.idle = sampler.phase();
+    const wall = edits.map(edit => edit.wallMs);
+    const cpu = edits.map(edit => edit.cpuMs);
+    return {
+      name,
+      root,
+      commit: git(root, "rev-parse", "HEAD"),
+      registerMs,
+      fullScan,
+      edits: {
+        count: edits.length,
+        wallP50Ms: percentile(wall, 0.5),
+        wallP95Ms: percentile(wall, 0.95),
+        cpuP50Ms: percentile(cpu, 0.5),
+        cpuP95Ms: percentile(cpu, 0.95),
+        samples: edits,
+      },
+      rss: {
+        peak: Math.max(...Object.values(phases)),
+        peakByPhase: phases,
+        afterScan: afterScan.rss,
+        final: beforeEvict.rss,
+        afterEvictIdle: afterEvictIdle.rss,
+      },
+      memory: { afterRegister, afterScan, beforeEvict, afterEvictIdle },
+      engineReport,
+    };
+  } finally {
+    workspace.close();
+    rmSync(stores, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Commands
+
+function option(values: Map<string, string[]>, key: string): string | undefined {
+  return values.get(key)?.at(-1);
+}
+
+function parseArguments(argv: readonly string[], valued: readonly string[]): { values: Map<string, string[]>; positional: string[] } {
+  const values = new Map<string, string[]>();
+  const positional: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index]!;
+    if (!argument.startsWith("--")) {
+      positional.push(argument);
+      continue;
+    }
+    if (!valued.includes(argument)) throw new UsageError(`unknown option ${argument}`);
+    const value = argv[++index];
+    if (value === undefined) throw new UsageError(`${argument} needs a value`);
+    values.set(argument, [...(values.get(argument) ?? []), value]);
+  }
+  return { values, positional };
+}
+
+function count(name: string, value: string | undefined, fallback: number, minimum: number): number {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum) throw new UsageError(`${name} takes an integer ≥ ${minimum}, not ${value}`);
+  return parsed;
+}
+
+function workspaceRoots(directory: string, only: readonly string[]): Array<{ name: string; root: string }> {
+  const missing = only.filter(name => !SUBSET.some(workspace => workspace.name === name));
+  if (missing.length > 0) throw new UsageError(`--only names no subset workspace: ${missing.join(", ")}`);
+  return SUBSET
+    .filter(workspace => only.length === 0 || only.includes(workspace.name))
+    .map(({ name, commit }) => {
+      const root = resolve(directory, name);
+      if (!existsSync(root)) throw new UsageError(`${root} does not exist: run setup first`);
+      const head = git(root, "rev-parse", "HEAD");
+      if (head !== commit) throw new UsageError(`${root} is at ${head}, not the subset's ${commit}`);
+      if (git(root, "status", "--porcelain", "--untracked-files=no") !== "") throw new UsageError(`${root} has local changes`);
+      return { name, root: realpathSync(root) };
+    });
+}
+
+async function run(argv: readonly string[]): Promise<void> {
+  const { values } = parseArguments(argv, ["--engine", "--rules", "--workspaces", "--output", "--addon", "--sql-batch", "--store", "--edits", "--idle-ms", "--only"]);
+  const engine = option(values, "--engine");
+  if (engine !== "native" && engine !== "sql") throw new UsageError("--engine takes native or sql");
+  const ruleDirectories = (values.get("--rules") ?? []).map(directory => resolve(directory));
+  if (ruleDirectories.length === 0) throw new UsageError("--rules <dir> is required");
+  const workspacesDirectory = option(values, "--workspaces");
+  if (workspacesDirectory === undefined) throw new UsageError("--workspaces <dir> is required");
+  const output = option(values, "--output");
+  if (output === undefined) throw new UsageError("--output <file.json> is required");
+  const sqlBatch = option(values, "--sql-batch");
+  if (sqlBatch !== undefined && engine !== "sql") throw new UsageError("--sql-batch needs --engine sql");
+  const store = option(values, "--store") ?? "on";
+  if (store !== "on" && store !== "off") throw new UsageError("--store takes on or off");
+  const options: RunOptions = {
+    engine,
+    sqlBatch: sqlBatch === undefined ? undefined : count("--sql-batch", sqlBatch, 0, 1),
+    store: store === "on",
+    edits: count("--edits", option(values, "--edits"), 20, 0),
+    idleMs: count("--idle-ms", option(values, "--idle-ms"), 5_000, 0),
+  };
+  const addon = option(values, "--addon");
+  if (addon !== undefined) process.env.RERAIL_ENGINE_PATH = resolve(addon);
+  const addonPath = realpathSync(resolveNativeBindingPath());
+  process.env.RERAIL_ENGINE_PATH = addonPath;
+  const roots = workspaceRoots(workspacesDirectory, (values.get("--only") ?? []).flatMap(names => names.split(",")));
+
+  const sampler = new RssSampler();
+  const started = performance.now();
+  const loadStart = loadavg();
+  const rssStart = process.memoryUsage.rss();
+  const binding = loadNativeBinding();
+  const kernelVersion = binding.health().kernelVersion;
+  const rules = loadRules(ruleDirectories);
+  const compileMs = performance.now() - started;
+  const peakCompile = sampler.phase();
+  const rssAfterCompile = process.memoryUsage.rss();
+  const nativeAfterCompile = JSON.parse(binding.nativeMemoryProfile()) as unknown;
+  process.stderr.write(`rerail-workspaces: ${engine}, ${rules.compiled.length} rules (${rules.rejected.length} rejected), compiled in ${Math.round(compileMs)} ms, RSS ${(rssAfterCompile / MIB).toFixed(0)} MiB\n`);
+  const workspaces = [];
+  for (const { name, root } of roots) {
+    const measured = await measureWorkspace(name, root, rules, options, sampler);
+    workspaces.push(measured);
+    process.stderr.write(
+      `rerail-workspaces: ${name}: scan ${Math.round(measured.fullScan.wallMs)} ms, edits p50 ${measured.edits.wallP50Ms.toFixed(1)} / p95 ${measured.edits.wallP95Ms.toFixed(1)} ms, ` +
+        `peak ${(measured.rss.peak / MIB).toFixed(0)} MiB, final ${(measured.rss.final / MIB).toFixed(0)} MiB, after evict+idle ${(measured.rss.afterEvictIdle / MIB).toFixed(0)} MiB, ` +
+        `${measured.fullScan.violations} violations, ${JSON.stringify(measured.fullScan.failureCodes)}\n`,
+    );
+  }
+  const result = {
+    benchmark: "rerail-workspaces/v1",
+    engine,
+    sqlBatch: options.sqlBatch,
+    store,
+    addon: { path: addonPath, sha256: `sha256:${createHash("sha256").update(readFileSync(addonPath)).digest("hex")}`, kernelVersion },
+    rules: { directories: ruleDirectories, count: rules.compiled.length, sha256: rules.sha256, rejected: rules.rejected },
+    edits: options.edits,
+    idleMs: options.idleMs,
+    machine: { cpus: cpus().length, model: cpus()[0]?.model, os: `${process.platform} ${release()}`, node: process.version },
+    loadAverage: { start: loadStart, end: loadavg() },
+    wallMs: performance.now() - started,
+    rss: {
+      start: rssStart,
+      afterCompile: rssAfterCompile,
+      nativeAfterCompile,
+      peakCompile,
+      peakSampled: sampler.peak,
+      // The kernel's resident-set high-water mark (`getrusage`, KiB): no sampling gap, never reset.
+      maxRss: process.resourceUsage().maxRSS * 1024,
+      end: process.memoryUsage.rss(),
+    },
+    workspaces,
+  };
+  await sampler.stop();
+  writeFileSync(resolve(output), `${JSON.stringify(result, null, 2)}\n`);
+  process.stderr.write(
+    `rerail-workspaces: ${engine}: ${workspaces.length} workspaces in ${(result.wallMs / 1000).toFixed(0)} s, peak RSS ${(result.rss.peakSampled / MIB).toFixed(0)} MiB sampled, ${(result.rss.maxRss / MIB).toFixed(0)} MiB getrusage; ${output}\n`,
+  );
+}
+
+function setup(argv: readonly string[]): void {
+  const { values } = parseArguments(argv, ["--data-layer", "--workspaces"]);
+  const clone = option(values, "--data-layer");
+  const directory = option(values, "--workspaces");
+  if (clone === undefined || directory === undefined) throw new UsageError("setup needs --data-layer <clone> --workspaces <dir>");
+  for (const { name, commit } of SUBSET) {
+    const root = resolve(directory, name);
+    if (existsSync(root)) {
+      const head = git(root, "rev-parse", "HEAD");
+      if (head !== commit) throw new UsageError(`${root} exists at ${head}, not ${commit}`);
+      process.stdout.write(`${name}: ${root} at ${commit}\n`);
+      continue;
+    }
+    git(resolve(clone), "worktree", "add", "--detach", root, commit);
+    process.stdout.write(`${name}: added ${root} at ${commit}\n`);
+  }
+}
+
+type RunResult = {
+  engine: string;
+  rules: { count: number };
+  wallMs: number;
+  rss: { afterCompile: number; peakCompile: number; peakSampled: number; maxRss: number; end: number };
+  workspaces: Array<{
+    name: string;
+    fullScan: { wallMs: number; cpuMs: number; violations: number; failureCodes: Record<string, number> };
+    edits: { wallP50Ms: number; wallP95Ms: number; samples: Array<{ wallMs: number }> };
+    rss: { peak: number; final: number; afterEvictIdle: number };
+  }>;
+};
+
+function compare(argv: readonly string[]): void {
+  const { positional } = parseArguments(argv, []);
+  if (positional.length !== 2) throw new UsageError("compare takes two run outputs: <native.json> <sql.json>");
+  const [left, right] = positional.map(path => JSON.parse(readFileSync(path, "utf8")) as RunResult) as [RunResult, RunResult];
+  const mib = (bytes: number) => `${(bytes / MIB).toFixed(0)} MiB`;
+  const ms = (value: number) => `${value.toFixed(value < 100 ? 1 : 0)} ms`;
+  const ratio = (a: number, b: number) => (a > 0 ? `${(b / a).toFixed(2)}×` : "-");
+  const rows: Array<[string, number, number, (value: number) => string]> = [
+    ["peak RSS, sampled (run)", left.rss.peakSampled, right.rss.peakSampled, mib],
+    ["peak RSS, getrusage (run)", left.rss.maxRss, right.rss.maxRss, mib],
+    ["RSS after rule compile", left.rss.afterCompile, right.rss.afterCompile, mib],
+    ["RSS at the end of the run", left.rss.end, right.rss.end, mib],
+    ["run wall time", left.wallMs, right.wallMs, value => `${(value / 1000).toFixed(1)} s`],
+  ];
+  const all = (result: RunResult) => result.workspaces.flatMap(workspace => workspace.edits.samples.map(sample => sample.wallMs));
+  rows.push(["edit p50 (all workspaces)", percentile(all(left), 0.5), percentile(all(right), 0.5), ms]);
+  rows.push(["edit p95 (all workspaces)", percentile(all(left), 0.95), percentile(all(right), 0.95), ms]);
+  const lines = [`| metric | ${left.engine} | ${right.engine} | ${right.engine}/${left.engine} |`, "| --- | ---: | ---: | ---: |"];
+  for (const [label, a, b, format] of rows) lines.push(`| ${label} | ${format(a)} | ${format(b)} | ${ratio(a, b)} |`);
+  // Per workspace, one row: each cell is `left / right`.
+  const pair = (a: number, b: number, format: (value: number) => string) => `${format(a)} / ${format(b)}`;
+  const codes = (result: Record<string, number>) => Object.entries(result).sort().map(([code, n]) => `${code} ${n}`).join(", ") || "none";
+  lines.push(
+    "",
+    `Per workspace, ${left.engine} / ${right.engine}:`,
+    "",
+    "| workspace | full scan wall | full scan CPU | edit p50 | edit p95 | peak RSS | final RSS | RSS after evict + idle | violations | failures |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+  );
+  for (const [index, a] of left.workspaces.entries()) {
+    const b = right.workspaces[index];
+    if (b === undefined || b.name !== a.name) throw new UsageError(`the runs' workspaces differ at ${a.name}`);
+    const seconds = (value: number) => `${(value / 1000).toFixed(1)} s`;
+    lines.push(
+      `| ${a.name} | ${pair(a.fullScan.wallMs, b.fullScan.wallMs, seconds)} | ${pair(a.fullScan.cpuMs, b.fullScan.cpuMs, seconds)} | ` +
+        `${pair(a.edits.wallP50Ms, b.edits.wallP50Ms, ms)} | ${pair(a.edits.wallP95Ms, b.edits.wallP95Ms, ms)} | ` +
+        `${pair(a.rss.peak, b.rss.peak, mib)} | ${pair(a.rss.final, b.rss.final, mib)} | ${pair(a.rss.afterEvictIdle, b.rss.afterEvictIdle, mib)} | ` +
+        `${a.fullScan.violations} / ${b.fullScan.violations} | ${codes(a.fullScan.failureCodes)} / ${codes(b.fullScan.failureCodes)} |`,
+    );
+  }
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+const [command, ...rest] = process.argv.slice(2);
+try {
+  if (command === "run") await run(rest);
+  else if (command === "setup") setup(rest);
+  else if (command === "compare") compare(rest);
+  else throw new UsageError(`unknown command ${command ?? "(none)"}: setup | run | compare`);
+} catch (error) {
+  if (!(error instanceof UsageError)) throw error;
+  process.stderr.write(`rerail-workspaces: ${error.message}\n`);
+  process.exitCode = 2;
+}

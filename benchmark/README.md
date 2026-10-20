@@ -193,3 +193,59 @@ mutant. It fails unless the clean build passes and both checks kill every mutant
 A generator change moves the cases. To re-measure the count, run the differential under each mutant with
 `RERAIL_SQL_DIFF_KEEP=<file>`, which logs every differing case with its index. The count is the largest first
 index plus one. A differing case's line is a replay case.
+
+## Many workspaces: peak memory
+
+`workspaces/` (`just rerail-workspaces <command>`) measures one process serving many repositories in turn, on the
+native or the SQL engine (`--engine native|sql`): its peak resident set above all, which G3's memory condition bounds
+(`docs/sql-set-composition-design.md`). It ports Tempo's `benchmark:rerailer` (nera-landing #2622), which measured
+native's 564 MiB peak over 47 nera-data-layer workspaces in about 26 minutes.
+
+The 47 workspaces are nera-data-layer checkouts at 47 commits. `SUBSET` in `workspaces/workspaces.ts` fixes eight of
+them, numbers 1 + round(k × 46 / 7), from the largest (01, 5,726 Python files) to the smallest (47, 5,491), with their
+commits; each engine runs them in a minute and a half with the #2622 rules. `setup --data-layer <nera-data-layer
+clone> --workspaces <dir>` adds them as worktrees of the clone under `<dir>`; `run` checks each is clean at its commit
+and `--only 01,47` runs some of them.
+
+`run --engine native|sql --rules <dir> [--rules <dir> …] --workspaces <dir> --output <file.json>` compiles every
+`rerail.policy/v1` document under the rule directories (recursively; other JSON is skipped) once, then for each
+workspace in turn, in one process:
+
+1. a fresh workspace on the engine registers every rule (on SQL, this compiles the program);
+2. the full scan, timed: the enforcer's stored repository audit. A content store in a temporary directory attaches,
+   the Git checkout is indexed chunk by chunk (`indexRepositoryAsync` with the enforcer's bounds), the final apply runs
+   quietly, the revision is recorded and every result page is read. `--store off` scans as the enforcer does where no
+   store attaches instead: batches of 32 files, closed at 1 MiB, each with the workspace-wide pass deferred;
+3. `--edits` edits (default 20), each appending a comment to the Python file at the minimum, median, p95 or maximum
+   size in turn, applied as the enforcer applies one (inline through `tryApply` below 4,096 characters, else
+   `applyBufferAsync`), each followed by `evictInactive`;
+4. `evictInactive` and `--idle-ms` of idle time (default 5,000), and the workspace closes.
+
+A worker thread samples the process's resident set every 10 ms, so a peak inside a long synchronous native call
+(a rule's compile, `addCodeRule`) is seen; `getrusage`'s high-water mark is reported beside it. Per workspace the
+output has the full scan's wall and CPU time, findings and failure codes; the edits' wall and CPU p50 and p95; the
+peak by phase and the resident set after the scan, after the edits (final) and after evicting and idling; at each
+point the Node heap, the addon's allocator (`nativeMemoryProfile`) and the workspace's `memoryProfile`; and the engine
+report, whose SQL `program` and `sessions` (setup, statements prepared, and the heap the pooled sessions hold:
+`schemaBytes`, `statementBytes` and `cacheBytes` of their SQLite connections, `frameBytes` of their frames) attribute
+the SQL engine's share. SQLite allocates through the system allocator, so its heap is in the resident set but not in
+the addon's allocator.
+
+`compare <native.json> <sql.json>` prints the two runs side by side: the run's peak, the resident set after the
+compile and at the end, edit percentiles over every workspace, and one row per workspace.
+
+The rules #2622 measured are internal, so they stay outside the repository: the 166 bundled Tempo rules and the three
+cross-file workloads E1–E3 of nera-landing `697bd2bd7`. Extract them once into a directory to pass as `--rules`:
+
+```sh
+git -C <nera-landing> archive 697bd2bd7 tempo/policies/executable-policy-dsl/rules | tar -x -C <tmp>
+cp -R <tmp>/tempo/policies/executable-policy-dsl/rules <dir>/catalog
+for e in e1-component-story e2-restricted-api e3-usage-budget; do
+  git -C <nera-landing> show 697bd2bd7:tempo/benchmark/crossfile/$e.json > <dir>/crossfile/$e.json
+done
+```
+
+Most of those rules scope `nera-data-layer/…` paths of a landing checkout and so read nothing in a data-layer
+checkout, as in #2622. The twelve ported data-layer linters (`--rules $RERAIL_BENCH_HOME/data-layer/policies`) are
+the SQL engine's own workload; they need `--store off` while the content store refuses their publications (more
+than 10 relationship statements per batch).

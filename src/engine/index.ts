@@ -64,7 +64,7 @@ export {
   CheckoutCodeRuleCatalog,
   loadCodeRuleCapabilities,
 } from "./code-rule/code-rule-dsl-catalog.js";
-export { IGNORED_DIRECTORIES, languageFor, NativeCodeRuleEnforcer } from "./code-rule/code-rule-enforcer.js";
+export { IGNORED_DIRECTORIES, languageFor, NativeCodeRuleEnforcer, REPOSITORY_INDEX_OPTIONS } from "./code-rule/code-rule-enforcer.js";
 export { languageNotSupportedOf } from "./code-rule/code-rule-language-support.js";
 export {
   CODE_RULE_AST_LANGUAGES,
