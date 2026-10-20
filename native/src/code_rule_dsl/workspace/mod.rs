@@ -446,9 +446,9 @@ struct WorkspaceState {
     crossfile: crossfile::CrossFileScheduler,
     /// How the workspace matches its AST clauses (`sql::EngineOptions`).
     engine: sql::EngineOptions,
-    /// The code rules compiled for the SQL engine, on the first apply on it: the rules are fixed
-    /// by then.
-    sql: Option<Arc<sql::SqlEngine>>,
+    /// The code rules compiled for the SQL engine as they are registered, the program finished
+    /// on first use (`sql::SqlState`).
+    sql: sql::SqlState,
 }
 
 fn check_closed(closed: &AtomicBool) -> Result<()> {

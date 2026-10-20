@@ -1,16 +1,18 @@
 //! The workspace on the SQL engine (`Engine::Sql`): every AST clause of the workspace's code rules
-//! is compiled once into one program (`sql::compile_each`), and an apply's files are matched in
-//! batches on sessions pooled across applies (`evaluate::run_jobs`). The native per-file pipeline
-//! around the matching (input limits, syntax errors, required text and anchor selection, rendering,
-//! suppressions, failures) is the native engine's own. A clause the engine refuses fails on every
-//! file it reads with `SQL_UNSUPPORTED`, never persisted; `SqlEngine::report` says why.
+//! is compiled into one program as the rules are registered (`register`, from `add_code_rule`),
+//! the program is finished on first use, and an apply's files are matched in batches on sessions
+//! pooled across applies (`evaluate::run_jobs`). The native per-file pipeline around the matching
+//! (input limits, syntax errors, required text and anchor selection, rendering, suppressions,
+//! failures) is the native engine's own. A clause the engine refuses fails on every file it reads
+//! with `SQL_UNSUPPORTED`, never persisted; `SqlEngine::report` says why.
 
 use super::{ClauseId, WorkspaceState};
 use crate::code_rule_dsl::eval::Engine;
 use crate::code_rule_dsl::matcher::GrammarMatcher;
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Query};
 use crate::code_rule_dsl::sql::{
-    ClauseRun, Compiled, FileContext, Session, SqlError, SqlMatch, Stats, compile_each,
+    ClauseRun, CompilePhases, Compiled, FileContext, ProgramCompiler, Session, SqlError, SqlMatch,
+    Stats, Timing,
 };
 #[cfg(feature = "unbounded-work")]
 use crate::code_rule_dsl::sql::{StatementProfile, profiled};
@@ -54,20 +56,52 @@ impl EngineOptions {
     }
 }
 
-/// The workspace's SQL engine where it matches on SQL, compiled on first use.
+/// The workspace's SQL program: compiled as its rules are registered, then finished into the
+/// engine its applies run on.
+pub(super) enum SqlState {
+    Compiling(Box<SqlProgram>),
+    Finished(Arc<SqlEngine>),
+}
+
+impl Default for SqlState {
+    fn default() -> Self {
+        Self::Compiling(Box::default())
+    }
+}
+
+/// Compiles the AST clauses of the code rule `rule` (the last registered) into the workspace's
+/// SQL program, where it matches on SQL: a workspace pays its rules' SQL compile when it registers
+/// them, as it pays their native compile, never in an apply. A program finished before (an engine
+/// report between registrations) is compiled again with every rule.
+pub(super) fn register(state: &mut WorkspaceState, rule: usize) {
+    if state.engine.engine != Engine::Sql {
+        return;
+    }
+    match &mut state.sql {
+        SqlState::Compiling(program) => program.add(&state.code_rules, rule),
+        SqlState::Finished(_) => {
+            let mut program = Box::<SqlProgram>::default();
+            for rule in 0..=rule {
+                program.add(&state.code_rules, rule);
+            }
+            state.sql = SqlState::Compiling(program);
+        }
+    }
+}
+
+/// The workspace's SQL engine where it matches on SQL, its program finished on first use.
 pub(super) fn engine_of(state: &mut WorkspaceState) -> Option<Arc<SqlEngine>> {
     if state.engine.engine != Engine::Sql {
         return None;
     }
-    let WorkspaceState {
-        code_rules,
-        engine,
-        sql,
-        ..
-    } = state;
-    Some(Arc::clone(sql.get_or_insert_with(|| {
-        Arc::new(SqlEngine::new(code_rules, engine.batch_size))
-    })))
+    if let SqlState::Compiling(program) = &mut state.sql {
+        let program = std::mem::take(program);
+        state.sql = SqlState::Finished(Arc::new(program.finish(state.engine.batch_size)));
+    }
+    match &state.sql {
+        SqlState::Finished(engine) => Some(Arc::clone(engine)),
+        SqlState::Compiling(_) => unreachable!("finished above"),
+    }
 }
 
 /// A clause (one grammar matcher of it) the engine refuses, and why.
@@ -78,9 +112,87 @@ struct Refusal {
     reason: String,
 }
 
+/// The registered code rules' AST clauses, compiled into one SQL program so far.
+#[derive(Default)]
+pub(super) struct SqlProgram {
+    compiler: ProgramCompiler,
+    /// Per code rule, clause and grammar matcher (its index in the clause's matchers): the
+    /// program's clause, `None` where the engine refuses it.
+    clauses: HashMap<(ClauseId, usize), Option<usize>>,
+    refusals: Vec<Refusal>,
+    /// The names of the program's clauses: rule and clause id.
+    names: Vec<(String, String)>,
+}
+
+impl SqlProgram {
+    /// Compiles every AST clause of `code_rules[rule]`.
+    fn add(&mut self, code_rules: &[Arc<CompiledCodeRule>], rule: usize) {
+        let code_rule = &code_rules[rule];
+        for (clause, compiled) in code_rule.clauses.iter().enumerate() {
+            let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &compiled.kind else {
+                continue;
+            };
+            for (index, grammar) in matchers.iter().enumerate() {
+                let outcome = self
+                    .compiler
+                    .clause(grammar, compiled.violation.each.as_deref());
+                let statement = match outcome {
+                    Ok(statement) => {
+                        self.names
+                            .push((code_rule.id.clone(), compiled.id.clone()));
+                        Some(statement)
+                    }
+                    Err(unsupported) => {
+                        // The workspace tests run on SQL show which of them hold a clause the
+                        // engine refuses.
+                        let reason = SqlError::Unsupported(unsupported).to_string();
+                        #[cfg(test)]
+                        eprintln!("sql-refused {}/{}: {reason}", code_rule.id, compiled.id);
+                        self.refusals.push(Refusal {
+                            rule: code_rule.id.clone(),
+                            clause: compiled.id.clone(),
+                            language: grammar.language.to_string(),
+                            reason,
+                        });
+                        None
+                    }
+                };
+                self.clauses.insert(((rule, clause), index), statement);
+            }
+        }
+    }
+
+    /// The engine of the program as compiled, running `batch_size` files per batch.
+    fn finish(self, batch_size: usize) -> SqlEngine {
+        let Self {
+            compiler,
+            clauses,
+            refusals,
+            names,
+        } = self;
+        let (compiled, phases) = compiler.finish();
+        SqlEngine {
+            compiled,
+            phases,
+            clauses,
+            refusals,
+            ran: (0..names.len()).map(|_| AtomicBool::new(false)).collect(),
+            batch_size: batch_size.max(1),
+            sessions: Mutex::default(),
+            stats: Mutex::default(),
+            pipeline: Mutex::default(),
+            #[cfg(feature = "unbounded-work")]
+            profile: Mutex::default(),
+            names,
+        }
+    }
+}
+
 /// The workspace's code rules compiled for the SQL engine.
 pub(super) struct SqlEngine {
     compiled: Compiled,
+    /// Where the program's compile went.
+    phases: CompilePhases,
     /// Per code rule, clause and grammar matcher (its index in the clause's matchers): the
     /// program's clause, `None` where the engine refuses it.
     clauses: HashMap<(ClauseId, usize), Option<usize>>,
@@ -91,12 +203,25 @@ pub(super) struct SqlEngine {
     /// Sessions between batches: each keeps its tables and cached statements.
     sessions: Mutex<Vec<Session>>,
     stats: Mutex<Stats>,
+    /// The native per-file steps around the batches' matching (`evaluate::sql_batch`).
+    pipeline: Mutex<Pipeline>,
     /// The benchmark build's profile: `report()`'s `statements.profile` and `profile`.
     #[cfg(feature = "unbounded-work")]
     profile: Mutex<Profile>,
-    /// The benchmark build's names of the program's clauses: rule and clause id.
-    #[cfg(feature = "unbounded-work")]
+    /// The names of the program's clauses: rule and clause id.
+    #[cfg_attr(not(feature = "unbounded-work"), allow(dead_code))]
     names: Vec<(String, String)>,
+}
+
+/// The time an apply's batches spent in the native per-file steps around their SQL run, summed
+/// over the workers: restoring each file's document (its parse and tape where none is stored),
+/// planning its clauses' runs (`SqlFile::plan`: anchor index and root selection), and rendering
+/// its matches (`SqlFile::render`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Pipeline {
+    pub(super) parse: Timing,
+    pub(super) plan: Timing,
+    pub(super) render: Timing,
 }
 
 /// What the benchmark (`unbounded-work`) build's SQL engine measured over its batches.
@@ -112,86 +237,15 @@ struct Profile {
 }
 
 impl SqlEngine {
-    pub(super) fn new(code_rules: &[Arc<CompiledCodeRule>], batch_size: usize) -> Self {
-        let mut keys = Vec::new();
-        let mut grammars: Vec<(&GrammarMatcher, Option<&str>)> = Vec::new();
-        let mut refusals = Vec::new();
-        let mut clauses = HashMap::new();
-        let refuse = |refusals: &mut Vec<Refusal>, key: (ClauseId, usize), reason: String| {
-            let code_rule = &code_rules[key.0.0];
-            let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &code_rule.clauses[key.0.1].kind
-            else {
-                unreachable!("an AST clause")
-            };
-            refusals.push(Refusal {
-                rule: code_rule.id.clone(),
-                clause: code_rule.clauses[key.0.1].id.clone(),
-                language: matchers[key.1].language.to_string(),
-                reason,
-            });
-        };
-        for (rule, code_rule) in code_rules.iter().enumerate() {
-            for (clause, compiled) in code_rule.clauses.iter().enumerate() {
-                let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &compiled.kind else {
-                    continue;
-                };
-                for (index, grammar) in matchers.iter().enumerate() {
-                    keys.push(((rule, clause), index));
-                    grammars.push((grammar, compiled.violation.each.as_deref()));
-                }
-            }
-        }
-        let (compiled, outcomes) = compile_each(&grammars);
-        for (key, outcome) in keys.into_iter().zip(outcomes) {
-            match outcome {
-                Ok(statement) => {
-                    clauses.insert(key, Some(statement));
-                }
-                Err(unsupported) => {
-                    clauses.insert(key, None);
-                    refuse(
-                        &mut refusals,
-                        key,
-                        SqlError::Unsupported(unsupported).to_string(),
-                    );
-                }
-            }
-        }
-        // The workspace tests run on SQL show which of them hold a clause the engine refuses.
-        #[cfg(test)]
-        for refusal in &refusals {
-            eprintln!(
-                "sql-refused {}/{}: {}",
-                refusal.rule, refusal.clause, refusal.reason
-            );
-        }
-        let statements = clauses.values().flatten().count();
-        #[cfg(feature = "unbounded-work")]
-        let names = {
-            let mut names = vec![(String::new(), String::new()); statements];
-            for (((rule, clause), _), statement) in &clauses {
-                if let Some(statement) = statement {
-                    names[*statement] = (
-                        code_rules[*rule].id.clone(),
-                        code_rules[*rule].clauses[*clause].id.clone(),
-                    );
-                }
-            }
-            names
-        };
-        Self {
-            compiled,
-            clauses,
-            refusals,
-            ran: (0..statements).map(|_| AtomicBool::new(false)).collect(),
-            batch_size: batch_size.max(1),
-            sessions: Mutex::default(),
-            stats: Mutex::default(),
-            #[cfg(feature = "unbounded-work")]
-            profile: Mutex::default(),
-            #[cfg(feature = "unbounded-work")]
-            names,
-        }
+    /// Adds a batch's native per-file steps (`Pipeline`).
+    pub(super) fn add_pipeline(&self, batch: Pipeline) {
+        let mut pipeline = self
+            .pipeline
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        pipeline.parse.add(batch.parse);
+        pipeline.plan.add(batch.plan);
+        pipeline.render.add(batch.render);
     }
 
     /// The program's clause for `id`'s `grammar` (one of its matchers); `None` where the engine
@@ -287,7 +341,7 @@ impl SqlEngine {
                         .or_default() += share;
                 }
             }
-            let share = (after.stage_nanos - before.stage_nanos) / paths.len().max(1) as u64;
+            let share = after.stages.since(before.stages).wall / paths.len().max(1) as u64;
             for path in paths {
                 *profile.stage_files.entry(path).or_default() += share;
             }
@@ -312,7 +366,11 @@ impl SqlEngine {
             .iter()
             .map(Session::prepared_statements)
             .sum();
-        let milliseconds = |nanos: u64| nanos as f64 / 1e6;
+        let pipeline = *self
+            .pipeline
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let phases = &self.phases;
         let report = json!({
             "engine": "sql",
             "batchSize": self.batch_size,
@@ -325,14 +383,25 @@ impl SqlEngine {
                 "language": refusal.language,
                 "reason": refusal.reason,
             })).collect::<Vec<_>>(),
+            // Each timer twice, summed over the workers: `…Milliseconds` wall time and
+            // `…CpuMilliseconds` the threads' CPU time.
             "statements": {
                 "count": stats.statements,
                 "rows": stats.rows,
-                "milliseconds": milliseconds(stats.nanos),
-                "stageMilliseconds": milliseconds(stats.stage_nanos),
-                "selectMilliseconds": milliseconds(stats.select_nanos),
-                "inputMilliseconds": milliseconds(stats.input_nanos),
-                "factsMilliseconds": milliseconds(stats.facts_nanos),
+                "milliseconds": stats.time.wall_milliseconds(),
+                "cpuMilliseconds": stats.time.cpu_milliseconds(),
+                "stageMilliseconds": stats.stages.wall_milliseconds(),
+                "stageCpuMilliseconds": stats.stages.cpu_milliseconds(),
+                "selectMilliseconds": stats.select.wall_milliseconds(),
+                "selectCpuMilliseconds": stats.select.cpu_milliseconds(),
+                "inputMilliseconds": stats.input.wall_milliseconds(),
+                "inputCpuMilliseconds": stats.input.cpu_milliseconds(),
+                // The fact terminals' native evaluation, inside the statements' time.
+                "factsMilliseconds": stats.facts.wall_milliseconds(),
+                "factsCpuMilliseconds": stats.facts.cpu_milliseconds(),
+                // The batches' files' node facts, before their statements.
+                "nodeFactsMilliseconds": stats.node_facts.wall_milliseconds(),
+                "nodeFactsCpuMilliseconds": stats.node_facts.cpu_milliseconds(),
                 // What the emptiness rules passed over (`sql::skip`); `count` is what ran.
                 "skipped": stats.skipped,
                 "skippedRuns": stats.skipped_runs,
@@ -348,15 +417,38 @@ impl SqlEngine {
                 "frames": census.frames,
                 "btrees": census.btrees,
             },
+            // The program's compile, as the workspace's rules were registered (`finish` on
+            // first use): lowering, emitting the statements (the stages' among them), planning
+            // each clause's, and planning the stages.
+            "compile": {
+                "lowerMilliseconds": phases.lower.wall_milliseconds(),
+                "lowerCpuMilliseconds": phases.lower.cpu_milliseconds(),
+                "emitMilliseconds": phases.emit.wall_milliseconds(),
+                "emitCpuMilliseconds": phases.emit.cpu_milliseconds(),
+                "planMilliseconds": phases.plan.wall_milliseconds(),
+                "planCpuMilliseconds": phases.plan.cpu_milliseconds(),
+                "finishMilliseconds": phases.finish.wall_milliseconds(),
+                "finishCpuMilliseconds": phases.finish.cpu_milliseconds(),
+            },
             // The sessions made and their setup (`sql::Session::activate`): the texts their
             // caches were sized for, the tables they made, and the statements the pooled ones
             // hold prepared.
             "sessions": {
                 "count": stats.sessions,
-                "setupMilliseconds": milliseconds(stats.setup_nanos),
+                "setupMilliseconds": stats.setup.wall_milliseconds(),
+                "setupCpuMilliseconds": stats.setup.cpu_milliseconds(),
                 "texts": stats.texts,
                 "tables": stats.tables,
                 "prepared": prepared,
+            },
+            // The native per-file steps around the batches' SQL runs (`Pipeline`).
+            "pipeline": {
+                "parseMilliseconds": pipeline.parse.wall_milliseconds(),
+                "parseCpuMilliseconds": pipeline.parse.cpu_milliseconds(),
+                "planMilliseconds": pipeline.plan.wall_milliseconds(),
+                "planCpuMilliseconds": pipeline.plan.cpu_milliseconds(),
+                "renderMilliseconds": pipeline.render.wall_milliseconds(),
+                "renderCpuMilliseconds": pipeline.render.cpu_milliseconds(),
             },
         });
         #[cfg(feature = "unbounded-work")]
@@ -456,6 +548,29 @@ mod tests {
         }
     }
 
+    /// This process's resident set now, in MiB (macOS; 0 elsewhere).
+    fn resident_mib() -> f64 {
+        #[cfg(target_os = "macos")]
+        {
+            // SAFETY: `proc_pidinfo` fills the struct it is given, of the size given.
+            let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+            let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+            let filled = unsafe {
+                libc::proc_pidinfo(
+                    libc::getpid(),
+                    libc::PROC_PIDTASKINFO,
+                    0,
+                    (&raw mut info).cast(),
+                    size,
+                )
+            };
+            if filled == size {
+                return info.pti_resident_size as f64 / 1048576.0;
+            }
+        }
+        0.0
+    }
+
     /// The workspace's SQL engine over a list of the data-layer corpus's files, every benchmark
     /// policy in one workspace as the whole-tree benchmark runs them: `RERAIL_SQL_FILES`, one path
     /// per line relative to `RERAIL_DATA_LAYER_CORPUS`; `RERAIL_SQL_BATCH`, files per batch
@@ -544,5 +659,87 @@ mod tests {
         eprintln!("statements {statements}");
         eprintln!("program {}", report["program"]);
         eprintln!("sessions {}", report["sessions"]);
+    }
+
+    /// What registering every benchmark policy on a SQL workspace costs: their native compile,
+    /// then their SQL compile as `add_code_rule` runs it, by phase (`compile` of the engine
+    /// report), with peak and current RSS after each, and a first apply's session. Run by hand:
+    /// `cargo test --release --lib workspace::sql::tests::the_sql_program_compile -- --ignored
+    /// --nocapture`.
+    #[test]
+    #[ignore = "reads the data-layer benchmark's policies from outside the repository"]
+    fn the_sql_program_compile() {
+        let home = std::env::var("HOME").expect("HOME");
+        let policies = std::env::var("RERAIL_BENCH_POLICIES")
+            .unwrap_or_else(|_| format!("{home}/rerail-bench/data-layer/policies"));
+        let mut workspace = CodeRuleDslWorkspace::with_options(Some(WorkspaceOptions {
+            engine: Some("sql".to_owned()),
+            sql_batch_size: None,
+        }))
+        .expect("a SQL workspace");
+        let mut paths: Vec<_> = std::fs::read_dir(&policies)
+            .expect("policies")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("policy.json"))
+            .filter(|path| path.exists())
+            .collect();
+        paths.sort();
+        let started = std::time::Instant::now();
+        let compiled: Vec<_> = paths
+            .iter()
+            .map(|path| {
+                CodeRuleDslRuntime::compile(
+                    std::fs::read_to_string(path).expect("policy"),
+                    "json".to_owned(),
+                    CAPABILITIES.to_owned(),
+                )
+                .unwrap_or_else(|error| panic!("{}: {}", path.display(), error.reason))
+            })
+            .collect();
+        eprintln!(
+            "native compile {:.2}s, peak {:.0} MiB, resident {:.0} MiB",
+            started.elapsed().as_secs_f64(),
+            peak_mib(),
+            resident_mib()
+        );
+        let started = std::time::Instant::now();
+        for compiled in &compiled {
+            workspace.add_code_rule(compiled, None).expect("a code rule");
+        }
+        eprintln!(
+            "add rules (SQL compile) {:.2}s, peak {:.0} MiB, resident {:.0} MiB",
+            started.elapsed().as_secs_f64(),
+            peak_mib(),
+            resident_mib()
+        );
+        let started = std::time::Instant::now();
+        let report: Value =
+            serde_json::from_str(&workspace.engine_report().expect("a report")).expect("JSON");
+        eprintln!(
+            "finish {:.2}s, peak {:.0} MiB, resident {:.0} MiB",
+            started.elapsed().as_secs_f64(),
+            peak_mib(),
+            resident_mib()
+        );
+        eprintln!("compile {}", report["compile"]);
+        eprintln!("program {}", report["program"]);
+        let started = std::time::Instant::now();
+        let source = "import os\n\nclass Store(Base):\n    async def get(self, key):\n        if hasattr(self, key):\n            return await self.session.execute(key)\n";
+        let mut task = WorkspaceApplyTask {
+            state: Arc::clone(&workspace.state),
+            closed: Arc::clone(&workspace.closed),
+            request_json: json!({ "revision": 1, "files": [{ "language": "python", "path": "probe.py", "source": source }], "removed": [] }).to_string(),
+            request_buffer: None,
+            request_direct: None,
+        };
+        task.compute().expect("the apply");
+        let report: Value =
+            serde_json::from_str(&workspace.engine_report().expect("a report")).expect("JSON");
+        eprintln!(
+            "first apply {:.2}s, peak {:.0} MiB; sessions {}",
+            started.elapsed().as_secs_f64(),
+            peak_mib(),
+            report["sessions"]
+        );
     }
 }

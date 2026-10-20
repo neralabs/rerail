@@ -18,15 +18,17 @@ mod skip;
 mod terminals;
 #[cfg(test)]
 mod tests;
+mod timing;
 
 #[cfg(test)]
-pub(super) use exec::compile;
+pub(super) use exec::{compile, compile_each};
 pub(super) use exec::{
-    ClauseRun, Compiled, FileContext, Session, SqlError, SqlMatch, Stats, compile_each,
-    compile_enumerating, environment,
+    ClauseRun, CompilePhases, Compiled, FileContext, ProgramCompiler, Session, SqlError,
+    SqlMatch, Stats, compile_enumerating, environment,
 };
 #[cfg(feature = "unbounded-work")]
 pub(super) use exec::{StatementProfile, profiled};
+pub(super) use timing::{Timing, timed};
 
 /// Files per batch where the caller sets none: the workspace's default, and every batch of a
 /// stateless evaluation.
