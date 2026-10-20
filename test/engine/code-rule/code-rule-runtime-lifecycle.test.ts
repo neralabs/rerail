@@ -133,7 +133,7 @@ describe("source-scoped steers", () => {
         toolCallId: "write", toolName: "write", output: "written",
       });
       await vi.waitFor(() => expect(audits.list({ sessionId: session.sessionId }).audits).toEqual(expect.arrayContaining([
-        expect.objectContaining({ scope: "touched-files", status: "completed" }),
+        expect.objectContaining({ scope: "ai-output", status: "completed" }),
         expect.objectContaining({ scope: "repository", status: "running" }),
       ])));
       expect(editDeliveries).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
@@ -154,7 +154,7 @@ describe("source-scoped steers", () => {
       expect(await runtime.ingest({
         kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "done",
       })).toEqual([]);
-      expect(audits.list({ sessionId: session.sessionId }).audits.filter(audit => audit.scope === "touched-files").flatMap(audit => audit.paths).sort())
+      expect(audits.list({ sessionId: session.sessionId }).audits.filter(audit => audit.scope === "ai-output").flatMap(audit => audit.paths).sort())
         .toEqual(["edited.py", "shell.py"]);
     } finally {
       gate.resolve();
@@ -257,7 +257,7 @@ describe("source-scoped steers", () => {
       await turnEnd;
       expect(audits.list({ sessionId: session.sessionId }).audits).toEqual(expect.arrayContaining([
         expect.objectContaining({ scope: "repository", status: "running" }),
-        expect.objectContaining({ scope: "touched-files", status: "completed", paths: ["edited.py"] }),
+        expect.objectContaining({ scope: "ai-output", status: "completed", paths: ["edited.py"] }),
       ]));
     } finally {
       for (const workspace of attachments.workspaces) workspace.release();
@@ -560,7 +560,7 @@ describe("source-scoped steers", () => {
         toolCallId: "write", toolName: "write", output: "written",
       })).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
       expect(audits.list({ sessionId: session.sessionId }).audits).toEqual(expect.arrayContaining([
-        expect.objectContaining({ scope: "touched-files", status: "completed", paths: ["edited.py"] }),
+        expect.objectContaining({ scope: "ai-output", status: "completed", paths: ["edited.py"] }),
       ]));
       expect(audits.list({ sessionId: session.sessionId }).audits.filter(audit => audit.status === "interrupted")).toEqual([]);
     } finally {
@@ -675,6 +675,7 @@ describe("source-scoped steers", () => {
         // Opened: the call it answered is not begun or finished late. The evaluator's first walk still sees the file
         // changed while it ran, as it sees any change it did not watch being made, and checks it.
         expect(await test.steers()).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
+
       } finally { await test.close(); }
     });
 
@@ -689,6 +690,7 @@ describe("source-scoped steers", () => {
       } finally { await test.close(); }
     });
   });
+
 
   it("keeps a session whose evaluator cannot open, and records why its code rules are off", async () => {
     const root = await realpath(await temporaryDirectory());

@@ -77,7 +77,7 @@ async function enforcerFor(workspaceRoot: string, codeRule: CodeRule | (() => Co
   const steers: Array<{ revision: number | undefined; scope: readonly string[]; content: string }> = [];
   const revisions: Array<{ revision: number; paths: readonly string[] }> = [];
   const enforcer = new NativeCodeRuleEnforcer(testCodeRuleCatalog(() => [current()], capabilitiesPath), {
-    workspaceRoot, audits: recorder, ...(scope === undefined ? {} : { scope }),
+    workspaceRoot, audits: recorder, scope: scope ?? "touched-files",
     steerDelivery: {
       requestSteer: async (_session, _delivery, content, metadata) => {
         steers.push({ revision: metadata?.revision, scope: metadata?.scope ?? [], content });

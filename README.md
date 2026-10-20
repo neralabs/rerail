@@ -406,9 +406,9 @@ The `steer` run mode records results and sends violations of `steer` and `block`
 
 `RerailRuntime` accepts ongoing `auditSettings: { scope, mode }` defaults; `NativeCodeRuleEnforcer` accepts the same settings directly. The first time Rerail sees a canonical workspace in local storage, it starts one independent full-repository audit in `log` mode. Later sessions in that workspace start without repeating that automatic audit. User-requested scans are also fixed to `log` mode and choose between the full eligible repository or the tracked, staged, and untracked files in the current Git diff.
 
-AI-output scope uses source diffs, not differences between old and new violation IDs. A newly created file is entirely generated output. If pre-edit source was not captured, including an existing file changed through an untracked shell write, AI-output evaluation records a scope failure rather than silently widening to the entire file. Parsing and cross-file query context may be broader than reporting scope. Source, parse, and match caches remain incremental; repository scans stream bounded source batches through a separate native workspace.
+AI-output scope uses source diffs, not differences between old and new violation IDs. A newly created file is entirely generated output. Pre-edit source is captured at the host's tool-call boundary; an edit made without one, such as a shell write or a Codex `apply_patch` that its hooks do not show, takes as its pre-edit source the text Rerail last saw the file with in this session (the most recently changed 64 MB of them), else its Git index or `HEAD` blob, either only when its SHA-256 equals the file's digest before the change; reading the blobs never fetches a partial clone's missing objects. Where none matches, the edit's generated lines are unknown, so that edit reports its whole file, as `touched-files` does; once Rerail has seen the file change in the session, its later edits report only their own lines again. Parsing and cross-file query context may be broader than reporting scope. Source, parse, and match caches remain incremental; repository scans stream bounded source batches through a separate native workspace.
 
-Results carry source revisions. Empty checkpoints do not invalidate buffered violations; changes to relevant source do. OMP and Pi support background delivery, while polling hook hosts receive buffered violations at their next event. Delivery is not an audit: there is no acceptance callback, acknowledgement persistence, retry chain, or exactly-once guarantee.
+Results carry source revisions. Empty checkpoints do not invalidate buffered violations; changes to relevant source do. OMP and Pi support background delivery, while polling hook hosts receive buffered violations at their next event. A newer edit of a file drops a steer still queued for it; in AI-output scope that edit then reports the lines generated since the dropped steer's edit along with its own, as it does for an earlier edit it superseded before evaluation, so a violation the agent was never shown reaches it once if the file still has it, and never if the newer edit removed it. A violation the agent was shown is not repeated by later edits elsewhere in the file. Delivery is not an audit: there is no acceptance callback, acknowledgement persistence, retry chain, or exactly-once guarantee.
 
 An audit returns violations and concrete execution failures, not an `unknown` verdict. Unreadable sources, unavailable generated ranges, missing capabilities, exhausted budgets, and evaluator errors are stored in `audits`, never rendered as conversation observations. `audit_requests_create` submits an audit request for a session and `GET /api/audits` exposes paginated audit records.
 
@@ -493,8 +493,11 @@ does not share rules across repositories; rule ownership is the repository's
 promote checkout settings.
 Effective settings identify their workspace and storage location.
 
-The ongoing defaults are automatic `touched-files` audits in `steer`
-mode. Saved scope/mode changes affect subsequent automatic evaluations,
+The ongoing defaults are automatic `ai-output` audits in `steer` mode: an
+edit is told only about violations in the lines it added or changed, not about
+what the rest of its file already broke. `--scope touched-files` reports whole
+edited files instead. A workspace whose settings were saved keeps the scope
+they name. Saved scope/mode changes affect subsequent automatic evaluations,
 including running sessions; they do not rewrite a running evaluation or its
 recorded results. Every repository in retained scan history receives one
 automatic full-repository, `log`-only baseline. When Rerail becomes active in a

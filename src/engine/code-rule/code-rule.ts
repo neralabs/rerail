@@ -1359,6 +1359,11 @@ export interface RuleSteerDelivery {
    * whose findings the auditor steers again.
    */
   revised?(sessionId: string, revision: number, paths: readonly string[]): readonly string[];
+  /**
+   * Whether a newer revision of `path` dropped a steer for it before the agent received it since the last call; the
+   * answer is consumed. An ai-output auditor then reports that steer's lines again with the source's next edit.
+   */
+  undelivered?(sessionId: string, path: string): boolean;
 }
 export interface AuditSettings {
   scope?: AuditScope;
