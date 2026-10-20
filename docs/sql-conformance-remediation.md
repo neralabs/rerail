@@ -696,10 +696,10 @@ The aggregate ordered terminal-catalog gate is green for all 39 contracts.
 
 The remaining aggregate defects are:
 
-- Eleven Phase 2 SQL statements lack the complete physical SQL boundary.
+- One Phase 2 SQL statement lacks the complete physical SQL boundary.
 - Ten Phase 3 SQL statements lack the complete physical SQL boundary.
-- The same 21 statements do not equal the compiler output.
-- `all-two-positive` is the first exact SQL mismatch.
+- The same 11 statements do not equal the compiler output.
+- `nested-all-any-not` is the first exact SQL mismatch.
 
 The catalog fixture contains only ordered terminal-catalog data.
 The SQL fixture is the only owner of authored SQL statements.
