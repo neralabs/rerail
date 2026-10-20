@@ -54,6 +54,8 @@ function editJson(directory: string, file: string, edit: (value: Json) => Json):
 
 const VALID = fixturesPath("packs", "valid");
 const COMPLEXITY = repositoryPath("packs", "complexity");
+/** The complexity pack's own version: Version packs bumps it, and the copies installed here carry it. */
+const COMPLEXITY_VERSION = (JSON.parse(readFileSync(join(COMPLEXITY, "package.json"), "utf8")) as { version: string }).version;
 const PYTHON_RULE = "complexity-cyclomatic-python";
 
 /** The ids of what `catalog` loaded, and each skipped pack's directory and reason. */
@@ -107,7 +109,7 @@ describe("the installed-pack catalog", () => {
       {
         name: "a core range that excludes the running core",
         breakPack: directory => editJson(directory, "package.json", manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": ">=9.0.0" } })),
-        reason: new RegExp(`^@neralabs/rerail-pack-complexity@0\\.1\\.1 needs @neralabs/rerail >=9\\.0\\.0; this is ${activeCoreVersion().replace(/\./gu, "\\.")}$`, "u"),
+        reason: new RegExp(`^@neralabs/rerail-pack-complexity@${COMPLEXITY_VERSION.replace(/\./gu, "\\.")} needs @neralabs/rerail >=9\\.0\\.0; this is ${activeCoreVersion().replace(/\./gu, "\\.")}$`, "u"),
       },
       {
         name: "a pack.json the schema refuses",
@@ -155,7 +157,7 @@ describe("the installed-pack catalog", () => {
         const catalog = loadRuleCatalog();
 
         expect(summary(catalog)).toEqual({ packs: ["valid"], skipped: [{ path: installed, reason: expect.stringMatching(reason) }] });
-        expect(catalog.skipped[0]).toMatchObject({ packageName: expect.stringMatching(/^@neralabs\/rerail-pack-/u), version: "0.1.1" });
+        expect(catalog.skipped[0]).toMatchObject({ packageName: expect.stringMatching(/^@neralabs\/rerail-pack-/u), version: COMPLEXITY_VERSION });
         expect([...catalog.documents.keys()].sort()).toEqual(["assert-used", "pass-statement"]);
       });
     }

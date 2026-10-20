@@ -82,7 +82,15 @@ test("NER-1955: a shell command that writes many sources costs no session events
     { content: ["Done."] },
   ]);
   try {
-    await host.prompt("Run the tests, then look at one output.");
+    // On a slow runner each command result and turn end may spend its full 10 s waiting for the shell-write walk of the
+    // 8,000 outputs (and the first one 10 s more for their audits): the run outlasts the host harness's default minute.
+    // This test is about events kept, not speed; a run that still overruns says where the daemon spent the time.
+    try {
+      await host.prompt("Run the tests, then look at one output.", { timeoutMs: 180_000 });
+    } catch (error) {
+      const waits = (await readFile(join(home, "daemon.log"), "utf8").catch(() => "")).split("\n").filter(line => line.includes("waited"));
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\ndaemon log (turn-end waits):\n${waits.join("\n")}`, { cause: error });
+    }
     const { sessionId, branch } = await host.snapshot();
     const expected = toolCallIds(branch).flatMap(id => [`tool-call:${id}`, `tool-result:${id}`]);
     expect(expected).toHaveLength(6);
