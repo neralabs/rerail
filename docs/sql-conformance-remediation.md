@@ -689,17 +689,17 @@ Run the architecture checks with structural, semantic, cross-file, negative, and
 
 ## Current status and execution direction
 
-Phases 1 through 3 have behavioral implementations. Their aggregate conformance gate is not complete.
-Phase 4 has complete focused SQL, catalog, fact-row, failure, and oracle checks.
-The aggregate Phase 2 through Phase 4 SQL gate remains red.
+Phases 1 through 4 are complete.
+The aggregate Phase 2 through Phase 4 SQL gate is green for all 39 contracts.
 The aggregate ordered terminal-catalog gate is green for all 39 contracts.
+All Phase 2 through Phase 4 behavioral oracle checks are green.
 
-The remaining aggregate defects are:
+The completed aggregate contracts include:
 
-- All Phase 2 SQL statements have complete physical SQL boundaries.
-- Four Phase 3 SQL statements lack the complete physical SQL boundary.
-- The same four Phase 3 statements do not equal the compiler output.
-- `utility-parameterized-call` is the first exact SQL mismatch.
+- Thirteen Phase 2 truth and value statements.
+- Ten Phase 3 utility statements.
+- Sixteen Phase 4 semantic fact statements.
+- Thirty-nine ordered terminal catalogs with 95 terminal entries.
 
 The catalog fixture contains only ordered terminal-catalog data.
 The SQL fixture is the only owner of authored SQL statements.
@@ -710,21 +710,12 @@ Commit `0601812d` is the completed focused red commit for nested Phase 2 truth c
 Commit `17decf57` is the completed focused red commit for leaf utility SQL.
 Commit `2d4cc9cc` is the completed focused red commit for capture utility SQL.
 Commit `2fbafd0e` is the completed focused red commit for recursive utility SQL.
-Commit `c90da557` is the active focused red commit for isolated utility-frame SQL.
-Do not use compiler output to create the authored SQL or catalog data.
-Reconcile each relational family from the policy semantics and the packed-row schema.
+Commit `c90da557` is the completed focused red commit for isolated utility-frame SQL.
+Commit `89ee5bb4` is the completed focused red commit for typed utility-limit SQL.
 
-The next required package is the Phase 3 utility conformance package:
-
-1. Add the complete physical boundary to each of the four remaining utility statements.
-2. Reconcile each statement with its relational implementation.
-3. Run all Phase 2 through Phase 4 behavioral oracle checks.
-4. Make the aggregate Phase 2 through Phase 4 SQL gate pass.
-
-The Phase 2 SQL work and the terminal-catalog work are complete.
+The next required package is Phase 5 parsed and generated documents.
+Do not change the completed Phase 2 through Phase 4 contracts to accommodate later work.
 All 39 catalogs pass exact, repeated, and concurrent compilation checks.
-
-Do not start Phase 5 until this package is green.
 
 ### Relation to the packed execution spike
 
