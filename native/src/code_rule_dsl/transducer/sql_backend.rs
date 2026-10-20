@@ -233,6 +233,16 @@ impl ValueFactDescriptor {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::code_rule_dsl) struct DocumentMapSpan {
+    pub(in crate::code_rule_dsl) source_document: usize,
+    pub(in crate::code_rule_dsl) generated_document: usize,
+    pub(in crate::code_rule_dsl) source_start: usize,
+    pub(in crate::code_rule_dsl) source_end: usize,
+    pub(in crate::code_rule_dsl) generated_start: usize,
+    pub(in crate::code_rule_dsl) generated_end: usize,
+}
+
 pub(in crate::code_rule_dsl) struct PackedDemand {
     backend: ExecutionBackend,
     programs: Vec<Program>,
@@ -240,6 +250,7 @@ pub(in crate::code_rule_dsl) struct PackedDemand {
     value_facts: Vec<Option<ValueFactDescriptor>>,
     semantic_facts: Vec<Option<SemanticFactDescriptor>>,
     parse_facts: Vec<Option<ParseFactDescriptor>>,
+    document_maps: Vec<DocumentMapSpan>,
     files: Vec<TapeDoc>,
     anchors: Vec<Vec<Vec<u32>>>,
     task_grid: Vec<Vec<bool>>,
@@ -275,6 +286,7 @@ impl PackedDemand {
             value_facts,
             semantic_facts,
             parse_facts,
+            document_maps: Vec::new(),
             files,
             anchors,
             task_grid,
@@ -361,6 +373,36 @@ impl PackedDemand {
             return Err(PackedError::InvalidAnchor);
         }
         self.parse_facts = parse_facts;
+        Ok(self)
+    }
+
+    pub(in crate::code_rule_dsl) fn with_document_maps(
+        mut self,
+        document_maps: Vec<DocumentMapSpan>,
+        required: bool,
+    ) -> Result<Self, PackedError> {
+        if required && document_maps.is_empty() {
+            return Err(PackedError::InvalidAnchor);
+        }
+        if document_maps.iter().any(|span| {
+            span.source_document >= self.files.len()
+                || span.generated_document >= self.files.len()
+                || span.source_start >= span.source_end
+                || span.generated_start >= span.generated_end
+                || span.source_end > self.files[span.source_document].transducer_source().len()
+        }) || document_maps.iter().enumerate().any(|(index, span)| {
+            document_maps[..index].iter().any(|earlier| {
+                (span.source_document == earlier.source_document
+                    && span.source_start < earlier.source_end
+                    && earlier.source_start < span.source_end)
+                    || (span.generated_document == earlier.generated_document
+                        && span.generated_start < earlier.generated_end
+                        && earlier.generated_start < span.generated_end)
+            })
+        }) {
+            return Err(PackedError::InvalidAnchor);
+        }
+        self.document_maps = document_maps;
         Ok(self)
     }
 
@@ -1144,6 +1186,12 @@ impl PackedDemand {
                 }
             }
         }
+        rows.extend(
+            self.document_maps
+                .iter()
+                .enumerate()
+                .map(|(index, span)| PackedRow::document_map(token, index, *span)),
+        );
         rows.insert(
             0,
             PackedRow::batch_status(token, batch_error.is_none(), batch_error),
@@ -1393,6 +1441,19 @@ impl PackedRow {
         row.source_text = Some(source_text);
         row.named_leaf = Some(i64::from(leaf));
         row.capture_named = Some(i64::from(named));
+        row
+    }
+
+    fn document_map(batch: i64, index: usize, span: DocumentMapSpan) -> Self {
+        let mut row = Self::blank(batch, RowKind::DocumentMap);
+        row.file_index = Some(span.generated_document as i64);
+        row.match_index = Some(index as i64);
+        row.node = Some(span.source_start as i64);
+        row.related_node = Some(span.source_end as i64);
+        row.document_id = Some(span.generated_document as i64);
+        row.mapped_document_id = Some(span.source_document as i64);
+        row.start_byte = Some(span.generated_start as i64);
+        row.end_byte = Some(span.generated_end as i64);
         row
     }
 

@@ -15,7 +15,7 @@ use crate::code_rule_dsl::model::CompiledCodeRule;
 use crate::code_rule_dsl::packed::ExecutionBackend;
 use crate::code_rule_dsl::tape::TapeDoc;
 use crate::code_rule_dsl::transducer::sql_backend::{
-    MatchRegistry, PackedDemand, PackedRow, ProducerKind, register_module,
+    DocumentMapSpan, MatchRegistry, PackedDemand, PackedRow, ProducerKind, register_module,
 };
 use rusqlite::Connection;
 use std::collections::BTreeMap;
@@ -29,6 +29,7 @@ pub(super) struct PackedFileInput {
     pub(super) tape: TapeDoc,
     pub(super) language: GrammarDialect,
     pub(super) tasks: BTreeMap<ClauseId, Vec<u32>>,
+    pub(super) document_maps: Vec<DocumentMapSpan>,
 }
 
 /// Rows returned by SQL after completion filtering and stable ordering.
@@ -89,6 +90,7 @@ impl SqlPlans {
         let mut tapes = Vec::with_capacity(files.len());
         let mut anchors = Vec::with_capacity(files.len());
         let mut task_grid = Vec::with_capacity(files.len());
+        let mut document_maps = Vec::new();
         for file in files {
             let mut file_anchors = Vec::with_capacity(programs.len());
             let mut file_tasks = Vec::with_capacity(programs.len());
@@ -114,6 +116,7 @@ impl SqlPlans {
                 file_tasks.push(demanded);
                 file_anchors.push(roots);
             }
+            document_maps.extend(file.document_maps);
             tapes.push(file.tape);
             anchors.push(file_anchors);
             task_grid.push(file_tasks);
@@ -150,6 +153,7 @@ impl SqlPlans {
         .and_then(|demand| demand.with_value_facts(value_facts))
         .and_then(|demand| demand.with_semantic_facts(semantic_facts))
         .and_then(|demand| demand.with_parse_facts(parse_facts))
+        .and_then(|demand| demand.with_document_maps(document_maps, plan.requires_document_maps()))
         .map_err(|error| format!("packed batch verification failed: {error:?}"))?;
         drive_sql(demand, plan.sql()).map_err(|error| error.to_string())
     }

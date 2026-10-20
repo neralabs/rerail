@@ -7,7 +7,7 @@ use crate::code_rule_dsl::packed::ExecutionBackend;
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
 use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file};
 use crate::code_rule_dsl::transducer::sql_backend::{
-    MatchRegistry, PackedDemand, ProducerKind, register_module,
+    DocumentMapSpan, MatchRegistry, PackedDemand, ProducerKind, register_module,
 };
 use rusqlite::{Connection, params};
 use serde_json::json;
@@ -1095,7 +1095,7 @@ pub(super) fn sql_outcome_for_dialect(
     source: &str,
     dialect: GrammarDialect,
 ) -> SqlOutcome {
-    sql_outcome_with_failure(compiled, source, dialect, None, None)
+    sql_outcome_with_failure(compiled, source, dialect, None, None, Vec::new())
 }
 
 pub(super) fn sql_outcome_for_statement(
@@ -1104,7 +1104,7 @@ pub(super) fn sql_outcome_for_statement(
     dialect: GrammarDialect,
     sql: &str,
 ) -> SqlOutcome {
-    sql_outcome_with_failure(compiled, source, dialect, None, Some(sql))
+    sql_outcome_with_failure(compiled, source, dialect, None, Some(sql), Vec::new())
 }
 
 pub(super) fn sql_outcome_for_statement_with_fact_failure(
@@ -1121,6 +1121,7 @@ pub(super) fn sql_outcome_for_statement_with_fact_failure(
         dialect,
         Some((fact_producer, code.to_owned())),
         Some(sql),
+        Vec::new(),
     )
 }
 
@@ -1137,6 +1138,7 @@ pub(super) fn sql_outcome_with_fact_failure(
         dialect,
         Some((fact_producer, code.to_owned())),
         None,
+        Vec::new(),
     )
 }
 
@@ -1146,6 +1148,7 @@ fn sql_outcome_with_failure(
     dialect: GrammarDialect,
     failure: Option<(usize, String)>,
     statement: Option<&str>,
+    document_maps: Vec<DocumentMapSpan>,
 ) -> SqlOutcome {
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect("policy has complete structural SQL lowering");
@@ -1224,6 +1227,9 @@ fn sql_outcome_with_failure(
                 .map(|terminal| terminal.parse_fact())
                 .collect(),
         )
+    })
+    .and_then(|demand| {
+        demand.with_document_maps(document_maps, plan.shape().contains(&SqlShape::MapDocument))
     })
     .and_then(|demand| match injected {
         Some((producer, code)) => demand.with_failure_injection(producer, code),
@@ -1374,9 +1380,43 @@ fn sql_outcome_with_failure(
 pub(super) fn sql_outcome_with_document_maps(
     compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
     source: &str,
-    _maps: &[(usize, usize, usize, usize)],
+    maps: &[(usize, usize, usize, usize)],
 ) -> Result<SqlOutcome, String> {
-    Ok(sql_outcome(compiled, source))
+    if maps.is_empty() {
+        return Err("document-map-missing".to_owned());
+    }
+    let mut ordered = maps.to_vec();
+    ordered.sort_unstable_by_key(|span| (span.2, span.3, span.0, span.1));
+    for (index, span) in ordered.iter().enumerate() {
+        if span.0 >= span.1 || span.2 >= span.3 || span.1 > source.len() {
+            return Err("document-map-invalid-span".to_owned());
+        }
+        if ordered[..index].iter().any(|earlier| {
+            (span.0 < earlier.1 && earlier.0 < span.1) || (span.2 < earlier.3 && earlier.2 < span.3)
+        }) {
+            return Err("document-map-overlap".to_owned());
+        }
+    }
+    Ok(sql_outcome_with_failure(
+        compiled,
+        source,
+        GrammarDialect::Blade,
+        None,
+        None,
+        ordered
+            .into_iter()
+            .map(
+                |(source_start, source_end, generated_start, generated_end)| DocumentMapSpan {
+                    source_document: 0,
+                    generated_document: 0,
+                    source_start,
+                    source_end,
+                    generated_start,
+                    generated_end,
+                },
+            )
+            .collect(),
+    ))
 }
 
 pub(super) fn sql_ranges(

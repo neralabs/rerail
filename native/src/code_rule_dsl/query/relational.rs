@@ -165,6 +165,12 @@ impl SqlCatalogPlan {
         Ok(plan)
     }
 
+    pub(super) fn requires_document_maps(&self) -> bool {
+        self.clause_irs
+            .iter()
+            .any(|ir| ir.operations().contains(&SqlOperation::MapDocument))
+    }
+
     pub(super) fn terminals(&self) -> &[TerminalPlan] {
         &self.terminals
     }
@@ -694,6 +700,9 @@ impl Builder {
                     }
                     ir.terminal_spec(TerminalKind::Kind, format!("terminal:{id}"));
                     ir.operation(SqlOperation::ScanTerminal);
+                    if language == GrammarDialect::Blade {
+                        ir.operation(SqlOperation::MapDocument);
+                    }
                 }
             }
             AstMatcher::All(items) => {
