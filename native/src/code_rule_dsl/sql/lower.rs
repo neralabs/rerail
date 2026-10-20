@@ -449,7 +449,7 @@ fn kind_id(kind: &ast_grep_core::matcher::KindMatcher) -> u16 {
 }
 
 /// The units each unit's body refers to (`Op::Recur`), in `out`.
-fn referred(op: &Op, out: &mut Vec<usize>) {
+pub(super) fn referred(op: &Op, out: &mut Vec<usize>) {
     match op {
         Op::Recur { unit, .. } => out.push(*unit),
         Op::All(items) | Op::Any(items) | Op::Seq(items) => {

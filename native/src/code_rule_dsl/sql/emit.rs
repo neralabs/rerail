@@ -86,6 +86,12 @@ fn start_table() -> String {
     format!("{NAMESPACE}ex")
 }
 
+/// A component's recursive reads into the units of other components (`(unit, key, unit, key)`,
+/// as `e{scc}` holds its reads among its own): only the recursion check reads them.
+fn cross_table(scc: usize) -> String {
+    format!("{NAMESPACE}r{scc}")
+}
+
 /// The table a stage's rows are stored in for the batch.
 pub(super) fn stage_table(stage: usize) -> String {
     format!("stage_{stage}")
@@ -924,8 +930,26 @@ impl<'s> Emitter<'s> {
                 members.join(", ")
             )
             .expect("write to a string");
+            if self.crosses(scc) {
+                write!(
+                    query,
+                    " UNION ALL SELECT su, s, du, d, 0 FROM {}",
+                    cross_table(scc)
+                )
+                .expect("write to a string");
+            }
         }
         self.push(query, Effect::default());
+    }
+
+    /// Whether a unit of component `scc` refers to a unit of another (`cross_table`).
+    fn crosses(&self, scc: usize) -> bool {
+        let units = self.units;
+        units.iter().filter(|unit| unit.scc == scc).any(|unit| {
+            let mut referred = Vec::new();
+            super::lower::referred(&unit.body, &mut referred);
+            referred.iter().any(|&to| units[to].scc != scc)
+        })
     }
 
     /// `op` on `input`, its output holding `live` (every frame of it holds those slots, `input`
@@ -1429,14 +1453,18 @@ impl<'s> Emitter<'s> {
             self.shared_loop(scc);
         }
         // The reference, for the recursion check: from the key of the unit whose body it lies in,
-        // into that unit's component's reads, or from the statement's own rows; recorded from the
-        // rows the matcher evaluates (`lineage`). Without an origin slot to name the key, it
-        // counts as the statement's own, which only starts the check at more keys.
+        // into that unit's component's reads (`cross_table` where it reads another component),
+        // or from the statement's own rows; recorded from the rows the matcher evaluates
+        // (`lineage`). Without an origin slot to name the key, it counts as the statement's own,
+        // which only starts the check at more keys.
         let (reads, source) = match (self.evaluating.last(), self.origin) {
-            (Some(&from), Some(origin)) => (
+            (Some(&from), Some(origin)) if units[from].scc == scc => (
                 format!("{NAMESPACE}e{}", units[from].scc),
                 format!("{from}, f.s{origin}"),
             ),
+            (Some(&from), Some(origin)) => {
+                (cross_table(units[from].scc), format!("{from}, f.s{origin}"))
+            }
             _ => (start_table(), "-1, 0".to_owned()),
         };
         self.record_read(
@@ -1517,6 +1545,17 @@ impl<'s> Emitter<'s> {
         ] {
             self.push(sql, Effect::default());
         }
+        // The reads into other components: no changed answer of this loop's is theirs, so only
+        // the recursion check reads them, and they need no index by the key read.
+        let crossing = self.crosses(scc).then(|| cross_table(scc));
+        if let Some(crossing) = &crossing {
+            for sql in [
+                format!("CREATE TEMP TABLE IF NOT EXISTS {crossing}(su, s, du, d)"),
+                format!("CREATE INDEX IF NOT EXISTS {crossing}_from ON {crossing}(su, s)"),
+            ] {
+                self.push(sql, Effect::default());
+            }
+        }
         self.emitting.push(scc);
         self.looping += 1;
         self.push(LOOP.to_owned(), Effect::default());
@@ -1558,10 +1597,12 @@ impl<'s> Emitter<'s> {
                 format!("UPDATE {demand} SET dirty = 0 WHERE id IN (SELECT k FROM {keys})"),
                 Reads::join(&[&keys]).writes(Writes::None),
             );
-            self.push(
-                format!("DELETE FROM {reads} WHERE su = {unit} AND s IN (SELECT k FROM {keys})"),
-                Reads::join(&[&reads, &keys]).writes(Writes::Delete(reads.clone())),
-            );
+            for reads in std::iter::once(&reads).chain(&crossing) {
+                self.push(
+                    format!("DELETE FROM {reads} WHERE su = {unit} AND s IN (SELECT k FROM {keys})"),
+                    Reads::join(&[reads, &keys]).writes(Writes::Delete(reads.clone())),
+                );
+            }
             self.evaluating.push(unit);
             self.member_start(&keys);
             let out = self.op(&units[unit].body, &keys, &answered);
