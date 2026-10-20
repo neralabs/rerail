@@ -977,6 +977,11 @@ impl Captures {
             .map(|index| self.spans[index].1.as_slice())
     }
 
+    #[cfg(feature = "code-rule-profile")]
+    pub(crate) fn shared_projection(&self) -> Option<Arc<Value>> {
+        self.projection.clone()
+    }
+
     pub(crate) fn projection(&self) -> Option<&Value> {
         self.projection.as_deref()
     }

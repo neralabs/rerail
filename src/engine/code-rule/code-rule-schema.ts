@@ -1434,9 +1434,12 @@ export const codeRuleClauseSchema = z
         "A declared diagnostic location must be a normalized relative path.")).min(1).max(4096).refine(paths => new Set(paths).size === paths.length, "Declared diagnostic locations must be distinct.").optional(),
       inputs: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), codeRuleRelationSchema),
       stages: z.array(z.union([
-        z.object({ name: nonEmptyString, query: nonEmptyString, indexes: z.array(z.array(nonEmptyString).min(1).max(16)).max(8).optional() }).strict(),
+        z.object({ name: nonEmptyString, query: nonEmptyString, indexes: z.array(z.array(nonEmptyString).min(1).max(16)).max(8).optional(),
+          deferred: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), nonEmptyString).refine(fields => Object.keys(fields).length >= 1 && Object.keys(fields).length <= 32 && new Set(Object.keys(fields).map(s => s.toLowerCase())).size === Object.keys(fields).length, "Deferred columns must contain 1 to 32 distinct fields.").optional(),
+        }).strict(),
         z.object({ name: nonEmptyString, reachability: z.object({ roots: nonEmptyString, edges: nonEmptyString,
           batchSize: z.number().int().min(1).max(4096).optional(),
+          graph: z.enum(["directed", "forest"]).optional(),
         }).strict() }).strict(),
       ])).max(64).optional(),
       references: z.object({ language: z.literal("python"),

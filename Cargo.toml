@@ -1,5 +1,6 @@
 [workspace]
 members = ["native"]
+exclude = ["scripts/profiling/reachability"]
 resolver = "2"
 
 [profile.release]

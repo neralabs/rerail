@@ -6,7 +6,7 @@ const native = loadNativeBinding();
 const capabilities = readFileSync(new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url), "utf8");
 const compile = (document: unknown) => native.CodeRuleDslRuntime.compile(JSON.stringify(document), "json", capabilities);
 const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
-function document(roots: string[], edges: [string, string][], batchSize?: number, recursive = false) {
+function document(roots: string[], edges: [string, string][], batchSize?: number, recursive = false, forest = false) {
   const rootQuery = `SELECT DISTINCT __path, value AS id FROM functions CROSS JOIN json_each(${literal(JSON.stringify(roots))})`;
   const edgeQuery = `SELECT DISTINCT __path,json_extract(value,'$[0]') AS src,json_extract(value,'$[1]') AS dst FROM functions CROSS JOIN json_each(${literal(JSON.stringify(edges))}) WHERE __path='a.py'`;
   return {
@@ -15,7 +15,7 @@ function document(roots: string[], edges: [string, string][], batchSize?: number
       inputs: { functions: { evidence: { as: "f", query: { ast: { language: "python", rule: { kind: "function_definition" } } }, project: { path: "file.path" } } } },
       stages: [{ name: "requested", query: rootQuery }, { name: "links", query: edgeQuery }, recursive ? {
         name: "closure", query: `WITH RECURSIVE walk(__path,root,node) AS (SELECT __path,id,id FROM requested UNION SELECT w.__path,w.root,e.dst FROM walk w JOIN links e ON e.__path=w.__path AND e.src=w.node) SELECT * FROM walk`,
-      } : { name: "closure", reachability: { roots: "SELECT __path,id FROM requested", edges: "SELECT __path,src,dst FROM links", ...(batchSize === undefined ? {} : { batchSize }) } }],
+      } : { name: "closure", reachability: { roots: "SELECT __path,id FROM requested", edges: "SELECT __path,src,dst FROM links", ...(forest ? { graph: "forest" } : {}), ...(batchSize === undefined ? {} : { batchSize }) } }],
       query: "SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,c.root,c.node FROM functions f JOIN closure c ON c.__path=f.__path",
       key: ["root", "node"],
     }, violation: { code: "GRAPH", message: "Reachable", anchor: "witness.span" } }],
@@ -38,6 +38,67 @@ function pairCount(roots: string[], edges: [string, string][]) {
   }
   return count;
 }
+
+it.each([1, 2, 256, 4096])("matches recursive SQL on forests with batches of %i", batch => {
+  const roots = ["r", "b", "孤立'", "r"];
+  const edges: [string, string][] = [["r", "a"], ["r", "b"], ["a", "c"], ["r", "a"], ["c", "missing"], ["missing", "tail"]];
+  const doc = document(roots, edges, batch, false, true);
+  expect(codeRuleSchema.safeParse(doc).success).toBe(true);
+  const actual = evaluate(compile(doc));
+  expect(actual.failures).toEqual([]);
+  expect(actual.violations).toEqual(evaluate(compile(document(roots, edges, batch, true))).violations);
+});
+
+it.each(([
+  [["r", "a"], ["a", "r"]],
+  [["r", "c"], ["b", "c"]],
+  [["r", "r"]],
+] as [string, string][][]).map(edges => ({ edges })))("rejects invalid forest shapes without partial findings: %j", ({ edges }) => {
+  const actual = evaluate(compile(document(["r"], edges, 2, false, true)));
+  expect(actual.violations).toEqual([]);
+  expect(actual.failures).toEqual([expect.objectContaining({ code: "relational-failed", message: expect.stringContaining("forest") })]);
+});
+
+it("handles a deep forest iteratively and preserves SQLite numeric identities", () => {
+  const edges = Array.from({ length: 500 }, (_, i): [string, string] => [String(i), String(i + 1)]);
+  const doc = document(["0", "500", "isolated"], edges, 2, false, true);
+  const actual = evaluate(compile(doc));
+  expect(actual.failures).toEqual([]);
+  expect(actual.violations).toEqual(evaluate(compile(document(["0", "500", "isolated"], edges, 2, true))).violations);
+  const numeric = document(["r"], [], 2, false, true);
+  numeric.clauses[0]!.relational.stages[0]!.query = "SELECT __path,1 AS id FROM functions UNION SELECT __path,1.0 FROM functions";
+  numeric.clauses[0]!.relational.stages[1]!.query = "SELECT __path,1.0 AS src,2 AS dst FROM functions";
+  const sql = structuredClone(numeric);
+  delete sql.clauses[0]!.relational.stages[2]!.reachability!.graph;
+  expect(evaluate(compile(numeric))).toEqual(evaluate(compile(sql)));
+});
+
+it("finishes the same derived closure within the SQL work allowance", () => {
+  const roots = Array.from({ length: 450 }, (_, i) => String(i));
+  const edges = roots.slice(1).map((node, i): [string, string] => [String(i), node]);
+  const forest = document(roots, edges, 256, false, true);
+  forest.clauses[0]!.relational.query = "SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,count(*) AS pairs FROM functions f JOIN closure c ON c.__path=f.__path GROUP BY f.__path,f.__start,f.__end";
+  forest.clauses[0]!.relational.key = ["pairs"];
+  const sql = structuredClone(forest);
+  delete sql.clauses[0]!.relational.stages[2]!.reachability!.graph;
+  const limited = JSON.stringify({ ...JSON.parse(capabilities), limits: { ...JSON.parse(capabilities).limits, maxVisitedNodes: 150_000, maxVisitsPerNode: 0 } });
+  const run = (doc: unknown) => evaluate(native.CodeRuleDslRuntime.compile(JSON.stringify(doc), "json", limited));
+  const expected = run(sql), actual = run(forest);
+  expect(expected.failures).toEqual([]);
+  expect(actual.failures).toEqual([]);
+  expect(actual.violations).toEqual(expected.violations);
+});
+
+it("indexes a 30,000-edge forest without recursive native calls", () => {
+  const doc = document(["r"], [], 256, false, true);
+  doc.clauses[0]!.relational.stages[0]!.query = "SELECT __path,0 AS id FROM functions UNION SELECT __path,30000 FROM functions";
+  doc.clauses[0]!.relational.stages[1]!.query = "WITH RECURSIVE seq(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM seq WHERE i<29999) SELECT __path,i AS src,i+1 AS dst FROM functions,seq WHERE __path='a.py'";
+  doc.clauses[0]!.relational.query = "SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,count(*) AS pairs FROM functions f JOIN closure c ON c.__path=f.__path GROUP BY f.__path,f.__start,f.__end ORDER BY f.__path";
+  doc.clauses[0]!.relational.key = ["pairs"];
+  const result = evaluate(compile(doc));
+  expect(result.failures).toEqual([]);
+  expect(result.violations.map((v: { variables: { row: { pairs: number } } }) => v.variables.row.pairs)).toEqual([30002, 2]);
+});
 
 it.each([1, 2, 256, 4096])("matches recursive UNION on arbitrary graphs with batches of %i", batch => {
   // Cycles, diamonds, duplicate links, missing intermediate nodes and an isolated Unicode root.

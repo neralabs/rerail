@@ -5,6 +5,7 @@ The adapters retain the existing linter SQL and return the same descendants rela
 The Rust and interval adapters remain experiments.
 The engine now supports the batched recursive SQL stage described in [the integration report](batched-sql-performance.md).
 The measurements below describe the earlier replay experiment.
+The [native relation experiments](native-relations-spikes.md) add strict forest indexing, tape access, shared captures, and finite-set propagation.
 
 ## Shared contract
 

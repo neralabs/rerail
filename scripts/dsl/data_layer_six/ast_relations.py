@@ -178,7 +178,7 @@ def typed_input_partitions(clause):
  plan['stages']=[*helpers,*plan['stages']]
  if len(plan['stages'])>64:raise ValueError(clause['id']+' needs too many materialized syntax stages')
 
-def batched_reachability(clause):
+def batched_reachability(clause,forest=False):
  """Lower explicit graph producers to the generic batched SQLite stage."""
  plan=clause['relational']
  for stage in plan.get('stages',[]):
@@ -200,4 +200,35 @@ def batched_reachability(clause):
   else:
    # Other linters retain all authored seeds until a smaller producer is proved.
    continue
-  stage.clear();stage.update(name='descendants',reachability={'roots':roots,'edges':'SELECT __path,src,dst FROM edges'})
+  stage.clear();stage.update(name='descendants',reachability={'roots':roots,'edges':'SELECT __path,src,dst FROM edges',**({'graph':'forest'} if forest else {})})
+
+def defer_node_text(clause):
+ """These authored relations carry the node's exact path and byte range.
+
+ Preserve all rule SQL while avoiding full source copies during extraction and
+ intermediate materialization. Other text values retain their existing meaning.
+ """
+ if not clause['id'].startswith('quality-contracts'):return
+ plan=clause['relational'];raw=plan['inputs'].get('raw_nodes')
+ if raw is None or raw['evidence']['project'].get('text')!='capture.NODE':
+  raise ValueError('deferred node text requires an exact source projection')
+ del raw['evidence']['project']['text']
+ # Explicit producer contracts: text is precisely the source at __start..__end.
+ producers={'nodes','functions','classes','methods','attributes','calls','arguments',
+  'keywords','returns','assignments','module_functions','last_methods','last_module_functions'}
+ for stage in plan['stages']:
+  if stage['name'] in producers:
+   stage['deferred']={'text':'source_text(__path,__start,__end)'}
+
+def narrow_deferred_windows(clause):
+ """Window coroutines otherwise compute all SELECT-star columns before outer pruning."""
+ if not clause['id'].startswith('quality-contracts'):return
+ plan=clause['relational'];raw=plan['inputs'].get('raw_nodes')
+ if raw is None or 'text' in raw['evidence']['project']:return
+ node_columns=['__path','__start','__end',*raw['evidence']['project'],'id','parent','edge_parent','ordinal']
+ for stage in plan['stages']:
+  if stage['name']=='arguments':
+   stage['query']=stage['query'].replace('SELECT n.*,','SELECT '+','.join('n.'+c for c in node_columns)+',',1)
+  elif stage['name'] in ('last_methods','last_module_functions'):
+   columns=[*node_columns,'name',*(['cls','class_name'] if stage['name']=='last_methods' else [])]
+   stage['query']=stage['query'].replace('SELECT *,row_number()','SELECT '+','.join(columns)+',row_number()',1)

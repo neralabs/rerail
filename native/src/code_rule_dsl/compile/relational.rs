@@ -6,7 +6,7 @@ use crate::code_rule_dsl::model::Capabilities;
 use crate::code_rule_dsl::relational::{self, Plan, Stage};
 use napi::Result;
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, atomic::AtomicUsize};
 
 fn names(value: &Value, path: &str) -> Result<Vec<String>> {
@@ -95,9 +95,10 @@ pub(super) fn compile(
             }
         }
     }
+    let work = Arc::new(AtomicUsize::new(usize::MAX));
     let db = relational::connection(
         capabilities.limits.max_regex_pattern_bytes,
-        Arc::new(AtomicUsize::new(usize::MAX)),
+        Arc::clone(&work),
     )?;
     let mut tables = BTreeSet::new();
     let mut inputs = Vec::new();
@@ -156,6 +157,8 @@ pub(super) fn compile(
         Ok(relational::References { query,key })
     }).transpose()?;
     let mut stages = Vec::new();
+    let mut last_uses = BTreeMap::new();
+    let mut reads_source = false;
     if let Some(value) = spec.get("stages") {
         let values = value
             .as_array()
@@ -164,7 +167,11 @@ pub(super) fn compile(
         for (index, value) in values.iter().enumerate() {
             let at = format!("{path}/stages/{index}");
             let spec = object(value, &at)?;
-            reject_unknown(spec, &["name", "query", "indexes", "reachability"], &at)?;
+            reject_unknown(
+                spec,
+                &["name", "query", "indexes", "reachability", "deferred"],
+                &at,
+            )?;
             let name = non_empty_str(spec.get("name"), &format!("{at}/name"))?.to_owned();
             if !relational::identifier(&name)
                 || tables.iter().any(|table| table.eq_ignore_ascii_case(&name))
@@ -176,13 +183,26 @@ pub(super) fn compile(
             let reachability = spec
                 .get("reachability")
                 .map(|value| -> Result<_> {
-                    if spec.contains_key("query") || spec.contains_key("indexes") {
+                    if spec.contains_key("query")
+                        || spec.contains_key("indexes")
+                        || spec.contains_key("deferred")
+                    {
                         return Err(invalid(format!(
                             "{at}: reachability cannot declare query or indexes"
                         )));
                     }
                     let shape = object(value, &format!("{at}/reachability"))?;
-                    reject_unknown(shape, &["roots", "edges", "batchSize"], &at)?;
+                    reject_unknown(shape, &["roots", "edges", "batchSize", "graph"], &at)?;
+                    let forest = match shape.get("graph").and_then(Value::as_str) {
+                        None if !shape.contains_key("graph") => false,
+                        Some("directed") => false,
+                        Some("forest") => true,
+                        _ => {
+                            return Err(invalid(format!(
+                                "{at}/reachability/graph must be directed or forest"
+                            )));
+                        }
+                    };
                     let mut queries = Vec::new();
                     for (field, required) in [
                         ("roots", vec!["__path", "id"]),
@@ -193,7 +213,12 @@ pub(super) fn compile(
                             &format!("{at}/reachability/{field}"),
                             capabilities.limits.max_ast_pattern_bytes,
                         )?;
-                        if relational::columns(&db, &query, &tables)? != required {
+                        let (selected, reads, source) = relational::inspect(&db, &query, &tables)?;
+                        reads_source |= source;
+                        for name in reads {
+                            last_uses.insert(name, index);
+                        }
+                        if selected != required {
                             return Err(invalid(format!(
                                 "{at}/reachability/{field} must select {} in order",
                                 required.join(",")
@@ -214,6 +239,7 @@ pub(super) fn compile(
                         roots: queries.remove(0),
                         edges: queries.remove(0),
                         batch_size,
+                        forest,
                     })
                 })
                 .transpose()?;
@@ -226,7 +252,55 @@ pub(super) fn compile(
                     capabilities.limits.max_ast_pattern_bytes,
                 )?
             };
-            let columns = relational::columns(&db, &query, &tables)?;
+            let (mut columns, reads, source) = relational::inspect(&db, &query, &tables)?;
+            reads_source |= source;
+            for name in reads {
+                last_uses.insert(name, index);
+            }
+            let mut deferred = BTreeMap::<String, String>::new();
+            if let Some(value) = spec.get("deferred") {
+                let fields = object(value, &format!("{at}/deferred"))?;
+                if fields.is_empty() || fields.len() > 32 {
+                    return Err(invalid(format!(
+                        "{at}/deferred must contain 1 to 32 columns"
+                    )));
+                }
+                for (field, expression) in fields {
+                    if !relational::identifier(field)
+                        || deferred.keys().any(|name| name.eq_ignore_ascii_case(field))
+                        || columns
+                            .iter()
+                            .any(|name| name.eq_ignore_ascii_case(field) && name != field)
+                    {
+                        return Err(invalid(format!(
+                            "{at}/deferred must name distinct relation columns"
+                        )));
+                    }
+                    deferred.insert(
+                        field.clone(),
+                        text(
+                            Some(expression),
+                            &format!("{at}/deferred/{field}"),
+                            capabilities.limits.max_ast_pattern_bytes,
+                        )?,
+                    );
+                }
+            }
+            let stored_columns = columns
+                .iter()
+                .filter(|c| !deferred.contains_key(*c))
+                .cloned()
+                .collect::<Vec<_>>();
+            if stored_columns.is_empty() {
+                return Err(invalid(format!(
+                    "{at}: a stage must retain a physical column"
+                )));
+            }
+            for field in deferred.keys() {
+                if !columns.contains(field) {
+                    columns.push(field.clone());
+                }
+            }
             let indexes = spec
                 .get("indexes")
                 .map(|value| {
@@ -239,7 +313,7 @@ pub(super) fn compile(
                         .iter()
                         .map(|value| {
                             let fields = names(value, &format!("{at}/indexes"))?;
-                            if fields.iter().any(|field| !columns.contains(field)) {
+                            if fields.iter().any(|field| !stored_columns.contains(field)) {
                                 return Err(invalid(format!(
                                     "{at}/indexes names an unknown column"
                                 )));
@@ -255,8 +329,12 @@ pub(super) fn compile(
                 query,
                 indexes,
                 reachability,
+                deferred,
+                stored_columns,
+                output_columns: columns,
             };
-            relational::create_stage(&db, &stage, false)?;
+            relational::create_stage(&db, &stage, false, &work)?;
+            reads_source |= relational::deferred::validate(&db, &stage)?;
             tables.insert(stage.name.clone());
             stages.push(stage);
         }
@@ -266,7 +344,11 @@ pub(super) fn compile(
         &format!("{path}/query"),
         capabilities.limits.max_ast_pattern_bytes,
     )?;
-    let columns = relational::columns(&db, &query, &tables)?;
+    let (columns, reads, source) = relational::inspect(&db, &query, &tables)?;
+    reads_source |= source;
+    for name in reads {
+        last_uses.insert(name, stages.len());
+    }
     for required in ["path", "start_byte", "end_byte"] {
         if !columns.iter().any(|column| column == required) {
             return Err(invalid(format!("{path}/query must select {required}")));
@@ -295,5 +377,7 @@ pub(super) fn compile(
         query,
         key,
         code,
+        last_uses,
+        reads_source,
     })
 }

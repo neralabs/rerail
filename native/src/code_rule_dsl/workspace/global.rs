@@ -142,6 +142,13 @@ pub(super) fn forget_evidence(state: &mut WorkspaceState, path: &str) {
             state.dirty_globals.insert(id.0);
         }
     }
+    // Lazy source reads can change while every projected metadata row stays equal,
+    // including a source with no witnesses. Invalidate those repository scopes.
+    for (index, clauses) in &state.globals {
+        if state.code_rules[*index].scope.matches(path) && clauses.iter().any(|clause| {
+            matches!(&clause.kind, ClauseKind::Relational(plan) if plan.reads_source && !plan.per_file)
+        }) { state.dirty_globals.insert(*index); }
+    }
 }
 
 /// A relation's rows: every partition of its producer in the relation's domain. A failed file, or
@@ -402,8 +409,54 @@ pub(super) fn evaluate_global(
                     );
                 }
             }
-        } else if let Some(producers) = state.relation_plans.get(&(index, clause.id.clone())) {
-            let mut result = evaluate_relations(state, code_rule, clause, producers, snapshot);
+        } else if let Some(producers) = state
+            .relation_plans
+            .get(&(index, clause.id.clone()))
+            .cloned()
+        {
+            let source_snapshot = if matches!(&clause.kind,ClauseKind::Relational(plan) if plan.reads_source)
+            {
+                let paths = state
+                    .files
+                    .keys()
+                    .chain(state.evicted_inputs.keys())
+                    .filter(|path| code_rule.scope.matches(path))
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                if paths.len() > code_rule.capabilities.limits.max_files {
+                    return Err(invalid("relational source snapshot exceeds maxFiles"));
+                }
+                let mut files = Vec::with_capacity(paths.len());
+                for path in paths {
+                    if crate::code_rule_dsl::budget::step_budget_exhausted() {
+                        return Err(invalid("interrupted: relational source load"));
+                    }
+                    let mut input = state
+                        .files
+                        .get(&path)
+                        .map(|file| file.input.clone())
+                        .or_else(|| state.evicted_inputs.get(&path).cloned())
+                        .ok_or_else(|| invalid("relational source was removed"))?;
+                    input.source = super::documents::source(state, &path)?;
+                    if input.source.len() > code_rule.capabilities.limits.max_source_bytes {
+                        return Err(invalid("relational source snapshot exceeds maxSourceBytes"));
+                    }
+                    files.push(input);
+                }
+                Some(Snapshot {
+                    revision: snapshot.revision,
+                    files,
+                })
+            } else {
+                None
+            };
+            let mut result = evaluate_relations(
+                state,
+                code_rule,
+                clause,
+                &producers,
+                source_snapshot.as_ref().unwrap_or(snapshot),
+            );
             evaluation.violations.append(&mut result.violations);
             evaluation.failures.append(&mut result.failures);
             evaluation.metrics.witnesses += result.metrics.witnesses;

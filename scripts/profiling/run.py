@@ -66,6 +66,12 @@ def execute(args, command, output, deadline):
     env.pop("RERAIL_PROFILE", None)
     env.pop("RERAIL_SQL_QUERY_PLANS", None)
     env["RERAIL_SQL_INSERT_BATCH"] = str(args.insert_batch)
+    env.pop("RERAIL_SQL_INPUT_VTAB", None)
+    if args.native_input != "table":
+        env["RERAIL_SQL_INPUT_VTAB"] = args.native_input
+    env.pop("RERAIL_SQL_RETAIN_STAGES", None)
+    if args.retain_sql_stages:
+        env["RERAIL_SQL_RETAIN_STAGES"] = "1"
     env.pop("RERAIL_SHARED_INPUT_INDEX", None)
     if args.shared_input_index:
         env["RERAIL_SHARED_INPUT_INDEX"] = "1"
@@ -131,6 +137,8 @@ def main():
     parser.add_argument("--sample-count", type=int, default=4)
     parser.add_argument("--sample-seconds", type=int, default=1)
     parser.add_argument("--sample-module", action="append", help="Include stacks with this module or symbol substring; repeat, or use '*' for all active stacks")
+    parser.add_argument("--native-input", choices=["table", "rows", "captures"], default="table", help="Profile-only native row virtual table instead of SQL input insertion")
+    parser.add_argument("--retain-sql-stages", action="store_true", help="Profile-only control: retain intermediate SQL stages until the connection closes")
     parser.add_argument("--allocator", default="unspecified")
     parser.add_argument("--policies", default="packs/data-layer/candidates/rules")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="Optional command after --, instead of a data-layer recording")
@@ -185,7 +193,7 @@ def main():
     (output / "trace.chrome.json").write_text(json.dumps(chrome_trace(events)) + "\n")
     report = {"version": 1, "command": command, "elapsedSeconds": time.monotonic() - started,
               "exitCode": code, "timedOut": timed_out, "deadlineSeconds": args.deadline,
-              "trace": args.trace, "external": args.external, "queryPlans": args.query_plans, "insertBatch": args.insert_batch, "sharedInputIndex": args.shared_input_index,
+              "trace": args.trace, "external": args.external, "queryPlans": args.query_plans, "insertBatch": args.insert_batch, "nativeInput": args.native_input, "sharedInputIndex": args.shared_input_index, "retainSqlStages":args.retain_sql_stages,
               "sampleModules":args.sample_module or ["rerail_engine"],
               "host": {"platform": platform.platform(), "cpu": platform.processor(), "python": platform.python_version(),
                        "logicalCpus": os.cpu_count(), "loadAverageStart": load_start,

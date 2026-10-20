@@ -53,11 +53,21 @@ async function workspace(rule: NativeCompiledCodeRuleDsl, files: File[], transit
 
 async function main(): Promise<void> {
   const { values } = parseArgs({ options: { baseline: { type: "string" }, candidate: { type: "string" },
-    recording: { type: "string", multiple: true }, output: { type: "string" }, offset: { type: "string", default: "0" }, limit: { type: "string", default: "40" }, transitions: { type: "boolean", default: false } } });
+    recording: { type: "string", multiple: true }, output: { type: "string" }, offset: { type: "string", default: "0" }, limit: { type: "string", default: "40" }, transitions: { type: "boolean", default: false },
+    "baseline-input": { type: "string" }, "candidate-input": { type: "string" } } });
   if (!values.baseline || !values.candidate || !values.recording || !values.output) throw new Error("Required: --baseline --candidate --recording --output [--offset --limit]");
   const recordings = values.recording.map(path => recordingSchema.parse(JSON.parse(readFileSync(path, "utf8"))));
   if (new Set(recordings.map(row => row.commit)).size !== 1) throw new Error("Source commits differ");
   const native = loadNativeBinding();
+  const originalInput = process.env.RERAIL_SQL_INPUT_VTAB;
+  for (const input of [values["baseline-input"], values["candidate-input"]]) {
+    if (input !== undefined && !["table", "rows", "captures"].includes(input)) throw new Error("Invalid input backend");
+  }
+  const selectInput = (input: string | undefined) => {
+    const value = input === undefined ? originalInput : input === "table" ? undefined : input;
+    if (value === undefined) delete process.env.RERAIL_SQL_INPUT_VTAB;
+    else process.env.RERAIL_SQL_INPUT_VTAB = value;
+  };
   const compile = (path: string) => native.CodeRuleDslRuntime.compile(JSON.stringify(codeRuleSchema.parse(JSON.parse(readFileSync(path, "utf8")))), "json", capabilitiesJson());
   const baseline = compile(values.baseline), candidate = compile(values.candidate);
   const events = recordings.flatMap(row => row.events).filter(row => row.check === "serverplan_quality");
@@ -79,10 +89,16 @@ async function main(): Promise<void> {
   const rows = [];
   for (const item of cases.slice(offset, offset + limit)) {
     const input = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: item.files.map(file => ({ ...file, language: "python" })) });
+    selectInput(values["baseline-input"]);
     const expected = resultSchema.parse(JSON.parse(baseline.evaluate(input, "report")));
+    selectInput(values["candidate-input"]);
     const actual = resultSchema.parse(JSON.parse(candidate.evaluate(input, "report")));
-    const baselineSnapshot = (files: File[]): Result => resultSchema.parse(JSON.parse(baseline.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: files.map(file => ({ ...file, language: "python" })) }), "report")));
+    const baselineSnapshot = (files: File[]): Result => {
+      selectInput(values["baseline-input"]);
+      return resultSchema.parse(JSON.parse(baseline.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: files.map(file => ({ ...file, language: "python" })) }), "report")));
+    };
     const transitionExpected = values.transitions ? { initial: expected, clean: baselineSnapshot(item.files.map(file => ({ ...file, source: "pass\n" }))), removed: baselineSnapshot([]) } : undefined;
+    selectInput(values["candidate-input"]);
     const incremental = await workspace(candidate, item.files, transitionExpected);
     rows.push({ name: item.name, positive: expected.violations.length > 0, codes: expected.violations.map(row => row.code),
       expected: expected.violations.length, actual: actual.violations.length,
@@ -95,6 +111,7 @@ async function main(): Promise<void> {
   const result = { provenance: "Baseline-relative production gates; these are not upstream oracle findings", commit: recordings[0]!.commit,
     nativeSha256: createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex"),
     policyDigests: Object.fromEntries([values.baseline, values.candidate].map(path => [path, createHash("sha256").update(readFileSync(path)).digest("hex")])),
+    baselineInput: values["baseline-input"] ?? originalInput ?? "table", candidateInput: values["candidate-input"] ?? originalInput ?? "table",
     totalCases: cases.length, offset, transitions: values.transitions ? rows.length * 3 : 0, cases: rows.length, positive: rows.filter(row => row.positive).length,
     clean: rows.filter(row => !row.positive).length, rows };
   writeFileSync(values.output, JSON.stringify(result, null, 2) + "\n");

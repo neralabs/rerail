@@ -43,6 +43,7 @@ pub struct Graph {
     pub batch_filters: u64,
     pub requested_roots: u64,
     pub emitted: u64,
+    forest: Option<crate::forest::Forest>,
 }
 
 impl Graph {
@@ -66,6 +67,7 @@ impl Graph {
             batch_filters: 0,
             requested_roots: 0,
             emitted: 0,
+            forest: None,
         };
         for node in nodes {
             graph.charge()?;
@@ -81,6 +83,23 @@ impl Graph {
         Ok(graph)
     }
 
+    pub fn new_tree(
+        nodes: Vec<i64>,
+        edges: Vec<[i64; 2]>,
+        budget: i64,
+        millis: i64,
+    ) -> Result<Self> {
+        let mut graph = Self::new(nodes.clone(), edges.clone(), budget, millis)?;
+        graph.forest = Some(crate::forest::Forest::build(&mut graph, &nodes, &edges)?);
+        Ok(graph)
+    }
+    pub fn contains(&mut self, root: i64, node: i64) -> Result<bool> {
+        self.charge()?;
+        if let Some(forest) = &self.forest {
+            return Ok(forest.contains(root, node));
+        }
+        Ok(self.reachable(root, false)?.binary_search(&node).is_ok())
+    }
     pub fn charge(&mut self) -> Result<()> {
         Self::charge_parts(&mut self.remaining, &mut self.work, self.deadline)
     }
@@ -104,6 +123,14 @@ impl Graph {
         // Do not accumulate unbounded empty entries for arbitrary unknown IDs.
         if !self.nodes.contains(&root) {
             return Ok(Arc::new(vec![]));
+        }
+        if let Some(forest) = &self.forest {
+            let mut values = forest.reachable(root, reverse);
+            for _ in &values {
+                Self::charge_parts(&mut self.remaining, &mut self.work, self.deadline)?;
+            }
+            values.sort_unstable();
+            return Ok(Arc::new(values));
         }
         let mut seen = HashSet::new();
         let mut pending = Vec::new();
