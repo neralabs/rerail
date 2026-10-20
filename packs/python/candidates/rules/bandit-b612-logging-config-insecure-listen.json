@@ -48,7 +48,7 @@
       "violation": {
         "code": "B612",
         "anchor": "capture.F",
-        "message": "logging.config.listen is used without a verify callback; verify or decrypt received configuration bytes.",
+        "message": "Pass a verify callback to logging.config.listen; otherwise anyone who can reach the port can push config that runs code.",
         "suppress": {
           "nosec": {
             "codes": [

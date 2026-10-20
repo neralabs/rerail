@@ -40,7 +40,7 @@
       "violation": {
         "code": "B409",
         "anchor": "witness.span",
-        "message": "xml.dom.pulldom parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library.",
+        "message": "Parse this XML with defusedxml.pulldom instead of xml.dom.pulldom; the standard parser is open to XML entity attacks.",
         "suppress": {
           "nosec": {
             "codes": [

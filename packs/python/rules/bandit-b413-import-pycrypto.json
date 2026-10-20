@@ -145,7 +145,7 @@
       "violation": {
         "code": "B413",
         "anchor": "witness.span",
-        "message": "The pyCrypto library is deprecated and unmaintained; consider using pyca/cryptography.",
+        "message": "Replace this pyCrypto import with the cryptography package; pyCrypto is unmaintained and has known vulnerabilities.",
         "suppress": {
           "nosec": {
             "codes": [

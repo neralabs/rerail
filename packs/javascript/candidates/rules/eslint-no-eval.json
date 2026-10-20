@@ -157,7 +157,7 @@
       "violation": {
         "anchor": "capture.P",
         "code": "no-eval",
-        "message": "`eval` can be harmful.",
+        "message": "Remove this use of eval; parse data with JSON.parse or dispatch through a map of functions instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -236,7 +236,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-eval",
-        "message": "`eval` can be harmful.",
+        "message": "Remove this use of eval; parse data with JSON.parse or dispatch through a map of functions instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -344,7 +344,7 @@
       "violation": {
         "anchor": "capture.P",
         "code": "no-eval",
-        "message": "`eval` can be harmful.",
+        "message": "Remove this use of eval; parse data with JSON.parse or dispatch through a map of functions instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1114,7 +1114,7 @@
       "violation": {
         "anchor": "capture.P",
         "code": "no-eval",
-        "message": "`eval` can be harmful.",
+        "message": "Remove this use of eval; parse data with JSON.parse or dispatch through a map of functions instead.",
         "suppress": {
           "eslint": {
             "rules": [

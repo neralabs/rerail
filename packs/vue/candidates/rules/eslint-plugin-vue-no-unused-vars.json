@@ -476,7 +476,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-unused-vars",
-        "message": "'$NAME' is defined but never used.",
+        "message": "Remove the unused '$NAME' alias or parameter, or use it in the template.",
         "suppress": {
           "eslint": {
             "rules": [

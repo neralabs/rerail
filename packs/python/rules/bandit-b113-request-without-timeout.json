@@ -124,7 +124,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B113",
-        "message": "Bandit B113 (request-without-timeout)",
+        "message": "Pass a finite timeout to this HTTP call; without one a slow server can hang the program.",
         "suppress": {
           "nosec": {
             "codes": [

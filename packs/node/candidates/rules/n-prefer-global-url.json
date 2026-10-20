@@ -314,7 +314,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/url",
-        "message": "Unexpected use of 'require(\"url\").URL'. Use the global variable 'URL' instead.",
+        "message": "Use the global URL instead of reading URL from the url module.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -441,7 +441,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/url",
-        "message": "Unexpected use of 'require(\"url\").URL'. Use the global variable 'URL' instead.",
+        "message": "Drop URL from this destructuring and use the global URL instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -500,7 +500,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/url",
-        "message": "Unexpected use of 'require(\"url\").URL'. Use the global variable 'URL' instead.",
+        "message": "Remove URL from this import or export and use the global URL instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -537,7 +537,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/url",
-        "message": "Unexpected use of 'require(\"url\").URL'. Use the global variable 'URL' instead.",
+        "message": "Re-export only the names you need from the url module; URL is already a global.",
         "suppress": {
           "eslint": {
             "rules": [

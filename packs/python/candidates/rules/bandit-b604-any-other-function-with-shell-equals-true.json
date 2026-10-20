@@ -94,7 +94,7 @@
       "violation": {
         "code": "B604",
         "anchor": "capture.F",
-        "message": "Non-subprocess call uses a truthy shell keyword",
+        "message": "Drop the truthy shell argument and pass the command as an argument list; this wrapper likely runs it through a shell.",
         "suppress": {
           "nosec": {
             "codes": [

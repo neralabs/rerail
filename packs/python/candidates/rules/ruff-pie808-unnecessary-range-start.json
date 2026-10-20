@@ -118,7 +118,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PIE808",
-        "message": "Unnecessary `start` argument in `range`",
+        "message": "Remove the `0` start argument from this range() call.",
         "suppress": {
           "noqa": {
             "codes": [

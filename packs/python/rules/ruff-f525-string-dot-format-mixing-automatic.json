@@ -85,7 +85,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F525",
-        "message": "`.format` string mixes automatic and manual numbering",
+        "message": "Number every field in this str.format() string, or none of them, instead of mixing `{}` with `{0}`.",
         "suppress": {
           "noqa": {
             "codes": [

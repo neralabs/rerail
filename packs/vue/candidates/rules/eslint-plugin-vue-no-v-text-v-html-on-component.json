@@ -442,7 +442,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-v-text-v-html-on-component",
-        "message": "Using v-${NAME} on component may break component's content.",
+        "message": "Remove v-${NAME} from this component and pass the content through a slot or prop instead.",
         "suppress": {
           "eslint": {
             "rules": [

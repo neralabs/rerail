@@ -267,7 +267,7 @@
       "violation": {
         "anchor": "capture.K",
         "code": "no-dupe-keys",
-        "message": "Duplicate key '$KT'.",
+        "message": "Remove or rename one of the duplicate '$KT' keys; the later value silently overwrites the earlier one.",
         "suppress": {
           "eslint": {
             "rules": [

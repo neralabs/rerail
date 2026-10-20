@@ -327,7 +327,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B020",
-        "message": "Loop control variable `$NAME` overrides iterable it iterates",
+        "message": "Rename the loop variable `$NAME` so it doesn't overwrite the iterable the loop iterates over.",
         "suppress": {
           "noqa": {
             "codes": [

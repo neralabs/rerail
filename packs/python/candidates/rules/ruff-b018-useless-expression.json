@@ -275,7 +275,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B018",
-        "message": "Found useless expression. Either assign it to a variable or remove it.",
+        "message": "Remove this expression, or assign or use its value; as a statement it does nothing.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -317,7 +317,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B018",
-        "message": "Found useless attribute access. Either assign it to a variable or remove it.",
+        "message": "Assign this attribute access to `_` if its property side effect is intended, or remove it.",
         "suppress": {
           "noqa": {
             "codes": [

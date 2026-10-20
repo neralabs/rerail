@@ -34,7 +34,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "AM01",
-        "message": "DISTINCT is ambiguous with GROUP BY.",
+        "message": "Remove DISTINCT from this SELECT; its GROUP BY already makes the rows unique.",
         "suppress": {
           "sqlfluff": {
             "rules": [

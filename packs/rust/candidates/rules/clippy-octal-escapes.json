@@ -11,14 +11,14 @@
       "kind": "string_literal",
       "regex": "(?s)(?:^|[^\\\\]|\\\\\\\\)(?P<O>\\\\0[0-7]{1,2})"
     } } },
-    "violation": { "suppress": { "clippy": { "lints": ["clippy::octal_escapes", "clippy::all", "clippy::suspicious", "warnings"] } }, "anchor": "capture.O", "code": "octal_escapes", "message": "Clippy octal_escapes: octal-looking escape in a literal" }
+    "violation": { "suppress": { "clippy": { "lints": ["clippy::octal_escapes", "clippy::all", "clippy::suspicious", "warnings"] } }, "anchor": "capture.O", "code": "octal_escapes", "message": "Replace this \\0 escape with the intended character, e.g. \\x1b for \\033, or \\x00 then the digits if NUL was meant." }
   }, {
     "id": "octal-escape-after-first",
       "forbid": { "ast": { "language": "rust", "rule": {
         "kind": "string_literal",
         "regex": "(?s).*?(?:^|[^\\\\]|\\\\\\\\)\\\\0[0-7]{1,2}.*?(?P<O>\\\\0[0-7]{1,2})"
       } } },
-      "violation": { "suppress": { "clippy": { "lints": ["clippy::octal_escapes", "clippy::all", "clippy::suspicious", "warnings"] } }, "anchor": "capture.O", "code": "octal_escapes", "message": "Clippy octal_escapes: octal-looking escape in a literal" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::octal_escapes", "clippy::all", "clippy::suspicious", "warnings"] } }, "anchor": "capture.O", "code": "octal_escapes", "message": "Replace this \\0 escape with the intended character, e.g. \\x1b for \\033, or \\x00 then the digits if NUL was meant." }
   }
   ]
 }

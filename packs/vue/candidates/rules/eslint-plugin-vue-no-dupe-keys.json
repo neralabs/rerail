@@ -1658,7 +1658,7 @@
       "violation": {
         "anchor": "capture.K",
         "code": "vue/no-dupe-keys",
-        "message": "Duplicate key '$KT'. May cause name collision in script or template tag.",
+        "message": "Rename one of the '$KT' keys so each name is unique across props, data, computed, methods and setup.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -2173,7 +2173,7 @@
       "violation": {
         "anchor": "capture.SITE",
         "code": "vue/no-dupe-keys",
-        "message": "Duplicate key '$NAME'. May cause name collision in script or template tag.",
+        "message": "Rename this '$NAME' binding so it does not reuse the name of a prop.",
         "suppress": {
           "eslint": {
             "rules": [

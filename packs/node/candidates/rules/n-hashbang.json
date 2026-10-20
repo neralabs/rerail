@@ -40,7 +40,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/hashbang",
-        "message": "This file needs no shebang.",
+        "message": "Remove the shebang line; package.json does not list this file as a bin executable.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -71,7 +71,7 @@
       "violation": {
         "anchor": "file.start",
         "code": "n/hashbang",
-        "message": "This file needs shebang \"#!/usr/bin/env node\".",
+        "message": "Add #!/usr/bin/env node as the first line; package.json lists this file as a bin executable.",
         "suppress": {
           "eslint": {
             "rules": [

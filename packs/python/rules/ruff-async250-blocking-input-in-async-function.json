@@ -129,7 +129,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC250",
-    "message": "Blocking call to `input()` in async context",
+    "message": "Read input in a worker thread, such as `await asyncio.to_thread(input)`, instead of calling `input()` directly.",
     "suppress": {
       "noqa": {
         "codes": [

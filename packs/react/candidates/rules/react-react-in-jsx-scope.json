@@ -207,7 +207,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/react-in-jsx-scope",
-        "message": "'React' must be in scope when using JSX",
+        "message": "Add `import React from \"react\"` to this file; the classic JSX transform compiles tags to React.createElement.",
         "suppress": {
           "eslint": {
             "rules": [

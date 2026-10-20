@@ -101,7 +101,7 @@
       "violation": {
         "anchor": "capture.C",
         "code": "ST02",
-        "message": "Unnecessary CASE statement. Use COALESCE function instead.",
+        "message": "Replace this CASE with COALESCE($C, FALSE), prefixed with NOT if its THEN value is FALSE.",
         "suppress": {
           "sqlfluff": {
             "rules": [
@@ -245,7 +245,7 @@
       "violation": {
         "anchor": "capture.C",
         "code": "ST02",
-        "message": "Unnecessary CASE statement. Use COALESCE function or the column itself instead.",
+        "message": "Replace this CASE with COALESCE($X, <its THEN value>), or just $X if the THEN value is NULL.",
         "suppress": {
           "sqlfluff": {
             "rules": [
@@ -389,7 +389,7 @@
       "violation": {
         "anchor": "capture.C",
         "code": "ST02",
-        "message": "Unnecessary CASE statement. Use COALESCE function or the column itself instead.",
+        "message": "Replace this CASE with COALESCE($X, <its ELSE value>), or just $X if it has no ELSE.",
         "suppress": {
           "sqlfluff": {
             "rules": [

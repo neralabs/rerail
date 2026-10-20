@@ -35,7 +35,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "ST08",
-        "message": "DISTINCT used with parentheses.",
+        "message": "Remove the parentheses after DISTINCT; it applies to the whole select list, not one column.",
         "suppress": {
           "sqlfluff": {
             "rules": [
@@ -82,7 +82,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "ST08",
-        "message": "DISTINCT used with parentheses.",
+        "message": "Remove the parentheses after DISTINCT; it applies to the whole select list, not the parenthesized part.",
         "suppress": {
           "sqlfluff": {
             "rules": [
@@ -149,7 +149,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "ST08",
-        "message": "DISTINCT used with parentheses.",
+        "message": "Remove the parentheses after DISTINCT in this call; DISTINCT is a keyword, not a function.",
         "suppress": {
           "sqlfluff": {
             "rules": [

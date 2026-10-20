@@ -343,7 +343,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC100",
-    "message": "A `with $CALLEE(...):` context does not contain any `await` statements. This makes it pointless, as the timeout can only be triggered by a checkpoint.",
+    "message": "Add an await inside this `with $CALLEE(...):` block; without a checkpoint the timeout can never fire.",
     "suppress": {
       "noqa": {
         "codes": [

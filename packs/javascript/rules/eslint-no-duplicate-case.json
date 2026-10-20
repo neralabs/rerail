@@ -136,7 +136,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-duplicate-case",
-        "message": "Duplicate case label.",
+        "message": "Remove this case or change its test; an earlier case with the same test always matches first.",
         "suppress": {
           "eslint": {
             "rules": [

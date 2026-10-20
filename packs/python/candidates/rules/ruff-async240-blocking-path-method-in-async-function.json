@@ -255,7 +255,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC240",
-    "message": "Async functions should not perform blocking os.path operations",
+    "message": "Run this `os.path` call in a worker thread, such as `await asyncio.to_thread(...)`, or use an async path API.",
     "suppress": {
       "noqa": {
         "codes": [
@@ -595,7 +595,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC240",
-    "message": "Async functions should not perform blocking pathlib.Path operations",
+    "message": "Use an async path such as `anyio.Path` or `trio.Path` and await this call, or run it in a worker thread.",
     "suppress": {
       "noqa": {
         "codes": [

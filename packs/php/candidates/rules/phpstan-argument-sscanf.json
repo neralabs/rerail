@@ -61,7 +61,7 @@
             ]
           }
         },
-        "message": "Call to sscanf contains more placeholders than values given."
+        "message": "Pass sscanf() one output variable for each placeholder in its format, or remove the extra placeholders."
       }
     },
     {
@@ -112,7 +112,7 @@
             ]
           }
         },
-        "message": "Call to sscanf contains fewer placeholders than values given."
+        "message": "Remove the extra output variables passed to sscanf(), or add placeholders to fill them."
       }
     },
     {
@@ -167,7 +167,7 @@
             ]
           }
         },
-        "message": "Call to sscanf contains an invalid placeholder."
+        "message": "Fix the invalid placeholder in this sscanf() format, or write a literal percent sign as %%."
       }
     }
   ]

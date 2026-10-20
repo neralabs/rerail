@@ -24,7 +24,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B101",
-        "message": "Bandit B101 (assert-used)",
+        "message": "Replace this assert with an if check that raises an exception; asserts are stripped when Python runs with -O.",
         "suppress": {
           "nosec": {
             "codes": [

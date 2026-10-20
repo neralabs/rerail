@@ -254,7 +254,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B610",
-        "message": "Bandit B610 (django-extra-used)",
+        "message": "Pass only literal strings to where, tables and select in this .extra() call, with values in params; dynamic SQL allows injection.",
         "suppress": {
           "nosec": {
             "codes": [

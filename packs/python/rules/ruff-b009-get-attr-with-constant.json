@@ -176,7 +176,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B009",
-        "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.",
+        "message": "Replace this `getattr` call with plain attribute access, such as `obj.name`.",
         "suppress": {
           "noqa": {
             "codes": [

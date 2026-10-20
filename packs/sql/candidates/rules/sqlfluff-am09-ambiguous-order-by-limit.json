@@ -49,7 +49,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "AM09",
-        "message": "LIMIT and OFFSET are used without ORDER BY, which may lead to non-deterministic results.",
+        "message": "Add an ORDER BY before this LIMIT so the rows it returns are deterministic.",
         "suppress": {
           "sqlfluff": {
             "rules": [
@@ -93,7 +93,7 @@
       "violation": {
         "anchor": "capture.OFFSET",
         "code": "AM09",
-        "message": "LIMIT and OFFSET are used without ORDER BY, which may lead to non-deterministic results.",
+        "message": "Add an ORDER BY to this query so the rows its OFFSET skips are deterministic.",
         "suppress": {
           "sqlfluff": {
             "rules": [

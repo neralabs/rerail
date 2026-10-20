@@ -97,7 +97,7 @@
       "violation": {
         "anchor": "capture.A",
         "code": "AL08",
-        "message": "Reuse of column alias.",
+        "message": "Rename this column with a unique alias; another column in this SELECT list has the same name.",
         "suppress": {
           "sqlfluff": {
             "rules": [

@@ -44,7 +44,7 @@
       "violation": {
         "code": "B301",
         "anchor": "witness.span",
-        "message": "Pickle or a related deserialization API can be unsafe when used with untrusted data.",
+        "message": "Load this data with json or another data-only format instead; unpickling untrusted input can run arbitrary code.",
         "suppress": {
           "nosec": {
             "codes": [

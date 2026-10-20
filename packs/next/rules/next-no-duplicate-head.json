@@ -173,7 +173,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-duplicate-head",
-        "message": "Do not include multiple instances of `<Head/>`. See: https://nextjs.org/docs/messages/no-duplicate-head",
+        "message": "Remove this extra Head and move its children into the Document's single Head element.",
         "suppress": {
           "eslint": {
             "rules": [

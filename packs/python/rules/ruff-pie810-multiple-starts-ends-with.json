@@ -570,7 +570,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PIE810",
-        "message": "Call `$M` once with a `tuple`",
+        "message": "Call `$M` once with a tuple of all the prefixes or suffixes instead of or-ing several calls.",
         "each": "FIRST",
         "suppress": {
           "noqa": {

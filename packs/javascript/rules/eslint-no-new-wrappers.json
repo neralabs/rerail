@@ -65,7 +65,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-new-wrappers",
-        "message": "Do not use $FN as a constructor.",
+        "message": "Use a $FN primitive here (a literal, or $FN() without new) instead of a wrapper object.",
         "suppress": {
           "eslint": {
             "rules": [

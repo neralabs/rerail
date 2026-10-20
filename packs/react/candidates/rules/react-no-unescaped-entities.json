@@ -38,7 +38,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-unescaped-entities",
-        "message": "HTML entity must be escaped.",
+        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -73,7 +73,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-unescaped-entities",
-        "message": "HTML entity must be escaped.",
+        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -108,7 +108,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-unescaped-entities",
-        "message": "HTML entity must be escaped.",
+        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -143,7 +143,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-unescaped-entities",
-        "message": "HTML entity must be escaped.",
+        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -178,7 +178,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-unescaped-entities",
-        "message": "HTML entity must be escaped.",
+        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -213,7 +213,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-unescaped-entities",
-        "message": "HTML entity must be escaped.",
+        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -248,7 +248,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-unescaped-entities",
-        "message": "HTML entity must be escaped.",
+        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -283,7 +283,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-unescaped-entities",
-        "message": "HTML entity must be escaped.",
+        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
         "suppress": {
           "eslint": {
             "rules": [

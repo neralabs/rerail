@@ -119,7 +119,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-empty",
-        "message": "Empty block statement.",
+        "message": "Add the missing code to this empty block, or add a comment saying why it is intentionally empty.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -163,7 +163,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-empty",
-        "message": "Empty switch statement.",
+        "message": "Add cases to this empty switch statement, or remove it.",
         "suppress": {
           "eslint": {
             "rules": [

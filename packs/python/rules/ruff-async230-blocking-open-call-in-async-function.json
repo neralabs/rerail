@@ -325,7 +325,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC230",
-    "message": "Async functions should not open files with blocking methods like `open`",
+    "message": "Open this file with an async file API, such as `anyio.open_file()`, `trio.open_file()` or `aiofiles.open()`.",
     "suppress": {
       "noqa": {
         "codes": [

@@ -210,7 +210,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-location-assign-relative-destination",
-        "message": "Do not use `location` to navigate to internal Next.js pages. Use `redirect()` in the render phase, or `useRouter().push()` in Client Components' event handlers instead. See: https://nextjs.org/docs/messages/no-location-assign-relative-destination",
+        "message": "Replace this location.href assignment with redirect() during render or useRouter().push() in a client event handler.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -418,7 +418,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-location-assign-relative-destination",
-        "message": "Do not use `location` to navigate to internal Next.js pages. Use `redirect()` in the render phase, or `useRouter().push()` in Client Components' event handlers instead. See: https://nextjs.org/docs/messages/no-location-assign-relative-destination",
+        "message": "Replace this location.assign call with redirect() during render or useRouter().push() in a client event handler.",
         "suppress": {
           "eslint": {
             "rules": [

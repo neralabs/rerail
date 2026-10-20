@@ -381,7 +381,7 @@
         }
       },
       "violation": {
-        "message": "Certificate verification is explicitly disabled",
+        "message": "Remove verify=False so TLS certificates are checked, passing a CA bundle path if needed; otherwise traffic is open to interception.",
         "anchor": "capture.VERIFY",
         "code": "B501",
         "suppress": {

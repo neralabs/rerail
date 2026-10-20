@@ -172,7 +172,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-title-in-document-head",
-        "message": "Do not use `<title>` element with `<Head />` component from `next/document`. Titles should defined at the page-level using `<Head />` from `next/head` instead. See: https://nextjs.org/docs/messages/no-title-in-document-head",
+        "message": "Move this title out of the Document's Head into each page's Head from next/head.",
         "suppress": {
           "eslint": {
             "rules": [

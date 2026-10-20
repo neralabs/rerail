@@ -170,7 +170,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "UnusedVariable",
-        "message": "The variable is never referenced or the value is not used",
+        "message": "Remove this variable, or the assignment to it, since its value is never read.",
         "suppress": {
           "psalm": {
             "issues": [

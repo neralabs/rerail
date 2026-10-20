@@ -64,7 +64,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F507",
-        "message": "`%`-format string placeholder count differs from the substitution count",
+        "message": "Make the number of values match the placeholders in this %-format string; a mismatch raises TypeError.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -46,7 +46,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-assign-module-variable",
-        "message": "Do not assign to the variable `module`. See: https://nextjs.org/docs/messages/no-assign-module-variable",
+        "message": "Rename this module variable, for example to mod; declaring module shadows the object Node.js and the bundler rely on.",
         "suppress": {
           "eslint": {
             "rules": [

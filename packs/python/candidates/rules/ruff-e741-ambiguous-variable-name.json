@@ -194,7 +194,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "E741",
-        "message": "Ambiguous variable name: `$NAME`",
+        "message": "Rename `$NAME` to a descriptive name; in many fonts it is easy to confuse with 1 or 0.",
         "suppress": {
           "noqa": {
             "codes": [

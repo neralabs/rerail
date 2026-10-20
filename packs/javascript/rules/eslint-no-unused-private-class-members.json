@@ -64,7 +64,7 @@
       "violation": {
         "anchor": "capture.N",
         "code": "no-unused-private-class-members",
-        "message": "'$N' is defined but never used.",
+        "message": "Remove the private member '$N'; nothing in the class reads it.",
         "suppress": {
           "eslint": {
             "rules": [

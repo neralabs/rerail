@@ -47,7 +47,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-document-import-in-page",
-        "message": "`<Document />` from `next/document` should not be imported outside of `pages/_document.js`. See: https://nextjs.org/docs/messages/no-document-import-in-page",
+        "message": "Move this next/document import into pages/_document; the custom Document API does not work in pages or components.",
         "suppress": {
           "eslint": {
             "rules": [

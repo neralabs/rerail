@@ -37,7 +37,7 @@
       "violation": {
         "code": "B703",
         "anchor": "witness.span",
-        "message": "Potentially dynamic content is passed to a Django safestring API.",
+        "message": "Build this markup with django.utils.html.format_html instead of marking it safe, so dynamic values are escaped and XSS is blocked.",
         "suppress": {
           "nosec": {
             "codes": [

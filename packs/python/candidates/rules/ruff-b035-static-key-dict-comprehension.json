@@ -285,7 +285,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B035",
-        "message": "Dictionary comprehension uses static key",
+        "message": "Make this comprehension's key depend on the loop variable; with a fixed key only the last value survives.",
         "suppress": {
           "noqa": {
             "codes": [

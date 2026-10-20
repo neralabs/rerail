@@ -99,7 +99,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "array.duplicateKey",
-        "message": "Array has duplicate keys with this value."
+        "message": "Rename or remove one of the entries with key $E in this array; PHP keeps only the last one."
       }
     }
   ]

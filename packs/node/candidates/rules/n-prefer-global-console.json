@@ -263,7 +263,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/console",
-        "message": "Unexpected use of 'require(\"console\")'. Use the global variable 'console' instead.",
+        "message": "Use the global console instead of requiring the console module.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -302,7 +302,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/console",
-        "message": "Unexpected use of 'require(\"console\")'. Use the global variable 'console' instead.",
+        "message": "Use the global console instead of importing or re-exporting the console module.",
         "suppress": {
           "eslint": {
             "rules": [

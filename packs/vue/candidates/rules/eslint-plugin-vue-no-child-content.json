@@ -78,7 +78,7 @@
       "violation": {
         "anchor": "witness.end",
         "code": "vue/no-child-content",
-        "message": "Child content is disallowed because it will be overwritten by the v-html directive.",
+        "message": "Remove the child content from this element, or drop v-html; the directive overwrites the children.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -155,7 +155,7 @@
       "violation": {
         "anchor": "witness.end",
         "code": "vue/no-child-content",
-        "message": "Child content is disallowed because it will be overwritten by the v-text directive.",
+        "message": "Remove the child content from this element, or drop v-text; the directive overwrites the children.",
         "suppress": {
           "eslint": {
             "rules": [

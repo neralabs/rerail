@@ -2292,7 +2292,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vitest/expect-expect",
-        "message": "This test asserts nothing, so it passes whatever the code does. Add an expect.",
+        "message": "Add an expect or assert call to this test; without one it passes whatever the code does.",
         "suppress": {
           "eslint": {
             "rules": [

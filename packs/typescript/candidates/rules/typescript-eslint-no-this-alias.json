@@ -189,7 +189,7 @@
       "violation": {
         "anchor": "capture.ID",
         "code": "@typescript-eslint/no-this-alias",
-        "message": "Unexpected aliasing of 'this' to local variable.",
+        "message": "Use an arrow function instead of assigning this to a local variable.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -272,7 +272,7 @@
       "violation": {
         "anchor": "capture.ID",
         "code": "@typescript-eslint/no-this-alias",
-        "message": "Unexpected aliasing of members of 'this' to local variables.",
+        "message": "Read these members through this directly instead of destructuring them into local variables.",
         "suppress": {
           "eslint": {
             "rules": [

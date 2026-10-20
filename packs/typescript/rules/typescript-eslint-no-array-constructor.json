@@ -133,7 +133,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "@typescript-eslint/no-array-constructor",
-    "message": "The array literal notation [] is preferable.",
+    "message": "Replace this Array constructor call with an array literal, `[...]`.",
     "fix": "[$$$A]",
     "suppress": {
      "eslint": {
@@ -251,7 +251,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "@typescript-eslint/no-array-constructor",
-    "message": "The array literal notation [] is preferable.",
+    "message": "Replace this Array constructor call with an array literal, `[...]`.",
     "suppress": {
      "eslint": {
       "rules": [

@@ -2218,7 +2218,7 @@
       "violation": {
         "code": "vue/no-mutating-props",
         "anchor": "witness.span",
-        "message": "Unexpected mutation of \"$NAME\" prop.",
+        "message": "Emit an event for the parent to update the \"$NAME\" prop, or copy it into local state, instead of mutating it here.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -2268,7 +2268,7 @@
       "violation": {
         "code": "vue/no-mutating-props",
         "anchor": "witness.span",
-        "message": "Unexpected mutation of \"$NAME\" prop.",
+        "message": "Emit an event for the parent to update the \"$NAME\" prop, or copy it into local state, instead of mutating it here.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -2323,7 +2323,7 @@
       "violation": {
         "code": "vue/no-mutating-props",
         "anchor": "witness.span",
-        "message": "Unexpected mutation of \"$NAME\" prop.",
+        "message": "Emit an event for the parent to update the \"$NAME\" prop, or copy it into local state, instead of mutating it here.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -2364,7 +2364,7 @@
       "violation": {
         "code": "vue/no-mutating-props",
         "anchor": "witness.span",
-        "message": "Unexpected mutation of \"$NAME\" prop.",
+        "message": "Emit an event for the parent to update the \"$NAME\" prop, or copy it into local state, instead of mutating it here.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -2405,7 +2405,7 @@
       "violation": {
         "code": "vue/no-mutating-props",
         "anchor": "witness.span",
-        "message": "Unexpected mutation of \"$NAME\" prop.",
+        "message": "Emit an event for the parent to update the \"$NAME\" prop, or copy it into local state, instead of mutating it here.",
         "suppress": {
           "eslint": {
             "rules": [

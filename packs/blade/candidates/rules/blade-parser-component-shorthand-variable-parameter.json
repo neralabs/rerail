@@ -66,7 +66,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "ComponentShorthandVariableParameterValidator",
-        "message": "Shorthand parameter variable issue"
+        "message": "Write this shorthand attribute as :\\$name with no value, or bind a value with a regular :name=\"...\" attribute."
       }
     }
   ]

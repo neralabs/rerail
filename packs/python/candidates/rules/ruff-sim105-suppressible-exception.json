@@ -304,7 +304,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM105",
-        "message": "Use `contextlib.suppress(...)` instead of `try`-`except`-`pass`",
+        "message": "Replace this `try`/`except`/`pass` with `with contextlib.suppress(...):` around the statement.",
         "suppress": {
           "noqa": {
             "codes": [

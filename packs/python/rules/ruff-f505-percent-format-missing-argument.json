@@ -35,7 +35,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F505",
-        "message": "`%`-format string is missing argument(s) for placeholder(s)",
+        "message": "Add a value for every %(key) placeholder in this format string; a missing key raises KeyError.",
         "suppress": {
           "noqa": {
             "codes": [

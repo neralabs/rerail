@@ -105,7 +105,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-useless-catch",
-        "message": "Unnecessary try/catch wrapper.",
+        "message": "Remove this try/catch; its catch only rethrows the error.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -215,7 +215,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-useless-catch",
-        "message": "Unnecessary catch clause.",
+        "message": "Remove this catch clause and keep the finally; the catch only rethrows the error.",
         "suppress": {
           "eslint": {
             "rules": [

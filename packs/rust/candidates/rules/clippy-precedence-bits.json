@@ -141,7 +141,7 @@
         },
         "anchor": "witness.span",
         "code": "precedence_bits",
-        "message": "Clippy precedence_bits: mixed bitwise operations may be confusing"
+        "message": "Add parentheses around the shift in this bitwise expression, e.g. (a << 4) | b."
       }
     }
   ]

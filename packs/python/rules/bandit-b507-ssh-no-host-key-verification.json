@@ -196,7 +196,7 @@
       "violation": {
         "code": "B507",
         "anchor": "witness.span",
-        "message": "Paramiko call with policy set to automatically trust the unknown host key.",
+        "message": "Set paramiko.RejectPolicy and load known host keys instead of auto-accepting unknown ones; that invites man-in-the-middle attacks.",
         "suppress": {
           "nosec": {
             "codes": [

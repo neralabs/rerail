@@ -100,7 +100,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F506",
-        "message": "`%`-format string has mixed positional and named placeholders",
+        "message": "Use only %(key) placeholders or only positional ones in this format string; Python cannot format a mix.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -527,7 +527,7 @@
       "violation": {
         "anchor": "capture.FUNC",
         "code": "SIM115",
-        "message": "Use a context manager for opening files",
+        "message": "Open this file in a `with` statement so it is closed even if an error occurs.",
         "suppress": {
           "noqa": {
             "codes": [

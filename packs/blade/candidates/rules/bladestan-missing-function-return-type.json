@@ -52,7 +52,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "missingType.return",
-        "message": "Function has no return type specified."
+        "message": "Declare a return type on this function, natively or with a @return doc tag."
       }
     }
   ]

@@ -133,7 +133,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F401",
-        "message": "`$NAME` imported but unused",
+        "message": "Remove the unused import `$NAME`, or list it in __all__ if it is meant to be re-exported.",
         "suppress": {
           "noqa": {
             "codes": [

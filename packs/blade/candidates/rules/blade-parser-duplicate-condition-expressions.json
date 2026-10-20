@@ -113,7 +113,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "DuplicateConditionExpressionsValidator",
-        "message": "Duplicate expression in [@elseif]"
+        "message": "Change or remove this @elseif; its condition ($C) already appears earlier in the chain, so the branch never runs."
       }
     }
   ]

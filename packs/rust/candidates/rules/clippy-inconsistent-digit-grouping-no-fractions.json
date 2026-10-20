@@ -34,7 +34,7 @@
           ] }
         ] }
       ] } } },
-      "violation": {"suppress": {"clippy": {"lints": ["clippy::inconsistent_digit_grouping", "clippy::all", "clippy::style", "warnings"]}}, "anchor": "witness.span", "code": "inconsistent_digit_grouping", "message": "Clippy inconsistent_digit_grouping: digits grouped inconsistently by underscores"}
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::inconsistent_digit_grouping", "clippy::all", "clippy::style", "warnings"]}}, "anchor": "witness.span", "code": "inconsistent_digit_grouping", "message": "Regroup this literal's digits with underscores into equal-size groups, e.g. 1_000_000 instead of 1_0000_00."}
     }
   ]
 }

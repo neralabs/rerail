@@ -61,7 +61,7 @@
       "violation": {
         "code": "B508",
         "anchor": "capture.F",
-        "message": "CommunityData uses insecure SNMP version via mpModel 0 or 1",
+        "message": "Switch to SNMPv3 with UsmUserData instead of this CommunityData; mpModel 0 or 1 sends the community string in clear text.",
         "suppress": {
           "nosec": {
             "codes": [

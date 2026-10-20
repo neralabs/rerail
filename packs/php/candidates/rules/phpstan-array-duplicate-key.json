@@ -91,7 +91,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "array.duplicateKey",
-        "message": "Array has duplicate keys with this value.",
+        "message": "Remove this array entry or give it a distinct key; a later entry with the same key silently overwrites it.",
         "suppress": {
           "phpstan": {
             "identifiers": [

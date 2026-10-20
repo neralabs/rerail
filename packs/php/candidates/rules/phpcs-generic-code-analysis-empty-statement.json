@@ -92,7 +92,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "Generic.CodeAnalysis.EmptyStatement",
-        "message": "Empty statement detected",
+        "message": "Put the missing logic in this empty block or remove the block; an empty branch or catch silently drops the case.",
         "suppress": {
           "phpcs": {
             "sniffs": [

@@ -50,7 +50,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F701",
-        "message": "`break` outside loop",
+        "message": "Move this `break` into a for or while loop body, or restructure the code without it.",
         "suppress": {
           "noqa": {
             "codes": [

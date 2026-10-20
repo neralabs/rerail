@@ -143,7 +143,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PIE794",
-        "message": "Class field `$N` is defined multiple times",
+        "message": "Keep one definition of class field `$N` and remove the others.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -122,7 +122,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/no-exports-assign",
-        "message": "Unexpected assignment to 'exports' variable. Use 'module.exports' instead.",
+        "message": "Assign to module.exports instead of exports, which only rebinds a local variable.",
         "suppress": {
           "eslint": {
             "rules": [

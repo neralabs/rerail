@@ -48,7 +48,7 @@
       "violation": {
         "code": "B601",
         "anchor": "witness.span",
-        "message": "Require a paramiko-like import and resolve an exec_command call, which runs remote input through a shell; Bandit recommends verifying that inputs are sanitized.",
+        "message": "Quote any untrusted values with shlex.quote before passing them to exec_command; the command runs through a shell on the remote host.",
         "suppress": {
           "nosec": {
             "codes": [

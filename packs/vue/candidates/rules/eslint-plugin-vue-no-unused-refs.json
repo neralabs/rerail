@@ -850,7 +850,7 @@
       "violation": {
         "code": "vue/no-unused-refs",
         "anchor": "witness.span",
-        "message": "'$REF' is defined as ref, but never used.",
+        "message": "Remove the unused ref '$REF', or read it through the component's refs, useTemplateRef or a matching setup binding.",
         "suppress": {
           "eslint": {
             "rules": [

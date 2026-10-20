@@ -13,7 +13,7 @@
         "inside": { "kind": "set_operation" },
         "not": { "precedes": { "stopBy": "neighbor", "any": [ { "kind": "keyword_all" }, { "kind": "keyword_distinct" } ] } }
       } } },
-      "violation": { "anchor": "witness.start", "code": "AM02", "message": "UNION should be followed by DISTINCT or ALL.", "suppress": { "sqlfluff": { "rules": ["AM02", "L033", "all", "ambiguous", "ambiguous.union", "core"] } } }
+      "violation": { "anchor": "witness.start", "code": "AM02", "message": "Write UNION ALL or UNION DISTINCT here to state whether duplicate rows are kept.", "suppress": { "sqlfluff": { "rules": ["AM02", "L033", "all", "ambiguous", "ambiguous.union", "core"] } } }
     }
   ]
 }

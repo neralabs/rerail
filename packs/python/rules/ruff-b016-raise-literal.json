@@ -41,7 +41,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "B016", "message": "Cannot raise a literal. Did you intend to return it or raise an Exception?", "suppress": { "noqa": { "codes": ["B016"] } } }
+      "violation": { "anchor": "witness.span", "code": "B016", "message": "Raise an exception instance, such as `ValueError(msg)`, instead of this literal.", "suppress": { "noqa": { "codes": ["B016"] } } }
     }
   ]
 }

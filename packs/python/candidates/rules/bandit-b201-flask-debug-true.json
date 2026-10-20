@@ -63,7 +63,7 @@
       "violation": {
         "code": "B201",
         "anchor": "witness.span",
-        "message": "After proving flask is imported (including aliases), resolve a call ending in .run and flag debug=True.",
+        "message": "Remove debug=True from this run call; the debugger lets anyone who reaches it run arbitrary code.",
         "suppress": {
           "nosec": {
             "codes": [

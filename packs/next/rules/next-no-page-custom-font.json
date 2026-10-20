@@ -88,7 +88,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-page-custom-font",
-        "message": "Custom fonts not added in `pages/_document.js` will only load for a single page. This is discouraged. See: https://nextjs.org/docs/messages/no-page-custom-font",
+        "message": "Move this Google Fonts link into the Head of the custom Document in pages/_document so the font loads on every page.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -322,7 +322,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-page-custom-font",
-        "message": "Using `<link />` outside of `<Head>` will disable automatic font optimization. This is discouraged. See: https://nextjs.org/docs/messages/no-page-custom-font",
+        "message": "Move this Google Fonts link into the Head rendered by this file's default-exported Document component.",
         "suppress": {
           "eslint": {
             "rules": [

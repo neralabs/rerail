@@ -34,7 +34,7 @@
       "violation": {
         "code": "B404",
         "anchor": "witness.span",
-        "message": "Consider possible security implications associated with the subprocess module.",
+        "message": "Remove this subprocess import unless the code needs to run external commands.",
         "suppress": {
           "nosec": {
             "codes": [

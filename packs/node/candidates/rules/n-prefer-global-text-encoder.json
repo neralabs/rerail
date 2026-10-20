@@ -314,7 +314,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/text-encoder",
-        "message": "Unexpected use of 'require(\"util\").TextEncoder'. Use the global variable 'TextEncoder' instead.",
+        "message": "Use the global TextEncoder instead of reading TextEncoder from the util module.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -441,7 +441,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/text-encoder",
-        "message": "Unexpected use of 'require(\"util\").TextEncoder'. Use the global variable 'TextEncoder' instead.",
+        "message": "Drop TextEncoder from this destructuring and use the global TextEncoder instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -500,7 +500,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/text-encoder",
-        "message": "Unexpected use of 'require(\"util\").TextEncoder'. Use the global variable 'TextEncoder' instead.",
+        "message": "Remove TextEncoder from this import or export and use the global TextEncoder instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -537,7 +537,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/text-encoder",
-        "message": "Unexpected use of 'require(\"util\").TextEncoder'. Use the global variable 'TextEncoder' instead.",
+        "message": "Re-export only the names you need from the util module; TextEncoder is already a global.",
         "suppress": {
           "eslint": {
             "rules": [

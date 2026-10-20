@@ -87,7 +87,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B015",
-        "message": "Pointless comparison at end of function scope. Did you mean to return the expression result?",
+        "message": "Return this comparison's result, or remove the comparison; its result is discarded.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -117,7 +117,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B015",
-        "message": "Pointless comparison. Did you mean to assign a value? Otherwise, prepend `assert` or remove it.",
+        "message": "Assign or `assert` this comparison's result, or remove the comparison; its result is discarded.",
         "suppress": {
           "noqa": {
             "codes": [

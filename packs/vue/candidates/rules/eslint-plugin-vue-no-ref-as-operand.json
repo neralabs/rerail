@@ -1046,7 +1046,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-ref-as-operand",
-        "message": "Must use `.value` to read or write the value wrapped by `$M()`.",
+        "message": "Add `.value` here to use the value wrapped by `$M()`, not the ref object.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1150,7 +1150,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-ref-as-operand",
-        "message": "Must use `.value` to read or write the value wrapped by `$M()`.",
+        "message": "Add `.value` here to use the value wrapped by `$M()`, not the ref object.",
         "suppress": {
           "eslint": {
             "rules": [

@@ -94,7 +94,7 @@
       "violation": {
         "code": "B412",
         "anchor": "witness.span",
-        "message": "Consider possible security implications associated with this CGI handler import.",
+        "message": "Serve the app through a WSGI server instead of this CGI handler; CGI handlers are open to the httpoxy proxy-header attack.",
         "suppress": {
           "nosec": {
             "codes": [

@@ -567,7 +567,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM401",
-        "message": "Use `$D.get($K, ...)` instead of an `if` block",
+        "message": "Replace this `if`/`else` with `$V = $D.get($K, $DEF)`.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -603,7 +603,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM401",
-        "message": "Use `$D.get($K, ...)` instead of an `if` block",
+        "message": "Replace this conditional expression with `$D.get($K, $DEF)`.",
         "suppress": {
           "noqa": {
             "codes": [

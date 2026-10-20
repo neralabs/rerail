@@ -1438,7 +1438,7 @@
       "violation": {
         "anchor": "capture.MODIFIER",
         "code": "vitest/no-focused-tests",
-        "message": "Remove .only: a focused test makes Vitest skip every other test.",
+        "message": "Remove .only from this test; it makes every other test in the file skip.",
         "suppress": {
           "eslint": {
             "rules": [

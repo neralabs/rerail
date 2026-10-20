@@ -302,7 +302,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC220",
-    "message": "Async functions should not create subprocesses with blocking methods",
+    "message": "Start this subprocess with the async library's API, such as `asyncio.create_subprocess_exec()` or `anyio.open_process()`.",
     "suppress": {
       "noqa": {
         "codes": [

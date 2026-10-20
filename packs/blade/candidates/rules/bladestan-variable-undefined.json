@@ -28,7 +28,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "variable.undefined",
-        "message": "Undefined variable"
+        "message": "Define this variable before reading it, or add it to the closure's use list if it comes from outside."
       }
     }
   ]

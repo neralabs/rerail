@@ -30,7 +30,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-with",
-        "message": "Unexpected use of 'with' statement.",
+        "message": "Remove this with statement and reference the object's properties explicitly through a variable.",
         "suppress": {
           "eslint": {
             "rules": [

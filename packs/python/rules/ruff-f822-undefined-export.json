@@ -40,7 +40,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F822",
-        "message": "Undefined name $S in `__all__`",
+        "message": "Remove $S from `__all__`, or define that name in this module.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -69,7 +69,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-is-mounted",
-        "message": "Do not use isMounted",
+        "message": "Remove this isMounted() check, and cancel the pending work when the component unmounts instead.",
         "suppress": {
           "eslint": {
             "rules": [

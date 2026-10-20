@@ -456,7 +456,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/attribute-hyphenation",
-        "message": "Attribute '${KEY}' must be hyphenated.",
+        "message": "Rename the '${KEY}' attribute to its hyphenated (kebab-case) form.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -950,7 +950,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/attribute-hyphenation",
-        "message": "Attribute '${KEY}' must be hyphenated.",
+        "message": "Rename the '${KEY}' binding to its hyphenated (kebab-case) form.",
         "suppress": {
           "eslint": {
             "rules": [

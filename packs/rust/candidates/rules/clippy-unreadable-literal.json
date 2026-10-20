@@ -23,7 +23,7 @@
           ] }
         ] }
       ] } } },
-      "violation": {"suppress": {"clippy": {"lints": ["clippy::unreadable_literal", "clippy::pedantic", "warnings"]}}, "anchor": "witness.span", "code": "unreadable_literal", "message": "Clippy unreadable_literal: long literal lacking separators"}
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::unreadable_literal", "clippy::pedantic", "warnings"]}}, "anchor": "witness.span", "code": "unreadable_literal", "message": "Add underscore separators to this number literal, e.g. 1_000_000 instead of 1000000."}
     }
   ]
 }

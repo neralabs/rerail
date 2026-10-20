@@ -22,7 +22,7 @@
           ] }
         ] }
       ] } } },
-      "violation": {"suppress": {"clippy": {"lints": ["clippy::large_digit_groups", "clippy::pedantic", "warnings"]}}, "anchor": "witness.span", "code": "large_digit_groups", "message": "Clippy large_digit_groups: digit groups should be smaller"}
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::large_digit_groups", "clippy::pedantic", "warnings"]}}, "anchor": "witness.span", "code": "large_digit_groups", "message": "Split this literal into digit groups of four or fewer, e.g. 1_000_000 instead of 1_000000."}
     }
   ]
 }

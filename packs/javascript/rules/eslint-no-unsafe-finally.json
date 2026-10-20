@@ -58,7 +58,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-unsafe-finally",
-        "message": "Unsafe usage of ReturnStatement.",
+        "message": "Move this return out of the finally block; it overrides the result or exception of the try and catch blocks.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -125,7 +125,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-unsafe-finally",
-        "message": "Unsafe usage of ThrowStatement.",
+        "message": "Move this throw out of the finally block; it replaces the result or exception of the try and catch blocks.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -213,7 +213,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-unsafe-finally",
-        "message": "Unsafe usage of BreakStatement.",
+        "message": "Move this break out of the finally block; it discards the result or exception of the try and catch blocks.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -298,7 +298,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-unsafe-finally",
-        "message": "Unsafe usage of ContinueStatement.",
+        "message": "Move this continue out of the finally block; it discards the result or exception of the try and catch blocks.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -422,7 +422,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-unsafe-finally",
-        "message": "Unsafe usage of BreakStatement.",
+        "message": "Move this break out of the finally block; it discards the result or exception of the try and catch blocks.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -546,7 +546,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-unsafe-finally",
-        "message": "Unsafe usage of ContinueStatement.",
+        "message": "Move this continue out of the finally block; it discards the result or exception of the try and catch blocks.",
         "suppress": {
           "eslint": {
             "rules": [

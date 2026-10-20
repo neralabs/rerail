@@ -380,7 +380,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "Squiz.PHP.DisallowSizeFunctionsInLoops",
-        "message": "The loop condition re-reads the size of $V on every pass, and this rule found no change to $V inside the loop. If nothing changes it, assign the size to a variable before the loop and use the variable in the condition.",
+        "message": "Assign the size of $V to a variable before the loop and use that in the condition; as written it is recomputed on every pass.",
         "suppress": {
           "phpcs": {
             "sniffs": [

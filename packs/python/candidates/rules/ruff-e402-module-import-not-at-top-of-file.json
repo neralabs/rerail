@@ -448,7 +448,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "E402",
-        "message": "Module level import not at top of file",
+        "message": "Move this import to the top of the file, above other module-level code.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -47,7 +47,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-head-import-in-document",
-        "message": "`next/head` should not be imported in `pages/_document.js`. Use `<Head />` from `next/document` instead. See: https://nextjs.org/docs/messages/no-head-import-in-document",
+        "message": "Import Head from next/document instead of next/head in this custom Document.",
         "suppress": {
           "eslint": {
             "rules": [

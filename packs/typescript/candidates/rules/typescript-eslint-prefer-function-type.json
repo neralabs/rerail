@@ -209,7 +209,7 @@
       "violation": {
         "anchor": "capture.MEMBER",
         "code": "@typescript-eslint/prefer-function-type",
-        "message": "Type literal only has a call signature, you should use a function type instead.",
+        "message": "Replace this type literal with a function type; it holds only a call signature.",
         "fix": "$TP$PARAMS => $RET",
         "suppress": {
           "eslint": {
@@ -423,7 +423,7 @@
       "violation": {
         "anchor": "capture.MEMBER",
         "code": "@typescript-eslint/prefer-function-type",
-        "message": "Type literal only has a call signature, you should use a function type instead.",
+        "message": "Replace this type literal with a function type; it holds only a call signature.",
         "fix": "($TP$PARAMS => $RET)",
         "suppress": {
           "eslint": {
@@ -637,7 +637,7 @@
       "violation": {
         "anchor": "capture.MEMBER",
         "code": "@typescript-eslint/prefer-function-type",
-        "message": "Type literal only has a call signature, you should use a function type instead.",
+        "message": "Replace this type literal with a function type; it holds only a call signature.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -952,7 +952,7 @@
       "violation": {
         "anchor": "capture.MEMBER",
         "code": "@typescript-eslint/prefer-function-type",
-        "message": "Interface only has a call signature, you should use a function type instead.",
+        "message": "Replace this interface with a function type alias; it holds only a call signature.",
         "fix": "type $NAME$ITP = $TP$PARAMS => $RET;",
         "suppress": {
           "eslint": {
@@ -1270,7 +1270,7 @@
       "violation": {
         "anchor": "capture.MEMBER",
         "code": "@typescript-eslint/prefer-function-type",
-        "message": "Interface only has a call signature, you should use a function type instead.",
+        "message": "Replace this interface with a function type alias; it holds only a call signature.",
         "fix": "type $NAME$ITP = $TP$PARAMS => $RET",
         "suppress": {
           "eslint": {
@@ -1562,7 +1562,7 @@
       "violation": {
         "anchor": "capture.MEMBER",
         "code": "@typescript-eslint/prefer-function-type",
-        "message": "Interface only has a call signature, you should use a function type instead.",
+        "message": "Replace this interface with a function type alias; it holds only a call signature.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1792,7 +1792,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/prefer-function-type",
-        "message": "`this` refers to the function type '$IFACE', did you intend to use a generic `this` parameter like `<Self>(this: Self, ...) => Self` instead?",
+        "message": "Replace `this` in '$IFACE' with a generic this parameter, like `<Self>(this: Self, ...) => Self`.",
         "suppress": {
           "eslint": {
             "rules": [

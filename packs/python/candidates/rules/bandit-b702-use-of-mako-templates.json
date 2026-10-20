@@ -33,7 +33,7 @@
       "violation": {
         "code": "B702",
         "anchor": "witness.span",
-        "message": "Mako templates do not provide environment-wide escaping; sanitize variables with the n, h, or x filters.",
+        "message": "Escape every expression in this Mako template with the h filter; Mako has no environment-wide escaping, so output is open to XSS.",
         "suppress": {
           "nosec": {
             "codes": [

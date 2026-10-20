@@ -72,7 +72,7 @@
       "violation": {
         "anchor": "capture.NAME",
         "code": "F405",
-        "message": "`$NAME` may be undefined, or defined from star imports",
+        "message": "Import `$NAME` explicitly from its module; it may only be defined by a star import.",
         "each": "NAME",
         "suppress": {
           "noqa": {

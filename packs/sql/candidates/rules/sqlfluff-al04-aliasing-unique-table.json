@@ -459,7 +459,7 @@
       "violation": {
         "anchor": "capture.A",
         "code": "AL04",
-        "message": "Duplicate table alias.",
+        "message": "Give this table a different alias; '$A' already names another table in this query.",
         "suppress": {
           "sqlfluff": {
             "rules": [

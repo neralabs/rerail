@@ -9,5 +9,5 @@
     { "has": { "field": "field", "pattern": "$F" } },
     { "has": { "field": "value", "pattern": "$V", "kind": "identifier" } },
     { "compare": { "left": "F", "op": "eq", "right": "V", "text": "source" } }
-  ] } } }, "violation": { "suppress": { "clippy": { "lints": ["clippy::redundant_field_names", "clippy::all", "clippy::style", "warnings"], "msrv": "1.17" } }, "anchor": "witness.span", "code": "redundant_field_names", "message": "Clippy redundant_field_names: redundant field names in struct initialization" } }]
+  ] } } }, "violation": { "suppress": { "clippy": { "lints": ["clippy::redundant_field_names", "clippy::all", "clippy::style", "warnings"], "msrv": "1.17" } }, "anchor": "witness.span", "code": "redundant_field_names", "message": "Use field init shorthand here, e.g. Point { x } instead of Point { x: x }." } }]
 }

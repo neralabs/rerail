@@ -84,7 +84,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-misused-new",
-        "message": "Class cannot have method named `new`.",
+        "message": "Replace this method named `new` with a constructor; `new` on the class never calls it.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -157,7 +157,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-misused-new",
-        "message": "Interfaces cannot be constructed, only classes.",
+        "message": "Declare $NAME as a class with a constructor instead of giving the interface a construct signature that returns itself.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -212,7 +212,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-misused-new",
-        "message": "Interfaces cannot be constructed, only classes.",
+        "message": "Remove this constructor method from the interface; declare a class with a real constructor if you need one.",
         "suppress": {
           "eslint": {
             "rules": [

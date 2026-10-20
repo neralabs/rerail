@@ -295,7 +295,7 @@
    "violation": {
     "anchor": "capture.IF",
     "code": "no-lonely-if",
-    "message": "Unexpected if as the only statement in an else block.",
+    "message": "Turn this if, the only statement in its else block, into an else if.",
     "fix": "$IF",
     "suppress": {
      "eslint": {
@@ -598,7 +598,7 @@
    "violation": {
     "anchor": "capture.IF",
     "code": "no-lonely-if",
-    "message": "Unexpected if as the only statement in an else block.",
+    "message": "Turn this if, the only statement in its else block, into an else if.",
     "fix": " $IF",
     "suppress": {
      "eslint": {
@@ -896,7 +896,7 @@
    "violation": {
     "anchor": "capture.IF",
     "code": "no-lonely-if",
-    "message": "Unexpected if as the only statement in an else block.",
+    "message": "Turn this if, the only statement in its else block, into an else if.",
     "suppress": {
      "eslint": {
       "rules": [

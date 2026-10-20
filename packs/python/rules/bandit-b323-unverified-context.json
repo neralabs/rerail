@@ -33,7 +33,7 @@
       "violation": {
         "code": "B323",
         "anchor": "witness.span",
-        "message": "Creating an unverified SSL context disables certificate validation and hostname checks.",
+        "message": "Use ssl.create_default_context() instead, which verifies certificates and hostnames.",
         "suppress": {
           "nosec": {
             "codes": [

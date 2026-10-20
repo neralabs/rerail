@@ -47,7 +47,7 @@
       "violation": {
         "code": "B202",
         "anchor": "witness.span",
-        "message": "After proving an exact tarfile import, resolve an extractall call; allow filter=\"data\", otherwise classify missing members, members supplied by a call, and other members expressions separately and recommend validating/discarding dangerous a",
+        "message": "Pass filter=\"data\" to this extractall call, or validate each member's path, so entries can't escape the target directory.",
         "suppress": {
           "nosec": {
             "codes": [

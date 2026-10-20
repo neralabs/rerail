@@ -314,7 +314,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/text-decoder",
-        "message": "Unexpected use of 'require(\"util\").TextDecoder'. Use the global variable 'TextDecoder' instead.",
+        "message": "Use the global TextDecoder instead of reading TextDecoder from the util module.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -441,7 +441,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/text-decoder",
-        "message": "Unexpected use of 'require(\"util\").TextDecoder'. Use the global variable 'TextDecoder' instead.",
+        "message": "Drop TextDecoder from this destructuring and use the global TextDecoder instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -500,7 +500,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/text-decoder",
-        "message": "Unexpected use of 'require(\"util\").TextDecoder'. Use the global variable 'TextDecoder' instead.",
+        "message": "Remove TextDecoder from this import or export and use the global TextDecoder instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -537,7 +537,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/text-decoder",
-        "message": "Unexpected use of 'require(\"util\").TextDecoder'. Use the global variable 'TextDecoder' instead.",
+        "message": "Re-export only the names you need from the util module; TextDecoder is already a global.",
         "suppress": {
           "eslint": {
             "rules": [

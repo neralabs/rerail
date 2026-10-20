@@ -247,7 +247,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B019",
-        "message": "Use of `functools.lru_cache` or `functools.cache` on methods can lead to memory leaks",
+        "message": "Move this cache off the method, such as to a module-level function, so it doesn't keep `self` alive.",
         "suppress": {
           "noqa": {
             "codes": [

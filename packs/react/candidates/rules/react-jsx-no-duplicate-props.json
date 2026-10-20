@@ -54,7 +54,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/jsx-no-duplicate-props",
-        "message": "No duplicate props allowed",
+        "message": "Remove one of the two `$NAME` props on this element; only the last one takes effect.",
         "suppress": {
           "eslint": {
             "rules": [

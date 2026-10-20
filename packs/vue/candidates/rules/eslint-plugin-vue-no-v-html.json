@@ -29,7 +29,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-v-html",
-        "message": "'v-html' directive can lead to XSS attack.",
+        "message": "Render this content with text interpolation or components instead of v-html, or sanitize it first, to avoid XSS.",
         "suppress": {
           "eslint": {
             "rules": [

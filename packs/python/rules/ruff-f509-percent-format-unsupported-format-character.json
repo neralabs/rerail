@@ -72,7 +72,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F509",
-        "message": "`%`-format string has unsupported format character",
+        "message": "Replace the unsupported conversion character in this %-format string with a valid one such as `s`, `d`, `r` or `f`.",
         "suppress": {
           "noqa": {
             "codes": [

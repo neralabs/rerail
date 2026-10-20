@@ -55,7 +55,7 @@
       "violation": {
         "code": "B405",
         "anchor": "witness.span",
-        "message": "ElementTree XML parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library.",
+        "message": "Import defusedxml.ElementTree instead of the standard ElementTree module.",
         "suppress": {
           "nosec": {
             "codes": [

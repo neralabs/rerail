@@ -32,7 +32,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F522",
-        "message": "`.format` call has unused named argument(s)",
+        "message": "Remove the keyword arguments that no named placeholder in this str.format() string uses.",
         "suppress": {
           "noqa": {
             "codes": [

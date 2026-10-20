@@ -34,7 +34,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-template-curly-in-string",
-        "message": "Unexpected template string expression.",
+        "message": "Change these quotes to backticks so the ${...} is interpolated, or escape the $ if the text is meant literally.",
         "suppress": {
           "eslint": {
             "rules": [

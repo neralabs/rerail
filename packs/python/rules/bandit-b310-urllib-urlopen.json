@@ -40,7 +40,7 @@
       "violation": {
         "code": "B310",
         "anchor": "witness.span",
-        "message": "Audit URL opening for permitted schemes; file or custom schemes may be unexpected.",
+        "message": "Check that this URL uses http or https before opening it; file: and custom schemes can expose local files.",
         "suppress": {
           "nosec": {
             "codes": [

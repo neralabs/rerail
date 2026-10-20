@@ -26,7 +26,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "Generic.PHP.BacktickOperator",
-        "message": "Use of the backtick operator is forbidden",
+        "message": "Replace this backtick shell command with proc_open() given the command as an array, so no shell parses the arguments.",
         "suppress": {
           "phpcs": {
             "sniffs": [
@@ -49,7 +49,7 @@
       "violation": {
         "anchor": "witness.end",
         "code": "Generic.PHP.BacktickOperator",
-        "message": "Use of the backtick operator is forbidden",
+        "message": "Replace this backtick shell command with proc_open() given the command as an array, so no shell parses the arguments.",
         "suppress": {
           "phpcs": {
             "sniffs": [

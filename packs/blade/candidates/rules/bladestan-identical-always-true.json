@@ -57,7 +57,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "identical.alwaysTrue",
-        "message": "Strict comparison using === will always evaluate to true."
+        "message": "Remove this === comparison or fix its operands; given the values the template sets, it is always true."
       }
     }
   ]

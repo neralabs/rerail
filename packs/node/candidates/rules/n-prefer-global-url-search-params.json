@@ -314,7 +314,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/url-search-params",
-        "message": "Unexpected use of 'require(\"url\").URLSearchParams'. Use the global variable 'URLSearchParams' instead.",
+        "message": "Use the global URLSearchParams instead of reading URLSearchParams from the url module.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -441,7 +441,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/url-search-params",
-        "message": "Unexpected use of 'require(\"url\").URLSearchParams'. Use the global variable 'URLSearchParams' instead.",
+        "message": "Drop URLSearchParams from this destructuring and use the global URLSearchParams instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -500,7 +500,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/url-search-params",
-        "message": "Unexpected use of 'require(\"url\").URLSearchParams'. Use the global variable 'URLSearchParams' instead.",
+        "message": "Remove URLSearchParams from this import or export and use the global URLSearchParams instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -537,7 +537,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/url-search-params",
-        "message": "Unexpected use of 'require(\"url\").URLSearchParams'. Use the global variable 'URLSearchParams' instead.",
+        "message": "Re-export only the names you need from the url module; URLSearchParams is already a global.",
         "suppress": {
           "eslint": {
             "rules": [

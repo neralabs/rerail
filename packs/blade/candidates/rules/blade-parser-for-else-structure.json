@@ -48,7 +48,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "ForElseStructureValidator",
-        "message": "Missing or too many [@empty] directives inside [@forelse]"
+        "message": "Give this @forelse exactly one @empty directive, holding what renders when the list is empty."
       }
     }
   ]

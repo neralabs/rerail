@@ -63,7 +63,7 @@
       "violation": {
         "code": "B503",
         "anchor": "witness.span",
-        "message": "Function default uses an insecure SSL/TLS protocol",
+        "message": "Change this parameter default to TLS 1.2 or newer (e.g. ssl.PROTOCOL_TLS_CLIENT); callers silently inherit a broken protocol.",
         "suppress": {
           "nosec": {
             "codes": [

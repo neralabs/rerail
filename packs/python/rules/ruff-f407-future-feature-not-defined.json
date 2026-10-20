@@ -42,7 +42,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F407",
-        "message": "Future feature `$NAME` is not defined",
+        "message": "Fix or remove `$NAME` in this __future__ import; it is not a known future feature.",
         "suppress": {
           "noqa": {
             "codes": [

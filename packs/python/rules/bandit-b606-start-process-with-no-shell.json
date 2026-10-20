@@ -49,7 +49,7 @@
       "violation": {
         "code": "B606",
         "anchor": "witness.span",
-        "message": "Review input passed to a no-shell process API",
+        "message": "Validate any untrusted input passed to this os exec, spawn or startfile call; it starts whatever program and arguments it receives.",
         "suppress": {
           "nosec": {
             "codes": [

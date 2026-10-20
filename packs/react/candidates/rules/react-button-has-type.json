@@ -554,7 +554,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Missing an explicit type attribute for button",
+        "message": "Add type=\"button\" to this button, or type=\"submit\" if it should submit its form.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -658,7 +658,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Set this button type to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
@@ -724,7 +724,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Set this button type to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
@@ -790,7 +790,7 @@
       "violation": {
         "anchor": "capture.LEAF",
         "code": "react/button-has-type",
-        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "message": "Set this button type to a string literal (\"button\", \"submit\" or \"reset\") or a simple ternary between such literals.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -856,7 +856,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Change this ternary branch to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
@@ -922,7 +922,7 @@
       "violation": {
         "anchor": "capture.LEAF",
         "code": "react/button-has-type",
-        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "message": "Set this ternary branch to a string literal: \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
@@ -988,7 +988,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Change this ternary branch to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1054,7 +1054,7 @@
       "violation": {
         "anchor": "capture.LEAF",
         "code": "react/button-has-type",
-        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "message": "Set this ternary branch to a string literal: \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1126,7 +1126,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Missing an explicit type attribute for button",
+        "message": "Add type: \"button\" to this button's props, or type: \"submit\" if it should submit its form.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1180,7 +1180,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Set this button type to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1234,7 +1234,7 @@
       "violation": {
         "anchor": "capture.LEAF",
         "code": "react/button-has-type",
-        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "message": "Set this button type to a string literal (\"button\", \"submit\" or \"reset\") or a simple ternary between such literals.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1288,7 +1288,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Change this ternary branch to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1342,7 +1342,7 @@
       "violation": {
         "anchor": "capture.LEAF",
         "code": "react/button-has-type",
-        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "message": "Set this ternary branch to a string literal: \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1396,7 +1396,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Change this ternary branch to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1450,7 +1450,7 @@
       "violation": {
         "anchor": "capture.LEAF",
         "code": "react/button-has-type",
-        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "message": "Set this ternary branch to a string literal: \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1502,7 +1502,7 @@
       "violation": {
         "anchor": "capture.LEAF",
         "code": "react/button-has-type",
-        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "message": "Replace the shorthand `$LEAF` with type: \"button\", \"submit\" or \"reset\" so the button type is a literal.",
         "suppress": {
           "eslint": {
             "rules": [

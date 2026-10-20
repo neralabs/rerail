@@ -29,7 +29,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "variable.undefined",
-        "message": "Undefined variable",
+        "message": "Assign this variable on every path before reading it, or fix the name if it is a typo.",
         "suppress": {
           "phpstan": {
             "identifiers": [

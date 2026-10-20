@@ -263,7 +263,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/process",
-        "message": "Unexpected use of 'require(\"process\")'. Use the global variable 'process' instead.",
+        "message": "Use the global process instead of requiring the process module.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -302,7 +302,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/process",
-        "message": "Unexpected use of 'require(\"process\")'. Use the global variable 'process' instead.",
+        "message": "Use the global process instead of importing or re-exporting the process module.",
         "suppress": {
           "eslint": {
             "rules": [

@@ -755,7 +755,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/no-path-concat",
-        "message": "Use path.join() or path.resolve() instead of string concatenation.",
+        "message": "Build this path with path.join() or path.resolve() instead of concatenating strings.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -822,7 +822,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/no-path-concat",
-        "message": "Use path.join() or path.resolve() instead of string concatenation.",
+        "message": "Build this path with path.join() or path.resolve() instead of a template string.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -880,7 +880,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/no-path-concat",
-        "message": "Use path.join() or path.resolve() instead of string concatenation.",
+        "message": "Build this path with path.join() or path.resolve() instead of concatenating strings.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -946,7 +946,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/no-path-concat",
-        "message": "Use path.join() or path.resolve() instead of string concatenation.",
+        "message": "Build this path with path.join() or path.resolve() instead of a template string.",
         "suppress": {
           "eslint": {
             "rules": [

@@ -40,7 +40,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-empty-static-block",
-        "message": "Unexpected empty static block.",
+        "message": "Remove this empty static block, or add a comment saying why it is empty.",
         "suppress": {
           "eslint": {
             "rules": [

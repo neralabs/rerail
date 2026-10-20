@@ -32,7 +32,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-new",
-        "message": "Do not use 'new' for side effects.",
+        "message": "Keep the object this new creates, or replace it with a plain function call if only its side effects matter.",
         "suppress": {
           "eslint": {
             "rules": [

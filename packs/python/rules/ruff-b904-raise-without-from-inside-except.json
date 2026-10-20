@@ -180,7 +180,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B904",
-        "message": "Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling",
+        "message": "Raise this exception with `from err` or `from None` so the cause chain is clear.",
         "suppress": {
           "noqa": {
             "codes": [

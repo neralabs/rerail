@@ -16,7 +16,7 @@
           { "follows": { "stopBy": "end", "kind": "field_declaration" } },
           { "not": { "follows": { "stopBy": "end", "kind": "field_declaration", "matches": "pub-field" } } }
         ] } } },
-      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "partial_pub_fields", "message": "Clippy partial_pub_fields: mixed usage of pub and non-pub fields" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "partial_pub_fields", "message": "Match this field's visibility to the struct's other fields: make all of them pub or none of them." }
     },
     {
       "id": "private-after-pub",
@@ -28,7 +28,7 @@
           { "follows": { "stopBy": "end", "kind": "field_declaration" } },
           { "not": { "follows": { "stopBy": "end", "kind": "field_declaration", "not": { "matches": "pub-field" } } } }
         ] } } },
-      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "partial_pub_fields", "message": "Clippy partial_pub_fields: mixed usage of pub and non-pub fields" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "partial_pub_fields", "message": "Match this field's visibility to the struct's other fields: make all of them pub or none of them." }
     },
     {
       "id": "tuple-pub-after-private",
@@ -37,7 +37,7 @@
         { "follows": { "stopBy": "end", "regex": "^,$" } },
         { "not": { "follows": { "stopBy": "end", "kind": "visibility_modifier", "regex": "^pub$" } } }
       ] } } },
-      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "partial_pub_fields", "message": "Clippy partial_pub_fields: mixed usage of pub and non-pub fields" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "partial_pub_fields", "message": "Match this field's visibility to the struct's other fields: make all of them pub or none of them." }
     },
     {
       "id": "tuple-private-after-pub",
@@ -57,7 +57,7 @@
           { "follows": { "stopBy": "end", "regex": "^,$" } },
           { "not": { "follows": { "stopBy": "end", "matches": "tuple-field", "not": { "matches": "tuple-pub" } } } }
         ] } } },
-      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "partial_pub_fields", "message": "Clippy partial_pub_fields: mixed usage of pub and non-pub fields" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "partial_pub_fields", "message": "Match this field's visibility to the struct's other fields: make all of them pub or none of them." }
     }
   ]
 }

@@ -1320,7 +1320,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM223",
-        "message": "Use `False` instead of `... and False`",
+        "message": "Drop the operands after the always-falsy value in this `and`; they never run, so the result is that value.",
         "suppress": {
           "noqa": {
             "codes": [

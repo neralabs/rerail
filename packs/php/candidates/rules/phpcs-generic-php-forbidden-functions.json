@@ -35,7 +35,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "Generic.PHP.ForbiddenFunctions",
-        "message": "The use of function sizeof() or delete() is forbidden",
+        "message": "Replace sizeof() with count(), or replace delete() with unset() or unlink(), whichever was meant.",
         "suppress": {
           "phpcs": {
             "sniffs": [

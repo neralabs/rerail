@@ -504,7 +504,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM910",
-        "message": "Use `.get(key)` instead of `.get(key, None)`",
+        "message": "Remove the redundant `None` default, writing `.get(key)` instead of `.get(key, None)`.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -56,7 +56,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-danger",
-        "message": "Dangerous property 'dangerouslySetInnerHTML' found",
+        "message": "Render this content as JSX instead of dangerouslySetInnerHTML; raw HTML from data opens the door to cross-site scripting.",
         "suppress": {
           "eslint": {
             "rules": [

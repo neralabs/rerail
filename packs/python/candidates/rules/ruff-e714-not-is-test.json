@@ -109,7 +109,7 @@
       "violation": {
         "anchor": "capture.C",
         "code": "E714",
-        "message": "Test for object identity should be `is not`",
+        "message": "Rewrite this as `x is not y` instead of `not x is y`.",
         "each": "C",
         "suppress": {
           "noqa": {

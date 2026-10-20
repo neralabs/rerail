@@ -718,7 +718,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B006",
-        "message": "Do not use mutable data structures for argument defaults",
+        "message": "Default this argument to `None` and create the mutable value inside the function.",
         "suppress": {
           "noqa": {
             "codes": [

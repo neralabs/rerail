@@ -49,7 +49,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "argument.type",
-        "message": "Parameter #1 $min of function random_int expects lower number than parameter #2 $max."
+        "message": "Swap the bounds of this random_int() call so the minimum $MIN is not above the maximum $MAX; reversed bounds throw."
       }
     }
   ]

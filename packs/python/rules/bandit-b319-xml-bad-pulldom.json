@@ -34,7 +34,7 @@
       "violation": {
         "code": "B319",
         "anchor": "witness.span",
-        "message": "Using xml.dom.pulldom to parse untrusted XML is vulnerable to XML attacks; use the defusedxml equivalent.",
+        "message": "Parse this XML with defusedxml.pulldom instead of xml.dom.pulldom.",
         "suppress": {
           "nosec": {
             "codes": [

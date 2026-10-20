@@ -169,7 +169,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-use-v-if-with-v-for",
-        "message": "This 'v-if' should be moved to the wrapper element.",
+        "message": "Move this v-if to a wrapper element around the v-for, such as a `<template>`.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -360,7 +360,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-use-v-if-with-v-for",
-        "message": "The '$SRC' variable inside 'v-for' directive should be replaced with a computed property that returns filtered array instead. You should not mix 'v-for' with 'v-if'.",
+        "message": "Replace '$SRC' in this v-for with a computed property that returns the filtered list, and drop the v-if.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -553,7 +553,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-use-v-if-with-v-for",
-        "message": "The '$SRC' expression inside 'v-for' directive should be replaced with a computed property that returns filtered array instead. You should not mix 'v-for' with 'v-if'.",
+        "message": "Replace the '$SRC' expression in this v-for with a computed property that returns the filtered list, and drop the v-if.",
         "suppress": {
           "eslint": {
             "rules": [

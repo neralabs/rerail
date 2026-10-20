@@ -9,7 +9,7 @@
     {
       "id": "octal-literal",
       "forbid": { "ast": { "language": "typescript", "rule": { "kind": "number", "regex": "^0[0-9]" } } },
-      "violation": { "anchor": "witness.span", "code": "no-octal", "message": "Octal literals should not be used.", "suppress": { "eslint": { "rules": ["no-octal"] } } }
+      "violation": { "anchor": "witness.span", "code": "no-octal", "message": "Write this number with a 0o prefix if it is octal, or drop the leading zero if it is decimal.", "suppress": { "eslint": { "rules": ["no-octal"] } } }
     }
   ]
 }

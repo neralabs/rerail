@@ -76,7 +76,7 @@
       "violation": {
         "code": "B502",
         "anchor": "witness.span",
-        "message": "An SSL context is configured with an insecure protocol version.",
+        "message": "Select TLS 1.2 or newer here (e.g. ssl.PROTOCOL_TLS_CLIENT) instead of this SSLv2, SSLv3, TLS 1.0 or TLS 1.1 protocol.",
         "suppress": {
           "nosec": {
             "codes": [

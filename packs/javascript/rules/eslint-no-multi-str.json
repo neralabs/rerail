@@ -37,7 +37,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-multi-str",
-        "message": "Multiline support is limited to browsers supporting ES5 only.",
+        "message": "Replace this backslash-continued string with a template literal or string concatenation.",
         "suppress": {
           "eslint": {
             "rules": [

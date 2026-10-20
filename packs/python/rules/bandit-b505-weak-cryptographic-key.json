@@ -152,7 +152,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B505",
-        "message": "Bandit B505 (weak-cryptographic-key)",
+        "message": "Generate this key with at least 2048 bits for RSA or DSA, or a curve of at least 224 bits for EC; smaller keys can be broken.",
         "suppress": {
           "nosec": {
             "codes": [

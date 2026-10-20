@@ -469,7 +469,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-watch-after-await",
-        "message": "`watch` is forbidden after an `await` expression.",
+        "message": "Move this watch call above the first await in setup(), or keep its stop handle and call it on unmount.",
         "suppress": {
           "eslint": {
             "rules": [

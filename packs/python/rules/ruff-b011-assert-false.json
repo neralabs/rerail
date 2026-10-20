@@ -48,7 +48,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B011",
-        "message": "Do not `assert False` (`python -O` removes these calls), raise `AssertionError()`",
+        "message": "Replace `assert False` with `raise AssertionError()`; asserts are removed when Python runs with optimizations.",
         "suppress": {
           "noqa": {
             "codes": [

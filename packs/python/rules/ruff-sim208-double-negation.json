@@ -44,7 +44,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM208",
-        "message": "Use the operand instead of `not (not ...)`",
+        "message": "Remove the double `not` and use the operand itself, or `bool(...)` if you need a real boolean.",
         "suppress": {
           "noqa": {
             "codes": [

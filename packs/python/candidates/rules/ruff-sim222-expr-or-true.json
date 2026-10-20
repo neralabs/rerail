@@ -1320,7 +1320,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM222",
-        "message": "Use `True` instead of `... or True`",
+        "message": "Drop the operands after the always-truthy value in this `or`; they never run, so the result is that value.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -90,7 +90,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-negated-condition",
-        "message": "Unexpected negated condition.",
+        "message": "Remove the negation from this condition and swap the two branches.",
         "suppress": {
           "eslint": {
             "rules": [

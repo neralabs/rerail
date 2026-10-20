@@ -28,7 +28,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "default-case-last",
-        "message": "Default clause should be the last clause.",
+        "message": "Move this default clause to the end of the switch.",
         "suppress": {
           "eslint": {
             "rules": [

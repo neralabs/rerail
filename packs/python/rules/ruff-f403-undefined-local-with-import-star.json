@@ -59,7 +59,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F403",
-        "message": "`from $MODULE import *` used; unable to detect undefined names",
+        "message": "Import the names you need from `$MODULE` explicitly instead of using `from $MODULE import *`.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -601,7 +601,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RET504",
-        "message": "Unnecessary assignment to `$N` before `return` statement",
+        "message": "Return the expression directly instead of assigning it to `$N` and then returning `$N`.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -407,7 +407,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/jsx-key",
-        "message": "Missing \"key\" prop for element in array",
+        "message": "Add a unique key prop to this element in the array.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -461,7 +461,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/jsx-key",
-        "message": "Missing \"key\" prop for element in iterator",
+        "message": "Add a key prop to this element, using a stable id from the item being mapped.",
         "suppress": {
           "eslint": {
             "rules": [

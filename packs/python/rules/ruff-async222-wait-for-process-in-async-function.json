@@ -130,7 +130,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC222",
-    "message": "Async functions should not wait on processes with blocking methods",
+    "message": "Replace this blocking `os.wait` call by awaiting the async process object, such as `await proc.wait()`.",
     "suppress": {
       "noqa": {
         "codes": [

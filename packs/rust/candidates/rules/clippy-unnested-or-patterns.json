@@ -129,7 +129,7 @@
           "unnested": {"kind": "or_pattern", "has": {"stopBy": {"not": {"kind": "or_pattern"}}, "any": [{"matches": "paren-or"}, {"matches": "pair"}]}}
         },
         "rule": {"all": [{"any": [{"kind": "match_pattern"}, {"inside": {"field": "pattern", "kind": "let_declaration"}}, {"inside": {"field": "pattern", "kind": "let_condition"}}, {"inside": {"field": "pattern", "kind": "parameter"}}, {"inside": {"kind": "closure_parameters"}, "not": {"kind": "parameter"}}]}, {"any": [{"matches": "unnested"}, {"has": {"stopBy": {"any": [{"kind": "closure_expression"}, {"kind": "match_expression"}, {"kind": "let_condition"}, {"kind": "let_declaration"}, {"kind": "block"}, {"kind": "function_item"}]}, "matches": "unnested"}}]}]} } },
-      "violation": {"suppress": {"clippy": {"lints": ["clippy::unnested_or_patterns", "clippy::pedantic", "warnings"], "msrv": "1.53"}}, "anchor": "witness.span", "code": "unnested_or_patterns", "message": "Clippy unnested_or_patterns: unnested or-patterns"}
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::unnested_or_patterns", "clippy::pedantic", "warnings"], "msrv": "1.53"}}, "anchor": "witness.span", "code": "unnested_or_patterns", "message": "Nest this or-pattern so the shared part is written once, e.g. Some(1 | 2) instead of Some(1) | Some(2)."}
     }
   ]
 }

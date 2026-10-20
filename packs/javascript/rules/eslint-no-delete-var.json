@@ -44,7 +44,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-delete-var",
-        "message": "Variables should not be deleted.",
+        "message": "Remove this delete; to clear the variable, assign undefined to it instead.",
         "suppress": {
           "eslint": {
             "rules": [

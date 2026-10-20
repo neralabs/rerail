@@ -42,7 +42,7 @@
       "violation": {
         "anchor": "capture.OP",
         "code": "CV05",
-        "message": "Comparisons with NULL should use IS or IS NOT.",
+        "message": "Rewrite this comparison with IS NULL or IS NOT NULL; comparing to NULL with =, != or <> is never true.",
         "suppress": {
           "sqlfluff": {
             "rules": [

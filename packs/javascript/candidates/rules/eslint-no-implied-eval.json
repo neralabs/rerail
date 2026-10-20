@@ -219,7 +219,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-implied-eval",
-        "message": "Implied eval. Consider passing a function instead of a string.",
+        "message": "Pass a function instead of a string to this call; string code is evaluated like eval.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -443,7 +443,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-implied-eval",
-        "message": "Implied eval. Do not use execScript().",
+        "message": "Replace this execScript() call with a direct function call; it evaluates its string like eval.",
         "suppress": {
           "eslint": {
             "rules": [

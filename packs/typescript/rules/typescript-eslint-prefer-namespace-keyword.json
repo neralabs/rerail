@@ -51,7 +51,7 @@
       "violation": {
         "anchor": "capture.D",
         "code": "@typescript-eslint/prefer-namespace-keyword",
-        "message": "Use 'namespace' instead of 'module' to declare custom TypeScript modules.",
+        "message": "Replace the module keyword with namespace in this declaration.",
         "fix": "namespace",
         "suppress": {
           "eslint": {
@@ -110,7 +110,7 @@
       "violation": {
         "anchor": "capture.M",
         "code": "@typescript-eslint/prefer-namespace-keyword",
-        "message": "Use 'namespace' instead of 'module' to declare custom TypeScript modules.",
+        "message": "Replace the module keyword with namespace in this declaration.",
         "fix": "namespace",
         "suppress": {
           "eslint": {

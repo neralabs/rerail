@@ -83,7 +83,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-render-return-value",
-        "message": "Do not depend on the return value from ReactDOM.render",
+        "message": "Stop using the return value of ReactDOM.render(); put a callback ref on the root element to get the instance.",
         "suppress": {
           "eslint": {
             "rules": [

@@ -50,7 +50,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-wrapper-object-types",
-        "message": "Prefer using the primitive `bigint` as a type name, rather than the upper-cased `BigInt`.",
+        "message": "Use the primitive type `bigint` instead of the wrapper object type `BigInt`.",
         "fix": "bigint",
         "suppress": {
           "eslint": {
@@ -102,7 +102,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-wrapper-object-types",
-        "message": "Prefer using the primitive `boolean` as a type name, rather than the upper-cased `Boolean`.",
+        "message": "Use the primitive type `boolean` instead of the wrapper object type `Boolean`.",
         "fix": "boolean",
         "suppress": {
           "eslint": {
@@ -154,7 +154,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-wrapper-object-types",
-        "message": "Prefer using the primitive `number` as a type name, rather than the upper-cased `Number`.",
+        "message": "Use the primitive type `number` instead of the wrapper object type `Number`.",
         "fix": "number",
         "suppress": {
           "eslint": {
@@ -206,7 +206,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-wrapper-object-types",
-        "message": "Prefer using the primitive `object` as a type name, rather than the upper-cased `Object`.",
+        "message": "Use the primitive type `object` instead of the wrapper object type `Object`.",
         "fix": "object",
         "suppress": {
           "eslint": {
@@ -258,7 +258,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-wrapper-object-types",
-        "message": "Prefer using the primitive `string` as a type name, rather than the upper-cased `String`.",
+        "message": "Use the primitive type `string` instead of the wrapper object type `String`.",
         "fix": "string",
         "suppress": {
           "eslint": {
@@ -310,7 +310,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-wrapper-object-types",
-        "message": "Prefer using the primitive `symbol` as a type name, rather than the upper-cased `Symbol`.",
+        "message": "Use the primitive type `symbol` instead of the wrapper object type `Symbol`.",
         "fix": "symbol",
         "suppress": {
           "eslint": {
@@ -360,7 +360,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-wrapper-object-types",
-        "message": "Prefer using the primitive `bigint` as a type name, rather than the upper-cased `BigInt`.",
+        "message": "Use the primitive type `bigint` instead of the wrapper object type `BigInt`.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -409,7 +409,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-wrapper-object-types",
-        "message": "Prefer using the primitive `boolean` as a type name, rather than the upper-cased `Boolean`.",
+        "message": "Use the primitive type `boolean` instead of the wrapper object type `Boolean`.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -458,7 +458,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-wrapper-object-types",
-        "message": "Prefer using the primitive `number` as a type name, rather than the upper-cased `Number`.",
+        "message": "Use the primitive type `number` instead of the wrapper object type `Number`.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -507,7 +507,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-wrapper-object-types",
-        "message": "Prefer using the primitive `object` as a type name, rather than the upper-cased `Object`.",
+        "message": "Use the primitive type `object` instead of the wrapper object type `Object`.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -556,7 +556,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-wrapper-object-types",
-        "message": "Prefer using the primitive `string` as a type name, rather than the upper-cased `String`.",
+        "message": "Use the primitive type `string` instead of the wrapper object type `String`.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -605,7 +605,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-wrapper-object-types",
-        "message": "Prefer using the primitive `symbol` as a type name, rather than the upper-cased `Symbol`.",
+        "message": "Use the primitive type `symbol` instead of the wrapper object type `Symbol`.",
         "suppress": {
           "eslint": {
             "rules": [

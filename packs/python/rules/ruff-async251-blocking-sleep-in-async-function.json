@@ -126,7 +126,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC251",
-    "message": "Async functions should not call `time.sleep`",
+    "message": "Replace `time.sleep` with an awaited async sleep, such as `await asyncio.sleep()` or `await trio.sleep()`.",
     "suppress": {
       "noqa": {
         "codes": [

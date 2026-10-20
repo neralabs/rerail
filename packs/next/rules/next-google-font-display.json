@@ -111,7 +111,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/google-font-display",
-        "message": "A font-display parameter is missing or not recommended. See: https://nextjs.org/docs/messages/google-font-display",
+        "message": "Add display=swap or display=optional to this Google Fonts URL so text stays visible while the font loads.",
         "suppress": {
           "eslint": {
             "rules": [

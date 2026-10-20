@@ -132,7 +132,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "ForbiddenCode",
-        "message": "Unsafe var_dump or shell_exec",
+        "message": "Remove this var_dump() or shell command; log debug output instead, and run commands with proc_open() given an argument array.",
         "suppress": {
           "psalm": {
             "issues": [

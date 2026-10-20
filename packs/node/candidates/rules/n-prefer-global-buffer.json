@@ -314,7 +314,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/buffer",
-        "message": "Unexpected use of 'require(\"buffer\").Buffer'. Use the global variable 'Buffer' instead.",
+        "message": "Use the global Buffer instead of reading Buffer from the buffer module.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -441,7 +441,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/buffer",
-        "message": "Unexpected use of 'require(\"buffer\").Buffer'. Use the global variable 'Buffer' instead.",
+        "message": "Drop Buffer from this destructuring and use the global Buffer instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -500,7 +500,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/buffer",
-        "message": "Unexpected use of 'require(\"buffer\").Buffer'. Use the global variable 'Buffer' instead.",
+        "message": "Remove Buffer from this import or export and use the global Buffer instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -537,7 +537,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/buffer",
-        "message": "Unexpected use of 'require(\"buffer\").Buffer'. Use the global variable 'Buffer' instead.",
+        "message": "Re-export only the names you need from the buffer module; Buffer is already a global.",
         "suppress": {
           "eslint": {
             "rules": [

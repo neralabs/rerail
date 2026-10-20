@@ -40,7 +40,7 @@
       "violation": {
         "code": "B407",
         "anchor": "witness.span",
-        "message": "xml.dom.expatbuilder parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library.",
+        "message": "Parse this XML with defusedxml.expatbuilder instead of xml.dom.expatbuilder; the standard parser is open to XML entity attacks.",
         "suppress": {
           "nosec": {
             "codes": [

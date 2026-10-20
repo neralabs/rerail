@@ -21,7 +21,7 @@
           ] }
         ] }
       ] } } },
-      "violation": {"suppress": {"clippy": {"lints": ["clippy::unusual_byte_groupings", "clippy::all", "clippy::style", "warnings"]}}, "anchor": "witness.span", "code": "unusual_byte_groupings", "message": "Clippy unusual_byte_groupings: digits of hex, binary or octal literal not in groups of equal size"}
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::unusual_byte_groupings", "clippy::all", "clippy::style", "warnings"]}}, "anchor": "witness.span", "code": "unusual_byte_groupings", "message": "Regroup this literal's digits into equal-size groups, e.g. 0xFFFF_FFFF or 0b1010_1010."}
     }
   ]
 }

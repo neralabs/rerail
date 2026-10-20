@@ -50,7 +50,7 @@
       "violation": {
         "code": "B603",
         "anchor": "capture.F",
-        "message": "Review input passed to a shell-free subprocess invocation",
+        "message": "Validate any untrusted input in this subprocess call's arguments; the program runs with whatever arguments it receives.",
         "suppress": {
           "nosec": {
             "codes": [
@@ -104,7 +104,7 @@
       "violation": {
         "code": "B603",
         "anchor": "capture.F",
-        "message": "Review input passed to a shell-free subprocess invocation",
+        "message": "Validate any untrusted input in this subprocess call's arguments; the program runs with whatever arguments it receives.",
         "suppress": {
           "nosec": {
             "codes": [

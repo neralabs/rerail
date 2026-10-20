@@ -242,7 +242,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RET501",
-        "message": "Do not explicitly `return None` in function if it is the only possible return value",
+        "message": "Replace `return None` with a bare `return`; this function never returns anything else.",
         "suppress": {
           "noqa": {
             "codes": [

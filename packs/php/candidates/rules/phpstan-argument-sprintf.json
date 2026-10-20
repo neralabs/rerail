@@ -73,7 +73,7 @@
             ]
           }
         },
-        "message": "Call to sprintf contains more placeholders than values given."
+        "message": "Pass sprintf() one value for each placeholder in its format, or remove the extra placeholders; too few values throw."
       }
     },
     {
@@ -129,7 +129,7 @@
             ]
           }
         },
-        "message": "Call to sprintf contains fewer placeholders than values given."
+        "message": "Remove the extra values passed to sprintf(), or add placeholders for them; extra values are silently ignored."
       }
     },
     {
@@ -189,7 +189,7 @@
             ]
           }
         },
-        "message": "Call to sprintf contains an invalid placeholder."
+        "message": "Fix the invalid placeholder in this sprintf() format, or write a literal percent sign as %%."
       }
     }
   ]

@@ -160,7 +160,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-duplicate-enum-values",
-        "message": "Duplicate enum member value $VT.",
+        "message": "Give this enum member a value other than $VT, which an earlier member already has.",
         "suppress": {
           "eslint": {
             "rules": [

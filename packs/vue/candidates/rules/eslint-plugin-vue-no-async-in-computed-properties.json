@@ -1190,7 +1190,7 @@
       "violation": {
         "anchor": "capture.A",
         "code": "vue/no-async-in-computed-properties",
-        "message": "Unexpected async function declaration in \"$NAME\" computed property.",
+        "message": "Make the \"$NAME\" computed getter synchronous and move the async work into a watcher or method.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1268,7 +1268,7 @@
       "violation": {
         "anchor": "capture.A",
         "code": "vue/no-async-in-computed-properties",
-        "message": "Unexpected async function declaration in computed function.",
+        "message": "Make this computed getter synchronous and move the async work into a watcher or function.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1323,7 +1323,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-async-in-computed-properties",
-        "message": "Unexpected await operator in \"$NAME\" computed property.",
+        "message": "Remove this await from the \"$NAME\" computed and load the value in a watcher or method instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1362,7 +1362,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-async-in-computed-properties",
-        "message": "Unexpected await operator in computed function.",
+        "message": "Remove this await from the computed getter and load the value in a watcher or function instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1422,7 +1422,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-async-in-computed-properties",
-        "message": "Unexpected Promise object in \"$NAME\" computed property.",
+        "message": "Remove this Promise from the \"$NAME\" computed and resolve the value in a watcher or method instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1466,7 +1466,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-async-in-computed-properties",
-        "message": "Unexpected Promise object in computed function.",
+        "message": "Remove this Promise from the computed getter and resolve the value in a watcher or function instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1547,7 +1547,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-async-in-computed-properties",
-        "message": "Unexpected asynchronous action in \"$NAME\" computed property.",
+        "message": "Move the async work out of the \"$NAME\" computed into a watcher or method, and have the computed return a value synchronously.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1612,7 +1612,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-async-in-computed-properties",
-        "message": "Unexpected asynchronous action in computed function.",
+        "message": "Move the async work out of this computed into a watcher or function, and have the getter return a value synchronously.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1688,7 +1688,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-async-in-computed-properties",
-        "message": "Unexpected timed function in \"$NAME\" computed property.",
+        "message": "Move this timer out of the \"$NAME\" computed into a watcher or method; the computed must return its value right away.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1748,7 +1748,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-async-in-computed-properties",
-        "message": "Unexpected timed function in computed function.",
+        "message": "Move this timer out of the computed getter into a watcher or function; the computed must return its value right away.",
         "suppress": {
           "eslint": {
             "rules": [

@@ -565,7 +565,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM905",
-        "message": "Consider using a list literal instead of `str.split`",
+        "message": "Replace this `split()` on a string literal with the list literal it produces.",
         "suppress": {
           "noqa": {
             "codes": [

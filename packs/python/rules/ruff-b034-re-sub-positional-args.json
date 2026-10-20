@@ -145,7 +145,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B034",
-        "message": "`re.sub` should pass `count` and `flags` as keyword arguments to avoid confusion due to unintuitive argument positions",
+        "message": "Pass count, maxsplit and flags to this re call as keywords; their positional order is easy to get wrong.",
         "suppress": {
           "noqa": {
             "codes": [

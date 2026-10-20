@@ -197,7 +197,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RET507",
-        "message": "Unnecessary `$BRANCH` after `continue` statement",
+        "message": "Remove this `$BRANCH` and dedent its body, since the branch above already continues; turn an `elif` into a plain `if`.",
         "suppress": {
           "noqa": {
             "codes": [

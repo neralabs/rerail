@@ -76,7 +76,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "unicorn/prefer-node-protocol",
-        "message": "Prefer `node:` when importing a Node.js built-in module.",
+        "message": "Add the node: prefix to this built-in module import, like 'node:fs'.",
         "suppress": {
           "eslint": {
             "rules": [

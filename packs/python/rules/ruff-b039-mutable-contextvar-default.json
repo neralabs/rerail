@@ -267,7 +267,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B039",
-        "message": "Do not use mutable data structures for `ContextVar` defaults",
+        "message": "Default this ContextVar to None and set the mutable value with .set(); a mutable default is shared by every context.",
         "suppress": {
           "noqa": {
             "codes": [

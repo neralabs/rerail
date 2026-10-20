@@ -47,7 +47,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-var",
-        "message": "Unexpected var, use let or const instead.",
+        "message": "Replace var with const, or with let if the variable is reassigned.",
         "suppress": {
           "eslint": {
             "rules": [

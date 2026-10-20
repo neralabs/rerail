@@ -149,7 +149,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-duplicate-attributes",
-        "message": "Duplicate attribute '$N'.",
+        "message": "Remove the repeated '$N' attribute, or merge both values into one.",
         "suppress": {
           "eslint": {
             "rules": [

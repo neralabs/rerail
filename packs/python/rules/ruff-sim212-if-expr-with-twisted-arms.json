@@ -81,7 +81,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM212",
-        "message": "Use `$A if $A else ...` instead of `... if not $A else $A`",
+        "message": "Swap the arms to read `$A if $A else ...`, dropping the `not` from `... if not $A else $A`.",
         "suppress": {
           "noqa": {
             "codes": [

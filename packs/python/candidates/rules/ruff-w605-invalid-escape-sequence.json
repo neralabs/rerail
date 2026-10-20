@@ -62,7 +62,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "W605",
-        "message": "Invalid escape sequence",
+        "message": "Make this a raw string (`r\"...\"`) or double the backslash, since this escape sequence is invalid.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -101,7 +101,7 @@
       "violation": {
         "anchor": "capture.BS",
         "code": "W605",
-        "message": "Invalid escape sequence",
+        "message": "Double this backslash in the format spec, or make the string raw with an `rf` prefix.",
         "each": "BS",
         "suppress": {
           "noqa": {

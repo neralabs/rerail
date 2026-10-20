@@ -32,7 +32,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F524",
-        "message": "`.format` call is missing argument(s) for placeholder(s)",
+        "message": "Pass an argument for every placeholder in this str.format() string, or remove the placeholders that have none.",
         "suppress": {
           "noqa": {
             "codes": [

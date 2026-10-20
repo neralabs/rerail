@@ -75,7 +75,7 @@
       "violation": {
         "anchor": "capture.OP",
         "code": "ST10",
-        "message": "Redundant constant expression.",
+        "message": "Remove or correct this comparison of $L with itself; it is always true or always false.",
         "suppress": {
           "sqlfluff": {
             "rules": [
@@ -156,7 +156,7 @@
       "violation": {
         "anchor": "capture.OP",
         "code": "ST10",
-        "message": "Redundant constant expression.",
+        "message": "Remove this comparison of two literals; it always has the same result (1 = 1 and 1 = 0 are allowed).",
         "suppress": {
           "sqlfluff": {
             "rules": [

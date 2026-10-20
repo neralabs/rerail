@@ -285,7 +285,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F633",
-        "message": "Use of `>>` is invalid with `print` function",
+        "message": "Replace `>>` with print()'s `file=` argument, as in `print(msg, file=sys.stderr)`.",
         "suppress": {
           "noqa": {
             "codes": [

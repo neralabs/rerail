@@ -325,7 +325,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "AL05",
-        "message": "Alias '$ALIAS' is never used in SELECT statement.",
+        "message": "Remove the alias '$ALIAS'; this query never uses it.",
         "suppress": {
           "sqlfluff": {
             "rules": [

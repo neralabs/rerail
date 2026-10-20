@@ -46,7 +46,7 @@
       "violation": {
         "code": "B108",
         "anchor": "witness.span",
-        "message": "Probable insecure use of a temporary-file path.",
+        "message": "Create this temporary path with the tempfile module instead of hardcoding a shared temp directory.",
         "suppress": {
           "nosec": {
             "codes": [

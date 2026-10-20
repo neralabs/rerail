@@ -79,7 +79,7 @@
       "violation": {
         "code": "B607",
         "anchor": "capture.CMD",
-        "message": "Process executable uses a partial path.",
+        "message": "Use an absolute path for this executable; a bare program name is looked up on PATH and can be hijacked.",
         "suppress": {
           "nosec": {
             "codes": [
@@ -157,7 +157,7 @@
       "violation": {
         "code": "B607",
         "anchor": "capture.CMD",
-        "message": "Process executable uses a partial path.",
+        "message": "Use an absolute path for this executable; a bare program name is looked up on PATH and can be hijacked.",
         "suppress": {
           "nosec": {
             "codes": [

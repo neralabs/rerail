@@ -45,7 +45,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/exports-style",
-        "message": "Unexpected access to 'exports'. Use 'module.exports' instead.",
+        "message": "Replace this bare exports with module.exports.",
         "suppress": {
           "eslint": {
             "rules": [

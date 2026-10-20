@@ -112,7 +112,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B014",
-        "message": "Exception handler with duplicate exception: `$NAME`",
+        "message": "Remove the duplicate `$NAME` from this except clause's tuple.",
         "suppress": {
           "noqa": {
             "codes": [

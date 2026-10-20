@@ -58,7 +58,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "PG02",
-        "message": "ADD CONSTRAINT ... FOREIGN KEY should use NOT VALID, then VALIDATE CONSTRAINT separately, to avoid locking the table while validating existing rows.",
+        "message": "Add this foreign key with NOT VALID and run VALIDATE CONSTRAINT as a separate step, so the table isn't locked.",
         "suppress": {
           "sqlfluff": {
             "rules": [

@@ -1411,7 +1411,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react-hooks/exhaustive-deps",
-        "message": "React Hook has a missing dependency. Either include it or remove the dependency array.",
+        "message": "Add `$R` to this dependency array; the callback reads it, so without it the callback keeps a stale value.",
         "suppress": {
           "eslint": {
             "rules": [

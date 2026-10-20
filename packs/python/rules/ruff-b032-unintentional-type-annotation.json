@@ -143,7 +143,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B032",
-        "message": "Possible unintentional type annotation (using `:`). Did you mean to assign (using `=`)?",
+        "message": "Use `=` instead of `:` here to assign the value; a colon makes a type annotation that assigns nothing.",
         "suppress": {
           "noqa": {
             "codes": [

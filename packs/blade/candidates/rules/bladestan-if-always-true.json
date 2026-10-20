@@ -87,7 +87,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "if.alwaysTrue",
-        "message": "If condition is always true."
+        "message": "Remove this if check or fix its condition; given the values the template sets, it is always true."
       }
     }
   ]

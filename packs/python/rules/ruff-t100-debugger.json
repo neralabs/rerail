@@ -106,7 +106,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "T100",
-        "message": "Import for a debugger found",
+        "message": "Remove this debugger import of `$D` before committing.",
         "each": "D",
         "suppress": {
           "noqa": {
@@ -183,7 +183,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "T100",
-        "message": "Trace found: debugger used",
+        "message": "Remove this debugger call before committing.",
         "suppress": {
           "noqa": {
             "codes": [

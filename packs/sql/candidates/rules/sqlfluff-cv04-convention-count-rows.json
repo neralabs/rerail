@@ -33,7 +33,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "CV04",
-        "message": "Use COUNT(*) to count rows.",
+        "message": "Replace this COUNT of a literal with COUNT(*).",
         "suppress": {
           "sqlfluff": {
             "rules": [

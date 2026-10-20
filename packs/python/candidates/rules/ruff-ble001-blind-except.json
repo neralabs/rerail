@@ -965,7 +965,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "BLE001",
-        "message": "Do not catch blind exception",
+        "message": "Catch specific exception types here, or log or re-raise the caught error; a blind catch hides unexpected failures.",
         "suppress": {
           "noqa": {
             "codes": [

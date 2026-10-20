@@ -58,7 +58,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "PG01",
-        "message": "CREATE INDEX should use CONCURRENTLY to avoid locking the table during the build.",
+        "message": "Add CONCURRENTLY to this CREATE INDEX so the table isn't locked while the index builds.",
         "suppress": {
           "sqlfluff": {
             "rules": [
@@ -111,7 +111,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "PG01",
-        "message": "DROP statement should use CONCURRENTLY to avoid locking the table.",
+        "message": "Add CONCURRENTLY to this DROP INDEX so the table isn't locked while it runs.",
         "suppress": {
           "sqlfluff": {
             "rules": [
@@ -164,7 +164,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "PG01",
-        "message": "REINDEX statement should use CONCURRENTLY to avoid locking the table.",
+        "message": "Add CONCURRENTLY to this REINDEX so the table isn't locked while it runs.",
         "suppress": {
           "sqlfluff": {
             "rules": [
@@ -217,7 +217,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "PG01",
-        "message": "REFRESH statement should use CONCURRENTLY to avoid locking the table.",
+        "message": "Add CONCURRENTLY to this REFRESH MATERIALIZED VIEW so the view stays readable while it runs.",
         "suppress": {
           "sqlfluff": {
             "rules": [

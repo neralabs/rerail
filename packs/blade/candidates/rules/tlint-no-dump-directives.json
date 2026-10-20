@@ -25,7 +25,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "NoDumpDirectives",
-        "message": "Do not use the @dump or @dd directives."
+        "message": "Remove this @dd or @dump directive before shipping."
       }
     }
   ]

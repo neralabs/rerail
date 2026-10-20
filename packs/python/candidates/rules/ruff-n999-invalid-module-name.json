@@ -71,7 +71,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "N999",
-        "message": "Invalid module name",
+        "message": "Rename this module to lowercase snake_case that is not a Python keyword.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -114,7 +114,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "N999",
-        "message": "Invalid module name",
+        "message": "Rename this module to lowercase letters, digits and underscores, avoiding Python keywords.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -160,7 +160,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "N999",
-        "message": "Invalid module name",
+        "message": "Rename this package's folder to lowercase snake_case that is not a Python keyword.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -206,7 +206,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "N999",
-        "message": "Invalid module name",
+        "message": "Rename this package's folder to lowercase letters, digits and underscores, avoiding Python keywords.",
         "suppress": {
           "noqa": {
             "codes": [

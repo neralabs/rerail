@@ -8696,7 +8696,7 @@
       "violation": {
         "code": "vue/require-valid-default-prop",
         "anchor": "witness.span",
-        "message": "Type of the default value for '$NM' prop must be a $M7.",
+        "message": "Make the default for the '$NM' prop a $M7 so it matches the declared type.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -8968,7 +8968,7 @@
       "violation": {
         "code": "vue/require-valid-default-prop",
         "anchor": "witness.span",
-        "message": "Type of the default value for '$NM' prop must be a $R7.",
+        "message": "Make the default for the '$NM' prop a $R7 so it matches the declared type.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -10422,7 +10422,7 @@
       "violation": {
         "code": "vue/require-valid-default-prop",
         "anchor": "witness.span",
-        "message": "Type of the default value for '$NM' prop must be a $R7.",
+        "message": "Return a $R7 from the default factory of the '$NM' prop so it matches the declared type.",
         "suppress": {
           "eslint": {
             "rules": [

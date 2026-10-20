@@ -546,7 +546,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B023",
-        "message": "Function definition does not bind loop variable `$N`",
+        "message": "Bind `$N` as a default argument, such as `$N=$N`, so the function keeps this iteration's value.",
         "suppress": {
           "noqa": {
             "codes": [

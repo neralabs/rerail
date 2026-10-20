@@ -24,7 +24,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-ternary",
-        "message": "Ternary operator used.",
+        "message": "Rewrite this ternary as an if statement.",
         "suppress": {
           "eslint": {
             "rules": [

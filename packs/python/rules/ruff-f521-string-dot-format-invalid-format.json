@@ -69,7 +69,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F521",
-        "message": "`.format` call has invalid format string",
+        "message": "Fix this str.format() string so its braces balance and every field and format spec is valid.",
         "suppress": {
           "noqa": {
             "codes": [

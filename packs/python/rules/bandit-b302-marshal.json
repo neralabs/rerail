@@ -34,7 +34,7 @@
       "violation": {
         "code": "B302",
         "anchor": "witness.span",
-        "message": "Deserialization with the marshal module is possibly dangerous.",
+        "message": "Load this data with json or another data-only format instead of marshal, which is unsafe on untrusted input.",
         "suppress": {
           "nosec": {
             "codes": [

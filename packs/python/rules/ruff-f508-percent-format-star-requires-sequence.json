@@ -98,7 +98,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F508",
-        "message": "`%`-format string `*` specifier requires sequence",
+        "message": "Pass a tuple instead of a dict to this %-format string; its `*` width or precision takes positional values.",
         "suppress": {
           "noqa": {
             "codes": [

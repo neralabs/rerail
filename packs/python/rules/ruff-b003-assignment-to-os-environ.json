@@ -48,7 +48,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "B003", "message": "Assigning to `os.environ` doesn't clear the environment", "suppress": { "noqa": { "codes": ["B003"] } } }
+      "violation": { "anchor": "witness.span", "code": "B003", "message": "Update `os.environ` in place with `.clear()` and `.update()` instead of assigning a new mapping to it.", "suppress": { "noqa": { "codes": ["B003"] } } }
     }
   ]
 }

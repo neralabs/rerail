@@ -50,7 +50,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "argument.type",
-        "message": "Parameter #1 $min of function random_int expects lower number than parameter #2 $max.",
+        "message": "Swap the random_int() arguments so the minimum comes first; a minimum above the maximum throws at runtime.",
         "suppress": {
           "phpstan": {
             "identifiers": [

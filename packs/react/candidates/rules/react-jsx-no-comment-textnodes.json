@@ -44,7 +44,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/jsx-no-comment-textnodes",
-        "message": "Comments inside children section of tag should be placed inside braces",
+        "message": "Wrap this comment in braces, as {/* comment */}, so it is not rendered as text.",
         "suppress": {
           "eslint": {
             "rules": [

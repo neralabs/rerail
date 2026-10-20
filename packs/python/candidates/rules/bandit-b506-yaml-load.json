@@ -79,7 +79,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B506",
-        "message": "Bandit B506 (yaml-load)",
+        "message": "Use yaml.safe_load, or pass Loader=yaml.SafeLoader, instead of this yaml.load; the full loader can run arbitrary code from input.",
         "suppress": {
           "nosec": {
             "codes": [

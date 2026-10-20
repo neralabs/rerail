@@ -198,7 +198,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PIE796",
-        "message": "Enum contains duplicate value: `$V`",
+        "message": "Change this member's value `$V` to one that no other member of the Enum uses.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -446,7 +446,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PIE796",
-        "message": "Enum contains duplicate value: `$V`",
+        "message": "Change this member's value `$V` to one that no other member of the Enum uses.",
         "suppress": {
           "noqa": {
             "codes": [

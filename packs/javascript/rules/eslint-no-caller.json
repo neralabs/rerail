@@ -44,7 +44,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-caller",
-        "message": "Avoid arguments.$PROP.",
+        "message": "Replace arguments.$PROP with a reference to the function by name or an explicit parameter.",
         "suppress": {
           "eslint": {
             "rules": [

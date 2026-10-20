@@ -177,7 +177,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-unwanted-polyfillio",
-        "message": "No duplicate polyfills from Polyfill.io are allowed. See: https://nextjs.org/docs/messages/no-unwanted-polyfillio",
+        "message": "Remove the features Next.js already polyfills from this polyfill.io URL, or drop the script if none remain.",
         "suppress": {
           "eslint": {
             "rules": [

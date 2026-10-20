@@ -269,11 +269,11 @@ def module_utils(rx, guarded=False):
     }
 
 
-def prefer_global_checks(rx, prop, message):
+def prefer_global_checks(rx, prop, mod):
     utils = module_utils(rx)
     if prop is None:
-        return [{"id": "module-call", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"matches": "module-call"}}, "message": message},
-                {"id": "esm-declaration", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"any": [{"kind": "import_statement"}, {"kind": "export_statement"}], "has": {"field": "source", "matches": "esm-source"}}}, "message": message}]
+        return [{"id": "module-call", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"matches": "module-call"}}, "message": f"Use the global {mod} instead of requiring the {mod} module."},
+                {"id": "esm-declaration", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"any": [{"kind": "import_statement"}, {"kind": "export_statement"}], "has": {"field": "source", "matches": "esm-source"}}}, "message": f"Use the global {mod} instead of importing or re-exporting the {mod} module."}]
     prx = f"^{prop}$"
     pattern = {"kind": "object_pattern", "any": [
         {"inside": {"kind": "variable_declarator", "field": "name", "has": {"field": "value", "matches": "module-value"}}},
@@ -282,15 +282,15 @@ def prefer_global_checks(rx, prop, message):
     return [
         {"id": "member", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"any": [
             {"kind": "member_expression", "all": [{"has": {"field": "object", "matches": "module-value"}}, {"has": {"field": "property", "kind": "property_identifier", "regex": prx}}]},
-            {"kind": "subscript_expression", "all": [{"has": {"field": "object", "matches": "module-value"}}, {"has": {"field": "index", **str_const(prx)}}]}]}}, "message": message},
+            {"kind": "subscript_expression", "all": [{"has": {"field": "object", "matches": "module-value"}}, {"has": {"field": "index", **str_const(prx)}}]}]}}, "message": f"Use the global {prop} instead of reading {prop} from the {mod} module."},
         {"id": "destructured", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"inside": pattern, "any": [
             {"kind": "shorthand_property_identifier_pattern", "regex": prx},
             {"kind": "pair_pattern", "has": {"field": "key", "any": [{"kind": "property_identifier", "regex": prx}, str_const(prx), {"kind": "computed_property_name", "has": str_const(prx)}]}},
-            {"kind": "object_assignment_pattern", "has": {"field": "left", "kind": "shorthand_property_identifier_pattern", "regex": prx}}]}}, "message": message},
+            {"kind": "object_assignment_pattern", "has": {"field": "left", "kind": "shorthand_property_identifier_pattern", "regex": prx}}]}}, "message": f"Drop {prop} from this destructuring and use the global {prop} instead."},
         {"id": "esm-specifier", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"any": [
             {"kind": "import_specifier", "has": {"field": "name", "regex": prx}, "inside": {"stopBy": "end", "kind": "import_statement", "has": {"field": "source", "matches": "esm-source"}}},
-            {"kind": "export_specifier", "has": {"field": "name", "regex": prx}, "inside": {"stopBy": "end", "kind": "export_statement", "has": {"field": "source", "matches": "esm-source"}}}]}}, "message": message},
-        {"id": "esm-export-all", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"kind": "export_statement", "has": {"field": "source", "matches": "esm-source"}, "not": {"has": {"kind": "export_clause"}}}}, "message": message},
+            {"kind": "export_specifier", "has": {"field": "name", "regex": prx}, "inside": {"stopBy": "end", "kind": "export_statement", "has": {"field": "source", "matches": "esm-source"}}}]}}, "message": f"Remove {prop} from this import or export and use the global {prop} instead."},
+        {"id": "esm-export-all", "ast": {"languageOptions": NODE_LO, "utils": utils, "rule": {"kind": "export_statement", "has": {"field": "source", "matches": "esm-source"}, "not": {"has": {"kind": "export_clause"}}}}, "message": f"Re-export only the names you need from the {mod} module; {prop} is already a global."},
     ]
 
 
@@ -308,11 +308,7 @@ PREFER_GLOBAL = {
 def prefer_global_docs():
     docs = []
     for name, (rx, prop, mod) in PREFER_GLOBAL.items():
-        if prop:
-            message = f"Unexpected use of 'require(\"{mod}\").{prop}'. Use the global variable '{prop}' instead."
-        else:
-            message = f"Unexpected use of 'require(\"{mod}\")'. Use the global variable '{mod}' instead."
-        docs.append(hoist(policy(f"n-prefer-global-{name}", f"n/prefer-global/{name}", DESCRIPTIONS[f"n-prefer-global-{name}"], prefer_global_checks(rx, prop, message))))
+        docs.append(hoist(policy(f"n-prefer-global-{name}", f"n/prefer-global/{name}", DESCRIPTIONS[f"n-prefer-global-{name}"], prefer_global_checks(rx, prop, mod))))
     return docs
 
 
@@ -358,10 +354,10 @@ def prefer_promises_docs():
     docs = []
     for mod, calls, constructs in (("fs", FS_FNS, []), ("dns", DNS_CALL, ["Resolver"])):
         checks = [{"id": "call", "ast": {"languageOptions": NODE_LO, "utils": promises_utils(mod, plain_alt(calls)),
-                                         "rule": {"kind": "call_expression", **IN_FILE_NAMING_MODULE, **NOT_TAGGED, "has": {"field": "function", "matches": "fn-value"}}}, "message": f"Use '{mod}.promises.<name>()' instead."}]
+                                         "rule": {"kind": "call_expression", **IN_FILE_NAMING_MODULE, **NOT_TAGGED, "has": {"field": "function", "matches": "fn-value"}}}, "message": f"Use the {mod}.promises version of this function and await it instead of passing a callback."}]
         if constructs:
             checks.append({"id": "construct", "ast": {"languageOptions": NODE_LO, "utils": promises_utils(mod, plain_alt(constructs)),
-                                                      "rule": {"kind": "new_expression", **IN_FILE_NAMING_MODULE, "has": {"field": "constructor", "matches": "fn-value"}}}, "message": f"Use 'new {mod}.promises.<name>()' instead."})
+                                                      "rule": {"kind": "new_expression", **IN_FILE_NAMING_MODULE, "has": {"field": "constructor", "matches": "fn-value"}}}, "message": f"Construct {mod}.promises.Resolver instead of the callback-style {mod}.Resolver."})
         docs.append(policy(f"n-prefer-promises-{mod}", f"n/prefer-promises/{mod}", DESCRIPTIONS[f"n-prefer-promises-{mod}"], checks))
     return docs
 
@@ -386,13 +382,12 @@ def no_path_concat_doc():
     # __dirname/__filename are CommonJS wrapper bindings: declared only where the file is CommonJS.
     commonjs = {"when": {"sourceType": "commonjs"}, "languageOptions": {"globals": {"process": "readonly", "__dirname": "readonly", "__filename": "readonly"}}}
     other = {"when": {"sourceType": ["script", "module"]}, "languageOptions": NODE_LO}
-    message = "Use path.join() or path.resolve() instead of string concatenation."
     checks = []
     for suffix, options in (("", other), ("-commonjs", commonjs)):
         checks += [
-            {"id": "binary" + suffix, "ast": {**options, "utils": utils, "rule": {"kind": "binary_expression", "all": [op("^\\+$"), {"has": {"field": "left", "matches": "path-source"}}, {"has": {"field": "right", "matches": "first-slash"}}]}}, "message": message},
+            {"id": "binary" + suffix, "ast": {**options, "utils": utils, "rule": {"kind": "binary_expression", "all": [op("^\\+$"), {"has": {"field": "left", "matches": "path-source"}}, {"has": {"field": "right", "matches": "first-slash"}}]}}, "message": "Build this path with path.join() or path.resolve() instead of concatenating strings."},
             {"id": "template" + suffix, "ast": {**options, "utils": utils, "rule": {"kind": "template_string", "has": {"kind": "template_substitution", "has": {"matches": "path-source"},
-                                                                                                                       "precedes": {"any": [slash_text, {"kind": "template_substitution", "has": {"matches": "first-slash"}}]}}}}, "message": message}]
+                                                                                                                       "precedes": {"any": [slash_text, {"kind": "template_substitution", "has": {"matches": "first-slash"}}]}}}}, "message": "Build this path with path.join() or path.resolve() instead of a template string."}]
     return hoist(policy("n-no-path-concat", "n/no-path-concat", DESCRIPTIONS["n-no-path-concat"], checks))
 
 
@@ -411,7 +406,7 @@ def prefer_node_protocol_doc(builtins):
     def first_argument_of(call):
         return {"nthChild": FIRST, "inside": {"kind": "arguments", "inside": {"field": "arguments", **call}}}
 
-    message = "Prefer `node:<module>` over `<module>`."
+    message = "Add the node: prefix to this built-in module name, as in node:fs."
     # isEnablingThisRule: the configured Node range must be a subset of supportedRangeForEsm, and for require also of
     # supportedRangeForCjs, which lies inside it (so the require gate is that range alone); getBuiltinModule is ungated.
     esm = {"package": {"nodeVersion": {"subsetOf": "^12.20.0 || >=14.13.1"}}}
@@ -429,11 +424,11 @@ def prefer_node_protocol_doc(builtins):
 def syntax_docs():
     docs = []
     docs.append(policy("n-no-new-require", "n/no-new-require", DESCRIPTIONS["n-no-new-require"], [
-        {"id": "upstream", "ast": {"rule": {"kind": "new_expression", "has": {"field": "constructor", "kind": "identifier", "regex": "^require$"}}}, "message": "Unexpected use of new with require."}]))
+        {"id": "upstream", "ast": {"rule": {"kind": "new_expression", "has": {"field": "constructor", "kind": "identifier", "regex": "^require$"}}}, "message": "Require the module into a variable first, then call new on that variable."}]))
     docs.append(policy("n-no-process-env", "n/no-process-env", DESCRIPTIONS["n-no-process-env"], [
         {"id": "upstream", "ast": {"rule": {"any": [
             {"kind": "member_expression", "all": [{"has": {"field": "object", "kind": "identifier", "regex": "^process$"}}, {"has": {"field": "property", "kind": "property_identifier", "regex": "^env$"}}]},
-            {"kind": "subscript_expression", "all": [{"has": {"field": "object", "kind": "identifier", "regex": "^process$"}}, {"has": {"field": "index", "kind": "string", "has": {"kind": "string_fragment", "regex": "^env$"}}}]}]}}, "message": "Unexpected use of process.env."}]))
+            {"kind": "subscript_expression", "all": [{"has": {"field": "object", "kind": "identifier", "regex": "^process$"}}, {"has": {"field": "index", "kind": "string", "has": {"kind": "string_fragment", "regex": "^env$"}}}]}]}}, "message": "Pass this value in as configuration instead of reading process.env here."}]))
 
     accept = ["assignment_expression", "augmented_assignment_expression", "variable_declarator", "member_expression", "subscript_expression", "expression_statement", "call_expression",
               "ternary_expression", "program", "lexical_declaration", "variable_declaration", "arguments", "parenthesized_expression"]
@@ -443,7 +438,7 @@ def syntax_docs():
     docs.append(policy("n-global-require", "n/global-require", DESCRIPTIONS["n-global-require"], [
         {"id": "upstream", "ast": {"languageOptions": FILE_LO, "rule": {"kind": "call_expression",
                                                                                          "has": {"field": "function", "kind": "identifier", "regex": "^require$", "resolves": {"global": ["require"], "declared": False}},
-                                                                                         "any": [{"inside": {"stopBy": "end", "not": {"any": [{"kind": k} for k in accept]}}}, chain]}}, "message": "Unexpected require()."}]))
+                                                                                         "any": [{"inside": {"stopBy": "end", "not": {"any": [{"kind": k} for k in accept]}}}, chain]}}, "message": "Move this require() to the top level of the module."}]))
 
     module_exports = {"kind": "member_expression", "all": [{"has": {**ident("module"), "field": "object"}}, {"has": {"field": "property", "kind": "property_identifier", "regex": "^exports$"}}]}
     docs.append(policy("n-no-exports-assign", "n/no-exports-assign", DESCRIPTIONS["n-no-exports-assign"], [
@@ -452,14 +447,14 @@ def syntax_docs():
                                                                     "not": {"any": [
                                                                         {"inside": {"kind": "assignment_expression", "all": [{"has": {"field": "left", **module_exports}}]}, "nthChild": {"position": 1, "reverse": True}},
                                                                         {"has": {"field": "right", "kind": "assignment_expression", "has": {"field": "left", **module_exports}}}]}}},
-         "message": "Unexpected assignment to 'exports' variable. Use 'module.exports' instead."}]))
+         "message": "Assign to module.exports instead of exports, which only rebinds a local variable."}]))
 
     sync_id = {"any": [{"kind": "identifier"}, {"kind": "property_identifier"}], "regex": "Sync$"}
     callee_member = {"kind": "member_expression", "inside": {"kind": "call_expression", "field": "function", **NOT_TAGGED}}
     call_child = {"kind": "call_expression", **NOT_TAGGED, "any": [{"has": {"field": "function", **sync_id}}, {"has": {"field": "arguments", "kind": "arguments", "has": sync_id}}]}
     docs.append(policy("n-no-sync", "n/no-sync", DESCRIPTIONS["n-no-sync"], [
-        {"id": "call-child", "ast": {"rule": call_child}, "message": "Unexpected sync method."},
-        {"id": "callee-member-descendant", "ast": {"rule": {"has": sync_id, "any": [callee_member, {"inside": {"stopBy": "end", **callee_member}}], "not": {"any": [{"kind": "arguments"}, call_child]}}}, "message": "Unexpected sync method."}]))
+        {"id": "call-child", "ast": {"rule": call_child}, "message": "Replace this Sync call with its async or promise-based version, such as fs.promises.readFile() for readFileSync()."},
+        {"id": "callee-member-descendant", "ast": {"rule": {"has": sync_id, "any": [callee_member, {"inside": {"stopBy": "end", **callee_member}}], "not": {"any": [{"kind": "arguments"}, call_child]}}}, "message": "Replace this Sync call with its async or promise-based version, such as fs.promises.readFile() for readFileSync()."}]))
 
     require_init = {"require-init": {"not": {"has": {"kind": "optional_chain"}}, "any": [
         {"kind": "call_expression", **NOT_TAGGED, "has": {"field": "function", "kind": "identifier", "regex": "^require$"}},
@@ -468,10 +463,10 @@ def syntax_docs():
     docs.append(policy("n-no-mixed-requires", "n/no-mixed-requires", DESCRIPTIONS["n-no-mixed-requires"], [
         {"id": "upstream", "ast": {"utils": require_init, "rule": {"any": [{"kind": "variable_declaration"}, {"kind": "lexical_declaration"}], "all": [
             {"has": {"kind": "variable_declarator", "has": {"field": "value", "matches": "require-init"}}},
-            {"has": {"kind": "variable_declarator", "not": {"has": {"field": "value", "matches": "require-init"}}}}]}}, "message": "Do not mix 'require' and other declarations."}]))
+            {"has": {"kind": "variable_declarator", "not": {"has": {"field": "value", "matches": "require-init"}}}}]}}, "message": "Move this require() into its own declaration, separate from the other variables."}]))
 
     docs.append(policy("n-exports-style", "n/exports-style", DESCRIPTIONS["n-exports-style"], [
-        {"id": "upstream", "ast": {"languageOptions": FILE_LO, "rule": {"any": [{"kind": "identifier"}, {"kind": "shorthand_property_identifier"}], "regex": "^exports$", "resolves": {"global": ["exports"]}}}, "message": "Unexpected access to 'exports'. Use 'module.exports' instead."}]))
+        {"id": "upstream", "ast": {"languageOptions": FILE_LO, "rule": {"any": [{"kind": "identifier"}, {"kind": "shorthand_property_identifier"}], "regex": "^exports$", "resolves": {"global": ["exports"]}}}, "message": "Replace this bare exports with module.exports."}]))
 
     err_id = {"kind": "identifier", "regex": "^err$", "binds": {"form": "parameter", "referenced": False}}
     first_err = {"any": [err_id,
@@ -483,7 +478,7 @@ def syntax_docs():
         {"id": "function", "ast": {"utils": {"first-err": first_err}, "rule": {"any": [
             {"any": [{"kind": k} for k in fn_kinds], "has": {"field": "parameters", "has": {"nthChild": FIRST, "matches": "first-err"}}},
             {"kind": "arrow_function", "has": {"field": "parameter", **err_id}},
-            {"kind": "formal_parameters", "inside": {"kind": "method_definition", "field": "parameters"}, "has": {"nthChild": FIRST, "matches": "first-err"}}]}}, "message": "Expected error to be handled."}]))
+            {"kind": "formal_parameters", "inside": {"kind": "method_definition", "field": "parameters"}, "has": {"nthChild": FIRST, "matches": "first-err"}}]}}, "message": "Handle this callback's error parameter, for example by returning or passing the error on when it is set."}]))
 
     cannot_be_error = {"any": [
         {"any": [{"kind": "string"}, {"kind": "number"}, {"kind": "true"}, {"kind": "false"}, {"kind": "regex"}, {"kind": "array"}, {"kind": "object"}, {"kind": "template_string"}]},
@@ -495,7 +490,7 @@ def syntax_docs():
     docs.append(policy("n-no-callback-literal", "n/no-callback-literal", DESCRIPTIONS["n-no-callback-literal"], [
         {"id": "upstream", "ast": {"utils": {"cannot-be-error": cannot_be_error}, "rule": {"kind": "call_expression", **NOT_TAGGED, "all": [
             {"has": {"field": "function", "kind": "identifier", "regex": "^(?:callback|cb)$"}},
-            {"has": {"field": "arguments", "kind": "arguments", "has": {"nthChild": FIRST, "matches": "cannot-be-error"}}}]}}, "message": "Unexpected literal in error position of callback. This rule goes by the callback's name only: if the callback is error-first, pass an Error or null as its first argument; if its API defines a different first argument (ws verifyClient's cb(result, code), ssh2 authHandler's callback(nextMethod)), leave the call as it is."}]))
+            {"has": {"field": "arguments", "kind": "arguments", "has": {"nthChild": FIRST, "matches": "cannot-be-error"}}}]}}, "message": "Pass an Error or null as this callback's first argument, unless its API expects a different first argument."}]))
 
     stop = {"any": [{"kind": "statement_block"}, {"kind": "return_statement"}, {"kind": "arrow_function"}]}
     any_func = {"any": [{"kind": k} for k in ["function_declaration", "function_expression", "generator_function_declaration", "generator_function", "arrow_function", "method_definition"]]}
@@ -511,7 +506,7 @@ def syntax_docs():
             {"has": {"field": "function", "kind": "identifier", "regex": "^(?:callback|cb|next)$"}},
             {"not": {"inside": {"stopBy": stop, "any": [{"kind": "return_statement"}, {"kind": "arrow_function"}]}}},
             {"not": ok_last}, {"not": ok_before_return},
-            {"inside": {"stopBy": "end", **any_func}}]}}, "message": "Expected return with your callback function."}]))
+            {"inside": {"stopBy": "end", **any_func}}]}}, "message": "Return right after this callback call, as in return callback(err), so the function stops and it can't fire twice."}]))
     return docs
 
 
@@ -638,6 +633,51 @@ def tracker(modules, globals_):
     return utils, report
 
 
+# n-no-deprecated-api: the message of the clause reporting each root of the trace map (a module, or `global <name>`).
+DEPRECATED_API_MESSAGES = {
+    "_linklist": "Replace the removed internal _linklist module with your own linked list or an npm package.",
+    "_stream_wrap": "Replace the internal _stream_wrap module with the public stream or net APIs.",
+    "async_hooks": "Replace async_hooks currentId or triggerId with executionAsyncId() or triggerAsyncId().",
+    "buffer": "Replace this Buffer constructor or SlowBuffer with Buffer.from(), Buffer.alloc() or Buffer.allocUnsafeSlow().",
+    "constants": "Replace the constants module with the module's own constants, such as os.constants or fs.constants.",
+    "crypto": "Replace this deprecated crypto API with a supported one, such as createCipheriv() or randomBytes().",
+    "domain": "Replace the domain module with try/catch, promise rejection handling or AsyncLocalStorage.",
+    "events": "Call emitter.listenerCount(name) instead of the static listenerCount(emitter, name).",
+    "freelist": "Replace the removed freelist module with your own object pool or an npm package.",
+    "fs": "Replace this deprecated fs API with a supported one, such as fs.access() or fs.stat() for fs.exists().",
+    "http": "Replace http.createClient() with http.request() or http.get().",
+    "module": "Replace this deprecated module API with a supported one, such as createRequire() for createRequireFromPath().",
+    "net": "Remove this call to the internal net._setSimultaneousAccepts(); Node.js no longer supports it.",
+    "os": "Replace os.getNetworkInterfaces() or os.tmpDir() with os.networkInterfaces() or os.tmpdir().",
+    "path": "Replace path._makeLong() with path.toNamespacedPath().",
+    "process": "Replace this deprecated process API with a supported one, such as the assert module for process.assert().",
+    "punycode": "Replace the built-in punycode module with the punycode npm package or url.domainToASCII().",
+    "readline": "Replace this internal readline helper with a public API, such as util.stripVTControlCharacters().",
+    "repl": "Replace this deprecated repl API with a supported one, such as module.builtinModules for repl.builtinModules.",
+    "safe-buffer": "Replace this safe-buffer constructor or SlowBuffer with the built-in Buffer.from() or Buffer.alloc().",
+    "sys": "Require util instead of sys, a deprecated alias for it.",
+    "timers": "Replace timers.enroll() or timers.unenroll() with setTimeout() or clearTimeout().",
+    "tls": "Replace this deprecated tls API with a supported one, such as tls.TLSSocket for createSecurePair().",
+    "tty": "Replace tty.setRawMode() with setRawMode() on the TTY stream, such as process.stdin.setRawMode().",
+    "url": "Replace url.parse() or url.resolve() with the WHATWG URL API, such as new URL(input, base).",
+    "util": "Replace this deprecated util function with its modern equivalent, such as Array.isArray() for util.isArray().",
+    "vm": "Replace vm.runInDebugContext() with the inspector module.",
+    "zlib": "Construct this zlib class with new, or use its factory such as zlib.createGzip(), instead of calling it bare.",
+    "global Buffer": "Replace this Buffer constructor call with Buffer.from(), Buffer.alloc() or Buffer.allocUnsafe().",
+    "global COUNTER_NET_SERVER_CONNECTION": "Remove COUNTER_NET_SERVER_CONNECTION, a global Node.js no longer provides; use diagnostics_channel for these metrics.",
+    "global COUNTER_NET_SERVER_CONNECTION_CLOSE": "Remove COUNTER_NET_SERVER_CONNECTION_CLOSE, a global Node.js no longer provides; use diagnostics_channel for these metrics.",
+    "global COUNTER_HTTP_SERVER_REQUEST": "Remove COUNTER_HTTP_SERVER_REQUEST, a global Node.js no longer provides; use diagnostics_channel for these metrics.",
+    "global COUNTER_HTTP_SERVER_RESPONSE": "Remove COUNTER_HTTP_SERVER_RESPONSE, a global Node.js no longer provides; use diagnostics_channel for these metrics.",
+    "global COUNTER_HTTP_CLIENT_REQUEST": "Remove COUNTER_HTTP_CLIENT_REQUEST, a global Node.js no longer provides; use diagnostics_channel for these metrics.",
+    "global COUNTER_HTTP_CLIENT_RESPONSE": "Remove COUNTER_HTTP_CLIENT_RESPONSE, a global Node.js no longer provides; use diagnostics_channel for these metrics.",
+    "global GLOBAL": "Replace GLOBAL with globalThis.",
+    "global Intl": "Replace Intl.v8BreakIterator with Intl.Segmenter.",
+    "global require": "Remove this use of require.extensions; precompile the files or use a module loader hook instead.",
+    "global root": "Replace root with globalThis.",
+    "global process": "Replace this deprecated process API with a supported one, such as the assert module for process.assert().",
+}
+
+
 def no_deprecated_api_doc(trace):
     utils, report = tracker(trace["modules"], trace["globals"])
     # `global` is Node's (globals.node) in both module systems; require only CommonJS's, as the file decides.
@@ -646,7 +686,7 @@ def no_deprecated_api_doc(trace):
     for root, alts in report.items():
         checks.append({"id": re.sub(r"[^a-z0-9]+", "-", root.lower()).strip("-"),
                        "forbid": {"ast": {"language": "typescript", "languageOptions": lo, "rule": {"any": alts}}},
-                       "violation": {"anchor": "witness.span", "code": "n/no-deprecated-api", "message": f"Deprecated Node.js API ({root}).",
+                       "violation": {"anchor": "witness.span", "code": "n/no-deprecated-api", "message": DEPRECATED_API_MESSAGES[root],
                                     "suppress": suppress("n/no-deprecated-api")}})
     return {"format": "rerail.policy/v1", "id": "n-no-deprecated-api", "revision": 1, "mode": "steer", "description": DESCRIPTIONS["n-no-deprecated-api"],
             "scope": {"include": INCLUDE, "exclude": []}, "clauses": checks}
@@ -672,8 +712,8 @@ def hashbang_doc():
     # getShebangInfo: `#!` and at least one character at the start of the text, ended by a line break.
     shebang = {"kind": "program", "regex": "\\A#![^\\r\\n\\x{2028}\\x{2029}]+\\r?\\n"}
     return policy("n-hashbang", "n/hashbang", DESCRIPTIONS["n-hashbang"], [
-        {"id": "needs-no-shebang", "ast": {"file": {"package": {"bin": False}}, "rule": {"kind": "hash_bang_line", "inside": shebang}}, "message": "This file needs no shebang."},
-        {"id": "needs-shebang", "anchor": "file.start", "ast": {"file": {"package": {"bin": True}}, "rule": {"kind": "program", "not": {"regex": node_shebang_rx()}}}, "message": "This file needs shebang \"#!/usr/bin/env node\"."}])
+        {"id": "needs-no-shebang", "ast": {"file": {"package": {"bin": False}}, "rule": {"kind": "hash_bang_line", "inside": shebang}}, "message": "Remove the shebang line; package.json does not list this file as a bin executable."},
+        {"id": "needs-shebang", "anchor": "file.start", "ast": {"file": {"package": {"bin": True}}, "rule": {"kind": "program", "not": {"regex": node_shebang_rx()}}}, "message": "Add #!/usr/bin/env node as the first line; package.json lists this file as a bin executable."}])
 
 
 # ---- probes ----------------------------------------------------------------------------------------------------------

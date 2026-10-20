@@ -204,7 +204,7 @@
       "violation": {
         "anchor": "capture.C",
         "code": "F722",
-        "message": "Syntax error in forward annotation",
+        "message": "Fix the syntax of this string annotation so it is a valid Python expression.",
         "each": "C",
         "suppress": {
           "noqa": {
@@ -388,7 +388,7 @@
       "violation": {
         "anchor": "capture.E",
         "code": "F722",
-        "message": "Syntax error in forward annotation",
+        "message": "Fix the syntax of this string annotation so it is a valid Python expression.",
         "each": "E",
         "suppress": {
           "noqa": {
@@ -639,7 +639,7 @@
       "violation": {
         "anchor": "capture.A",
         "code": "F722",
-        "message": "Syntax error in forward annotation",
+        "message": "Remove the `await` from this string annotation; it is not valid outside a function.",
         "each": "A",
         "suppress": {
           "noqa": {

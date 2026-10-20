@@ -129,7 +129,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/next-script-for-ga",
-        "message": "Prefer `@next/third-parties/google` when using the inline script for Google Analytics and Tag Manager. See: https://nextjs.org/docs/messages/next-script-for-ga",
+        "message": "Replace this inline Google Analytics or Tag Manager script with GoogleAnalytics or GoogleTagManager from @next/third-parties/google.",
         "suppress": {
           "eslint": {
             "rules": [

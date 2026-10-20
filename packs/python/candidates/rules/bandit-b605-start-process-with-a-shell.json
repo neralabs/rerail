@@ -44,7 +44,7 @@
       "violation": {
         "code": "B605",
         "anchor": "witness.span",
-        "message": "Command is executed through a shell-spawning API",
+        "message": "Replace this shell-spawning call with subprocess.run and an argument list; running the command through a shell allows injection.",
         "suppress": {
           "nosec": {
             "codes": [

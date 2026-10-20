@@ -44,7 +44,7 @@
       "violation": {
         "code": "B317",
         "anchor": "witness.span",
-        "message": "Using xml.sax to parse untrusted XML may permit XML attacks; use defusedxml.",
+        "message": "Parse this XML with defusedxml.sax instead of xml.sax.",
         "suppress": {
           "nosec": {
             "codes": [

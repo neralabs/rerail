@@ -115,7 +115,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "A005",
-        "message": "Module shadows a Python standard-library module",
+        "message": "Rename this module so it doesn't share a name with a standard-library module; importing it can shadow the real one.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -151,7 +151,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "A005",
-        "message": "Module shadows a Python standard-library module",
+        "message": "Rename this module so it doesn't share a name with a standard-library module; importing it can shadow the real one.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -187,7 +187,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "A005",
-        "message": "Module shadows a Python standard-library module",
+        "message": "Rename this module so it doesn't share a name with a standard-library module; importing it can shadow the real one.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -223,7 +223,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "A005",
-        "message": "Module shadows a Python standard-library module",
+        "message": "Rename this module so it doesn't share a name with a standard-library module; importing it can shadow the real one.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -259,7 +259,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "A005",
-        "message": "Module shadows a Python standard-library module",
+        "message": "Rename this module so it doesn't share a name with a standard-library module; importing it can shadow the real one.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -295,7 +295,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "A005",
-        "message": "Module shadows a Python standard-library module",
+        "message": "Rename this module so it doesn't share a name with a standard-library module; importing it can shadow the real one.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -331,7 +331,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "A005",
-        "message": "Module shadows a Python standard-library module",
+        "message": "Rename this module so it doesn't share a name with a standard-library module; importing it can shadow the real one.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -367,7 +367,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "A005",
-        "message": "Module shadows a Python standard-library module",
+        "message": "Rename this module so it doesn't share a name with a standard-library module; importing it can shadow the real one.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -403,7 +403,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "A005",
-        "message": "Module shadows a Python standard-library module",
+        "message": "Rename this module so it doesn't share a name with a standard-library module; importing it can shadow the real one.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -439,7 +439,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "A005",
-        "message": "Module shadows a Python standard-library module",
+        "message": "Rename this module so it doesn't share a name with a standard-library module; importing it can shadow the real one.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -475,7 +475,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "A005",
-        "message": "Module shadows a Python standard-library module",
+        "message": "Rename this module so it doesn't share a name with a standard-library module; importing it can shadow the real one.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -511,7 +511,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "A005",
-        "message": "Module shadows a Python standard-library module",
+        "message": "Rename this module so it doesn't share a name with a standard-library module; importing it can shadow the real one.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -547,7 +547,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "A005",
-        "message": "Module shadows a Python standard-library module",
+        "message": "Rename this module so it doesn't share a name with a standard-library module; importing it can shadow the real one.",
         "suppress": {
           "noqa": {
             "codes": [

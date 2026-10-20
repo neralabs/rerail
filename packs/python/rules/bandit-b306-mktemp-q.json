@@ -40,7 +40,7 @@
       "violation": {
         "code": "B306",
         "anchor": "witness.span",
-        "message": "Use of insecure and deprecated function mktemp.",
+        "message": "Replace tempfile.mktemp with mkstemp or NamedTemporaryFile, which create the file atomically.",
         "suppress": {
           "nosec": {
             "codes": [

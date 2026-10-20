@@ -553,7 +553,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/require-v-for-key",
-        "message": "Elements in iteration expect to have 'v-bind:key' directives.",
+        "message": "Add a :key bound to a unique id of each item to this element rendered by v-for.",
         "suppress": {
           "eslint": {
             "rules": [

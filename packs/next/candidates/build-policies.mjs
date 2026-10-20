@@ -20,7 +20,6 @@ const PACK = join(HERE, "..");
 const PACK_RULES = join(PACK, "rules");
 const CANDIDATES = join(HERE, "rules");
 const SCOPE = { include: ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"], exclude: [] };
-const DOCS = "https://nextjs.org/docs/messages";
 // The capabilities a port can exercise, in the order conformance.json lists them.
 const CAPABILITIES = ["syntax", "scope", "value", "suppression"];
 
@@ -204,7 +203,7 @@ policy("no-img-element", "Use the next/image Image component instead of img elem
         },
       },
     },
-    message: `Using \`<img>\` could result in slower LCP and higher bandwidth. Consider using \`<Image />\` from \`next/image\` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. \`<Image />\` needs \`width\` and \`height\` (or \`fill\`) unless \`src\` is a static import, and a remote \`src\` needs a matching \`images.remotePatterns\` entry in next.config. To keep \`<img>\`, e.g. for images from arbitrary hosts, put \`// eslint-disable-next-line @next/next/no-img-element -- <reason>\` on the line above (as \`{/* ... */}\` among JSX children). See: ${DOCS}/no-img-element`,
+    message: `Replace this img with Image from next/image, giving it width and height or fill unless src is a static import.`,
   },
 ]);
 
@@ -212,7 +211,7 @@ policy("no-head-element", "Use the Head component from next/head instead of a ra
   {
     id: "upstream",
     ast: { file: { path: { notRegex: "app/" } }, rule: { all: [OPEN, named("head")] } },
-    message: `Do not use \`<head>\` element. Use \`<Head />\` from \`next/head\` instead. See: ${DOCS}/no-head-element`,
+    message: `Replace this head element with the Head component imported from next/head.`,
   },
 // The port readiness gates no longer score the plugin's invalid[1], JSX at pages/index.ts that upstream's own parser rejects.
 ]);
@@ -221,7 +220,7 @@ policy("no-sync-scripts", "Add async or defer to script tags that load an extern
   {
     id: "upstream",
     ast: { rule: { all: [OPEN, named("script"), hasAttribute("src"), { not: hasAttribute("async") }, { not: hasAttribute("defer") }] } },
-    message: `Synchronous scripts should not be used. See: ${DOCS}/no-sync-scripts`,
+    message: `Add async or defer to this external script tag so it stops blocking page rendering.`,
   },
 ]);
 
@@ -229,7 +228,7 @@ policy("no-css-tags", "Import local stylesheets instead of adding them with link
   {
     id: "upstream",
     ast: { rule: { all: [OPEN, named("link"), hasAttribute("rel", plainString({ eq: "stylesheet" })), hasAttribute("href", { has: { kind: "string", not: { value: { startsWith: "http" } } } })] } },
-    message: `Do not include stylesheets manually. See: ${DOCS}/no-css-tags`,
+    message: `Import this local stylesheet from the component (import './styles.css') instead of adding it with a link tag.`,
   },
 ]);
 
@@ -252,7 +251,7 @@ policy("google-font-display", "Add a display value of swap or optional to Google
         ],
       },
     },
-    message: `A font-display parameter is missing or not recommended. See: ${DOCS}/google-font-display`,
+    message: `Add display=swap or display=optional to this Google Fonts URL so text stays visible while the font loads.`,
   },
 ]);
 
@@ -264,7 +263,7 @@ policy("google-font-preconnect", "Mark links to Google's font file host (fonts.g
         all: [OPEN, named("link"), hasAttribute("href", literalString({ startsWith: "https://fonts.gstatic.com" })), { not: hasAttribute("rel", literalString({ eq: "preconnect" })) }],
       },
     },
-    message: `\`rel="preconnect"\` is missing from Google Font. See: ${DOCS}/google-font-preconnect`,
+    message: `Set rel="preconnect" on this fonts.gstatic.com link so the browser opens the font connection early.`,
   },
 ]);
 
@@ -297,7 +296,7 @@ policy("next-script-for-ga", "Use the Google helpers from @next/third-parties in
         ],
       },
     },
-    message: `Prefer \`@next/third-parties/google\` when using the inline script for Google Analytics and Tag Manager. See: ${DOCS}/next-script-for-ga`,
+    message: `Replace this inline Google Analytics or Tag Manager script with GoogleAnalytics or GoogleTagManager from @next/third-parties/google.`,
   },
 ]);
 
@@ -323,7 +322,7 @@ policy("no-unwanted-polyfillio", "Don't load polyfills from polyfill.io for feat
         ],
       },
     },
-    message: `No duplicate polyfills from Polyfill.io are allowed. See: ${DOCS}/no-unwanted-polyfillio`,
+    message: `Remove the features Next.js already polyfills from this polyfill.io URL, or drop the script if none remain.`,
   },
 ]);
 
@@ -333,7 +332,7 @@ policy("no-assign-module-variable", "Don't declare a variable named module in Ne
     ast: {
       rule: { any: [{ kind: "lexical_declaration" }, { kind: "variable_declaration" }], has: { kind: "variable_declarator", has: { field: "name", kind: "identifier", regex: "^module$" } } },
     },
-    message: `Do not assign to the variable \`module\`. See: ${DOCS}/no-assign-module-variable`,
+    message: `Rename this module variable, for example to mod; declaring module shadows the object Node.js and the bundler rely on.`,
   },
 ]);
 
@@ -341,7 +340,7 @@ policy("no-document-import-in-page", "Import next/document only in pages/_docume
   {
     id: "upstream",
     ast: { file: { path: { notRegex: LAST_PIECE_DOCUMENT } }, rule: importFrom("next/document") },
-    message: `\`<Document />\` from \`next/document\` should not be imported outside of \`pages/_document.js\`. See: ${DOCS}/no-document-import-in-page`,
+    message: `Move this next/document import into pages/_document; the custom Document API does not work in pages or components.`,
   },
 ]);
 
@@ -349,7 +348,7 @@ policy("no-head-import-in-document", "Use Head from next/document, not next/head
   {
     id: "upstream",
     ast: { file: { path: { regex: SPLIT2_DOCUMENT } }, rule: importFrom("next/head") },
-    message: `\`next/head\` should not be imported in \`pages/_document.js\`. Use \`<Head />\` from \`next/document\` instead. See: ${DOCS}/no-head-import-in-document`,
+    message: `Import Head from next/document instead of next/head in this custom Document.`,
   },
 ]);
 
@@ -357,7 +356,7 @@ policy("no-styled-jsx-in-document", "Don't use styled-jsx style tags in pages/_d
   {
     id: "upstream",
     ast: { file: { path: { regex: SPLIT2_DOCUMENT } }, rule: { all: [OPEN, named("style"), hasAttribute("jsx")] } },
-    message: `\`styled-jsx\` should not be used in \`pages/_document.js\`. See: ${DOCS}/no-styled-jsx-in-document`,
+    message: `Move these styled-jsx styles out of pages/_document into a global stylesheet imported in pages/_app.`,
   },
 ]);
 
@@ -375,7 +374,7 @@ policy("no-title-in-document-head", "Set page titles with Head from next/head on
         ],
       },
     },
-    message: `Do not use \`<title>\` element with \`<Head />\` component from \`next/document\`. Titles should defined at the page-level using \`<Head />\` from \`next/head\` instead. See: ${DOCS}/no-title-in-document-head`,
+    message: `Move this title out of the Document's Head into each page's Head from next/head.`,
   },
 ]);
 
@@ -388,7 +387,7 @@ policy("no-script-component-in-head", "Place next/script Script components outsi
         all: [{ has: { field: "open_tag", ...named("Head") } }, { has: ELEMENT_NAMED("Script") }, inProgram(importFrom("next/head"))],
       },
     },
-    message: `\`next/script\` should not be used in \`next/head\` component. Move \`<Script />\` outside of \`<Head>\` instead. See: ${DOCS}/no-script-component-in-head`,
+    message: `Move this Script component outside the Head from next/head; Script places the tag itself.`,
   },
 ]);
 
@@ -416,14 +415,13 @@ policy("inline-script-id", "Give every next/script component with inline content
         ],
       },
     },
-    message: `\`next/script\` components with inline content must specify an \`id\` attribute. See: ${DOCS}/inline-script-id`,
+    message: `Add a unique id prop to this next/script component with inline content; Next.js needs it to track the script.`,
   },
 ]);
 
 const USE_CLIENT = { kind: "expression_statement", has: { kind: "string", value: { eq: "use client" } } };
 const DEFAULT_EXPORT_OF_N_AFTER_USE_CLIENT = inProgram({ kind: "export_statement", all: [{ has: { kind: "identifier", pattern: "$N" } }, { follows: { stopBy: "end", ...USE_CLIENT } }] });
 const DECLARES_N = { any: [{ kind: "function_declaration", has: { field: "name", pattern: "$N" } }, { any: [{ kind: "lexical_declaration" }, { kind: "variable_declaration" }], has: { kind: "variable_declarator", has: { field: "name", kind: "identifier", pattern: "$N" } } }] };
-const ASYNC_CLIENT_MESSAGE = `Prevent Client Components from being async functions. See: ${DOCS}/no-async-client-component`;
 policy("no-async-client-component", "Don't make the default-exported component of a \"use client\" file an async function; Client Components cannot be async.", [
   {
     id: "export-default-function",
@@ -433,7 +431,7 @@ policy("no-async-client-component", "Don't make the default-exported component o
         all: [{ inside: { kind: "program" } }, { regex: "^export\\s+default\\s" }, { has: { kind: "function_declaration", regex: "^async\\s", has: { field: "name", regex: "^[A-Z]" } } }, { follows: { stopBy: "end", ...USE_CLIENT } }],
       },
     },
-    message: ASYNC_CLIENT_MESSAGE,
+    message: `Remove async from this Client Component and load its data in a parent Server Component or an effect instead.`,
   },
   {
     id: "exported-declaration",
@@ -455,7 +453,7 @@ policy("no-async-client-component", "Don't make the default-exported component o
         ],
       },
     },
-    message: ASYNC_CLIENT_MESSAGE,
+    message: `Remove async from this Client Component and load its data in a parent Server Component or an effect instead.`,
   },
 ]);
 // ---- third batch ---------------------------------------------------------------------------------------------------
@@ -473,7 +471,7 @@ policy("no-before-interactive-script-outside-document", "Use the beforeInteracti
         ],
       },
     },
-    message: `\`next/script\`'s \`beforeInteractive\` strategy should not be used outside of \`pages/_document.js\`. See: ${DOCS}/no-before-interactive-script-outside-document`,
+    message: `Move this beforeInteractive Script into pages/_document or the app directory, or switch it to afterInteractive.`,
   },
 ]);
 
@@ -498,7 +496,7 @@ policy("no-duplicate-head", "Keep a single Head element in a custom Next.js Docu
         ],
       },
     },
-    message: `Do not include multiple instances of \`<Head/>\`. See: ${DOCS}/no-duplicate-head`,
+    message: `Remove this extra Head and move its children into the Document's single Head element.`,
   },
 ]);
 
@@ -535,7 +533,7 @@ policy("no-typos", "Spell getStaticProps, getStaticPaths and getServerSideProps 
       },
     },
     anchor: "capture.E",
-    message: `A data-fetching export may be a typo of getStaticProps, getStaticPaths or getServerSideProps.`,
+    message: `Rename this export to the getStaticProps, getStaticPaths or getServerSideProps it misspells; Next.js ignores the typo.`,
   },
 ]);
 
@@ -556,13 +554,12 @@ const DEFAULT_COMPONENT = {
     },
   ],
 };
-const CUSTOM_FONT_MESSAGE = `Custom fonts not added in \`pages/_document.js\` will only load for a single page. This is discouraged. See: ${DOCS}/no-page-custom-font`;
 policy("no-page-custom-font", "Add Google Fonts stylesheet links only inside the default-exported custom Document in pages/_document; fonts linked elsewhere load for one page and skip font optimization.", [
-  { id: "page", ast: { file: { path: { notRegex: LAST_PIECE_DOCUMENT } }, rule: GOOGLE_FONT_LINK }, message: CUSTOM_FONT_MESSAGE },
+  { id: "page", ast: { file: { path: { notRegex: LAST_PIECE_DOCUMENT } }, rule: GOOGLE_FONT_LINK }, message: `Move this Google Fonts link into the Head of the custom Document in pages/_document so the font loads on every page.` },
   {
     id: "document",
     ast: { file: { path: { regex: `pages/_document${AV}$` } }, rule: { all: [GOOGLE_FONT_LINK, { not: { inside: { stopBy: "end", ...DEFAULT_COMPONENT } } }] } },
-    message: `Using \`<link />\` outside of \`<Head>\` will disable automatic font optimization. This is discouraged. See: ${DOCS}/no-page-custom-font`,
+    message: `Move this Google Fonts link into the Head rendered by this file's default-exported Document component.`,
   },
 ]);
 
@@ -593,7 +590,6 @@ const LOCATION_UTILS = {
     ],
   },
 };
-const LOCATION_MESSAGE = `Do not use \`location\` to navigate to internal Next.js pages. Use \`redirect()\` in the render phase, or \`useRouter().push()\` in Client Components' event handlers instead. See: ${DOCS}/no-location-assign-relative-destination`;
 policy(
   "no-location-assign-relative-destination",
   "Don't navigate to internal pages by setting location.href or calling location.assign with a relative URL; use redirect() or the router for client-side navigation.",
@@ -605,7 +601,7 @@ policy(
         utils: LOCATION_UTILS,
         rule: { kind: "assignment_expression", all: [{ has: { field: "left", all: [namedMember("href"), { has: { field: "object", matches: "location-root" } }] } }, { has: { field: "right", matches: "relative-prefix" } }] },
       },
-      message: LOCATION_MESSAGE,
+      message: `Replace this location.href assignment with redirect() during render or useRouter().push() in a client event handler.`,
     },
     {
       id: "assign",
@@ -620,7 +616,7 @@ policy(
           ],
         },
       },
-      message: LOCATION_MESSAGE,
+      message: `Replace this location.assign call with redirect() during render or useRouter().push() in a client event handler.`,
     },
   ],
   // The port readiness gates lint in eslint-config-next's environment, whose browser globals let upstream report the 29 findings

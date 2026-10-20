@@ -17,7 +17,7 @@
           { "has": { "field": "left", "kind": "binary_expression", "all": [ { "has": { "field": "operator", "regex": "^\\+$" } }, { "has": { "field": "left", "regex": "^-1(?:[iu](?:8|16|32|64|128|size))?$" } } ] } }
         ] }
       ] } } },
-      "violation": { "suppress": { "clippy": { "lints": ["clippy::int_plus_one", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "int_plus_one", "message": "Clippy int_plus_one: inequality can be replaced by a strict comparison" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::int_plus_one", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "int_plus_one", "message": "Use > and drop the one here, e.g. x > y instead of x >= y + 1 or x - 1 >= y." }
     },
     {
       "id": "le-adjusted",
@@ -30,7 +30,7 @@
           { "has": { "field": "right", "kind": "binary_expression", "all": [ { "has": { "field": "operator", "regex": "^\\+$" } }, { "has": { "field": "left", "regex": "^-1(?:[iu](?:8|16|32|64|128|size))?$" } } ] } }
         ] }
       ] } } },
-      "violation": { "suppress": { "clippy": { "lints": ["clippy::int_plus_one", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "int_plus_one", "message": "Clippy int_plus_one: inequality can be replaced by a strict comparison" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::int_plus_one", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "int_plus_one", "message": "Use < and drop the one here, e.g. x < y instead of x + 1 <= y or x <= y - 1." }
     }
   ]
 }

@@ -74,7 +74,7 @@
       "violation": {
         "code": "B609",
         "anchor": "capture.F",
-        "message": "Shell command combines a wildcard with a sensitive utility",
+        "message": "List the files explicitly instead of using a wildcard in this chown, chmod, tar or rsync command; crafted file names can inject options.",
         "suppress": {
           "nosec": {
             "codes": [
@@ -148,7 +148,7 @@
       "violation": {
         "code": "B609",
         "anchor": "capture.F",
-        "message": "Shell command combines a wildcard with a sensitive utility",
+        "message": "List the files explicitly instead of using a wildcard in this chown, chmod, tar or rsync command; crafted file names can inject options.",
         "suppress": {
           "nosec": {
             "codes": [

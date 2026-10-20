@@ -422,7 +422,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM103",
-        "message": "Return the condition directly",
+        "message": "Replace this `if`/`else` with one `return` of the condition, negated with `not` if the `if` branch returns `False`.",
         "suppress": {
           "noqa": {
             "codes": [

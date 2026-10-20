@@ -230,7 +230,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM202",
-        "message": "Use `==` instead of `not ... != ...`",
+        "message": "Replace `not a != b` with `a == b`.",
         "suppress": {
           "noqa": {
             "codes": [

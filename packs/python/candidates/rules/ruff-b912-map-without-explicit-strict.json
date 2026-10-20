@@ -434,7 +434,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B912",
-        "message": "`map()` without an explicit `strict=` parameter",
+        "message": "Pass strict=True to this map() call, or strict=False if truncating to the shortest input is intended.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -47,7 +47,7 @@
    "violation": {
     "anchor": "capture.PROP",
     "code": "no-prototype-builtins",
-    "message": "Do not access Object.prototype method '$PROP' from target object.",
+    "message": "Call Object.prototype.$PROP.call(obj, ...) instead; the object may override $PROP or have no prototype.",
     "suppress": {
      "eslint": {
       "rules": [
@@ -119,7 +119,7 @@
    "violation": {
     "anchor": "capture.PROP",
     "code": "no-prototype-builtins",
-    "message": "Do not access Object.prototype method '$NAME' from target object.",
+    "message": "Call Object.prototype.$NAME.call(obj, ...) instead; the object may override $NAME or have no prototype.",
     "suppress": {
      "eslint": {
       "rules": [

@@ -165,7 +165,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PIE804",
-        "message": "Unnecessary `dict` kwargs",
+        "message": "Pass these entries as keyword arguments directly instead of unpacking a dict literal with `**`.",
         "suppress": {
           "noqa": {
             "codes": [

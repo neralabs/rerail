@@ -181,7 +181,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM117",
-        "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+        "message": "Merge these nested `with` statements into one `with` that holds all the context managers.",
         "suppress": {
           "noqa": {
             "codes": [

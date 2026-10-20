@@ -45,7 +45,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "unicorn/filename-case",
-        "message": "File names should be kebab-case, for example cart-total.js."
+        "message": "Rename this file to kebab-case, for example cart-total.js."
       }
     }
   ]
