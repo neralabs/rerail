@@ -1399,21 +1399,28 @@ impl<'s> Emitter<'s> {
         let mut columns: String = (0..site_columns.len())
             .map(|index| format!(", c{index}"))
             .collect();
-        let mut values: String = site_columns
+        // The input's distinct keys, as `c0…` (and `cf`), each probed once against the demand.
+        let mut keys: String = site_columns
             .iter()
-            .map(|column| format!(", f.{column}"))
+            .enumerate()
+            .map(|(index, column)| format!(", f.{column} AS c{index}"))
+            .collect();
+        let mut probe: String = (0..site_columns.len())
+            .map(|index| format!(" AND d.c{index} IS f.c{index}"))
             .collect();
         if units[unit].following.is_some() {
             let passed = context.map_or_else(|| "NULL".to_owned(), |slot| format!("f.s{slot}"));
             write!(matched, " AND d.cf IS {passed}").expect("write to a string");
             columns.push_str(", cf");
-            write!(values, ", {passed}").expect("write to a string");
+            write!(keys, ", {passed} AS cf").expect("write to a string");
+            probe.push_str(" AND d.cf IS f.cf");
         }
         self.insert(
             &demand,
             format!(
-                "INSERT INTO {demand}(file, node{columns}) SELECT DISTINCT f.file, f.node{values} FROM {input} f \
-                 WHERE NOT EXISTS (SELECT 1 FROM {demand} d WHERE d.file = f.file AND d.node = f.node{matched})"
+                "INSERT INTO {demand}(file, node{columns}) SELECT f.file, f.node{columns} FROM \
+                 (SELECT DISTINCT f.file AS file, f.node AS node{keys} FROM {input} f) f \
+                 WHERE NOT EXISTS (SELECT 1 FROM {demand} d WHERE d.file = f.file AND d.node = f.node{probe})"
             ),
             Reads::join(&[input]),
         );
