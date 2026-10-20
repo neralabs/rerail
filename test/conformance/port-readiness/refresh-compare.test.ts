@@ -18,6 +18,7 @@ import { CORPUS_FORMAT, RECORDING_FORMAT } from "../../../conformance/port-readi
 import { buildRecordingLock, recordingLockText, writeCachedRecording } from "../../../conformance/port-readiness/recording/store.js";
 import { driftLine, renderMarkdown } from "../../../conformance/port-readiness/report.js";
 import { blockingFailures, runToolPack, verdictDrift, type CachedRule, type RuleReport } from "../../../conformance/port-readiness/run.js";
+import { shardName, shardOf } from "../../../conformance/port-readiness/shard.js";
 import { renderSummary, summarize } from "../../../conformance/port-readiness/summary.js";
 
 const temporary: string[] = [];
@@ -117,7 +118,9 @@ describe("a refresh run compares each fresh verdict with the cached one under it
   it("fails, naming the rule, its file and the gate, when a cached gate differs, and saves the fresh result", async () => {
     const where = await toolPack();
     const seeded = await judge(where, "cached");
-    assert.deepEqual(seeded.cache, { rules: 1, hits: 0, compared: 0, differing: [] });
+    // A run that does not refresh compares nothing, and its report says nothing of comparing.
+    assert.deepEqual(seeded.cache, { rules: 1, hits: 0 });
+    assert.match(renderMarkdown(seeded), /^- Cache: 0 of 1 rule result\(s\) from the cache$/mu);
     assert.equal(seeded.rules[0]!.stoppedAt, "not-overfit");
     assert.equal(seeded.rules[0]!.gates.compact.pass, true);
     // A candidate that stops at a gate blocks nothing.
@@ -163,15 +166,56 @@ describe("a refresh run compares each fresh verdict with the cached one under it
       value.report.gates.compact = { ...value.report.gates.compact, pass: false };
     });
     // --no-cache neither reads, saves nor compares; a cached run reads the entry as a hit.
-    assert.deepEqual((await judge(where, "no-cache")).cache, { rules: 1, hits: 0, compared: 0, differing: [] });
+    assert.deepEqual((await judge(where, "no-cache")).cache, { rules: 1, hits: 0 });
     const hit = await judge(where, "cached");
-    assert.deepEqual(hit.cache, { rules: 1, hits: 1, compared: 0, differing: [] });
+    assert.deepEqual(hit.cache, { rules: 1, hits: 1 });
     assert.equal(hit.rules[0]!.gates.compact.pass, false);
     // An entry for another document under this key is a miss when read, and is not compared either.
     editCached(where.cacheRoot, (value) => {
       value.report.file = "packs/demo/candidates/rules/other.json";
     });
     assert.deepEqual((await judge(where, "refresh")).cache, { rules: 1, hits: 0, compared: 0, differing: [] });
+  });
+
+  it("keeps only the results it saved: a refresh, and only a refresh, deletes entries under old keys", async () => {
+    const where = await toolPack();
+    await judge(where, "cached");
+    const directory = join(where.cacheRoot, "results", "demo", "bandit");
+    const current = readdirSync(directory).sort();
+    const rule = current.find((name) => !name.startsWith("pack-"))!;
+    const packEntry = current.find((name) => name.startsWith("pack-"))!;
+    // What earlier runs left: a result and a tool-pack entry under keys that have since moved, a temporary file of a
+    // write that never finished, and a shard's own directory, which an unsharded run does not own.
+    const stale = { [`${"0".repeat(64)}.json`]: rule, [`pack-${"1".repeat(64)}.json`]: packEntry, [`${rule}.123.tmp`]: rule };
+    for (const [name, from] of Object.entries(stale)) copyFileSync(join(directory, from), join(directory, name));
+    mkdirSync(join(directory, "shard-1of2"));
+    copyFileSync(join(directory, rule), join(directory, "shard-1of2", rule));
+    const files = () => readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => entry.name).sort();
+
+    // A cached run and an uncached one delete nothing.
+    await judge(where, "cached");
+    await judge(where, "no-cache");
+    assert.deepEqual(files(), [...current, ...Object.keys(stale)].sort());
+    // A refresh saves every result the tool-pack has now, and only those are left.
+    assert.deepEqual((await judge(where, "refresh")).cache, { rules: 1, hits: 0, compared: 1, differing: [] });
+    assert.deepEqual(files(), current);
+    assert.deepEqual(readdirSync(join(directory, "shard-1of2")), [rule]);
+  });
+
+  it("a shard's refresh deletes only in the shard's own directory", async () => {
+    const where = await toolPack();
+    const shard = { index: shardOf(ID, 2), count: 2 };
+    const refresh = () => runToolPack({ ...where, pack: "demo", tool: "bandit", readCache: false, writeCache: true, compareCache: true, runner: new ProcessCommandRunner(), shard });
+    await refresh();
+    const directory = join(where.cacheRoot, "results", "demo", "bandit");
+    const own = join(directory, shardName(shard));
+    const current = readdirSync(own).sort();
+    // An unsharded run's entry beside the shard's directory, and an entry under an old key inside it.
+    writeFileSync(join(directory, `${"2".repeat(64)}.json`), "{}\n");
+    writeFileSync(join(own, `${"3".repeat(64)}.json`), "{}\n");
+    assert.deepEqual((await refresh()).cache, { rules: 1, hits: 0, compared: 1, differing: [] });
+    assert.deepEqual(readdirSync(own).sort(), current);
+    assert.deepEqual(readdirSync(directory).sort(), [`${"2".repeat(64)}.json`, shardName(shard)]);
   });
 
   it("puts one blocking row per difference in the summary, a candidate's included", async () => {
@@ -188,6 +232,8 @@ describe("a refresh run compares each fresh verdict with the cached one under it
       ["demo/bandit", ID, "Cache", "defaultOn"],
     ]);
     assert.match(summary.blocking[0]!.why, new RegExp(`^${FILE.replaceAll(".", "\\.")}: cached fail, fresh pass under the same key`, "u"));
+    // The fresh result is saved, so a re-run compares it with itself and passes: the row says so.
+    assert.match(summary.blocking[0]!.why, /a re-run passes/u);
     assert.equal(summary.pass, false);
     assert.match(renderSummary(summary), /\*\*0 of 0 shipped rules pass; 2 blocking failure\(s\);/u);
   });

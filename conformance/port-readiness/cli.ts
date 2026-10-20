@@ -117,7 +117,8 @@ async function merge(args: string[]): Promise<number> {
   for (const report of merged) console.log(`${report.toolPack}: merged ${report.rules.length} rules; ${report.summary.shipped.pass}/${report.summary.shipped.rules} shipped pass, ${report.summary.candidates.pass}/${report.summary.candidates.rules} candidates pass; ${blockingFailures(report)} blocking failure(s)`);
   for (const problem of problems) process.stderr.write(`not merged: ${problem}\n`);
   console.log(`merged ${merged.length} sharded tool-pack(s) in ${resolve(directory)}`);
-  // 2: a tool-pack's shards are missing or disagree, so it has no report (the summary fails it); 1: a shipped rule fails.
+  // 2: a tool-pack's shards are missing or disagree, so it has no report (the summary fails it); 1: a shipped rule
+  // fails, or a refresh found a fresh verdict that differs from the cached one under the same key.
   return problems.length > 0 ? 2 : merged.some((report) => blockingFailures(report) > 0) ? 1 : 0;
 }
 

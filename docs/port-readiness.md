@@ -180,10 +180,15 @@ the same key, compares the two: the rule's verdict (`pass` and `stoppedAt`), eac
 temporary path. A difference means the key leaves out something the verdict depends on, so each one fails the run, a
 candidate's as much as a shipped rule's: an `::error::` line names the rule, its file and the gate, cached and fresh, and
 the summary has a blocking row for it. The fresh result is saved all the same, so the cache then holds what the gates
-say now. CI restores main's latest results for that run as for any other (`port-readiness.yml`), and only a result
-cached under the same key is compared, so a rule whose key moved since main last saved is judged with nothing to compare
-it with; each report says how many results it compared (`cache.compared`) and lists the differences (`cache.differing`).
-`--no-cache` reads, compares and saves nothing, and a run on a stale native binary compares nothing.
+say now, and a difference is reported once: a re-run of the failed job, or the next nightly, compares the fresh result
+with itself and passes, so find the input the key leaves out from the failing run rather than re-running it. CI
+restores main's latest results for that run as for any other (`port-readiness.yml`), and only a result cached under
+the same key is compared, so a rule whose key moved since main last saved is judged with nothing to compare it with;
+each report says how many results it compared (`cache.compared`) and lists the differences (`cache.differing`). Having
+saved every result, the refresh deletes every other file in the tool-pack's (or shard's) result directory: those are
+under keys that have moved on, and CI saves a leg's results back on top of the ones it restored, so without this the
+leg's cache entry would gain a full set each time the keys move. `--no-cache` reads, compares, saves and deletes
+nothing, and a run on a stale native binary compares and deletes nothing.
 
 In CI every run saves its results, pull requests included. GitHub scopes a pull request's cache to that pull request,
 so main never reads one: a push to main reads only what main's own pushes and the nightly saved. A pull request can

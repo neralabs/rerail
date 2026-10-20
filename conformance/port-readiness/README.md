@@ -63,7 +63,7 @@ write `/rerail-gates-cache` for the recorder's cache directory.
 npm run port-readiness                                   # every gated tool-pack, reports in .rerail/reports/port-readiness/
 npm run port-readiness -- --pack python --tool bandit    # one tool-pack
 npm run port-readiness -- --no-cache                     # judge every rule again; read and save no results
-npm run port-readiness -- --refresh-cache                # judge every rule again, fail on a verdict that differs from the cached one under its key, save the fresh results (the nightly)
+npm run port-readiness -- --refresh-cache                # judge every rule again, fail on a verdict that differs from the cached one under its key, save the fresh results and delete the rest (the nightly)
 npm run port-readiness -- --pack javascript --tool eslint --shard 2/4   # one shard: rules with sha256(id) mod 4 = 1
 npm run port-readiness -- merge .rerail/reports/port-readiness    # join each tool-pack's shard-<i>of<n>/ reports (shard.ts, merge.ts)
 npm run port-readiness -- summary .rerail/reports/port-readiness --base <sha>

@@ -143,7 +143,8 @@ jobs:
       # Each result is keyed by everything the rule's verdict depends on, so a stale entry is never read. The `-run-`
       # after the tool and shard keeps eslint-plugin-react's prefix from matching eslint-plugin-react-hooks' entries.
       # A no-cache run (the nightly) restores them too, only to compare each fresh verdict with the cached one under the
-      # same key: it takes no result from them.
+      # same key: it takes no result from them, and deletes every entry it did not save, so what it saves holds only
+      # the current keys.
       - name: Restore earlier rule results
         uses: actions/cache/restore@v6
         with:

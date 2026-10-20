@@ -77,9 +77,11 @@ export function mergeShards(reports: GatesReport[], binary?: string): GatesRepor
     cache: {
       rules: reports.reduce((sum, entry) => sum + entry.cache.rules, 0),
       hits: reports.reduce((sum, entry) => sum + entry.cache.hits, 0),
-      // A shard report written before reports compared results compared none.
-      compared: reports.reduce((sum, entry) => sum + (entry.cache.compared ?? 0), 0),
-      differing: reports.flatMap((entry) => entry.cache.differing ?? []).sort((a, b) => byText(a.file, b.file)),
+      // Only a refresh compares results (run.ts): shards that compared none merge to a report that says nothing of it.
+      ...(reports.every((entry) => entry.cache.compared === undefined) ? {} : {
+        compared: reports.reduce((sum, entry) => sum + (entry.cache.compared ?? 0), 0),
+        differing: reports.flatMap((entry) => entry.cache.differing ?? []).sort((a, b) => byText(a.file, b.file)),
+      }),
     },
     summary: summarizeRules(rules),
     rules,

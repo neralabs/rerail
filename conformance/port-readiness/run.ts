@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
-import { dependencyDigest, ruleKey, readCached, toolPackKey, trackedDigest, writeCached, GATE_CODE, type SharedKeyInputs } from "./cache.js";
+import { dependencyDigest, resultPath, ruleKey, readCached, toolPackKey, trackedDigest, writeCached, GATE_CODE, type SharedKeyInputs } from "./cache.js";
 import { upstreamStatusChecks, defaultOn } from "./checks/upstream-status.js";
 import { loadAsBundled, loadsGate } from "./checks/loads.js";
 import { packConformance, passesConformanceChecks } from "./checks/passes-conformance.js";
@@ -155,6 +155,23 @@ export function verdictDrift(cached: CachedRule, fresh: CachedRule): VerdictDrif
   return drift;
 }
 
+/**
+ * Delete every file in the tool-pack's (or the shard's) result directory but the entries under `keep`: once a refresh
+ * has saved every result the tool-pack has now, the rest are under keys that have moved on, which no run reads again,
+ * or a write's temporary file that never finished. CI restores the results a leg saved last and saves them back with
+ * its own (port-readiness.yml), so without this a leg's archive would gain a full set each time the keys move. A
+ * directory in it (an unsharded tool-pack's holds its shards') is not this run's, and stays.
+ */
+function pruneCached(cacheRoot: string, pack: string, tool: string, keep: readonly string[], shard?: Shard): void {
+  const kept = new Set(keep.map((key) => resultPath(cacheRoot, pack, tool, key, shard)));
+  const directory = dirname(resultPath(cacheRoot, pack, tool, keep[0]!, shard));
+  if (!existsSync(directory)) return;
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isFile() && !kept.has(path)) rmSync(path, { force: true });
+  }
+}
+
 export interface GatesReport {
   format: typeof REPORT_FORMAT;
   pack: string;
@@ -180,8 +197,8 @@ export interface GatesReport {
   listedWithoutDocument: number;
   /**
    * How many rule results came from the cache; and how many fresh results a refresh compared with the cached one under
-   * the same key, with every way one differs (verdictDrift), each a blocking failure. A report written before reports
-   * compared has neither `compared` nor `differing`.
+   * the same key, with every way one differs (verdictDrift), each a blocking failure. A run that does not compare
+   * (without `--refresh-cache`), and a report written before reports compared, has neither `compared` nor `differing`.
    */
   cache: { rules: number; hits: number; compared?: number; differing?: VerdictDrift[] };
   /** The shard this report judged, and how many rules the whole tool-pack has; absent on a whole or merged report. */
@@ -208,7 +225,8 @@ export interface RunOptions {
   writeCache: boolean;
   /**
    * Compare each fresh result with the cached one under its key before saving over it (`--refresh-cache`): every way
-   * a verdict differs is listed in the report's `cache.differing` and fails the run.
+   * a verdict differs is listed in the report's `cache.differing` and fails the run. Having saved every result the
+   * tool-pack (or shard) has now, it deletes the other entries in its result directory (pruneCached).
    */
   compareCache: boolean;
   runner: CommandRunner;
@@ -663,6 +681,8 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
       corpusComplete: complete,
     };
     if (save) await writeCached(cacheRoot, pack, tool, `pack-${packKey}`, packResult, shard);
+    // A refresh has now saved every result the tool-pack (or shard) has, so whatever else its directory holds goes.
+    if (save && compare) pruneCached(cacheRoot, pack, tool, [...judged.map((entry) => entry.key), `pack-${packKey}`], shard);
   }
 
   // passes-conformance: the pack's own conformance check reads every rule of the pack, so it runs on every run.
@@ -707,7 +727,7 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
     corpus: packResult.corpus,
     unmapped,
     listedWithoutDocument,
-    cache: { rules: judged.length, hits: cached.size, compared, differing: drifted },
+    cache: { rules: judged.length, hits: cached.size, ...(options.compareCache ? { compared, differing: drifted } : {}) },
     ...(shard === undefined ? {} : { shard: { ...shard, rules: keyed.length } }),
     summary: summarizeRules(reports),
     rules: reports,

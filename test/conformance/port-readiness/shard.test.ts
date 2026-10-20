@@ -95,8 +95,8 @@ describe("merge", () => {
     assert.deepEqual(report.summary, summarizeRules(report.rules));
     assert.deepEqual(report.summary.shipped, { rules: 8, pass: 7 });
     assert.deepEqual(report.summary.candidates, { rules: 3, pass: 3 });
-    // Shard reports written before reports compared results have no compared or differing: none were.
-    assert.deepEqual(report.cache, { rules: 11, hits: 3, compared: 0, differing: [] });
+    // Only a refresh compares results with the cache: shards that compared none merge to a report that says nothing.
+    assert.deepEqual(report.cache, { rules: 11, hits: 3 });
     assert.equal(report.gapCandidates.length, 1);
   });
 

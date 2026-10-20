@@ -149,7 +149,8 @@ export function renderMarkdown(report: GatesReport): string {
     `- Upstream: ${report.upstream.name}, ${report.upstream.repository} at \`${report.upstream.commit}\` (${report.upstream.version}, ${report.upstream.license}); runtime ${report.upstream.runtime}`,
     // A report written before reports recorded the native binary names none.
     `- Engine: this checkout's, identity \`${report.engine.sha256.slice(0, 16)}\`${report.engine.binary === undefined ? "" : `, native binary \`${report.engine.binary.slice(0, 16)}\``}`,
-    `- Cache: ${report.cache.hits} of ${report.cache.rules} rule result(s) from the cache; compared ${report.cache.compared ?? 0}; ${report.cache.differing?.length ?? 0} differ`,
+    // Only a refresh (`--refresh-cache`) compares results with the cache, and only its report says how many.
+    `- Cache: ${report.cache.hits} of ${report.cache.rules} rule result(s) from the cache${report.cache.compared === undefined ? "" : `; compared ${report.cache.compared}; ${report.cache.differing?.length ?? 0} differ`}`,
     ...(report.cache.differing ?? []).map((drift) => `  - ${cell(driftLine(drift))}`),
     `- Documents not mapped to an upstream rule: ${report.unmapped.length === 0 ? "none" : report.unmapped.map((entry) => `\`${entry.file}\` (${entry.location})`).join(", ")}`,
     `- conformance.json entries of ${report.tool} listed, no document yet: ${report.listedWithoutDocument}`,
