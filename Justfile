@@ -70,7 +70,7 @@ rerail-workspaces *args:
 rerail-bench-setup *args:
     @benchmark/data-layer/setup/setup.sh {{ args }}
 
-# The SQL engine's speed loop: build the `loop` profile addon (target-loop/), then the reporting clauses in cost-planned units on SQL and native over benchmark/data-layer/loop-subset.json, longest first over up to 14 processes within a memory budget: SQL/native CPU ratio, parity, TIMEOUT and ERROR rows, projection; then the mutation stage, native against SQL on the recorded mutations (--mutations selected|all|off, default selected: benchmark/data-layer/loop-mutations.json over the subset) (benchmark/README.md). Reads and records under RERAIL_BENCH_HOME (default ~/rerail-bench; `just rerail-bench-setup`). RERAIL_BENCH_LOCK=<command> prefixes the timed run (e.g. benchmark/data-layer/setup/bench-lock).
+# The SQL engine's speed loop: build the `loop` profile addon (target-loop/), then the headline, the program stage: every policy in one workspace per engine (production's shape), benchmark/data-layer/loop-subset.json in one apply on the 4 worker threads, 3 rounds (--program-rounds, 0 skips it), each engine alone: SQL/native apply wall and CPU, matching alone (apply CPU − the parse floor), SQL's statement CPU and phase timers, and the calibrated projection to the whole tree. Then the reporting clauses in cost-planned units on SQL and native over the subset, longest first over up to 14 processes within a memory budget: parity, per-clause attribution, TIMEOUT and ERROR rows, and their parse-diluted ratio; then the mutation stage, native against SQL on the recorded mutations (--mutations selected|all|off, default selected: benchmark/data-layer/loop-mutations.json over the subset) (benchmark/README.md). Reads and records under RERAIL_BENCH_HOME (default ~/rerail-bench; `just rerail-bench-setup`). RERAIL_BENCH_LOCK=<command> prefixes the timed run (e.g. benchmark/data-layer/setup/bench-lock).
 rerail-sql-loop *args:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -79,7 +79,7 @@ rerail-sql-loop *args:
     echo "rerail-sql-loop: build $((SECONDS - started)) s" >&2
     ${RERAIL_BENCH_LOCK:-} node --import tsx benchmark/data-layer/loop.ts run {{ args }}
 
-# The loop's other commands: costs (per (clause, file) SQL times) | select (writes loop-subset.json) | calibrate (SQL per clause on the full corpus against the projection) | mutations (the mutation stage alone, default every mutation over the whole tree; --select rewrites loop-mutations.json). Re-calibrate after every select.
+# The loop's other commands: costs (per (clause, file) SQL times) | select (writes loop-subset.json) | calibrate (the program stage over the subset and the full corpus; writes their ratio into loop-subset.json, which the projection multiplies by) | mutations (the mutation stage alone, default every mutation over the whole tree; --select rewrites loop-mutations.json). Re-calibrate after every select.
 rerail-sql-loop-tool *args:
     @${RERAIL_BENCH_LOCK:-} node --import tsx benchmark/data-layer/loop.ts {{ args }}
 
