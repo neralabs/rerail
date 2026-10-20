@@ -2032,9 +2032,9 @@ fn replayed_cases_agree() {
 /// The loops of a statement's `EXPLAIN QUERY PLAN` rows `(id, parent, detail)` that read a whole
 /// table once per row of an outer loop: a `SCAN` after the first loop of its join, or in a
 /// correlated subquery. A `node` table loop is bounded where a constraint on `id`, `parent` or
-/// `last` drives it (its index string: `i`, `p`, `l` codes); a terminal's where it has a term
-/// (a nonzero index number). `SEARCH` loops (an index, a primary key, an automatic index) are
-/// bounded by their key.
+/// `last` drives it (its index string: `i`, `p`, `l` codes), a `nearest` walk's where its row's
+/// node does (`b`); a terminal's where it has a term (a nonzero index number). `SEARCH` loops (an
+/// index, a primary key, an automatic index) are bounded by their key.
 pub(super) fn inner_scans(plan: &[(i64, i64, String)]) -> Vec<String> {
     let parent_of: std::collections::HashMap<i64, i64> =
         plan.iter().map(|(id, parent, _)| (*id, *parent)).collect();
@@ -2072,7 +2072,8 @@ pub(super) fn inner_scans(plan: &[(i64, i64, String)]) -> Vec<String> {
                     // A frame's lookup on its constrained columns (`frames`).
                     true
                 } else {
-                    ["i=", "p=", "i>", "i}", "i<", "i{", "l}", "l>"]
+                    // `b=`: a `nearest` walk's lookup of one input row's listed rows.
+                    ["i=", "p=", "i>", "i}", "i<", "i{", "l}", "l>", "b="]
                         .iter()
                         .any(|code| {
                             codes

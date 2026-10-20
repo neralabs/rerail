@@ -228,7 +228,7 @@ impl NodeFacts {
         }
     }
 
-    fn field(&self, id: u32) -> u16 {
+    pub(super) fn field(&self, id: u32) -> u16 {
         match &self.tree {
             Tree::Tape(root) => root.root().get_doc().transducer_field(id),
             Tree::Sub(root) => root.root().get_doc().tree.field(id),
@@ -291,6 +291,12 @@ impl NodeFacts {
     /// The node at `at` of the postings.
     fn posted(&self, at: usize) -> u32 {
         self.postings_built().ids[at]
+    }
+
+    /// The nodes of `kind`, ascending, from the postings.
+    pub(super) fn kind_ids(&self, kind: u16) -> &[u32] {
+        let range = self.kind_range(kind);
+        &self.postings_built().ids[range]
     }
 
     /// Every node keyed by its kind, sorted: the postings.

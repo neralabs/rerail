@@ -1934,6 +1934,9 @@ pub(in crate::code_rule_dsl) struct Session {
     capacity: usize,
     /// The buffers the steps' texts are written into as they run (`Runner::texts`).
     texts: Vec<String>,
+    /// The last batch's clause runs: each run's statement (a clause index of the program) and the
+    /// wall time its steps took, in nanoseconds (`clause_times`).
+    clause_times: Vec<(usize, u64)>,
 }
 
 /// The heap a session holds (`Session::memory`), in bytes: its connection's, by
@@ -1990,6 +1993,7 @@ impl Session {
             active: vec![false; plan.stages.len() + plan.clauses.len()],
             cached: vec![false; plan.census.texts],
             texts: Vec::new(),
+            clause_times: Vec::new(),
             capacity: BATCH_STATEMENTS,
             stats: Stats {
                 sessions: 1,
@@ -2043,6 +2047,11 @@ impl Session {
         }
         self.stats.setup.add(started.elapsed());
         Ok(())
+    }
+
+    /// The last batch's clause runs: each run's statement and its steps' wall time (nanoseconds).
+    pub(in crate::code_rule_dsl) fn clause_times(&self) -> &[(usize, u64)] {
+        &self.clause_times
     }
 
     /// What the session's statements did so far.
@@ -2216,6 +2225,7 @@ impl Session {
             frames,
             counts,
             texts,
+            clause_times,
             ..
         } = self;
         let plan = &**plan;
@@ -2230,6 +2240,7 @@ impl Session {
             at: ("", 0),
             depth: 0,
         };
+        clause_times.clear();
         let inputs = Started::now();
         connection.prepare_cached(CLEAR_RUNS)?.execute([])?;
         connection.prepare_cached(CLEAR_ROOTS)?.execute([])?;
@@ -2305,7 +2316,6 @@ impl Session {
             let mut found: Vec<Vec<(usize, SqlMatch)>> =
                 run.files.iter().map(|_| Vec::new()).collect();
             if !run.files.is_empty() {
-                #[cfg(feature = "unbounded-work")]
                 let clause_started = std::time::Instant::now();
                 for (at, (file, _)) in run.files.iter().enumerate() {
                     position[*file] = at;
@@ -2411,10 +2421,12 @@ impl Session {
                 if let Some(each) = &bound.shape.each {
                     runner.clears(bound, &each.clear)?;
                 }
+                let nanos = clause_started.elapsed().as_nanos() as u64;
+                clause_times.push((run.statement, nanos));
                 #[cfg(feature = "unbounded-work")]
                 CLAUSE_PROFILE.with_borrow_mut(|profile| {
                     if let Some(profile) = profile {
-                        profile.push((run.statement, clause_started.elapsed().as_nanos() as u64));
+                        profile.push((run.statement, nanos));
                     }
                 });
             }

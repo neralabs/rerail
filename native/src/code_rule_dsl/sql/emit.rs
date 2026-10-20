@@ -1880,6 +1880,20 @@ impl<'s> Emitter<'s> {
             Some(kinds) => format!(" AND c.kind IN ({})", list(kinds)),
         };
         let mut with = String::new();
+        // A descendant walk with kinds is one native pass of `nearest` over the input's nodes,
+        // which tests the shape too where it is tests of one node each (`nearest::probe_of`):
+        // `Some` where the walk tests it, with its tests where it has a shape.
+        let probes: Option<Option<String>> = match (walk, kinds) {
+            (Walk::Has(Stop::End | Stop::Rule(_)), Some(kinds)) if !kinds.is_empty() => {
+                match &need.shape {
+                    Some(shape) => nearest::probe_of(shape).map(Some),
+                    None => Some(None),
+                }
+            }
+            _ => None,
+        };
+        let probed = probes.clone().flatten();
+        let probed = probed.as_deref();
         let source = match walk {
             // A sub-rule no node can match (`Never`'s kinds): no candidate.
             _ if kinds.is_some_and(<[u16]>::is_empty) => {
@@ -1894,21 +1908,20 @@ impl<'s> Emitter<'s> {
                     ""
                 }
             )),
+            Walk::Has(Stop::End) if let Some(kinds) = kinds => {
+                nearest::descendants(input, None, kinds, probed)
+            }
             Walk::Has(Stop::End) => simple(&format!(
                 "{at} JOIN node c ON c.file = f.file AND c.id > f.node AND c.id <= fn.\"last\"{c}"
             )),
             // A rule stop's walks read the stop set `S` through `nearest` (no recursion). `has`
             // visits a descendant `c` of `f` where no node strictly between them is in `S`: where
             // `c`'s nearest proper ancestor in `S` is `f`'s nearest ancestor-or-self in `S`. With
-            // kinds, the subtree's nodes of those kinds come from the postings and each is
-            // looked up in `nearest`; without, `nearest` lists the nodes under `f`'s base.
-            Walk::Has(Stop::Rule(stage)) if kinds.is_some() => simple(&format!(
-                "CROSS JOIN nearest nf ON {} AND nf.id = f.node \
-                 CROSS JOIN node c ON c.file = f.file AND c.id > f.node AND c.id <= nf.\"last\"{c} \
-                 CROSS JOIN nearest nc ON {} AND nc.id = c.id AND nc.anc = nf.base",
-                nearest::set_of("nf", stage, "f.file"),
-                nearest::set_of("nc", stage, "c.file")
-            )),
+            // kinds, `nearest` lists them for the whole input; without, the nodes under each
+            // row's base.
+            Walk::Has(Stop::Rule(stage)) if let Some(kinds) = kinds => {
+                nearest::descendants(input, Some(stage), kinds, probed)
+            }
             Walk::Has(Stop::Rule(stage)) => simple(&format!(
                 "CROSS JOIN nearest nf ON {} AND nf.id = f.node \
                  CROSS JOIN nearest c ON {} AND c.anc = nf.base AND c.id > f.node AND c.id <= nf.\"last\"",
@@ -2015,13 +2028,13 @@ impl<'s> Emitter<'s> {
             }
             _ => source,
         };
-        // The shape `need` tests on a candidate, past its kinds.
+        // The shape `need` tests on a candidate, past its kinds, unless the walk tested it.
         let source = match &need.shape {
-            Some(shape) => format!(
+            Some(shape) if probes.is_none() => format!(
                 "SELECT * FROM ({source}) m WHERE {}",
                 shape_test(shape, "m.file", "m.node", &mut 0)
             ),
-            None => source,
+            _ => source,
         };
         let order = if walk.descending() {
             "-c.node"

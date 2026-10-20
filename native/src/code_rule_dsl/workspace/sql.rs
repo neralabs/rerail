@@ -17,9 +17,10 @@ use crate::code_rule_dsl::sql::{
 #[cfg(feature = "unbounded-work")]
 use crate::code_rule_dsl::sql::{StatementProfile, profiled};
 use crate::code_rule_dsl::tape::TapeDoc;
+use rayon::prelude::*;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// The failure of a clause the SQL engine refuses, on each file it reads.
@@ -176,8 +177,12 @@ impl SqlProgram {
             clauses,
             refusals,
             ran: (0..names.len()).map(|_| AtomicBool::new(false)).collect(),
+            costs: (0..names.len()).map(|_| AtomicU64::new(0)).collect(),
+            homes: (0..names.len()).map(|_| AtomicUsize::new(usize::MAX)).collect(),
             batch_size: batch_size.max(1),
-            sessions: Mutex::default(),
+            sessions: (0..crate::WORKER_THREADS)
+                .map(|_| Mutex::new(None))
+                .collect(),
             stats: Mutex::default(),
             pipeline: Mutex::default(),
             #[cfg(feature = "unbounded-work")]
@@ -198,9 +203,17 @@ pub(super) struct SqlEngine {
     refusals: Vec<Refusal>,
     /// Which of the program's clauses ran on some file.
     ran: Vec<AtomicBool>,
+    /// Per program clause: the time its run took per file of the run, in nanoseconds, as the
+    /// batches so far measured it (each batch's measure averaged with the estimate before it);
+    /// 0 until a batch runs it. `run_grouped` balances its groups by it.
+    costs: Vec<AtomicU64>,
+    /// Per program clause: the group (and so the session slot) `run_grouped` last ran it in;
+    /// `usize::MAX` before.
+    homes: Vec<AtomicUsize>,
     pub(super) batch_size: usize,
-    /// Sessions between batches: each keeps its tables and cached statements.
-    sessions: Mutex<Vec<Session>>,
+    /// One session slot per worker: each session keeps its tables and cached statements across
+    /// batches and applies.
+    sessions: Vec<Mutex<Option<Session>>>,
     stats: Mutex<Stats>,
     /// The native per-file steps around the batches' matching (`evaluate::sql_batch`).
     pipeline: Mutex<Pipeline>,
@@ -223,6 +236,15 @@ pub(super) struct Pipeline {
     pub(super) render: Timing,
 }
 
+impl Pipeline {
+    /// Adds `other`'s time to this one's.
+    pub(super) fn add(&mut self, other: &Pipeline) {
+        self.parse.add(other.parse);
+        self.plan.add(other.plan);
+        self.render.add(other.render);
+    }
+}
+
 /// What the benchmark (`unbounded-work`) build's SQL engine measured over its batches.
 #[cfg(feature = "unbounded-work")]
 #[derive(Default)]
@@ -242,9 +264,7 @@ impl SqlEngine {
             .pipeline
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        pipeline.parse.add(batch.parse);
-        pipeline.plan.add(batch.plan);
-        pipeline.render.add(batch.render);
+        pipeline.add(&batch);
     }
 
     /// The program's clause for `id`'s `grammar` (one of its matchers); `None` where the engine
@@ -266,27 +286,148 @@ impl SqlEngine {
         self.clauses[&(id, index)]
     }
 
-    /// Runs one batch on a pooled session (a new one where none is free): each file with what
-    /// its scopes read beyond its tape. A session whose batch failed is emptied by it, and pooled
-    /// as any other: sessions are made once per worker, and kept across batches and applies.
-    pub(super) fn run(
+    /// Runs one batch as `run` does, its clause runs split into groups run in parallel on the
+    /// worker pool, each on a session of its own over the files its runs read: a batch's clauses
+    /// are independent of each other (each reads its own tables and the stages, which a group
+    /// makes for itself where its clauses read them), so a batch of one large file or a few, an
+    /// edit's or an index chunk's, runs on every worker, as native runs its files, and its
+    /// clauses still run over the whole batch's files at once. The groups are balanced by the
+    /// clauses' measured cost per node of the files they run on (`costs`, longest first onto the
+    /// least loaded group); a clause no batch has run yet counts `UNMEASURED_COST`. A clause
+    /// stays in the group it last ran in (`homes`) while that group's load stays within
+    /// `STICKY_SLACK` of an even share: group `g` runs on session slot `g`, so a clause's
+    /// statements stay prepared and its frames made on one session, not on every one. A batch
+    /// whose runs are estimated below `GROUPED_COST` runs as one group: each group pays its
+    /// batch's node facts and the stages it reads.
+    pub(super) fn run_grouped(
         &self,
         docs: Vec<(TapeDoc, FileContext)>,
         runs: &[ClauseRun],
     ) -> Result<Vec<Vec<Vec<SqlMatch>>>, SqlError> {
-        let pooled = self
-            .sessions
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .pop();
-        // A new session's setup counts in the engine's statistics.
-        let (mut session, before) = match pooled {
-            Some(session) => {
-                let before = session.stats();
-                (session, before)
+        /// A clause no batch ran yet, in nanoseconds per `COST_NODES` nodes.
+        const UNMEASURED_COST: u64 = 250_000;
+        /// The least estimated time, in nanoseconds, of a batch split into groups.
+        const GROUPED_COST: u64 = 5_000_000;
+        /// How far over an even share a clause's last group may be loaded and still take it, in
+        /// eighths: 10 is 25% over.
+        const STICKY_SLACK: u64 = 10;
+        let mut estimates: Vec<(u64, usize)> = runs
+            .iter()
+            .enumerate()
+            .filter(|(_, run)| !run.files.is_empty())
+            .map(|(index, run)| {
+                let cost = match self.costs[run.statement].load(Ordering::Relaxed) {
+                    0 => UNMEASURED_COST,
+                    cost => cost,
+                };
+                (cost.saturating_mul(run_nodes(run, &docs)) / COST_NODES, index)
+            })
+            .collect();
+        let total: u64 = estimates.iter().map(|(cost, _)| cost).sum();
+        let count = self.sessions.len().min(estimates.len());
+        if count < 2 || total < GROUPED_COST {
+            return self.run(self.worker_slot(), docs, runs);
+        }
+        let share = total.div_ceil(count as u64).saturating_mul(STICKY_SLACK) / 8;
+        estimates.sort_unstable_by(|left, right| right.cmp(left));
+        let mut groups: Vec<(u64, Vec<usize>)> = vec![(0, Vec::new()); count];
+        for (cost, index) in estimates {
+            let home = &self.homes[runs[index].statement];
+            let group = match home.load(Ordering::Relaxed) {
+                group if group < count && groups[group].0 + cost <= share => group,
+                _ => (0..count)
+                    .min_by_key(|&group| groups[group].0)
+                    .expect("a group"),
+            };
+            home.store(group, Ordering::Relaxed);
+            groups[group].0 += cost;
+            groups[group].1.push(index);
+        }
+        // Each group's own batch: the files its runs read, renumbered in its order.
+        let grouped: Vec<(usize, Vec<usize>, Vec<(TapeDoc, FileContext)>, Vec<ClauseRun>)> = groups
+            .into_iter()
+            .enumerate()
+            .filter(|(_, (_, members))| !members.is_empty())
+            .map(|(slot, (_, mut members))| {
+                members.sort_unstable();
+                let mut renumbered: HashMap<usize, usize> = HashMap::new();
+                let mut group_docs = Vec::new();
+                let group_runs = members
+                    .iter()
+                    .map(|&index| ClauseRun {
+                        statement: runs[index].statement,
+                        files: runs[index]
+                            .files
+                            .iter()
+                            .map(|(file, roots)| {
+                                let at = *renumbered.entry(*file).or_insert_with(|| {
+                                    group_docs.push(docs[*file].clone());
+                                    group_docs.len() - 1
+                                });
+                                (at, roots.clone())
+                            })
+                            .collect(),
+                    })
+                    .collect();
+                (slot, members, group_docs, group_runs)
+            })
+            .collect();
+        drop(docs);
+        let found: Vec<(Vec<usize>, Result<Vec<Vec<Vec<SqlMatch>>>, SqlError>)> =
+            crate::WORK_POOL.install(|| {
+                grouped
+                    .into_par_iter()
+                    .map(|(slot, members, group_docs, group_runs)| {
+                        (members, self.run(slot, group_docs, &group_runs))
+                    })
+                    .collect()
+            });
+        let mut results: Vec<Vec<Vec<SqlMatch>>> = runs
+            .iter()
+            .map(|run| run.files.iter().map(|_| Vec::new()).collect())
+            .collect();
+        for (members, found) in found {
+            for (index, matches) in members.into_iter().zip(found?) {
+                results[index] = matches;
             }
-            None => (self.compiled.session()?, Stats::default()),
+        }
+        Ok(results)
+    }
+
+    /// The session slot of the worker thread calling: batches run side by side on the worker
+    /// pool each take their worker's.
+    pub(super) fn worker_slot(&self) -> usize {
+        rayon::current_thread_index().unwrap_or(0) % self.sessions.len()
+    }
+
+    /// Runs one batch on the session of slot `slot` (made there on its first batch), waiting for
+    /// it where another batch holds it: each file with what its scopes read beyond its tape. A
+    /// session whose batch failed is emptied by it, and kept as any other: sessions are made once
+    /// per slot, and kept across batches and applies.
+    pub(super) fn run(
+        &self,
+        slot: usize,
+        docs: Vec<(TapeDoc, FileContext)>,
+        runs: &[ClauseRun],
+    ) -> Result<Vec<Vec<Vec<SqlMatch>>>, SqlError> {
+        let mut held = self.sessions[slot]
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        // A new session's setup counts in the engine's statistics.
+        let before = match &*held {
+            Some(session) => session.stats(),
+            None => {
+                *held = Some(self.compiled.session()?);
+                Stats::default()
+            }
         };
+        let session = held.as_mut().expect("the slot's session");
+        // Each clause run's nodes, which its measured time is a cost per (`costs`).
+        let nodes: HashMap<usize, u64> = runs
+            .iter()
+            .filter(|run| !run.files.is_empty())
+            .map(|run| (run.statement, run_nodes(run, &docs)))
+            .collect();
         #[cfg(feature = "unbounded-work")]
         let paths: Vec<String> = docs
             .iter()
@@ -301,18 +442,22 @@ impl SqlEngine {
             let mut stats = self.stats.lock().unwrap_or_else(|error| error.into_inner());
             stats.add_since(&after, &before);
         }
-        let found = match found {
-            Ok(found) => found,
-            Err(error) => {
-                self.sessions
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner())
-                    .push(session);
-                return Err(error);
-            }
-        };
-        for run in runs.iter().filter(|run| !run.files.is_empty()) {
-            self.ran[run.statement].store(true, Ordering::Relaxed);
+        let found = found?;
+        for &statement in nodes.keys() {
+            self.ran[statement].store(true, Ordering::Relaxed);
+        }
+        for &(statement, nanos) in session.clause_times() {
+            let measured = (u128::from(nanos) * u128::from(COST_NODES)
+                / u128::from(nodes[&statement].max(1)))
+            .clamp(1, u128::from(u64::MAX)) as u64;
+            let cost = &self.costs[statement];
+            let before = cost.load(Ordering::Relaxed);
+            let estimate = if before == 0 {
+                measured
+            } else {
+                before / 2 + measured / 2
+            };
+            cost.store(estimate, Ordering::Relaxed);
         }
         #[cfg(feature = "unbounded-work")]
         {
@@ -345,10 +490,7 @@ impl SqlEngine {
                 *profile.stage_files.entry(path).or_default() += share;
             }
         }
-        self.sessions
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .push(session);
+        drop(held);
         Ok(found)
     }
 
@@ -359,12 +501,11 @@ impl SqlEngine {
         let stats = *self.stats.lock().unwrap_or_else(|error| error.into_inner());
         let census = self.compiled.census();
         let (mut prepared, mut memory) = (0, SessionMemory::default());
-        for session in self
-            .sessions
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .iter()
-        {
+        for slot in &self.sessions {
+            let held = slot.lock().unwrap_or_else(|error| error.into_inner());
+            let Some(session) = held.as_ref() else {
+                continue;
+            };
             let held = session.memory();
             prepared += session.prepared_statements();
             memory.schema += held.schema;
@@ -537,6 +678,17 @@ impl SqlEngine {
         });
         report
     }
+}
+
+/// The nodes a clause's `costs` are counted per.
+const COST_NODES: u64 = 1_000;
+
+/// The nodes of the files `run` reads, of the batch's `docs`.
+fn run_nodes(run: &ClauseRun, docs: &[(TapeDoc, FileContext)]) -> u64 {
+    run.files
+        .iter()
+        .map(|(file, _)| docs[*file].0.transducer_len() as u64)
+        .sum()
 }
 
 #[cfg(test)]
