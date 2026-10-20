@@ -338,6 +338,7 @@ impl Builder {
                 target_kind: Some(kind),
                 relation: None,
                 incomplete_position: None,
+                deduplicate_source: false,
             };
         }
         let mut relation = RelationalIr::empty();
@@ -347,6 +348,7 @@ impl Builder {
             target_kind: None,
             relation: Some(Box::new(relation)),
             incomplete_position: None,
+            deduplicate_source: false,
         }
     }
 
@@ -441,6 +443,7 @@ impl Builder {
                     target_kind: None,
                     relation: Some(Box::new(relation)),
                     incomplete_position: None,
+                    deduplicate_source: true,
                 });
                 call_through = Some(term.through);
             }

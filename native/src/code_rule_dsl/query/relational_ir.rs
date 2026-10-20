@@ -208,6 +208,7 @@ pub(super) struct SemanticRuleSpec {
     pub(super) target_kind: Option<u16>,
     pub(super) relation: Option<Box<RelationalIr>>,
     pub(super) incomplete_position: Option<u32>,
+    pub(super) deduplicate_source: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -981,6 +982,7 @@ impl SqlRenderer {
                         target_producer,
                         rule.slot,
                         rule.incomplete_position,
+                        rule.deduplicate_source,
                     );
                 }
             }
@@ -1139,6 +1141,20 @@ impl SqlRenderer {
         let RelationNode::Apply { operation, inputs } = node else {
             return Ok(None);
         };
+        if *operation == SqlOperation::InnerJoin {
+            let producers = inputs
+                .iter()
+                .map(Self::terminal_producer)
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some(producer) = producers.first().copied().flatten()
+                && producers
+                    .iter()
+                    .all(|candidate| *candidate == Some(producer))
+            {
+                return Ok(Some(producer));
+            }
+            return Ok(None);
+        }
         if *operation == SqlOperation::ScanTerminal {
             let [RelationNode::Producer(producer)] = inputs.as_slice() else {
                 return Ok(None);
@@ -1280,6 +1296,7 @@ impl SqlRenderer {
         target_producer: usize,
         slot: u16,
         incomplete_position: Option<u32>,
+        deduplicate_source: bool,
     ) -> Result<String, String> {
         let source = self.render_terminal_producer(source_producer, "source")?;
         let targets = self.next_name("semantic_target");
@@ -1299,8 +1316,9 @@ impl SqlRenderer {
         let checked_columns = qualified_row_columns_with_verdict("target", checked_verdict);
         let merged = Self::merged_bindings(&["target".to_owned(), "nested".to_owned()]);
         let compatible = Self::binding_compatibility("target", "nested");
+        let distinct = if deduplicate_source { "DISTINCT " } else { "" };
         self.ctes.push(format!(
-            "{checked} AS (\n  SELECT {checked_columns}, {merged} AS bindings, target.choice_order || nested.choice_order AS choice_order FROM {targets} target\n  INNER JOIN {nested} nested\n    ON nested.file_index = target.file_index AND nested.node = target.target_node\n    AND {compatible}\n)"
+            "{checked} AS (\n  SELECT {distinct}{checked_columns}, {merged} AS bindings, target.choice_order || nested.choice_order AS choice_order FROM {targets} target\n  INNER JOIN {nested} nested\n    ON nested.file_index = target.file_index AND nested.node = target.target_node\n    AND {compatible}\n)"
         ));
         Ok(checked)
     }
