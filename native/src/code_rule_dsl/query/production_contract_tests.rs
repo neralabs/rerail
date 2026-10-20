@@ -2138,6 +2138,34 @@ fn production_contract_phase_three_limit_utilities_match_authored_sql() {
 }
 
 #[test]
+fn production_contract_phase_three_authored_limit_utilities_are_atomic() {
+    let statements = authored_sql_goldens();
+    for (name, error) in [
+        ("utility-depth-limit", "utility-depth-limit"),
+        ("utility-work-limit", "utility-work-limit"),
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the utility limit contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the utility limit policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        assert!(outcome.ranges.is_empty(), "{name}: no partial violation");
+        assert_eq!(outcome.errors, [error], "{name}: exact typed failure");
+    }
+}
+
+#[test]
 fn production_contract_phase_three_parameter_utilities_match_authored_sql() {
     let expected = authored_sql_goldens();
     for name in [
