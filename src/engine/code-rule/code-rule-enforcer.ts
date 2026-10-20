@@ -219,6 +219,8 @@ type PreparedWorkspace = {
   storage: Promise<boolean>;
 };
 type ByteRange = { start: number; end: number };
+/** The earlier source an ai-output edit's generated lines are measured from. */
+type ReportBase = Pick<CodeRuleEdit, "previousText" | "previousReadError">;
 /** The nested checkouts a walk skips (judged by their own rules), and the ones it reached. */
 type NestedCheckoutWalk = { readonly pruned: ReadonlySet<string>; readonly reached: string[] };
 /** One audit walk's budget and what it has read; `facts` holds each directory's nearest `package.json` and server graphs. */
@@ -528,6 +530,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * reported in its own slot: read only by `#steerAgain`, never compared with a source's own-line findings.
    */
   readonly #auditFindings = new Map<string, { revision: number; mode: AuditMode; violations: CodeRuleViolation[] }>();
+  /**
+   * Per source, in ai-output scope, the preimage of its oldest edit whose generated lines may not have reached the agent:
+   * an edit a later one superseded or left unreported (`published: false`), or one whose findings were published as a
+   * steer that a later revision may have dropped before delivery (`published: true`, confirmed by the runtime's
+   * `undelivered`). The source's next edit reports what it generated since then (`#reportBase`).
+   */
+  readonly #unreported = new Map<string, { base: ReportBase; published: boolean }>();
   #spoolDirectory: string | undefined;
   #spoolSequence = 0;
   readonly #spoolRemovals = new Set<Promise<void>>();
@@ -744,7 +753,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       if (previous !== undefined) {
         previous.auditId ??= this.#startAudit(previous.scope, previous.mode, previous.revision, [edit.path], null);
         this.#finishAudit(previous.auditId, "superseded", [], []);
-        this.#release(previous);
+        try {
+          // Its lines were never reported: the edit that supersedes it reports them with its own.
+          if (previous.scope === "ai-output")
+            this.#unreported.set(edit.path, { base: this.#reportBase(edit.path, await this.#load(previous)), published: false });
+        } finally {
+          this.#release(previous);
+        }
       }
       this.#pending.set(edit.path, stored);
     } catch (error) {
@@ -1051,7 +1066,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       )
         reported.set(source.path, findings);
     }
-    const own = scopeFailure === undefined ? this.#selectViolations(stored.scope, edit, result.violations) : [];
+    const base = stored.scope === "ai-output" ? this.#reportBase(path, edit) : edit;
+    const own = scopeFailure === undefined ? this.#selectViolations(stored.scope, edit, result.violations, base) : [];
     this.#finishAudit(
       stored.auditId,
       scopeFailure === undefined && result.status === "completed" ? "completed" : "failed",
@@ -1059,8 +1075,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       scopeFailure === undefined ? failures : [...failures, scopeFailure],
     );
     if (this.#versions.get(path) !== stored.revision || this.#replacement !== undefined) {
+      if (stored.scope === "ai-output") this.#unreported.set(path, { base, published: false });
       unreported();
       return;
+    }
+    if (stored.scope === "ai-output") {
+      if (edit.deleted || !own.some((violation) => steers(violation.mode))) this.#unreported.delete(path);
+      else this.#unreported.set(path, { base, published: true });
     }
     this.#evaluation = result;
     let readyViolations = this.#readyViolations.get(stored.revision);
@@ -1127,18 +1148,30 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#finishAudit(stored.auditId, "failed", [], [problem]);
   }
   /**
-   * An edit's violations: in touched-files scope its file's, otherwise those in the lines it generated (none where its
-   * file's earlier text was unreadable).
+   * Where the edit of `path` measures what it generated: from the preimage of the source's oldest edit whose lines may
+   * not have reached the agent (`#unreported`), else from its own preimage. A published edit counts only when the
+   * runtime says a newer revision dropped its steer before delivery; an unreadable earlier preimage is not used.
+   */
+  #reportBase(path: string, edit: CodeRuleEdit): ReportBase {
+    const dropped = this.#sessionId !== undefined && (this.#steerDelivery.undelivered?.(this.#sessionId, this.#presentPath(path)) ?? false);
+    const outstanding = this.#unreported.get(path);
+    if (outstanding === undefined || outstanding.base.previousReadError !== undefined) return edit;
+    return !outstanding.published || dropped ? outstanding.base : edit;
+  }
+  /**
+   * An edit's violations: in touched-files scope its file's, otherwise those in the lines it generated since `base`
+   * (its own preimage unless given; none where that earlier text was unreadable).
    */
   #selectViolations(
     scope: AuditScope,
     edit: CodeRuleEdit,
     violations: readonly CodeRuleViolation[],
+    base: ReportBase = edit,
   ): CodeRuleViolation[] {
     const pathViolations = violations.filter((violation) => violation.path === edit.path);
     if (scope === "touched-files" || edit.deleted || edit.generatedText === undefined) return pathViolations;
-    if (edit.previousReadError !== undefined) return [];
-    const ranges = generatedRanges(edit.previousText ?? "", edit.generatedText);
+    if (base.previousReadError !== undefined) return [];
+    const ranges = generatedRanges(base.previousText ?? "", edit.generatedText);
     return pathViolations.filter((violation) => intersectsGeneratedRange(violation, ranges));
   }
   /**

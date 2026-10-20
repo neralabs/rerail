@@ -346,6 +346,8 @@ interface RuntimeSessionState {
   pendingSteers: PendingSteer[];
   codeRuleRevision: number;
   codeRuleSourceVersions: Map<string, number>;
+  /** Sources whose queued steer a newer revision of them dropped before delivery, until the auditor asks (`undelivered`). */
+  undeliveredSources: Set<string>;
   /** The session's evaluator, opening or open; unset for good once it could not open. */
   codeRuleBridge?: CodeRuleBridge;
   /** Why the evaluator could not open, when it did not: a scan that waited for it reports this. */
@@ -939,6 +941,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       pendingSteers: [],
       codeRuleRevision: 0,
       codeRuleSourceVersions: new Map(),
+      undeliveredSources: new Set(),
       ownerClaim: undefined,
       codeRuleWorkspace: Promise.resolve(undefined),
       codeRuleReady: false,
@@ -969,7 +972,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           revision,
           scope: metadata?.scope ?? [],
         };
-        if (!this.#isCurrentSteer(activeState, pending)) return "discarded";
+        if (!this.#isCurrentSteer(activeState, pending)) {
+          this.#recordUndelivered(activeState, pending);
+          return "discarded";
+        }
         activeState.pendingSteers.push(pending);
         if (activeState.codeRuleReady && metadata?.background === true && this.#deliverBackground !== undefined) {
           const inFlight = this.#deliverSteer(activeState, pending, true);
@@ -989,11 +995,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         const surviving = new Set<string>();
         current.pendingSteers = current.pendingSteers.filter(pending => {
           if (this.#isCurrentSteer(current, pending)) return true;
+          this.#recordUndelivered(current, pending);
           for (const path of pending.scope)
             if ((current.codeRuleSourceVersions.get(path) ?? 0) <= pending.revision) surviving.add(path);
           return false;
         });
         return [...surviving];
+      },
+      undelivered: (sessionId, path) => {
+        const current = this.#sessions.get(sessionId);
+        return current === opened && current.undeliveredSources.delete(path);
       },
     };
     let auditor: CodeRuleAuditor | undefined;
@@ -1021,7 +1032,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           if (current !== opened || current.closed || paths.length === 0) return;
           current.codeRuleRevision = Math.max(current.codeRuleRevision, revision);
           for (const path of paths) current.codeRuleSourceVersions.set(path, revision);
-          current.pendingSteers = current.pendingSteers.filter(pending => this.#isCurrentSteer(current, pending));
+          current.pendingSteers = current.pendingSteers.filter(pending => {
+            if (this.#isCurrentSteer(current, pending)) return true;
+            this.#recordUndelivered(current, pending);
+            return false;
+          });
         },
       });
       opened.codeRuleBridge = bridge;
@@ -1363,6 +1378,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         : pending.scope.every(path => (state.codeRuleSourceVersions.get(path) ?? 0) <= pending.revision));
   }
 
+  /** Marks the sources whose newer revision keeps `pending` from the agent (`undeliveredSources`). */
+  #recordUndelivered(state: RuntimeSessionState, pending: PendingSteer): void {
+    for (const path of pending.scope)
+      if ((state.codeRuleSourceVersions.get(path) ?? 0) > pending.revision) state.undeliveredSources.add(path);
+  }
+
   #deliverSteer(
     state: RuntimeSessionState,
     pending: PendingSteer,
@@ -1383,14 +1404,22 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const index = state.pendingSteers.indexOf(pending);
     if (index < 0) return undefined;
     state.pendingSteers.splice(index, 1);
-    if (!this.#isCurrentSteer(state, pending) || this.#stopped()) return undefined;
+    if (!this.#isCurrentSteer(state, pending)) {
+      this.#recordUndelivered(state, pending);
+      return undefined;
+    }
+    if (this.#stopped()) return undefined;
     try {
       await this.persistDelivery(pending.delivery);
     } catch (error) {
       process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
     }
     // A stop committed elsewhere while the ledger was written withholds the result.
-    if (!this.#isCurrentSteer(state, pending) || this.#stopped()) return undefined;
+    if (!this.#isCurrentSteer(state, pending)) {
+      this.#recordUndelivered(state, pending);
+      return undefined;
+    }
+    if (this.#stopped()) return undefined;
     if (!native) return pending.delivery;
     try {
       await this.#deliverBackground!(pending.delivery);
