@@ -28,6 +28,10 @@ pub(super) use exec::{
 #[cfg(feature = "unbounded-work")]
 pub(super) use exec::{StatementProfile, profiled};
 
+/// Files per batch where the caller sets none: the workspace's default, and every batch of a
+/// stateless evaluation.
+pub(super) const DEFAULT_BATCH_SIZE: usize = 64;
+
 /// The mutation kit's switch: whether this process runs seeded semantic mutant `n`
 /// (`RERAIL_SQL_MUTANT=<n>`, read once; unset or 0 runs none). Each mutant is a plausible
 /// regression of one hard construct, a few lines at its site, that the differential and the
