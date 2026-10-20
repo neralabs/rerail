@@ -633,6 +633,18 @@ struct UtilitySelections<'index> {
     roots: HashMap<BTreeSet<u16>, Selection<'index>>,
 }
 
+/// The nodes of a tree by kind, as an anchor index's walk numbered them, in preorder from the
+/// root (`FileAnchorIndex::into_kind_postings`): a tape's node ids.
+pub(in crate::code_rule_dsl) struct KindPostings {
+    /// The nodes walked: the whole tree's, unless the walk was cut short (its node budget, or the
+    /// matcher budget).
+    pub(in crate::code_rule_dsl) nodes: usize,
+    /// By kind id: the nodes of the kind, ascending; error nodes are in `errors` instead.
+    pub(in crate::code_rule_dsl) kinds: Vec<Vec<usize>>,
+    /// The error nodes (`kind_utils::is_error_kind`), ascending.
+    pub(in crate::code_rule_dsl) errors: Vec<usize>,
+}
+
 pub(in crate::code_rule_dsl) struct FileAnchorIndex<'tree, D: Doc> {
     root: &'tree AstGrep<D>,
     source: &'tree str,
@@ -816,6 +828,16 @@ where
     }
     pub(in crate::code_rule_dsl) fn kind(&self, ordinal: usize) -> u16 {
         self.entries[ordinal].kind
+    }
+
+    /// The index's kind postings, for a reader of the same tree past the index's selections
+    /// (the SQL engine's `node` table): no copy, as the walk built them.
+    pub(in crate::code_rule_dsl) fn into_kind_postings(self) -> KindPostings {
+        KindPostings {
+            nodes: self.entries.len(),
+            kinds: self.kinds,
+            errors: self.errors,
+        }
     }
 
     #[cfg(feature = "code-rule-profile")]

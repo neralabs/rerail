@@ -664,6 +664,174 @@ mod tests {
         eprintln!("sessions {}", report["sessions"]);
     }
 
+    /// The SQL pipeline's per-file plan (`SqlFile::plan`) against the native dispatch's per-file
+    /// preparation it mirrors (`evaluate::NATIVE_PLAN`), thread CPU summed over the workers, and
+    /// the SQL batches' kind postings after it (`sql::POSTINGS_TIME`), per unit of a loop record
+    /// (`RERAIL_LOOP_RECORD`, its last round's SQL units, those of the `RERAIL_PLAN_LINTERS`
+    /// linters, comma-separated, where set) over the loop's subset: each unit's rule as the loop
+    /// builds it (the policy's clauses of the unit, and its definitions), applied on a native and
+    /// a SQL workspace. Run by hand: `cargo test --profile loop --features unbounded-work --lib
+    /// workspace::sql::tests::per_file_plan_against_native -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "reads the data-layer benchmark's policies, corpus and loop record from outside the repository"]
+    fn per_file_plan_against_native() {
+        use super::super::evaluate::NATIVE_PLAN;
+        use crate::code_rule_dsl::sql::POSTINGS_TIME;
+        let home = std::env::var("HOME").expect("HOME");
+        let corpus = std::env::var("RERAIL_DATA_LAYER_CORPUS")
+            .unwrap_or_else(|_| format!("{home}/rerail-bench/nera-data-layer-fce4dc72"));
+        let policies = std::env::var("RERAIL_BENCH_POLICIES")
+            .unwrap_or_else(|_| format!("{home}/rerail-bench/data-layer/policies"));
+        let list = std::env::var("RERAIL_SQL_FILES")
+            .unwrap_or_else(|_| format!("{home}/rerail-bench/distill/subset.txt"));
+        let record: Value = serde_json::from_str(
+            &std::fs::read_to_string(std::env::var("RERAIL_LOOP_RECORD").expect("a loop record"))
+                .expect("the loop record"),
+        )
+        .expect("JSON");
+        let linters: Option<Vec<String>> = std::env::var("RERAIL_PLAN_LINTERS")
+            .ok()
+            .map(|list| list.split(',').map(str::to_owned).collect());
+        let root = std::path::Path::new(&corpus);
+        let sources: Vec<(String, String)> = std::fs::read_to_string(&list)
+            .expect("the file list")
+            .lines()
+            .filter(|path| !path.is_empty())
+            .filter_map(|path| {
+                let source = String::from_utf8(std::fs::read(root.join(path)).ok()?).ok()?;
+                Some((path.to_owned(), source))
+            })
+            .collect();
+        let units = record["rounds"]
+            .as_array()
+            .and_then(|rounds| rounds.last())
+            .and_then(|round| round["sql"].as_array())
+            .expect("the record's units");
+        let mut totals: std::collections::BTreeMap<String, (f64, f64, usize, f64)> =
+            std::collections::BTreeMap::new();
+        for unit in units {
+            let linter = unit["unit"]["linter"]
+                .as_str()
+                .expect("a linter")
+                .to_owned();
+            if linters
+                .as_ref()
+                .is_some_and(|linters| !linters.contains(&linter))
+            {
+                continue;
+            }
+            let ids: std::collections::HashSet<&str> = unit["unit"]["clauses"]
+                .as_array()
+                .expect("clauses")
+                .iter()
+                .map(|name| &name.as_str().expect("a clause")[linter.len() + 1..])
+                .collect();
+            let mut document: Value = serde_json::from_str(
+                &std::fs::read_to_string(format!("{policies}/{linter}/policy.json"))
+                    .expect("policy"),
+            )
+            .expect("JSON");
+            let clauses: Vec<Value> = document["clauses"]
+                .as_array()
+                .expect("clauses")
+                .iter()
+                .filter(|clause| {
+                    clause.get("define").is_some()
+                        || clause["id"].as_str().is_some_and(|id| ids.contains(id))
+                })
+                .cloned()
+                .collect();
+            document["clauses"] = Value::Array(clauses);
+            let compiled = CodeRuleDslRuntime::compile(
+                document.to_string(),
+                "json".to_owned(),
+                CAPABILITIES.to_owned(),
+            )
+            .unwrap_or_else(|error| panic!("{linter}: {}", error.reason));
+            let mut plan = [0.0; 2];
+            let mut postings = 0.0;
+            for (side, engine) in ["native", "sql"].into_iter().enumerate() {
+                let mut workspace = CodeRuleDslWorkspace::with_options(Some(WorkspaceOptions {
+                    engine: Some(engine.to_owned()),
+                    sql_batch_size: None,
+                }))
+                .expect("a workspace");
+                workspace
+                    .add_code_rule(&compiled, None)
+                    .expect("a code rule");
+                let files: Vec<Value> = sources
+                    .iter()
+                    .filter(|(path, _)| workspace.accepts_path(path.clone()))
+                    .map(|(path, source)| {
+                        let mut file =
+                            json!({ "language": "python", "path": path, "source": source });
+                        if let Some(module) = crate::code_rule_dsl::language::adapter::module_path(
+                            "python",
+                            &root.join(path),
+                        ) {
+                            file["module"] = module;
+                        }
+                        file
+                    })
+                    .collect();
+                let native_before = *NATIVE_PLAN.lock();
+                let postings_before = *POSTINGS_TIME.lock();
+                let mut task = WorkspaceApplyTask {
+                    state: Arc::clone(&workspace.state),
+                    closed: Arc::clone(&workspace.closed),
+                    request_json: json!({ "revision": 1, "files": files, "removed": [] })
+                        .to_string(),
+                    request_buffer: None,
+                    request_direct: None,
+                };
+                task.compute().expect("the apply");
+                plan[side] = if engine == "native" {
+                    NATIVE_PLAN.lock().since(native_before).cpu_milliseconds()
+                } else {
+                    postings = POSTINGS_TIME
+                        .lock()
+                        .since(postings_before)
+                        .cpu_milliseconds();
+                    let report: Value =
+                        serde_json::from_str(&workspace.engine_report().expect("a report"))
+                            .expect("JSON");
+                    report["pipeline"]["planCpuMilliseconds"]
+                        .as_f64()
+                        .expect("the SQL plan")
+                };
+            }
+            let loop_plan = unit["phases"]["timers"]["pipeline.planCpuMilliseconds"]
+                .as_f64()
+                .unwrap_or(0.0);
+            eprintln!(
+                "plan native {:8.1} ms, SQL {:8.1} ms ({:+6.1}%), loop SQL {loop_plan:8.1} ms, SQL postings {postings:7.1} ms  {linter} ({} clauses: {})",
+                plan[0],
+                plan[1],
+                (plan[1] / plan[0] - 1.0) * 100.0,
+                ids.len(),
+                unit["unit"]["clauses"][0].as_str().unwrap_or_default(),
+            );
+            let total = totals.entry(linter).or_default();
+            total.0 += plan[0];
+            total.1 += plan[1];
+            total.2 += 1;
+            total.3 += postings;
+        }
+        let (mut native, mut sql) = (0.0, 0.0);
+        for (linter, (linter_native, linter_sql, count, linter_postings)) in &totals {
+            eprintln!(
+                "total native {linter_native:9.1} ms, SQL {linter_sql:9.1} ms ({:+6.1}%), SQL postings {linter_postings:8.1} ms  {linter} ({count} units)",
+                (linter_sql / linter_native - 1.0) * 100.0
+            );
+            native += linter_native;
+            sql += linter_sql;
+        }
+        eprintln!(
+            "total native {native:9.1} ms, SQL {sql:9.1} ms ({:+6.1}%)",
+            (sql / native - 1.0) * 100.0
+        );
+    }
+
     /// The bytes jemalloc holds allocated now, in MiB (0 where it is not the allocator).
     fn allocated_mib() -> f64 {
         #[cfg(not(windows))]
