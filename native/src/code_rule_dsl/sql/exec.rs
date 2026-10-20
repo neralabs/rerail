@@ -1482,6 +1482,93 @@ fn registers(
     (allocated, clears)
 }
 
+/// Names the temporaries of one stage's or clause's statements (`items`, after `frames::rewrite`)
+/// that stay B-trees, as `registers` names frames: a B-tree's class is its declaration, its
+/// `CREATE TABLE` with its indexes, numbered in `classes`, which every list shares, and the
+/// list's `k`-th B-tree of a class, in the order they are made, is `{prefix}b{class}_{k}`. A
+/// clause's tables are emptied when it ends, so clauses share B-trees as they share frames: a
+/// session makes a B-tree per class and rank the program needs, not one per clause (its
+/// recursion units' tables were 29,429 B-trees of 137 classes on the data-layer and Tempo
+/// policies, 1,097 shared), and the clauses alike run the same texts. A B-tree is live for its
+/// whole list, so no two of a list share one.
+fn btree_registers(
+    items: &[String],
+    classes: &mut HashMap<String, usize>,
+    prefix: &str,
+) -> HashMap<String, String> {
+    // Each B-tree temporary, in the order it is made, with its declaration: `@` for its name.
+    let mut declared: Vec<(&str, String)> = Vec::new();
+    let mut at: HashMap<&str, usize> = HashMap::new();
+    let unnamed = |sql: &str, name: &str| {
+        rename_temporaries(sql.to_owned(), |found, out| {
+            if found == name {
+                out.push('@');
+            } else {
+                out.push_str(emit::TEMP);
+                out.push_str(found);
+            }
+        })
+    };
+    for item in items {
+        if let Some(table) = item.strip_prefix("CREATE TEMP TABLE ") {
+            let table = table.strip_prefix("IF NOT EXISTS ").unwrap_or(table);
+            if let Some(name) = table.strip_prefix(emit::TEMP).map(temporary)
+                && !at.contains_key(name)
+            {
+                at.insert(name, declared.len());
+                declared.push((name, unnamed(item, name)));
+            }
+        } else if item.starts_with("CREATE INDEX ")
+            && let Some((_, on)) = item.split_once(" ON ")
+            && let Some(name) = on.strip_prefix(emit::TEMP).map(temporary)
+            && let Some(&index) = at.get(name)
+        {
+            let index_declaration = unnamed(item, name);
+            let declaration = &mut declared[index].1;
+            // A unit's table is made at each site that reads it (`IF NOT EXISTS`): its index once.
+            if !declaration.contains(&index_declaration) {
+                declaration.push_str("; ");
+                declaration.push_str(&index_declaration);
+            }
+        }
+    }
+    let mut ranks: HashMap<usize, usize> = HashMap::new();
+    declared
+        .into_iter()
+        .map(|(name, declaration)| {
+            let next = classes.len();
+            let class = *classes.entry(declaration).or_insert(next);
+            let rank = ranks.entry(class).or_default();
+            let register = format!("{prefix}b{class}_{rank}");
+            *rank += 1;
+            (name.to_owned(), register)
+        })
+        .collect()
+}
+
+/// `sql` with each temporary (`emit::TEMP` then its name) written by `name`; `sql` itself where
+/// it names none.
+fn rename_temporaries(sql: String, mut name: impl FnMut(&str, &mut String)) -> String {
+    let mut found = temporaries_in(&sql).peekable();
+    if found.peek().is_none() {
+        return sql;
+    }
+    let mut out = String::with_capacity(sql.len());
+    let mut copied = 0;
+    for at in found {
+        if at < copied {
+            continue;
+        }
+        out.push_str(&sql[copied..at]);
+        let after = &sql[at + emit::TEMP.len()..];
+        let temporary = temporary(after);
+        name(temporary, &mut out);
+        copied = at + emit::TEMP.len() + temporary.len();
+    }
+    out.push_str(&sql[copied..]);
+    out
+}
+
 /// One declaration class's registers as `registers` allocates them: those holding a span not yet
 /// ended (by its end), and the others.
 #[derive(Default)]
@@ -1627,34 +1714,18 @@ fn plan(
         .into_iter();
     let items = frames::rewrite(statements);
     let (registers, clears) = registers(&items, classes, prefix);
-    // A temporary's name: its register, or, a B-tree, the namespace's.
-    let temporary_name = |name: &str, out: &mut String| match registers.get(name) {
-        Some(register) => out.push_str(register),
-        None => {
-            out.push_str(namespace);
-            out.push_str(name);
-        }
-    };
-    let rename = |sql: String| -> String {
-        let mut found = temporaries_in(&sql).peekable();
-        if found.peek().is_none() {
-            return sql;
-        }
-        let mut out = String::with_capacity(sql.len());
-        let mut copied = 0;
-        for at in found {
-            if at < copied {
-                continue;
+    let btrees = btree_registers(&items, classes, prefix);
+    // A temporary's name: its register, a frame's or a B-tree's.
+    let temporary_name = |name: &str, out: &mut String| {
+        match registers.get(name).or_else(|| btrees.get(name)) {
+            Some(register) => out.push_str(register),
+            None => {
+                out.push_str(namespace);
+                out.push_str(name);
             }
-            out.push_str(&sql[copied..at]);
-            let after = &sql[at + emit::TEMP.len()..];
-            let name = temporary(after);
-            temporary_name(name, &mut out);
-            copied = at + emit::TEMP.len() + name.len();
         }
-        out.push_str(&sql[copied..]);
-        out
     };
+    let rename = |sql: String| -> String { rename_temporaries(sql, temporary_name) };
     let mut clears = clears.into_iter().peekable();
     let mut steps: Vec<(String, Effect)> = Vec::new();
     // The tables the statements make, in order, and their indexes.
@@ -1839,6 +1910,9 @@ pub(in crate::code_rule_dsl) struct Session {
     capacity: usize,
     /// The buffers the steps' texts are written into as they run (`Runner::texts`).
     texts: Vec<String>,
+    /// The last batch's clause runs: each run's statement (a clause index of the program) and the
+    /// wall time its steps took, in nanoseconds (`clause_times`).
+    clause_times: Vec<(usize, u64)>,
 }
 
 /// The heap a session holds (`Session::memory`), in bytes: its connection's, by
@@ -1866,6 +1940,20 @@ impl Session {
              node INTEGER NOT NULL, PRIMARY KEY (run, file, node)) WITHOUT ROWID;",
         )?;
         connection.set_prepared_statement_cache_capacity(BATCH_STATEMENTS);
+        // Every B-tree of the plan, before any statement is prepared: a `CREATE TEMP TABLE`
+        // scans the whole schema to parse its entry and expires every prepared statement of the
+        // connection (the temporary schema changed), so a B-tree made lazily, on its clause's
+        // first run, re-prepared each statement cached so far. Clauses share their B-trees
+        // (`btree_registers`), so the plan holds few.
+        let mut made = vec![false; plan.tables.len()];
+        let mut tables = 0;
+        for (table, is_made) in plan.tables.iter().zip(&mut made) {
+            if let Make::BTree(create) = &table.make {
+                connection.execute_batch(create)?;
+                *is_made = true;
+                tables += 1;
+            }
+        }
         let names = plan
             .tables
             .iter()
@@ -1876,14 +1964,16 @@ impl Session {
             slot,
             program: Arc::clone(&compiled.program),
             counts: Counts::new(Arc::clone(&frames), names, plan.marks),
-            made: vec![false; plan.tables.len()],
+            made,
             active: vec![false; plan.stages.len() + plan.clauses.len()],
             cached: vec![false; plan.census.texts],
             texts: Vec::new(),
+            clause_times: Vec::new(),
             capacity: BATCH_STATEMENTS,
             stats: Stats {
                 sessions: 1,
                 setup: started.elapsed(),
+                tables,
                 ..Stats::default()
             },
             plan,
@@ -1891,10 +1981,10 @@ impl Session {
         })
     }
 
-    /// Makes the tables of the stages and clauses `pending` names (stages first, then clauses, as
+    /// Makes the frames of the stages and clauses `pending` names (stages first, then clauses, as
     /// `Plan::prepared` indexes them) and of the stages they read, where none ran on this session
     /// before, and sizes the statement cache for their texts: a `violation.each` clause's rounds
-    /// run three statements of their own.
+    /// run three statements of their own. Their B-trees are made with the session.
     fn activate(&mut self, mut pending: Vec<usize>) -> Result<(), SqlError> {
         let started = Started::now();
         let plan = Arc::clone(&self.plan);
@@ -1909,12 +1999,10 @@ impl Session {
                 if self.made[table] {
                     continue;
                 }
-                match &plan.tables[table].make {
-                    Make::Frame(declaration) => {
-                        self.frames.register(&self.connection, declaration)?;
-                    }
-                    Make::BTree(create) => self.connection.execute_batch(create)?,
-                }
+                let Make::Frame(declaration) = &plan.tables[table].make else {
+                    unreachable!("a session makes its B-trees when it starts")
+                };
+                self.frames.register(&self.connection, declaration)?;
                 self.made[table] = true;
                 self.stats.tables += 1;
             }
@@ -1934,6 +2022,11 @@ impl Session {
         }
         self.stats.setup.add(started.elapsed());
         Ok(())
+    }
+
+    /// The last batch's clause runs: each run's statement and its steps' wall time (nanoseconds).
+    pub(in crate::code_rule_dsl) fn clause_times(&self) -> &[(usize, u64)] {
+        &self.clause_times
     }
 
     /// What the session's statements did so far.
@@ -2107,6 +2200,7 @@ impl Session {
             frames,
             counts,
             texts,
+            clause_times,
             ..
         } = self;
         let plan = &**plan;
@@ -2121,6 +2215,7 @@ impl Session {
             at: ("", 0),
             depth: 0,
         };
+        clause_times.clear();
         let inputs = Started::now();
         connection.prepare_cached(CLEAR_RUNS)?.execute([])?;
         connection.prepare_cached(CLEAR_ROOTS)?.execute([])?;
@@ -2196,7 +2291,6 @@ impl Session {
             let mut found: Vec<Vec<(usize, SqlMatch)>> =
                 run.files.iter().map(|_| Vec::new()).collect();
             if !run.files.is_empty() {
-                #[cfg(feature = "unbounded-work")]
                 let clause_started = std::time::Instant::now();
                 for (at, (file, _)) in run.files.iter().enumerate() {
                     position[*file] = at;
@@ -2302,10 +2396,12 @@ impl Session {
                 if let Some(each) = &bound.shape.each {
                     runner.clears(bound, &each.clear)?;
                 }
+                let nanos = clause_started.elapsed().as_nanos() as u64;
+                clause_times.push((run.statement, nanos));
                 #[cfg(feature = "unbounded-work")]
                 CLAUSE_PROFILE.with_borrow_mut(|profile| {
                     if let Some(profile) = profile {
-                        profile.push((run.statement, clause_started.elapsed().as_nanos() as u64));
+                        profile.push((run.statement, nanos));
                     }
                 });
             }

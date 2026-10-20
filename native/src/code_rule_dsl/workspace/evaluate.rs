@@ -195,30 +195,26 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
         Ok(metrics)
     };
     if let Some(sql) = context.sql {
-        // Batches small enough that an apply of a few files still runs on every worker.
-        let size = sql
-            .batch_size
-            .min(jobs.len().div_ceil(WORKER_THREADS))
-            .max(1);
+        // Batches of up to the batch size. An apply with fewer batches than workers (an edit, an
+        // index chunk) runs them one after another, each on every worker (`sql_batch`'s
+        // `grouped`): splitting its files into more batches would run every clause's statements
+        // once per batch for no fewer rows. More batches run side by side, one per worker.
+        let size = sql.batch_size.min(jobs.len()).max(1);
         let mut jobs = jobs.into_iter().peekable();
         let mut batches = Vec::new();
         while jobs.peek().is_some() {
             batches.push(jobs.by_ref().take(size).collect::<Vec<_>>());
         }
-        let run = |batch: Vec<Job>, grammars: &mut Grammars| {
-            sql_batch(batch, context, sql, grammars, &read, &finish)
-        };
-        let evaluated: Vec<Evaluated> = if batches.len() < 2 {
-            let mut grammars = BTreeMap::new();
+        let evaluated: Vec<Evaluated> = if batches.len() < WORKER_THREADS {
             batches
                 .into_iter()
-                .map(|batch| run(batch, &mut grammars))
+                .map(|batch| sql_batch(batch, context, sql, true, &read, &finish))
                 .collect()
         } else {
             WORK_POOL.install(|| {
                 batches
                     .into_par_iter()
-                    .map_init(BTreeMap::new, |grammars, batch| run(batch, grammars))
+                    .map(|batch| sql_batch(batch, context, sql, false, &read, &finish))
                     .collect()
             })
         };
@@ -317,14 +313,17 @@ struct Started<'c> {
 /// Evaluates a batch of jobs with their AST clauses matched on the SQL engine: each file's native
 /// steps up to its clauses' matching (storage, regex clauses, input limits, the tape, syntax
 /// errors, required text and anchor selection), one SQL run for the batch's AST clauses, then
-/// each file's native rendering of the matches and the rest of its steps.
+/// each file's native rendering of the matches and the rest of its steps. `grouped`: the batch
+/// runs alone, so its files' native steps run on the worker pool, as native runs its files, and
+/// its clauses in groups on it (`SqlEngine::run_grouped`); otherwise batches run side by side,
+/// each on one worker.
 fn sql_batch(
     batch: Vec<Job>,
     context: &JobContext<'_>,
     sql: &SqlEngine,
-    grammars: &mut Grammars,
-    read: &impl Fn(&str, &mut FileState, &mut Grammars) -> Result<u64>,
-    finish: &impl Fn(
+    grouped: bool,
+    read: &(impl Fn(&str, &mut FileState, &mut Grammars) -> Result<u64> + Sync),
+    finish: &(impl Fn(
         &mut FileState,
         &mut Grammars,
         &MatchBudget,
@@ -332,20 +331,20 @@ fn sql_batch(
         Option<tape::TapeDoc>,
         Metrics,
         u64,
-    ) -> Result<Metrics>,
+    ) -> Result<Metrics>
+          + Sync),
 ) -> Evaluated {
     let closed = context.closed;
     #[cfg(feature = "code-rule-profile")]
     let _worker_profile = profile::WorkerProfile::start();
-    let mut started = Vec::with_capacity(batch.len());
-    let mut pipeline = Pipeline::default();
-    for job in batch {
+    let start = |job: Job, grammars: &mut Grammars| {
         let Job {
             path,
             mut file,
             consumes,
             crossfile,
         } = job;
+        let mut pipeline = Pipeline::default();
         let start = check_closed(closed).and_then(|()| {
             let storage_read_nanoseconds = read(&path, &mut file, grammars)?;
             let budget = MatchBudget::work(closed, file_work_budget(file.input.source.len()));
@@ -377,7 +376,28 @@ fn sql_batch(
                 ast,
             })
         });
-        started.push((path, file, consumes, crossfile, start));
+        ((path, file, consumes, crossfile, start), pipeline)
+    };
+    // A batch alone runs its files' native steps on the worker pool where native would: with as
+    // many files as workers.
+    let parallel = grouped && batch.len() >= WORKER_THREADS;
+    let (mut started, pipelines): (Vec<_>, Vec<Pipeline>) = if parallel {
+        WORK_POOL.install(|| {
+            batch
+                .into_par_iter()
+                .map_init(BTreeMap::new, |grammars, job| start(job, grammars))
+                .unzip()
+        })
+    } else {
+        let mut grammars = BTreeMap::new();
+        batch
+            .into_iter()
+            .map(|job| start(job, &mut grammars))
+            .unzip()
+    };
+    let mut pipeline = Pipeline::default();
+    for job in &pipelines {
+        pipeline.add(job);
     }
     // One run for the batch: each statement over the files whose clause it matches.
     let mut docs = Vec::new();
@@ -423,8 +443,10 @@ fn sql_batch(
     }
     let found = if runs.is_empty() {
         Ok(Vec::new())
+    } else if grouped {
+        sql.run_grouped(docs, &runs)
     } else {
-        sql.run(docs, &runs)
+        sql.run(sql.worker_slot(), docs, &runs)
     };
     match found {
         Ok(mut found) => {
@@ -443,43 +465,66 @@ fn sql_batch(
             }
         }
     }
-    let finished = started
-        .into_iter()
-        .map(|(path, mut file, consumes, crossfile, start)| {
-            let work = start.and_then(|started| {
-                let Started {
-                    budget,
-                    transient,
-                    storage_read_nanoseconds,
-                    mut pass,
-                    ast,
-                } = started;
-                let budget = budget.resume();
-                #[cfg(test)]
-                let consumer_budget = consumer_budget(crossfile.is_some());
-                let _consumer = CrossFileScheduler::install(crossfile);
-                let rendered = timed(&mut pipeline.render, || {
-                    ast.map(|ast| ast.render(&mut file, context.code_rules, &mut pass))
-                        .transpose()
-                });
-                #[cfg(test)]
-                restore_consumer_budget(consumer_budget);
-                let restored = rendered?;
-                let metrics = pass.end(&mut file, &budget);
-                finish(
-                    &mut file,
-                    grammars,
-                    &budget,
-                    (transient, consumes),
-                    restored,
-                    metrics,
-                    storage_read_nanoseconds,
-                )
+    type StartedJob<'c> = (
+        String,
+        FileState,
+        bool,
+        Option<CrossFileConsumer>,
+        Result<Started<'c>>,
+    );
+    let end = |(path, mut file, consumes, crossfile, start): StartedJob<'_>,
+               grammars: &mut Grammars| {
+        let mut pipeline = Pipeline::default();
+        let work = start.and_then(|started| {
+            let Started {
+                budget,
+                transient,
+                storage_read_nanoseconds,
+                mut pass,
+                ast,
+            } = started;
+            let budget = budget.resume();
+            #[cfg(test)]
+            let consumer_budget = consumer_budget(crossfile.is_some());
+            let _consumer = CrossFileScheduler::install(crossfile);
+            let rendered = timed(&mut pipeline.render, || {
+                ast.map(|ast| ast.render(&mut file, context.code_rules, &mut pass))
+                    .transpose()
             });
-            CrossFileScheduler::retain_scopes(&mut file, consumes);
-            (path, file, work)
+            #[cfg(test)]
+            restore_consumer_budget(consumer_budget);
+            let restored = rendered?;
+            let metrics = pass.end(&mut file, &budget);
+            finish(
+                &mut file,
+                grammars,
+                &budget,
+                (transient, consumes),
+                restored,
+                metrics,
+                storage_read_nanoseconds,
+            )
+        });
+        CrossFileScheduler::retain_scopes(&mut file, consumes);
+        ((path, file, work), pipeline)
+    };
+    let (finished, pipelines): (Evaluated, Vec<Pipeline>) = if parallel {
+        WORK_POOL.install(|| {
+            started
+                .into_par_iter()
+                .map_init(BTreeMap::new, |grammars, job| end(job, grammars))
+                .unzip()
         })
-        .collect();
+    } else {
+        let mut grammars = BTreeMap::new();
+        started
+            .into_iter()
+            .map(|job| end(job, &mut grammars))
+            .unzip()
+    };
+    for job in &pipelines {
+        pipeline.add(job);
+    }
     sql.add_pipeline(pipeline);
     finished
 }
