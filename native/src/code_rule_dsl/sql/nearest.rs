@@ -462,7 +462,7 @@ unsafe impl VTabCursor for NearestCursor<'_> {
             cache.batch = current;
             cache.stages.clear();
         }
-        if !cache.stages.contains_key(&stage) {
+        if let std::collections::hash_map::Entry::Vacant(slot) = cache.stages.entry(stage) {
             let mut listed: HashMap<u32, Vec<u32>> = HashMap::new();
             let mut items = args.in_values(2)?;
             while let Some(item) = items.next()? {
@@ -477,13 +477,10 @@ unsafe impl VTabCursor for NearestCursor<'_> {
                 nodes.sort_unstable();
                 nodes.dedup();
             }
-            cache.stages.insert(
-                stage,
-                StageSet {
-                    listed,
-                    files: HashMap::new(),
-                },
-            );
+            slot.insert(StageSet {
+                listed,
+                files: HashMap::new(),
+            });
         }
         self.stage = stage;
         self.columns = None;

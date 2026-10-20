@@ -51,7 +51,10 @@ impl Emitter<'_> {
     ) -> String {
         // The rows `sub` runs on hold what it reads, and `base` and `out`.
         let held = self.live_before(follow, live);
-        assert!(rule < ELEMENT, "a statement numbers its guarded sub-rules below {ELEMENT}");
+        assert!(
+            rule < ELEMENT,
+            "a statement numbers its guarded sub-rules below {ELEMENT}"
+        );
         let sets = format!("{NAMESPACE}fs");
         let members = format!("{NAMESPACE}fm");
         for sql in [

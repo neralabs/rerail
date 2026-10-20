@@ -453,7 +453,12 @@ fn reach(down: Value) -> Value {
 fn a_self_call_past_the_first_match_reads_no_loop() {
     let down = json!({ "stopBy": "end", "kind": "call", "matches": "reach" });
     assert_eq!(
-        agreed("python", reach(down), None, "def f(x):\n    g(x)\n    f(x)\n"),
+        agreed(
+            "python",
+            reach(down),
+            None,
+            "def f(x):\n    g(x)\n    f(x)\n"
+        ),
         ["f(x)", "g(x)"]
     );
 }
@@ -487,10 +492,19 @@ fn a_strict_search_ending_unknown_before_a_self_call_reads_no_loop() {
             .three_valued
     );
     assert_eq!(
-        agreed("python", reach(down.clone()), None, "def f(x):\n    u(x)\n    f(x)\ng(1)\n"),
+        agreed(
+            "python",
+            reach(down.clone()),
+            None,
+            "def f(x):\n    u(x)\n    f(x)\ng(1)\n"
+        ),
         ["g(1)"]
     );
-    let reason = refused("python", reach(down), "def f(x):\n    f(x)\n    u(x)\ng(1)\n");
+    let reason = refused(
+        "python",
+        reach(down),
+        "def f(x):\n    f(x)\n    u(x)\ng(1)\n",
+    );
     assert!(
         reason.contains("Unsupported(recursion whose reads loop back)"),
         "{reason}"
@@ -609,7 +623,11 @@ def unrelated(value):\n    return is_ref(value)\n";
             .collect();
         assert_eq!(
             names,
-            ["lower_row_cell", "lower_scalar_server_ref", "lower_scalar_source"],
+            [
+                "lower_row_cell",
+                "lower_scalar_server_ref",
+                "lower_scalar_source"
+            ],
             "{ast}"
         );
     }

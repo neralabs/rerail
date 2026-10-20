@@ -5,13 +5,13 @@
 //! matcher's order of the steps, the first that is not true deciding.
 
 use super::{Bound, INTERNAL, Lowerer, unsupported};
-use crate::code_rule_dsl::sql::recursion;
 use crate::code_rule_dsl::matcher::{
     AstMatcher, BindingFilter, BindingTest, Binds, FormatArgs, ParseTest, Semantic,
 };
 use crate::code_rule_dsl::sql::plan::{
     AllTerm, Export, Need, Op, SlotId, SlotKind, Source, Unsupported, Walk,
 };
+use crate::code_rule_dsl::sql::recursion;
 use crate::code_rule_dsl::sql::terminals::{
     Binder, BindingSites, BindsCandidates, BindsOthers, Exported, FactTerm, FormatPart,
     FormatSides, Occurrences, Parsed, Terminal, Verdicts,

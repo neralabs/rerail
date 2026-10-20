@@ -618,7 +618,11 @@ impl<'s> Emitter<'s> {
 
     /// What each of `ops`, run one after another, must leave in its output for the rest and
     /// `live` after them: the `live` of each, in order.
-    fn pipeline<'o>(&mut self, ops: impl DoubleEndedIterator<Item = &'o Op>, live: &Live) -> Vec<Live> {
+    fn pipeline<'o>(
+        &mut self,
+        ops: impl DoubleEndedIterator<Item = &'o Op>,
+        live: &Live,
+    ) -> Vec<Live> {
         let mut lives = Vec::new();
         let mut after = Rc::clone(live);
         for op in ops.rev() {

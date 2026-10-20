@@ -79,9 +79,7 @@ impl Emitter<'_> {
                 let roots = self.op(root, input, &held);
                 self.op(op, &roots, live)
             }
-            [op, Op::Excluded { name, root }] => {
-                self.excluding_open(op, *name, *root, input, live)
-            }
+            [op, Op::Excluded { name, root }] => self.excluding_open(op, *name, *root, input, live),
             _ => unreachable!("a three-valued clause lowers `all` as AllOpen"),
         }
     }

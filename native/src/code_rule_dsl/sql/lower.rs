@@ -69,6 +69,8 @@ pub(super) struct ProgramBuilder {
     /// The rules `stage` derives (an `any` with a `not` branch read as its dual `all`), kept for
     /// the program's life: their addresses key `stage_rules` and `leaves`, so none is freed and
     /// its address reused by another rule while the program is lowered.
+    // Boxed on purpose: `Vec` reallocation would move an unboxed rule and change its address.
+    #[allow(clippy::vec_box)]
     derived: Vec<Box<AstMatcher>>,
     regexes: HashMap<(String, String), usize>,
     fresh_patterns: HashMap<usize, usize>,
@@ -284,9 +286,9 @@ impl RootKinds {
     fn shape(&mut self, rule: &AstMatcher, analysis: &mut Analysis) -> Option<Shape> {
         let kinds = |kinds: BTreeSet<u16>| kinds.into_iter().collect::<Vec<u16>>();
         match rule {
-            AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Never => self
-                .of(rule, analysis)
-                .map(|own| Shape::Kinds(kinds(own))),
+            AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Never => {
+                self.of(rule, analysis).map(|own| Shape::Kinds(kinds(own)))
+            }
             AstMatcher::Has(related, StopBy::End) => self
                 .of(related.rule(), analysis)
                 .map(|own| Shape::Contains(kinds(own))),

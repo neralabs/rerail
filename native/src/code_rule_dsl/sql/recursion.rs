@@ -105,13 +105,14 @@ fn walk(rule: &AstMatcher, stop: bool, found: &mut dyn FnMut(&UtilRef, bool)) {
 /// calling `seen(matcher, stop)`, `stop` where it lies in a stop rule.
 fn visit<'r>(rule: &'r AstMatcher, stop: bool, seen: &mut dyn FnMut(&'r AstMatcher, bool)) {
     seen(rule, stop);
-    let related =
-        |item: &'r AstMatcher, stop_by: Option<&'r AstMatcher>, seen: &mut dyn FnMut(&'r AstMatcher, bool)| {
-            visit(item, stop, seen);
-            if let Some(stop_by) = stop_by {
-                visit(stop_by, true, seen);
-            }
-        };
+    let related = |item: &'r AstMatcher,
+                   stop_by: Option<&'r AstMatcher>,
+                   seen: &mut dyn FnMut(&'r AstMatcher, bool)| {
+        visit(item, stop, seen);
+        if let Some(stop_by) = stop_by {
+            visit(stop_by, true, seen);
+        }
+    };
     match rule {
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             for item in items {

@@ -1178,7 +1178,9 @@ impl Generator<'_> {
                         { first: { "stopBy": "end", "matches": { "c0": { "P": "$P" } } } },
                     ] } }),
                 );
-                vec![json!({ second: { "stopBy": "end", "matches": { "c2": { "P": format!("${caller}") } } } })]
+                vec![
+                    json!({ second: { "stopBy": "end", "matches": { "c2": { "P": format!("${caller}") } } } }),
+                ]
             } else {
                 let call = json!({ "c0": { "P": format!("${caller}") } });
                 vec![

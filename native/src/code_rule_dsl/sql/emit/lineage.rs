@@ -219,7 +219,11 @@ impl Emitter<'_> {
             });
             return;
         }
-        self.insert(reads, format!("{head}{tail}"), Reads::join(&[input, demand]));
+        self.insert(
+            reads,
+            format!("{head}{tail}"),
+            Reads::join(&[input, demand]),
+        );
     }
 
     /// Ends a unit's body: its deferred reads, each from the needed rows of its space.
@@ -247,7 +251,9 @@ impl Emitter<'_> {
         if let Some(needed) = &self.spaces[space].needed {
             return needed.clone();
         }
-        let parent = self.spaces[space].parent.expect("a unit's keys are all needed");
+        let parent = self.spaces[space]
+            .parent
+            .expect("a unit's keys are all needed");
         let above = self.needed(parent);
         let frame = self.spaces[space].frame.clone();
         // The rows whose parent row `alias` is needed.

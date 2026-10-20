@@ -14,8 +14,8 @@ use super::shapes::{
 };
 use super::skip::{self, Counts, MODE, Mode, Outcome};
 use super::terminals::{
-    BatchScopes, FactTable, PatternRow, PatternTable, PatternTerm, Terminal, TextTable, fresh_match,
-    take_fact_time,
+    BatchScopes, FactTable, PatternRow, PatternTable, PatternTerm, Terminal, TextTable,
+    fresh_match, take_fact_time,
 };
 use super::timing::{Started, Timing, timed};
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -86,6 +86,10 @@ pub(super) struct Program {
 /// A pattern terminal's fresh-env matches tested so far in a batch, by key (`file << 32 | node`):
 /// the capture columns, `None` where the pattern does not match.
 type FreshMatches = HashMap<i64, Option<Arc<[Option<i64>]>>>;
+/// A file to run: its tape, the statement (by index into the compiled grammars) that matches it,
+/// if any, with its selected roots, and what its scopes read beyond the tape.
+pub(in crate::code_rule_dsl) type RunFile =
+    (TapeDoc, Option<(usize, Option<Arc<[u32]>>)>, FileContext);
 
 /// A batch: its files' tapes and node facts, its program, and the fresh-env matches of each
 /// pattern terminal at the nodes tested so far.
@@ -429,9 +433,7 @@ impl ProgramCompiler {
             mut phases,
             ..
         } = self;
-        let compiled = timed(&mut phases.finish, || {
-            Compiled::new(builder, planner, None)
-        });
+        let compiled = timed(&mut phases.finish, || Compiled::new(builder, planner, None));
         (compiled, phases)
     }
 }
@@ -698,7 +700,7 @@ impl Compiled {
     /// file's matches, ordered by root.
     pub(in crate::code_rule_dsl) fn run_batches(
         &self,
-        files: Vec<(TapeDoc, Option<(usize, Option<Arc<[u32]>>)>, FileContext)>,
+        files: Vec<RunFile>,
         batch: usize,
     ) -> Result<Vec<Vec<SqlMatch>>, SqlError> {
         let mut session = self.session()?;
@@ -780,7 +782,8 @@ impl Stats {
         self.stages.add(after.stages.since(before.stages));
         self.select.add(after.select.since(before.select));
         self.input.add(after.input.since(before.input));
-        self.node_facts.add(after.node_facts.since(before.node_facts));
+        self.node_facts
+            .add(after.node_facts.since(before.node_facts));
         self.facts.add(after.facts.since(before.facts));
         self.skipped += after.skipped - before.skipped;
         self.skipped_runs += after.skipped_runs - before.skipped_runs;
@@ -1543,7 +1546,10 @@ fn substitute(sql: String, substitutions: &[(&str, &str)]) -> String {
             continue;
         }
         let rest = &sql[at..];
-        if let Some((from, to)) = substitutions.iter().find(|(from, _)| rest.starts_with(from)) {
+        if let Some((from, to)) = substitutions
+            .iter()
+            .find(|(from, _)| rest.starts_with(from))
+        {
             let out = out.get_or_insert_with(|| String::with_capacity(sql.len() + 64));
             out.push_str(&sql[copied..at]);
             out.push_str(to);

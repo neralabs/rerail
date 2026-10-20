@@ -222,8 +222,14 @@ fn a_walk_s_candidates_hold_only_the_slots_read_after_them() {
     };
     let wide = json!({ "pattern": "$F($A, $B, $C, $D)" });
     let cases = [
-        (json!({ "stopBy": "end", "kind": "identifier", "regex": "^x$" }), 0),
-        (json!({ "stopBy": "end", "kind": "identifier", "pattern": "$X" }), 1),
+        (
+            json!({ "stopBy": "end", "kind": "identifier", "regex": "^x$" }),
+            0,
+        ),
+        (
+            json!({ "stopBy": "end", "kind": "identifier", "pattern": "$X" }),
+            1,
+        ),
     ];
     for (has, carried) in cases {
         let rule = compiled(json!({ "rule": {
@@ -232,8 +238,14 @@ fn a_walk_s_candidates_hold_only_the_slots_read_after_them() {
         } }));
         same(&rule, &snapshot(&[("typescript", "a.ts", source)]));
         let (copied, selected) = widths(&rule);
-        assert_eq!(copied, carried, "the walk's candidates carry {copied} slots");
-        assert!(selected > carried + 4, "the clause selects {selected} slots");
+        assert_eq!(
+            copied, carried,
+            "the walk's candidates carry {copied} slots"
+        );
+        assert!(
+            selected > carried + 4,
+            "the clause selects {selected} slots"
+        );
     }
 }
 
@@ -274,9 +286,12 @@ fn a_negated_stop_or_of_rule_is_its_rule_s_stage_complemented() {
             );
             // A stage's frames are named `s<stage>_…`: none reads every node of the batch.
             assert!(
-                !statements.iter().any(|statement| statement.starts_with("INSERT INTO s")
-                    && statement.contains("FROM node n WHERE n.file IN (SELECT file FROM runs")
-                    && !statement.contains("AND n.kind IN (")),
+                !statements
+                    .iter()
+                    .any(|statement| statement.starts_with("INSERT INTO s")
+                        && statement
+                            .contains("FROM node n WHERE n.file IN (SELECT file FROM runs")
+                        && !statement.contains("AND n.kind IN (")),
                 "{rule}: a stage reads only its rule's kinds"
             );
             // None computes the plain negation's anti-join (the dual's `not return_statement`

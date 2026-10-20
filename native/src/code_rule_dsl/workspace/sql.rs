@@ -138,8 +138,7 @@ impl SqlProgram {
                     .clause(grammar, compiled.violation.each.as_deref());
                 let statement = match outcome {
                     Ok(statement) => {
-                        self.names
-                            .push((code_rule.id.clone(), compiled.id.clone()));
+                        self.names.push((code_rule.id.clone(), compiled.id.clone()));
                         Some(statement)
                     }
                     Err(unsupported) => {
@@ -723,7 +722,9 @@ mod tests {
         );
         let started = std::time::Instant::now();
         for compiled in &compiled {
-            workspace.add_code_rule(compiled, None).expect("a code rule");
+            workspace
+                .add_code_rule(compiled, None)
+                .expect("a code rule");
         }
         eprintln!(
             "add rules (SQL compile) {:.2}s, peak {:.0} MiB, resident {:.0} MiB, allocated {:.0} MiB",

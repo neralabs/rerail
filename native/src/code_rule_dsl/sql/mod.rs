@@ -22,16 +22,16 @@ mod tests;
 mod texts;
 mod timing;
 
+pub(super) use exec::{
+    ClauseRun, CompilePhases, Compiled, FileContext, ProgramCompiler, Session, SqlError, SqlMatch,
+    Stats, compile_enumerating, environment,
+};
+#[cfg(feature = "unbounded-work")]
+pub(super) use exec::{StatementProfile, profiled};
 #[cfg(test)]
 pub(super) use exec::{compile, compile_each};
 #[cfg(test)]
 pub(super) use shapes::VERIFY as VERIFY_SHAPES;
-pub(super) use exec::{
-    ClauseRun, CompilePhases, Compiled, FileContext, ProgramCompiler, Session, SqlError,
-    SqlMatch, Stats, compile_enumerating, environment,
-};
-#[cfg(feature = "unbounded-work")]
-pub(super) use exec::{StatementProfile, profiled};
 pub(super) use timing::{Timing, timed};
 
 /// Files per batch where the caller sets none: the workspace's default, and every batch of a
