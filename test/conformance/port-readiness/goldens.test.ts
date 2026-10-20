@@ -81,9 +81,10 @@ test("the goldens file is one golden per line, grouped by rule and then task, ev
     ["a:rule", [golden("rerail:vscode", "src/x.ts")]],
     ["z:rule", [golden("t1", "0.ts"), golden("t2", "b.ts", "1".repeat(64)), golden("t1", "a.ts")]],
   ]);
-  const text = serializeGoldens(a);
-  assert.equal(text, serializeGoldens(b));
-  assert.deepEqual(text.split("\n").slice(1), [
+  const text = serializeGoldens(a, "NRV");
+  assert.equal(text, serializeGoldens(b, "NRV"));
+  assert.equal(text.split("\n")[1], "# Source: NRV");
+  assert.deepEqual(text.split("\n").slice(2), [
     "a:rule",
     "\trerail:vscode",
     `\t\tsrc/x.ts\t${SHA}`,
@@ -99,11 +100,13 @@ test("the goldens file is one golden per line, grouped by rule and then task, ev
 });
 
 test("a goldens file not in its one form is refused", () => {
-  const text = serializeGoldens(new Map([["r", [golden("t1", "a.ts"), golden("t1", "b.ts")]]]));
+  const text = serializeGoldens(new Map([["r", [golden("t1", "a.ts"), golden("t1", "b.ts")]]]), "NRV");
   const swapped = text.replace(`\t\ta.ts\t${SHA}\n\t\tb.ts`, `\t\tb.ts\t${SHA}\n\t\ta.ts`);
   assert.throws(() => parseGoldens(swapped, "goldens.tsv"), /not in its one form/u);
   assert.throws(() => parseGoldens(text.replace(SHA, "x"), "goldens.tsv"), /not a golden/u);
-  assert.throws(() => serializeGoldens(new Map([["r", [golden("t1", "a\tb.ts")]]])), /cannot be written/u);
+  // Every goldens file says where its goldens come from.
+  assert.throws(() => parseGoldens(text.replace("# Source: NRV\n", ""), "goldens.tsv"), /no "# Source: /u);
+  assert.throws(() => serializeGoldens(new Map([["r", [golden("t1", "a\tb.ts")]]]), "NRV"), /cannot be written/u);
 });
 
 test("readGoldens reads a tool-pack's goldens.tsv, and a tool-pack without one has none", async () => {
@@ -111,7 +114,7 @@ test("readGoldens reads a tool-pack's goldens.tsv, and a tool-pack without one h
   try {
     assert.equal((await readGoldens(root)).size, 0);
     const goldens: Goldens = new Map([["eslint:no-debugger", [golden("t1", "src/a.ts")]]]);
-    await writeFile(join(root, GOLDENS_FILE), serializeGoldens(goldens));
+    await writeFile(join(root, GOLDENS_FILE), serializeGoldens(goldens, "NRV"));
     assert.deepEqual([...await readGoldens(root)], [...goldens]);
   } finally {
     await rm(root, { recursive: true, force: true });
