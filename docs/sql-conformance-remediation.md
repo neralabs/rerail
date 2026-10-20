@@ -689,17 +689,17 @@ Run the architecture checks with structural, semantic, cross-file, negative, and
 
 ## Current status and execution direction
 
-Phases 1 through 4 are complete.
+Phases 1 through 5 are complete.
 The aggregate Phase 2 through Phase 4 SQL gate is green for all 39 contracts.
-The aggregate ordered terminal-catalog gate is green for all 39 contracts.
-All Phase 2 through Phase 4 behavioral oracle checks are green.
+The four Phase 5 SQL and catalog contracts are also green.
+All Phase 2 through Phase 5 behavioral oracle checks are green.
 
 The completed aggregate contracts include:
 
 - Thirteen Phase 2 truth and value statements.
 - Ten Phase 3 utility statements.
 - Sixteen Phase 4 semantic fact statements.
-- Thirty-nine ordered terminal catalogs with 95 terminal entries.
+- Forty-three ordered terminal catalogs with 105 terminal entries.
 
 The catalog fixture contains only ordered terminal-catalog data.
 The SQL fixture is the only owner of authored SQL statements.
@@ -716,18 +716,19 @@ Commit `e5197b32` is the completed focused red commit for parsed-document SQL be
 Commit `dd3e38c1` is its TDD-green implementation.
 Commit `e63f33be` is the completed focused red commit for generated-document mapping.
 Commit `24e32bed` is its TDD-green implementation.
-Commit `c2358ea9` is the active red commit for exact Phase 5 SQL and terminal catalogs.
+Commit `c2358ea9` is the completed red commit for exact Phase 5 SQL and terminal catalogs.
+Commit `5e7178b3` is its TDD-green implementation.
 
-Phase 5 is in progress.
-Parsed literals, relational host predicates, and exported parsed captures now execute through bounded
+Phases 1 through 5 are complete.
+Parsed literals, relational host predicates, and exported parsed captures execute through bounded
 parse-fact descriptors and SQL composition. Generated results cross typed document-map rows in SQL.
-Missing maps, invalid spans, and overlaps fail closed before registration. Mapped spans equal the
-committed oracle for the generated-document contract.
+Missing maps, invalid spans, and overlaps fail closed before registration. Mapped source identities,
+paths, and spans equal the committed oracles. Parse-capacity failure is atomic.
 
-Authored Phase 5 SQL and catalog contracts remain incomplete. Source-path identity assertions and
-atomic parse-capacity failure tests also remain incomplete.
+All four Phase 5 authored SQL statements and all four ordered terminal catalogs pass exact,
+behavioral, repeated, and concurrent compilation checks.
 
-The next required package is exact Phase 5 SQL and ordered terminal catalogs.
+The next required package is Phase 6 clause-level relational semantics.
 Do not change the completed Phase 2 through Phase 4 contracts to accommodate later work.
 All 39 Phase 2 through Phase 4 catalogs pass exact, repeated, and concurrent compilation checks.
 
