@@ -827,6 +827,42 @@ fn production_contract_phases_two_to_four_match_authored_sql_statements() {
 }
 
 #[test]
+fn production_contract_phase_four_has_complete_terminal_catalogs() {
+    let goldens = implementation_goldens();
+    let expected_names = PHASE_FOUR_CASES.iter().copied().collect::<BTreeSet<_>>();
+    let phase_four = goldens
+        .cases
+        .into_iter()
+        .filter(|golden| expected_names.contains(golden.name.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        phase_four
+            .iter()
+            .map(|golden| golden.name.as_str())
+            .collect::<BTreeSet<_>>(),
+        expected_names,
+        "each Phase 4 contract must own one authored terminal catalog"
+    );
+    let cases = cases()
+        .into_iter()
+        .map(|case| (case.name.clone(), case))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for golden in phase_four {
+        assert!(
+            !golden.terminal_catalog.is_empty(),
+            "{} catalog",
+            golden.name
+        );
+        assert_eq!(
+            actual_implementation_golden(&cases[&golden.name]).terminal_catalog,
+            golden.terminal_catalog,
+            "{} exact ordered terminal catalog",
+            golden.name
+        );
+    }
+}
+
+#[test]
 fn production_contract_phases_two_to_four_have_complete_implementation_goldens() {
     let goldens = implementation_goldens();
     let expected_names = PHASE_TWO_CASES
