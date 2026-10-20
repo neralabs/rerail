@@ -938,18 +938,26 @@ impl SqlRenderer {
             if spec.rules.is_empty() {
                 return self.render_simple_semantic_gate(source_producer, spec.producer);
             }
-            if let [rule] = spec.rules.as_slice()
-                && rule.target_kind.is_none()
-                && let Some(relation) = &rule.relation
-                && let [root] = relation.roots.as_slice()
-                && let Some(target_producer) = Self::terminal_producer(root)?
-            {
-                return self.render_semantic_target(
-                    source_producer,
-                    spec.producer,
-                    target_producer,
-                    rule.slot,
-                );
+            if let [rule] = spec.rules.as_slice() {
+                if let Some(target_kind) = rule.target_kind {
+                    return self.render_semantic_kind_target(
+                        source_producer,
+                        spec.producer,
+                        rule.slot,
+                        target_kind,
+                    );
+                }
+                if let Some(relation) = &rule.relation
+                    && let [root] = relation.roots.as_slice()
+                    && let Some(target_producer) = Self::terminal_producer(root)?
+                {
+                    return self.render_semantic_target(
+                        source_producer,
+                        spec.producer,
+                        target_producer,
+                        rule.slot,
+                    );
+                }
             }
         }
         let relations = inputs
@@ -1128,6 +1136,23 @@ impl SqlRenderer {
             "{resolved} AS (\n  SELECT {columns}, {merged} AS bindings, source.choice_order || semantic.choice_order AS choice_order FROM {source} source\n  INNER JOIN {gate} semantic\n    ON semantic.file_index = source.file_index AND semantic.node = source.node\n    AND {compatible}\n)"
         ));
         Ok(resolved)
+    }
+
+    fn render_semantic_kind_target(
+        &mut self,
+        source_producer: usize,
+        fact_producer: usize,
+        slot: u16,
+        target_kind: u16,
+    ) -> Result<String, String> {
+        let source = self.render_terminal_producer(source_producer, "source")?;
+        let target = self.next_name("semantic_site");
+        let verdict = "CASE WHEN source.verdict = 0 OR gate.verdict = 0 THEN 0 WHEN source.verdict IS NULL OR gate.verdict < 0 OR gate.verdict IS NULL THEN NULL ELSE 1 END";
+        let columns = qualified_row_columns_with_verdict("source", verdict);
+        self.ctes.push(format!(
+            "{target} AS (\n  SELECT DISTINCT {columns}, source.bindings, source.choice_order FROM {source} source\n  JOIN fact gate ON gate.producer_id = {fact_producer} AND gate.file_index = source.file_index AND gate.node = source.node AND gate.fact_kind = 0\n  JOIN fact target ON target.producer_id = gate.producer_id AND target.file_index = gate.file_index AND target.node = gate.node AND target.match_index = gate.match_index AND target.fact_kind = {slot}\n  JOIN producer_status status ON status.producer_id = gate.producer_id AND status.file_index = gate.file_index\n  WHERE status.complete = 1 AND gate.verdict <> 0 AND target.verdict = 1 AND target.capture_kind = {target_kind}\n)"
+        ));
+        Ok(target)
     }
 
     fn render_semantic_target(
