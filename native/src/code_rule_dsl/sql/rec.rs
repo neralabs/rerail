@@ -41,9 +41,6 @@ use std::sync::Arc;
 /// The end of a hash chain.
 const NONE: u32 = u32::MAX;
 
-/// The rows a table's buffers keep across batches once emptied.
-const RETAIN: usize = 1 << 14;
-
 /// The `xBestIndex` cost of a full scan, as `frames` weighs one: a stat-less B-tree's.
 const SCAN_COST: f64 = 1_048_576.0;
 
@@ -152,13 +149,17 @@ impl RecStore {
         }
     }
 
-    /// Frees what emptied tables keep beyond `RETAIN` rows.
-    pub(super) fn trim(&self) {
+    /// Frees every emptied table's buffers, when a batch ends, as `FrameStore::release` frees the
+    /// frames': a session has hundreds of recursion tables and a batch runs few of them, so
+    /// buffers kept for the next batch add up to every table's largest batch (120 MiB over four
+    /// sessions on workspace 01's Tempo and data-layer policies, where every table is empty when
+    /// its batch ends). Within a batch, `clear` keeps them for the loop's next pass.
+    pub(super) fn release(&self) {
         for shared in self.tables.lock().values() {
             // SAFETY: as in `clear`.
             let table = unsafe { shared.get_mut() };
             if table.live == 0 {
-                table.trim();
+                table.release();
             }
         }
     }
@@ -600,16 +601,20 @@ impl Table {
         }
     }
 
-    fn trim(&mut self) {
-        let cells = RETAIN * self.width;
-        self.values.shrink_to(cells);
-        self.tags.shrink_to(cells);
+    /// Empties a table without live rows (its deleted ones dropped, as `compact` drops them) and
+    /// frees its buffers. `largest` stays: a NULL key still takes the largest so far plus one.
+    fn release(&mut self) {
+        let largest = self.largest;
+        self.clear();
+        self.largest = largest;
+        self.values.shrink_to(0);
+        self.tags.shrink_to(0);
         self.others.shrink_to(0);
-        self.alive.shrink_to(RETAIN);
-        self.slot_of.shrink_to(RETAIN);
+        self.alive.shrink_to(0);
+        self.slot_of.shrink_to(0);
         for index in &mut self.indexes {
-            index.heads.shrink_to(RETAIN);
-            index.next.shrink_to(RETAIN);
+            index.heads.shrink_to(0);
+            index.next.shrink_to(0);
         }
     }
 

@@ -1925,10 +1925,12 @@ const FREE_PAGES: &str = "PRAGMA temp.incremental_vacuum";
 /// The statements every batch runs besides its stages' and clauses'.
 const BATCH_STATEMENTS: usize = 5;
 /// The most statements a session's cache holds; the least recently run is finalized when a new
-/// one is prepared past it. A statement holds 4.7 KiB on average, and a session that ran every
-/// clause of the data-layer and Tempo policies held 34k of them (619 MiB over four sessions); a
-/// batch runs a few thousand.
-const STATEMENT_CACHE: usize = 4096;
+/// one is prepared past it. A statement holds 5 KiB on average. On workspace 01 with the Tempo and
+/// data-layer policies each of the four sessions runs about 19k distinct texts (395 MiB held
+/// uncapped, whether its clauses run grouped or not); at 2,048 they hold 40 MiB, and re-preparing
+/// the evicted ones costs 0.6% of the scan's instructions (nothing measurable at 4,096, 1.5% at
+/// 1,024).
+const STATEMENT_CACHE: usize = 2048;
 
 /// A connection running one compiled program's batches (`Plan`). A session starts with only the
 /// tables of the batch's own rows, `runs` and `roots`: the files and roots a statement's root
@@ -2193,10 +2195,10 @@ impl Session {
     /// each of `runs` over its files (a statement in one run at most). Returns, per run and per
     /// file of it (in its order), the file's matches, ordered by root. A batch that fails leaves
     /// every table empty, so the session runs the next one afresh; every batch ends with its
-    /// frames' buffers freed and its B-trees' free pages returned (`FREE_PAGES`), so a session
-    /// holds between batches only what it keeps for all of them. The input-set terminals' file
-    /// scopes live for the batch: built on a file's first key, kept across the batch's
-    /// statements, and dropped when it ends.
+    /// frames' and emptied recursion tables' buffers freed and its B-trees' free pages returned
+    /// (`FREE_PAGES`), so a session holds between batches only what it keeps for all of them. The
+    /// input-set terminals' file scopes live for the batch: built on a file's first key, kept
+    /// across the batch's statements, and dropped when it ends.
     pub(in crate::code_rule_dsl) fn run(
         &mut self,
         docs: Vec<(TapeDoc, FileContext)>,
@@ -2248,7 +2250,7 @@ impl Session {
             self.counts.reset();
         }
         self.frames.release();
-        self.recs.trim();
+        self.recs.release();
         let mut free = self.connection.prepare_cached(FREE_PAGES)?;
         let mut freed = free.query([])?;
         // Each step frees one page.
