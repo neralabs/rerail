@@ -1,0 +1,13 @@
+[package]
+name = "lits"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex = "=1.13.1"
+regex-syntax = "=0.8.11"
+globset = "=0.4.20"
+aho-corasick = "1"
+serde_json = "1"
+
+[workspace]
