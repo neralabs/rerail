@@ -31,6 +31,18 @@ pub(super) const SQL_UNSUPPORTED_MESSAGE: &str =
 
 use crate::code_rule_dsl::sql::DEFAULT_BATCH_SIZE;
 
+/// A worker group's batch: its slot, the clause runs it holds (by index), its files renumbered in
+/// its order, and the runs over those files.
+type GroupBatch = (
+    usize,
+    Vec<usize>,
+    Vec<(TapeDoc, FileContext)>,
+    Vec<ClauseRun>,
+);
+
+/// A group's clause runs (by index) and their matches: per run, per file, per root.
+type GroupFound = (Vec<usize>, Result<Vec<Vec<Vec<SqlMatch>>>, SqlError>);
+
 /// How a workspace matches its AST clauses: the engine and, on SQL, the files per batch.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct EngineOptions {
@@ -178,7 +190,9 @@ impl SqlProgram {
             refusals,
             ran: (0..names.len()).map(|_| AtomicBool::new(false)).collect(),
             costs: (0..names.len()).map(|_| AtomicU64::new(0)).collect(),
-            homes: (0..names.len()).map(|_| AtomicUsize::new(usize::MAX)).collect(),
+            homes: (0..names.len())
+                .map(|_| AtomicUsize::new(usize::MAX))
+                .collect(),
             batch_size: batch_size.max(1),
             sessions: (0..crate::WORKER_THREADS)
                 .map(|_| Mutex::new(None))
@@ -320,7 +334,10 @@ impl SqlEngine {
                     0 => UNMEASURED_COST,
                     cost => cost,
                 };
-                (cost.saturating_mul(run_nodes(run, &docs)) / COST_NODES, index)
+                (
+                    cost.saturating_mul(run_nodes(run, &docs)) / COST_NODES,
+                    index,
+                )
             })
             .collect();
         let total: u64 = estimates.iter().map(|(cost, _)| cost).sum();
@@ -344,7 +361,7 @@ impl SqlEngine {
             groups[group].1.push(index);
         }
         // Each group's own batch: the files its runs read, renumbered in its order.
-        let grouped: Vec<(usize, Vec<usize>, Vec<(TapeDoc, FileContext)>, Vec<ClauseRun>)> = groups
+        let grouped: Vec<GroupBatch> = groups
             .into_iter()
             .enumerate()
             .filter(|(_, (_, members))| !members.is_empty())
@@ -373,15 +390,14 @@ impl SqlEngine {
             })
             .collect();
         drop(docs);
-        let found: Vec<(Vec<usize>, Result<Vec<Vec<Vec<SqlMatch>>>, SqlError>)> =
-            crate::WORK_POOL.install(|| {
-                grouped
-                    .into_par_iter()
-                    .map(|(slot, members, group_docs, group_runs)| {
-                        (members, self.run(slot, group_docs, &group_runs))
-                    })
-                    .collect()
-            });
+        let found: Vec<GroupFound> = crate::WORK_POOL.install(|| {
+            grouped
+                .into_par_iter()
+                .map(|(slot, members, group_docs, group_runs)| {
+                    (members, self.run(slot, group_docs, &group_runs))
+                })
+                .collect()
+        });
         let mut results: Vec<Vec<Vec<SqlMatch>>> = runs
             .iter()
             .map(|run| run.files.iter().map(|_| Vec::new()).collect())

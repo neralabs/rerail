@@ -323,7 +323,8 @@ fn sql_batch(
     sql: &SqlEngine,
     grouped: bool,
     read: &(impl Fn(&str, &mut FileState, &mut Grammars) -> Result<u64> + Sync),
-    finish: &(impl Fn(
+    finish: &(
+         impl Fn(
         &mut FileState,
         &mut Grammars,
         &MatchBudget,
@@ -332,7 +333,8 @@ fn sql_batch(
         Metrics,
         u64,
     ) -> Result<Metrics>
-          + Sync),
+         + Sync
+     ),
 ) -> Evaluated {
     let closed = context.closed;
     #[cfg(feature = "code-rule-profile")]
