@@ -512,6 +512,7 @@ impl SqlEngine {
             memory.statements += held.statements;
             memory.cache += held.cache;
             memory.frames += held.frames;
+            memory.recursion += held.recursion;
         }
         let pipeline = *self
             .pipeline
@@ -563,6 +564,7 @@ impl SqlEngine {
                 "texts": census.texts,
                 "bytes": census.bytes,
                 "frames": census.frames,
+                "recursionTables": census.recs,
                 "btrees": census.btrees,
                 "shapes": census.shapes,
                 "skeletons": census.skeletons,
@@ -595,6 +597,7 @@ impl SqlEngine {
                 "statementBytes": memory.statements,
                 "cacheBytes": memory.cache,
                 "frameBytes": memory.frames,
+                "recursionBytes": memory.recursion,
             },
             // The native per-file steps around the batches' SQL runs (`Pipeline`).
             "pipeline": {
