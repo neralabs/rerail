@@ -1,10 +1,10 @@
 name: Port readiness (record)
 
-# The only workflow that writes a port readiness recording. Pull request CI never runs an upstream linter, so it cannot
-# tell a recording that is what upstream says from one a contributor wrote to make their own rule pass; in a public
-# repository that would be a way to walk a rule past the gates. So recordings are made here, in a run a maintainer
-# starts, with the recorder and the runtimes from the base branch. A pull request that supplies its own recording fails
-# in port-readiness.yml, where the fetch finds no such asset.
+# The only workflow that uploads a port readiness recording to the release, attested, so that later gate legs fetch it
+# instead of recording. A gate leg in port-readiness.yml records a tool-pack whose lock names no attested recording
+# itself, with the commit's own recorder, and fails unless that recorder writes the lock the commit has; this workflow
+# makes the recording that leg can then fetch, in a run a maintainer starts, with the recorder and the runtimes from the
+# base branch.
 #
 # Started two ways, both by someone who can write here:
 #   * the `record-port-readiness` label on a pull request (removed again when the run starts, so a second label re-runs
@@ -174,7 +174,13 @@ jobs:
               {"pack": "javascript", "tool": "eslint-plugin-unicorn"},
               {"pack": "typescript", "tool": "typescript-eslint"},
               {"pack": "typescript", "tool": "eslint-plugin-vitest"},
-              {"pack": "next", "tool": "eslint-plugin-next"}
+              {"pack": "next", "tool": "eslint-plugin-next"},
+              {"pack": "php", "tool": "phpcs"},
+              {"pack": "php", "tool": "phpstan"},
+              {"pack": "php", "tool": "psalm"},
+              {"pack": "blade", "tool": "tlint"},
+              {"pack": "blade", "tool": "blade-parser"},
+              {"pack": "blade", "tool": "bladestan"}
             ]
         run: |
           set -euo pipefail
@@ -251,6 +257,15 @@ jobs:
 
       - name: Build the package
         run: npm run build:js
+
+      # The php and blade tool-packs run their upstream under the exact PHP their runtime pins, and Composer installs
+      # it. Built before the pull request's packs/ are taken, with no token, and cached under the same rule as the caches
+      # above.
+      - name: Set up the pinned PHP and Composer
+        if: matrix.pack == 'php' || matrix.pack == 'blade'
+        uses: ./.github/actions/php
+        with:
+          save: ${{ needs.authorize.outputs.pr == '' }}
 
       # Exactly the commit that was authorized: a push after the label or the dispatch fails here rather than being
       # recorded. packs/ is replaced, not laid over the base branch's, so it is the pull request's exactly — no file only

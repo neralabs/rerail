@@ -66,7 +66,7 @@ A file is fixture data when a directory in its path is `fixtures`/`__fixtures__`
 root (`test/`, `integration/`, `conformance/`, `benchmark/`) and is not TS/JS source or Markdown; or it sits
 in `test/`/`integration/` with a fixture name. It may live only under `fixtures/` or `packs/<id>/upstream/`.
 Exemptions: `packs/<id>/candidates/**` (pack data), `gate-pins` (the port readiness gates' pinned inputs and workers:
-`conformance/port-readiness/*.json`, `conformance/recorders/port-readiness/runtimes/**` and the recorder's Python workers) and, for
+`conformance/port-readiness/*.json`, `conformance/recorders/port-readiness/runtimes/**` and the recorder's Python and PHP workers) and, for
 code-rule documents, `packs/<id>/rules/**`.
 
 ### 4. Engine source roots — target 1 (`native/`)

@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "phpcs-generic-php-backtick-operator",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Avoid the backtick shell operator in PHP; it runs shell commands implicitly and invites command injection.",
   "scope": {
@@ -42,12 +42,19 @@
         "ast": {
           "language": "php",
           "rule": {
-            "kind": "shell_command_expression"
+            "regex": "^`$",
+            "inside": {
+              "kind": "shell_command_expression"
+            },
+            "follows": {
+              "regex": "^`$",
+              "stopBy": "end"
+            }
           }
         }
       },
       "violation": {
-        "anchor": "witness.end",
+        "anchor": "witness.start",
         "code": "Generic.PHP.BacktickOperator",
         "message": "Replace this backtick shell command with proc_open() given the command as an array, so no shell parses the arguments.",
         "suppress": {

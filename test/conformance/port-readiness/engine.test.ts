@@ -68,6 +68,12 @@ describe("the engine sources a rule's key covers", () => {
     for (const path of ["languages/javascript.json", "languages/typescript.json", "native/src/code_rule_dsl/scope/ecma.rs", "native/src/code_rule_dsl/value/ecma/ops.rs"]) {
       assert.ok(split.families.ecma!.includes(path), `${path} is not ecma's`);
     }
+    for (const path of ["languages/php.json", "native/src/code_rule_dsl/scope/php.rs", "native/src/code_rule_dsl/scope/php/blade.rs", "native/src/code_rule_dsl/suppress/phpcs.rs", "native/src/code_rule_dsl/php_view.rs", "native/src/code_rule_dsl/blade/forte/scan.rs"]) {
+      assert.ok(split.families.php!.includes(path), `${path} is not php's`);
+    }
+    for (const path of ["languages/blade.json", "native/src/code_rule_dsl/blade.rs", "native/src/code_rule_dsl/blade/view.rs", "native/src/code_rule_dsl/blade/forte/parser/mod.rs", "native/src/code_rule_dsl/embed/compiled_view.rs"]) {
+      assert.ok(split.families.blade!.includes(path), `${path} is not blade's`);
+    }
   });
 
   /** The only family files under the directories every language reads: Rust's adapter and two matchers only it calls. */
@@ -222,6 +228,9 @@ describe("the language families a rule document names", () => {
     assert.deepEqual(policyFamilies(document([clause("python"), clause("typescript")])), ["ecma", "python"]);
     // Nested utils and sub-rules name languages too, and all of them count.
     assert.deepEqual(policyFamilies(JSON.stringify({ clauses: [{ forbid: { any: [{ ast: { language: "php" } }] } }] })), ["php"]);
+    // A Blade rule reads the PHP of a template's compiled view, so it is judged in PHP's family too; PHP embeds nothing.
+    assert.deepEqual(policyFamilies(document([clause("blade")])), ["blade", "php"]);
+    assert.deepEqual(policyFamilies(document([clause("php")])), ["php"]);
   });
 
   // Empty means "the gates cannot tell", which `engineKey` answers with the whole engine.

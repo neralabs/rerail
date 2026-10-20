@@ -4,7 +4,8 @@ Run offline, never in CI, with PHP 8.5.11 (laravel/framework 13.34.0 installed b
     python3 generate.py fixtures <stillat/blade-parser checkout at tag v2.1.0> <composer project with stillat/blade-parser 2.1.0>
     python3 generate.py corpus <composer project> <name>=<corpus checkout> [...]
 
-`fixtures` runs each ported validator's own test (tests/Validation/<X>Test.php, a Pest file) with read_tests.php:
+`fixtures` runs each ported validator's own test (tests/Validation/<X>Test.php, a Pest file) with the port readiness
+recorder's reader (READ_TESTS, which its blade-parser adapter runs too):
 every template the test hands Document::fromText() is captured, for every row of the test's dataset (`->with(...)`,
 read from the running parser, e.g. CoreDirectiveRetriever's debug directive names), and every expectation the test
 makes is checked against the validator's output on it. Each distinct template of a test file is written to
@@ -45,6 +46,8 @@ VALIDATORS = {
     "RequiredArgumentsValidator": "RequiredArgumentsTest",
 }
 LICENSES = HERE.parents[1] / "licenses" / "blade-parser"
+# Kept outside packs/ because the port readiness recorder runs it too, and a pull request's packs/ is never run there.
+READ_TESTS = HERE.parents[3] / "conformance" / "recorders" / "port-readiness" / "adapters" / "blade_parser_tests.php"
 
 
 def php(*arguments: str, stdin: str | None = None) -> dict | list:
@@ -85,7 +88,7 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
     for validator, name in VALIDATORS.items():
         test = pathlib.Path("tests/Validation") / f"{name}.php"
         written: dict[str, str] = {}
-        for entry in php(str(HERE / "read_tests.php"), str(project), str(checkout), str(checkout / test)):
+        for entry in php(str(READ_TESTS), str(project), str(checkout), str(checkout / test)):
             where = f"{test}: {entry['test']} {entry['dataset'] or ''}"
             if len(entry["templates"]) != 1:
                 raise SystemExit(f"{where} hands Document::fromText() {len(entry['templates'])} templates")
@@ -126,7 +129,7 @@ def write_licenses(checkout: pathlib.Path, copies: list[tuple]) -> None:
 
 Upstream: [stillat/blade-parser](https://github.com/stillat/blade-parser/tree/{COMMIT}) at tag `v{VERSION}` (commit `{COMMIT}`). License: MIT (Copyright (c) Johnathon Koster); [`license.md`](license.md) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the templates the tests of the validators the Blade pack ports (the pack's `conformance.json`) hand the parser, and remain under stillat/blade-parser's license. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): the rule documents in `candidates/rules/`, the recorders `upstream/common.py`, `upstream/capture.php` and `upstream/blade-parser/` (`generate.py`, `read_tests.php`, `run.php`), and the recordings they write by running stillat/blade-parser {VERSION}.
+The files listed below are the templates the tests of the validators the Blade pack ports (the pack's `conformance.json`) hand the parser, and remain under stillat/blade-parser's license. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): the rule documents in `candidates/rules/`, the recorders `upstream/common.py` and `upstream/blade-parser/` (`generate.py`, `run.php`; the test reader it runs is the port readiness recorder's, under `conformance/recorders/port-readiness/adapters/`), and the recordings they write by running stillat/blade-parser {VERSION}.
 
 Paths are relative to the pack directory, `packs/blade/`. Each fixture is written by `upstream/blade-parser/generate.py fixtures`, which runs the test with the template captured as the parser receives it; a template several dataset rows of a test file build alike is written once, under the first.
 

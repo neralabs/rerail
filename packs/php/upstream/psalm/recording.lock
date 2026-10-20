@@ -1,0 +1,37 @@
+{
+  "format": "rerail.port-readiness-recording-lock/v1",
+  "tool": "psalm",
+  "release": "port-readiness-recordings",
+  "recorder": "0.1.0-next.3",
+  "pins": {
+    "repository": "https://github.com/vimeo/psalm",
+    "commit": "e2ca44251c1f1aa2e35452d426895746b47de64e",
+    "version": "6.19.1",
+    "runtime": "psalm-6.19.1"
+  },
+  "runtimes": {
+    "php": {
+      ".php-version": "b5327018c5a535ddfd76fd6e0e83d6a15de58762ccf4ba20ff302c22ee207561",
+      "composer.json": "ad7a9c2cd5b1e654c9b8f856031614e04010bd67a8ad3c6352cc53c623b42213",
+      "extensions.txt": "a79976fa1ad0f348483f383a7c2d603dc4279b137d3d9abb2cc6a27798834ca5"
+    },
+    "psalm-6.19.1": {
+      ".php-version": "b5327018c5a535ddfd76fd6e0e83d6a15de58762ccf4ba20ff302c22ee207561",
+      "composer.json": "98cb4a13816a680408d61b3d692309973f0a901d2ef2f881268b648e921ea17b"
+    }
+  },
+  "files": {
+    "recording.json": {
+      "sha256": "78d63f69051363092cbf2933fbf0d060a743ca1b9e3ebab5b6fb21bc3b480632",
+      "size": 3597637,
+      "format": "rerail.port-readiness-recording/v2",
+      "asset": "php-psalm-recording-78d63f69051363092cbf2933fbf0d060a743ca1b9e3ebab5b6fb21bc3b480632.json.gz"
+    },
+    "corpus.json": {
+      "sha256": "acdcf29c843326ae1af92022012074ecb5bfa48b6e53f5e00fa00672b804fb11",
+      "size": 990,
+      "format": "rerail.port-readiness-corpus/v2",
+      "asset": "php-psalm-corpus-acdcf29c843326ae1af92022012074ecb5bfa48b6e53f5e00fa00672b804fb11.json.gz"
+    }
+  }
+}

@@ -1,0 +1,61 @@
+adapter: psalm
+# Psalm's documents in rerail's php pack.
+rerail:
+  pack: php
+  project: psalm
+  # Psalm analyses .php files (Config's file_extensions), which Rerail routes to PHP; a Blade template (`.blade.php`)
+  # is the blade pack's.
+  in_scope:
+    - .php
+upstream:
+  name: vimeo/psalm
+  repository: https://github.com/vimeo/psalm
+  # The release rerail's php pack records (packs/php/licenses/psalm/UPSTREAM.md: Psalm 6.19.1, the conformance.json
+  # tools entry); tag 6.19.1.
+  commit: e2ca44251c1f1aa2e35452d426895746b47de64e
+  version: 6.19.1
+  license: MIT
+  # The Composer package, with the parsers its analysis reads source and docblocks with pinned too (nikic/php-parser,
+  # phpdocumentor's reflection-docblock and type-resolver, phpstan/phpdoc-parser), run on PHP 8.5.11
+  # (runtimes/psalm-6.19.1/.php-version, the interpreter the pack's conformance recordings were made with).
+  runtime: psalm-6.19.1
+  # Psalm's recommended configuration is the psalm.xml its installation guide has every project generate,
+  # `./vendor/bin/psalm --init` ("Psalm will scan your project and figure out an appropriate error level"):
+  # Config\Creator's template, with findUnusedCode="true" and findUnusedBaselineEntry="true", at the level --init
+  # detects. A project in which Psalm finds no issue gets level 1 (Psalm::autoGenerateConfig), which is also the
+  # template's own level and the level of Psalm's own tests (tests/TestConfig.php), so `init` is that file, read from
+  # the pinned Creator by the adapter's driver. Without errorLevel Psalm runs at level 2 (docs/running_psalm/
+  # error_levels.md); the two levels report both ported issues alike.
+  # - ForbiddenCode (ERROR_LEVEL 4) is an error at levels 1 to 4 and info above (docs: "Errors ignored at level 5 and
+  #   higher"): `init` reports it, with no forbiddenFunctions, so var_dump and shell_exec (and backticks) alone.
+  # - UnusedVariable (ERROR_LEVEL -2) is a feature-specific issue, reported at every level once unused variables are
+  #   sought. findUnusedCode="true" seeks them (Config::loadFromXML sets find_unused_variables from findUnusedCode;
+  #   docs/running_psalm/configuration.md: "including unused variables"), so `init` needs no
+  #   findUnusedVariablesAndParams. Both documents are `recommended` and ship on.
+  #
+  # How the adapter applies it (decisions for the team; they hold for every Psalm pack):
+  # - Gate 5 runs Psalm's command line (`vendor/bin/psalm --output-format=json --no-cache --threads=1`) with `init` on
+  #   each case of upstream's tests: the `code` of a providerValidCodeParse() or providerInvalidCodeParse() case,
+  #   analysed alone as src/somefile.php as the test harness analyses it, for the PHP version its test names (7.4 by
+  #   default, 8.0 for `PHP80-`, 8.1 for a valid `PHP81-`), with the issues the case ignores suppressed. A `SKIPPED-`
+  #   case, which the tests skip as a known Psalm bug, is skipped.
+  # - The tests assert the first error's message (its issue type, sometimes its line and column), not every finding's
+  #   start and end, so no case has markup. The `upstream-tests-agree` tool-pack check runs every case once more as
+  #   tests/TestConfig.php configures Psalm (unused variables sought where the test's setUp calls
+  #   reportUnusedVariables()) and holds Psalm to the tests: each invalid case raises its error_message and no valid
+  #   case raises an error.
+  # - An issue's cases are the cases of every ported issue's test class (tests/UnusedVariableTest.php,
+  #   tests/ForbiddenCodeTest.php; packs/php/upstream/psalm/fixtures/), not its own alone: another issue's case is
+  #   upstream's answer on code the rule must stay silent on, as PHP_CodeSniffer's test files are.
+  # - not-overfit reads the `code` of every provider case of every test class (inline texts in the recording), and an
+  #   issue's implementation is its class and every file of src/ that raises it, with the classes they extend.
+  # - Positions are Psalm's selection, read from its byte offsets (`from`, `to`): start and end, lines as PHP's tokenizer
+  #   breaks them and columns in UTF-8 bytes, as Psalm counts them (span-units/psalm.ts).
+  recommended_configs:
+    - init
+popularity:
+  observed_on: 2026-10-20
+  evidence:
+    - "Packagist: 89,304,062 installs of vimeo/psalm in total, 2,309,491 in the last 30 days (packagist.org/packages/vimeo/psalm/stats.json)"
+    - "GitHub: vimeo/psalm has 5,897 stars and is not archived"
+known_gaps: []

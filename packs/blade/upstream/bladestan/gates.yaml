@@ -1,0 +1,61 @@
+adapter: bladestan
+# Bladestan's documents in rerail's blade pack.
+rerail:
+  pack: blade
+  project: bladestan
+upstream:
+  name: TomasVotruba/bladestan
+  # The repository packs/blade/licenses/bladestan/UPSTREAM.md names; GitHub now serves it as bladestan/bladestan.
+  repository: https://github.com/TomasVotruba/bladestan
+  # The release rerail's blade pack records (packs/blade/licenses/bladestan/UPSTREAM.md: Bladestan 0.11.7, the
+  # conformance.json tools entry); tag 0.11.7.
+  commit: ceb0823cd4b4f400b64a008cace0d91e786a2859
+  version: 0.11.7
+  license: MIT
+  # The Composer package with the PHPStan it runs (phpstan/phpstan 2.2.16, the PHPStan the ported rules name) and the
+  # development dependencies its own rule test runs with (laravel/framework 13.34.0, larastan 3.12.3, livewire 4.4.7,
+  # orchestra/testbench 11.3.0 and its core 11.5.0, phpunit 12.5.38; nikic/php-parser 5.9.0, which Bladestan compiles
+  # templates with), on PHP 8.5.11 (runtimes/bladestan-0.11.7/.php-version, the interpreter the pack's conformance
+  # recordings were made with).
+  runtime: bladestan-0.11.7
+  # Bladestan has no configuration of its own besides the PHPStan extension it ships (config/extension.neon, which
+  # PHPStan's extension installer includes; README "Configure"): which rules run over a compiled template is the
+  # PHPStan level the project runs at. PHPStan recommends none of its levels over the others, and the one it runs
+  # without one is level 0 (phpstan.org/user-guide/rule-levels, "The default level is 0"), as php/phpstan reads it.
+  # Level 0 registers DefinedVariableRule (variable.undefined), PrintfParametersRule (argument.sprintf) and
+  # DuplicateKeysInLiteralArraysRule (array.duplicateKey): those three documents are `recommended` and ship on. The
+  # other five ship off: IfConstantConditionRule (if.alwaysTrue, if.alwaysFalse) and
+  # StrictComparisonOfDifferentTypesRule (identical.alwaysTrue) are level 4's, RandomIntParametersRule (argument.type)
+  # level 5's and MissingFunctionReturnTypehintRule (missingType.return) level 6's.
+  #
+  # How the adapter applies it (decisions for the team; they hold for every Bladestan pack):
+  # - Gate 5 runs Bladestan as its own rule test runs it (tests/Rules/BladeRuleTest.php: PHPStan's RuleTestCase, which
+  #   is level 8, with tests/Rules/config/configured_extension.neon, in the Testbench application of Bladestan's
+  #   testbench.yaml): that is the only configuration Bladestan itself runs its rules in, and level 8 registers every
+  #   ported rule. The `upstream-tests-agree` tool-pack check holds the installed Bladestan to every expectation of that
+  #   test (message and caller line).
+  # - The cases are the templates of the test's application (tests/skeleton/resources, committed as
+  #   packs/blade/upstream/bladestan/fixtures/skeleton/resources/, the copies upstream/bladestan/generate.py wrote), each
+  #   rendered alone with no view data (`view('<its name>')`): a variable no path of the template defines is then "might
+  #   not be defined", which no ported rule claims, so Bladestan's reading and Rerail's, which reads view data as
+  #   unknown, agree on what a template alone says. The test's own renders pass data the template cannot show (its
+  #   fixtures under tests/Rules/Fixture/), so their findings are no answer on the template. A case's answer is the
+  #   errors Bladestan places at the template itself; an included template's are the included template's, which its
+  #   own render answers. Every template is every rule's case, so another rule's template is upstream's answer on code
+  #   the rule must stay silent on. A template Bladestan does not analyse (it does not compile, or names a view or
+  #   component the application does not have) is skipped with Bladestan's message.
+  # - A ported finding is the error of the rule's identifier whose message is the ported rule's (argument.type is
+  #   every rule's parameter type error, the port random_int's; variable.undefined is also "might not be defined").
+  # - A corpus template is rendered the same way, alone, its corpus the only view location, and a view or component
+  #   the corpus's application or packages would register is an empty stub: Bladestan does not compile a template one
+  #   of whose components it cannot locate at all.
+  # - Positions are the template line Bladestan reports (its template_line metadata), lines split at \n, with no
+  #   column and no end (span-units/bladestan.ts).
+  recommended_configs:
+    - level0
+popularity:
+  observed_on: 2026-10-20
+  evidence:
+    - "Packagist: 1,000,586 installs of tomasvotruba/bladestan in total, 111,681 in the last 30 days (packagist.org/packages/tomasvotruba/bladestan/stats.json)"
+    - "GitHub: bladestan/bladestan (formerly TomasVotruba/bladestan) has 377 stars and is not archived"
+known_gaps: []

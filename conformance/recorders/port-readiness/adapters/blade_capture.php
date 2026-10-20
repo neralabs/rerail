@@ -1,8 +1,10 @@
 <?php
-// Shared by upstream/tlint/read_tests.php and upstream/blade-parser/read_tests.php. rerail_rewrite() rewrites an upstream
-// test file so that the first argument of every call handing the tool a template (`new <Lint>(...)`,
-// `Document::fromText(...)`) passes through rerail_capture() first. Running the rewritten test then records each
-// template the test feeds the tool, exactly as the tool receives it, under the running test (and dataset row).
+// Shared by blade_parser_tests.php beside it and the Blade pack's packs/blade/upstream/tlint/read_tests.php, and kept
+// here, outside packs/, because the port readiness recorder runs it: a pull request's packs/ is recorded, never run.
+// rerail_rewrite() rewrites an upstream test file so that the first argument of every call handing the tool a template
+// (`new <Lint>(...)`, `Document::fromText(...)`) passes through rerail_capture() first. Running the rewritten test then
+// records each template the test feeds the tool, exactly as the tool receives it, under the running test (and dataset
+// row).
 
 declare(strict_types=1);
 

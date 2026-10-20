@@ -13,7 +13,7 @@ import { z } from "zod";
 export const GATES_MANIFEST = "gates.yaml";
 
 /** The live adapters a tool-pack can name, one per upstream linter family (recorders/port-readiness/adapters/). */
-export const ADAPTERS = ["bandit", "ruff", "eslint"] as const;
+export const ADAPTERS = ["bandit", "ruff", "eslint", "phpcs", "tlint", "blade-parser", "phpstan", "psalm", "bladestan"] as const;
 
 const nonEmpty = z.string().min(1);
 const commit = z.string().regex(/^[0-9a-f]{40}$/u, "a full commit sha");
@@ -171,6 +171,11 @@ export const gatesManifestSchema = z.strictObject({
     /** The upstream project's directory under packs/<pack>/licenses/, which keeps its LICENSE and UPSTREAM.md. */
     project: z.string().regex(/^[A-Za-z0-9._-]+$/u),
     /**
+     * The name of upstream's licence file, at the root of upstream's repository and kept under licenses/<project>/,
+     * when it is not LICENSE (PHP_CodeSniffer's is `licence.txt`).
+     */
+    license: z.string().regex(/^[A-Za-z0-9._-]+$/u).optional(),
+    /**
      * The file types rerail's ports of this tool cover, when the pack deliberately covers fewer than upstream lints:
      * `loads`'s in-scope check then asks for these alone. Each must be a type upstream lints (the `in-scope-narrowing`
      * tool-pack check). Absent, the ports must cover every type upstream lints.
@@ -216,7 +221,7 @@ export const gatesManifestSchema = z.strictObject({
 export type GatesManifest = z.infer<typeof gatesManifestSchema>;
 
 /** The runtimes each adapter runs besides upstream's own (gates.yaml `upstream.runtime`). */
-const EXTRA_RUNTIMES: Record<GatesManifest["adapter"], string[]> = { bandit: ["python"], ruff: ["python"], eslint: ["parsers"] };
+const EXTRA_RUNTIMES: Record<GatesManifest["adapter"], string[]> = { bandit: ["python"], ruff: ["python"], eslint: ["parsers"], phpcs: ["php"], tlint: ["blade", "php"], "blade-parser": ["php"], phpstan: ["php"], psalm: ["php"], bladestan: ["blade", "php"] };
 
 /**
  * Every runtime the adapter installs to record a tool-pack, sorted: upstream's own, the adapter's, and the environment

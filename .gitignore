@@ -15,6 +15,7 @@ coverage/
 # installs resolve in .rerail/port-readiness/runtimes/, and a lockfile here would put every transitive package in the dependency graph.
 conformance/recorders/port-readiness/runtimes/*/package-lock.json
 conformance/recorders/port-readiness/runtimes/*/uv.lock
+conformance/recorders/port-readiness/runtimes/*/composer.lock
 
 # The port readiness gates' recordings are not in the tree: each tool-pack commits a recording.lock naming the one its rules
 # are judged against, and the bytes live in a GitHub release (conformance/port-readiness/recording/store.ts). The recorder and

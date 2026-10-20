@@ -3,13 +3,20 @@ import { existsSync, readFileSync } from "node:fs";
 import { extname, join, posix, resolve } from "node:path";
 
 import { checkoutPinned, type CorpusFile } from "./corpus.js";
-import { readGatesManifest, recordedRuntimes, toolPackDirectory } from "./manifest.js";
+import { fileTypeOf } from "./engine.js";
+import { readGatesManifest, recordedRuntimes, toolPackDirectory, type GatesManifest } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
 import { cleanVerdicts, CORPUS_FILE, RECORDING_FILE, gatesCorpusSchema, gatesRecordingSchema, spanOf, type GatesCorpusRecording, type GatesRecording } from "./recording/schema.js";
 import { caseSourcesDigest, LIFTED_CASE_SOURCES, LIFTED_RUNTIMES, readCachedRecording, readRecordingLock, RECORDING_LOCK, type RecordingLock } from "./recording/store.js";
 import { banditSpan } from "./span-units/bandit.js";
+import { bladeParserSpan } from "./span-units/blade-parser.js";
+import { bladestanSpan } from "./span-units/bladestan.js";
 import { eslintSpan } from "./span-units/eslint.js";
+import { phpcsSpan } from "./span-units/phpcs.js";
+import { phpstanSpan } from "./span-units/phpstan.js";
+import { psalmSpan } from "./span-units/psalm.js";
 import { ruffSpan } from "./span-units/ruff.js";
+import { tlintSpan } from "./span-units/tlint.js";
 import type { Check, PackAdapter, PackManifest, ParserVerdict, Span, SpanParts, UpstreamCase, UpstreamFile } from "./types.js";
 
 const sha256 = (bytes: string | Buffer): string => createHash("sha256").update(bytes).digest("hex");
@@ -29,7 +36,18 @@ const SPAN_UNITS: Record<GatesRecording["adapter"], (source: string, startByte: 
   ruff: ruffSpan,
   bandit: banditSpan,
   eslint: eslintSpan,
+  phpcs: phpcsSpan,
+  tlint: tlintSpan,
+  "blade-parser": bladeParserSpan,
+  phpstan: phpstanSpan,
+  psalm: psalmSpan,
+  bladestan: bladestanSpan,
 };
+
+/** The kept copy of upstream's licence: licenses/<project>/LICENSE, or the file gates.yaml's `rerail.license` names. */
+export function keptLicensePath(manifest: Pick<GatesManifest, "rerail">): string {
+  return `packs/${manifest.rerail.pack}/licenses/${manifest.rerail.project}/${manifest.rerail.license ?? "LICENSE"}`;
+}
 
 function parseText<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false; error: { issues: { path: PropertyKey[]; message: string }[] } } }, label: string, text: string): T {
   const parsed = schema.safeParse(JSON.parse(text));
@@ -165,7 +183,7 @@ export function inScopeSamples(samples: readonly string[], inScope: readonly str
  * The tool-pack checks the gates make on a recording: pins agree (gates.yaml, recording.lock, recording.json,
  * conformance.json), the lock pins every runtime gates.yaml installs and no other (recordedRuntimes, or with
  * `liftedRuntimes` for a recording uploaded by hand before the recorder pinned them all), the runtimes' pins
- * (package.json, pyproject.toml, .python-version) are the committed ones, the kept LICENSE is the recorded one, every committed case source has its recorded sha256 (or, in a recording uploaded by
+ * (package.json, pyproject.toml, .python-version, composer.json, .php-version, PHP's extensions.txt) are the committed ones, the kept licence (keptLicensePath) is the recorded one, every committed case source has its recorded sha256 (or, in a recording uploaded by
  * hand before cases carried one, the digest `liftedCaseSources` pins them all by), and the recording covers every
  * upstream rule the pack names. Any failure means the recording is stale.
  *
@@ -217,14 +235,14 @@ export function toolPackChecks(
   const liftedRuntimesNote = lifted === undefined ? "" : ` (${Object.keys(lifted).sort().join(", ")} pinned in recording/store.ts's LIFTED_RUNTIMES: ${RECORDING_FILE} was uploaded by hand before its lock named every runtime)`;
   checks.push({ id: "runtime-pins", ok: pinFileMismatches.length === 0, detail: pinFileMismatches.length === 0 ? `${pinnedRuntimes.length} runtime(s) match their committed pins${liftedRuntimesNote}` : `${pinFileMismatches.slice(0, 3).join("; ")}: ${stale}` });
 
-  const licensePath = join(root, "packs", pack, "licenses", manifest.rerail.project, "LICENSE");
-  const licenseSha = existsSync(licensePath) ? sha256(readFileSync(licensePath)) : null;
+  const licensePath = keptLicensePath(manifest);
+  const licenseSha = existsSync(join(root, licensePath)) ? sha256(readFileSync(join(root, licensePath))) : null;
   checks.push({
     id: "license-sha256",
     ok: licenseSha === recording.licenseSha256,
     detail: licenseSha === recording.licenseSha256
-      ? `packs/${pack}/licenses/${manifest.rerail.project}/LICENSE is upstream's LICENSE at the pinned commit (sha256 ${licenseSha.slice(0, 12)})`
-      : `packs/${pack}/licenses/${manifest.rerail.project}/LICENSE ${licenseSha === null ? "is missing" : `has sha256 ${licenseSha.slice(0, 12)}`}, upstream's recorded LICENSE ${recording.licenseSha256.slice(0, 12)}: ${stale}`,
+      ? `${licensePath} is upstream's licence at the pinned commit (sha256 ${licenseSha.slice(0, 12)})`
+      : `${licensePath} ${licenseSha === null ? "is missing" : `has sha256 ${licenseSha.slice(0, 12)}`}, upstream's recorded licence ${recording.licenseSha256.slice(0, 12)}: ${stale}`,
   });
 
   // Upstream's answers are pinned by the lock, so the sources they were recorded on must be too: an edited case source
@@ -319,9 +337,9 @@ export function createRecordedAdapter(
   return {
     identity: recording.identity,
     packChecks: [...recording.packChecks, ...toolPackChecks(inputs)],
-    // The text is the kept LICENSE; license-sha256 checks it is upstream's.
+    // The text is the kept licence; license-sha256 checks it is upstream's.
     licenseText: (() => {
-      const path = join(root, "packs", manifest.rerail.pack, "licenses", manifest.rerail.project, "LICENSE");
+      const path = join(root, keptLicensePath(manifest));
       return existsSync(path) ? readFileSync(path, "utf8") : "";
     })(),
     recordedCorpusPins: corpus?.pins ?? null,
@@ -377,8 +395,9 @@ export function createRecordedAdapter(
       return toSpan(text, startByte, endByte, parts);
     },
     inCorpus(path) {
-      const ext = extname(path);
-      return extensions.has(recording.corpus.caseSensitive ? ext : ext.toLowerCase());
+      // A path's type is its longest dialect suffix where that is longer than its extension: `.blade.php` is no `.php`.
+      const type = fileTypeOf(path);
+      return extensions.has(recording.corpus.caseSensitive ? type : type.toLowerCase());
     },
     async lintCorpus(files: CorpusFile[], names: string[]): Promise<UpstreamFile[]> {
       const asked = new Set(names);

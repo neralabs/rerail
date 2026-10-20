@@ -134,6 +134,18 @@ jobs:
             tool: eslint-plugin-vitest
           - pack: next
             tool: eslint-plugin-next
+          - pack: php
+            tool: phpcs
+          - pack: php
+            tool: phpstan
+          - pack: php
+            tool: psalm
+          - pack: blade
+            tool: tlint
+          - pack: blade
+            tool: blade-parser
+          - pack: blade
+            tool: bladestan
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -150,6 +162,11 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+
+      # The php and blade tool-packs run their upstream under the exact PHP their runtime pins, and Composer installs it.
+      - name: Set up the pinned PHP and Composer
+        if: matrix.pack == 'php' || matrix.pack == 'blade'
+        uses: ./.github/actions/php
 
       # The recorder's own cache, so a run on main warms what the next maintainer recording reads. The paths are
       # port-readiness-record.yml's exactly, which GitHub requires for one to restore what the other saved. `recordings/*`

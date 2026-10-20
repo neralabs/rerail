@@ -1,0 +1,9 @@
+{
+  "name": "rerail/port-readiness-blade-toolkit",
+  "description": "The Blade parsers the port readiness gates read templates with: Laravel's BladeCompiler (laravel/framework, which stillat/blade-parser requires and which carries illuminate/view at its own version) and stillat/blade-parser.",
+  "license": "Apache-2.0",
+  "require": {
+    "laravel/framework": "13.34.0",
+    "stillat/blade-parser": "2.1.0"
+  }
+}

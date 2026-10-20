@@ -20,7 +20,7 @@ import type { Check } from "../../port-readiness/types.js";
  * unmodified, so editing the cache never changes a result.
  */
 
-/** The committed runtimes: one directory per runtime, holding its npm or uv manifest. */
+/** The committed runtimes: one directory per runtime, holding its npm, uv or Composer manifest. */
 export const RUNTIMES_DIRECTORY = fileURLToPath(new URL("./runtimes/", import.meta.url));
 
 const sha256 = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
@@ -115,14 +115,22 @@ async function cachedInstall(directory: string, tree: string, install: () => Pro
   await writeFile(record, `${treeDigest(tree)}\n`);
 }
 
-/** The files a runtime of each kind is pinned by: its manifest, and for Python the exact interpreter. */
+/** The files a runtime of each kind is pinned by: its manifest, and for Python and PHP the exact interpreter. */
 export const NPM_PINS = ["package.json"] as const;
 export const UV_PINS = ["pyproject.toml", ".python-version"] as const;
+export const COMPOSER_PINS = ["composer.json", ".php-version"] as const;
+/**
+ * The extensions the pinned PHP loads, one per line as `php -n -m` names them, sorted: the build's profile, which
+ * answers depend on (PHP_CodeSniffer's DeprecatedFunctions lists the functions `get_defined_functions()` finds). It is
+ * kept once, in runtimes/php (whose build.sh builds that PHP), which every PHP tool-pack installs, so its digest is in
+ * every PHP recording's lock.
+ */
+export const PHP_EXTENSIONS = "extensions.txt";
 
 /** The sha256 of each pin file of `runtimes/<runtime>/` that the directory has, by file name: what a recording pins. */
 export function runtimePinDigests(runtime: string, directory: string = RUNTIMES_DIRECTORY): Record<string, string> {
   const source = join(directory, runtime);
-  return Object.fromEntries([...NPM_PINS, ...UV_PINS].filter((file) => existsSync(join(source, file))).sort()
+  return Object.fromEntries([...NPM_PINS, ...UV_PINS, ...COMPOSER_PINS, PHP_EXTENSIONS].filter((file) => existsSync(join(source, file))).sort()
     .map((file) => [file, sha256(readFileSync(join(source, file)))]));
 }
 
@@ -249,4 +257,129 @@ export async function uvRuntime(runtime: string, cacheRoot: string, runner: Comm
   const pinned = (await readFile(join(source, ".python-version"), "utf8")).trim();
   if (!/^\d+\.\d+\.\d+$/u.test(pinned)) throw new Error(`runtimes/${runtime}/.python-version must pin an exact interpreter, found ${pinned}`);
   return { directory, python, version, pinned };
+}
+
+/** An exact Composer version: a release, with Composer's optional `v` and a pre-release suffix (`v5.9.0`, `4.0.0-RC1`). */
+const EXACT_COMPOSER = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/u;
+
+/**
+ * The composer.json keys the pin check reads. Any other can change what is installed or run at install time
+ * (`repositories`, `minimum-stability`, `config`'s `platform`, `scripts`, `autoload`), so it is reported rather than
+ * read past.
+ */
+const COMPOSER_KEYS: Record<string, true> = { name: true, description: true, license: true, type: true, require: true };
+
+/**
+ * The requirements of a runtime's composer.json that are not pinned at an exact version, as `name@constraint`, and any
+ * key the check does not read. Platform requirements (`php`, `ext-*`) are requirements too: the interpreter is pinned
+ * by `.php-version`, which the runtime checks, and a range on it here would say less. A composer.json that is not a JSON
+ * object is reported as such, so nothing the check cannot judge passes.
+ */
+export function unpinnedComposerDependencies(composerJson: string): string[] {
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(composerJson);
+  } catch (error) {
+    return [`(not JSON: ${(error instanceof Error ? error.message : String(error)).split("\n")[0]})`];
+  }
+  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) return ["(not a JSON object)"];
+  const fields = manifest as Record<string, unknown>;
+  const unpinned: string[] = [];
+  const require = fields.require;
+  if (require !== undefined && (require === null || typeof require !== "object" || Array.isArray(require))) unpinned.push("require (not an object)");
+  else {
+    for (const [name, constraint] of Object.entries((require ?? {}) as Record<string, unknown>)) {
+      if (typeof constraint !== "string" || !EXACT_COMPOSER.test(constraint)) unpinned.push(`${name}@${typeof constraint === "string" ? constraint : JSON.stringify(constraint)}`);
+    }
+  }
+  for (const key of Object.keys(fields).filter((key) => COMPOSER_KEYS[key] !== true).sort()) unpinned.push(`${key} (not read by the pin check)`);
+  return unpinned;
+}
+
+/**
+ * The php.ini settings every PHP process of the gates runs with: no php.ini at all (`-n`), so neither the machine's
+ * settings nor the extensions it loads reach an answer (the pinned build has every extension compiled in), and on top
+ * of PHP's built-in defaults: `short_open_tag` off, since it changes how PHP tokenizes `<?` (php.ini-development and
+ * php.ini-production turn it off, PHP's built-in default is on, and upstream's tests skip their short-tag cases when it
+ * is off); errors to stderr, so a deprecation notice never lands in a driver's JSON on stdout; memory not limited, as
+ * PHP_CodeSniffer's own scripts run it; and UTF-8 as the default charset, which mbstring's functions take as their
+ * encoding when they are given none (stillat/blade-parser's offsets are mb_strlen's and mb_substr's).
+ */
+export const PHP_INI = ["-n", "-d", "short_open_tag=Off", "-d", "display_errors=stderr", "-d", "error_reporting=-1", "-d", "memory_limit=-1", "-d", "default_charset=UTF-8"] as const;
+
+export interface PhpRuntime {
+  /** The cache directory Composer installed into: composer.json, the composer.lock it resolved, and vendor/. */
+  directory: string;
+  /** The interpreter, `PHP_BINARY` of the `php` on PATH: the one Composer ran on and every driver runs on. */
+  php: string;
+  /** That interpreter's `PHP_VERSION`, e.g. `8.5.11`: always `pinned`, since the runtime refuses any other. */
+  version: string;
+  /** The exact interpreter `.php-version` pins. */
+  pinned: string;
+  /** An executable a package of the runtime installs under vendor/bin (`phpcs`). */
+  vendorBin(name: string): string;
+  /** A command running a PHP script on the pinned interpreter with PHP_INI: `[php, ...PHP_INI, script, ...args]`. */
+  command(script: string, ...args: string[]): string[];
+}
+
+/**
+ * The `php` on PATH, which must be exactly the release `runtimes/<runtime>/.php-version` pins (an exact `x.y.z`), with
+ * exactly the extensions runtimes/php/extensions.txt lists when it runs with no php.ini; any other throws, so nothing
+ * is recorded on another PHP or another build of it. Unlike uv, Composer installs no interpreter: runtimes/php/build.sh
+ * builds the pinned one, which CI's record and nightly legs put on PATH (.github/actions/php) and a maintainer puts
+ * first on PATH to record locally.
+ */
+export async function pinnedPhp(runtime: string, runner: CommandRunner): Promise<{ php: string; version: string; pinned: string }> {
+  const pinned = (await readFile(join(RUNTIMES_DIRECTORY, runtime, ".php-version"), "utf8")).trim();
+  if (!/^\d+\.\d+\.\d+$/u.test(pinned)) throw new Error(`runtimes/${runtime}/.php-version must pin an exact interpreter, found ${pinned}`);
+  const [version = "", php = ""] = (await runChecked(runner, ["php", ...PHP_INI, "-r", "echo PHP_VERSION, \"\\n\", PHP_BINARY, \"\\n\";"])).split("\n");
+  if (version !== pinned) throw new Error(`runtimes/${runtime}/.php-version pins PHP ${pinned}; the php on PATH (${php || "unknown"}) is ${version || "unknown"}`);
+  const profile = extensionList(await readFile(join(RUNTIMES_DIRECTORY, "php", PHP_EXTENSIONS), "utf8"));
+  const loaded = extensionList(await runChecked(runner, [php, "-n", "-m"]));
+  const missing = profile.filter((extension) => !loaded.includes(extension));
+  const extra = loaded.filter((extension) => !profile.includes(extension));
+  if (missing.length > 0 || extra.length > 0) {
+    throw new Error(`${php} is not the PHP build runtimes/php/${PHP_EXTENSIONS} pins (build it with runtimes/php/build.sh): `
+      + [missing.length > 0 ? `missing ${missing.join(", ")}` : "", extra.length > 0 ? `extra ${extra.join(", ")}` : ""].filter(Boolean).join("; "));
+  }
+  return { php, version, pinned };
+}
+
+/** The extension names of `php -m` output or of extensions.txt: one per line, section headers (`[PHP Modules]`) left out, sorted and distinct. */
+export function extensionList(text: string): string[] {
+  return [...new Set(text.split("\n").map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("[")))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/**
+ * A PHP runtime installed by Composer from `runtimes/<runtime>/` (composer.json, every requirement at an exact version,
+ * and .php-version, which pins the interpreter exactly): `composer update` resolves it in the cache directory with no
+ * plugins and no scripts, and the tree it resolved is in that directory's composer.lock. No lockfile is committed, as for
+ * npm and uv: transitive packages resolve at install time, and the nightly's `--check` reports one that moves an answer.
+ */
+export async function composerRuntime(runtime: string, cacheRoot: string, runner: CommandRunner): Promise<PhpRuntime> {
+  const files = COMPOSER_PINS;
+  const { source, directory } = await pinnedDirectory(runtime, files, cacheRoot);
+  const unpinned = unpinnedComposerDependencies(await readFile(join(source, "composer.json"), "utf8"));
+  if (unpinned.length > 0) throw new Error(`runtimes/${runtime}/composer.json must pin every requirement at an exact version: ${unpinned.join(", ")}`);
+  const { php, version, pinned } = await pinnedPhp(runtime, runner);
+  const env: NodeJS.ProcessEnv = { ...process.env, COMPOSER_NO_INTERACTION: "1", COMPOSER_NO_AUDIT: "1" };
+  await cachedInstall(directory, join(directory, "vendor"), async () => {
+    for (const file of files) await copyFile(join(source, file), join(directory, file));
+    await runChecked(runner, [php, ...PHP_INI, await composerPath(runner), "update", "--no-interaction", "--no-progress", "--no-plugins", "--no-scripts", "--prefer-dist", "--quiet"], { cwd: directory, env });
+  });
+  return {
+    directory,
+    php,
+    version,
+    pinned,
+    vendorBin: (name) => join(directory, "vendor", "bin", name),
+    command: (script, ...args) => [php, ...PHP_INI, script, ...args],
+  };
+}
+
+/** The Composer on PATH, as a file the pinned interpreter runs (a phar, or Composer's bin script). */
+async function composerPath(runner: CommandRunner): Promise<string> {
+  const path = (await runChecked(runner, ["sh", "-c", "command -v composer"])).trim();
+  if (path === "") throw new Error("Composer is not on PATH");
+  return path;
 }

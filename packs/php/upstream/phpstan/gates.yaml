@@ -1,0 +1,57 @@
+adapter: phpstan
+# PHPStan's documents in rerail's php pack.
+rerail:
+  pack: php
+  project: phpstan
+  # PHPStan analyses .php files (conf/config.neon's fileExtensions), which Rerail routes to PHP; a Blade template
+  # (`.blade.php`) is the blade pack's.
+  in_scope:
+    - .php
+upstream:
+  name: phpstan/phpstan-src
+  repository: https://github.com/phpstan/phpstan-src
+  # The release rerail's php pack records (packs/php/licenses/phpstan/UPSTREAM.md: PHPStan 2.2.16, the conformance.json
+  # tools entry); tag 2.2.16.
+  commit: 08e3736efd29631ab8f32596c5dd2362dec8dc26
+  version: 2.2.16
+  license: MIT
+  # phpstan/phpstan's phar, which is built from phpstan-src at the tag (its vendor/composer/installed.php names the
+  # commit), run on PHP 8.5.11 (runtimes/phpstan-2.2.16/.php-version, the interpreter the pack's conformance recordings
+  # were made with): PHPStan reads the running PHP's version for its phpVersion, and upstream's tests skip methods by it.
+  runtime: phpstan-2.2.16
+  # PHPStan's configurations are its rule levels, 0 (loosest) to 10 (strictest, `max`): conf/config.level<N>.neon, each
+  # including the one below it. A rule class is registered by the level its #[RegisteredRule(level: N)] names, and a
+  # level also sets options (level 1 turns on checkMaybeUndefinedVariables, level 7 reportMaybes, …). PHPStan recommends
+  # none of 1 to 10 over the others: its user guide's "Rule Levels" says to start low and raise the level as the code
+  # base allows. The level it runs without one is level 0 ("The default level is 0", phpstan.org/user-guide/rule-levels;
+  # src/Command/CommandHelper.php's DEFAULT_LEVEL), the same reading as PHP_CodeSniffer's PSR12 and Bandit's and Ruff's
+  # `default`. Level 0 registers DefinedVariableRule (variable.undefined, its "Undefined variable" message alone, since
+  # checkMaybeUndefinedVariables is off), PrintfParametersRule (argument.sprintf, argument.sscanf) and
+  # DuplicateKeysInLiteralArraysRule (array.duplicateKey): those four documents are `recommended` and ship on. The other
+  # four ship off: IfConstantConditionRule (if.alwaysTrue, if.alwaysFalse) is level 4's, RandomIntParametersRule
+  # (argument.type) level 5's and MissingFunctionReturnTypehintRule (missingType.return) level 6's.
+  #
+  # How the adapter applies it (decisions for the team; they hold for every PHPStan pack):
+  # - Gate 5 runs PHPStan's command line on upstream's own rule test data: each RuleTestCase method's analysed files
+  #   together, as the test analyses them, with the files the method requires first (the definitions of the functions and
+  #   classes they call) as PHPStan's scanFiles, all read statically from the test (methods whose files or expectations
+  #   are built at run time, or that skip themselves on PHP 8.5.11, are left out). A rule runs at the first recommended
+  #   level that registers its class, else at the lowest level that does, with that level's options. A finding is the
+  #   rule's when PHPStan reports it under the rule's identifier with a message the rule's class writes (argument.type,
+  #   missingType.return and variable.undefined are other classes' identifiers too).
+  # - A rule's cases are the data files of every ported rule's tests (packs/php/upstream/phpstan/fixtures/), not its own
+  #   alone: they are PHP files any rule reads, so another rule's file is upstream's answer on code the rule must stay
+  #   silent on. A case's variant names the test method that analyses it. Its markup is that method's written
+  #   expectations when the method analyses the file alone with the options the rule's level gives it; RuleTestCase also
+  #   loads conf/bleedingEdge.neon, which no level includes, so where the two differ the report says so and PHPStan's
+  #   output stands.
+  # - Positions are the line PHPStan reports, and nothing else: it reports no column and no end
+  #   (span-units/phpstan.ts).
+  recommended_configs:
+    - level0
+popularity:
+  observed_on: 2026-10-20
+  evidence:
+    - "Packagist: 418,322,883 installs of phpstan/phpstan in total, 16,580,215 in the last 30 days (packagist.org/packages/phpstan/phpstan/stats.json)"
+    - "GitHub: phpstan/phpstan has 14,132 stars and is not archived; phpstan/phpstan-src, its source, is not archived"
+known_gaps: []

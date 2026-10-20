@@ -11,7 +11,7 @@
 // exemptions: `packs/<id>/candidates/` (ports still scored, never shipped, with their hand-labelled probe packs: pack
 // data), `gate-pins` (the port readiness gates' pinned inputs and workers: `conformance/port-readiness/*.json`, the task list and pack lists
 // the gates read; `conformance/recorders/port-readiness/runtimes/**`, the manifests that pin each upstream runtime; and the Python
-// workers under `conformance/recorders/port-readiness/`, code the recorder runs inside those runtimes) and, for code-rule
+// and PHP workers under `conformance/recorders/port-readiness/`, code the recorder runs inside those runtimes) and, for code-rule
 // documents only, the shipped rule directories `packs/<id>/rules/` and `code-rule-dsl/rules/`.
 //
 // #10: every directory fixtures/<family>/<feature>/ names a top-level module of the engine
@@ -74,11 +74,11 @@ function fixtureKind(repo, path) {
   return undefined;
 }
 
-/** Exemption `gate-pins`: the port readiness gates' pinned inputs and the recorder's Python workers (see the header). */
+/** Exemption `gate-pins`: the port readiness gates' pinned inputs and the recorder's Python and PHP workers (see the header). */
 function isGatePin(path) {
   if (/^conformance\/port-readiness\/[^/]+\.json$/u.test(path)) return true;
   if (path.startsWith("conformance/recorders/port-readiness/runtimes/")) return true;
-  return path.startsWith("conformance/recorders/port-readiness/") && path.endsWith(".py");
+  return path.startsWith("conformance/recorders/port-readiness/") && (path.endsWith(".py") || path.endsWith(".php"));
 }
 
 function allowed(path, kind) {

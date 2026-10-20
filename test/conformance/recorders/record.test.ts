@@ -11,7 +11,7 @@ import { gatesCorpusSchema, gatesRecordingSchema, recordingText, spanOf } from "
 import { readCachedRecording, recordingLockSchema, recordingLockText, writeCachedRecording } from "../../../conformance/port-readiness/recording/store.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
 import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
-import { RUNTIMES_DIRECTORY, unpinnedNpmDependencies, unpinnedPythonDependencies } from "../../../conformance/recorders/port-readiness/runtimes.js";
+import { extensionList, RUNTIMES_DIRECTORY, runtimePinDigests, unpinnedComposerDependencies, unpinnedNpmDependencies, unpinnedPythonDependencies } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 
 const MANIFEST = `adapter: bandit
@@ -240,6 +240,8 @@ test("an ESLint case reuses a committed source with its bytes, its own directory
 test("a lock pins every runtime the adapter installs, the environment the pack is linted in among them", () => {
   assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "next", "eslint-plugin-next")), ["eslint-config-next-16.3.8", "eslint-plugin-next-16.3.8", "parsers"]);
   assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "python", "ruff")), ["python", "ruff-0.16.9"]);
+  assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "php", "phpcs")), ["php", "phpcs-4.0.4"]);
+  assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "blade", "tlint")), ["blade", "php", "tlint-9.7.0"]);
 });
 
 test("a runtime's manifest pins every direct dependency at an exact version", () => {
@@ -257,13 +259,78 @@ test("a runtime's manifest pins every direct dependency at an exact version", ()
   assert.deepEqual(unpinnedPythonDependencies('[project]\ndependencies = ["ruff==0.16.9"]\n[tool.uv]\npackage = false\noverride-dependencies = ["libcst>=1"]\nsources = { ruff = { git = "https://example.com/ruff" } }\n'), ["tool.uv.override-dependencies: libcst>=1", "tool.uv.sources (not read by the pin check)"]);
   assert.deepEqual(unpinnedPythonDependencies('[project]\ndependencies = "ruff==0.16.9"\n'), ["(not a list)"]);
   assert.match(unpinnedPythonDependencies('[project]\ndependencies = ["ruff==0.16.9"\n')[0]!, /^\(not TOML: /u);
+  // Composer: every requirement at an exact release, platform requirements included (`.php-version` pins the
+  // interpreter), and no key that can change what is installed or run.
+  assert.deepEqual(unpinnedComposerDependencies('{"name": "x", "require": {"squizlabs/php_codesniffer": "4.0.4", "nikic/php-parser": "v5.9.0", "a/b": "4.0.0-RC1"}}'), []);
+  assert.deepEqual(unpinnedComposerDependencies('{"require": {"a/b": "^4.0", "c/d": "4.*", "e/f": ">=1.0 <2", "g/h": "dev-main", "php": ">=8.2", "ext-iconv": "*"}}'), ["a/b@^4.0", "c/d@4.*", "e/f@>=1.0 <2", "g/h@dev-main", "php@>=8.2", "ext-iconv@*"]);
+  assert.deepEqual(unpinnedComposerDependencies('{"require": {"a/b": "1.0.0"}, "require-dev": {"c/d": "^1"}, "repositories": [], "config": {"platform": {"php": "8.1.0"}}}'), ["config (not read by the pin check)", "repositories (not read by the pin check)", "require-dev (not read by the pin check)"]);
+  assert.deepEqual(unpinnedComposerDependencies('{"require": {"a/b": 1}}'), ["a/b@1"]);
+  assert.deepEqual(unpinnedComposerDependencies('{"require": []}'), ["require (not an object)"]);
+  assert.deepEqual(unpinnedComposerDependencies("[]"), ["(not a JSON object)"]);
+  assert.match(unpinnedComposerDependencies("{")[0]!, /^\(not JSON: /u);
 });
 
 test("every committed runtime pins its direct dependencies exactly, and has no lockfile", () => {
   for (const runtime of readdirSync(RUNTIMES_DIRECTORY, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name)) {
     const directory = join(RUNTIMES_DIRECTORY, runtime);
-    for (const lockfile of ["package-lock.json", "uv.lock"]) assert.ok(!existsSync(join(directory, lockfile)), `${runtime}/${lockfile}`);
+    for (const lockfile of ["package-lock.json", "uv.lock", "composer.lock"]) assert.ok(!existsSync(join(directory, lockfile)), `${runtime}/${lockfile}`);
     if (existsSync(join(directory, "package.json"))) assert.deepEqual(unpinnedNpmDependencies(JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as { dependencies?: Record<string, string> }), [], runtime);
     if (existsSync(join(directory, "pyproject.toml"))) assert.deepEqual(unpinnedPythonDependencies(readFileSync(join(directory, "pyproject.toml"), "utf8")), [], runtime);
+    if (existsSync(join(directory, "composer.json"))) {
+      assert.deepEqual(unpinnedComposerDependencies(readFileSync(join(directory, "composer.json"), "utf8")), [], runtime);
+      // Composer installs no interpreter, so a PHP runtime names the exact one it must run on.
+      assert.match(readFileSync(join(directory, ".php-version"), "utf8"), /^\d+\.\d+\.\d+\n$/u, runtime);
+    }
+  }
+});
+
+test("a runtime's pin files are its manifest and, for Python and PHP, the exact interpreter and PHP's extensions", () => {
+  const directory = mkdtempSync(join(tmpdir(), "gates-runtime-pins-"));
+  try {
+    mkdirSync(join(directory, "php"));
+    writeFileSync(join(directory, "php", "composer.json"), "{}\n");
+    writeFileSync(join(directory, "php", ".php-version"), "8.5.11\n");
+    writeFileSync(join(directory, "php", "extensions.txt"), "Core\nmbstring\n");
+    writeFileSync(join(directory, "php", "build.sh"), "not a pin\n");
+    const digest = (text: string) => createHash("sha256").update(text).digest("hex");
+    assert.deepEqual(runtimePinDigests("php", directory), { ".php-version": digest("8.5.11\n"), "composer.json": digest("{}\n"), "extensions.txt": digest("Core\nmbstring\n") });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("PHP's extensions are read from `php -m` as extensions.txt lists them: headers left out, sorted, distinct", () => {
+  assert.deepEqual(extensionList("[PHP Modules]\nmbstring\nCore\nZend OPcache\n\n[Zend Modules]\nZend OPcache\n\n"), ["Core", "Zend OPcache", "mbstring"]);
+  // The committed list is already in that form, so a byte-identical `php -n -m` is what pinnedPhp accepts.
+  const committed = readFileSync(join(RUNTIMES_DIRECTORY, "php", "extensions.txt"), "utf8");
+  assert.equal(committed, `${extensionList(committed).join("\n")}\n`);
+});
+
+test("PHP_CodeSniffer's unit test files are committed as fixtures/<standard>/<category>/<file>.php, as generate.py copied them", () => {
+  const layout = CASE_LAYOUTS.phpcs;
+  const place = (fixture: string) => layout.file({ fixture, path: `${fixture}.php`, bytes: Buffer.from("") }, () => []);
+  assert.equal(place("src/Standards/Generic/Tests/PHP/LowerCaseConstantUnitTest.1.inc"), "fixtures/Generic/PHP/LowerCaseConstantUnitTest.1.inc.php");
+  assert.equal(place("src/Standards/Squiz/Tests/PHP/EvalUnitTest.inc"), "fixtures/Squiz/PHP/EvalUnitTest.inc.php");
+  assert.equal(place("src/Util/Tokens.php"), null);
+  assert.deepEqual(CONTEXT_FILES.phpcs("src/a/b.php"), []);
+});
+
+test("a tlint case reuses the committed copy of its template, its test's own directory first, or gets one of its own", () => {
+  const root = mkdtempSync(join(tmpdir(), "gates-layout-"));
+  try {
+    for (const [file, text] of [["fixtures/NoRayDirectiveTest/1.blade.php", "@ray($a)"], ["fixtures/NoDumpDirectivesTest/1.blade.php", "@ray($a)"], ["fixtures/NoDumpDirectivesTest/2.blade.php", "@dd($a)"]] as const) {
+      mkdirSync(join(root, file, ".."), { recursive: true });
+      writeFileSync(join(root, file), text);
+    }
+    const committed = committedSources(root);
+    const layout = CASE_LAYOUTS.tlint;
+    const place = (fixture: string, template: string) => layout.file({ fixture, path: "NoRayDirectiveTest/catches_ray_directive_usage.blade.php", bytes: Buffer.from(template) }, committed);
+    assert.equal(place("tests/Linting/Linters/NoRayDirectiveTest.php#catches_ray_directive_usage", "@ray($a)"), "fixtures/NoRayDirectiveTest/1.blade.php");
+    assert.equal(place("tests/Linting/Linters/NoRayDirectiveTest.php#catches_ray_directive_usage", "@dd($a)"), "fixtures/NoDumpDirectivesTest/2.blade.php");
+    assert.match(place("tests/Linting/Linters/NoRayDirectiveTest.php#catches_ray_directive_usage", "{{$a}}")!, /^fixtures\/NoRayDirectiveTest\/[0-9a-f]{12}\.blade\.php$/u);
+    assert.deepEqual(layout.row!("tests/Linting/Linters/NoRayDirectiveTest.php#catches_ray_directive_usage"), { upstream: "tests/Linting/Linters/NoRayDirectiveTest.php", copy: "derived" });
+    assert.deepEqual(CONTEXT_FILES.tlint("resources/views/welcome.blade.php"), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

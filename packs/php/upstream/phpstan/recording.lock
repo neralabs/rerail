@@ -1,0 +1,37 @@
+{
+  "format": "rerail.port-readiness-recording-lock/v1",
+  "tool": "phpstan",
+  "release": "port-readiness-recordings",
+  "recorder": "0.1.0-next.3",
+  "pins": {
+    "repository": "https://github.com/phpstan/phpstan-src",
+    "commit": "08e3736efd29631ab8f32596c5dd2362dec8dc26",
+    "version": "2.2.16",
+    "runtime": "phpstan-2.2.16"
+  },
+  "runtimes": {
+    "php": {
+      ".php-version": "b5327018c5a535ddfd76fd6e0e83d6a15de58762ccf4ba20ff302c22ee207561",
+      "composer.json": "ad7a9c2cd5b1e654c9b8f856031614e04010bd67a8ad3c6352cc53c623b42213",
+      "extensions.txt": "a79976fa1ad0f348483f383a7c2d603dc4279b137d3d9abb2cc6a27798834ca5"
+    },
+    "phpstan-2.2.16": {
+      ".php-version": "b5327018c5a535ddfd76fd6e0e83d6a15de58762ccf4ba20ff302c22ee207561",
+      "composer.json": "4520c51055e05b09bc64559a4d2da43b34a052e6f24a5f74a4fe7cbd73425bb0"
+    }
+  },
+  "files": {
+    "recording.json": {
+      "sha256": "b67ab8ad0ba8a1160f9a759cfd19349915dd8fe1cf2813f374638235a8a39454",
+      "size": 1603598,
+      "format": "rerail.port-readiness-recording/v2",
+      "asset": "php-phpstan-recording-b67ab8ad0ba8a1160f9a759cfd19349915dd8fe1cf2813f374638235a8a39454.json.gz"
+    },
+    "corpus.json": {
+      "sha256": "82b4728b88c631ca9d69167cde3f26d08958f38746da557e4df7f370db616cfd",
+      "size": 1138,
+      "format": "rerail.port-readiness-corpus/v2",
+      "asset": "php-phpstan-corpus-82b4728b88c631ca9d69167cde3f26d08958f38746da557e4df7f370db616cfd.json.gz"
+    }
+  }
+}

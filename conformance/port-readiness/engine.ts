@@ -6,13 +6,14 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import {
   bundledCodeRuleDslDirectory,
   CODE_RULE_AST_LANGUAGES,
   CODE_RULE_DIALECTS,
   codeRuleLanguageFamily,
   codeRuleSchema,
+  LANGUAGE_REGISTRY,
   loadPackRuleDocuments,
   loadNativeBinding,
   PACKAGE_ROOT,
@@ -121,9 +122,9 @@ export const ENGINE_SOURCES = ["native", "languages", "src/engine", "Cargo.lock"
 
 /**
  * Engine source files only one language family can reach, by family (`languages/*.json`'s `family`: `ecma` for
- * JavaScript and TypeScript, `python` for Python, `rust` for Rust). A rule of one family keys on these and the shared
- * files alone, so a change to Python support leaves every ECMAScript rule's cached verdict standing. An entry is a
- * tracked file, or a directory with a trailing `/`.
+ * JavaScript and TypeScript, `python` for Python, `rust` for Rust, `php` for PHP, `blade` for Blade). A rule of one
+ * family keys on these and the shared files alone, so a change to Python support leaves every ECMAScript rule's cached
+ * verdict standing. An entry is a tracked file, or a directory with a trailing `/`.
  *
  * A family earns a list when the gates judge it, so its rules key narrowly, or when its files would otherwise sit in
  * every gated rule's key, as Rust's would: unlisted, a change to Rust support alone would re-judge every rule.
@@ -132,17 +133,27 @@ export const ENGINE_SOURCES = ["native", "languages", "src/engine", "Cargo.lock"
  * its own), or through a style, grammar or suppression every other family refuses when the rule compiles. The list is
  * thus a ledger of what the engine's own dispatch already decides, never a second opinion on it: the language
  * registry says which families honour which suppressions (`noqa` and `nosec`, read by `suppress/noqa.rs` and
- * `suppress/nosec.rs`, are listed by `languages/python.json` alone, `clippy` by `languages/rust.json`),
- * `literal/mod.rs` hosts `eslintDirective` on ECMA comments only and `rustFormat` on Rust strings only, `formatArgs`
- * style `rust` is refused by every other family, and the rest are each family's vendored grammars, its registry
- * entries and the modules named for it. What another family's rule can still read of a listed file is the wording of
- * a compile error, never whether the rule compiles: a suppression's spec is parsed before the family refuses it,
- * `compile/binds.rs` checks a binding filter's `form` and `scope` names against every family's (Rust's are in
- * `language/adapter/rust.rs`) before the rule's own family narrows them, and `compile/parse.rs` checks a `parse` or
+ * `suppress/nosec.rs`, are listed by `languages/python.json` alone, `clippy` by `languages/rust.json`, `phpcs` and
+ * `phpstan` by `languages/php.json`), `literal/mod.rs` hosts `eslintDirective` on ECMA comments only, `rustFormat` on
+ * Rust strings only and `phpDoc` and PHP strings on PHP only, `formatArgs` style `rust` is refused by every other
+ * family, and the rest are each family's vendored grammars, its registry entries and the modules named for it. What
+ * another family's rule can still read of a listed file is the wording of a compile error, never whether the rule
+ * compiles: a suppression's spec is parsed before the family refuses it, `compile/binds.rs` checks a binding filter's
+ * `form` and `scope` names against every family's (Rust's are in `language/adapter/rust.rs`) before the rule's own
+ * family narrows them, `compile/resolve.rs` reads a `resolves` name list as Python's, Rust's or PHP's shape
+ * (`scope/php_names.rs`'s labels) before each family refuses the others', and `compile/parse.rs` checks a `parse` or
  * `formatArgs` sub-rule's `kind` against its grammar's kinds (`rustFormat`'s are in `literal/rust_format.rs`) before
  * the family refuses the grammar or style. `suppress/eslint.rs` is the one entry a family outside its list reads to
  * decide a verdict: `languages/vue.json` honours `eslint` too, and a Vue rule belongs to no listed family, so it keys
  * on the whole engine regardless.
+ *
+ * A family whose files embed another's program keys on that family too (`policyFamilies`, from the registry's
+ * `embeds`). Blade is its own family for that reason rather than PHP's: a Blade template's semantics are the PHP its
+ * compiled view holds (`blade/view.rs`, `embed/compiled_view.rs`), read with PHP's family, so every Blade rule keys on
+ * PHP's files as well as Blade's, while a PHP rule never reaches Blade's parser (Rerail's port of Forte) and keys on
+ * PHP's alone. The one Forte file PHP reaches, the byte scanner `php_view.rs` finds PHP's open tags with
+ * (`blade/forte/scan.rs`), is PHP's, which Blade's rules key on anyway. Vue embeds TypeScript the same way but is not
+ * gated, so it stays unlisted and keys on the whole engine.
  *
  * `matcher/`, `compile/`, `workspace/` and `language/adapter/` are shared, `language/adapter.rs` and its concern files
  * included, with three exceptions, all Rust's: `language/adapter/rust.rs`, the adapter itself, and
@@ -191,6 +202,40 @@ export const FAMILY_SOURCES: Readonly<Record<string, readonly string[]>> = {
     "native/src/code_rule_dsl/scope/usage/rust.rs",
     "native/src/code_rule_dsl/suppress/clippy.rs",
     "native/src/code_rule_dsl/value/rust.rs",
+  ],
+  php: [
+    "languages/php.json",
+    "native/src/code_rule_dsl/blade/forte/scan.rs",
+    "native/src/code_rule_dsl/calls/php.rs",
+    "native/src/code_rule_dsl/literal/php_string.rs",
+    "native/src/code_rule_dsl/literal/phpdoc.rs",
+    "native/src/code_rule_dsl/literal/phpdoc/",
+    "native/src/code_rule_dsl/php_literal.rs",
+    "native/src/code_rule_dsl/php_view.rs",
+    "native/src/code_rule_dsl/scope/data/php_builtins.generated.json",
+    "native/src/code_rule_dsl/scope/php.rs",
+    "native/src/code_rule_dsl/scope/php/",
+    "native/src/code_rule_dsl/scope/php_names.rs",
+    "native/src/code_rule_dsl/scope/usage/php.rs",
+    "native/src/code_rule_dsl/suppress/phpcs.rs",
+    "native/src/code_rule_dsl/suppress/phpstan.rs",
+    "native/src/code_rule_dsl/value/php.rs",
+    "native/src/code_rule_dsl/value/php_compare.rs",
+    "native/src/code_rule_dsl/value/php_structure.rs",
+  ],
+  blade: [
+    "languages/blade.json",
+    "native/src/code_rule_dsl/blade.rs",
+    "native/src/code_rule_dsl/blade/forte/ast.rs",
+    "native/src/code_rule_dsl/blade/forte/directives/",
+    "native/src/code_rule_dsl/blade/forte/lexer/",
+    "native/src/code_rule_dsl/blade/forte/mod.rs",
+    "native/src/code_rule_dsl/blade/forte/node.rs",
+    "native/src/code_rule_dsl/blade/forte/parser/",
+    "native/src/code_rule_dsl/blade/forte/token.rs",
+    "native/src/code_rule_dsl/blade/forte/tree.rs",
+    "native/src/code_rule_dsl/blade/view.rs",
+    "native/src/code_rule_dsl/embed/compiled_view.rs",
   ],
 } as const;
 
@@ -358,9 +403,11 @@ export function engineKey(identity: EngineIdentity, families: readonly string[])
 }
 
 /**
- * The language families a rule document can be judged in: the family of every `language` its clauses name. Empty when
- * the document names none, names one the language registry does not know, or is not JSON at all; `engineKey` then
- * keys the rule on the whole engine, which is the only safe answer when the document does not say.
+ * The language families a rule document can be judged in: the family of every `language` its clauses name, and of
+ * every language those languages' files embed (the registry's `embeds`: a Blade rule reads the PHP of a template's
+ * compiled view, so it is judged in PHP's family as well as Blade's). Empty when the document names none, names one the
+ * language registry does not know, or is not JSON at all; `engineKey` then keys the rule on the whole engine, which is
+ * the only safe answer when the document does not say.
  *
  * Every `language` anywhere in the document counts, not only the ones under a clause's `ast`: a key that covers a
  * family the rule never reaches costs a re-judge, and one that misses a family it does reach would keep a stale
@@ -385,6 +432,11 @@ export function policyFamilies(text: string): string[] {
   walk(document);
   const known = new Set<string>(CODE_RULE_AST_LANGUAGES);
   if (languages.size === 0 || [...languages].some((language) => !known.has(language))) return [];
+  for (const language of languages) {
+    const entry = LANGUAGE_REGISTRY.find((candidate) => candidate.id === language);
+    // A Set visits what is added while it is iterated, so an embedded language's own embeds count too.
+    if (entry !== undefined && "embeds" in entry) for (const embed of entry.embeds) languages.add(embed.language);
+  }
   return [...new Set([...languages].map((language) => codeRuleLanguageFamily(language as typeof CODE_RULE_AST_LANGUAGES[number])))].sort(byText);
 }
 
@@ -424,6 +476,21 @@ function dialectForPath(path: string): string | undefined {
     if (name.length > suffix.length && name.endsWith(suffix) && (found === undefined || suffix.length > found.suffix.length)) found = { suffix, dialect };
   }
   return found?.dialect;
+}
+
+/**
+ * A path's file type: the longest dialect suffix of the language registry it ends with when that is longer than its
+ * extension (`.blade.php`, a Blade template rather than PHP, as the engine routes it), or else its extension. A recorded
+ * adapter's inCorpus reads a corpus file's type by it, so a tool-pack that lints `.php` never takes a template for one.
+ */
+export function fileTypeOf(path: string): string {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  const lower = name.replace(/[A-Z]+/g, (upper) => upper.toLowerCase());
+  let found = extname(name);
+  for (const suffix of DIALECT_SUFFIXES.keys()) {
+    if (lower.length > suffix.length && lower.endsWith(suffix) && suffix.length > found.length) found = name.slice(-suffix.length);
+  }
+  return found;
 }
 
 /** The rerail modules the gates call, as this checkout's src/engine/index.ts provides them. */
