@@ -25,7 +25,7 @@ use rusqlite::Connection;
 use rusqlite::types::Value;
 use rusqlite::vtab::Module;
 use std::cmp::Reverse;
-use std::collections::{BTreeSet, BinaryHeap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// One file of a batch.
@@ -1149,18 +1149,92 @@ fn temporary(rest: &str) -> &str {
     &rest[..letters + digits]
 }
 
+/// Where one temporary of a stage's or clause's statements is mentioned (`registers`): its
+/// mentions' span, each extended to its outermost loop; its declaration (`frames::FRAME`), its
+/// first clear (a loop's `create` empties it on every pass) and the span of its other mentions,
+/// unextended; and where each `emit::RUN` of a block that mentions it is, and the outermost loop
+/// it is in.
+#[derive(Default)]
+struct Uses {
+    span: Option<(usize, usize)>,
+    declared: usize,
+    cleared: Option<usize>,
+    mentions: Option<(usize, usize)>,
+    runs: Vec<(usize, (usize, usize))>,
+}
+
+/// Where a temporary is live (`Uses::live`): one span, and the runs of its blocks, which write it
+/// anew there.
+struct Live {
+    span: (usize, usize),
+    runs: Vec<usize>,
+}
+
+impl Uses {
+    /// `item`, at `at` in a loop that spans `span` (or none: `at` alone), mentions it.
+    fn mention(&mut self, item: &str, at: usize, span: (usize, usize)) {
+        let widen = |into: &mut Option<(usize, usize)>, (from, to): (usize, usize)| {
+            let (start, end) = into.get_or_insert((from, to));
+            *start = (*start).min(from);
+            *end = (*end).max(to);
+        };
+        widen(&mut self.span, span);
+        if item.starts_with(frames::FRAME) {
+            self.declared = at;
+            return;
+        }
+        if item.starts_with(frames::CLEAR) && self.cleared.is_none() {
+            self.cleared = Some(at);
+        }
+        widen(&mut self.mentions, (at, at));
+    }
+
+    /// Where it is live. A pass's own temporary (declared, then emptied, then mentioned only
+    /// within one loop: `inner`, each item's innermost) is written anew by every pass before it
+    /// is read: it is live from its declaration to its last mention, and dead between its
+    /// block's runs, where it is written anew (`Live::runs`). Any other temporary is live over
+    /// its mentions' span extended to their loops, and from there to its blocks' last run.
+    fn live(self, inner: &[Option<(usize, usize)>]) -> Live {
+        let span = self.span.expect("a declared temporary");
+        let own = self.cleared.and_then(|cleared| {
+            let (first, last) = self.mentions.unwrap_or((cleared, cleared));
+            inner[cleared]
+                .is_some_and(|(start, end)| {
+                    start <= self.declared && first >= cleared && last <= end
+                })
+                .then_some(last)
+        });
+        match own {
+            Some(last) => Live {
+                span: (self.declared, last),
+                runs: self.runs.into_iter().map(|(at, _)| at).collect(),
+            },
+            None => Live {
+                span: self
+                    .runs
+                    .iter()
+                    .fold(span, |(start, end), &(_, (from, to))| {
+                        (start.min(from), end.max(to))
+                    }),
+                runs: Vec::new(),
+            },
+        }
+    }
+}
+
 /// Allocates the temporaries of one stage's or clause's statements (`items`, after
 /// `frames::rewrite`) that are frames to registers, as a compiler allocates variables: a register
 /// is a frame name of one declaration (its class, numbered in `classes`, which every list
-/// shares), held by one temporary at a time. Statements run in order, so a temporary is live
-/// from its first mention to its last, and further: through every loop that mentions it (its
-/// passes run again after the mention) and to each `emit::RUN` of a block that mentions it (the
-/// run executes the block's statements there). Each temporary takes its class's lowest register
-/// no live temporary holds. A clause's tables are emptied when it ends, so every list starts with
-/// its registers empty, and lists run one after another: lists share registers (`prefix` names
-/// them: a stage's frames live until the batch ends, so a stage's prefix is its own). Returns
-/// each temporary's register, and where a register taken after another temporary is emptied:
-/// `(position, register)`, before the item at the later temporary's first live position.
+/// shares). Each temporary, in the order of its first live position, takes its class's lowest
+/// register that no other temporary holds over its live span (`Uses::live`), and that no block
+/// writes within the span: a block's run writes its own temporaries' registers there. A
+/// temporary live across a run started before its block's temporaries, so it overlaps their
+/// spans, or after them, so it finds their registers written. A clause's tables are emptied when
+/// it ends, so every list starts with its registers empty, and lists run one after another:
+/// lists share registers (`prefix` names them: a stage's frames live until the batch ends, so a
+/// stage's prefix is its own). Returns each temporary's register, and where a register taken
+/// after another temporary is emptied: `(position, register)`, before the item at the later
+/// temporary's first live position (a pass's own temporary empties itself on every pass after).
 fn registers(
     items: &[String],
     classes: &mut HashMap<String, usize>,
@@ -1189,7 +1263,7 @@ fn registers(
     if names.is_empty() {
         return Default::default();
     }
-    // Each item's outermost loop (`emit::LOOP` … `emit::UNTIL`), where it is in one.
+    // Each item's outermost and innermost loop (`emit::LOOP` … `emit::UNTIL`), where it is in one.
     let mut loops = Vec::new();
     let mut open = Vec::new();
     for (at, item) in items.iter().enumerate() {
@@ -1200,14 +1274,15 @@ fn registers(
         }
     }
     let mut outer: Vec<Option<(usize, usize)>> = vec![None; items.len()];
-    loops.sort_by_key(|&(start, end)| std::cmp::Reverse(end - start));
-    for (start, end) in loops {
+    let mut inner: Vec<Option<(usize, usize)>> = vec![None; items.len()];
+    loops.sort_by_key(|&(start, end)| Reverse(end - start));
+    for &(start, end) in &loops {
         for at in start..=end {
             outer[at].get_or_insert((start, end));
+            inner[at] = Some((start, end));
         }
     }
-    let mut first = vec![usize::MAX; names.len()];
-    let mut last = vec![0; names.len()];
+    let mut uses: Vec<Uses> = names.iter().map(|_| Uses::default()).collect();
     // The temporaries each block mentions, nested blocks' included: the open blocks' so far,
     // innermost last, and the closed blocks', by id.
     let mut blocks: HashMap<&str, Vec<usize>> = HashMap::new();
@@ -1229,51 +1304,59 @@ fn registers(
             blocks.insert(id, temporaries);
             continue;
         }
+        let span = outer[at].unwrap_or((at, at));
         if let Some(id) = item.strip_prefix(emit::RUN) {
             mentioned.extend(blocks.get(id).into_iter().flatten().copied());
+            for &temporary in &mentioned {
+                uses[temporary].runs.push((at, span));
+            }
         } else {
             for (found, _) in item.match_indices(emit::TEMP) {
                 let name = temporary(&item[found + emit::TEMP.len()..]);
                 mentioned.extend(temporaries.get(name).copied());
             }
-        }
-        let (from, to) = outer[at].unwrap_or((at, at));
-        for &temporary in &mentioned {
-            first[temporary] = first[temporary].min(from);
-            last[temporary] = last[temporary].max(to);
+            for &temporary in &mentioned {
+                uses[temporary].mention(item, at, span);
+            }
         }
         if let Some((_, block)) = inside.last_mut() {
             block.extend_from_slice(&mentioned);
         }
     }
+    let live: Vec<Live> = uses.into_iter().map(|uses| uses.live(&inner)).collect();
     let mut order: Vec<usize> = (0..names.len()).collect();
-    order.sort_by_key(|&temporary| (first[temporary], temporary));
-    // The live temporaries' `(last, class, register)`, earliest last first; per class, the
-    // registers made and those free.
-    let mut live: BinaryHeap<Reverse<(usize, usize, usize)>> = BinaryHeap::new();
-    let mut made: HashMap<usize, usize> = HashMap::new();
-    let mut free: HashMap<usize, BTreeSet<usize>> = HashMap::new();
+    order.sort_by_key(|&temporary| (live[temporary].span.0, temporary));
+    // Per class, each register's spans held, by start, and where blocks' runs write it.
+    let mut held: HashMap<usize, Vec<(BTreeMap<usize, usize>, BTreeSet<usize>)>> = HashMap::new();
     let mut allocated = HashMap::with_capacity(names.len());
     let mut clears = Vec::new();
     for temporary in order {
-        let at = first[temporary];
-        while let Some(&Reverse((last, class, register))) = live.peek()
-            && last < at
-        {
-            live.pop();
-            free.entry(class).or_default().insert(register);
-        }
         let class = class_of[temporary];
-        let reused = free.get_mut(&class).and_then(BTreeSet::pop_first);
-        let register = reused.unwrap_or_else(|| {
-            let count = made.entry(class).or_default();
-            *count += 1;
-            *count - 1
+        let Live {
+            span: (start, end),
+            ref runs,
+        } = live[temporary];
+        let registers = held.entry(class).or_default();
+        // The span overlaps one held where the last held span starting before its end ends at
+        // its start or after: held spans do not overlap.
+        let free = |(spans, written): &(BTreeMap<usize, usize>, BTreeSet<usize>)| {
+            spans
+                .range(..=end)
+                .next_back()
+                .is_none_or(|(_, &until)| until < start)
+                && written.range(start..=end).next().is_none()
+        };
+        let register = registers.iter().position(free).unwrap_or_else(|| {
+            registers.push(Default::default());
+            registers.len() - 1
         });
-        live.push(Reverse((last[temporary], class, register)));
+        let (spans, written) = &mut registers[register];
+        let reused = !spans.is_empty();
+        spans.insert(start, end);
+        written.extend(runs.iter().copied());
         let name = format!("{prefix}f{class}_{register}");
-        if reused.is_some() {
-            clears.push((at, name.clone()));
+        if reused {
+            clears.push((start, name.clone()));
         }
         allocated.insert(names[temporary].to_owned(), name);
     }
@@ -2330,4 +2413,111 @@ pub(in crate::code_rule_dsl) fn environment<'t>(
         }
     }
     env
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `items` with `$name` standing for the temporary `name`, allocated with no class made yet:
+    /// each temporary's register, and the clears.
+    fn allocate(items: &[&str]) -> (HashMap<String, String>, Vec<(usize, String)>) {
+        let items: Vec<String> = items
+            .iter()
+            .map(|item| item.replace('$', emit::TEMP))
+            .collect();
+        registers(&items, &mut HashMap::new(), "")
+    }
+
+    fn frame(name: &str) -> String {
+        format!(
+            "{}${name}(k INTEGER PRIMARY KEY, file, node)",
+            frames::FRAME
+        )
+    }
+
+    fn clear(name: &str) -> String {
+        format!("{}${name}", frames::CLEAR)
+    }
+
+    #[test]
+    fn a_dead_temporary_s_register_is_taken_again_and_emptied_first() {
+        let items = [
+            frame("x1"),
+            "INSERT INTO $x1 SELECT 1, 1, 1".to_owned(),
+            frame("x2"),
+            "INSERT INTO $x2 SELECT * FROM $x1".to_owned(),
+            frame("x3"),
+            "INSERT INTO $x3 SELECT * FROM $x2".to_owned(),
+            "SELECT * FROM $x3".to_owned(),
+        ];
+        let (registers, clears) = allocate(&items.iter().map(String::as_str).collect::<Vec<_>>());
+        assert_eq!(registers["x1"], "f0_0");
+        assert_eq!(registers["x2"], "f0_1");
+        assert_eq!(registers["x3"], "f0_0");
+        assert_eq!(clears, [(4, "f0_0".to_owned())]);
+    }
+
+    #[test]
+    fn a_temporary_a_loop_reads_lives_through_the_loop() {
+        let items = [
+            frame("x1"),
+            "INSERT INTO $x1 SELECT 1, 1, 1".to_owned(),
+            emit::LOOP.to_owned(),
+            frame("x2"),
+            clear("x2"),
+            "INSERT INTO $x2 SELECT * FROM $x1".to_owned(),
+            format!("{}SELECT 0", emit::UNTIL),
+            frame("x3"),
+            "INSERT INTO $x3 SELECT 1, 1, 1".to_owned(),
+        ];
+        let (registers, clears) = allocate(&items.iter().map(String::as_str).collect::<Vec<_>>());
+        // `x1` is read on every pass: `x2` may not take its register; `x3`, after the loop, may.
+        assert_ne!(registers["x2"], registers["x1"]);
+        assert_eq!(registers["x3"], registers["x1"]);
+        assert_eq!(clears, [(7, registers["x1"].clone())]);
+    }
+
+    #[test]
+    fn a_block_s_own_temporary_lives_at_each_run_and_not_between() {
+        let items = [
+            format!("{}7", emit::BLOCK),
+            emit::LOOP.to_owned(),
+            frame("x1"),
+            clear("x1"),
+            "INSERT INTO $x1 SELECT 1, 1, 1".to_owned(),
+            format!("{}SELECT 0", emit::UNTIL),
+            emit::END.to_owned(),
+            frame("x2"),
+            "INSERT INTO $x2 SELECT 1, 1, 1".to_owned(),
+            "SELECT * FROM $x2".to_owned(),
+            frame("x3"),
+            "INSERT INTO $x3 SELECT 1, 1, 1".to_owned(),
+            format!("{}7", emit::RUN),
+            "SELECT * FROM $x3".to_owned(),
+        ];
+        let (registers, _) = allocate(&items.iter().map(String::as_str).collect::<Vec<_>>());
+        // Between the block and its run, `x1` is dead: `x2` takes its register. `x3` is live
+        // across the run, which writes `x1` again: it may not.
+        assert_eq!(registers["x2"], registers["x1"]);
+        assert_ne!(registers["x3"], registers["x1"]);
+    }
+
+    #[test]
+    fn a_block_temporary_not_its_pass_s_own_lives_to_the_last_run() {
+        let items = [
+            format!("{}7", emit::BLOCK),
+            frame("x1"),
+            emit::LOOP.to_owned(),
+            "INSERT INTO $x1 SELECT 1, 1, 1".to_owned(),
+            format!("{}SELECT 0", emit::UNTIL),
+            emit::END.to_owned(),
+            frame("x2"),
+            "INSERT INTO $x2 SELECT 1, 1, 1".to_owned(),
+            "SELECT * FROM $x2".to_owned(),
+            format!("{}7", emit::RUN),
+        ];
+        let (registers, _) = allocate(&items.iter().map(String::as_str).collect::<Vec<_>>());
+        assert_ne!(registers["x2"], registers["x1"]);
+    }
 }
