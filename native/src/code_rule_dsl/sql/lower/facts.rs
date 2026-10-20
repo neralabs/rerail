@@ -107,7 +107,12 @@ fn node_local(rule: &AstMatcher, depth: usize) -> bool {
 impl Lowerer<'_> {
     /// `rule` as a member of its shared literal fact (`Op::InFact`), where it is one here.
     pub(super) fn shared_fact(&mut self, rule: &AstMatcher, scope: usize) -> Option<Op> {
-        if self.tree.is_some()
+        // `RERAIL_SQL_FACTS=0` lowers every sub-rule on its clause's frame, as before facts.
+        static ENABLED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+            std::env::var("RERAIL_SQL_FACTS").map_or(true, |value| value != "0")
+        });
+        if !*ENABLED
+            || self.tree.is_some()
             || self.program.census.is_some()
             || !matches!(
                 rule,
