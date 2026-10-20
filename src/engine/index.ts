@@ -76,7 +76,7 @@ export {
   LANGUAGE_REGISTRY,
 } from "./code-rule/code-rule-languages.js";
 export { CODE_RULE_FORMAT, type CodeRule, codeRuleSchema, type CodeRuleScope } from "./code-rule/code-rule-schema.js";
-export { type CodeRuleSourceLanguage, type CodeRuleViolation, type RuleSteerDelivery } from "./code-rule/code-rule.js";
+export { type CodeRuleSourceLanguage, type CodeRuleViolation, renderSteer, type RuleSteerDelivery } from "./code-rule/code-rule.js";
 export { headlineText, linkSteers, sessionStartNote, steerBlock, steerHeadlines } from "./code-rule/rerail-steer.js";
 export { steerOrigin } from "./code-rule/steer-origin.js";
 export { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
