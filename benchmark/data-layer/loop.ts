@@ -9,8 +9,8 @@
 // costliest statements, clauses and (clause, file)s, against the previous run), a projection to the whole tree, and
 // the whole-program SQL setup (every clause in one program, compiled, and a first session), capped, and the mutation
 // stage (`mutations.ts`: native against SQL over each rule's base and recorded mutations). Native's lines over the
-// subset and its whole-tree time are cached per native source hash (`~/rerail-bench/data-layer/loop-cache/`); every run
-// is recorded in `~/rerail-bench/data-layer/loop-runs/`.
+// subset and its whole-tree time are cached per native source hash (`$RERAIL_BENCH_HOME/data-layer/loop-cache/`, the
+// home defaulting to `~/rerail-bench`); every run is recorded in `$RERAIL_BENCH_HOME/data-layer/loop-runs/`.
 //
 //   loop.ts run        [--rounds N] [--jobs N] [--memory GiB] [--chunk S] [--replan] [--cap S] [--group-cap S] [--clauses a,b] [--program-cap S] [--mutations selected|all|off] [--show N]
 //   loop.ts calibrate  [--jobs N] [--cap S] [--group-cap S]: the latest run's units over the full corpus, against its projection
@@ -41,7 +41,8 @@ import {
 import { compareLines, linesOf, parseLine } from "./parity.js";
 
 const script = fileURLToPath(import.meta.url);
-const benchHome = resolve(homedir(), "rerail-bench");
+/** The benchmark's inputs and state (`just rerail-bench-setup` lays it out): `RERAIL_BENCH_HOME`, default `~/rerail-bench`. */
+const benchHome = resolve(process.env.RERAIL_BENCH_HOME ?? resolve(homedir(), "rerail-bench"));
 const stateRoot = resolve(benchHome, "data-layer");
 const defaultSubset = resolve(rerailRoot, "benchmark/data-layer/loop-subset.json");
 const defaultCosts = resolve(stateRoot, "loop-costs.json");
@@ -106,8 +107,8 @@ interface Options {
   mutations: "selected" | "all" | "off";
   /** mutations: run every mutation over the subset and write `loop-mutations.json` (the greedy selection) from it. */
   select: boolean;
-  /** The distillation's per-clause coverage of the subset (`hit`: a finding file). */
-  cover: string;
+  /** A distillation's per-clause coverage of the subset (`hit`: a finding file); unset, the subset manifest's `finding`s. */
+  cover: string | undefined;
   // unit children only
   scope: "subset" | "full" | "list";
 }
@@ -171,7 +172,7 @@ function parseOptions(argv: readonly string[]): Options {
     output: values["--output"] === undefined ? undefined : resolve(values["--output"]),
     mutations,
     select: selectMutationSet,
-    cover: resolve(values["--cover"] ?? resolve(benchHome, "distill/cover.json")),
+    cover: values["--cover"] === undefined ? undefined : resolve(values["--cover"]),
     scope,
   };
 }
@@ -227,6 +228,12 @@ function readSubset(path: string): Subset {
 }
 
 const subsetSha = (subset: Subset) => sha256(JSON.stringify(subset.files.map(file => file.path)));
+
+/** The clauses (`linter/clause`) the subset has a finding file for: `--cover`'s `hit`s, else the manifest's `finding`s. */
+function subsetHits(options: Options): Set<string> {
+  if (options.cover !== undefined) return readSubsetHits(options.cover);
+  return new Set(Object.entries(readSubset(options.subset).clauses).flatMap(([clause, coverage]) => (coverage.finding === null ? [] : [clause])));
+}
 
 /** Files with their working-tree contents and module paths, as `corpus.ts` collects them. */
 function readFiles(engine: Engine, corpus: string, paths: readonly string[]): SourceFile[] {
@@ -1418,7 +1425,7 @@ async function mutationStage(options: Options, mode: "selected" | "all", subsetB
   const run = await runMutations({ addon: options.addon, corpus: options.corpus, policies: options.policies, set, subset: subsetBase ? options.subset : undefined, jobs: options.jobs, capSeconds: MUTATION_CAP_SECONDS });
   const base = subsetBase ? "subset" : "whole tree";
   const label = set.kind === "all" ? `every recorded mutation over the ${base}` : `the ${Object.values(set.mutations).flat().length} mutations of loop-mutations.json over the ${base}`;
-  return { run, summary: summarizeMutations(run, set, readSubsetHits(options.cover)), label };
+  return { run, summary: summarizeMutations(run, set, subsetHits(options)), label };
 }
 
 function mutationRecord(stage: MutationStage) {
@@ -1432,7 +1439,7 @@ function mutationRecord(stage: MutationStage) {
 
 /**
  * The mutation stage alone (`--mutations all` by default: every mutation over the whole tree), recorded with every
- * case in `~/rerail-bench/data-layer/mutation-runs/`. `--select` runs every mutation over the subset and writes
+ * case in `$RERAIL_BENCH_HOME/data-layer/mutation-runs/`. `--select` runs every mutation over the subset and writes
  * `loop-mutations.json`, the greedy selection the loop runs by default.
  */
 async function mutations(options: Options): Promise<number> {
@@ -1444,7 +1451,7 @@ async function mutations(options: Options): Promise<number> {
   const stage = await mutationStage(options, options.select ? "all" : options.mutations, options.select || options.mutations === "selected");
   printMutations(stage.run, stage.summary, stage.label, options.show);
   if (options.select) {
-    const selection = selectMutations(stage.run, readSubsetHits(options.cover), `greedy set cover over every recorded mutation on the subset base (each step: the mutation giving the most clauses without a subset hit their first true positive, the cheaper on a tie), native findings of addon ${addonSha256.slice(0, 19)} (rerail HEAD ${head}), ${stamp}`);
+    const selection = selectMutations(stage.run, subsetHits(options), `greedy set cover over every recorded mutation on the subset base (each step: the mutation giving the most clauses without a subset hit their first true positive, the cheaper on a tie), native findings of addon ${addonSha256.slice(0, 19)} (rerail HEAD ${head}), ${stamp}`);
     writeFileSync(defaultMutationSelection, `${JSON.stringify(selection, null, 2)}\n`);
     console.log(`wrote ${defaultMutationSelection}: ${Object.keys(selection.covers).length} mutations for ${stage.summary.newlyCovered.length} clauses`);
   }
@@ -1694,7 +1701,7 @@ async function main(): Promise<number> {
     if (!existsSync(options.addon)) throw new UsageError(`no addon at ${options.addon}; build it with \`just rerail-sql-loop\` (or --addon)`);
     if ((options.command === "run" || options.command === "mutations") && options.mutations !== "off") {
       // Checked before the run: the stage comes after the rounds.
-      if (!existsSync(options.cover)) throw new UsageError(`no subset coverage at ${options.cover} (--cover)`);
+      if (options.cover !== undefined && !existsSync(options.cover)) throw new UsageError(`no subset coverage at ${options.cover} (--cover)`);
       if (options.mutations === "selected" && !options.select && !existsSync(defaultMutationSelection)) throw new UsageError(`no mutation selection at ${defaultMutationSelection}; write it with \`just rerail-sql-loop-tool mutations --select\``);
     }
     return options.command === "select" ? await select(options) : options.command === "costs" ? await costs(options) : options.command === "calibrate" ? await calibrate(options) : options.command === "mutations" ? await mutations(options) : await run(options);

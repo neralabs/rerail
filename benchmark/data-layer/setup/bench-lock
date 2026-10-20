@@ -1,0 +1,19 @@
+#!/bin/bash
+# Serialize timing measurements across agents: bench-lock <command...>
+# Holds an exclusive lock while the command runs; waits otherwise. Prints wait time and load.
+# Use it for the loop's timed run: RERAIL_BENCH_LOCK=benchmark/data-layer/setup/bench-lock just rerail-sql-loop
+lock=/tmp/rerail-bench.lock
+load() { sysctl -n vm.loadavg 2>/dev/null || cut -d' ' -f1-3 /proc/loadavg; }
+start=$(date +%s)
+until mkdir "$lock" 2>/dev/null; do
+  holder=$(cat "$lock/pid" 2>/dev/null)
+  if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then rm -rf "$lock"; continue; fi
+  sleep 2
+done
+echo $$ > "$lock/pid"
+trap 'rm -rf "$lock"' EXIT INT TERM
+echo "bench-lock: acquired after $(( $(date +%s) - start ))s; load $(load)" >&2
+"$@"
+status=$?
+echo "bench-lock: released; load $(load)" >&2
+exit $status

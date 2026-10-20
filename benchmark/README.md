@@ -112,8 +112,10 @@ A run is untrusted when:
 `--clauses a,b` keeps only the clauses whose `linter/clause` name contains one of the filters.
 
 Native's lines over the subset (the oracle) and its whole-tree time are cached per native source hash in
-`~/rerail-bench/data-layer/loop-cache/`. Each run is recorded in `~/rerail-bench/data-layer/loop-runs/`. To prefix
-the timed run with a command, set `RERAIL_BENCH_LOCK=<command>`, for example a lock that serializes measurements.
+`$RERAIL_BENCH_HOME/data-layer/loop-cache/`. Each run is recorded in `$RERAIL_BENCH_HOME/data-layer/loop-runs/`. The
+home defaults to `~/rerail-bench` (see below). To prefix the timed run with a command, set
+`RERAIL_BENCH_LOCK=<command>`, for example `benchmark/data-layer/setup/bench-lock`, a lock that serializes
+measurements on one machine.
 
 `just rerail-sql-loop-tool <command>` runs the loop's other commands:
 
@@ -123,12 +125,53 @@ the timed run with a command, set `RERAIL_BENCH_LOCK=<command>`, for example a l
   SQL/native ratio with the subset's, then writes the correction and its error into the manifest. Run it again after
   every `select`.
 - **`costs`** times every subset file on SQL with every clause in one program, one file per apply, each capped by
-  `--cap`. The profile gives each (clause, file) its statement time. It writes `~/rerail-bench/data-layer/loop-costs.json`.
+  `--cap`. The profile gives each (clause, file) its statement time. It writes `$RERAIL_BENCH_HOME/data-layer/loop-costs.json`.
 - **`mutations`** runs the mutation stage alone, by default `--mutations all` (every mutation over the whole tree).
-  It records every case in `~/rerail-bench/data-layer/mutation-runs/`. With `--select`, it runs every mutation over
+  It records every case in `$RERAIL_BENCH_HOME/data-layer/mutation-runs/`. With `--select`, it runs every mutation over
   the subset and rewrites `loop-mutations.json` from what native found. Re-select after a policy, mutation or subset
-  change. `--cover` names the distillation's per-clause coverage (default `~/rerail-bench/distill/cover.json`), whose
-  `hit` says which clauses already have a finding file in the subset.
+  change. The clauses that already have a finding file in the subset are those with a `finding` in the manifest;
+  `--cover <cover.json>` takes them from a distillation's per-clause coverage (`hit`) instead.
+
+### Running the loop on a fresh machine
+
+The loop reads its corpus and policies from a benchmark home, `RERAIL_BENCH_HOME` (default `~/rerail-bench`), and
+records its runs there. Both are internal, so neither is in the repository. `just rerail-bench-setup` lays the home
+out from a nera-data-layer clone and a nera-landing clone you already have:
+
+```sh
+just rerail-bench-setup --data-layer ~/repos/nera-data-layer --nera-landing ~/repos/nera-landing [--home <dir>]
+```
+
+It fetches from each clone's `origin` only the commit it lacks, then:
+
+- **Corpus:** adds `nera-data-layer-fce4dc72/`, a detached worktree of the nera-data-layer clone at
+  `loop-subset.json`'s corpus commit. The clone's own checkout is not touched. An existing one must be at that commit
+  and clean, since the loop reads the working tree.
+- **Addon:** runs `npm ci` when `node_modules/` is missing, and builds the `loop` addon into `target-loop/` when it is
+  missing, as `just rerail-sql-loop` does. `--addon <path>` uses another build for the conversion instead.
+- **Policies:** `data-layer/setup/convert.mts` exports `tempo-oracles/data-layer/` from nera-landing's
+  `Moti-Velz/tempo-data-layer-benchmark` at `aa63f36b5`, the commit the loop's policies were converted from, into
+  `data-layer/policies/<linter>/`. It copies each linter's oracle files verbatim. It stores each `policy.json` as
+  Rerail's own check, `validateCodeRule`, returns it, compiled on the addon, and writes
+  `data-layer/conversion-report.json`.
+- **Check:** `data-layer/setup/verify.mts` requires every oracle file to have the commit's git blob id, the report to
+  convert all 12 linters, and each `policy.json`'s sha256 to equal its `policies` entry in `loop-subset.json` (the
+  hash `select` records, over the file's bytes). A policy hash differs when this checkout stores a rule differently
+  from the checkout the subset was selected with; the subset's coverage is then stale, so re-run `select` and
+  `calibrate`.
+
+A home that already passes the check is left as it is, so running the recipe again only checks. It ends by printing
+the loop and gate commands to run next, with `export RERAIL_BENCH_HOME=<dir>` first when the home is not the default.
+The first loop run in a home measures native over the subset and the whole tree once; later runs read that from
+`loop-cache/`.
+
+The loop does not need the distillation that chose the subset. Its tools are kept for re-selecting:
+`data-layer/setup/cover.py` writes `$RERAIL_BENCH_HOME/distill/cover.json`, each clause's finding and clean cover files,
+from the home's corpus and policies and a whole-tree and profile run (`data-layer/out/baseline/`,
+`data-layer/out/profile/`). Its helper, `data-layer/setup/lits/`, extracts regex literals as native does; build it with
+`cargo build --release --manifest-path benchmark/data-layer/setup/lits/Cargo.toml`. `select --from <subset.json>`
+then writes the manifest from a distilled subset. The script that merged `cover.json` with a construct census into
+that `subset.json` was not kept.
 
 ### The SQL engine's gate
 
