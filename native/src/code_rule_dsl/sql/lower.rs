@@ -65,7 +65,11 @@ pub(super) struct ProgramBuilder {
     /// Each rule lowered as a stage, by its address and dialect: a stage is context-free, so a
     /// rule reached again (a utility many terms or utilities share) is lowered once, not once per
     /// path to it.
-    stage_rules: HashMap<(usize, String), usize>,
+    stage_rules: HashMap<(usize, String), NodeSet>,
+    /// The rules `stage` derives (an `any` with a `not` branch read as its dual `all`), kept for
+    /// the program's life: their addresses key `stage_rules` and `leaves`, so none is freed and
+    /// its address reused by another rule while the program is lowered.
+    derived: Vec<Box<AstMatcher>>,
     regexes: HashMap<(String, String), usize>,
     fresh_patterns: HashMap<usize, usize>,
     /// Leaf fact terminals by the leaf's address and the captures their keys carry: lowering a
@@ -138,7 +142,7 @@ impl ProgramBuilder {
             self.terminals.truncate(terminals);
             self.stages.truncate(stages);
             self.stage_index.retain(|_, stage| *stage < stages);
-            self.stage_rules.retain(|_, stage| *stage < stages);
+            self.stage_rules.retain(|_, set| set.stage < stages);
             self.regexes.retain(|_, term| *term < terminals);
             self.fresh_patterns.retain(|_, term| *term < terminals);
             self.leaves.retain(|_, term| *term < terminals);
@@ -596,6 +600,39 @@ impl<'p> Lowerer<'p> {
             .need(rule, &mut self.program.analysis)
     }
 
+    /// Whether `rule`'s per-batch stage (`stage`) holds only nodes of some kinds: its rule has
+    /// root kinds, or it is read as the complement of a stage that has. A stage that is not reads
+    /// every node of the batch.
+    fn stage_bounded(&mut self, rule: &AstMatcher) -> bool {
+        let three = self.three;
+        let complementable = |lowerer: &mut Self, inner: &AstMatcher| {
+            lowerer.program.analysis.capture_free(inner)
+                && !(three && lowerer.program.analysis.reads_values(inner))
+        };
+        match rule {
+            AstMatcher::Not(inner) if complementable(self, inner) => self.stage_bounded(inner),
+            AstMatcher::Any(items)
+                if items.iter().any(|item| matches!(item, AstMatcher::Not(_)))
+                    && complementable(self, rule) =>
+            {
+                // The dual `all[R, not X…]`: bounded where one of its terms `R` has root kinds.
+                items.iter().any(|item| match item {
+                    AstMatcher::Not(inner) => self
+                        .kinds
+                        .get_or_insert_with(|| RootKinds::new(three))
+                        .of(inner, &mut self.program.analysis)
+                        .is_some(),
+                    _ => false,
+                })
+            }
+            _ => self
+                .kinds
+                .get_or_insert_with(|| RootKinds::new(three))
+                .of(rule, &mut self.program.analysis)
+                .is_some(),
+        }
+    }
+
     /// The statement of what was lowered: its root kinds, its operator and its units.
     fn finish(self, kinds: Option<Vec<u16>>, op: Op) -> Statement {
         let mut units = self.units;
@@ -1011,8 +1048,11 @@ impl<'p> Lowerer<'p> {
 
     /// The per-batch set of the nodes `rule` matches in a fresh environment: a stage lowered,
     /// emitted and keyed by its SQL. A capture-free `not R` that cannot be unknown is `R`'s set
-    /// complemented: a negation holds at most nodes of the batch, `R` at few. Not one that
-    /// reaches back into the following cycle being lowered: the matcher matches it with the
+    /// complemented: a negation holds at most nodes of the batch, `R` at few. So is an `any` with
+    /// a `not` branch, by De Morgan: `any[not R, X…]` is `not all[R, not X…]`, a set bounded by
+    /// `R`'s kinds (the stop rule `any[not any[block, argument_list, …], decorator, …]` of a
+    /// depth walk otherwise runs one anti-join per kind over every node of the batch). Not one
+    /// that reaches back into the following cycle being lowered: the matcher matches it with the
     /// binding sub-rules in progress, which a per-batch stage does not know.
     fn stage(&mut self, rule: &AstMatcher) -> Result<NodeSet, Unsupported> {
         if let Some(following) = &self.following
@@ -1027,33 +1067,56 @@ impl<'p> Lowerer<'p> {
             return Ok(self.stage(inner)?.complemented());
         }
         let address = (std::ptr::from_ref(rule) as usize, self.stage_key());
-        let stage = match self.program.stage_rules.get(&address) {
-            Some(&stage) => stage,
-            None => {
-                let stage = self.stage_of(rule)?;
-                self.program.stage_rules.insert(address, stage);
-                stage
+        if let Some(&set) = self.program.stage_rules.get(&address) {
+            return Ok(set);
+        }
+        let set = match rule {
+            AstMatcher::Any(items)
+                if items.iter().any(|item| matches!(item, AstMatcher::Not(_)))
+                    && self.program.analysis.capture_free(rule)
+                    && !(self.three && self.program.analysis.reads_values(rule)) =>
+            {
+                let dual = Box::new(AstMatcher::All(
+                    items
+                        .iter()
+                        .map(|item| match item {
+                            AstMatcher::Not(inner) => (**inner).clone(),
+                            other => AstMatcher::Not(Box::new(other.clone())),
+                        })
+                        .collect(),
+                ));
+                let set = self.stage(&dual)?.complemented();
+                self.program.derived.push(dual);
+                set
             }
+            _ => NodeSet {
+                stage: self.stage_of(rule)?,
+                complement: false,
+            },
         };
-        Ok(NodeSet {
-            stage,
-            complement: false,
-        })
+        self.program.stage_rules.insert(address, set);
+        Ok(set)
     }
 
+    /// A stage's statement. A rule that cannot be unknown is lowered two-valued even in a
+    /// three-valued clause (its verdict is the same, with no `unk` to carry through its frames),
+    /// and its stage's rows say `unk = 0` for the clause's readers.
     fn stage_of(&mut self, rule: &AstMatcher) -> Result<usize, Unsupported> {
-        let kinds = RootKinds::new(self.three)
+        let three = self.three && reads_values(rule, &mut BTreeSet::new());
+        let kinds = RootKinds::new(three)
             .of(rule, &mut self.program.analysis)
             .map(|kinds| kinds.into_iter().collect());
         let statement = {
             let mut lowerer = Lowerer::new(self.program, self.dialect);
-            lowerer.three = self.three;
+            lowerer.three = three;
             lowerer.shared = recursion::repeated(&[rule]);
             let (op, _) = lowerer.lower(rule, 0, &BTreeSet::new())?;
             let op = lowerer.unknowable(op);
             lowerer.finish(kinds, op)
         };
-        let sql = timed(&mut self.program.stage_emission, || emit::stage(&statement));
+        let sql = timed(&mut self.program.stage_emission, || {
+            emit::stage(&statement, self.three)
+        });
         let digest = format!("{}:{}", self.dialect, sql.statements.join(";\n"));
         if let Some(&existing) = self.program.stage_index.get(&digest) {
             return Ok(existing);
@@ -1225,6 +1288,31 @@ impl<'p> Lowerer<'p> {
                         .collect();
                     return Ok((Op::Kinds(kinds), bound.clone()));
                 }
+                // Where no branch reads or binds a capture, which branch holds a row is not
+                // observable: the plain kind branches are one kind test, run first, and the
+                // others run on the rows it leaves (the depth walks' stop rule: 12 of its 18
+                // branches are kinds, each an anti-join over the rows the earlier ones left).
+                let kinds: Vec<u16> = items
+                    .iter()
+                    .filter_map(|item| match item {
+                        AstMatcher::Kind(kind) => Some(kind_id(kind)),
+                        _ => None,
+                    })
+                    .collect();
+                if kinds.len() > 1
+                    && self.exclude.is_none()
+                    && items
+                        .iter()
+                        .all(|item| self.program.analysis.capture_free(item))
+                {
+                    let mut ops = vec![Op::Kinds(kinds)];
+                    for item in items {
+                        if !matches!(item, AstMatcher::Kind(_)) {
+                            ops.push(self.lower(item, scope, bound)?.0);
+                        }
+                    }
+                    return Ok((Op::Any(ops), bound.clone()));
+                }
                 let mut ops = Vec::with_capacity(items.len());
                 let mut out = bound.clone();
                 for item in items {
@@ -1286,10 +1374,14 @@ impl<'p> Lowerer<'p> {
             AstMatcher::NthChild(nth) => {
                 let (of_rule, out) = match &nth.of_rule {
                     None => (None, bound.clone()),
+                    // A capture-free `ofRule` is a per-batch stage where that stage is bounded by
+                    // kinds; one that would read every node of the batch is probed at the input's
+                    // siblings alone, as a capture-reading one is (the ranks read no other node).
                     Some(rule)
                         if self.program.analysis.capture_free(rule)
                             && self.tree.is_none()
-                            && !recursion::reaches(rule, &self.program.in_progress) =>
+                            && !recursion::reaches(rule, &self.program.in_progress)
+                            && self.stage_bounded(rule) =>
                     {
                         (Some(OfRule::Stage(self.stage(rule)?)), bound.clone())
                     }

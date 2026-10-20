@@ -111,8 +111,9 @@ fn a_sample_clause_set_runs_a_bounded_number_of_statements_per_batch() {
     let (stages, clauses) = program.statement_count();
     eprintln!("sample clause set: {stages} stage statements, {clauses} clause statements");
     // `count` groups into a table keyed by row (`Emitter::grouped`). No rule walks over a frame
-    // that repeats a key (the nested `has` walks children, one row each): nothing is keyed.
-    assert_eq!((stages, clauses), (6, 66));
+    // that repeats a key (the nested `has` walks children, one row each): nothing is keyed. A
+    // walk's sub-rule does not re-test the kind its candidates were read by (`on_candidates`).
+    assert_eq!((stages, clauses), (6, 60));
 }
 
 /// Terminals run once per statement over their whole input set, never once per row: a fresh
@@ -185,10 +186,62 @@ fn walks_read_their_sub_rule_kinds_and_a_double_negation_is_a_semi_join() {
     }
 }
 
+/// A frame holds only the slots read after it (`emit`'s liveness), as `spt-022`'s walks from a
+/// statement of many captures do: a walk's candidates carry the slots its sub-rule reads and
+/// those it returns to the row, not every capture of the clause. A semi-join's carry none; a
+/// first match that binds `$X` carries `$X` alone. Both engines agree.
+#[test]
+fn a_walk_s_candidates_hold_only_the_slots_read_after_them() {
+    use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
+    let source = "function g() { f(a, b, c, d); h(x, 2); }\nf(x, y, z, w);\n";
+    // The candidates' slot columns of the has-end walk, and the clause's own.
+    let widths = |rule: &CompiledCodeRuleDsl| -> (usize, usize) {
+        let grammars: Vec<_> = grammar_matchers(rule).iter().collect();
+        let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
+        let statements: Vec<&String> = program.statements().collect();
+        let walk = statements
+            .iter()
+            .find(|statement| statement.contains("c.id <= fn.\"last\""))
+            .expect("a has-end walk");
+        let copied = walk
+            .split_once("SELECT NULL, c.file, c.node")
+            .and_then(|(_, rest)| rest.split_once(", c.pk"))
+            .expect("a candidate row")
+            .0
+            .matches(", f.s")
+            .count();
+        let selected = statements
+            .iter()
+            .find_map(|statement| statement.strip_prefix("SELECT file, node"))
+            .and_then(|rest| rest.split_once(" FROM "))
+            .expect("the clause's select")
+            .0
+            .matches(", s")
+            .count();
+        (copied, selected)
+    };
+    let wide = json!({ "pattern": "$F($A, $B, $C, $D)" });
+    let cases = [
+        (json!({ "stopBy": "end", "kind": "identifier", "regex": "^x$" }), 0),
+        (json!({ "stopBy": "end", "kind": "identifier", "pattern": "$X" }), 1),
+    ];
+    for (has, carried) in cases {
+        let rule = compiled(json!({ "rule": {
+            "kind": "call_expression",
+            "all": [wide.clone(), { "inside": { "stopBy": "end", "kind": "program", "has": has } }],
+        } }));
+        same(&rule, &snapshot(&[("typescript", "a.ts", source)]));
+        let (copied, selected) = widths(&rule);
+        assert_eq!(copied, carried, "the walk's candidates carry {copied} slots");
+        assert!(selected > carried + 4, "the clause selects {selected} slots");
+    }
+}
+
 /// A stop set or `ofRule` set whose rule is a capture-free `not R` is `R`'s stage read as its
 /// complement: no stage holds the negation's many nodes, and every reader (`nearest`, the
-/// field walk's stop, `nthChild`'s ranks) inverts membership. Both engines agree, three-valued
-/// too, where `R` cannot be unknown.
+/// field walk's stop, `nthChild`'s ranks) inverts membership. So is one whose rule is an `any`
+/// with a `not` branch, read by De Morgan as its dual `all`'s complement: the dual's stage reads
+/// only its kinds' nodes. Both engines agree, three-valued too, where the rule cannot be unknown.
 #[test]
 fn a_negated_stop_or_of_rule_is_its_rule_s_stage_complemented() {
     use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
@@ -196,34 +249,46 @@ fn a_negated_stop_or_of_rule_is_its_rule_s_stage_complemented() {
         "function g(a) { if (a) { return (((a))); } f((1), [2], k(3)); }\nconst y = [k(u), (v)];\n";
     let wrappers =
         json!({ "not": { "any": [{ "kind": "parenthesized_expression" }, { "kind": "array" }] } });
-    let rules = [
-        json!({ "kind": "identifier", "inside": { "stopBy": wrappers, "kind": "call_expression" } }),
-        json!({ "kind": "statement_block", "has": { "stopBy": wrappers, "kind": "identifier" } }),
-        json!({ "kind": "return_statement", "precedes": { "stopBy": wrappers, "kind": "expression_statement" } }),
-        json!({ "kind": "call_expression", "has": { "field": "arguments", "stopBy": wrappers, "kind": "number" } }),
-        json!({ "kind": "number", "nthChild": { "position": 1, "ofRule": wrappers } }),
-        json!({ "kind": "identifier", "inside": { "stopBy": wrappers, "kind": "call_expression", "testUnknown": "^k" } }),
-    ];
-    for rule in rules {
-        let compiled = compiled(json!({ "rule": rule }));
-        same(&compiled, &snapshot(&[("typescript", "a.ts", source)]));
-        let grammars: Vec<_> = grammar_matchers(&compiled).iter().collect();
-        let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
-        let statements: Vec<&String> = program.statements().collect();
-        assert!(
-            statements
-                .iter()
-                .any(|statement| statement.contains("complement = 1")
-                    || statement.contains("NOT EXISTS (SELECT 1 FROM stage_")),
-            "{rule}: the negation is read as a complement"
-        );
-        // A stage's frames are named `s<stage>_…`: none computes the negation's anti-join.
-        assert!(
-            !statements
-                .iter()
-                .any(|statement| statement.contains("NOT IN (SELECT k FROM s")),
-            "{rule}: no stage holds the negation"
-        );
+    let dual = json!({ "any": [wrappers.clone(), { "kind": "return_statement" }] });
+    for (stop, plain) in [(wrappers, true), (dual, false)] {
+        let rules = [
+            json!({ "kind": "identifier", "inside": { "stopBy": stop, "kind": "call_expression" } }),
+            json!({ "kind": "statement_block", "has": { "stopBy": stop, "kind": "identifier" } }),
+            json!({ "kind": "return_statement", "precedes": { "stopBy": stop, "kind": "expression_statement" } }),
+            json!({ "kind": "call_expression", "has": { "field": "arguments", "stopBy": stop, "kind": "number" } }),
+            json!({ "kind": "number", "nthChild": { "position": 1, "ofRule": stop } }),
+            json!({ "kind": "identifier", "inside": { "stopBy": stop, "kind": "call_expression", "testUnknown": "^k" } }),
+        ];
+        for rule in rules {
+            let compiled = compiled(json!({ "rule": rule }));
+            same(&compiled, &snapshot(&[("typescript", "a.ts", source)]));
+            let grammars: Vec<_> = grammar_matchers(&compiled).iter().collect();
+            let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
+            let statements: Vec<&String> = program.statements().collect();
+            assert!(
+                statements
+                    .iter()
+                    .any(|statement| statement.contains("complement = 1")
+                        || statement.contains("NOT EXISTS (SELECT 1 FROM stage_")),
+                "{rule}: the negation is read as a complement"
+            );
+            // A stage's frames are named `s<stage>_…`: none reads every node of the batch.
+            assert!(
+                !statements.iter().any(|statement| statement.starts_with("INSERT INTO s")
+                    && statement.contains("FROM node n WHERE n.file IN (SELECT file FROM runs")
+                    && !statement.contains("AND n.kind IN (")),
+                "{rule}: a stage reads only its rule's kinds"
+            );
+            // None computes the plain negation's anti-join (the dual's `not return_statement`
+            // is one, over the wrappers' nodes alone).
+            assert!(
+                !plain
+                    || !statements
+                        .iter()
+                        .any(|statement| statement.contains("NOT IN (SELECT k FROM s")),
+                "{rule}: no stage holds the negation"
+            );
+        }
     }
 }
 

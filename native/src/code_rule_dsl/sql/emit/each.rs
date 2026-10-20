@@ -65,19 +65,23 @@
 //! passed over; three-valued, a sub-rule of the trial that read true or false where the matcher
 //! reads unknown (or the reverse) would change the search.
 
-use super::{EACH, Emitter, Reads};
+use super::{EACH, Emitter, Live, Reads};
 use crate::code_rule_dsl::sql::plan::Op;
+use std::rc::Rc;
 
 impl Emitter<'_> {
     /// `Op::All` in a three-valued statement, which lowers only `violation.each`'s two sequences
     /// to it: the root filter before the clause's operator, and an operator then its exclusion.
-    pub(super) fn each_open(&mut self, items: &[Op], input: &str) -> String {
+    pub(super) fn each_open(&mut self, items: &[Op], input: &str, live: &Live) -> String {
         match items {
             [root @ Op::EachRoot { .. }, op] => {
-                let roots = self.op(root, input);
-                self.op(op, &roots)
+                let held = self.live_before(op, live);
+                let roots = self.op(root, input, &held);
+                self.op(op, &roots, live)
             }
-            [op, Op::Excluded { name, root }] => self.excluding_open(op, *name, *root, input),
+            [op, Op::Excluded { name, root }] => {
+                self.excluding_open(op, *name, *root, input, live)
+            }
             _ => unreachable!("a three-valued clause lowers `all` as AllOpen"),
         }
     }
@@ -85,8 +89,17 @@ impl Emitter<'_> {
     /// `op`'s verdicts with the true rows that bind the enumerated capture (`name`) to a range
     /// reported for their root dropped: an excluded true candidate is passed over, an unknown one
     /// stays unknown.
-    fn excluding_open(&mut self, op: &Op, name: usize, root: usize, input: &str) -> String {
-        let out = self.op(op, input);
+    fn excluding_open(
+        &mut self,
+        op: &Op,
+        name: usize,
+        root: usize,
+        input: &str,
+        live: &Live,
+    ) -> String {
+        let mut held = (**live).clone();
+        held.extend([name, root]);
+        let out = self.op(op, input, &Rc::new(held));
         self.frame(
             "x",
             &format!(
@@ -103,20 +116,30 @@ impl Emitter<'_> {
     /// the input's bindings; elsewhere true where the position holds, with the bindings of
     /// `ofRule` re-matched at the node excluding (`commit`), or the input's where it does not
     /// match. `commit` is never unknown: the lowering refuses an `ofRule` that could be.
-    pub(super) fn nth_commit_open(&mut self, nth: &Op, commit: &Op, input: &str) -> String {
-        let positioned = self.op(nth, input);
-        let passed = self.frame(
-            "y",
-            &format!(
-                "SELECT {} FROM {input} f WHERE f.k IN (SELECT k FROM {positioned} WHERE unk = 0)",
-                self.cols("f")
-            ),
-            Reads::join(&[input, &positioned]),
-        );
+    pub(super) fn nth_commit_open(
+        &mut self,
+        nth: &Op,
+        commit: &Op,
+        input: &str,
+        live: &Live,
+    ) -> String {
+        let positioned = self.op(nth, input, &Live::default());
+        let held = self.live_before(commit, live);
+        let passed = self.within(&held, |this| {
+            this.frame(
+                "y",
+                &format!(
+                    "SELECT {} FROM {input} f WHERE f.k IN (SELECT k FROM {positioned} WHERE unk = 0)",
+                    this.cols("f")
+                ),
+                Reads::join(&[input, &positioned]),
+            )
+        });
         self.same_space(input, &passed);
-        let committed = self.op(commit, &passed);
+        let committed = self.op(commit, &passed, live);
         let overrides: Vec<(String, String)> = self
-            .physical
+            .layout
+            .columns
             .iter()
             .map(|column| {
                 (

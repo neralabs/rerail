@@ -1,0 +1,765 @@
+{
+  "format": "rerail.sql-loop-mutations/v1",
+  "method": "greedy set cover over every recorded mutation on the subset base (each step: the mutation giving the most clauses without a subset hit their first true positive, the cheaper on a tie), native findings of addon sha256:d767afbb20fc (rerail HEAD 4cbfb4c16), 2026-10-20T13-26-18-222Z",
+  "mutations": {
+    "async_sync_delegation": [
+      "allowlist_unsigned_waiver"
+    ],
+    "connection_caches": [
+      "allowlisted-file-unreviewed-cache",
+      "module-level-revision-dict",
+      "resolver-revision-dicts"
+    ],
+    "eager_resolve": [
+      "dirty-phase-probes",
+      "lazy-python-materialization",
+      "permission-from-sql-derived-values",
+      "transitive-database-terminals",
+      "transitive-eager-resolution",
+      "transitive-planning-state-probes"
+    ],
+    "hasattr_async": [
+      "several-probes-on-one-line"
+    ],
+    "lazy_architecture": [
+      "budget_la013_new_violation_within_budget",
+      "la001_pure_lazy_direct_grammar_value",
+      "la001_pure_lazy_reaches_store_read",
+      "la002_intent_with_direct_read_fallback",
+      "la003_public_bulk_ops_direct_read",
+      "la004_idf_rebuild_commits_connection",
+      "la005_dolt_branch_lookup_in_versioned_ops",
+      "la006_grammar_value_on_raw_conn",
+      "la007_prepare_reads_idf_stats",
+      "la008_sync_async_staged_row_count_drift",
+      "la009_compat_import_in_revert",
+      "la009_execution_context_terminal_in_ops_analytics",
+      "la009_lazy_method_defers_to_eager_reader",
+      "la009_private_conn_reachthrough_in_ops_analytics",
+      "la009_pure_lazy_async_function",
+      "la010_lazy_sync_name",
+      "la011_preprocess_checks_write_permission",
+      "la011_preprocess_reads_gate_row",
+      "la013_defer_lazy_result_repo_wide_dedupe",
+      "la014_closed_post_op_lambda",
+      "la014_materialize_dynamic_decoder"
+    ],
+    "post_op_no_internal_dispatch": [
+      "builder-multiple-enum-comparisons",
+      "domain-materializer-helper",
+      "legacy-surface-references",
+      "literal-kwarg-probe",
+      "literal-payload-key-probes",
+      "repeated-enum-comparison",
+      "runtime-builder-name-in-materializer"
+    ],
+    "pure_lazy_runtime_purity": [
+      "plp004-lazy-wrapper-runtime",
+      "plp008-runtime-sink-keyword",
+      "plp010-lazy-operation-runtime-payload"
+    ],
+    "revision_ancestry_invariants": [
+      "hand-built-walk-beside-canonical-delegation",
+      "hand-built-walk-imported-recursive-constant",
+      "hand-built-walk-module-constants",
+      "hand-built-walk-split-literal",
+      "removed-stmt-ancestry-chain-import",
+      "test-and-out-of-root-paths"
+    ],
+    "serverplan_quality": [
+      "spq-002-pos-l4-intent-compile-raises",
+      "spq-003-pos-post-op-hydration",
+      "spq-004-pos-getattr-in-core-plan-file",
+      "spq-005-pos-lower-forks-on-staging-ctx",
+      "spq-006-pos-pipeline-result-resolution-duplicated",
+      "spq-007-pos-nested-class-and-chain",
+      "spq-008-pos-raw-data-discarded",
+      "spq-011-pos-compile-direct-io",
+      "spq-012-pos-executor-runtime-helper",
+      "spq-013-pos-executor-variants",
+      "spq-014-pos-strategy-runtime-sequential",
+      "spq-014-pos-strategy-variants",
+      "spq-016-pos-assigns-children",
+      "spq-016-pos-step-child-steps",
+      "spq-017-pos-compiledstep-runtime-result",
+      "spq-020-pos-preop-local-closure",
+      "spq-021-pos-conditional-compiles-children",
+      "spq-021-pos-conditional-sql-grammar",
+      "spq-023-pos-dialect-test-direct-compile",
+      "spq-024-pos-compile-helpers-order-by-codegen",
+      "spq-024-pos-order-by-variants",
+      "spq-025-pos-can-batch-lock-policy",
+      "spq-026-pos-branch-fetch-helper",
+      "spq-027-pos-object-id-cache",
+      "spq-028-pos-field-reassignment",
+      "spq-029-pos-compiler-strategy-first",
+      "spq-029-pos-executor-missing-lowering",
+      "spq-029-pos-physical-contract",
+      "spq-029-pos-physical-state-write",
+      "spq-029-pos-semantic-level-and-compile",
+      "spq-029-pos-semantic-validation-returns",
+      "spq-029-pos-subclass-callbacks",
+      "spq-030-pos-plan-or-direct",
+      "spq-031-pos-optional-context-fallback",
+      "spq-032-pos-plan-internals",
+      "spq-033-pos-bespoke-lowering",
+      "spq-034-pos-relationship-type-branch",
+      "spq-035-pos-through-skip",
+      "spq-036-pos-relationship-metadata",
+      "spq-037-pos-descriptor-fk-planning",
+      "spq-038-pos-legacy-vocabulary",
+      "spq-039-pos-legacy-step-sharing",
+      "spq-040-pos-include-load-bypass",
+      "spq-041-pos-embedded-formatting",
+      "spq-042-pos-string-scope-filter",
+      "spq-043-pos-projection-fallback",
+      "spq-045-pos-compound-write",
+      "spq-046-pos-batch-without-category",
+      "spq-047-pos-can-fuse-replay",
+      "spq-048-pos-batched-step-hint",
+      "spq-049-pos-duplicated-taxonomy",
+      "spq-050-pos-runtime-ingress",
+      "spq-051-pos-callback-surfaces",
+      "spq-052-pos-predicate-surfaces"
+    ],
+    "serverplan_state_tripwires": [
+      "spt-001-pos-queue-auth-def-and-call",
+      "spt-002-pos-large-column",
+      "spt-003-neg-signed-allowlist-search-lazy",
+      "spt-003-pos-annotated-authority",
+      "spt-004-pos-queue-udf-string",
+      "spt-005-pos-nested-execution",
+      "spt-006-pos-ir-carriers",
+      "spt-008-pos-pre-op-hook",
+      "spt-009-pos-ddl-helpers",
+      "spt-010-pos-resolved-refs",
+      "spt-011-pos-preprocess-sql",
+      "spt-014-pos-raw-table-name",
+      "spt-018-pos-lower-shape-branch",
+      "spt-020-pos-sql-builder-transitive",
+      "spt-021-pos-provider-param-with-ctx-txn",
+      "spt-022-pos-helper-returning-runtime-txn",
+      "spt-023-pos-post-op-converts-rows",
+      "spt-026-pos-runtime-ref-callback-in-compile",
+      "spt-027-pos-numpy-in-serverplan-helper",
+      "spt-028-pos-materializer-row-projection",
+      "spt-029-pos-projection-row-shape-fallback",
+      "spt-030-pos-map-lazy-result-enqueues-terminals",
+      "spt-032-pos-graph-read-config-str-graph-id",
+      "spt-033-pos-private-step-ref-id",
+      "spt-034-pos-traverse-resolves-defaults"
+    ],
+    "serverplan_steps": [
+      "step-016-pos-compile-branches-on-resolved-attr",
+      "step-017-pos-compile-copies-object",
+      "step-018-pos-l0-compile-raises",
+      "step-019-pos-postop-mutates-captured",
+      "step-020-pos-can-batch-false",
+      "step-021-pos-nested-step-class-counted-per-step-class",
+      "step-022-pos-side-effect-tag",
+      "step-023-pos-zero-io-l0-without-execution-role",
+      "step-024-neg-not-zero-io",
+      "step-024-pos-execution-role-annotated-str-returns-literal",
+      "step-026-pos-callback-referenced-twice",
+      "step-027-pos-legacy-post-op-in-strict-module",
+      "step-028-pos-user-callable-in-strict-module",
+      "step-029-pos-runtime-builder-escape-hatches",
+      "step-033-pos-closed-post-op-consumes-runtime-refs",
+      "step-033-pos-virtual-scalar-value-carrier",
+      "step-034-pos-refless-runtime-refs-post-op",
+      "step-035-pos-cte-anchor-hides-runtime-ref-post-op",
+      "step-037-pos-terminal-projection-string-dispatch",
+      "step-038-pos-empty-result-assertion",
+      "step-039-pos-literal-payload-materializer-helper",
+      "step-039-pos-row-materializer-raw-row-shaping",
+      "step-040-pos-type-hints-comprehension",
+      "step-041-pos-static-exception-closed-post-op",
+      "step-042-pos-result-materialization-source-refs",
+      "step-045-pos-virtual-tables-read-concrete",
+      "step-045-pos-virtual-tables-written-dynamic",
+      "step-045-pos-virtual-wildcard-tables",
+      "step-046-pos-virtual-compile-grammar",
+      "step-049-neg-batch-transport-with-publication-contract",
+      "step-049-pos-virtual-batch-transport",
+      "step-050-pos-sql-step-hides-accounting"
+    ]
+  },
+  "covers": {
+    "async_sync_delegation/allowlist_unsigned_waiver": [
+      "async_sync_delegation/unsigned-allowlist"
+    ],
+    "connection_caches/allowlisted-file-unreviewed-cache": [
+      "connection_caches/branch-revision-tip-cache--allowlisted-branch-ops-steps",
+      "connection_caches/connection-dict-cache--allowlisted-branch-ops-steps",
+      "connection_caches/instance-dict--allowlisted-branch-ops-steps"
+    ],
+    "connection_caches/module-level-revision-dict": [
+      "connection_caches/module-dict--other-files"
+    ],
+    "connection_caches/resolver-revision-dicts": [
+      "connection_caches/connection-dict-cache--other-files",
+      "connection_caches/instance-dict--other-files"
+    ],
+    "eager_resolve/dirty-phase-probes": [
+      "eager_resolve/compile:*.is_resolved",
+      "eager_resolve/compile:peek_resolved_value()",
+      "eager_resolve/lower:*.resolve()",
+      "eager_resolve/lower:getattr(_step_ref_id)",
+      "eager_resolve/preprocess:*.resolve(resolved)",
+      "eager_resolve/preprocess:resolve_lazy_param()",
+      "eager_resolve/preprocess:resolved.get()",
+      "eager_resolve/transitive:peek_resolved_value()",
+      "eager_resolve/transitive:resolve_lazy_param()"
+    ],
+    "eager_resolve/lazy-python-materialization": [
+      "eager_resolve/bool(lazy...)",
+      "eager_resolve/float(lazy...)",
+      "eager_resolve/int(lazy...)",
+      "eager_resolve/transitive:lazy-python:set(lazy)"
+    ],
+    "eager_resolve/permission-from-sql-derived-values": [
+      "eager_resolve/transitive:permission-sql:direct-permission-expression",
+      "eager_resolve/transitive:sql-derived-python:permission-check"
+    ],
+    "eager_resolve/transitive-database-terminals": [
+      "eager_resolve/transitive:callback-terminal:*.get()"
+    ],
+    "eager_resolve/transitive-eager-resolution": [
+      "eager_resolve/transitive:*.peek_resolved_value()",
+      "eager_resolve/transitive:*.resolve<bound>",
+      "eager_resolve/transitive:get_server_ref_id()",
+      "eager_resolve/transitive:resolve_server_value()"
+    ],
+    "eager_resolve/transitive-planning-state-probes": [
+      "eager_resolve/transitive:*.__getattribute__(deleted_state_flag)",
+      "eager_resolve/transitive:*.deleted_state_flag",
+      "eager_resolve/transitive:hasattr(_deleted_state_slot)"
+    ],
+    "hasattr_async/several-probes-on-one-line": [
+      "hasattr_async/hasattr"
+    ],
+    "lazy_architecture/budget_la013_new_violation_within_budget": [
+      "lazy_architecture/la-013-pure-legacy"
+    ],
+    "lazy_architecture/la001_pure_lazy_direct_grammar_value": [
+      "lazy_architecture/la-001-direct",
+      "lazy_architecture/la-009-pure"
+    ],
+    "lazy_architecture/la001_pure_lazy_reaches_store_read": [
+      "lazy_architecture/la-001-transitive"
+    ],
+    "lazy_architecture/la002_intent_with_direct_read_fallback": [
+      "lazy_architecture/la-002-direct"
+    ],
+    "lazy_architecture/la003_public_bulk_ops_direct_read": [
+      "lazy_architecture/la-003-direct"
+    ],
+    "lazy_architecture/la004_idf_rebuild_commits_connection": [
+      "lazy_architecture/la-004-direct"
+    ],
+    "lazy_architecture/la005_dolt_branch_lookup_in_versioned_ops": [
+      "lazy_architecture/la-005-dolt-direct"
+    ],
+    "lazy_architecture/la006_grammar_value_on_raw_conn": [
+      "lazy_architecture/la-006-plan-io-on-conn"
+    ],
+    "lazy_architecture/la007_prepare_reads_idf_stats": [
+      "lazy_architecture/la-007-direct"
+    ],
+    "lazy_architecture/la008_sync_async_staged_row_count_drift": [
+      "lazy_architecture/la-008-sync-async-drift",
+      "lazy_architecture/la-012-lazy-resolve"
+    ],
+    "lazy_architecture/la009_compat_import_in_revert": [
+      "lazy_architecture/la-009-lazy-compat-surface"
+    ],
+    "lazy_architecture/la009_execution_context_terminal_in_ops_analytics": [
+      "lazy_architecture/la-009-def-line-sensitive"
+    ],
+    "lazy_architecture/la009_lazy_method_defers_to_eager_reader": [
+      "lazy_architecture/la-009-deferring"
+    ],
+    "lazy_architecture/la009_private_conn_reachthrough_in_ops_analytics": [
+      "lazy_architecture/la-009-sensitive-other"
+    ],
+    "lazy_architecture/la009_pure_lazy_async_function": [
+      "lazy_architecture/la-009-def-line"
+    ],
+    "lazy_architecture/la010_lazy_sync_name": [
+      "lazy_architecture/la-010-mixed-name"
+    ],
+    "lazy_architecture/la011_preprocess_checks_write_permission": [
+      "lazy_architecture/la-011-permission"
+    ],
+    "lazy_architecture/la011_preprocess_reads_gate_row": [
+      "lazy_architecture/la-011-direct"
+    ],
+    "lazy_architecture/la013_defer_lazy_result_repo_wide_dedupe": [
+      "lazy_architecture/la-013-defer-lazy-result",
+      "lazy_architecture/la-013-named"
+    ],
+    "lazy_architecture/la014_closed_post_op_lambda": [
+      "lazy_architecture/la-014-payload"
+    ],
+    "lazy_architecture/la014_materialize_dynamic_decoder": [
+      "lazy_architecture/la-014-materialize"
+    ],
+    "post_op_no_internal_dispatch/builder-multiple-enum-comparisons": [
+      "post_op_no_internal_dispatch/builder-multiple-enum-comparisons"
+    ],
+    "post_op_no_internal_dispatch/domain-materializer-helper": [
+      "post_op_no_internal_dispatch/domain-materializer-helper"
+    ],
+    "post_op_no_internal_dispatch/legacy-surface-references": [
+      "post_op_no_internal_dispatch/legacy-surface-attribute",
+      "post_op_no_internal_dispatch/legacy-surface-name"
+    ],
+    "post_op_no_internal_dispatch/literal-kwarg-probe": [
+      "post_op_no_internal_dispatch/materializer-literal-kwarg-probe",
+      "post_op_no_internal_dispatch/materializer-literal-payload-probe"
+    ],
+    "post_op_no_internal_dispatch/literal-payload-key-probes": [
+      "post_op_no_internal_dispatch/post-op-helper-literal-payload-probe"
+    ],
+    "post_op_no_internal_dispatch/repeated-enum-comparison": [
+      "post_op_no_internal_dispatch/repeated-enum-comparison"
+    ],
+    "post_op_no_internal_dispatch/runtime-builder-name-in-materializer": [
+      "post_op_no_internal_dispatch/materializer-runtime-builder-name"
+    ],
+    "pure_lazy_runtime_purity/plp004-lazy-wrapper-runtime": [
+      "pure_lazy_runtime_purity/plp-004-resolved-lazy-wrapper"
+    ],
+    "pure_lazy_runtime_purity/plp008-runtime-sink-keyword": [
+      "pure_lazy_runtime_purity/plp-008-runtime-sink"
+    ],
+    "pure_lazy_runtime_purity/plp010-lazy-operation-runtime-payload": [
+      "pure_lazy_runtime_purity/plp-010-opaque-lazy-operation"
+    ],
+    "revision_ancestry_invariants/hand-built-walk-beside-canonical-delegation": [
+      "revision_ancestry_invariants/hand-built-recursive-walk-recursive-constructor",
+      "revision_ancestry_invariants/hand-built-recursive-walk-string-fragment"
+    ],
+    "revision_ancestry_invariants/hand-built-walk-imported-recursive-constant": [
+      "revision_ancestry_invariants/hand-built-recursive-walk-imported-recursive-constant"
+    ],
+    "revision_ancestry_invariants/hand-built-walk-module-constants": [
+      "revision_ancestry_invariants/hand-built-recursive-walk-binary-operator-module-constant"
+    ],
+    "revision_ancestry_invariants/hand-built-walk-split-literal": [
+      "revision_ancestry_invariants/hand-built-recursive-walk-concatenated-string-fragment"
+    ],
+    "revision_ancestry_invariants/removed-stmt-ancestry-chain-import": [
+      "revision_ancestry_invariants/removed-stmt-ancestry-chain"
+    ],
+    "revision_ancestry_invariants/test-and-out-of-root-paths": [
+      "revision_ancestry_invariants/forbidden-descriptor-class",
+      "revision_ancestry_invariants/stored-revision-text-cast"
+    ],
+    "serverplan_quality/spq-002-pos-l4-intent-compile-raises": [
+      "serverplan_quality/spq-002-intent-boilerplate"
+    ],
+    "serverplan_quality/spq-003-pos-post-op-hydration": [
+      "serverplan_quality/spq-003-post-op-hydration"
+    ],
+    "serverplan_quality/spq-004-pos-getattr-in-core-plan-file": [
+      "serverplan_quality/spq-004-duck-typed-context"
+    ],
+    "serverplan_quality/spq-005-pos-lower-forks-on-staging-ctx": [
+      "serverplan_quality/spq-005-versioned-forking"
+    ],
+    "serverplan_quality/spq-006-pos-pipeline-result-resolution-duplicated": [
+      "serverplan_quality/spq-006-result-resolution-duplication"
+    ],
+    "serverplan_quality/spq-007-pos-nested-class-and-chain": [
+      "serverplan_quality/spq-007-lifecycle-entanglement-function",
+      "serverplan_quality/spq-007-lifecycle-entanglement-method"
+    ],
+    "serverplan_quality/spq-008-pos-raw-data-discarded": [
+      "serverplan_quality/spq-008-unused-raw-data"
+    ],
+    "serverplan_quality/spq-011-pos-compile-direct-io": [
+      "serverplan_quality/spq-011-compile-direct-io"
+    ],
+    "serverplan_quality/spq-012-pos-executor-runtime-helper": [
+      "serverplan_quality/spq-012-runtime-helper-def",
+      "serverplan_quality/spq-012-runtime-helper-method"
+    ],
+    "serverplan_quality/spq-013-pos-executor-variants": [
+      "serverplan_quality/spq-012-runtime-dispatch-call",
+      "serverplan_quality/spq-013-executor-child-steps",
+      "serverplan_quality/spq-013-executor-getattribute-bypass",
+      "serverplan_quality/spq-013-executor-isinstance",
+      "serverplan_quality/spq-013-executor-strategy-dispatch",
+      "serverplan_quality/spq-013-runtime-dispatch-ir-isinstance",
+      "serverplan_quality/spq-018-executor-runtime-result"
+    ],
+    "serverplan_quality/spq-014-pos-strategy-runtime-sequential": [
+      "serverplan_quality/spq-014-uses-runtime-sequential"
+    ],
+    "serverplan_quality/spq-014-pos-strategy-variants": [
+      "serverplan_quality/spq-014-batch-raises-not-implemented",
+      "serverplan_quality/spq-014-probes-runtime-sequential",
+      "serverplan_quality/spq-014-runtime-marker-ir"
+    ],
+    "serverplan_quality/spq-016-pos-assigns-children": [
+      "serverplan_quality/spq-016-child-steps-assignment"
+    ],
+    "serverplan_quality/spq-016-pos-step-child-steps": [
+      "serverplan_quality/spq-016-child-steps-method"
+    ],
+    "serverplan_quality/spq-017-pos-compiledstep-runtime-result": [
+      "serverplan_quality/spq-017-compiledstep-runtime-result"
+    ],
+    "serverplan_quality/spq-020-pos-preop-local-closure": [
+      "serverplan_quality/spq-020-imperative-preop"
+    ],
+    "serverplan_quality/spq-021-pos-conditional-compiles-children": [
+      "serverplan_quality/spq-021-conditional-child-compile",
+      "serverplan_quality/spq-022-control-flow-child-compile"
+    ],
+    "serverplan_quality/spq-021-pos-conditional-sql-grammar": [
+      "serverplan_quality/spq-021-conditional-compiledstep-grammar",
+      "serverplan_quality/spq-021-conditional-sql-grammar",
+      "serverplan_quality/spq-029-semantic-compile"
+    ],
+    "serverplan_quality/spq-023-pos-dialect-test-direct-compile": [
+      "serverplan_quality/spq-023-dialect-test-compile"
+    ],
+    "serverplan_quality/spq-024-pos-compile-helpers-order-by-codegen": [
+      "serverplan_quality/spq-024-order-by-name"
+    ],
+    "serverplan_quality/spq-024-pos-order-by-variants": [
+      "serverplan_quality/spq-024-order-by-attribute",
+      "serverplan_quality/spq-024-order-by-definition",
+      "serverplan_quality/spq-024-order-by-string"
+    ],
+    "serverplan_quality/spq-025-pos-can-batch-lock-policy": [
+      "serverplan_quality/spq-025-can-batch-lock-policy"
+    ],
+    "serverplan_quality/spq-026-pos-branch-fetch-helper": [
+      "serverplan_quality/spq-026-branch-fetch-batchability-helper"
+    ],
+    "serverplan_quality/spq-027-pos-object-id-cache": [
+      "serverplan_quality/spq-027-id-step",
+      "serverplan_quality/spq-027-step-fact-step-ids"
+    ],
+    "serverplan_quality/spq-028-pos-field-reassignment": [
+      "serverplan_quality/spq-028-plan-analysis-field-reassignment"
+    ],
+    "serverplan_quality/spq-029-pos-compiler-strategy-first": [
+      "serverplan_quality/spq-029-compiler"
+    ],
+    "serverplan_quality/spq-029-pos-executor-missing-lowering": [
+      "serverplan_quality/spq-029-executor-defines-lowering",
+      "serverplan_quality/spq-029-executor-lowering"
+    ],
+    "serverplan_quality/spq-029-pos-physical-contract": [
+      "serverplan_quality/spq-029-physical-compile",
+      "serverplan_quality/spq-029-physical-level",
+      "serverplan_quality/spq-029-physical-role"
+    ],
+    "serverplan_quality/spq-029-pos-physical-state-write": [
+      "serverplan_quality/spq-029-subclass-backend-control",
+      "serverplan_quality/spq-029-subclass-child-compile",
+      "serverplan_quality/spq-029-subclass-state-write-store"
+    ],
+    "serverplan_quality/spq-029-pos-semantic-level-and-compile": [
+      "serverplan_quality/spq-029-semantic-level"
+    ],
+    "serverplan_quality/spq-029-pos-semantic-validation-returns": [
+      "serverplan_quality/spq-029-semantic-validation"
+    ],
+    "serverplan_quality/spq-029-pos-subclass-callbacks": [
+      "serverplan_quality/spq-029-subclass-callback-annotation",
+      "serverplan_quality/spq-029-subclass-callback-init-attribute"
+    ],
+    "serverplan_quality/spq-030-pos-plan-or-direct": [
+      "serverplan_quality/spq-030-if-else"
+    ],
+    "serverplan_quality/spq-031-pos-optional-context-fallback": [
+      "serverplan_quality/spq-030-if-then-later",
+      "serverplan_quality/spq-031-optional-context-fallback"
+    ],
+    "serverplan_quality/spq-032-pos-plan-internals": [
+      "serverplan_quality/spq-032-attribute",
+      "serverplan_quality/spq-032-name",
+      "serverplan_quality/spq-032-probe"
+    ],
+    "serverplan_quality/spq-033-pos-bespoke-lowering": [
+      "serverplan_quality/spq-033-relationship-helper",
+      "serverplan_quality/spq-033-spec-class"
+    ],
+    "serverplan_quality/spq-034-pos-relationship-type-branch": [
+      "serverplan_quality/spq-034-relationship-type"
+    ],
+    "serverplan_quality/spq-035-pos-through-skip": [
+      "serverplan_quality/spq-035-include-through-skip"
+    ],
+    "serverplan_quality/spq-036-pos-relationship-metadata": [
+      "serverplan_quality/spq-036-get-relationship",
+      "serverplan_quality/spq-036-registry-relationships",
+      "serverplan_quality/spq-036-relationship-descriptor-call",
+      "serverplan_quality/spq-036-relationship-descriptor-def"
+    ],
+    "serverplan_quality/spq-037-pos-descriptor-fk-planning": [
+      "serverplan_quality/spq-037-fk-helper",
+      "serverplan_quality/spq-037-isinstance-descriptor"
+    ],
+    "serverplan_quality/spq-038-pos-legacy-vocabulary": [
+      "serverplan_quality/spq-038-legacy-import",
+      "serverplan_quality/spq-038-legacy-name"
+    ],
+    "serverplan_quality/spq-039-pos-legacy-step-sharing": [
+      "serverplan_quality/spq-039-bundle-legacy-kwarg",
+      "serverplan_quality/spq-039-bundle-steps",
+      "serverplan_quality/spq-039-source-flush-context"
+    ],
+    "serverplan_quality/spq-040-pos-include-load-bypass": [
+      "serverplan_quality/spq-040-include-load-intent"
+    ],
+    "serverplan_quality/spq-041-pos-embedded-formatting": [
+      "serverplan_quality/spq-041-format-embedded-call",
+      "serverplan_quality/spq-041-format-embedded-def"
+    ],
+    "serverplan_quality/spq-042-pos-string-scope-filter": [
+      "serverplan_quality/spq-042-column-scope-filter",
+      "serverplan_quality/spq-042-positional-scope-filter"
+    ],
+    "serverplan_quality/spq-043-pos-projection-fallback": [
+      "serverplan_quality/spq-043-projection-eager-fallback"
+    ],
+    "serverplan_quality/spq-045-pos-compound-write": [
+      "serverplan_quality/spq-045-import",
+      "serverplan_quality/spq-045-name"
+    ],
+    "serverplan_quality/spq-046-pos-batch-without-category": [
+      "serverplan_quality/spq-046-statement-batch-category"
+    ],
+    "serverplan_quality/spq-047-pos-can-fuse-replay": [
+      "serverplan_quality/spq-047-can-fuse-replay"
+    ],
+    "serverplan_quality/spq-048-pos-batched-step-hint": [
+      "serverplan_quality/spq-048-batched-step-hint"
+    ],
+    "serverplan_quality/spq-049-pos-duplicated-taxonomy": [
+      "serverplan_quality/spq-049-payload-taxonomy"
+    ],
+    "serverplan_quality/spq-050-pos-runtime-ingress": [
+      "serverplan_quality/spq-050-owner-unwrap",
+      "serverplan_quality/spq-050-renewable-bundle",
+      "serverplan_quality/spq-050-runtime-builder-kwarg"
+    ],
+    "serverplan_quality/spq-051-pos-callback-surfaces": [
+      "serverplan_quality/spq-051-attribute",
+      "serverplan_quality/spq-051-compiled-step-callback",
+      "serverplan_quality/spq-051-lifecycle-effect-field",
+      "serverplan_quality/spq-051-name",
+      "serverplan_quality/spq-051-pending-effects-lambda"
+    ],
+    "serverplan_quality/spq-052-pos-predicate-surfaces": [
+      "serverplan_quality/spq-052-bound-sql-column-source",
+      "serverplan_quality/spq-052-construction",
+      "serverplan_quality/spq-052-filter-ref-string",
+      "serverplan_quality/spq-052-import",
+      "serverplan_quality/spq-052-predicate-param",
+      "serverplan_quality/spq-052-sql-function-any",
+      "serverplan_quality/spq-052-sql-function-scalar"
+    ],
+    "serverplan_state_tripwires/spt-001-pos-queue-auth-def-and-call": [
+      "serverplan_state_tripwires/spt-001-queue-auth-call",
+      "serverplan_state_tripwires/spt-001-queue-auth-def"
+    ],
+    "serverplan_state_tripwires/spt-002-pos-large-column": [
+      "serverplan_state_tripwires/spt-002-convert-row-hydrate",
+      "serverplan_state_tripwires/spt-002-large-column-call",
+      "serverplan_state_tripwires/spt-002-terminal-hydration-def",
+      "serverplan_state_tripwires/spt-002-transitive-large-column"
+    ],
+    "serverplan_state_tripwires/spt-003-neg-signed-allowlist-search-lazy": [
+      "serverplan_state_tripwires/spt-003-transitive-eager-sql-allowlisted-file"
+    ],
+    "serverplan_state_tripwires/spt-003-pos-annotated-authority": [
+      "serverplan_state_tripwires/spt-003-transitive-eager-sql"
+    ],
+    "serverplan_state_tripwires/spt-004-pos-queue-udf-string": [
+      "serverplan_state_tripwires/spt-004-queue-udf-string"
+    ],
+    "serverplan_state_tripwires/spt-005-pos-nested-execution": [
+      "serverplan_state_tripwires/spt-005-executor-execute",
+      "serverplan_state_tripwires/spt-005-nested-steps",
+      "serverplan_state_tripwires/spt-005-transitive-nested-execute"
+    ],
+    "serverplan_state_tripwires/spt-006-pos-ir-carriers": [
+      "serverplan_state_tripwires/spt-006-ir-carrier-class",
+      "serverplan_state_tripwires/spt-006-ir-constructor",
+      "serverplan_state_tripwires/spt-006-tripwire-ack"
+    ],
+    "serverplan_state_tripwires/spt-008-pos-pre-op-hook": [
+      "serverplan_state_tripwires/spt-008-pre-op"
+    ],
+    "serverplan_state_tripwires/spt-009-pos-ddl-helpers": [
+      "serverplan_state_tripwires/spt-009-ddl-helper"
+    ],
+    "serverplan_state_tripwires/spt-010-pos-resolved-refs": [
+      "serverplan_state_tripwires/spt-010-resolved-refs-read",
+      "serverplan_state_tripwires/spt-010-transitive-resolved-refs",
+      "serverplan_state_tripwires/spt-024-runtime-value"
+    ],
+    "serverplan_state_tripwires/spt-011-pos-preprocess-sql": [
+      "serverplan_state_tripwires/spt-011-preprocess-sql",
+      "serverplan_state_tripwires/spt-011-transitive-preprocess-sql"
+    ],
+    "serverplan_state_tripwires/spt-014-pos-raw-table-name": [
+      "serverplan_state_tripwires/spt-014-table-name-str"
+    ],
+    "serverplan_state_tripwires/spt-018-pos-lower-shape-branch": [
+      "serverplan_state_tripwires/spt-018-intent-lower-shape-branch"
+    ],
+    "serverplan_state_tripwires/spt-020-pos-sql-builder-transitive": [
+      "serverplan_state_tripwires/spt-020-transitive-cc-helper"
+    ],
+    "serverplan_state_tripwires/spt-021-pos-provider-param-with-ctx-txn": [
+      "serverplan_state_tripwires/spt-020-direct-ctx-getattr",
+      "serverplan_state_tripwires/spt-021-provider-authority"
+    ],
+    "serverplan_state_tripwires/spt-022-pos-helper-returning-runtime-txn": [
+      "serverplan_state_tripwires/spt-022-runtime-authority"
+    ],
+    "serverplan_state_tripwires/spt-023-pos-post-op-converts-rows": [
+      "serverplan_state_tripwires/spt-023-convert-row-in-result-callback"
+    ],
+    "serverplan_state_tripwires/spt-026-pos-runtime-ref-callback-in-compile": [
+      "serverplan_state_tripwires/spt-026-runtime-callback",
+      "serverplan_state_tripwires/spt-028-runtime-projection"
+    ],
+    "serverplan_state_tripwires/spt-027-pos-numpy-in-serverplan-helper": [
+      "serverplan_state_tripwires/spt-027-native-python-work"
+    ],
+    "serverplan_state_tripwires/spt-028-pos-materializer-row-projection": [
+      "serverplan_state_tripwires/spt-028-materializer-sequence-projection"
+    ],
+    "serverplan_state_tripwires/spt-029-pos-projection-row-shape-fallback": [
+      "serverplan_state_tripwires/spt-029-projection-recovery"
+    ],
+    "serverplan_state_tripwires/spt-030-pos-map-lazy-result-enqueues-terminals": [
+      "serverplan_state_tripwires/spt-030-lazy-callback-terminal",
+      "serverplan_state_tripwires/spt-031-graph-builder-terminal-chain"
+    ],
+    "serverplan_state_tripwires/spt-032-pos-graph-read-config-str-graph-id": [
+      "serverplan_state_tripwires/spt-032-graph-id-config-typing"
+    ],
+    "serverplan_state_tripwires/spt-033-pos-private-step-ref-id": [
+      "serverplan_state_tripwires/spt-033-lazy-result-private-ref"
+    ],
+    "serverplan_state_tripwires/spt-034-pos-traverse-resolves-defaults": [
+      "serverplan_state_tripwires/spt-034-mcp-default-graph"
+    ],
+    "serverplan_steps/step-016-pos-compile-branches-on-resolved-attr": [
+      "serverplan_steps/step-016-compile-branches-on-resolved-data"
+    ],
+    "serverplan_steps/step-017-pos-compile-copies-object": [
+      "serverplan_steps/step-017-compile-object-manipulation"
+    ],
+    "serverplan_steps/step-018-pos-l0-compile-raises": [
+      "serverplan_steps/step-018-l0-compile-raises"
+    ],
+    "serverplan_steps/step-019-pos-postop-mutates-captured": [
+      "serverplan_steps/step-019-postop-assigns-captured-attr",
+      "serverplan_steps/step-019-postop-manipulates-captured"
+    ],
+    "serverplan_steps/step-020-pos-can-batch-false": [
+      "serverplan_steps/step-020-can-batch-false"
+    ],
+    "serverplan_steps/step-021-pos-nested-step-class-counted-per-step-class": [
+      "serverplan_steps/step-021-runtime-state-on-self"
+    ],
+    "serverplan_steps/step-022-pos-side-effect-tag": [
+      "serverplan_steps/step-022-side-effect-step-tag"
+    ],
+    "serverplan_steps/step-023-pos-zero-io-l0-without-execution-role": [
+      "serverplan_steps/step-023-zero-io-l0-without-execution-role",
+      "serverplan_steps/step-051-reserved-virtual-tag"
+    ],
+    "serverplan_steps/step-024-neg-not-zero-io": [
+      "serverplan_steps/step-045-virtual-tables-written-ret"
+    ],
+    "serverplan_steps/step-024-pos-execution-role-annotated-str-returns-literal": [
+      "serverplan_steps/step-024-execution-role-annotated-str",
+      "serverplan_steps/step-025-execution-role-raw-string"
+    ],
+    "serverplan_steps/step-026-pos-callback-referenced-twice": [
+      "serverplan_steps/step-026-compile-callback-runtime-authority-postop"
+    ],
+    "serverplan_steps/step-027-pos-legacy-post-op-in-strict-module": [
+      "serverplan_steps/step-027-post-op-with-refs",
+      "serverplan_steps/step-027-runtime-ref-ids-without-grammar"
+    ],
+    "serverplan_steps/step-028-pos-user-callable-in-strict-module": [
+      "serverplan_steps/step-027-post-op-not-closed",
+      "serverplan_steps/step-028-callback-invokes-user-callable",
+      "serverplan_steps/step-028-partial-binds-user-callable",
+      "serverplan_steps/step-028-references-user-callable"
+    ],
+    "serverplan_steps/step-029-pos-runtime-builder-escape-hatches": [
+      "serverplan_steps/step-029-registry-target",
+      "serverplan_steps/step-029-runtime-builder-keyword",
+      "serverplan_steps/step-030-misc-runtime-reference",
+      "serverplan_steps/step-031-raw-string-builder-name"
+    ],
+    "serverplan_steps/step-033-pos-closed-post-op-consumes-runtime-refs": [
+      "serverplan_steps/step-033-closed-post-op-consumes-runtime-refs"
+    ],
+    "serverplan_steps/step-033-pos-virtual-scalar-value-carrier": [
+      "serverplan_steps/step-033-virtual-scalar-value-carrier"
+    ],
+    "serverplan_steps/step-034-pos-refless-runtime-refs-post-op": [
+      "serverplan_steps/step-034-refless-runtime-refs-post-op"
+    ],
+    "serverplan_steps/step-035-pos-cte-anchor-hides-runtime-ref-post-op": [
+      "serverplan_steps/step-035-helper-anchored-runtime-ref-post-op"
+    ],
+    "serverplan_steps/step-037-pos-terminal-projection-string-dispatch": [
+      "serverplan_steps/step-037-projection-kind-dispatch"
+    ],
+    "serverplan_steps/step-038-pos-empty-result-assertion": [
+      "serverplan_steps/step-038-empty-result-assertion"
+    ],
+    "serverplan_steps/step-039-pos-literal-payload-materializer-helper": [
+      "serverplan_steps/step-039-literal-payload-materializer"
+    ],
+    "serverplan_steps/step-039-pos-row-materializer-raw-row-shaping": [
+      "serverplan_steps/step-039-row-materializer-raw-row-shaping"
+    ],
+    "serverplan_steps/step-040-pos-type-hints-comprehension": [
+      "serverplan_steps/step-040-inferred-cte-type-hints"
+    ],
+    "serverplan_steps/step-041-pos-static-exception-closed-post-op": [
+      "serverplan_steps/step-041-static-exception-closed-post-op"
+    ],
+    "serverplan_steps/step-042-pos-result-materialization-source-refs": [
+      "serverplan_steps/step-042-runtime-ref-payload-ingress"
+    ],
+    "serverplan_steps/step-045-pos-virtual-tables-read-concrete": [
+      "serverplan_steps/step-045-virtual-tables-read-ret"
+    ],
+    "serverplan_steps/step-045-pos-virtual-tables-written-dynamic": [
+      "serverplan_steps/step-045-virtual-tables-written-def"
+    ],
+    "serverplan_steps/step-045-pos-virtual-wildcard-tables": [
+      "serverplan_steps/step-045-virtual-tables-read-def"
+    ],
+    "serverplan_steps/step-046-pos-virtual-compile-grammar": [
+      "serverplan_steps/step-046-virtual-compile-sql-surface"
+    ],
+    "serverplan_steps/step-049-neg-batch-transport-with-publication-contract": [
+      "serverplan_steps/step-046-virtual-publication-contract"
+    ],
+    "serverplan_steps/step-049-pos-virtual-batch-transport": [
+      "serverplan_steps/step-049-batch-transport-without-sql-surface"
+    ],
+    "serverplan_steps/step-050-pos-sql-step-hides-accounting": [
+      "serverplan_steps/step-050-sql-compile-hides-accounting"
+    ]
+  }
+}
