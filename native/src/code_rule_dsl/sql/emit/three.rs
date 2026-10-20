@@ -112,10 +112,11 @@ impl Emitter<'_> {
             self.inherit(&current, &run, &BTreeSet::new());
             self.same_space(&current, &run);
             let out = self.op(&term.op, &run, after);
-            // The first term's rows are the pipeline's with no capture withheld yet: where they
-            // withhold none already, the term's own frame is the pipeline's (a copy would only
-            // write its `wh` as the zeros it holds).
-            if first && !self.withheld.contains(&out) {
+            // The first term's rows are the pipeline's: where an unknown verdict of it withholds
+            // nothing and its rows withhold no capture already, the term's own frame is the
+            // pipeline's (a copy would only write its `wh` as the zeros it holds).
+            let withholds = term.withholds && term.binds.iter().any(|bits| *bits != 0);
+            if first && !withholds && !self.withheld.contains(&out) {
                 current = out;
                 continue;
             }
