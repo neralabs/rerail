@@ -189,8 +189,9 @@ each report says how many results it compared (`cache.compared`) and lists the d
 saved every result, the refresh deletes every other file in the tool-pack's (or shard's) result directory: those are
 under keys that have moved on, and CI saves a leg's results back on top of the ones it restored, so without this the
 leg's cache entry would gain a full set each time the keys move. A write's temporary file stays, since it may be another
-run's write still in flight. `--no-cache` reads, compares, saves and deletes nothing, and a run on a stale native binary
-compares and deletes nothing.
+run's write still in flight. Locally the cache is shared by every branch, so a `--refresh-cache` there also deletes the
+entries another branch's gate code saved, and that branch judges those rules again on its next run. `--no-cache` reads,
+compares, saves and deletes nothing, and a run on a stale native binary compares and deletes nothing.
 
 In CI every run saves its results, pull requests included. GitHub scopes a pull request's cache to that pull request,
 so main never reads one: a push to main reads only what main's own pushes and the nightly saved. A pull request can
