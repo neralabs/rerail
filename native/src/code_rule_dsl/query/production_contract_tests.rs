@@ -821,6 +821,27 @@ fn production_contract_phase_four_failure_matches_authored_sql() {
 }
 
 #[test]
+fn production_contract_phase_two_any_relations_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in [
+        "any-first-branch",
+        "any-unknown-binding-blocks-later",
+        "any-unknown-without-binding",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the ordered alternative contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored three-valued alternative SQL contract"
+        );
+    }
+}
+
+#[test]
 fn production_contract_phase_two_all_relations_match_authored_sql() {
     let expected = authored_sql_goldens();
     for name in [
