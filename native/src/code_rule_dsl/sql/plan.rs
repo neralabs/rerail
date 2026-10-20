@@ -122,6 +122,19 @@ impl Walk {
             Self::Inside(_) | Self::Follows(_) | Self::FieldInside(..)
         )
     }
+
+    /// Whether a row has one candidate at most, so a first match passes over none.
+    pub(super) fn single(self) -> bool {
+        matches!(
+            self,
+            Self::Inside(Stop::Neighbor)
+                | Self::Precedes(Stop::Neighbor)
+                | Self::Follows(Stop::Neighbor)
+                | Self::FieldHas(_, Stop::Neighbor)
+                | Self::FieldInside(_, Stop::Neighbor)
+                | Self::Slot(_)
+        )
+    }
 }
 
 /// `nthChild`'s `ofRule`.
