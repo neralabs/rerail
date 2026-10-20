@@ -7,7 +7,7 @@
 //   compare <native.json> <sql.json>                                prints the two runs side by side
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { opendir, readFile, stat } from "node:fs/promises";
 import { cpus, loadavg, release, tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -57,6 +57,12 @@ const SUBSET = [
   { name: "40", commit: "17562322111407ccfdcdf148e4a9e09afc6f1730" },
   { name: "47", commit: "e99ce662f0e90653a777b321138a0182271bf43d" },
 ] as const;
+
+/**
+ * The production-path loop's workload (`prod-path`): workspace 01 walked as the enforcer walks it without a store (the
+ * stored index refuses the data-layer policies' publications), on a fixed sample of its files, then a few edits.
+ */
+const PROD_PATH = { only: "01", sample: 40, edits: 8 } as const;
 
 function git(cwd: string, ...args: string[]): string {
   const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
@@ -250,8 +256,39 @@ interface RunOptions {
   sqlBatch: number | undefined;
   /** Whether the scan is the stored repository index (`on`) or the enforcer's walk without a content store (`off`). */
   store: boolean;
+  /** The percentage of the workspace's files in scope the walk keeps (`inSample`); 100 keeps every file. */
+  sample: number;
   edits: number;
   idleMs: number;
+}
+
+/** Whether `path` is in a `percent` sample: the first four bytes of its sha256, mod 100, below `percent`. */
+function inSample(path: string, percent: number): boolean {
+  return percent >= 100 || createHash("sha256").update(path).digest().readUInt32BE(0) % 100 < percent;
+}
+
+/**
+ * Every result page of the workspace's current revision: the violations and failures counted, and a sha256 of each
+ * list as sorted JSON lines, so two runs' findings compare by digest.
+ */
+async function readResults(workspace: NativeCodeRuleDslWorkspace) {
+  const violations: string[] = [];
+  const failures: string[] = [];
+  const failureCodes: Record<string, number> = {};
+  let cursor = 0;
+  let pages = 0;
+  while (true) {
+    const page = pageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
+    pages += 1;
+    for (const violation of page.violations) violations.push(JSON.stringify(violation));
+    for (const failure of page.failures) failures.push(JSON.stringify(failure));
+    countCodes(page.failures, failureCodes);
+    if (page.done) break;
+    if (page.cursor <= cursor) throw new Error("The result stream did not advance");
+    cursor = page.cursor;
+  }
+  const digest = (lines: string[]) => `sha256:${createHash("sha256").update(lines.sort().join("\n")).digest("hex")}`;
+  return { pages, violations: violations.length, failureCodes, violationsSha256: digest(violations), failuresSha256: digest(failures) };
 }
 
 async function measureWorkspace(
@@ -278,7 +315,7 @@ async function measureWorkspace(
     const afterRegister = memorySnapshot(workspace);
 
     // The walk for the files in scope (the scan without a store reads them; the edits pick from them) is not timed.
-    const files = await sourceFiles(workspace, root);
+    const files = (await sourceFiles(workspace, root)).filter(file => inSample(file.path, options.sample));
     const scanCpu = process.cpuUsage();
     const scanStarted = performance.now();
     let revision = 0;
@@ -333,18 +370,8 @@ async function measureWorkspace(
       await workspace.completeStorageRevisionAsync().catch((error: unknown) => {
         throw new Error(`${root}: recording the scanned revision failed`, { cause: error });
       });
-    let violations = 0;
-    let cursor = 0;
-    let pages = 0;
-    while (true) {
-      const page = pageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
-      pages += 1;
-      violations += page.violations.length;
-      countCodes(page.failures, failureCodes);
-      if (page.done) break;
-      if (page.cursor <= cursor) throw new Error("The result stream did not advance");
-      cursor = page.cursor;
-    }
+    const results = await readResults(workspace);
+    for (const [code, n] of Object.entries(results.failureCodes)) failureCodes[code] = (failureCodes[code] ?? 0) + n;
     const fullScan = {
       wallMs: performance.now() - scanStarted,
       cpuMs: cpuMs(scanCpu),
@@ -352,9 +379,11 @@ async function measureWorkspace(
       chunks,
       discoveredFiles: discovered,
       readFiles: read,
-      pages,
-      violations,
+      pages: results.pages,
+      violations: results.violations,
       failureCodes,
+      violationsSha256: results.violationsSha256,
+      failuresSha256: results.failuresSha256,
     };
     phases.scan = sampler.phase();
     const afterScan = memorySnapshot(workspace);
@@ -381,6 +410,8 @@ async function measureWorkspace(
     }
     phases.edits = sampler.phase();
     const beforeEvict = memorySnapshot(workspace);
+    // The findings after the edits (untimed): each edited file's own, every other file's from the scan.
+    const afterEdits = options.edits > 0 ? await readResults(workspace) : undefined;
     workspace.evictInactive();
     await sleep(options.idleMs);
     const afterEvictIdle = memorySnapshot(workspace);
@@ -400,6 +431,9 @@ async function measureWorkspace(
         cpuP50Ms: percentile(cpu, 0.5),
         cpuP95Ms: percentile(cpu, 0.95),
         samples: edits,
+        ...(afterEdits === undefined
+          ? {}
+          : { violations: afterEdits.violations, failureCodes: afterEdits.failureCodes, violationsSha256: afterEdits.violationsSha256, failuresSha256: afterEdits.failuresSha256 }),
       },
       rss: {
         peak: Math.max(...Object.values(phases)),
@@ -464,7 +498,7 @@ function workspaceRoots(directory: string, only: readonly string[]): Array<{ nam
 }
 
 async function run(argv: readonly string[]): Promise<void> {
-  const { values } = parseArguments(argv, ["--engine", "--rules", "--workspaces", "--output", "--addon", "--sql-batch", "--store", "--edits", "--idle-ms", "--only"]);
+  const { values } = parseArguments(argv, ["--engine", "--rules", "--workspaces", "--output", "--addon", "--sql-batch", "--store", "--sample", "--edits", "--idle-ms", "--only"]);
   const engine = option(values, "--engine");
   if (engine !== "native" && engine !== "sql") throw new UsageError("--engine takes native or sql");
   const ruleDirectories = (values.get("--rules") ?? []).map(directory => resolve(directory));
@@ -477,10 +511,14 @@ async function run(argv: readonly string[]): Promise<void> {
   if (sqlBatch !== undefined && engine !== "sql") throw new UsageError("--sql-batch needs --engine sql");
   const store = option(values, "--store") ?? "on";
   if (store !== "on" && store !== "off") throw new UsageError("--store takes on or off");
+  const sample = count("--sample", option(values, "--sample"), 100, 1);
+  // The stored index reads the whole checkout; only the walk without a store can keep a sample of it.
+  if (sample < 100 && store === "on") throw new UsageError("--sample needs --store off");
   const options: RunOptions = {
     engine,
     sqlBatch: sqlBatch === undefined ? undefined : count("--sql-batch", sqlBatch, 0, 1),
     store: store === "on",
+    sample,
     edits: count("--edits", option(values, "--edits"), 20, 0),
     idleMs: count("--idle-ms", option(values, "--idle-ms"), 5_000, 0),
   };
@@ -517,6 +555,7 @@ async function run(argv: readonly string[]): Promise<void> {
     engine,
     sqlBatch: options.sqlBatch,
     store,
+    sample: options.sample,
     addon: { path: addonPath, sha256: `sha256:${createHash("sha256").update(readFileSync(addonPath)).digest("hex")}`, kernelVersion },
     rules: { directories: ruleDirectories, count: rules.compiled.length, sha256: rules.sha256, rejected: rules.rejected },
     edits: options.edits,
@@ -568,13 +607,14 @@ type RunResult = {
   rss: { afterCompile: number; peakCompile: number; peakSampled: number; maxRss: number; end: number };
   workspaces: Array<{
     name: string;
-    fullScan: { wallMs: number; cpuMs: number; violations: number; failureCodes: Record<string, number> };
-    edits: { wallP50Ms: number; wallP95Ms: number; samples: Array<{ wallMs: number }> };
+    fullScan: { wallMs: number; cpuMs: number; violations: number; failureCodes: Record<string, number>; violationsSha256?: string; failuresSha256?: string };
+    edits: { wallP50Ms: number; wallP95Ms: number; samples: Array<{ wallMs: number }>; violationsSha256?: string; failuresSha256?: string };
     rss: { peak: number; final: number; afterEvictIdle: number };
   }>;
 };
 
-function compare(argv: readonly string[]): void {
+/** Prints two runs side by side; returns whether their findings (violations, after the scan and after the edits) are equal. */
+function compare(argv: readonly string[]): boolean {
   const { positional } = parseArguments(argv, []);
   if (positional.length !== 2) throw new UsageError("compare takes two run outputs: <native.json> <sql.json>");
   const [left, right] = positional.map(path => JSON.parse(readFileSync(path, "utf8")) as RunResult) as [RunResult, RunResult];
@@ -588,6 +628,8 @@ function compare(argv: readonly string[]): void {
     ["RSS at the end of the run", left.rss.end, right.rss.end, mib],
     ["run wall time", left.wallMs, right.wallMs, value => `${(value / 1000).toFixed(1)} s`],
   ];
+  const scans = (result: RunResult) => result.workspaces.reduce((sum, workspace) => sum + workspace.fullScan.wallMs, 0);
+  rows.push(["full scan wall (all workspaces)", scans(left), scans(right), value => `${(value / 1000).toFixed(1)} s`]);
   const all = (result: RunResult) => result.workspaces.flatMap(workspace => workspace.edits.samples.map(sample => sample.wallMs));
   rows.push(["edit p50 (all workspaces)", percentile(all(left), 0.5), percentile(all(right), 0.5), ms]);
   rows.push(["edit p95 (all workspaces)", percentile(all(left), 0.95), percentile(all(right), 0.95), ms]);
@@ -603,6 +645,11 @@ function compare(argv: readonly string[]): void {
     "| workspace | full scan wall | full scan CPU | edit p50 | edit p95 | peak RSS | final RSS | RSS after evict + idle | violations | failures |",
     "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
   );
+  // Findings: violations must be equal; failures may differ where native's work budget fails a file (the design's
+  // §Budgets), so they are reported only.
+  const findings: string[] = [];
+  let equal = true;
+  const same = (a: string | undefined, b: string | undefined) => (a === undefined || b === undefined ? "not recorded" : a === b ? "equal" : "DIFFER");
   for (const [index, a] of left.workspaces.entries()) {
     const b = right.workspaces[index];
     if (b === undefined || b.name !== a.name) throw new UsageError(`the runs' workspaces differ at ${a.name}`);
@@ -613,16 +660,57 @@ function compare(argv: readonly string[]): void {
         `${pair(a.rss.peak, b.rss.peak, mib)} | ${pair(a.rss.final, b.rss.final, mib)} | ${pair(a.rss.afterEvictIdle, b.rss.afterEvictIdle, mib)} | ` +
         `${a.fullScan.violations} / ${b.fullScan.violations} | ${codes(a.fullScan.failureCodes)} / ${codes(b.fullScan.failureCodes)} |`,
     );
+    const scan = same(a.fullScan.violationsSha256, b.fullScan.violationsSha256);
+    const edited = same(a.edits.violationsSha256, b.edits.violationsSha256);
+    equal &&= scan !== "DIFFER" && edited !== "DIFFER" && a.fullScan.violations === b.fullScan.violations;
+    findings.push(
+      `- ${a.name}: violations after the scan ${scan}, after the edits ${edited}; ` +
+        `failures after the scan ${same(a.fullScan.failuresSha256, b.fullScan.failuresSha256)}, after the edits ${same(a.edits.failuresSha256, b.edits.failuresSha256)}`,
+    );
   }
+  lines.push("", `Findings, ${left.engine} against ${right.engine}:`, "", ...findings);
   process.stdout.write(`${lines.join("\n")}\n`);
+  return equal;
+}
+
+/**
+ * The production-path loop: `run` on native, then on SQL, each in its own process (each peak is its own), over the
+ * fixed production-shape workload (`PROD_PATH`), then `compare`. Fails where the findings differ.
+ */
+function prodPath(argv: readonly string[]): void {
+  const { values } = parseArguments(argv, ["--rules", "--workspaces", "--output-dir", "--addon", "--only", "--sample", "--edits"]);
+  const outputDirectory = option(values, "--output-dir");
+  if (outputDirectory === undefined) throw new UsageError("--output-dir <dir> is required");
+  mkdirSync(outputDirectory, { recursive: true });
+  const shared = [
+    ...(values.get("--rules") ?? []).flatMap(directory => ["--rules", directory]),
+    "--workspaces", option(values, "--workspaces") ?? "",
+    ...(option(values, "--addon") === undefined ? [] : ["--addon", option(values, "--addon")!]),
+    "--store", "off",
+    "--only", option(values, "--only") ?? PROD_PATH.only,
+    "--sample", option(values, "--sample") ?? String(PROD_PATH.sample),
+    "--edits", option(values, "--edits") ?? String(PROD_PATH.edits),
+    "--idle-ms", "0",
+  ];
+  const outputs = (["native", "sql"] as const).map(engine => {
+    const output = resolve(outputDirectory, `${engine}.json`);
+    const child = spawnSync(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), "run", "--engine", engine, ...shared, "--output", output], { stdio: "inherit" });
+    if (child.status !== 0) throw new Error(`rerail-workspaces: the ${engine} run failed (${child.status ?? child.signal})`);
+    return output;
+  });
+  if (!compare(outputs)) {
+    process.stderr.write("rerail-workspaces: the engines' findings differ\n");
+    process.exitCode = 1;
+  }
 }
 
 const [command, ...rest] = process.argv.slice(2);
 try {
   if (command === "run") await run(rest);
   else if (command === "setup") setup(rest);
-  else if (command === "compare") compare(rest);
-  else throw new UsageError(`unknown command ${command ?? "(none)"}: setup | run | compare`);
+  else if (command === "compare") process.exitCode = compare(rest) ? 0 : 1;
+  else if (command === "prod-path") prodPath(rest);
+  else throw new UsageError(`unknown command ${command ?? "(none)"}: setup | run | compare | prod-path`);
 } catch (error) {
   if (!(error instanceof UsageError)) throw error;
   process.stderr.write(`rerail-workspaces: ${error.message}\n`);
