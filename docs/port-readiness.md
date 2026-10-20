@@ -241,15 +241,14 @@ one the lock names fails the leg — which is how a pull request that points its
 A matching digest only says the asset is the one the lock names. Anyone who can write to the repository, and any
 workflow with a write token, can upload to the release, so the fetch also requires the GitHub artifact attestation
 that `port-readiness-record.yml` makes when it records from `main` (`gh attestation verify`, so fetching needs the GitHub
-CLI, signed in or given `GH_TOKEN`/`GITHUB_TOKEN`, even once the repository is public). The only assets taken without
-one are those recorded on a maintainer's machine and uploaded by hand before that workflow could run from `main`;
-`LIFTED_ASSETS` in `recording/store.ts` lists them, nothing joins the list once the workflow runs from `main`, and an
-entry goes when its tool-pack gets an attested recording. A hand-uploaded recording made before each recorded case
-carried the sha256 of its committed source has its case sources held by `case-sources` to one digest over all of them
-instead, the one they had when it was recorded (`LIFTED_CASE_SOURCES`), and an edited or missing case source fails it
-the same way. Likewise, a hand-uploaded recording made before the lock pinned the environment the pack is linted in
-(`eslint-config-next-16.3.8` for next/eslint-plugin-next, react/eslint-plugin-react and react/eslint-plugin-react-hooks)
-names that runtime and the digest of its pin in `LIFTED_RUNTIMES`; the gates read the entry as part of the lock.
+CLI, signed in or given `GH_TOKEN`/`GITHUB_TOKEN`, even once the repository is public), and takes no asset without it.
+The 18 assets (each tool-pack's `recording.json` and `corpus.json`) recorded on a maintainer's machine and uploaded by
+hand before that workflow could run from `main` were taken without an attestation (`LIFTED_ASSETS` in
+`recording/store.ts`) until run 39319650531 recorded every tool-pack from `main`; the list is empty now and nothing
+joins it. The two lists that went with it are empty too. `LIFTED_CASE_SOURCES`, which held a hand-uploaded recording's
+case sources to one digest over all of them, was already empty before that run: the hand-uploaded recordings had gained
+a sha256 per case. `LIFTED_RUNTIMES`, which pinned `eslint-config-next-16.3.8` for next/eslint-plugin-next,
+react/eslint-plugin-react and react/eslint-plugin-react-hooks before their locks named it, emptied with that run.
 
 ### Recording
 

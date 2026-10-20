@@ -21,16 +21,16 @@
   },
   "files": {
     "recording.json": {
-      "sha256": "34a2fac3e70ef1fb025ccc1beaedcc6f9207a5128d5030caf7a1a39e90e565a1",
-      "size": 1436207,
+      "sha256": "d792bbf67fd40a933ce74ff2a894801bd383a0d33ec51d605bee5c58f60fd3e0",
+      "size": 1457552,
       "format": "rerail.port-readiness-recording/v2",
-      "asset": "python-ruff-recording-34a2fac3e70ef1fb025ccc1beaedcc6f9207a5128d5030caf7a1a39e90e565a1.json.gz"
+      "asset": "python-ruff-recording-d792bbf67fd40a933ce74ff2a894801bd383a0d33ec51d605bee5c58f60fd3e0.json.gz"
     },
     "corpus.json": {
-      "sha256": "941b451583ab220d51a50cd883fa9c47e80e606bc62bdcbde0332ce2438fb5f5",
-      "size": 680826,
+      "sha256": "d9aa8d34404d3f9cb882e43f0c027f1207bb7fda3bfbd7efbd86d6bb3db6d898",
+      "size": 399837,
       "format": "rerail.port-readiness-corpus/v2",
-      "asset": "python-ruff-corpus-941b451583ab220d51a50cd883fa9c47e80e606bc62bdcbde0332ce2438fb5f5.json.gz"
+      "asset": "python-ruff-corpus-d9aa8d34404d3f9cb882e43f0c027f1207bb7fda3bfbd7efbd86d6bb3db6d898.json.gz"
     }
   }
 }
