@@ -86,14 +86,34 @@ impl fmt::Display for Unsupported {
     }
 }
 
+/// A per-batch node set a statement reads: a stage's rows, or (`complement`) every node of the
+/// batch's files but them. A capture-free rule `not R` is `R`'s stage complemented, so a set
+/// holding most nodes of the batch is stored as the few it leaves out; every reader inverts
+/// membership where `complement` is set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct NodeSet {
+    pub(super) stage: usize,
+    pub(super) complement: bool,
+}
+
+impl NodeSet {
+    /// The nodes this set leaves out.
+    pub(super) fn complemented(self) -> Self {
+        Self {
+            stage: self.stage,
+            complement: !self.complement,
+        }
+    }
+}
+
 /// How far a relation walks.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Stop {
     Neighbor,
     End,
-    /// Until (and including) the first node of a shared stage: the stop rule, matched in a fresh
-    /// environment, is a per-batch node set.
-    Rule(usize),
+    /// Until (and including) the first node of a per-batch set: the stop rule, matched in a
+    /// fresh environment.
+    Rule(NodeSet),
 }
 
 /// A relation's walk from the frame's node: its candidates and their walk order.
@@ -142,8 +162,8 @@ impl Walk {
 pub(super) enum OfRule {
     /// A rule that reads or binds captures: probed at each named sibling with the row's bindings.
     Frame(Box<Op>),
-    /// A capture-free rule: a per-batch stage.
-    Stage(usize),
+    /// A capture-free rule: a per-batch set.
+    Stage(NodeSet),
 }
 
 /// A parameterized call's copy of one caller capture into a parameter, and back.

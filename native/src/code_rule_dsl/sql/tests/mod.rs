@@ -184,3 +184,45 @@ fn walks_read_their_sub_rule_kinds_and_a_double_negation_is_a_semi_join() {
         }
     }
 }
+
+/// A stop set or `ofRule` set whose rule is a capture-free `not R` is `R`'s stage read as its
+/// complement: no stage holds the negation's many nodes, and every reader (`nearest`, the
+/// field walk's stop, `nthChild`'s ranks) inverts membership. Both engines agree, three-valued
+/// too, where `R` cannot be unknown.
+#[test]
+fn a_negated_stop_or_of_rule_is_its_rule_s_stage_complemented() {
+    use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
+    let source =
+        "function g(a) { if (a) { return (((a))); } f((1), [2], k(3)); }\nconst y = [k(u), (v)];\n";
+    let wrappers =
+        json!({ "not": { "any": [{ "kind": "parenthesized_expression" }, { "kind": "array" }] } });
+    let rules = [
+        json!({ "kind": "identifier", "inside": { "stopBy": wrappers, "kind": "call_expression" } }),
+        json!({ "kind": "statement_block", "has": { "stopBy": wrappers, "kind": "identifier" } }),
+        json!({ "kind": "return_statement", "precedes": { "stopBy": wrappers, "kind": "expression_statement" } }),
+        json!({ "kind": "call_expression", "has": { "field": "arguments", "stopBy": wrappers, "kind": "number" } }),
+        json!({ "kind": "number", "nthChild": { "position": 1, "ofRule": wrappers } }),
+        json!({ "kind": "identifier", "inside": { "stopBy": wrappers, "kind": "call_expression", "testUnknown": "^k" } }),
+    ];
+    for rule in rules {
+        let compiled = compiled(json!({ "rule": rule }));
+        same(&compiled, &snapshot(&[("typescript", "a.ts", source)]));
+        let grammars: Vec<_> = grammar_matchers(&compiled).iter().collect();
+        let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
+        let statements: Vec<&String> = program.statements().collect();
+        assert!(
+            statements
+                .iter()
+                .any(|statement| statement.contains("complement = 1")
+                    || statement.contains("NOT EXISTS (SELECT 1 FROM stage_")),
+            "{rule}: the negation is read as a complement"
+        );
+        // A stage's frames are named `s<stage>_…`: none computes the negation's anti-join.
+        assert!(
+            !statements
+                .iter()
+                .any(|statement| statement.contains("NOT IN (SELECT k FROM s")),
+            "{rule}: no stage holds the negation"
+        );
+    }
+}
