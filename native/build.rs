@@ -164,7 +164,10 @@ fn build_grammar(grammar: &VendoredGrammar) {
     let compiler = ["CC", "CFLAGS", "AR", "CRATE_CC_NO_DEFAULTS"];
     let target = std::env::var("TARGET").expect("target");
     let mut stamp = Sha256::new();
-    stamp.update(format!("{:?}\0{}\0{source}\0", grammar.version, grammar.headers));
+    stamp.update(format!(
+        "{:?}\0{}\0{source}\0",
+        grammar.version, grammar.headers
+    ));
     for input in grammar.inputs {
         stamp.update(input.as_bytes());
         stamp.update([0]);

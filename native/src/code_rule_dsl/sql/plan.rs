@@ -228,11 +228,13 @@ pub(super) enum Op {
     Not(Box<Op>),
     Never,
     /// A relation: `binds` where the sub-rule may bind (the first match in walk order then binds;
-    /// otherwise a semi-join).
+    /// otherwise a semi-join). `kinds`: the kinds a candidate must have for the sub-rule to hold
+    /// there (`lower::RootKinds`), which the walk reads from the kind postings; `None`: any.
     Relation {
         walk: Walk,
         sub: Box<Op>,
         binds: bool,
+        kinds: Option<Vec<u16>>,
     },
     NthChild {
         step: i32,
@@ -240,13 +242,15 @@ pub(super) enum Op {
         reverse: bool,
         of_rule: Option<OfRule>,
     },
-    /// `count` over a relation's walk, two-valued; `bind` is the `as` slot and its offset.
+    /// `count` over a relation's walk, two-valued; `bind` is the `as` slot and its offset. `kinds`
+    /// as a relation's.
     Count {
         walk: Walk,
         sub: Box<Op>,
         min: usize,
         max: Option<usize>,
         bind: Option<(SlotId, i64)>,
+        kinds: Option<Vec<u16>>,
     },
     /// A parameterized call: `entry` copies caller captures into parameters, `body` runs in the
     /// callee's scope, `returns` brings back what it bound.
@@ -278,12 +282,14 @@ pub(super) enum Op {
     /// A three-valued relation (`relation::Search`): the first candidate in walk order that is
     /// true binds. An unknown candidate ends the search unknown where it is `strict` (its rule may
     /// bind); otherwise the search goes on, and is unknown where nothing matched. `binds` where the
-    /// sub-rule may bind slots.
+    /// sub-rule may bind slots. `kinds` as a relation's: the sub-rule is false, not unknown, at a
+    /// candidate of any other kind.
     Search {
         walk: Walk,
         sub: Box<Op>,
         binds: bool,
         strict: bool,
+        kinds: Option<Vec<u16>>,
     },
     /// An input-set terminal's verdicts (`terminals::Verdicts`): each distinct key of the frame,
     /// `(file, node if at_node, bindings of reads)`, is evaluated once natively; the terminal

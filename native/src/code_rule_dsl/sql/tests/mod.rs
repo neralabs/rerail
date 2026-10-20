@@ -139,3 +139,48 @@ fn terminals_run_once_per_statement_never_per_row() {
     assert_eq!(PATTERN_FILTERS.get(), 2);
     assert_eq!(TEXT_FILTERS.get(), 1);
 }
+
+/// A walk builds candidate rows only for the nodes of its sub-rule's root kinds (`not { not { R }
+/// }` has `R`'s), and that double negation is one semi-join, not two anti-joins. Both engines
+/// agree, three-valued too, where a sub-rule term after an unknown one may be withheld.
+#[test]
+fn walks_read_their_sub_rule_kinds_and_a_double_negation_is_a_semi_join() {
+    use crate::code_rule_dsl::test_support::{compiled, grammar_matchers};
+    let source = "function g() { f(1); h(x, 2); u(3); }\nconst y = k(u);\n";
+    let calls = json!({ "not": { "not": { "kind": "call_expression" } } });
+    let cases = [
+        (
+            json!({ "all": [calls.clone(), { "pattern": "$F($$$A)" }] }),
+            true,
+        ),
+        // Three-valued: `$F` may be withheld past the unknown term, so only the kind test bounds.
+        (
+            json!({ "all": [{ "kind": "call_expression" }, { "has": { "kind": "identifier", "pattern": "$F", "testUnknown": "^u" } }, { "pattern": "$F($$$A)" }] }),
+            true,
+        ),
+        // Nothing narrows a bare negation's candidates.
+        (json!({ "not": { "kind": "call_expression" } }), false),
+    ];
+    for (sub, narrowed) in cases {
+        let mut has = sub.clone();
+        has["stopBy"] = json!("end");
+        let rule = compiled(json!({ "rule": { "kind": "program", "has": has } }));
+        same(&rule, &snapshot(&[("typescript", "a.ts", source)]));
+        let grammars: Vec<_> = grammar_matchers(&rule).iter().collect();
+        let program = crate::code_rule_dsl::sql::compile(&grammars).expect("compiles");
+        let statements: Vec<&String> = program.statements().collect();
+        let walk = statements
+            .iter()
+            .find(|statement| statement.contains("c.id <= fn.\"last\""))
+            .expect("a has-end walk");
+        assert_eq!(walk.contains("c.kind IN ("), narrowed, "{walk}");
+        if sub.get("all").is_some_and(|all| all[0] == calls) {
+            assert!(
+                !statements
+                    .iter()
+                    .any(|statement| statement.contains("NOT IN")),
+                "a double negation emits no anti-join"
+            );
+        }
+    }
+}
