@@ -2121,6 +2121,23 @@ const PHASE_THREE_CASES: &[&str] = &[
 ];
 
 #[test]
+fn production_contract_phase_three_capture_utilities_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["utility-shared-component", "utility-capture-return"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the capture utility contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored capture-return utility SQL contract"
+        );
+    }
+}
+
+#[test]
 fn production_contract_phase_three_leaf_utilities_match_authored_sql() {
     let expected = authored_sql_goldens();
     for name in ["utility-simple", "utility-nested"] {
