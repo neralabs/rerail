@@ -306,9 +306,13 @@ Precisely:
    [description](#description) criteria a machine can check (`textFailures`): it is present, one sentence ending in a
    period, at most 200 characters, with no backticks, and names no upstream tool outside quoted text (`'…'` or
    `` `…` ``). Messages are advisory (`messageAdvisories`): each message, and each text a message an option chooses can
-   be, that is over 200 characters, holds its rule's id (quoted or not), names an upstream tool, Rerail or steering
-   outside quoted text, or shouts (NEVER, MUST, ALWAYS) is listed in the result's `advisories`, which fail neither the
-   pack nor the rule. `packs.test.ts` reports each as a warning annotation, which CI shows on the pull request.
+   be, that is over 200 characters, holds its rule's id or the upstream rule code `conformance.json` says it ports
+   (quoted or not; a code that is a plain word, such as `precedence`, is not looked for), names an upstream tool, Rerail
+   or steering outside quoted text, hedges ("consider", "may be", "may permit", "possibly", or a review or audit as the
+   action) or is emphatic (NEVER, MUST, ALWAYS, "strongly", "extremely") is listed in the result's `advisories`, which
+   fail neither the pack nor the rule. `packs.test.ts` reports each as a warning annotation, which CI shows on the pull
+   request (locally, `--reporter=verbose` prints them). Whether a message gives advice at all is left to review: a
+   check for it flagged 240 of 595 rules, among them 35 of the 65 Python steers the study rated good.
 
 **Languages not supported yet.** A pack may hold code rules for a language core's
 [language registry](language-packs.md) lists as `planned`, or rules that read a capability their language has

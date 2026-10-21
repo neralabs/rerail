@@ -57,7 +57,7 @@ describe.each(packs)("pack %s", id => {
     expect((await validated()).checks[name]).toEqual([]);
   });
 
-  // A warning annotation becomes a GitHub Actions ::warning in CI; the default reporter prints none, so stderr has them too.
+  // A warning annotation becomes a GitHub Actions ::warning in CI; locally, --reporter=verbose shows them on stderr.
   it("check 8: message advisories, reported as warnings that fail nothing", { timeout: TIMEOUT }, async ({ annotate }) => {
     for (const advisory of (await validated()).advisories) {
       console.warn(`advisory: ${advisory}`);
@@ -424,8 +424,35 @@ describe("validatePack", () => {
       const document = { id: "complexity-cyclomatic-typescript", description: "Keep functions at cyclomatic complexity 6 or below.", clauses: [{ violation: { message } }] };
       expect(messageAdvisories("rules/x.json", JSON.stringify(document))).toEqual([
         `rules/x.json: message holds its rule id, which the block already shows: ${message}`,
-        `rules/x.json: message shouts: ${message}`,
+        `rules/x.json: message is emphatic: ${message}`,
       ]);
+    });
+
+    it("advises on a message that hedges or presses, and not on a may that permits or explains", () => {
+      const advised = (message: string): string[] => messageAdvisories("rules/x.json", JSON.stringify({ id: "x", clauses: [{ violation: { message } }] }));
+      for (const message of [
+        "Consider using a list literal instead of `str.split`",
+        "Using xml.sax to parse untrusted XML may permit XML attacks; use defusedxml.",
+        "Loop control variable `$NAME` may not be used within loop body",
+        "Audit URL opening for permitted schemes; file or custom schemes may be unexpected.",
+      ]) expect(advised(message)).toEqual([`rules/x.json: message hedges instead of advising: ${message}`]);
+      const pressed = "Star-arg unpacking after a keyword argument is strongly discouraged";
+      expect(advised(pressed)).toEqual([`rules/x.json: message is emphatic: ${pressed}`]);
+      expect(advised("Flatten this callback with a named function; callbacks may nest 2 deep.")).toEqual([]);
+      expect(advised("Call Object.prototype.$PROP.call(obj, ...) instead; the object may override $PROP or have no prototype.")).toEqual([]);
+    });
+
+    it("advises on a message that names the upstream rule code it ports, in any case, quoted or not", () => {
+      const advised = (message: string, upstream: string): string[] => messageAdvisories("rules/x.json", JSON.stringify({ id: "bandit-b101-assert-used", clauses: [{ violation: { message } }] }), upstream);
+      expect(advised("Bandit B101 (assert-used)", "B101")).toEqual([
+        "rules/x.json: message names an upstream tool: Bandit B101 (assert-used)",
+        "rules/x.json: message names its upstream rule code B101: Bandit B101 (assert-used)",
+      ]);
+      expect(advised("Keep it with `# noqa: b101` if the assert guards a test.", "B101")).toEqual([
+        "rules/x.json: message names its upstream rule code B101: Keep it with `# noqa: b101` if the assert guards a test.",
+      ]);
+      expect(advised("Raise an error instead of this assert; asserts are stripped with -O.", "B101")).toEqual([]);
+      expect(advised("Add parentheses to make the precedence explicit.", "precedence")).toEqual([]);
     });
 
     it("reads no sentence end in an abbreviation or quoted text, and no tool name in a quoted value", () => {

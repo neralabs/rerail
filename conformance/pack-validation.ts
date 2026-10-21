@@ -440,6 +440,13 @@ const SENTENCE_BREAK = /[.?]\s+\p{Lu}/u;
 const QUOTED = /'[^']*'|`[^`]*`/gu;
 /** Abbreviations whose full stop ends no sentence. */
 const ABBREVIATION = /\b(?:e\.g|i\.e|etc|vs)\./giu;
+/**
+ * A message that hedges instead of advising: "consider", "may be", "possibly", or a review or audit as the whole action.
+ * "May" that permits or explains ("callbacks may nest 2 deep", "the object may override it") is not a hedge.
+ */
+const HEDGE = /\b(?:consider(?:ing)?|maybe|perhaps|possibly|might|may (?:be|not|permit|cause|lead|expose)|should be reviewed)\b|(?:^|[.;]\s+)(?:review|audit)\b/iu;
+/** A message that shouts or presses: capitals, or an intensifier ("strongly discouraged"). */
+const EMPHATIC = /\b(?:NEVER|MUST|ALWAYS)\b|\b(?:strongly|extremely)\b/u;
 
 /** Every text a message can be: the message, or each case and template of a message an option chooses. */
 function messageTexts(message: unknown): string[] {
@@ -477,14 +484,26 @@ export function textFailures(file: string, text: string): string[] {
 }
 
 /**
- * Check 8 (text), the advisory part: each violation message that misses the message criteria a machine can check. It
- * is over MESSAGE_CHARS, repeats the rule id the block already shows, names an upstream tool, Rerail or steering, or
- * shouts. Whether it gives advice, and says when to leave the code alone, is for review.
+ * The pattern for a rule id or upstream rule code standing alone in a message, any case, `-` and `_` alike; none for one
+ * that is a plain word (Clippy's `precedence`), which a message may well use as a word.
  */
-export function messageAdvisories(file: string, text: string): string[] {
+function codePattern(code: unknown): RegExp | undefined {
+  if (typeof code !== "string" || !/[\d_-]/u.test(code)) return undefined;
+  const body = code.split(/[-_]/u).map(part => part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join("[-_]");
+  return new RegExp(`(?<![\\w-])${body}(?![\\w-])`, "iu");
+}
+
+/**
+ * Check 8 (text), the advisory part: each violation message that misses the message criteria a machine can check. It
+ * is over MESSAGE_CHARS, repeats the rule id the block already shows, names an upstream tool or the upstream rule code
+ * it ports (`upstreamRule`, from conformance.json), names Rerail or steering, hedges, or is emphatic. Whether it gives
+ * advice, and says when to leave the code alone, is for review.
+ */
+export function messageAdvisories(file: string, text: string, upstreamRule?: string): string[] {
   const document = parsedDocument(text);
   if (document === undefined) return [];
-  const id = (document as { id?: unknown }).id;
+  const id = codePattern((document as { id?: unknown }).id);
+  const code = codePattern(upstreamRule);
   const advisories: string[] = [];
   const seen = new Set<string>();
   const walk = (value: unknown): void => {
@@ -497,10 +516,12 @@ export function messageAdvisories(file: string, text: string): string[] {
           seen.add(message);
           const plain = message.replace(QUOTED, "''");
           if (message.length > MESSAGE_CHARS) advisories.push(`${file}: message is ${message.length} characters, over ${MESSAGE_CHARS}: ${message}`);
-          if (typeof id === "string" && id !== "" && message.includes(id)) advisories.push(`${file}: message holds its rule id, which the block already shows: ${message}`);
+          if (id?.test(message) === true) advisories.push(`${file}: message holds its rule id, which the block already shows: ${message}`);
           if (TOOL_NAMES.test(plain)) advisories.push(`${file}: message names an upstream tool: ${message}`);
+          if (code?.test(message) === true) advisories.push(`${file}: message names its upstream rule code ${upstreamRule}: ${message}`);
           if (/\b(?:rerail|steer)/iu.test(plain)) advisories.push(`${file}: message names Rerail or steering: ${message}`);
-          if (/\b(?:NEVER|MUST|ALWAYS)\b/u.test(message)) advisories.push(`${file}: message shouts: ${message}`);
+          if (HEDGE.test(plain)) advisories.push(`${file}: message hedges instead of advising: ${message}`);
+          if (EMPHATIC.test(plain)) advisories.push(`${file}: message is emphatic: ${message}`);
         }
       }
     }
@@ -776,7 +797,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   for (const file of documents) {
     const text = readFileSync(join(directory, file), "utf8");
     for (const failure of textFailures(file, text)) fail("text", failure, listedBy.get(file));
-    advisories.push(...messageAdvisories(file, text));
+    advisories.push(...messageAdvisories(file, text, portByDocument.get(file)?.upstream.rule));
   }
 
   const rules = (pack?.rules ?? []).map((rule): PackRuleResult => {
