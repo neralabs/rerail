@@ -119,10 +119,14 @@ describe("source-scoped steers", () => {
     });
     try {
       await vi.waitFor(() => expect(ready).toBe(true));
-      expect(enforcer!.snapshotStatus().pending).toBe(true);
-      expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([
-        expect.objectContaining({ scope: "repository", status: "running" }),
-      ]);
+      // The session start sets off the repository audit without awaiting it, and the audit reaches the enforcer a few
+      // awaits later: on a loaded runner the start can return first. Discovery then stays pending on the gated opendir.
+      await vi.waitFor(() => {
+        expect(enforcer!.snapshotStatus().pending).toBe(true);
+        expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([
+          expect.objectContaining({ scope: "repository", status: "running" }),
+        ]);
+      });
       await runtime.ingest({
         kind: "call", eventId: "call", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", input: { path: "edited.py" },
