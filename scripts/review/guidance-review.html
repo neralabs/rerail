@@ -311,7 +311,7 @@ function renderReview(id, keepFocus) {
           <button id="clear" ${d.status === "pending" ? "disabled" : ""}>Clear</button>
           <span class="saved" id="saved">${d.at ? `Saved ${new Date(d.at).toLocaleString()}` : ""}</span>
         </div>
-        <div class="keys"><kbd>a</kbd> approve · <kbd>r</kbd> request changes · <kbd>j</kbd>/<kbd>k</kbd> next/previous · <kbd>c</kbd> comment · <kbd>o</kbd> overview</div>
+        <div class="keys"><kbd>a</kbd> approve · <kbd>r</kbd> request changes · <kbd>↓</kbd>/<kbd>↑</kbd> or <kbd>j</kbd>/<kbd>k</kbd> next/previous · <kbd>c</kbd> comment · <kbd>o</kbd> overview</div>
       </div>
     </section></div>`;
   wireControls(focus => renderReview(rule.id, focus));
@@ -376,8 +376,8 @@ document.addEventListener("keydown", e => {
   const typing = /^(TEXTAREA|INPUT)$/.test(document.activeElement?.tagName ?? "");
   if (typing) { if (e.key === "Escape") document.activeElement.blur(); return; }
   if (!currentId()) return;
-  if (e.key === "j") next(1);
-  else if (e.key === "k") next(-1);
+  if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); next(1); }
+  else if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); next(-1); }
   else if (e.key === "a") $("#approve")?.click();
   else if (e.key === "r") $("#changes")?.click();
   else if (e.key === "c") { e.preventDefault(); $("#comment")?.focus(); }
