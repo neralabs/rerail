@@ -44,6 +44,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
   const byText = new Map();
   const queries = [];
   const contexts = new Map();
+  const relationalStages = new Map();
   const clauseNames = new Map((workload.results?.sql?.report?.profile?.clauses ?? []).map(clause => [clause.statement, clause]));
   const trace = openSync(join(outputDirectory, "trace.json"), "w");
   writeSync(trace, '{"displayTimeUnit":"ms","traceEvents":[');
@@ -52,6 +53,20 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
     for (const name of files) {
       const catalogue = JSON.parse(readFileSync(join(rawDirectory, name), "utf8"));
       if (catalogue.version !== 1) throw new Error(`Unsupported SQL profile version: ${catalogue.version}`);
+      for (const batch of catalogue.relationalBatches ?? []) {
+        for (const stage of batch.stagesByCpu ?? []) {
+          const key = JSON.stringify([stage.sql, stage.columns]);
+          let combined = relationalStages.get(key);
+          if (!combined) {
+            combined = { sql: stage.sql, columns: stage.columns, cpuNs: 0, wallNs: 0, runs: 0, incomplete: 0 };
+            relationalStages.set(key, combined);
+          }
+          combined.cpuNs += stage.cpuNs;
+          combined.wallNs += stage.wallNs;
+          combined.runs++;
+          if (stage.incomplete) combined.incomplete++;
+        }
+      }
       const local = new Map(catalogue.queries.map(query => {
         const key = `${query.kind}:${query.sql}`;
         let combined = byText.get(key);
@@ -112,6 +127,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
   const summary = Object.fromEntries(fields.map(key => [key, queries.reduce((n, q) => n + (key === "cpuNs" || key === "wallNs" ? (q.kind === "sql" ? q[key] : 0) : q[key]), 0)]));
   const report = { version: 1, workload, thresholds, eventCount, sessions: files.length, summary,
     accounting: "Ranked CPU uses SQL CPU plus operator CPU excluding child SQL. SQL spans exclude preparation; operator spans include preparation. Parsing and other pipeline phases outside these spans are not attributed. Inclusive operator times overlap SQL. Aggregate wall time sums worker spans, not workload latency. Profiling callback and serialization overhead affect timings. EXPLAIN uses unbound NULL parameters after execution. Query plans describe SQLite choices, not actual loop counts. Frame counters cover frame tables; terminal internals are included in SQL time but have no callback breakdown. Rows are returned, changed, or published rows; shared rows are not copies. Summed row counts include operator and SQL observations of the same rows. Threshold flags are review candidates, not correctness failures.",
+    relationalStages: [...relationalStages.values()].sort((a, b) => b.cpuNs - a.cpuNs),
     contexts: [...contexts.values()].sort((a, b) => b.selfCpuNs - a.selfCpuNs), queries };
   return writeReport(report, outputDirectory);
 }
@@ -142,7 +158,7 @@ function html(report) {
   const payload = JSON.stringify(report).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
   return `<!doctype html><html lang="en"><meta charset="utf-8"><title>SQL workload profile</title>
 <style>body{font:14px system-ui;margin:24px;color:#17202a}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd}th{cursor:pointer}tr:hover{background:#eef5ff}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6f8;padding:12px}.flag{color:#934500}input{padding:8px;width:70%}#detail{border-top:2px solid #aaa;margin-top:24px}button{margin:8px;padding:6px}.action{border:1px solid #ccd4de;border-radius:8px;padding:12px;margin:12px 0}.cost{font-weight:600}.muted{color:#52606d}#priorities table{margin:12px 0}details{margin:12px 0}</style>
-<h1>SQL workload profile</h1><p id="summary"></p><section id="priorities"></section><details><summary>Measurement limits</summary><p id="accounting"></p></details><h2>All queries</h2><input id="filter" aria-label="Filter queries" placeholder="Filter SQL, scope, or flag"><button id="flagged">Flagged only</button><table><thead><tr><th data-sort="id">Query</th><th data-sort="selfCpuNs">Self CPU ms ↓</th><th data-sort="runs">Runs</th><th data-sort="rows">Rows</th><th data-sort="vmSteps">VM steps</th><th>Flags</th></tr></thead><tbody id="rows"></tbody></table><section id="detail"></section>
+<h1>SQL workload profile</h1><p id="summary"></p><section id="priorities"></section><details><summary>Measurement limits</summary><p id="accounting"></p></details><details><summary>Work inside fused SQL</summary><p>These stage times are included in SQL CPU. Select a stage to inspect its SQL.</p><div id="relational"></div></details><h2>All queries</h2><input id="filter" aria-label="Filter queries" placeholder="Filter SQL, scope, or flag"><button id="flagged">Flagged only</button><table><thead><tr><th data-sort="id">Query</th><th data-sort="selfCpuNs">Self CPU ms ↓</th><th data-sort="runs">Runs</th><th data-sort="rows">Rows</th><th data-sort="vmSteps">VM steps</th><th>Flags</th></tr></thead><tbody id="rows"></tbody></table><section id="detail"></section>
 <script type="application/json" id="data">${payload}</script><script>
 const report=JSON.parse(document.getElementById('data').textContent);let sort='selfCpuNs',direction=-1,flagged=false;
 const el=id=>document.getElementById(id),ms=n=>(n/1e6).toFixed(3),text=(tag,value)=>{const e=document.createElement(tag);e.textContent=value;return e};
@@ -150,6 +166,7 @@ el('summary').textContent=report.eventCount+' events · '+report.sessions+' sess
 function detail(q){const d=el('detail');d.replaceChildren(text('h2','Q'+q.id+' · '+q.kind),text('p',q.contexts.join(', ')),text('pre',q.sql));for(const f of q.flags)d.append(text('p',f.code+' ('+f.certainty+'): '+JSON.stringify(f.evidence)+' '+f.action));d.append(text('h3','Metrics'),text('pre',JSON.stringify({...q,sql:undefined,plans:undefined,bytecode:undefined,plan:undefined},null,2)));if(q.kind==='sql')d.append(text('h3','EXPLAIN QUERY PLAN and bytecode'),text('pre',JSON.stringify(q.plans,null,2)));d.scrollIntoView({block:'start'});}
 function render(){const filter=el('filter').value.toLowerCase();el('rows').replaceChildren();for(const q of [...report.queries].filter(q=>(!flagged||q.flags.length)&&JSON.stringify([q.sql,q.contexts,q.flags]).toLowerCase().includes(filter)).sort((a,b)=>direction*(a[sort]-b[sort]))){const r=document.createElement('tr');for(const value of ['Q'+q.id+' '+q.kind,ms(q.selfCpuNs),q.runs,q.rows+q.changes,q.vmSteps,q.flags.map(f=>f.code).join(', ')])r.append(text('td',value));r.onclick=()=>detail(q);el('rows').append(r);}}
 const a=report.actionableSummary,p=el('priorities'),fmt=n=>n.toLocaleString('en-US',{maximumFractionDigits:n>0&&n<1?3:1});
+for(const [i,s] of (report.relationalStages??[]).slice(0,20).entries()){const d=document.createElement('details'),h=document.createElement('summary'),b=document.createElement('pre');h.textContent='S'+i+': '+fmt(s.cpuNs/1e6)+' ms, '+s.runs+' runs, '+s.columns.length+' columns'+(s.incomplete?' (incomplete)':'');b.textContent=s.sql;d.append(h,b);el('relational').append(d);}
 p.append(text('p',a.nextStep),text('p',a.budget.interpretation),text('h2','Where recorded CPU goes'));
 const costs=document.createElement('table');for(const c of a.costBreakdown){const row=document.createElement('tr');for(const v of [c.label,fmt(c.cpuMs)+' ms',fmt(c.measuredCpuPercent)+'%',fmt(c.executions)+' executions'])row.append(text('td',v));costs.append(row);}p.append(costs,text('p',a.budget.frameIndexCpuMs===null?'Frame index construction was not timed in this capture. Re-run with the current profiler.':'Frame index construction: '+fmt(a.budget.frameIndexCpuMs)+' ms across '+fmt(a.budget.frameIndexTimedBuilds)+' timed builds ('+fmt(a.budget.frameIndexBuilds)+' total), including scan-order preparation on cache misses. Already included in SQL CPU.'),text('h2','Priority actions'),text('p',a.interpretation));
 if(!a.actions.length)p.append(text('p','No action group reaches both 10 ms and 1% of recorded CPU. Use a larger representative capture.'));

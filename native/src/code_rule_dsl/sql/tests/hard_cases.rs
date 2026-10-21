@@ -160,7 +160,7 @@ fn zero_width_siblings_follow_the_tapes_byte_positioned_walks() {
 /// field, two- and three-valued (an unknown stop leaves the walk open), around zero-width
 /// siblings.
 #[test]
-fn rule_stop_walks_read_the_stop_set_without_recursion() {
+fn rule_stop_walks_read_the_indexed_stop_set() {
     use crate::code_rule_dsl::test_support::grammar_matchers;
     let sources = [
         "g(x);\nh(y, z);\nlet q = [1, 2;\nlet r = 3;\n",
@@ -207,9 +207,6 @@ fn rule_stop_walks_read_the_stop_set_without_recursion() {
                         || plans.iter().any(|(sql, _)| sql.contains("nearest")),
                     "{relation} {field:?} {stop}: no walk reads `nearest`"
                 );
-                for (sql, _) in &plans {
-                    assert!(!sql.contains("RECURSIVE"), "a recursive walk: {sql}");
-                }
                 statements += plans.len();
             }
         }

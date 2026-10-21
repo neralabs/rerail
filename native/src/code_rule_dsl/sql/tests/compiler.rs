@@ -113,19 +113,16 @@ fn shared_search_avoids_quadratic_rows_for_early_late_and_missing_matches() {
         );
         STATEMENT_PROFILE.set(Some(Default::default()));
         let result = same(&rule, &snapshot(&[("typescript", "a.ts", &source)]));
-        let rows = STATEMENT_PROFILE
-            .take()
-            .unwrap_or_default()
-            .values()
-            .map(|(_, rows, _)| rows)
-            .sum::<usize>();
+        let profile = STATEMENT_PROFILE.take().unwrap_or_default();
+        let executed = profile.values().map(|(_, _, runs)| runs).sum::<usize>();
+        let rows = profile.values().map(|(_, rows, _)| rows).sum::<usize>();
         assert_eq!(
             result["violations"].as_array().map(Vec::len),
             Some(expected)
         );
         assert_eq!(result["failures"], json!([]));
         assert!(
-            rows > 0 && rows < 32 * depth,
+            executed > 0 && rows < 32 * depth,
             "{regex}: {rows} rows for {depth} roots"
         );
     }

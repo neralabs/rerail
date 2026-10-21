@@ -169,7 +169,7 @@ impl SqlProgram {
             refusals,
             names,
         } = self;
-        let (compiled, phases) = compiler.finish();
+        let (compiled, phases) = compiler.finish_with_batch(batch_size);
         SqlEngine {
             compiled,
             phases,
@@ -373,6 +373,7 @@ impl SqlEngine {
         let report = json!({
             "engine": "sql",
             "batchSize": self.batch_size,
+            "relational": self.compiled.relational_plan(),
             "clauses": self.clauses.len(),
             "compiled": self.ran.len(),
             "ran": self.ran.iter().filter(|ran| ran.load(Ordering::Relaxed)).count(),

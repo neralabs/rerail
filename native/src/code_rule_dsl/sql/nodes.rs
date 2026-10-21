@@ -58,6 +58,14 @@ pub(super) struct NodeFacts {
     values: parking_lot::Mutex<ValuePostings>,
     positions: OnceLock<Positions>,
     atoms: OnceLock<Vec<u32>>,
+    depths: OnceLock<Depths>,
+}
+
+/// Range maxima over preorder depths. A first-witness prefix needs one logarithmic lookup,
+/// rather than expanding every root into every node visited before its witness.
+struct Depths {
+    base: usize,
+    tree: Vec<u32>,
 }
 
 type ValuePostings = HashMap<u16, HashMap<i64, Arc<[u32]>>>;
@@ -147,6 +155,7 @@ impl NodeFacts {
             values: Default::default(),
             positions: OnceLock::new(),
             atoms: OnceLock::new(),
+            depths: OnceLock::new(),
         }
     }
 
@@ -175,6 +184,42 @@ impl NodeFacts {
             }
             atoms
         })[id as usize]
+    }
+
+    pub(super) fn dependency_depth(&self, root: u32, end: u32) -> u32 {
+        let d = self.depths.get_or_init(|| {
+            let base = (self.len as usize).max(1).next_power_of_two();
+            let mut tree = vec![0; base * 2];
+            #[cfg(test)]
+            count_bytes(tree.len() * size_of::<u32>());
+            for id in 0..self.len {
+                let parent = self.parent(id);
+                tree[base + id as usize] = if parent == NONE {
+                    0
+                } else {
+                    tree[base + parent as usize] + 1
+                };
+            }
+            for i in (1..base).rev() {
+                tree[i] = tree[i * 2].max(tree[i * 2 + 1]);
+            }
+            Depths { base, tree }
+        });
+        let (mut lo, mut hi) = (d.base + root as usize, d.base + end as usize + 1);
+        let mut max = 0;
+        while lo < hi {
+            if lo % 2 == 1 {
+                max = max.max(d.tree[lo]);
+                lo += 1;
+            }
+            if hi % 2 == 1 {
+                hi -= 1;
+                max = max.max(d.tree[hi]);
+            }
+            lo /= 2;
+            hi /= 2;
+        }
+        max - d.tree[d.base + root as usize]
     }
 
     pub(super) fn len(&self) -> u32 {

@@ -23,6 +23,14 @@ export function sqlShape(sql) {
 }
 
 function recommendation(query) {
+  if (query.kind === "operator" && query.sql.includes("schedule(step,token) AS MATERIALIZED")) return {
+    key: "fused-operator-overhead", title: "Reduce fused-program preparation and handling",
+    certainty: "observed CPU outside SQL execution; preparation is a candidate",
+    reason: "This operator's exclusive CPU excludes its child SQL execution. It includes preparation, result decoding, and instrumentation.",
+    change: "Compare dependency-expansion budgets and prepared-program reuse. Declare component schemas before preparation, then inspect the separate internal stage costs.",
+    source: "native/src/code_rule_dsl/sql/fused/physical.rs; native/src/code_rule_dsl/sql/exec.rs",
+    verify: "Separate cold and repeated calls. Compare complete apply CPU, output parity, memory, and actual SQL execution counts.",
+  };
   const flags = names(query);
   if (rootInsert(query.sql)) return {
     key: "root-input-loading", title: "Remove per-root SQLite input calls", certainty: "observed",
@@ -211,5 +219,14 @@ export function summaryMarkdown(report) {
     "## Measurement quality", "",
     `${summary.quality.expectedSetupExplainFailures} expected setup explanation failures, ${summary.quality.unexpectedExplainFailures} unexpected explanation failures, and ${summary.quality.incompleteOperations} incomplete operations.`, "",
     "Expected setup failures occur because deferred EXPLAIN sees a table that setup already created. They do not outrank expensive runtime queries.", "");
+  if (report.relationalStages?.length) {
+    lines.push("", "## Work inside fused SQL", "",
+      "These stage times are included in SQL CPU above. Do not add them to the recorded budget.", "",
+      "| Stage | CPU ms | Runs | Columns | Incomplete |", "|---|---:|---:|---:|---:|");
+    for (const [index, stage] of report.relationalStages.slice(0, 10).entries()) {
+      lines.push(`| S${index} | ${fmt(stage.cpuNs / 1e6)} | ${stage.runs} | ${stage.columns.length} | ${stage.incomplete} |`);
+    }
+    lines.push("", "Inspect the hottest stage bodies in profile.json. Restrict their input grain and capture width before changing materialization boundaries.");
+  }
   return lines.join("\n");
 }

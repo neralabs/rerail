@@ -110,6 +110,7 @@ struct State {
     running: HashMap<usize, Running>,
     ids: HashMap<String, usize>,
     queries: Vec<Value>,
+    relational: Vec<Value>,
     context: Value,
     sql_time: Timing,
     error: Option<String>,
@@ -255,6 +256,10 @@ impl Profiler {
         result
     }
 
+    pub(super) fn relational(&self, profile: Value) {
+        self.state.borrow_mut().relational.push(profile);
+    }
+
     fn save(&self) -> rusqlite::Result<()> {
         let mut state = self.state.borrow_mut();
         if let Some(writer) = &mut state.writer {
@@ -266,7 +271,7 @@ impl Profiler {
         let data = json!({"version":1,"pid":std::process::id(),"events":state.events,
             "clock":"process monotonic nanoseconds","cpuClock":if cfg!(unix) {"thread CPU"} else {"unavailable"},
             "writtenAtUnixMs":SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis(),
-            "queries":state.queries});
+            "queries":state.queries,"relationalBatches":state.relational});
         let file = File::create(self.stem.with_extension("json")).map_err(io_error)?;
         let mut writer = BufWriter::new(file);
         serde_json::to_writer(&mut writer, &data)

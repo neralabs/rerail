@@ -28,7 +28,9 @@ test("report preserves execution trace, counter order, plans, and exclusive CPU"
   const directory = mkdtempSync(join(tmpdir(), "rerail-profile-report-"));
   const raw = join(directory, "raw"); mkdirSync(raw);
   const sql = "SELECT '</script><script>alert(1)</script>' FROM frame";
-  const catalogue = { version: 1, pid: 9, events: 2, queries: [
+  const catalogue = { version: 1, pid: 9, events: 2,
+    relationalBatches: [{stagesByCpu:[{sql:"SELECT work FROM q1",columns:["k","s0"],cpuNs:50,wallNs:75}]},
+      {stagesByCpu:[{sql:"SELECT work FROM q1",columns:["k","s0"],cpuNs:25,wallNs:40,incomplete:true}]}], queries: [
     { id: 0, kind: "sql", sql, plan: [[0,0,0,"SCAN frame VIRTUAL TABLE INDEX 0:"]], bytecode: [] },
     { id: 1, kind: "operator", sql: "INSERT INTO output SELECT * FROM frame" },
   ] };
@@ -43,6 +45,9 @@ test("report preserves execution trace, counter order, plans, and exclusive CPU"
   try {
     const report = await buildReport(raw, directory);
     assert.equal(report.summary.selfCpuNs, 200);
+    assert.equal(report.relationalStages[0].cpuNs,75);
+    assert.equal(report.relationalStages[0].runs,2);
+    assert.equal(report.relationalStages[0].incomplete,1);
     assert.equal(report.contexts[0].selfCpuNs, 200);
     const q = report.queries.find(q => q.kind === "sql");
     assert.equal(q.frameScans, 1); assert.equal(q.frameIndexedRows, 7);
@@ -174,4 +179,15 @@ test("virtual root publication reports removal of the insertion path", () => {
   assert.equal(summary.rootInput.publication.returnedRows, 919_765);
   assert.match(summary.rootInput.explanation, /without per-root INSERT/);
   assert.ok(!summary.actions.some(action => action.key === "root-input-loading"));
+});
+
+test("fused operator priorities separate preparation candidates from child SQL CPU", () => {
+  const summary = actionableSummary({ queries: [
+    query({ id: 1, kind: "operator", sql: "WITH RECURSIVE schedule(step,token) AS MATERIALIZED (...) SELECT result", selfCpuNs: 300_000_000, cpuNs: 400_000_000 }),
+    query({ id: 2, sql: "WITH RECURSIVE schedule(step,token) AS MATERIALIZED (...) SELECT result", selfCpuNs: 100_000_000, cpuNs: 100_000_000 }),
+  ] });
+  const action = summary.actions.find(action => action.key === "fused-operator-overhead");
+  assert.equal(action.cpuMs, 300);
+  assert.equal(summary.budget.measuredCpuMs, 400);
+  assert.match(action.certainty, /candidate/);
 });

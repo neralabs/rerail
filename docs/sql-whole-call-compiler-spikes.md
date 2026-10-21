@@ -1,5 +1,8 @@
 # Whole-call SQL compiler spikes
 
+This report records the experiments before engine integration.
+The [compiler journal](sql-set-composition-compiler-spike.md#production-integration-of-accepted-relational-spikes--2026-10-21) records their production adoption and complete-call measurements.
+
 These experiments target one actual SQL execution across all selected files and rules in a Rerail call.
 They run under Rust tests. They do not change the addon or add runtime switches.
 The existing production compiler still uses its frame scheduler.

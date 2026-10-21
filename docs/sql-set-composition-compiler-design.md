@@ -35,8 +35,10 @@ The frame fusion pass removes safe intermediate relations before register alloca
 Each worker retains one SQLite session and its prepared statements across batches.
 A batch runs in one transaction.
 Native pattern and semantic terminals receive complete input sets through virtual tables.
-Recursive utilities use demanded-key and answer tables with host-controlled loops.
-They use no recursive CTEs.
+General utilities use demanded-key and answer tables with host-controlled loops.
+Recognized positive subtree utilities use witness relations.
+A finite recursive CTE sequences immutable publication boundaries.
+The [integration journal](sql-set-composition-compiler-spike.md#production-integration-of-accepted-relational-spikes--2026-10-21) records the current engine boundary and measurements.
 
 ## Why the remaining gap needs demand analysis
 

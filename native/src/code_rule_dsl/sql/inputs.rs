@@ -1,6 +1,7 @@
 //! Selected roots are already immutable Rust slices. Expose them directly to SQLite rather
 //! than copying every (run, file, node) membership through a separate INSERT into a B-tree.
 
+mod files;
 use super::exec::ClauseRun;
 use parking_lot::RwLock;
 use rusqlite::types::ValueRef;
@@ -17,6 +18,7 @@ use std::sync::Arc;
 #[derive(Default)]
 pub(super) struct RootInputs {
     current: RwLock<Arc<RootSet>>,
+    runs: Arc<files::RunInputs>,
 }
 
 #[derive(Default)]
@@ -45,7 +47,8 @@ fn ordered(nodes: &Arc<[u32]>) -> Arc<[u32]> {
 impl RootInputs {
     pub(super) fn register(self: &Arc<Self>, connection: &Connection) -> Result<()> {
         const MODULE: Module<'static, RootTable> = Module::eponymous_only_module();
-        connection.create_module(c"roots", &MODULE, Some(Arc::clone(self)))
+        connection.create_module(c"roots", &MODULE, Some(Arc::clone(self)))?;
+        self.runs.register(connection)
     }
 
     pub(super) fn install(&self, runs: &[ClauseRun]) -> usize {
@@ -88,7 +91,12 @@ impl RootInputs {
         rows
     }
 
+    pub(super) fn install_runs(&self, rows: Vec<(i64, i64)>) {
+        self.runs.install(rows);
+    }
+
     pub(super) fn clear(&self) {
+        self.runs.install(Vec::new());
         *self.current.write() = Arc::default();
     }
 }

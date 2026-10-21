@@ -274,7 +274,7 @@ pub(super) fn compile_scoped(
     let mut leaves = Vec::new();
     let mut probes = Vec::new();
     if !compiler.direct.is_empty() {
-        definitions.push("dialects(file,dialect) AS MATERIALIZED(SELECT file,spike_file_dialect(file) FROM node WHERE id=0)".into());
+        definitions.push("dialects(file,dialect) AS MATERIALIZED(SELECT file,fused_file_dialect(file) FROM node WHERE id=0)".into());
     }
     for &term in &compiler.regex {
         let filter = super::amplification::domains::filter(&domains, "regex", term);
@@ -556,7 +556,7 @@ pub(super) fn register_text(
     }
     let dialects: Vec<_> = batch.files.iter().map(|f| f.dialect.to_string()).collect();
     connection.create_scalar_function(
-        "spike_file_dialect",
+        "fused_file_dialect",
         1,
         rusqlite::functions::FunctionFlags::SQLITE_UTF8,
         move |ctx| {

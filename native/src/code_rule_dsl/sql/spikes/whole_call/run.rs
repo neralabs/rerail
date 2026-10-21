@@ -42,7 +42,7 @@ impl Aggregate<Buffer, String> for Publish {
     fn finalize(&self, _: &mut Context<'_>, acc: Option<Buffer>) -> Result<String> {
         let rows = acc.unwrap_or_default().rows;
         let started = Started::now();
-        self.frames.0.publish_spike_rows(&self.name, &rows)?;
+        self.frames.0.publish_relation(&self.name, &rows)?;
         self.profile.publication(
             &self.name,
             rows.len(),

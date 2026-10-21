@@ -753,18 +753,17 @@ impl FrameStore {
 
     /// Publish an aggregate's completed input batch, with no nested SQL. Experiments register
     /// a separate immutable handle for each terminal demand before preparing the query.
-    #[cfg(test)]
-    pub(super) fn publish_spike_rows(&self, name: &str, rows: &[Vec<Value>]) -> Result<()> {
+    pub(super) fn publish_relation(&self, name: &str, rows: &[Vec<Value>]) -> Result<()> {
         let shared = self
             .frames
             .lock()
             .get(name)
             .cloned()
-            .ok_or_else(|| Error::ModuleError(format!("unknown spike demand handle {name}")))?;
+            .ok_or_else(|| Error::ModuleError(format!("unknown relation handle {name}")))?;
         let frame = shared.get();
         if frame.len != 0 || rows.iter().any(|row| row.len() != frame.columns.len()) {
             return Err(Error::ModuleError(format!(
-                "spike relation {name}: {} existing rows, {} columns, incoming width {:?}",
+                "relation {name}: {} existing rows, {} columns, incoming width {:?}",
                 frame.len,
                 frame.columns.len(),
                 rows.first().map(Vec::len)
@@ -781,13 +780,13 @@ impl FrameStore {
                 .any(|row| !matches!(row.get(key),Some(Value::Integer(k)) if keys.insert(*k)))
         {
             return Err(Error::ModuleError(
-                "spike relation keys must be unique integers".into(),
+                "relation keys must be unique integers".into(),
             ));
         }
         let live = self.live.fetch_add(rows.len(), Atomic::Relaxed) + rows.len();
         if live > BUDGET {
             self.live.fetch_sub(rows.len(), Atomic::Relaxed);
-            return Err(Error::ModuleError("spike demand budget".into()));
+            return Err(Error::ModuleError("relation publication budget".into()));
         }
         self.peak.fetch_max(live, Atomic::Relaxed);
         // SAFETY: publication has its own handle, never a source CTE's handle. The scalar
@@ -799,6 +798,8 @@ impl FrameStore {
                 column.push(index, value.into());
             }
         }
+        #[cfg(any(test, feature = "unbounded-work"))]
+        super::profiling::frame(super::profiling::FrameEvent::Insert, rows.len());
         frame.len = rows.len();
         frame.ascending = false;
         frame.dense = false;

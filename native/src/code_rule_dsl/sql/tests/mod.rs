@@ -4,6 +4,8 @@ mod census;
 mod compiler;
 pub(super) mod differential;
 mod frontier;
+#[path = "../fused/tests.rs"]
+mod fused;
 mod hard_cases;
 mod keyed;
 mod leaves;

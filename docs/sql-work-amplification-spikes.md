@@ -1,5 +1,8 @@
 # SQL work amplification spikes
 
+This report records the experiments before engine integration.
+The [compiler journal](sql-set-composition-compiler-spike.md#production-integration-of-accepted-relational-spikes--2026-10-21) records their production adoption and complete-call measurements.
+
 These experiments extend [the SQL generation spikes](sql-generation-shape-spikes.md).
 They remain test-only and use one statement, or four bounded phases, across each admitted batch.
 The production addon keeps its existing compiler path.

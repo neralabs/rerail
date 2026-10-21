@@ -1057,3 +1057,313 @@ Additional materialization and statistics do not close the remaining performance
 The comparison alternatives remain test-only experiments.
 The compiler now adopts the preferred join order, with no new addon switches.
 The [addon results](sql-anchor-first-results.md) report its effect on total workload CPU and the remaining engine gap.
+
+
+## Production integration of accepted relational spikes — 2026-10-21
+
+The integration starts from commit `268a1fd3`.
+The existing storage, progressive-search, integer-key, and anchor-order changes are already active.
+The remaining accepted components are batch-wide acyclic fusion, constant capture removal, stage membership, ancestor anchors, and specialized recursive witnesses.
+
+The engine will select supported relational components automatically, without an execution switch.
+Stateful components retain their existing scheduler until a replacement preserves their complete contract and improves measured work.
+The generic recursive machine, unconditional guard movement, and blanket JSONB replacement remain rejected experiments.
+
+Production acceptance includes selected roots, file dialects, terminal failures, recursion refusals, and connection reuse after failures.
+Complete addon measurements will include compilation, setup, application, and output parity.
+Kernel-only measurements remain separate.
+Results and any narrowed integration scope will follow in this journal.
+
+### Initial integration observations
+
+The first complete addon smoke run preserves all 33 findings, captures, failures, and blind-file results on the 32-file corpus.
+It admits 55 of 141 clauses to one relational statement per batch.
+The remaining clauses retain stateful scheduling.
+This first run uses the historical two-file batch size and increases total CPU.
+It is a rejected timing candidate, not an accepted speedup.
+
+The new profile isolates 1,687 ms outside SQLite execution for the fused operator, versus 860 ms inside SQLite.
+The statement contains 363 KB of SQL and executes across 16 batches on four sessions.
+Preparation and result handling dominate the apparent matching gain.
+The physical planner now uses a smaller expansion budget for small file batches.
+The session also declares component schemas before preparing fused SQL, so later clause activation cannot invalidate that preparation.
+
+These are physical planning choices within one engine configuration.
+They add no optimizer switch.
+
+Two existing tests rejected every `WITH RECURSIVE` statement.
+The execution contract now permits recursive SQL, so those assertions no longer apply.
+The plan audit still checks bounded tree access and indexed joins, including the generated relational statements.
+
+### Plan audit and terminal rejoins
+
+The expanded audit explains the actual relational queries, as well as the existing frame statements.
+A global materialized `qN` relation is a closed SQL expression.
+SQLite can display its primary scan below its first correlated reader.
+The audit now distinguishes that one-time materialization from correlation inside the relation's body.
+A regression test still rejects a repeated data probe and an unindexed inner join.
+The dispatcher's final result scan also has a proved one-row outer input.
+
+Four generated clauses exposed a real inner scan after a native publication boundary.
+Their terminal rejoin compares `t.ek` with `f.file * 4294967296 + f.node`.
+SQLite can start with terminal answers and scan the complete native frame for each answer.
+That arithmetic equality cannot probe the frame's `(file,node)` index by inversion.
+The physical generator now keeps that native frame outermost and probes materialized terminal answers by their packed key.
+It changes this join only when its input crosses a native boundary.
+
+### Current integration boundary
+
+The real catalogue admits 55 of 141 clauses to relational SQL.
+The other clauses still use mutable demand tables or enumeration state.
+This includes shared nonrecursive utilities as well as general recursion.
+Their statement count still dominates complete calls.
+The generic recursive CTE interpreter remains a rejected performance candidate.
+
+The specialized positive recursive workload has a different result.
+Complete calls improve from 1,855 ms to 194 ms on 32 files in the first three-run comparison.
+On 138 files, they improve from 13,706 ms to 1,183 ms.
+All results preserve 1,478 and 5,631 findings respectively, including their captures.
+The workspace uses four worker batches, each with one SQL statement.
+Those figures include parsing, planning, matching, and rendering.
+
+They do not establish catalogue-wide recursive coverage.
+
+### Compiler ownership and practical limits
+
+Fusion admission uses checkpoints over relation counts, use counts, handles, barriers, and the small publication caches.
+A rejected component restores that checkpoint.
+It does not copy the accumulated relation bodies before each attempted admission.
+A regression executes later accepted components after a rejection and checks that abandoned terminal effects cannot appear.
+
+The engine keeps one physical planning policy.
+File batches of at most eight use an expansion budget of four.
+Larger batches use sixteen.
+Programs with more than 3,000 logical relations can use additional bounded statement phases.
+Small programs retain one fused execution per worker batch.
+
+Large terminal fences use balanced sums.
+The regression executes 1,100 required effects exactly once in one SQLite statement.
+A linear sum would exceed SQLite's expression-depth limit.
+Required terminal effects remain observable even when later filters remove every finding.
+
+The positive recursive compiler also counts the initial utility invocation toward the depth limit.
+A boundary comparison found an off-by-one error in the first integration guard.
+The final guard agrees with native acceptance at that boundary and still ignores deep branches after an earlier witness.
+The old SQL scheduler refuses some shallower valid examples because its convergence-pass limit is stricter.
+The typed plan accepts those valid examples.
+
+### Measurement method for the integrated engine
+
+The baseline is a clean detached checkout of `268a1fd3`.
+Both addons use the same release flags, four workers, `unbounded-work`, and the diagnostic allocator shim.
+The driver checks complete serialized outcomes against native, including findings, captures, failures, and blind files.
+It reverses variant order between rounds.
+The historical catalogue comparison uses two files per SQL batch.
+A separate comparison uses the engine's default batch size of 64.
+
+Each fresh process records compilation, setup, application, peak RSS, clause admission, and physical statement counts.
+Application CPU includes parsing, planning, matching, and rendering.
+Total CPU additionally includes cold compilation and setup.
+Profiled timings are separate from these unprofiled comparisons.
+The original 818-clause translated-policy workload is outside this measurement scope.
+
+The artifact directory is `/tmp/rerail-engine-integration-20261021`.
+It contains frozen addons, complete source manifests, policy and corpus hashes, configurations, outcomes, repeated measurements, and profile traces.
+The `pre-checkpoint` directory preserves the preceding candidate's results.
+
+### Adopted components
+
+| Component | Engine integration |
+|---|---|
+| Shared immutable relations | Eligible clauses share one relational program and persistent prepared statements. |
+| Capture constants | Recognized projections omit capture columns until a value must exist. |
+| Stage membership | Proved input-only stage bridges use row-value membership. |
+| Ancestor anchors | Necessary ancestor guards retain file and candidate-kind restrictions. |
+| Native publication | Typed aggregates publish sets without interpreting rules or executing nested SQL. |
+| Positive recursive witnesses | Supported fresh-capture subtree utilities use witness segments and a reached-depth check. |
+| Profiling | Complete SQL plans and counters remain available, with separate internal stage timings. |
+| Input publication | Both selected roots and whole-file memberships use immutable virtual input relations. |
+| Earlier accepted work | Frame sharing, progressive search, integer capture-free keys, and anchor-first walks remain active. |
+
+The logical guard-reordering candidate, generic recursive interpreter, and blanket JSONB replacement remain rejected.
+The heterogeneous leaf and policy-composition examples remain semantic feasibility experiments.
+They do not replace the existing complete policy evaluator.
+
+Per-clause timers cover scheduled components.
+Shared relational time belongs to its batch query and internal stages.
+The profiler does not divide that shared time among clauses or add stage time to the enclosing SQL budget.
+
+### Admission cost
+
+The first integration copied the whole accumulated relational graph before every attempted clause admission.
+That copies SQL bodies even when the next clause contains an unsupported scheduling marker.
+Checkpoints now copy only use counts and small publication caches.
+Rollback removes new relations, handles, required effects, and interning entries.
+The generated query and admitted-clause set remain the same.
+This change removes avoidable compiler work without introducing another execution path.
+
+### Selected statement phases
+
+A final paired comparison tests one phase against four on the integrated engine.
+It uses two fresh processes per variant and reverses their order.
+Both variants preserve complete output parity.
+
+| 32-file configuration | One-phase peak RSS | Four-phase peak RSS | One-phase apply CPU | Four-phase apply CPU |
+|---|---:|---:|---:|---:|
+| Historical two-file batches | 594 MiB | 485 MiB | 5,427 ms | 5,320 ms |
+| Default batch size 64 | 614 MiB | 475 MiB | 5,253 ms | 5,277 ms |
+
+These samples support a memory reduction of about 18 to 23 percent.
+Their CPU differences remain small relative to run variation.
+They do not establish a general execution speedup from splitting statements.
+
+The selected policy requests four phases above 512 logical relations.
+Additional phases can bound larger graphs beyond 3,000 relations per phase.
+The generator can still emit one statement where no publication boundary needs a split.
+This includes the test with 140 simple rules across multiple files.
+The 55-clause catalogue component uses four statements per worker batch.
+The specialized recursive component retains one.
+
+The comparison changes physical boundaries without changing matching semantics.
+It supports shorter materialization lifetimes as a practical memory control.
+It does not isolate which SQLite allocation accounts for every saved byte.
+The configuration remains automatic and exposes no phase-selection switch.
+
+### Final complete-call results
+
+The selected engine uses the four-phase policy above.
+The following figures supersede the earlier integration timings.
+CPU figures are medians of fresh-process application CPU, in milliseconds.
+Peak RSS is the maximum across those processes, in MiB.
+The catalogue contains 135 policies and 141 Python AST matchers.
+
+| Catalogue configuration | Before CPU | Integrated CPU | CPU change | Before peak RSS | Integrated peak RSS |
+|---|---:|---:|---:|---:|---:|
+| 32 files, batch size 2, three rounds | 4,722 | 5,322 | +12.7% | 364 | 483 |
+| 138 files, batch size 2, three rounds | 27,854 | 28,415 | +2.0% | 558 | 696 |
+| 32 files, default batch size 64, two rounds | 4,398 | 5,214 | +18.5% | 359 | 478 |
+
+The general catalogue has no measured speedup.
+The 138-file CPU difference is small relative to variation between runs.
+Its median wall time increases from 11.72 to 14.05 seconds.
+Lower memory than the one-phase candidate still leaves substantially more memory than the original engine.
+
+Cold total CPU also increases.
+The respective before/after figures are 4,935/5,634 ms, 28,072/28,770 ms, and 4,606/5,585 ms.
+The catalogue preserves all 33 findings on 32 files and all 580 findings on 138 files.
+The comparison also checks captures, failures, and blind files.
+
+The generated positive recursive policy exercises the specialized witness compiler on the same source corpora.
+It uses batch size 256 and three rounds per variant.
+
+| Files | Native CPU | Before SQL CPU | Integrated SQL CPU | SQL speedup | Before peak RSS | Integrated peak RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| 32 | 257 | 2,243 | 193 | 11.6× | 160 | 130 |
+| 138 | 1,298 | 15,497 | 1,152 | 13.4× | 460 | 279 |
+
+This policy preserves 1,478 and 5,631 findings, including their captures.
+Each complete call executes four matching SQL statements, one per worker batch.
+The result demonstrates a large improvement for the supported recursive shape.
+It does not demonstrate general recursive scheduling or catalogue-wide native performance.
+
+All 34 final timed runs preserve complete native output parity.
+The measurements use the diagnostic allocator shim and disabled work limits.
+They establish a comparison in this environment, not shipping allocator performance.
+
+### Actual SQL counts and remaining amplification
+
+The production trace compares the clean baseline with the selected engine on 32 files and batch size two.
+These are actual SQL executions, rather than the engine's logical plan-step counter.
+The latter includes some native frame operations and omits some setup statements.
+
+| Traced SQL category | Before | Integrated |
+|---|---:|---:|
+| Matching and cleanup | 34,487 | 32,559 |
+| Transactions | 32 | 32 |
+| Schema and setup | 7,610 | 9,904 |
+| Per-file input publication | 305 | 0 |
+| Total | 42,434 | 42,495 |
+
+Matching and cleanup executions fall by 5.6 percent.
+Additional schema setup offsets that reduction in a cold call.
+The total statement count remains effectively unchanged.
+The file loader no longer inserts memberships individually into a SQL table.
+It publishes an immutable virtual relation once per batch.
+
+SQLite VM instructions increase from 233,296,897 to 245,655,418, or 5.3 percent.
+Native frame cursor advances decrease from 11,225,553 to 10,263,036, or 8.6 percent.
+Fewer frame visits do not imply less total SQL work.
+The integrated profile has no unexpected EXPLAIN failures or incomplete operations.
+Thirteen setup explanations fail because their schema objects already exist.
+
+The admitted component covers 55 clauses.
+The remaining 86 clauses have these compiler admission reasons:
+
+| Admission reason | Clauses |
+|---|---:|
+| Column-specific insert or mutable demand | 47 |
+| Stateful frontier instruction | 35 |
+| Enumeration requires exclusion rounds | 4 |
+
+These categories overlap conceptually with shared utilities and progressive searches.
+They do not mean that all 86 clauses require recursion.
+The scheduler still executes those components repeatedly across demands and batches.
+Their work prevents the complete catalogue from approaching a small number of SQL executions.
+
+The next compiler priority is direct relational lowering of demands, frontiers, and their callers.
+That lowering must preserve binding state, relation grain, required effects, and exclusion semantics in the intermediate representation.
+The current adapter still inherits frame restoration, row numbering, coercion, and intermediate relations from emitted frame SQL.
+Removing statement boundaries alone does not remove that work.
+
+Another hypothesis concerns empty inputs.
+The scheduler can skip later operations after an empty result, while a fused query can retain required publication boundaries.
+The next profile must isolate empty publications and their consumers before it attributes the regression to this difference.
+The current counters establish the regression, but do not identify one exclusive cause.
+
+### Final validation and reproduction
+
+The selected source passes 1,481 code-rule tests, with 44 ignored tests and no failures.
+The ordinary build also passes eight targeted integration regressions and library Clippy.
+The selected build passes Clippy for the library and tests.
+Thirteen profiling and SQL-shape script tests pass.
+Boundary and Windows path checks pass.
+
+A final repeat of the unchanged script tests cannot start.
+The installed Homebrew Node binaries cannot load `libsimdjson.33.dylib`.
+The earlier successful script log remains in `published-script-tests.log`.
+Rust formatting and the native source-manifest comparison still pass after the journal update.
+
+The structure check retains two existing failure categories.
+They concern benchmark fixture locations and cross-root fixture includes in `policy_guards.rs`.
+This integration adds no findings to either category.
+
+The final addon SHA-256 is `37c08d195ebe4d796b5faf32dd3a60e7ce0945b0b9b545db30afd8587f034875`.
+Its source manifest matches every native source file in this integration.
+The manifest records a dirty checkout based on `268a1fd3`, because the build precedes the integration commit.
+
+The artifact directory contains these final records:
+
+| Record | Purpose |
+|---|---|
+| `validation.json` | All 34 outcomes, source identity, and final summaries. |
+| `selected-comparison-{32,138}.json` | Historical batch-size catalogue comparisons. |
+| `default-comparison-32.json` | Default batch-size catalogue comparison. |
+| `positive-comparison-{32,138}.json` | Specialized recursive comparisons, including native. |
+| `before-build.json`, `after-build.json` | Exact source hashes, build flags, and addon identities. |
+| `profile-before-32/`, `profile-adopted-32/` | Complete baseline and selected production profiles. |
+| `phase-comparison-{small,default}.json` | The one-phase versus four-phase selection. |
+
+Earlier candidate profiles remain in the directory for the journal history.
+`profile-adopted-32` is the final selected profile.
+`after.node` is the selected four-phase addon.
+The temporary artifact directory is local and is not part of the published branch.
+
+The saved configurations reproduce each comparison through the existing driver:
+
+```sh
+node benchmark/sql-set-tuning.mjs /tmp/rerail-engine-integration-20261021/selected-sweep-32.json
+node benchmark/sql-set-tuning.mjs /tmp/rerail-engine-integration-20261021/selected-sweep-138.json
+node benchmark/sql-set-tuning.mjs /tmp/rerail-engine-integration-20261021/default-sweep-32.json
+node benchmark/sql-set-tuning.mjs /tmp/rerail-engine-integration-20261021/positive-sweep-32.json
+node benchmark/sql-set-tuning.mjs /tmp/rerail-engine-integration-20261021/positive-sweep-138.json
+```

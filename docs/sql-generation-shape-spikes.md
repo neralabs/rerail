@@ -1,5 +1,8 @@
 # SQL generation and recursive CTE spikes
 
+This report records the experiments before engine integration.
+The [compiler journal](sql-set-composition-compiler-spike.md#production-integration-of-accepted-relational-spikes--2026-10-21) records their production adoption and complete-call measurements.
+
 These test-only spikes extend [the whole-call experiments](sql-whole-call-compiler-spikes.md).
 They run on `jeremy/sql-capture-demand-spikes` and preserve Tim's branch.
 The production addon still uses the existing scheduler.
