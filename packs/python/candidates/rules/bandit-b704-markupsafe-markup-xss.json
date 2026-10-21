@@ -64,7 +64,7 @@
       "violation": {
         "code": "B704",
         "anchor": "capture.CONTENT",
-        "message": "Wrap this content in markupsafe.escape() before passing it to Markup; Markup marks it safe and skips escaping, opening XSS.",
+        "message": "Dynamic content is marked safe without sanitization; interpolate into a Markup object or use markupsafe.escape().",
         "suppress": {
           "nosec": {
             "codes": [

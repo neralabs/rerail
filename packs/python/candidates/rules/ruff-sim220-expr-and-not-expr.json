@@ -250,7 +250,7 @@
       "violation": {
         "anchor": "capture.ROOT",
         "code": "SIM220",
-        "message": "Replace `$A and not $A` with `False`, or fix the condition if you meant to test something else.",
+        "message": "Use `False` instead of `$A and not $A`",
         "each": "N",
         "suppress": {
           "noqa": {

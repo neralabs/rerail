@@ -153,7 +153,7 @@
       "violation": {
         "anchor": "capture.L",
         "code": "no-extra-label",
-        "message": "Remove the label '$L' here; it already targets the nearest enclosing loop or switch.",
+        "message": "This label '$L' is unnecessary.",
         "fix": "break;",
         "suppress": {
           "eslint": {
@@ -318,7 +318,7 @@
       "violation": {
         "anchor": "capture.L",
         "code": "no-extra-label",
-        "message": "Remove the label '$L' here; it already targets the nearest enclosing loop or switch.",
+        "message": "This label '$L' is unnecessary.",
         "fix": "break",
         "suppress": {
           "eslint": {
@@ -481,7 +481,7 @@
       "violation": {
         "anchor": "capture.L",
         "code": "no-extra-label",
-        "message": "Remove the label '$L' here; it already targets the nearest enclosing loop or switch.",
+        "message": "This label '$L' is unnecessary.",
         "fix": "continue;",
         "suppress": {
           "eslint": {
@@ -646,7 +646,7 @@
       "violation": {
         "anchor": "capture.L",
         "code": "no-extra-label",
-        "message": "Remove the label '$L' here; it already targets the nearest enclosing loop or switch.",
+        "message": "This label '$L' is unnecessary.",
         "fix": "continue",
         "suppress": {
           "eslint": {
@@ -805,7 +805,7 @@
       "violation": {
         "anchor": "capture.L",
         "code": "no-extra-label",
-        "message": "Remove the label '$L' here; it already targets the nearest enclosing loop or switch.",
+        "message": "This label '$L' is unnecessary.",
         "suppress": {
           "eslint": {
             "rules": [

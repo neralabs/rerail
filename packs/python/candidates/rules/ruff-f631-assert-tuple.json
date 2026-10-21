@@ -61,7 +61,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F631",
-        "message": "Drop the parentheses around this assert's condition and message so it reads `assert condition, message`.",
+        "message": "Assert test is a non-empty tuple, which is always `True`",
         "suppress": {
           "noqa": {
             "codes": [

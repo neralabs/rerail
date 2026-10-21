@@ -43,7 +43,7 @@
       "violation": {
         "code": "B311",
         "anchor": "witness.span",
-        "message": "Use the secrets module instead of random if this value is a token, password, key, or other secret.",
+        "message": "Standard pseudo-random generators are not suitable for security or cryptographic purposes.",
         "suppress": {
           "nosec": {
             "codes": [

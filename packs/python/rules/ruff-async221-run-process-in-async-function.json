@@ -328,7 +328,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC221",
-    "message": "Run this process with the async library's API, such as `asyncio.create_subprocess_exec()` or `anyio.run_process()`.",
+    "message": "Async functions should not run processes with blocking methods",
     "suppress": {
       "noqa": {
         "codes": [
