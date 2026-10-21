@@ -24,7 +24,6 @@ const capabilities = readFileSync(join(CODE_RULE_DIRECTORY, "capabilities.json")
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 
 const LIMIT = 6;
-const message = (ccn: number) => `Cyclomatic complexity ${ccn} (limit ${LIMIT}). Split this function into smaller ones or simplify its branching.`;
 const RULES = {
   python: "complexity-cyclomatic-python",
   typescript: "complexity-cyclomatic-typescript",
@@ -32,6 +31,20 @@ const RULES = {
 } as const;
 type CorpusLanguage = keyof typeof RULES;
 const LANGUAGES = Object.keys(RULES) as CorpusLanguage[];
+
+/** The steer for a function scored `ccn`: named as `name` (in backticks), or "This function" when it has none. */
+function message(language: CorpusLanguage, name: string | undefined, ccn: number): string {
+  const subject = name === undefined ? "This function" : `\`${name}\``;
+  return `${subject} has cyclomatic complexity ${ccn}, over the ceiling of ${LIMIT}. Decompose it into smaller functions.`;
+}
+
+/** The number a steer carries; every message must be one `message` would write. */
+function ccnOf(language: CorpusLanguage, text: string): number {
+  const ccn = /has cyclomatic complexity (\d+),/u.exec(text)?.[1];
+  const name = /^`([^`]+)` has/u.exec(text)?.[1];
+  expect(text).toBe(message(language, name, Number(ccn)));
+  return Number(ccn);
+}
 
 /**
  * Where Rerail's number differs from lizard's, on purpose: lizard 1.24.0 tokenizer and reader defects, each found on
@@ -43,6 +56,8 @@ const LANGUAGES = Object.keys(RULES) as CorpusLanguage[];
  *   the enclosing function and lists a one-line arrow, scored 1, on the line after.
  * - A Python def whose return annotation spans several lines, or whose parameter list breaks after a default holding
  *   brackets, is scored whole: lizard ends it inside its signature and scores it 1 (fixed in crapkit #72).
+ * - A default-only switch counts 0 beside a cased one. The recorded number is min(standard, -m) over the whole function,
+ *   which there gives the default-only switch the 1 that -m adds for any switch; the rule counts each switch on its own.
  */
 const DEVIATIONS: ReadonlyArray<{ path: string; line: number; lizard: number | null; rerail: number | null }> = [
   { path: "javascript/nullish.js", line: 4, lizard: 8, rerail: 4 },
@@ -51,6 +66,8 @@ const DEVIATIONS: ReadonlyArray<{ path: string; line: number; lizard: number | n
   { path: "typescript/nullish.ts", line: 16, lizard: 7, rerail: 5 },
   { path: "python/signatures.py", line: 1, lizard: 1, rerail: 7 },
   { path: "python/signatures.py", line: 35, lizard: 1, rerail: 8 },
+  { path: "javascript/branches.js", line: 148, lizard: 3, rerail: 2 },
+  { path: "typescript/branches.ts", line: 169, lizard: 3, rerail: 2 },
   ...(["javascript/tokens.js", "typescript/tokens.ts"] as const).flatMap(path => [
     { path, line: 1, lizard: 2, rerail: 1 },
     { path, line: 5, lizard: 2, rerail: 1 },
@@ -107,7 +124,7 @@ function corpusFiles(language: CorpusLanguage): { path: string; source: string }
 }
 
 /** Findings by `path:line` (1-based, as lizard prints it), each mapped to its message. */
-function findings(compiled: NativeCompiledCodeRuleDsl, files: { path: string; source: string }[]): Record<string, string> {
+function messages(compiled: NativeCompiledCodeRuleDsl, files: { path: string; source: string }[]): Record<string, string> {
   const input = JSON.stringify({
     format: "rerail.repository-snapshot/v1",
     revision: 0,
@@ -117,7 +134,14 @@ function findings(compiled: NativeCompiledCodeRuleDsl, files: { path: string; so
   const result = evaluationSchema.parse(JSON.parse(compiled.evaluate(input, "report")));
   expect(result.failures).toEqual([]);
   expect(result.violations.map(violation => violation.code).filter(code => code !== "CYCLOMATIC_COMPLEXITY")).toEqual([]);
+  const keys = result.violations.map(violation => key(violation.path, violation.span.startLine + 1));
+  expect(new Set(keys).size, "one finding per function").toBe(keys.length);
   return Object.fromEntries(result.violations.map(violation => [key(violation.path, violation.span.startLine + 1), violation.message]));
+}
+
+/** Findings by `path:line`, each mapped to the number its message carries. */
+function findings(language: CorpusLanguage, compiled: NativeCompiledCodeRuleDsl, files: { path: string; source: string }[]): Record<string, number> {
+  return Object.fromEntries(Object.entries(messages(compiled, files)).map(([at, text]) => [at, ccnOf(language, text)]));
 }
 
 const documents = loadPackRuleDocuments([repositoryPath("packs", "complexity")]).filter(document => document.rule.id.startsWith("complexity-"));
@@ -150,16 +174,15 @@ describe("complexity rule pack", () => {
   it.each(LANGUAGES)("%s: reports exactly the in-scope functions lizard scores over the limit, with lizard's number", language => {
     const compiled = compile(ruleJson(language));
     const expected = Object.fromEntries(
-      Object.entries(expectedNumbers(language, path => compiled.inScope(path))).filter(([, ccn]) => ccn > LIMIT).map(([at, ccn]) => [at, message(ccn)]),
+      Object.entries(expectedNumbers(language, path => compiled.inScope(path))).filter(([, ccn]) => ccn > LIMIT),
     );
     expect(Object.keys(expected).length, `${language} corpus has functions over the limit`).toBeGreaterThan(0);
-    expect(findings(compiled, corpusFiles(language))).toEqual(expected);
+    expect(findings(language, compiled, corpusFiles(language))).toEqual(expected);
   });
 
   it.each(LANGUAGES)("%s: measures every in-scope function as lizard does, apart from the listed deviations", language => {
     const compiled = compile(measuringJson(language));
-    const expected = Object.fromEntries(Object.entries(expectedNumbers(language, path => compiled.inScope(path))).map(([at, ccn]) => [at, message(ccn)]));
-    expect(findings(compiled, corpusFiles(language))).toEqual(expected);
+    expect(findings(language, compiled, corpusFiles(language))).toEqual(expectedNumbers(language, path => compiled.inScope(path)));
   });
 
   it.each(LANGUAGES)("%s: leaves test files out even where lizard scores them over the limit", language => {
@@ -168,7 +191,7 @@ describe("complexity rule pack", () => {
     expect(excluded.length, `${language} corpus has excluded test files`).toBeGreaterThan(0);
     for (const row of excluded) expect(row.ccn, key(row.path, row.line)).toBeGreaterThan(LIMIT);
     const files = corpusFiles(language);
-    expect(findings(compiled, files.filter(file => excluded.some(row => row.path === file.path)))).toEqual({});
+    expect(findings(language, compiled, files.filter(file => excluded.some(row => row.path === file.path)))).toEqual({});
   });
 
   it.each([
@@ -179,10 +202,82 @@ describe("complexity rule pack", () => {
     const source = readFileSync(join(CORPUS, fixture), "utf8");
     for (const path of testPaths) {
       expect(compiled.inScope(path), path).toBe(false);
-      expect(findings(compiled, [{ path, source }]), path).toEqual({});
+      expect(findings(language, compiled, [{ path, source }]), path).toEqual({});
     }
     expect(compiled.inScope(sourcePath)).toBe(true);
-    expect(findings(compiled, [{ path: sourcePath, source }])).toEqual({ [key(sourcePath, 3)]: message(8) });
+    expect(findings(language, compiled, [{ path: sourcePath, source }])).toEqual({ [key(sourcePath, 3)]: 8 });
+  });
+
+  // slapkit scores min(lizard's standard count, its modified count): a switch with a case, or a match, adds 1 however
+  // many cases it has, so a flat dispatch table is not flagged. Per-case counting scored switchCountsOnce 8.
+  const SWITCHES: Record<CorpusLanguage, { file: string; scores: Record<string, number> }> = {
+    typescript: { file: "typescript/branches.ts", scores: { switchCountsOnce: 2, nestedSwitches: 3, switchDefaultOnly: 1, switchOverLimit: 8 } },
+    javascript: { file: "javascript/branches.js", scores: { switchCountsOnce: 2, nestedSwitches: 3, switchDefaultOnly: 1, switchOverLimit: 8 } },
+    python: { file: "python/match_case.py", scores: { match_counts_once: 2, nested_matches: 3, match_over_limit: 7, guarded_match_over_limit: 7 } },
+  };
+
+  it.each(LANGUAGES)("%s: a switch or match counts once however many cases it has, and only the functions over the limit are flagged", language => {
+    const { file, scores } = SWITCHES[language];
+    const at = (name: string) => {
+      const row = lizardRows.find(candidate => candidate.path === file && candidate.name === name);
+      if (row === undefined) throw new Error(`${file} has no ${name}`);
+      expect(row.ccn, `lizard's ${name}`).toBe(scores[name]);
+      return key(file, row.line);
+    };
+    const files = corpusFiles(language).filter(candidate => candidate.path === file);
+    const measured = findings(language, compile(measuringJson(language)), files);
+    for (const name of Object.keys(scores)) expect(measured[at(name)], name).toBe(scores[name]);
+    const flagged = Object.keys(scores).filter(name => scores[name]! > LIMIT).map(at);
+    expect(Object.keys(findings(language, compile(ruleJson(language)), files)).filter(found => Object.keys(scores).map(at).includes(found)).sort()).toEqual(flagged.sort());
+  });
+
+  /** `body`'s decisions, enough to put any function holding them over the limit (ccn 7). */
+  const OVER: Record<CorpusLanguage, string> = {
+    typescript: "if (a) {} if (a) {} if (a) {} if (a) {} if (a) {} if (a) {} return 1;",
+    javascript: "if (a) {} if (a) {} if (a) {} if (a) {} if (a) {} if (a) {} return 1;",
+    python: "if a: pass\n    if a: pass\n    if a: pass\n    if a: pass\n    if a: pass\n    if a: pass\n    return 1",
+  };
+
+  // Seven functions at ccn 7, one per line of `$` (the decisions): each named as the steer should name it, the last
+  // a callback with no name at all.
+  const NAMED_TS = [
+    "export function declared(a: number) { $ }",
+    "class Box {",
+    "  method(a: number) { $ }",
+    "  get level() { const a = 1; $ }",
+    "  field = (a: number) => { $ };",
+    "}",
+    "const assigned = (a: number) => { $ };",
+    "const handlers = { onKey: function (a: number) { $ } };",
+    "[1].map((a: number) => { $ });",
+  ];
+  const NAMED_JS = NAMED_TS.map(line => line.replaceAll(": number", ""));
+  const NAMED_PY = [
+    "def declared(a):",
+    "    $",
+    "class Box:",
+    "    def method(self, a):",
+    "        $",
+  ];
+
+  it.each([
+    ["typescript", "src/names.ts", NAMED_TS, ["declared", "method", "level", "field", "assigned", "onKey", undefined]],
+    ["javascript", "src/names.js", NAMED_JS, ["declared", "method", "level", "field", "assigned", "onKey", undefined]],
+    ["python", "src/names.py", NAMED_PY, ["declared", "method"]],
+  ] as const)("%s: names the function in the steer, or says 'This function' when it has no name", (language, path, lines, names) => {
+    // A function starts on its `def` line in Python, and on the line holding its decisions in the one-line sources.
+    const opens = (line: string) => (language === "python" ? /^\s*def /u.test(line) : line.includes("$"));
+    const starts: number[] = [];
+    const written: string[] = [];
+    for (const line of lines) {
+      if (opens(line)) starts.push(written.length + 1);
+      const indent = /^ */u.exec(line)![0];
+      written.push(...line.replace("$", OVER[language].replaceAll("\n    ", `\n${indent}`)).split("\n"));
+    }
+    const source = written.join("\n") + "\n";
+    expect(starts.length).toBe(names.length);
+    const expected = Object.fromEntries(starts.map((line, index) => [key(path, line), message(language, names[index], 7)]));
+    expect(messages(compile(ruleJson(language)), [{ path, source }])).toEqual(expected);
   });
 
   it("scopes each rule to its own language's sources outside dependency and build output", () => {
