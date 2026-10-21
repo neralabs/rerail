@@ -364,17 +364,24 @@ async function walkApply(workspace: NativeCodeRuleDslWorkspace, files: readonly 
   return { revision, chunks };
 }
 
-/** The final quiet apply (the deferred workspace-wide pass), the stored revision's record, and every result page. */
+/**
+ * The final quiet apply (the deferred workspace-wide pass), the stored revision's record, and every result page, with
+ * the time of each.
+ */
 async function finishScan(workspace: NativeCodeRuleDslWorkspace, root: string, revision: number, store: boolean, reuse: Reuse) {
+  const started = performance.now();
   const final = await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: [], removed: [], quiet: true })).catch((error: unknown) => {
     throw new Error(`${root}: the full scan's final apply failed`, { cause: error });
   });
   addReuse(reuse, applySchema.parse(JSON.parse(final)).evaluation);
+  const applied = performance.now();
   if (store)
     await workspace.completeStorageRevisionAsync().catch((error: unknown) => {
       throw new Error(`${root}: recording the scanned revision failed`, { cause: error });
     });
-  return readResults(workspace);
+  const completed = performance.now();
+  const results = await readResults(workspace);
+  return { ...results, timings: { finalApplyMs: applied - started, completionMs: completed - applied, resultPagesMs: performance.now() - completed } };
 }
 
 async function measureWorkspace(
@@ -440,6 +447,7 @@ async function measureWorkspace(
       ({ revision, chunks } = await walkApply(workspace, files, revision, reuse));
       read = files.length;
     }
+    const indexMs = performance.now() - scanStarted;
     revision += 1;
     const results = await finishScan(workspace, root, revision, options.store, reuse);
     for (const [code, n] of Object.entries(results.failureCodes)) failureCodes[code] = (failureCodes[code] ?? 0) + n;
@@ -447,6 +455,8 @@ async function measureWorkspace(
       wallMs: performance.now() - scanStarted,
       cpuMs: cpuMs(scanCpu),
       attachMs,
+      // The attach and index (or the walk's applies), then the final apply, the completion record and the result pages.
+      phasesMs: { index: indexMs, ...results.timings },
       chunks,
       discoveredFiles: discovered,
       readFiles: read,
