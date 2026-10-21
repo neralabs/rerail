@@ -24,12 +24,15 @@ interface Example {
 }
 
 /**
- * The example pairs in a pack README. Every `### ` section is one pair: a heading that is not exactly `` `<rule id>` ``,
- * or a section without both blocks, fails rather than dropping the pair.
+ * The example pairs in a pack README's `## Candidates` section (its `## Rule details` holds prose, under the same
+ * headings). Every `### ` section there is one pair: a heading that is not exactly `` `<rule id>` ``, or a section
+ * without both blocks, fails rather than dropping the pair.
  */
 function readmePairs(pack: string): { id: string; caught: Example; passes: Example }[] {
   const readme = readFileSync(repositoryPath("packs", pack, "README.md"), "utf8");
-  return readme
+  const candidates = /^## Candidates\n([\s\S]*?)(?=^## |(?![\s\S]))/mu.exec(readme)?.[1];
+  if (candidates === undefined) throw new Error(`packs/${pack}/README.md: has no ## Candidates section`);
+  return candidates
     .split(/^### /mu)
     .slice(1)
     .map(section => {

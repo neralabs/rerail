@@ -369,6 +369,7 @@ export default async function playgroundHarness(api: ExtensionAPI): Promise<void
         mechanism: ADAPTER_CAPABILITIES.omp.delivery[ruleMode],
         content: guidance,
         ruleIds: [],
+        rules: [{ id: document.rule.id, state: "steered" }],
       });
       trace("delivered", `Production OMP queued ${ruleMode} guidance into the root session.`);
     };
