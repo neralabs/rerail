@@ -12,12 +12,12 @@ layout, and the gates answer from recordings instead of running upstream. The NR
 changed, are in [`conformance/port-readiness/README.md`](../conformance/port-readiness/README.md#where-the-code-comes-from).
 
 **Names.** The system is *port readiness*, its steps are *gates*, and GitHub shows its workflows and checks as "Port
-readiness". It was called the rule gates while this was built. What it publishes outside the repository is named for
-port readiness too: the recordings (`recording.json`, `rerail.port-readiness-recording/v2`, and `corpus.json`,
-`rerail.port-readiness-corpus/v2`) and the lock that names them (`rerail.port-readiness-recording-lock/v1`), the
-`port-readiness-recordings` release and its assets, the branches the record workflow pushes, the marker on its comments
-and the `record-port-readiness` label. The files that configure the gates themselves (`gates.yaml`, `goldens.tsv`) are
-named for the gates, as they should be.
+readiness". It was called the rule gates while this was built. What it keeps outside the tree is named for port
+readiness too: the recordings (`recording.json`, `rerail.port-readiness-recording/v2`, and `corpus.json`,
+`rerail.port-readiness-corpus/v2`), the lock that names them (`rerail.port-readiness-recording-lock/v2`), their
+Actions cache entries (`port-readiness-recording-<pack>-<tool>-<sha256>-<sha256>`) and the marker on the recording
+summaries. The files that configure the gates themselves (`gates.yaml`, `goldens.tsv`) are named for the gates, as they
+should be.
 
 ## The gates
 
@@ -234,92 +234,66 @@ packs/<id>/upstream/<tool>/
 └── fixtures/           upstream's test files, copied (listed in licenses/<project>/UPSTREAM.md): pack test data, in S3
 ```
 
-`fixtures/` is pack test data: it is not in git but in S3, fetched by `npm run fixtures:pull`
-([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)). Without it the `case-sources` check fails, and the recorder
-refuses to record a tool-pack that has a lock, both saying to pull it.
+`fixtures/` is pack test data: it is not in git but in `s3://nera-test-fixtures/rerail/`, at the paths it has here, and
+`npm run fixtures:pull` puts it in the checkout ([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)). Without it the
+`case-sources` check fails, and the recorder refuses to record a tool-pack that has a lock, both saying to pull it.
+Every CI job that runs the gates or the recorder pulls it first, under the repository's OIDC role
+(`.github/actions/pack-fixtures`), so the gates run for pushes and same-repository pull requests only: GitHub gives a
+fork's or Dependabot's pull request no OIDC token. A pull request that adds or changes case sources checks them in,
+and the pull wins over S3 for every file the commit tracks; the maintainer who merges it moves them to S3 and deletes
+them from git in the same pull request. CI picks the legs from the git diff (`ci.yml`'s filter and `plan.mjs`), so that
+deletion is what selects them; no change reaches S3 alone.
 
 ### The recordings are not in the tree
 
 A recording — `recording.json`, upstream's facts and expected findings per rule, and `corpus.json`, its findings on
 the real-code files the goldens name — is generated, large, and rewritten whole every time a tool-pack is recorded. The sixteen of
 them were 71 MB, and git keeps every version of each forever, so a pack re-recorded after an upstream bump cost
-another few megabytes of history nobody can read. They live in a GitHub release instead, and each tool-pack commits a
-`recording.lock` of a few hundred bytes naming exactly the one its rules are judged against: its sha256, its size, its
-format, the pins it was made at and the release that holds it.
+another few megabytes of history nobody can read. Each tool-pack commits a `recording.lock` of a few hundred bytes
+instead, naming exactly the one its rules are judged against: its sha256, its size, its format, and the pins and
+runtimes it was made with. The bytes live in `.rerail/port-readiness/recordings/<sha256>.json`, where the recorder
+writes them, and every read checks them against the digest: bytes that are not the ones the lock names read as absent.
 
-Release assets rather than Git LFS, because every public clone and every fork would draw on the repository's LFS
-bandwidth quota and going over it blocks LFS for the whole repository; rather than Actions artifacts, because those
-expire after 90 days and a commit must stay judgeable. An asset is named `<pack>-<tool>-recording-<sha256>.json.gz` or
-`<pack>-<tool>-corpus-<sha256>.json.gz`, so it is write-once: the same recording is the same asset, and nothing a
-commit already names is ever replaced. A lock naming its asset any other way is refused, so it cannot point at another
-tool-pack's recording.
+In CI that directory is a GitHub Actions cache entry, keyed by the tool-pack and the lock's two digests
+(`port-readiness-recording-<pack>-<tool>-<recording sha256>-<corpus sha256>`), so a commit that did not re-record hits
+the entry an earlier run saved and records nothing. The cache, not Git LFS, because every public clone and every fork
+would draw on the repository's LFS bandwidth quota and going over it blocks LFS for the whole repository. An entry is
+a copy, never the source: GitHub evicts one unused for a week, and the leg then records again.
 
-```sh
-npm run port-readiness -- fetch --pack python --tool ruff   # download what this commit's lock names, into .rerail/port-readiness/recordings/
-```
+**A leg records what the cache does not hold.** On a miss the leg records the tool-pack itself: it installs the pinned
+runtimes, runs `port-readiness:record` with this commit's recorder, and fails unless the recorder wrote exactly the
+lock, case sources and `UPSTREAM.md` the commit has. It compares every file under the tool-pack and the pack's
+`licenses/`, tracked or not, since pulled test data is git-ignored and `git status` would not show a case source the
+recorder added. The lock names no recorder version, so a release of rerail leaves it as it was. Only then does the leg
+save the two recordings, and nothing else: the recorder ran upstream's code and the Composer packages it resolved, so
+the leg saves neither the corpus nor its results. The recorder runs without the job's token. A new tool-pack, a new
+port or a pin bump therefore goes green on its own pull request, with nobody to start a recording: the commit's lock is
+checked against upstream run in CI, and what records the answers (the recorder, its adapters and runtimes) is in the
+pull request's diff, as the gate code that judges them is. A lock pointed at a recording of the pull request's own
+making fails the same way, since CI's recording does not match it.
 
-Each gate leg fetches its own tool-pack and nothing else, and a job that runs no gate fetches nothing. A recording is
-cached by its own digest, so a re-run on the same commit downloads nothing, and a download whose sha256 is not the
-one the lock names is not taken. A cached recording is read without checking its attestation again, so CI's
-recordings cache is saved only after a fetch that found both recordings, and never by a leg that recorded them itself:
-a later push with the same lock asks the release again rather than reading what an earlier push's recorder made.
-
-**A leg records what the release does not hold.** When the lock names a recording the release does not have (the
-release exists and has no asset of that name; the fetch exits 3), the leg records the tool-pack itself: it installs the
-pinned runtimes, runs `port-readiness:record` with this commit's recorder and the release the lock names, and fails
-unless the recorder wrote exactly the lock, case sources and `UPSTREAM.md` the commit has. The lock names no recorder
-version, so a release of rerail leaves it as it was. Any other fetch failure (a release the lookup cannot find, which
-GitHub answers alike for a missing tag, a repository the token cannot read and a wrong repository; any other releases
-API error, a download, a digest, an attestation) fails the leg: only a recording that was never uploaded is recorded
-instead. The recorder runs upstream's code and the Composer packages it resolves, so it runs without the job's token. A
-new tool-pack, a new port or a pin bump therefore goes green on its own pull request, with nobody to start a recording:
-the commit's lock is checked against upstream run in CI, and what records the answers (the recorder, its adapters and
-runtimes) is in the pull request's diff, as the gate code that judges them is. A lock pointed at a recording of the pull
-request's own making fails the same way, since CI's recording does not match it. The attested release stays the fast
-path: a leg that fetches records nothing.
-
-A fork's pull request records against the upstream its base pins, as `port-readiness-record.yml` does: the leg
-refuses a fork's change to `gates.yaml`'s repository, commit, runtime or tests (only `popularity`, `known_gaps`,
-`real_code_gaps` and comments may differ), since CI would otherwise run the upstream the fork chose and match the lock
-the fork committed. It refuses a fork's change to the code the recorder runs for the same reason:
-`conformance/recorders/port-readiness`, `conformance/port-readiness`, `src/engine` (which the recorder imports for
-`PACKAGE_ROOT`), `package.json` and `package-lock.json` (the script that starts it, and the npm packages it imports)
-and `.github/actions/php`. `cache.test.ts` checks that list against what a bundle of the recorder loads. A maintainer
-records such a pull request with `port-readiness-record.yml`, which runs the base branch's recorder; a fork that touches
-only `packs/` still records itself. The guard is no defence against a pull request that edits the workflow, since a
-`pull_request` run takes the workflow from the pull request: reviewing a change to `.github/` is. And because the
-recordings are not in the diff, the leg writes the per-rule summary the record
-workflow posts (`--changes`, below), against the recording the base's lock names (a first recording when the base has
-none), into its job summary and its report artifact.
-
-A matching digest only says the asset is the one the lock names. Anyone who can write to the repository, and any
-workflow with a write token, can upload to the release, so the fetch also requires the GitHub artifact attestation
-that `port-readiness-record.yml` makes when it records from `main` (`gh attestation verify`, so fetching needs the GitHub
-CLI, signed in or given `GH_TOKEN`/`GITHUB_TOKEN`, even once the repository is public), and takes no asset without it.
-The 18 assets (each tool-pack's `recording.json` and `corpus.json`) recorded on a maintainer's machine and uploaded by
-hand before that workflow could run from `main` were taken without an attestation (`LIFTED_ASSETS` in
-`recording/store.ts`) until run 39319650531 recorded every tool-pack from `main`; the list is empty now and nothing
-joins it. The two lists that went with it are empty too. `LIFTED_CASE_SOURCES`, which held a hand-uploaded recording's
-case sources to one digest over all of them, was already empty before that run: the hand-uploaded recordings had gained
-a sha256 per case. `LIFTED_RUNTIMES`, which pinned `eslint-config-next-16.3.8` for next/eslint-plugin-next,
-react/eslint-plugin-react and react/eslint-plugin-react-hooks before their locks named it, emptied with that run.
+GitHub scopes a pull request's cache entries to that pull request, so main reads only what main's own pushes and the
+nightly saved; an entry a pull request saved holds the bytes its own recorder made, which the pull request could as
+well have judged by editing the gate code. And because the recordings are not in the diff, the leg writes a per-rule
+summary (`--changes`, below) against the recording the base's lock names (restored from the cache when an earlier run
+saved it; a first recording when the base has no lock) into its job summary and its report artifact.
 
 ### Recording
 
-`port-readiness:record` writes the recording into the local cache, the `recording.lock` beside it, the gzipped assets to
-upload under `.rerail/port-readiness/recordings/upload/`, and any case source the recording names that the tool-pack's
-`fixtures/` lacks, with its row in `UPSTREAM.md`. The lock and `UPSTREAM.md` are committed; the new case sources are
-pack test data, which a pull request adds with `git add -f` (the recorder prints the command) and a maintainer moves to
-S3 before merge; the recordings are neither. Record again after adding a port,
-changing a tool's pins, adding a corpus or importing a golden whose file `corpus.json` does not answer; it needs `uv`, the network, and the pinned upstream runtimes
-(`conformance/recorders/port-readiness/runtimes/`):
+`port-readiness:record` writes the recording into the local cache, the `recording.lock` beside it, and any case source
+the recording names that the tool-pack's `fixtures/` lacks, with its row in `UPSTREAM.md`. The lock and `UPSTREAM.md`
+are committed; the case sources are pack test data, checked in with the pull request (`git add -f`, which the recorder
+prints: pulled test data is git-ignored) and moved to S3 before it merges; the recordings are neither. Record again
+after adding a port, changing a tool's pins, adding a corpus or importing a golden whose file `corpus.json` does not
+answer; it needs `uv`, the network, the pinned upstream runtimes (`conformance/recorders/port-readiness/runtimes/`) and
+the pack test data (`npm run fixtures:pull`):
 
 ```sh
 npm run port-readiness:record -- --pack python --tool ruff
 ```
 
 The `php` and `blade` tool-packs also need the pinned PHP first on `PATH`, and Composer. That PHP is built by
-`conformance/recorders/port-readiness/runtimes/php/build.sh`, the script CI's record and nightly legs build it with
+`conformance/recorders/port-readiness/runtimes/php/build.sh`, the script CI's gate and nightly legs build it with
 (`.github/actions/php`), into the prefix it is given, on Linux (with the development packages the action installs) or
 on macOS (with Xcode's command line tools and the Homebrew formulae the script names when one is missing):
 
@@ -334,48 +308,26 @@ macOS, `corpus.json` lacks the findings in Linux-only code (tokio's `examples/pr
 Linux or take the lock CI's leg writes (its report artifact holds the recording).
 
 Locally that is all: the lock names what was just recorded and the gates read it out of the cache, so iterating on a
-port needs no release and no network. In CI, a gate leg records a tool-pack whose recording the release does not hold
-(above), and `port-readiness-record.yml` is the only workflow that uploads, so later runs fetch instead of recording.
-A maintainer uploads one with the `record-port-readiness` label, or by hand with a pull request and the head `sha` they reviewed, and
-the run records **only that commit**: if the pull request has moved on since, it fails rather than record the newer
-push. The recorder and the runtimes come **from the base branch**, and only the pull request's `packs/` and rule list
-from its head (so the goldens it records answers for are the head's); a fork may not change the upstream its
-`gates.yaml` pins (repository, commit, runtime, tests), only `popularity`, `known_gaps` and `real_code_gaps`. Only a run from `main`, for `main` or a pull request into `main`, is attested, and the
-gates fetch no other recording (an asset without that attestation fails the leg; only one the release lacks is
-recorded in the leg instead), so `authorize` refuses any other before a leg records: one started by hand from another
-branch, and a stacked pull request, which is recorded once it targets `main`.
+port needs no network. A maintainer's flow for a pull request that changes a tool-pack:
 
-The run has three jobs, so nothing a pull request chose runs where a write token is. `authorize` checks who started
-it and fixes the commits, the tool-packs and the release. One read-only `record` leg per tool-pack runs the recorder
-and uploads what it wrote as an artifact. `publish`, the only job with a write token, runs no recorder, node or npm: it
-checks every path and digest in those artifacts, attests the recordings it checked, uploads them, and commits every
-leg's lock, case sources and `UPSTREAM.md` rows as one commit on the recorded head, pushed once:
-
-- a pull request from a branch here gets the commit on its branch, as a fast-forward;
-- a fork's goes to `port-readiness-recordings/pr-<n>` here, since the default token cannot write to a fork, and a
-  comment says to merge it;
-- a run started by hand from `main` with no pull request records `main`, pushes `port-readiness-recordings/run-<id>`,
-  and opens a pull request into `main`: a recording never reaches a protected branch without review. (GitHub must let
-  Actions create pull requests, under Settings → Actions → General.)
-
-A push or pull request made with the workflow token starts no workflow, so CI runs on the recording commit once
-someone pushes to the branch or closes and reopens the pull request.
-
-GitHub holds at most 1,000 assets in a release. `authorize` uses the newest of `port-readiness-recordings`,
-`port-readiness-recordings-2`, `-3` and so on, and starts the next once the newest holds 900; `publish` refuses an
-upload that would pass 1,000. A lock names the release that holds its recordings, so an older commit keeps fetching
-from the older one.
+1. Record locally, run the gates, and commit the lock, `UPSTREAM.md` and any new case sources (`git add -f`).
+2. CI's gate leg misses the cache, records the tool-pack from the pull request's commit, fails unless it wrote the same
+   files, and saves the recordings in the pull request's cache scope.
+3. Before merging, a maintainer runs `npm run fixtures:push`, which uploads the pull request's pack test data to S3 and
+   untracks it, and pushes that commit; CI then pulls the data from S3 instead.
+4. The first push to `main` after the merge records the tool-pack once more, in `main`'s scope, and every later run
+   and pull request reads it from there.
 
 `port-readiness-nightly.yml` runs the same recorder with `--check` in a read-only job of its own, so it reports when a
-committed recording no longer matches the pinned upstream and uploads nothing, then judges every rule again
+committed recording no longer matches the pinned upstream and saves nothing, then judges every rule again
 (`--refresh-cache`) and saves the fresh results.
 
 Because the recordings are no longer in the diff, `port-readiness:record` writes a per-rule summary of what moved instead —
 expected findings gained and lost on upstream's own tests, corpus files answered differently, facts changed
-(`--changes <file>`, `conformance/port-readiness/recording/diff.ts`) — and the publish job posts it on the pull request,
-one comment per tool-pack, collapsing that tool-pack's earlier ones.
-When the committed lock names a recording that cannot be read (its fetch failed, or the lock or the cached recording
-fails its schema), the summary warns that it was not compared rather than calling it a first recording.
+(`--changes <file>`, `conformance/port-readiness/recording/diff.ts`) — and a gate leg that records puts it in its job
+summary and report artifact.
+When the committed lock names a recording that cannot be read (it is not in the cache, or the lock or the cached
+recording fails its schema), the summary warns that it was not compared rather than calling it a first recording.
 
 The lock pins every runtime the recorder installs for the tool-pack: upstream's own (`upstream.runtime`), the adapter's
 (`parsers` for ESLint, `python` for Ruff and Bandit, `php` for PHP_CodeSniffer, PHPStan and Psalm, `blade` and `php` for tlint, `php` for stillat/blade-parser, whose own runtime is the Blade toolkit's `blade`) and the environment the pack is linted in
@@ -387,7 +339,7 @@ Each runtime is pinned by its `package.json`, `pyproject.toml` or `composer.json
 exact version and in `overrides` (the recorder refuses a range), and no lockfile is committed (they are git-ignored).
 A Python runtime also pins its exact interpreter in `.python-version`, which uv installs; a PHP runtime pins its exact
 interpreter in `.php-version`, which Composer cannot install, so the recorder refuses to run on any other `php`
-(`pinnedPhp` in `runtimes.ts`) and the record and nightly workflows build that release. Every PHP process runs with no
+(`pinnedPhp` in `runtimes.ts`) and the gate legs that record and the nightly build that release. Every PHP process runs with no
 php.ini (`php -n`, `PHP_INI` in `runtimes.ts`, which sets the few settings the gates depend on, UTF-8 as the default
 charset among them), so the machine's settings never reach an answer, and the extensions a PHP loads do:
 PHP_CodeSniffer's `Generic.PHP.DeprecatedFunctions` lists the deprecated functions `get_defined_functions()` finds.
@@ -399,8 +351,7 @@ against a runtime's pin changes it and fails `runtime-pins` until the tool-pack 
 resolve when a runtime is installed. When one of them changes what upstream
 answers, the nightly `--check` fails and names the difference: pin that package too (an `overrides` entry in
 `package.json`, a direct `==` dependency in `pyproject.toml`, or a direct requirement in `composer.json`) and record
-again. A recording's per-rule summary (`--changes`, which both the record workflow's legs and a gate leg that records
-upload in their artifact) lists every package each Composer runtime resolved (`name@version`, from `vendor/composer/installed.json`),
+again. A recording's per-rule summary (`--changes`, which a gate leg that records uploads in its artifact) lists every package each Composer runtime resolved (`name@version`, from `vendor/composer/installed.json`),
 so a transitive release shows between two recordings; the list is in neither `recording.json` nor the lock, so a
 release that moves no answer fails nothing. Composer audits what it resolved with blocking off (`--no-blocking`): an
 advisory is written to the recorder's log and does not stop the install.
@@ -410,7 +361,7 @@ the pack: the recording lists each one with its sha256, and the gates fetch them
 (sparse, cached like the corpus), so Ruff's GPL-derived fixtures are read in place and never committed. Test text that
 is not a file of its own (Ruff's test-module strings, the `code` of each ESLint RuleTester case) is kept verbatim in
 `recording.json` (`fixtureTexts.inline`). That makes the recording partly upstream's material, so it carries
-upstream's licence text (`licenseText`, whose sha256 is `licenseSha256`) wherever the release asset is downloaded. The
+upstream's licence text (`licenseText`, whose sha256 is `licenseSha256`) wherever the recording is copied. The
 licence is every file at upstream's root named `LICENSE` or `LICENCE`, in any letter case and with any extension or
 suffix (`licence.txt`, `license.md`, `LICENSE-MIT`), their bytes one after another in name order; the pack keeps the
 same files under `licenses/<project>/`, and `license-sha256` holds them to the recorded digest. The
@@ -434,6 +385,33 @@ parser objected to. The entry itself stays, with its path and its sha256: an ent
 parser was silent, and no entry at all means the source was never recorded — a golden whose text changed, say — on
 which the gates have no verdict and draw no conclusion.
 
+### Upstream releases
+
+A pin says which release the rules were ported and recorded against; nothing above notices when upstream publishes a
+newer one. `port-readiness-nightly.yml` therefore runs a job on main that does:
+
+```sh
+npm run port-readiness:upstream-releases   # conformance/port-readiness/upstream-releases.ts
+```
+
+For every gated tool-pack it reads the release `gates.yaml` pins (`upstream.version`) and the one its runtime installs
+(`runtimes/<upstream.runtime>/package.json`, `pyproject.toml` or `composer.json`), and fails when they differ. The
+package is the one the runtime installs upstream as: an ESLint-family upstream's comes from `eslint.release.installed`,
+and every other adapter's is listed in `ADAPTER_PACKAGES`, since an upstream's repository is not always the name it
+publishes under (PHPCSStandards/PHP_CodeSniffer is `squizlabs/php_codesniffer`, tighten/tlint is `tightenco/tlint`).
+The Rust pack's Clippy is not gated; it ships with Rust, so its pin is the toolchain `packs/rust/upstream/common.py`
+refuses any other than (`TOOLCHAIN`, whose Clippy `conformance.json` must name as `0.1.<minor>`), not
+`rust-toolchain.toml`, which pins the toolchain Rerail is built with.
+
+It then asks each registry for the latest stable release: npm's `latest` dist-tag, the highest final PyPI release with
+a file that is not yanked, the highest Packagist version without a `dev`, alpha, beta or RC suffix, and `[pkg.rust]` in
+Rust's stable channel manifest (what rustup installs as `stable`; GitHub's releases of rust-lang/rust are marked latest
+by hand and rate-limited without a token). Versions compare by their numeric components, a leading `v` dropped. The job
+prints one table row per tool-pack, appends the table to the job summary (`GITHUB_STEP_SUMMARY`), annotates each failing
+tool-pack with `::error::`, and fails when a pin is behind, the pins disagree, or a registry cannot be read: a check that
+cannot see upstream's releases does not pass. A failure is a prompt to bump the pins and record the tool-pack again
+("Recording" above), not a broken build; until then the gates keep judging the rules against the pinned release.
+
 ## CI
 
 `ci.yml` calls `port-readiness.yml` after its build job when a pull request or a push to main touches `packs/`,
@@ -441,6 +419,12 @@ which the gates have no verdict and draw no conclusion.
 report job that writes the summary and fails when anything blocking failed. A push to main is compared with the
 previous head only when CI finished green there; after a red, cancelled or missing run it runs port readiness
 whatever it touches, so a failing shipped rule, or a change whose queued run was replaced, is never skipped past.
+
+Port readiness runs for pushes and same-repository pull requests only, because every leg pulls the packs' test data
+from S3 under an OIDC token (`id-token: write`, which `ci.yml` and the nightly grant the called workflow), and GitHub
+gives a fork's or Dependabot's pull request none. The plan sees only the git diff: a change to pack test data alone
+would plan no leg, so none is made alone (the maintainer who moves a pull request's data to S3 deletes it from git in
+that pull request, which plans its tool-packs).
 
 The plan (`conformance/port-readiness/plan.mjs`) gives each gated tool-pack one leg, or one per shard. A pull request
 judges only the tool-packs of the packs it touches: a change under `packs/<pack>/` plans that pack's tool-packs, while

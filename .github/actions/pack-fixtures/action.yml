@@ -1,0 +1,24 @@
+name: Pack test data
+description: >-
+  Puts the packs' test data (packs/*/upstream/<tool>/fixtures/, tests/, *.expected.json and the rest of
+  PACK_FIXTURE_PATTERNS in scripts/s3/pack-fixtures.mjs) into the checkout. It is not in git: it lives in
+  s3://nera-test-fixtures/rerail/, at the paths it has in the repository, and a pull request that adds or changes it
+  checks it in until a maintainer moves it to S3 before merging (CONTRIBUTING.md). `fixtures:pull` syncs the bucket into
+  packs/ and then restores every such file the commit still tracks, so a pull request's own data wins over S3's.
+  Use it right after `actions/checkout`. The job needs `id-token: write` (and `contents: read`), a reusable workflow's
+  caller must grant it too, and it runs only for pushes and same-repository pull requests: GitHub gives a fork's or
+  Dependabot's pull request no OIDC token.
+
+runs:
+  using: composite
+  steps:
+    # The role reads the bucket; the workflows assume it with the job's OIDC token, so no AWS secret is stored here.
+    - name: Assume the test data read role
+      uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+      with:
+        role-to-assume: arn:aws:iam::696860996542:role/github-actions-test-fixtures-read
+        aws-region: us-east-2
+
+    - name: Pull the packs' test data from S3
+      shell: bash
+      run: node scripts/s3/pack-fixtures.mjs pull
