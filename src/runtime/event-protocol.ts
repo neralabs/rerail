@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
+import { STEER_STRATEGIES, type AdapterDelivery, type AdapterEvent } from "../engine/adapter-contract.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 
 export const RERAIL_EVENT_PROTOCOL_PREFACE = "RERAIL-EVENTS/1";
@@ -39,6 +39,9 @@ const DeliverySchema: z.ZodType<AdapterDelivery> = z.object({
   ruleIds: z.array(z.string()),
   // Absent from a daemon that predates deliveries carrying their rules.
   rules: z.array(SteerRuleSchema).default([]),
+  strategy: z.enum(STEER_STRATEGIES).exactOptional(),
+  toolCallId: z.string().min(1).exactOptional(),
+  rewound: z.array(z.string()).exactOptional(),
 }).strict();
 
 const EventFrameSchema = z.object({ event: AdapterEventSchema }).strict();

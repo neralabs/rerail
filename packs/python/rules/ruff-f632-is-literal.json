@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-f632-is-literal",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Use == instead of is to compare against string, number, tuple or container literals; the identity of such values is unreliable.",
+  "description": "Use == or != instead of is or is not to compare literal values; the identity of such values is unreliable.",
   "scope": {
     "include": [
       "**/*"
@@ -12,7 +12,7 @@
   },
   "clauses": [
     {
-      "id": "is-literal",
+      "id": "is-literal-is",
       "forbid": {
         "ast": {
           "language": "python",
@@ -150,7 +150,7 @@
               ]
             },
             "is-literal-op": {
-              "regex": "^is(?:[\\s\\\\]+not)?$",
+              "regex": "^is$",
               "any": [
                 {
                   "follows": {
@@ -217,7 +217,224 @@
       "violation": {
         "anchor": "capture.C",
         "code": "F632",
-        "message": "Use `==` to compare constant literals",
+        "message": "Use `==` instead of `is` to compare this literal value.",
+        "each": "O",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F632"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "is-literal-is-not",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "constant": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "interpolation"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "interpolation"
+                    }
+                  }
+                },
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "constant"
+                  }
+                },
+                {
+                  "kind": "tuple",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "matches": "constant"
+                          },
+                          {
+                            "regex": "^[(),]$"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "singleton": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "singleton"
+                  }
+                }
+              ]
+            },
+            "constant-non-singleton": {
+              "all": [
+                {
+                  "matches": "constant"
+                },
+                {
+                  "not": {
+                    "matches": "singleton"
+                  }
+                }
+              ]
+            },
+            "literal-operand": {
+              "any": [
+                {
+                  "matches": "constant-non-singleton"
+                },
+                {
+                  "kind": "set"
+                },
+                {
+                  "kind": "set_comprehension"
+                },
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "list_comprehension"
+                },
+                {
+                  "kind": "dictionary"
+                },
+                {
+                  "kind": "dictionary_comprehension"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "literal-operand"
+                  }
+                }
+              ]
+            },
+            "is-literal-op": {
+              "regex": "^is[\\s\\\\]+not$",
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "matches": "literal-operand"
+                  }
+                },
+                {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "matches": "literal-operand"
+                  }
+                }
+              ]
+            },
+            "is-literal-in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "comparison_operator",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "is-literal-op",
+                        "capture": "O"
+                      },
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "is-literal-in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "is-literal-op",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "comparison_operator",
+                  "pattern": "$C"
+                }
+              },
+              {
+                "matches": "is-literal-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "F632",
+        "message": "Use `!=` instead of `is not` to compare this literal value.",
         "each": "O",
         "suppress": {
           "noqa": {

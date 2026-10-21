@@ -1,0 +1,6 @@
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PostToolUse",
+    "additionalContext": "Rerail finished checking your earlier edits after you moved on:\n- web/src/features/orders/useOrders.ts:1:33 — Use unknown or a real type in exported signatures. [typescript-eslint-no-explicit-any]\nFix it, or tell the user in one line why you won't."
+  }
+}

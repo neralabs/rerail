@@ -14,6 +14,7 @@ import {
   assistantDeltaEvent,
   assistantMessageEvent,
   sendNativeDeliveries,
+  resultWithSteers,
   callEvent,
   resultEvent,
   turnEndEvent,
@@ -29,6 +30,7 @@ import { registerOmpSemanticTools, type NativeSemanticToolRuntime } from "../../
 import { countDroppedEvent, createNativeSession, NativeSessionClient, type NativeSessionHost } from "../../harness/native-session-client.js";
 import type { SessionDatabaseOptions } from "../../harness/session-database-options.js";
 import { contained } from "../../harness/contained-hook.js";
+import { guardCompaction } from "../../harness/compaction-guard.js";
 import { registerHostCommands } from "../../harness/host-commands.js";
 import { createOmpPresentation } from "../../presentation/omp-presentation.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules, readRepositoryState } from "../../presentation/session-presentation.js";
@@ -189,6 +191,8 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       return pending;
     };
 
+    /** The tool results being ingested, each with the steers placed in it so far. */
+    const openResults = new Map<string, AdapterDelivery[]>();
     // The runtime records no links; the rules point at this checkout's dashboard only here.
     const sendDeliveries = async (current: NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
       sendNativeDeliveries(await linkDeliveries(deliveries, currentContext?.cwd), async (message, options_) => {
@@ -203,7 +207,12 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
         // string-only normalization path; the hook prevents queue consumption.
         await new Promise<void>(resolve_ => queueMicrotask(resolve_));
         if (!context.hasPendingMessages()) throw new Error("OMP did not accept Rerail policy guidance");
-      }, (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds));
+      }, (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds), (toolCallId, delivery) => {
+        // A steer placed into its call's result skips OMP's steer queue.
+        const placed = openResults.get(toolCallId);
+        placed?.push(delivery);
+        return placed !== undefined;
+      });
 
     /**
      * Hands the event to the live runtime. `outcome` learns whether the event reached the daemon through the runtime that is
@@ -429,6 +438,7 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
         storageRoot: resolve(ctx.cwd, process.env.RERAIL_STORAGE_ROOT ?? ".rerail/sessions"),
       });
       if (activation !== "attached") throw new Error("OMP Rerail routing did not attach a runtime");
+      guardCompactions();
       presentation.start(ctx);
       // A rebuilt session indexes again behind its new evaluator.
       if (remote !== undefined && (options_.rebuild === true || indexing?.client !== remote)) watchIndexing(remote);
@@ -508,6 +518,17 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
     pi.on("session_switch", (_event, ctx) => attach(ctx));
     pi.on("session_branch", (_event, ctx) => attach(ctx));
     pi.on("session_tree", (_event, ctx) => attach(ctx));
+    /**
+     * Registers the compaction guard the first time Rerail attaches in a started repository. OMP compacts the
+     * preparation its handlers received, but skips speculative compaction while any `session_before_compact` handler is
+     * registered, and offers no way to remove one: sessions where Rerail never runs keep it.
+     */
+    let compactionsGuarded = false;
+    function guardCompactions(): void {
+      if (compactionsGuarded) return;
+      compactionsGuarded = true;
+      pi.on("session_before_compact", (event) => { guardCompaction(event.preparation); });
+    }
 
     // The first prompt of each session also carries the session-start note, hidden from the person (design A1).
     const notedSessions = new Set<string>();
@@ -601,9 +622,11 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
         ), undefined, { quietAttachFailure: true });
       }));
     });
-    pi.on("tool_result", (event) => {
+    pi.on("tool_result", async (event) => {
       codeRuleTools.delete(event.toolCallId);
-      return contained("tool_result", sequenceCodeRuleEvent(async () => {
+      const placed: AdapterDelivery[] = [];
+      openResults.set(event.toolCallId, placed);
+      await contained("tool_result", sequenceCodeRuleEvent(async () => {
         await ingestEvent(sessionId => resultEvent(
           sessionId,
           `tool-result:${event.toolCallId}`,
@@ -613,6 +636,10 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
           event.isError,
         ), undefined, { quietAttachFailure: true });
       }));
+      if (openResults.get(event.toolCallId) === placed) openResults.delete(event.toolCallId);
+      // The call's steers ride its result: after what it says, or in its place when its edit was rolled back; a later
+      // one goes out as a message.
+      return resultWithSteers(event.content, placed);
     });
 
     /** The latest turn's end, still being checked: the daemon waits up to 10 s for the turn's code rules before it answers. */

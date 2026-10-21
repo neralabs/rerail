@@ -19,6 +19,7 @@ import { createOmpPresentation } from "../../presentation/omp-presentation.js";
 import { linkDeliveries } from "../../presentation/session-presentation.js";
 import { PiNativeSession } from "./pi-native-session.js";
 import { registerPiHostAdapter } from "./pi-host-adapter.js";
+import { registerPiFixTool } from "./pi-fix-tool.js";
 import { ConversationRuleRegistry, type RuleMatch } from "../../engine/catalog/registry.js";
 import { openCheckoutConversationRules } from "../../engine/code-rule/code-rule-dsl-catalog.js";
 import { defaultRerailDatabasePath } from "../../engine/storage/database.js";
@@ -158,10 +159,24 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       attaching = pending;
       return pending;
     };
+    /** The tool results being ingested, each with the steers placed in it so far. */
+    const openResults = new Map<string, AdapterDelivery[]>();
+    let fixToolRegistered = false;
     // The runtime records no links; the rules point at this checkout's dashboard only here.
-    const sendDeliveries = async (current: RerailRuntime | NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
-      sendNativeDeliveries(await linkDeliveries(deliveries, (native.context() ?? currentContext)?.cwd), (message, options_) => pi.sendMessage(message, options_),
-        (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds));
+    const sendDeliveries = async (current: RerailRuntime | NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> => {
+      // A `subagent` steer names `rerail_fix`, so the tool is there before the first one is.
+      if (!fixToolRegistered && deliveries.some(delivery => delivery.strategy === "subagent")) {
+        fixToolRegistered = true;
+        registerPiFixTool(pi);
+      }
+      await sendNativeDeliveries(await linkDeliveries(deliveries, (native.context() ?? currentContext)?.cwd), (message, options_) => pi.sendMessage(message, options_),
+        (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds),
+        (toolCallId, delivery) => {
+          const placed = openResults.get(toolCallId);
+          placed?.push(delivery);
+          return placed !== undefined;
+        });
+    };
     /** The session Pi is in: set when a session event delivers it, so a client of a session Pi left cannot write its closing gap marker into this one. */
     let liveSessionId: string | undefined;
     const native = new PiNativeSession({
@@ -359,6 +374,14 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       started: cwd => isRerailStarted(cwd, configuredDatabasePath(options, cwd)),
       configuredDatabase: cwd => options.databasePath === undefined ? undefined : resolve(cwd, options.databasePath),
       sessionNoteRules: async session => sessionNoteRules(session.cwd, configuredDatabasePath(options, session.cwd)),
+      openToolResult: toolCallId => {
+        const placed: AdapterDelivery[] = [];
+        openResults.set(toolCallId, placed);
+        return () => {
+          if (openResults.get(toolCallId) === placed) openResults.delete(toolCallId);
+          return placed;
+        };
+      },
     });
     // The old client's open gap gets its count while its session is still the one Pi appends to; a switch that follows closes that client into a session it no longer writes to.
     pi.on("session_before_switch", (_event, ctx) => { native.markGapFinal(ctx.sessionManager.getSessionId()); });

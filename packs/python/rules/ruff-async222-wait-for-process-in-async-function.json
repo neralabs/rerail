@@ -1,7 +1,7 @@
 {
  "format": "rerail.policy/v1",
  "id": "ruff-async222-wait-for-process-in-async-function",
- "revision": 1,
+ "revision": 2,
  "mode": "steer",
  "description": "Don't call os.wait, os.waitpid or the other blocking os.wait functions inside async functions; they block the event loop.",
  "scope": {
@@ -130,7 +130,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC222",
-    "message": "Replace this blocking `os.wait` call by awaiting the async process object, such as `await proc.wait()`.",
+    "message": "Offload the wait with `await asyncio.to_thread(wait_fn, ...)`; preserve arguments and status. Await `proc.wait()` only for an async process.",
     "suppress": {
       "noqa": {
         "codes": [

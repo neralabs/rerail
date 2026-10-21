@@ -1,15 +1,16 @@
 import { hookText, type AdapterDelivery, type RerailEventLoop } from "../../engine/adapter-contract.js";
 import { codexHookEvents } from "./codex-event-adapter.js";
 import {
-  deliveryRuleIds,
   deliveryRules,
-  deliveryText,
+  holdStopSteers,
   pendingPath,
-  prepareGuidanceOutput,
   routeDeliveries,
+  steerHookOutput,
   type EventTable,
+  type HeldDelivery,
   type HookInput,
   type HookOutput,
+  type SteerLines,
 } from "../../harness/hook-adapter.js";
 import { headlineText, sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
@@ -30,35 +31,25 @@ const CONTEXT_EVENTS: EventTable = {
   PostToolUse: true,
 };
 
-/** Stop carries steers too: Codex continues the turn with it as a `decision: "block"` reason. */
-const CARRY_EVENTS: EventTable = { ...CONTEXT_EVENTS, Stop: true };
-
 const { required: requiredText } = hookText("Codex");
 
 export function supportsCodexHook(input: HookInput): boolean {
   return CODEX_EVENTS[requiredText(input, "hook_event_name")] === true;
 }
 
-/**
- * Steers reach the model as context (or, at `Stop`, as the reason to keep going) and the person as one
- * `systemMessage` line per rule. `note` is the session-start note, which only the model sees.
- */
-export function codexHookOutput(hook: string, deliveries: readonly AdapterDelivery[], note?: string): HookOutput {
-  const content = deliveryText(deliveries);
-  const ruleIds = deliveryRuleIds(deliveries);
-  // Codex prints the reason of a Stop hold under its own "Blocked by hook", so the person's lines would only repeat it.
-  if (hook === "Stop") {
-    return content === undefined ? {} : prepareGuidanceOutput({ decision: "block", reason: content }, ruleIds);
-  }
-  const context = [note, content].filter(text => text !== undefined).join("\n\n");
-  if (context === "" || CONTEXT_EVENTS[hook] !== true) return {};
-  // Codex draws hook text as plain text with no links, so each line prints its `why?` link after it.
+/** The person's lines, one per rule; Codex draws hook text as plain text with no links, so each prints its `why?` link after it. */
+const steerLines: SteerLines = deliveries => {
   const lines = steerHeadlines(deliveryRules(deliveries)).map(headline => headlineText(headline, "plain"));
-  const output = {
-    ...(lines.length === 0 ? {} : { systemMessage: lines.join("\n") }),
-    hookSpecificOutput: { hookEventName: hook, additionalContext: context },
-  };
-  return content === undefined ? output : prepareGuidanceOutput(output, ruleIds);
+  return lines.length === 0 ? {} : { systemMessage: lines.join("\n") };
+};
+
+/**
+ * Steers reach the model as `additionalContext` and the person as one `systemMessage` line per rule; at `Stop`, only
+ * the person's lines (`steerHookOutput`), since Codex records a `Stop` block's reason as the user's turn. `note` is the
+ * session-start note, which only the model sees.
+ */
+export function codexHookOutput(hook: string, deliveries: readonly HeldDelivery[], note?: string): HookOutput {
+  return steerHookOutput(hook, deliveries, CONTEXT_EVENTS, steerLines, note);
 }
 
 export async function handleCodexEvent(
@@ -73,6 +64,9 @@ export async function handleCodexEvent(
   const path = pendingPath(storageRoot, "codex", sessionId);
   // The runtime records no links; the rules point at this checkout's dashboard only here.
   const cwd = requiredText(input, "cwd");
+  if (hook === "Stop") return codexHookOutput(hook, await linkDeliveries(await holdStopSteers(path, deliveries), cwd));
   const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "codex", sessionId, await presentedSessionNoteRules({ host: "codex", sessionId, cwd })) : undefined;
-  return codexHookOutput(hook, await linkDeliveries(await routeDeliveries(path, hook, deliveries, CARRY_EVENTS), cwd), note);
+  const routed: HeldDelivery[] = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
+  // `linkDeliveries` copies each delivery, so a held steer keeps its `shown` mark.
+  return codexHookOutput(hook, await linkDeliveries(routed, cwd), note);
 }
