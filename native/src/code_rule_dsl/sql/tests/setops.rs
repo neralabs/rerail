@@ -431,7 +431,24 @@ fn random_value(rng: &mut Rng, depth: usize) -> Value {
         9 => json!(2.5),
         10 => json!(1e21),
         11 | 12 => json!(rng.pick(&[
-            "", "1", "a", "A", "1.0", "s.k", "e.k", "u.k", "null", "\u{1f}", "a\"b", "é", "all",
+            "",
+            "1",
+            "a",
+            "A",
+            "1.0",
+            "s.k",
+            "e.k",
+            "u.k",
+            "null",
+            "\u{1f}",
+            "a\"b",
+            "é",
+            "all",
+            // Ordered apart by UTF-16 code units, not by code points or UTF-8 bytes.
+            "\u{ffff}",
+            "\u{1f600}",
+            "2050",
+            "3000",
         ])),
         13 | 14 => Value::Array(
             (0..rng.below(3))
@@ -495,10 +512,14 @@ fn random_predicate(rng: &mut Rng, aliases: &[&str], depth: usize) -> Value {
             .collect()
     };
     let leaf = depth == 0 || rng.chance(40);
-    match if leaf { rng.below(4) } else { 4 + rng.below(9) } {
+    match if leaf { rng.below(5) } else { 5 + rng.below(9) } {
         0 | 1 => json!({ "eq": [random_operand(rng, aliases), random_operand(rng, aliases)] }),
         2 => json!({ "ne": [random_operand(rng, aliases), random_operand(rng, aliases)] }),
-        3 => rng.pick(&[
+        3 => {
+            let operator = rng.pick(&ORDERED);
+            json!({ operator: [random_operand(rng, aliases), random_operand(rng, aliases)] })
+        }
+        4 => rng.pick(&[
             json!(5),
             json!("x"),
             json!([]),
@@ -507,23 +528,28 @@ fn random_predicate(rng: &mut Rng, aliases: &[&str], depth: usize) -> Value {
             json!({ "eq": ["s.k"] }),
             json!({ "eq": "s.k" }),
             json!({ "eq": ["s.k", "e.k", "e.n"] }),
+            json!({ "lt": ["s.k"] }),
+            json!({ "ge": "s.k" }),
             json!({ "all": 5 }),
             json!({ "any": "x" }),
             json!({}),
         ]),
-        4 | 5 => json!({ "all": items(rng) }),
-        6 | 7 => json!({ "any": items(rng) }),
-        8 | 9 => json!({ "not": random_predicate(rng, aliases, depth - 1) }),
-        10 => {
-            // Several operators in one object: the first of all, any, not, eq, ne decides.
+        5 | 6 => json!({ "all": items(rng) }),
+        7 | 8 => json!({ "any": items(rng) }),
+        9 | 10 => json!({ "not": random_predicate(rng, aliases, depth - 1) }),
+        11 => {
+            // Several operators in one object: the first of all, any, not, eq, ne, lt, le, gt, ge
+            // decides.
             let mut object = Map::new();
-            for key in ["ne", "eq", "not", "any", "all"] {
+            for key in ["ge", "ne", "lt", "eq", "not", "any", "gt", "all", "le"] {
                 if rng.chance(50) {
                     let value = match key {
-                        "eq" | "ne" if rng.chance(70) => {
+                        "eq" | "ne" | "lt" | "le" | "gt" | "ge" if rng.chance(70) => {
                             json!([random_operand(rng, aliases), random_operand(rng, aliases)])
                         }
-                        "eq" | "ne" => json!([random_operand(rng, aliases)]),
+                        "eq" | "ne" | "lt" | "le" | "gt" | "ge" => {
+                            json!([random_operand(rng, aliases)])
+                        }
                         "not" => random_predicate(rng, aliases, depth - 1),
                         _ => Value::Array(items(rng)),
                     };
@@ -538,6 +564,9 @@ fn random_predicate(rng: &mut Rng, aliases: &[&str], depth: usize) -> Value {
         ] }),
     }
 }
+
+/// The ordering operators of a `where` predicate.
+const ORDERED: [&str; 4] = ["lt", "le", "gt", "ge"];
 
 fn running() -> bool {
     false
@@ -718,6 +747,76 @@ fn interrupted_clauses_fail_alike() {
     }
 }
 
+/// `lt`/`le`/`gt`/`ge` hold in SQL exactly where natively: of two strings by UTF-16 code units,
+/// never of a missing or non-string operand, under `not` as well. The first predicate is
+/// `data-layer-layer-violations`' `layer-0` budget, whose layer edges SQL once counted none of.
+#[test]
+fn ordered_predicates_answer_alike_in_sql() {
+    let rows = [
+        json!({ "path": "api/l2050_transaction/query.py", "start": 0, "from": "2050", "to": "3000" }),
+        json!({ "path": "api/l2100_sql_grammar/a.py", "start": 0, "from": "2100", "to": "2200", "grammar": "l2100_sql_grammar" }),
+        json!({ "path": "api/l2000_connection/connection_factory.py", "start": 0, "from": "2000", "to": "2200" }),
+        json!({ "path": "api/l3000_high/a.py", "start": 0, "from": "3000", "to": "1000" }),
+        json!({ "path": "api/l2050_transaction/b.py", "start": 0, "from": "2050" }),
+        json!({ "path": "api/l2050_transaction/c.py", "start": 0, "from": 2050, "to": "3000" }),
+        // U+FFFF is one code unit above the surrogate U+1F600 starts with, below it by code point.
+        json!({ "path": "api/x.py", "start": 0, "from": "\u{ffff}", "to": "\u{1f600}" }),
+    ];
+    let relation = Relation {
+        rows: rows
+            .iter()
+            .map(|row| row.as_object().expect("object").clone())
+            .collect(),
+        incomplete: BTreeSet::new(),
+    };
+    let group_by = ["edge.path".to_owned(), "edge.start".to_owned()];
+    for (predicate, firsts) in [
+        (
+            json!({ "all": [
+                { "lt": ["edge.from", "edge.to"] },
+                { "not": { "all": [
+                    { "eq": ["edge.grammar", "l2100_sql_grammar"] },
+                    { "eq": ["edge.to", "2200"] },
+                ] } },
+            ] }),
+            vec![0, 2],
+        ),
+        (
+            json!({ "not": { "lt": ["edge.from", "edge.to"] } }),
+            vec![3, 4, 5, 6],
+        ),
+        (json!({ "gt": ["edge.from", "edge.to"] }), vec![3, 6]),
+        (json!({ "le": ["edge.from", "2050"] }), vec![0, 2, 4]),
+        (json!({ "ge": ["3000", "edge.to"] }), vec![0, 1, 2, 3, 5]),
+    ] {
+        let native = crossfile::budget(
+            ("edge", &relation),
+            Some(&predicate),
+            &group_by,
+            &[],
+            0,
+            running,
+        );
+        let found: Vec<usize> = native
+            .as_ref()
+            .expect("not interrupted")
+            .iter()
+            .map(|group| group.first)
+            .collect();
+        assert_eq!(found, firsts, "native groups under {predicate}");
+        let sql = sql::crossfile::budget(
+            ("edge", &relation),
+            Some(&predicate),
+            &group_by,
+            &[],
+            0,
+            running,
+        )
+        .expect("no SQL error");
+        assert_eq!(sql, native, "SQL groups under {predicate}");
+    }
+}
+
 // --- whole evaluations ------------------------------------------------------------------------
 
 /// The stateless evaluator answers `select_when`, `require_each` and `budget` clauses alike under
@@ -762,6 +861,17 @@ fn set_operation_clauses_evaluate_alike_under_both_engines() {
             "query": evidence("u", "**/*.ts", "call_expression", json!({ "dir": "file.directory", "path": "file.path" }), None),
             "group_by": ["u.dir"],
             "count": { "lte": 0, "distinct": ["u.path"] },
+        } },
+        // `data-layer-layer-violations`' shape: projected strings, an edge kept where one orders
+        // below the other (`ordered_predicates_answer_alike_in_sql`).
+        { "id": "ordered", "violation": violation, "budget": {
+            "query": evidence("u", "**/*.ts", "call_expression", json!({
+                "path": "file.path",
+                "from": "file.directory",
+                "to": { "source": "file.name", "regex": "^([a-z])", "group": 1 },
+            }), Some(json!({ "lt": ["u.from", "u.to"] }))),
+            "group_by": ["u.path"],
+            "count": { "lte": 0 },
         } },
     ]);
     let code_rule = json!({

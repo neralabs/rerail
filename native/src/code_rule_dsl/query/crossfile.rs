@@ -8,9 +8,12 @@
 //! predicate against its bucket alone (every evidence row when no `eq` seeks), stopping at the
 //! first match. `budget` counts the passing rows per group key, groups in first-row order.
 //!
-//! A `where` predicate (`all`, `any`, `not`, `eq`, `ne`) compares operands by their JSON text: a
-//! field reads its row's value (missing equals only missing), anything else is a JSON literal; so
-//! `"1"` and `1` differ, `1` and `1.0` differ, and objects compare key by key in order.
+//! A `where` predicate (`all`, `any`, `not`, `eq`, `ne`, `lt`, `le`, `gt`, `ge`) compares operands
+//! by their JSON text: a field reads its row's value (missing equals only missing), anything else
+//! is a JSON literal; so `"1"` and `1` differ, `1` and `1.0` differ, and objects compare key by
+//! key in order. An ordering compares two strings by UTF-16 code units, and holds of nothing else.
+//! `sql::crossfile` lowers the same compiled predicate (`Predicate`), so an operator added here
+//! does not compile there until it is lowered.
 
 use indexmap::IndexMap;
 use serde_json::{Map, Number, Value};
@@ -87,18 +90,18 @@ thread_local! {
 }
 
 /// The bound row `require_each`'s evidence fields read; its subject fields read row 0.
-const EVIDENCE: usize = 1;
+pub(in crate::code_rule_dsl) const EVIDENCE: usize = 1;
 
 /// A predicate operand: `alias.field` of a bound alias reads that row's field (the field is
 /// everything after the first dot); anything else is a literal.
-enum Operand<'v> {
+pub(in crate::code_rule_dsl) enum Operand<'v> {
     /// The field of the row bound at this position of the aliases.
     Field(usize, &'v str),
     Literal(Value),
 }
 
 impl<'v> Operand<'v> {
-    fn compile(value: &'v Value, aliases: &[&str]) -> Self {
+    pub(in crate::code_rule_dsl) fn compile(value: &'v Value, aliases: &[&str]) -> Self {
         value
             .as_str()
             .and_then(|text| Self::field(text, aliases))
@@ -106,7 +109,7 @@ impl<'v> Operand<'v> {
     }
 
     /// `group_by`/`distinct` names: each a bound field, or else the name as a JSON string.
-    fn named(names: &'v [String], aliases: &[&str]) -> Vec<Self> {
+    pub(in crate::code_rule_dsl) fn named(names: &'v [String], aliases: &[&str]) -> Vec<Self> {
         names
             .iter()
             .map(|name| {
@@ -131,7 +134,8 @@ impl<'v> Operand<'v> {
     }
 }
 
-enum Predicate<'v> {
+/// A compiled `where` predicate: what `holds` tests natively and `sql::crossfile` lowers.
+pub(in crate::code_rule_dsl) enum Predicate<'v> {
     Constant(bool),
     All(Vec<Self>),
     Any(Vec<Self>),
@@ -145,9 +149,12 @@ enum Predicate<'v> {
 impl<'v> Predicate<'v> {
     /// A `where` predicate with `aliases` bound to rows by position. No predicate holds; anything
     /// unreadable (not an object, an unknown operator, `eq`/`ne` without two operands) does not.
-    /// An object's first of `all`, `any`, `not`, `eq`, `ne` decides; `all`/`any` of no items (or
-    /// of a non-array) hold and do not.
-    fn compile(predicate: Option<&'v Value>, aliases: &[&str]) -> Self {
+    /// An object's first of `all`, `any`, `not`, `eq`, `ne`, `lt`, `le`, `gt`, `ge` decides;
+    /// `all`/`any` of no items (or of a non-array) hold and do not.
+    pub(in crate::code_rule_dsl) fn compile(
+        predicate: Option<&'v Value>,
+        aliases: &[&str],
+    ) -> Self {
         let Some(predicate) = predicate else {
             return Self::Constant(true);
         };
@@ -312,7 +319,10 @@ fn key_hash<'r>(parts: impl Iterator<Item = Option<&'r Value>>) -> u64 {
 
 /// The `eq`s every evidence row satisfying `predicate` meets, as (evidence field, operand reading
 /// no evidence). Only conjunctions are followed: past `any`, `not` or `ne` none is necessary.
-fn seeks<'p, 'v>(predicate: &'p Predicate<'v>, found: &mut Vec<(&'v str, &'p Operand<'v>)>) {
+pub(in crate::code_rule_dsl) fn seeks<'p, 'v>(
+    predicate: &'p Predicate<'v>,
+    found: &mut Vec<(&'v str, &'p Operand<'v>)>,
+) {
     match predicate {
         Predicate::All(items) => items.iter().for_each(|item| seeks(item, found)),
         Predicate::Equal(left, right, true) => {

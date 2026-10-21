@@ -1,6 +1,8 @@
 //! `require_each` and `budget` answered in SQL over relation rows: the set-based counterparts of
 //! `query::crossfile::{require_each, budget}`, which stay the parity oracle. Same arguments, same
-//! results; a SQL error is returned apart (`SqlError`).
+//! results; a SQL error is returned apart (`SqlError`). The `where` predicate is the native one,
+//! compiled by `query::crossfile::Predicate::compile` and lowered here variant by variant, so the
+//! two engines read the same operators.
 //!
 //! # Input
 //!
@@ -13,6 +15,10 @@
 //!   floats by their bits, arrays and objects item by item in order), so two values are
 //!   `same_text` exactly where their canonical texts are equal. A missing field is NULL, and an
 //!   operand pair compares with `IS`: missing equals only missing, as natively.
+//! - A `where` operand of an ordering (`lt`/`le`/`gt`/`ge`) reads a string's UTF-16 code units,
+//!   big-endian, as a BLOB (`Encoding::Utf16`): SQLite compares BLOBs by `memcmp` and then by
+//!   length, which is the code units' lexicographic order the native predicate compares by. A
+//!   missing field or any other JSON type is NULL.
 //! - A `group_by`/`distinct` operand reads the value's JSON text (`Display`, as `append_key`
 //!   writes it); a missing field is NULL and reads `null` in the key (`COALESCE`).
 //! - A literal operand is a bound parameter in the same encoding.
@@ -20,13 +26,15 @@
 //! # Statements
 //!
 //! A `where` predicate lowers to a boolean expression over those columns (`all` → `AND`, `any`
-//! → `OR`, `not` → `NOT`, `eq`/`ne` → `IS`/`IS NOT`, constants → `1`/`0`). Every operand pair is
-//! two-valued (`IS` never yields NULL), so the expression holds exactly where the native
-//! predicate does. `require_each` is one statement: the subjects passing their predicate, minus
-//! (`NOT IN`) those some evidence row satisfies the join predicate with (a join, which SQLite
-//! answers through an automatic index on the evidence columns the predicate's `eq`s compare).
-//! `budget` is one statement: the passing rows grouped by their key text, each group's first row,
-//! row count and distinct-value count, filtered by the maximum unless some file is incomplete.
+//! → `OR`, `not` → `NOT`, `eq`/`ne` → `IS`/`IS NOT`, `lt`/`le`/`gt`/`ge` → `COALESCE(l < r, 0)`
+//! and so on, constants → `1`/`0`). Every operand pair is two-valued (`IS` never yields NULL, and
+//! an ordering with a NULL side is false, as a native one without two strings is), so the
+//! expression holds exactly where the native predicate does. `require_each` is one statement:
+//! the subjects passing their predicate, minus (`NOT IN`) those some evidence row satisfies the
+//! join predicate with (a join, which SQLite answers through an automatic index on the evidence
+//! columns the predicate's `eq`s compare). `budget` is one statement: the passing rows grouped by
+//! their key text, each group's first row, row count and distinct-value count, filtered by the
+//! maximum unless some file is incomplete.
 //!
 //! The native bucket probe by key hash is an optimisation with no effect on the answer (a hash
 //! collision only adds candidates the predicate then tests), so it has no counterpart here.
@@ -34,7 +42,9 @@
 //! Every predicate shape is lowered exactly; nothing is refused.
 
 use super::SqlError;
-use crate::code_rule_dsl::query::crossfile::{Group, Interrupted, Relation, Requirement};
+use crate::code_rule_dsl::query::crossfile::{
+    self, EVIDENCE, Group, Interrupted, Operand, Predicate, Relation, Requirement,
+};
 use rusqlite::Connection;
 use rusqlite::types::Value as SqlValue;
 use serde_json::{Map, Number, Value};
@@ -78,27 +88,30 @@ fn with_connection<T>(
     })
 }
 
-/// The bound row the join predicate's evidence fields read; its subject fields read row 0.
-const EVIDENCE: usize = 1;
-
 /// How a loaded field value is encoded.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Encoding {
     /// `canonical`, for `eq`/`ne`.
     Canonical,
+    /// A string's UTF-16 code units, big-endian, for `lt`/`le`/`gt`/`ge`; NULL for any other
+    /// value.
+    Utf16,
     /// JSON text, for `group_by`/`distinct` keys.
     Json,
 }
 
 impl Encoding {
-    fn encode(self, value: &Value) -> String {
+    fn encode(self, value: &Value) -> SqlValue {
         match self {
             Self::Canonical => {
                 let mut text = String::new();
                 canonical(value, &mut text);
-                text
+                SqlValue::Text(text)
             }
-            Self::Json => value.to_string(),
+            Self::Utf16 => value.as_str().map_or(SqlValue::Null, |text| {
+                SqlValue::Blob(text.encode_utf16().flat_map(u16::to_be_bytes).collect())
+            }),
+            Self::Json => SqlValue::Text(value.to_string()),
         }
     }
 }
@@ -135,106 +148,6 @@ fn number_text(number: &Number, text: &mut String) {
         let _ = write!(text, "d{:?};", number.as_f64().map(f64::to_bits));
     } else {
         let _ = write!(text, "i{:?}{:?};", number.as_i64(), number.as_u64());
-    }
-}
-
-/// A predicate operand, as `query::crossfile` reads it: `alias.field` of a bound alias reads that
-/// row's field (everything after the first dot); anything else is a literal.
-enum Operand<'v> {
-    Field(usize, &'v str),
-    Literal(Value),
-}
-
-impl<'v> Operand<'v> {
-    fn compile(value: &'v Value, aliases: &[&str]) -> Self {
-        value
-            .as_str()
-            .and_then(|text| Self::field(text, aliases))
-            .unwrap_or_else(|| Self::Literal(value.clone()))
-    }
-
-    fn named(names: &'v [String], aliases: &[&str]) -> Vec<Self> {
-        names
-            .iter()
-            .map(|name| {
-                Self::field(name, aliases)
-                    .unwrap_or_else(|| Self::Literal(Value::String(name.clone())))
-            })
-            .collect()
-    }
-
-    fn field(text: &'v str, aliases: &[&str]) -> Option<Self> {
-        let (alias, field) = text.split_once('.')?;
-        let bound = aliases.iter().position(|name| *name == alias)?;
-        Some(Self::Field(bound, field))
-    }
-}
-
-/// A `where` predicate, compiled as `query::crossfile` compiles it.
-enum Predicate<'v> {
-    Constant(bool),
-    All(Vec<Self>),
-    Any(Vec<Self>),
-    Not(Box<Self>),
-    Equal(Operand<'v>, Operand<'v>, bool),
-}
-
-impl<'v> Predicate<'v> {
-    /// No predicate holds; anything unreadable does not. An object's first of `all`, `any`,
-    /// `not`, `eq`, `ne` decides; `all`/`any` of no items (or of a non-array) hold and do not.
-    fn compile(predicate: Option<&'v Value>, aliases: &[&str]) -> Self {
-        let Some(predicate) = predicate else {
-            return Self::Constant(true);
-        };
-        let Some(object) = predicate.as_object() else {
-            return Self::Constant(false);
-        };
-        let items = |items: &'v Value| {
-            items
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|item| Self::compile(Some(item), aliases))
-                .collect()
-        };
-        if let Some(all) = object.get("all") {
-            return Self::All(items(all));
-        }
-        if let Some(any) = object.get("any") {
-            return Self::Any(items(any));
-        }
-        if let Some(inner) = object.get("not") {
-            return Self::Not(Box::new(Self::compile(Some(inner), aliases)));
-        }
-        for (key, equal) in [("eq", true), ("ne", false)] {
-            if let Some([left, right]) =
-                object.get(key).and_then(Value::as_array).map(Vec::as_slice)
-            {
-                return Self::Equal(
-                    Operand::compile(left, aliases),
-                    Operand::compile(right, aliases),
-                    equal,
-                );
-            }
-        }
-        Self::Constant(false)
-    }
-
-    /// Whether the native probe seeks evidence rows by key: an `eq` along the top-level
-    /// conjunction comparing an evidence field with anything but an evidence field.
-    fn seeks(&self) -> bool {
-        match self {
-            Self::All(items) => items.iter().any(Self::seeks),
-            Self::Equal(left, right, true) => {
-                [(left, right), (right, left)]
-                    .into_iter()
-                    .any(|(sought, other)| {
-                        matches!(sought, Operand::Field(EVIDENCE, _))
-                            && !matches!(other, Operand::Field(EVIDENCE, _))
-                    })
-            }
-            _ => false,
-        }
     }
 }
 
@@ -287,7 +200,7 @@ impl<'v> Lowering<'v> {
                 format!("{prefix}{}", slots.slot(field, encoding))
             }
             Operand::Literal(value) => {
-                self.parameters.push(SqlValue::Text(encoding.encode(value)));
+                self.parameters.push(encoding.encode(value));
                 format!("?{}", self.parameters.len())
             }
         }
@@ -312,6 +225,21 @@ impl<'v> Lowering<'v> {
                 let right = self.operand(right, Encoding::Canonical);
                 let operator = if *equal { "IS" } else { "IS NOT" };
                 format!("({left} {operator} {right})")
+            }
+            Predicate::Ordered(left, right, operation) => {
+                // Native orders nothing else (`Predicate::holds`).
+                let Some(operator) = (match *operation {
+                    "lt" => Some("<"),
+                    "le" => Some("<="),
+                    "gt" => Some(">"),
+                    "ge" => Some(">="),
+                    _ => None,
+                }) else {
+                    return "0".to_owned();
+                };
+                let left = self.operand(left, Encoding::Utf16);
+                let right = self.operand(right, Encoding::Utf16);
+                format!("COALESCE({left} {operator} {right}, 0)")
             }
         }
     }
@@ -404,9 +332,12 @@ pub(in crate::code_rule_dsl) fn require_each(
 ) -> Result<Result<Vec<Requirement>, Interrupted>, SqlError> {
     let subject_predicate = Predicate::compile(subject_predicate, &[subject_alias]);
     let predicate = Predicate::compile(predicate, &[subject_alias, evidence_alias]);
+    // Native polls at the first evidence row it buckets, which it does where an `eq` seeks.
+    let mut sought = Vec::new();
+    crossfile::seeks(&predicate, &mut sought);
     let poll = Poll {
         interrupted,
-        visits: !subject.rows.is_empty() || (predicate.seeks() && !evidence.rows.is_empty()),
+        visits: !subject.rows.is_empty() || (!sought.is_empty() && !evidence.rows.is_empty()),
     };
     let mut lowering = Lowering::new(&["a", "b"]);
     let filter = lowering.predicate(&subject_predicate);
