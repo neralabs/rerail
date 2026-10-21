@@ -11,11 +11,6 @@ PIN='2b1504adc4291daaf080b2e932962b134da1a69a'
 p=argparse.ArgumentParser(description=__doc__)
 for name in ('source','repo'):p.add_argument('--'+name,type=Path,required=True)
 p.add_argument('--output',type=Path,default=Path('packs/data-layer/candidates/rules'))
-p.add_argument('--independent-sql',action='store_true',help='Generate the previous independent quality SQL groups for comparison')
-p.add_argument('--quality-all-sql',action='store_true',help='Experimental single quality SQL scope with explicit production source gates')
-p.add_argument('--normalized-syntax-graph',action='store_true',help='Keep SQL graph normalization with shared syntax facts to isolate preparation savings')
-p.add_argument('--evidence-syntax',action='store_true',help='Use the preceding matcher-evidence syntax backend for comparison')
-p.add_argument('--baseline-relations',action='store_true',help='Generate eager text and recursive SQL for matched comparisons')
 a=p.parse_args();source=a.source.resolve();sys.path[:0]=[str(source),str(source/'scripts')];a.output.mkdir(parents=True,exist_ok=True)
 modules={name:importlib.import_module(module) for name,module in MODULES.items()}
 verify_sources(source,a.repo,PIN)
@@ -23,7 +18,7 @@ from scripts.lint_lib.discovery import data_layer_production_dirs
 ROOTS=[v+'/**/*.py' for v in data_layer_production_dirs(source)]
 EXCLUDE=['**/.git/**','**/.venv/**','**/venv/**','**/tmp/**','**/__pycache__/**','**/tests/**','**/test_*.py']
 def W(name,clauses,utils=None,options=None,roots=None,exclude=None,mode='block'):
- write(a.output,name,clauses,PIN,roots or ROOTS,EXCLUDE if exclude is None else exclude,utils,options,mode,optimized_relations=name=='serverplan_quality' and not a.baseline_relations,shared_syntax=name=='serverplan_quality' and not a.baseline_relations and not a.evidence_syntax,direct_syntax_graph=not a.normalized_syntax_graph)
+ write(a.output,name,clauses,PIN,roots or ROOTS,EXCLUDE if exclude is None else exclude,utils,options,mode)
 
 # Direct bypass calls are deduplicated by method and source line.
 m=modules['serverplan_bypass'];clauses=[]
@@ -71,7 +66,7 @@ W('legacy_execution_surfaces',legacy_clauses(m),roots=[p.relative_to(source).as_
 from data_layer_six.quality import quality_clauses
 from data_layer_six.conditional import conditional_clauses
 m=modules['serverplan_quality']
-W('serverplan_quality',quality_clauses(m,shared_sql=not a.independent_sql,share_all=a.quality_all_sql)+conditional_clauses(m),roots=['**/*.py'],exclude=['**/.git/**','**/.venv/**','**/venv/**','**/tmp/**','**/__pycache__/**'])
+W('serverplan_quality',quality_clauses(m)+conditional_clauses(m),roots=['**/*.py'],exclude=['**/.git/**','**/.venv/**','**/venv/**','**/tmp/**','**/__pycache__/**'])
 
 from data_layer_six.state import state_clauses
 m=modules['serverplan_state_tripwires'];clauses,utils=state_clauses(m)

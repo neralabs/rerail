@@ -165,34 +165,6 @@ Total number in stack (recursive counted multiple, when >=5):
             self.assertEqual(result.returncode, 124, result.stderr)
             self.assertTrue(json.loads((output / "profile.json").read_text())["timedOut"])
 
-    def test_experimental_flags_are_explicit_and_recorded(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            for name, flags, expected in [("default", [], ["32", None]),
-                                          ("control", ["--insert-batch", "1"], ["1", None]),
-                                          ("experiment", ["--insert-batch", "7", "--shared-input-index"], ["7", "1"])]:
-                output = Path(temporary) / name
-                result = subprocess.run([sys.executable, str(PROFILING / "run.py"), "--output", str(output),
-                                         "--deadline", "5", "--trace", "off", *flags, "--", sys.executable, "-c",
-                                         "import json,os;print(json.dumps([os.getenv('RERAIL_SQL_INSERT_BATCH'),os.getenv('RERAIL_SHARED_INPUT_INDEX')]))"],
-                                        env={**os.environ, "RERAIL_SQL_INSERT_BATCH": "256", "RERAIL_SHARED_INPUT_INDEX": "1"},
-                                        capture_output=True, timeout=8)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(json.loads((output / "stdout.log").read_text()), expected)
-                report = json.loads((output / "profile.json").read_text())
-                self.assertEqual([str(report["insertBatch"]), "1" if report["sharedInputIndex"] else None], expected)
-
-    def test_completed_output_adapter_is_explicit_and_inherited_flags_are_cleared(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            for mode in ["table", "virtual"]:
-                output = Path(temporary) / mode
-                result = subprocess.run([sys.executable, str(PROFILING / "run.py"), "--output", str(output),
-                    "--deadline", "5", "--trace", "off", "--completed-output", mode, "--", sys.executable,
-                    "-c", "import json,os;print(json.dumps(os.getenv('RERAIL_SQL_COMPLETED_OUTPUT')))"],
-                    env={**os.environ, "RERAIL_SQL_COMPLETED_OUTPUT": "virtual"}, capture_output=True, timeout=8)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(json.loads((output / "stdout.log").read_text()), "virtual" if mode == "virtual" else None)
-                self.assertEqual(json.loads((output / "profile.json").read_text())["completedOutput"], mode)
-
     def test_sql_capture_requires_instrumented_execution_and_clears_inherited_capture(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

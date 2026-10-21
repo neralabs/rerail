@@ -489,8 +489,6 @@ struct Session<'a> {
     work: Arc<AtomicUsize>,
     tables: BTreeSet<String>,
     next: usize,
-    release_stages: bool,
-    _retained_inputs: Vec<Rows>,
 }
 impl<'a> Session<'a> {
     fn new(
@@ -564,12 +562,7 @@ impl<'a> Session<'a> {
         let work = Arc::new(AtomicUsize::new(
             code_rule.capabilities.limits.visits_for(count),
         ));
-        #[cfg(feature = "code-rule-profile")]
-        let release_stages = std::env::var_os("RERAIL_SQL_RETAIN_STAGES").is_none();
-        #[cfg(not(feature = "code-rule-profile"))]
-        let release_stages = true;
         let anchors = anchors::collect(plan, &rows);
-        let mut retained_inputs = Vec::new();
         let db = connection(
             code_rule.capabilities.limits.max_regex_pattern_bytes,
             Arc::clone(&work),
@@ -608,22 +601,6 @@ impl<'a> Session<'a> {
                 .iter()
                 .map(|project| project.field.clone())
                 .collect::<Vec<_>>();
-            #[cfg(feature = "code-rule-profile")]
-            if std::env::var("RERAIL_SQL_INPUT_VTAB").is_ok_and(|v| v == "captures") {
-                super::profile::capture_rows::load(
-                    &db,
-                    name,
-                    &fields,
-                    &rows.witnesses,
-                    &input.anchor,
-                    Arc::clone(&work),
-                )?;
-                tables.insert(name.clone());
-                if !release_stages {
-                    retained_inputs.push(rows);
-                }
-                continue;
-            }
             create_input(&db, name, &fields)?;
             insert::insert_rows(
                 &db,
@@ -651,9 +628,6 @@ impl<'a> Session<'a> {
             )?;
             tables.insert(name.clone());
             // SQL owns the copied values; only compact anchors remain necessary.
-            if !release_stages {
-                retained_inputs.push(rows);
-            }
         }
         if let Some(reference) = &plan.references {
             let graph = super::calls::reference_rows(reference.key)
@@ -735,8 +709,6 @@ impl<'a> Session<'a> {
             work,
             tables,
             next: 0,
-            release_stages,
-            _retained_inputs: retained_inputs,
         })
     }
     fn release(&mut self) -> Result<()> {
@@ -749,7 +721,7 @@ impl<'a> Session<'a> {
             .plan
             .last_uses
             .iter()
-            .filter(|(_, last)| self.release_stages && **last == self.next)
+            .filter(|(_, last)| **last == self.next)
         {
             deferred::release(&self.db, name, &self.plan.stages)?;
             self.tables.remove(name);

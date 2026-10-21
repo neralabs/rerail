@@ -1,5 +1,9 @@
 # Shared SQL execution for data-layer rules
 
+This document records historical experiments. The [final decisions](sql-shape-spikes.md#final-decisions) describe the current execution path.
+The current branch removes experimental execution flags and alternate input adapters.
+Historical commands require the corresponding older commit.
+
 ## Implementation
 
 Keep SQLite as the relational execution engine.

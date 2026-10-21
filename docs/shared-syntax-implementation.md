@@ -1,5 +1,9 @@
 # Shared syntax facts and direct tree execution
 
+This document records historical experiments. The [final decisions](sql-shape-spikes.md#final-decisions) describe the current execution path.
+The current branch removes experimental execution flags and alternate input adapters.
+Historical commands require the corresponding older commit.
+
 The measurements below describe commit `c4bd76bf`.
 The [batched producer contract](gpu-producer-execution-contract.md) defines the subsequent execution boundary.
 

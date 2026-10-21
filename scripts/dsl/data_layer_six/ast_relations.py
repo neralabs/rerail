@@ -233,7 +233,7 @@ def narrow_deferred_windows(clause):
    columns=[*node_columns,'name',*(['cls','class_name'] if stage['name']=='last_methods' else [])]
    stage['query']=stage['query'].replace('SELECT *,row_number()','SELECT '+','.join(columns)+',row_number()',1)
 
-def shared_syntax_relations(clause,direct_graph=True):
+def shared_syntax_relations(clause):
  """Use declared tape facts; keep every detector and source gate in SQL/AST."""
  import copy
  plan=clause['relational'];raw=plan['inputs'].get('raw_nodes')
@@ -281,5 +281,5 @@ def shared_syntax_relations(clause,direct_graph=True):
  plan['query']=lower(plan['query'])
  for stage in plan['stages']:
   if 'reachability' in stage:
-   stage['reachability']={'roots':lower(stage['reachability']['roots']),**({'syntax':'nodes'} if direct_graph else {'edges':'SELECT __path,src,dst FROM edges','graph':'forest'})}
+   stage['reachability']={'roots':lower(stage['reachability']['roots']),'syntax':'nodes'}
  return True

@@ -1,5 +1,9 @@
 # SQL performance experiments
 
+This document records historical experiments. The [final decisions](sql-shape-spikes.md#final-decisions) describe the current execution path.
+The current branch removes experimental execution flags and alternate input adapters.
+Historical commands require the corresponding older commit.
+
 These experiments address the proposals in [the shared SQL profile](shared-sql-performance.md).
 The shipped policy keeps its existing three file-local SQL scopes.
 The SQL policy variants and shared input index require explicit selection.

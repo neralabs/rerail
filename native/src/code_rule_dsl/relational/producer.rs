@@ -1,11 +1,10 @@
 //! Broad CPU producer passes. SQL publication is a separate completed-output consumer.
-use super::{Result, invalid, quote, source, sql_error};
-use rusqlite::{Connection, types::Value};
+use super::{Result, invalid, source, sql_error};
+use rusqlite::Connection;
 use std::{
     cell::Cell,
     sync::{Arc, atomic::AtomicUsize},
 };
-#[cfg(feature = "code-rule-profile")]
 mod completed;
 const MAX_STAGES: usize = 100;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
@@ -74,35 +73,7 @@ impl Completed {
     pub fn publish(self, db: &Connection, name: &str, work: &Arc<AtomicUsize>) -> Result<()> {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("producer-publish", name);
-        #[cfg(feature = "code-rule-profile")]
-        if std::env::var("RERAIL_SQL_COMPLETED_OUTPUT").is_ok_and(|v| v == "virtual") {
-            return completed::publish(self, db, name, Arc::clone(work));
-        }
-        db.execute_batch(&format!(
-            "CREATE TEMP TABLE {} (__path TEXT,root,node)",
-            quote(name)
-        ))
-        .map_err(sql_error)?;
-        let Self { output, paths } = self;
-        super::insert::stage_rows(
-            db,
-            name,
-            3,
-            output
-                .roots
-                .into_iter()
-                .zip(output.nodes)
-                .zip(output.files)
-                .map(|((root, node), file)| {
-                    [
-                        Value::Text(paths[file as usize].clone()),
-                        Value::Integer(i64::from(root)),
-                        Value::Integer(i64::from(node)),
-                    ]
-                }),
-            work,
-        )?;
-        db.execute_batch(&format!("CREATE INDEX {} ON {}(__path,root,node);CREATE INDEX {} ON {}(__path,node,root);ANALYZE temp.{}",quote(&format!("__{name}_forward")),quote(name),quote(&format!("__{name}_reverse")),quote(name),quote(name))).map_err(sql_error)
+        completed::publish(self, db, name, Arc::clone(work))
     }
 }
 /// Checked, flat request columns. Relation boundaries are numeric CSR offsets.

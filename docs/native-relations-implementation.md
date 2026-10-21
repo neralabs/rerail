@@ -1,5 +1,9 @@
 # Native forest traversal and deferred SQL columns
 
+This document records historical experiments. The [final decisions](sql-shape-spikes.md#final-decisions) describe the current execution path.
+The current branch removes experimental execution flags and alternate input adapters.
+Historical commands require the corresponding older commit.
+
 This report records the implementation at `f52817f`.
 The [shared syntax follow-up](shared-syntax-implementation.md) removes repeated preparation and uses direct parser identities.
 

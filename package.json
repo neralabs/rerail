@@ -100,7 +100,7 @@
     "profile:code-rule-dsl": "python3 scripts/profiling/run.py",
     "profile:sql:summary": "node benchmark/sql-profile/summarize.mjs",
     "test:producer-shape": "node scripts/profiling/producer-shape.mjs",
-    "test:profiling": "node --test test/scripts/sql-profile.test.mjs && python3 test/scripts/test_profile.py && python3 test/scripts/test_shared_sql.py && python3 test/scripts/test_sql_variants.py && python3 test/scripts/test_sql_shape_spikes.py",
+    "test:profiling": "node --test test/scripts/sql-profile.test.mjs && python3 test/scripts/test_profile.py && python3 test/scripts/test_shared_sql.py && python3 test/scripts/test_sql_variants.py && python3 test/scripts/test_data_layer_sql_columns.py",
     "test:integration:built": "npm run build:test-host && vitest run --dir integration",
     "test:integration:code-rule-runtime": "vitest run integration/code-rule-runtime.test.ts",
     "test:integration": "npm run build && npm run test:integration:built",

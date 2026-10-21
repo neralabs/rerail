@@ -1,5 +1,9 @@
 # Reachability adapters
 
+This document records historical experiments. The [final decisions](sql-shape-spikes.md#final-decisions) describe the current execution path.
+The current branch removes experimental execution flags and alternate input adapters.
+Historical commands require the corresponding older commit.
+
 The experiment gives recursive SQL, a Rust scalar function, and a Rust virtual table the same request relation.
 The adapters retain the existing linter SQL and return the same descendants relation.
 The Rust and interval adapters remain experiments.

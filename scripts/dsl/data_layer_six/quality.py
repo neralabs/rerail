@@ -3,7 +3,7 @@
 from .common import *
 from .ast_relations import grouped_relations,python_stages
 
-def quality_clauses(m,shared_sql=True,share_all=False):
+def quality_clauses(m):
  def rel(path):return path.relative_to(m.ROOT).as_posix() if path.is_relative_to(m.ROOT) else path.as_posix()
  def at(path):return 'p.__path='+q(rel(path))
  def under(path):return 'substr(p.__path,1,'+str(len(rel(path))+1)+')='+q(rel(path)+'/')
@@ -84,14 +84,8 @@ def quality_clauses(m,shared_sql=True,share_all=False):
  # Production SELECTs already enforce primary_file/fallback_file independently.
  # Their source domains can therefore share the union of those file domains.
  callback_pattern='|'.join(re.escape(v) for v in sorted(m.FORBIDDEN_CALLBACK_ARCHITECTURE_NAMES|{'CompiledStep','PipelineLifecycleEffect','pending_pipeline_effects'}))
- if share_all:
-  # Preserve the source-trigger gates explicitly in the production SQL.
-  for sql,tag in row_groups.items():
-   if tag in ('callback','inventory'):
-    pattern=callback_pattern if tag=='callback' else 'MAINTENANCE|ORDERED_SEMANTIC'
-    production_rows[sql]+=' AND rx_matches(p.source,'+q(pattern)+')'
- sql_groups={sql:('all-shared' if share_all else 'contracts' if tag in ('primary','fallback') else tag) for sql,tag in row_groups.items()} if shared_sql else row_groups
- clauses=grouped_relations('quality-contracts',stages,rows,['all','_check_serverplan_quality_source'],extra_inputs,production_rows,sql_groups,shared_sql=shared_sql)
+ sql_groups={sql:('contracts' if tag in ('primary','fallback') else tag) for sql,tag in row_groups.items()}
+ clauses=grouped_relations('quality-contracts',stages,rows,['all','_check_serverplan_quality_source'],extra_inputs,production_rows,sql_groups,shared_sql=True)
  primary_paths=sorted(set(rel(p) for p in (*m.CORE_PLAN_FILES,*m.BATCHING_SUPPORT_FILES,*m.LIFECYCLE_FILES,m.OPTIMIZER_ANALYSIS_FILE,m.CONDITIONAL_DIALECT_TEST_FILE)))
  directory_paths=[rel(p) for p in (*m.STEP_DIRS,m.STRATEGY_DIR)]
  primary_ast=O({'filePath':{'regex':'^(?:'+'|'.join(re.escape(p) for p in primary_paths)+')$'}},A(N({'filePath':{'regex':r'(?:^|/)__init__\.py$'}}),{'filePath':{'regex':'^(?:'+'|'.join(re.escape(p)+'/' for p in directory_paths)+r'|impl/common/l2070_server_plan/[^/]+$)'}}))

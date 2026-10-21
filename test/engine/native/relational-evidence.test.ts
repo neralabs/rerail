@@ -20,7 +20,6 @@ const query = `SELECT f.__path AS path, f.__start AS start_byte, f.__end AS end_
 const compile = (document: unknown) => native.CodeRuleDslRuntime.compile(JSON.stringify(document), "json", capabilities);
 
 it("preserves nullable and numeric projections across SQLite insertion batches and tails", () => {
-  const previous = process.env.RERAIL_SQL_INSERT_BATCH;
   const document = policy("SELECT __path AS path,__start AS start_byte,__end AS end_byte,name AS family,'batch' AS issue,annotation,offset FROM functions");
   const evidence = { as: "f", query: { ast: { language: "python", rule: { all: [
     { kind: "function_definition" }, { has: { field: "name", pattern: "$NAME" } },
@@ -30,24 +29,18 @@ it("preserves nullable and numeric projections across SQLite insertion batches a
     ...document.clauses[0]!.relational, inputs: { functions: { evidence } },
   } }] });
   const sources = [Array.from({ length: 131 }, (_, i) => `def read_ä${i}()${i % 2 ? " -> str" : ""}: pass`).join("\n"), "value = 'clean'\n"];
-  try {
-    for (const source of sources) {
-      const snapshot = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0,
-        files: [{ path: "unicode/ü.py", language: "python", source }] });
-      process.env.RERAIL_SQL_INSERT_BATCH = "1";
-      const expected = JSON.parse(rule.evaluate(snapshot, "report"));
-      expect(expected.failures).toEqual([]);
-      expect(expected.violations).toHaveLength(source.startsWith("def") ? 131 : 0);
-      for (const batch of [7, 32, 256]) {
-        process.env.RERAIL_SQL_INSERT_BATCH = String(batch);
-        const actual = JSON.parse(rule.evaluate(snapshot, "report"));
-        expect(actual.failures).toEqual(expected.failures);
-        expect(actual.violations).toEqual(expected.violations);
-      }
+  for (const source of sources) {
+    const snapshot = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0,
+      files: [{ path: "unicode/ü.py", language: "python", source }] });
+    const actual = JSON.parse(rule.evaluate(snapshot, "report"));
+    expect(actual.failures).toEqual([]);
+    expect(actual.violations).toHaveLength(source.startsWith("def") ? 131 : 0);
+    for (const violation of actual.violations) {
+      const row = violation.variables.row;
+      const index = Number(row.family.slice("read_ä".length));
+      expect(row.annotation).toBe(index % 2 ? "str" : null);
+      expect(row.offset).toBe(Buffer.byteLength(source.slice(0, source.indexOf(row.family))));
     }
-  } finally {
-    if (previous === undefined) delete process.env.RERAIL_SQL_INSERT_BATCH;
-    else process.env.RERAIL_SQL_INSERT_BATCH = previous;
   }
 });
 
@@ -206,7 +199,6 @@ it("joins native reference edges and invalidates them after an edit in another f
 });
 
 it("batches reference edges across full batches and tails and repairs edits", async () => {
-  const previous = process.env.RERAIL_SQL_INSERT_BATCH;
   const document = policy(`SELECT __path AS path,__start AS start_byte,__end AS end_byte,
     source_name || target_name AS family,'reference' AS issue FROM reference_edges WHERE target_name LIKE '%._effect'`);
   Object.assign(document.clauses[0]!.relational, { references: { language: "python" } });
@@ -219,17 +211,9 @@ it("batches reference edges across full batches and tails and repairs edits", as
   const evaluate = () => JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files }), "report"));
   const workspace = new native.CodeRuleDslWorkspace();
   try {
-    delete process.env.RERAIL_SQL_INSERT_BATCH;
     const expected = evaluate();
     expect(expected.failures).toEqual([]);
     expect(expected.violations).toHaveLength(131);
-    for (const batch of [1, 7, 32, 256]) {
-      process.env.RERAIL_SQL_INSERT_BATCH = String(batch);
-      const actual = evaluate();
-      expect(actual.failures).toEqual([]);
-      expect(actual.violations).toEqual(expected.violations);
-    }
-    delete process.env.RERAIL_SQL_INSERT_BATCH;
     workspace.addCodeRule(rule);
     const apply = async (revision: number, changed: typeof files, removed: string[] = []) =>
       JSON.parse(await workspace.applyAsync(JSON.stringify({ revision, files: changed, removed }))).evaluation;
@@ -239,8 +223,6 @@ it("batches reference edges across full batches and tails and repairs edits", as
     expect(await apply(4, [], [files[0]!.path])).toMatchObject({ failures: [], violations: [] });
   } finally {
     workspace.close();
-    if (previous === undefined) delete process.env.RERAIL_SQL_INSERT_BATCH;
-    else process.env.RERAIL_SQL_INSERT_BATCH = previous;
   }
 });
 

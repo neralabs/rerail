@@ -66,23 +66,10 @@ def execute(args, command, output, deadline):
     env.pop("RERAIL_PROFILE", None)
     env.pop("RERAIL_SQL_QUERY_PLANS", None)
     env.pop("RERAIL_SQL_PROFILE_DIR", None)
-    env.pop("RERAIL_SQL_COMPLETED_OUTPUT", None)
-    if args.completed_output == "virtual":
-        env["RERAIL_SQL_COMPLETED_OUTPUT"] = "virtual"
     if args.sql_profile:
         raw = output / "sql" / "raw"
         raw.mkdir(parents=True)
         env["RERAIL_SQL_PROFILE_DIR"] = str(raw)
-    env["RERAIL_SQL_INSERT_BATCH"] = str(args.insert_batch)
-    env.pop("RERAIL_SQL_INPUT_VTAB", None)
-    if args.native_input != "table":
-        env["RERAIL_SQL_INPUT_VTAB"] = args.native_input
-    env.pop("RERAIL_SQL_RETAIN_STAGES", None)
-    if args.retain_sql_stages:
-        env["RERAIL_SQL_RETAIN_STAGES"] = "1"
-    env.pop("RERAIL_SHARED_INPUT_INDEX", None)
-    if args.shared_input_index:
-        env["RERAIL_SHARED_INPUT_INDEX"] = "1"
     if args.query_plans:
         env["RERAIL_SQL_QUERY_PLANS"] = "1"
     if args.trace == "on":
@@ -138,17 +125,12 @@ def main():
     parser.add_argument("--external", choices=["none", "sample"], default="none")
     parser.add_argument("--trace", choices=["on", "off"], default="on")
     parser.add_argument("--cold-only", action="store_true", help="Skip unchanged and edit phases in the data-layer driver")
-    parser.add_argument("--insert-batch", type=int, default=32, choices=range(1,257), metavar="1..256", help="SQLite input batch row cap (default 32; profiling builds allow 1 as a control)")
-    parser.add_argument("--shared-input-index", action="store_true", help="Experimental document-scoped kind postings shared between input selectors")
     parser.add_argument("--query-plans", action="store_true", help="Record SQLite EXPLAIN QUERY PLAN for materialized stages (requires tracing)")
     parser.add_argument("--sql-profile", action="store_true", help="Capture every executed relational SQLite statement, plans, bytecode, counters and HTML report (requires code-rule-profile)")
-    parser.add_argument("--completed-output", choices=["table", "virtual"], default="table", help="Profile-only completed producer publication adapter")
     parser.add_argument("--sample-every", type=float, default=6)
     parser.add_argument("--sample-count", type=int, default=4)
     parser.add_argument("--sample-seconds", type=int, default=1)
     parser.add_argument("--sample-module", action="append", help="Include stacks with this module or symbol substring; repeat, or use '*' for all active stacks")
-    parser.add_argument("--native-input", choices=["table", "rows", "captures"], default="table", help="Profile-only native row virtual table instead of SQL input insertion")
-    parser.add_argument("--retain-sql-stages", action="store_true", help="Profile-only control: retain intermediate SQL stages until the connection closes")
     parser.add_argument("--allocator", default="unspecified")
     parser.add_argument("--policies", default="packs/data-layer/candidates/rules")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="Optional command after --, instead of a data-layer recording")
@@ -203,7 +185,7 @@ def main():
     (output / "trace.chrome.json").write_text(json.dumps(chrome_trace(events)) + "\n")
     report = {"version": 1, "command": command, "elapsedSeconds": time.monotonic() - started,
               "exitCode": code, "timedOut": timed_out, "deadlineSeconds": args.deadline,
-              "trace": args.trace, "external": args.external, "queryPlans": args.query_plans, "sqlProfile":args.sql_profile, "completedOutput":args.completed_output, "insertBatch": args.insert_batch, "nativeInput": args.native_input, "sharedInputIndex": args.shared_input_index, "retainSqlStages":args.retain_sql_stages,
+              "trace": args.trace, "external": args.external, "queryPlans": args.query_plans, "sqlProfile":args.sql_profile,
               "sampleModules":args.sample_module or ["rerail_engine"],
               "host": {"platform": platform.platform(), "cpu": platform.processor(), "python": platform.python_version(),
                        "logicalCpus": os.cpu_count(), "loadAverageStart": load_start,

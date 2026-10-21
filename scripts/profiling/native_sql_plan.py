@@ -5,50 +5,10 @@ reads; the authorizer supplies schema dependencies needed even by dead expressio
 Physical tables retain demanded columns; views retain other columns as NULL.
 This is a lab compiler, not a policy equivalence or SQL side-effect guarantee.
 """
-from collections import defaultdict
-
-
-def quote(value):
-    return '"' + value.replace('"', '""') + '"'
-
-
-def reads(db, query, schemas, conservative_rowid=True):
-    dependencies = set()
-    def authorize(action, table, column, database, trigger):
-        if action == 20 and table in schemas:  # SQLITE_READ
-            dependencies.add(table)
-        return 0
-    roots = {}
-    for database, name in [(0, "main"), (1, "temp")]:
-        for table, page in db.execute(f"SELECT name,rootpage FROM {name}.sqlite_schema WHERE type='table'"):
-            if table in schemas:
-                roots[(database, page)] = table
-    db.set_authorizer(authorize)
-    try:
-        program = list(db.execute("EXPLAIN " + query))
-    finally:
-        db.set_authorizer(None)
-    cursors = defaultdict(set)
-    for _, op, p1, p2, p3, *_ in program:
-        if op == "OpenRead" and (p3, p2) in roots:
-            cursors[p1].add(roots[(p3, p2)])
-    for _ in range(len(cursors) + 1):
-        for _, op, p1, p2, *_ in program:
-            if op == "OpenDup":
-                cursors[p1].update(cursors[p2])
-    demand = defaultdict(set)
-    for _, op, p1, p2, *_ in program:
-        if op == "Rowid" and not conservative_rowid:
-            continue
-        if op in ("Column", "Rowid"):
-            for table in cursors[p1]:
-                if op == "Rowid" or p2 >= len(schemas[table]):
-                    demand[table].update(schemas[table])
-                else:
-                    demand[table].add(schemas[table][p2])
-    for table in dependencies:
-        demand[table]  # count(*) still needs a row carrier.
-    return demand, dependencies
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dsl"))
+from data_layer_six.sql_columns import quote, reads
 
 
 def plan(db, inputs, stages, final_query, additional=None):
