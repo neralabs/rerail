@@ -166,15 +166,22 @@ describe("shared host engine", () => {
   it("reconciles shell-written files at the command boundary and finds nothing new at the turn checkpoint", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-kernel-shell-"));
     process.env.RERAIL_HOME = join(root, "home");
-    seedContractCodeRuleForRoot(root);
     let runtime: RerailRuntime | undefined;
     try {
       await mkdir(join(root, "api"));
       await writeFile(join(root, "api/route.py"), "def route():\n    return 1\n");
+      // Committed: the shell write has no hook preimage, so its generated lines come from the Git blob of what it changed.
+      // The repository is set up after `git init`, which gives it the identity its rules are added under.
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+      execFileSync("git", ["add", "api"], { cwd: root });
+      execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
+      seedContractCodeRuleForRoot(root);
       runtime = new RerailRuntime({ storageRoot: join(root, ".rerail/sessions"), workspaceRoot: root, modelPath: resolve("model") });
       const session = { host: "codex" as const, sessionId: "shell", cwd: root };
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
       await runtime.codeRulesOpened(session.sessionId);
+      // A first turn waits for the baseline walk: a write racing it changed a file no one observed before it.
+      await runtime.ingest({ kind: "turn-end", eventId: "turn:0", sessionId: session.sessionId, text: "Looked around." });
       await runtime.ingest({
         kind: "call",
         eventId: "call:shell",

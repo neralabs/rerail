@@ -30,7 +30,7 @@ describe("audit controls", () => {
     const { controls, sessionStore: sessionStore } = await fixture();
     controls.updateSettings("a", { scope: "repository", mode: "log" });
     expect(controls.getSettings("a").settings).toEqual({ scope: "repository", mode: "log" });
-    expect(controls.getSettings("b").settings).toEqual({ scope: "touched-files", mode: "steer" });
+    expect(controls.getSettings("b").settings).toEqual({ scope: "ai-output", mode: "steer" });
     controls.close();
     const reopened = new SqliteAuditControlStore(sessionStore.path);
     expect(reopened.getSettings("a").settings).toEqual({ scope: "repository", mode: "log" });

@@ -5,6 +5,8 @@ export const auditSettingsSchema = z.strictObject({
   mode: z.enum(["log", "steer"]),
 });
 export type AuditSettings = z.infer<typeof auditSettingsSchema>;
+/** Automatic audits report what an edit generated (`ai-output`), and steer. */
+export const DEFAULT_AUDIT_SETTINGS: Readonly<AuditSettings> = { scope: "ai-output", mode: "steer" };
 export const auditSettingsPatchSchema = auditSettingsSchema.partial().strict();
 export const repositoryAuditSchema = z.strictObject({
   sessionId: z.string(),
