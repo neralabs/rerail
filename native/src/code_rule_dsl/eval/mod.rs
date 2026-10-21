@@ -17,7 +17,7 @@ pub(super) use output::{
     violation_ids,
 };
 pub(super) use query::{
-    TapeCacheSlot, WitnessError, evaluate_query, file_language, grammar_matcher,
+    TapeCacheSlot, WitnessError, evaluate_query, file_language, file_tape, grammar_matcher,
     witness_from_match, witnesses_from_match,
 };
 #[cfg(test)]
@@ -261,6 +261,7 @@ pub(super) fn evaluate_clauses(
     clauses: &[CompiledClause],
 ) -> Result<Evaluation> {
     let _tapes = TapeCacheSlot::install();
+    let _syntax = super::relational::syntax::Pool::install();
     if mode != "decision" && mode != "report" {
         return Err(invalid(format!("unsupported evaluation mode `{mode}`")));
     }

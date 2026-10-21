@@ -58,11 +58,11 @@ def prepare(db, roots):
     db.execute("INSERT INTO reach_keys SELECT __path,key,row_number() OVER(ORDER BY __path,key) FROM (SELECT __path,id AS key FROM nodes UNION SELECT __path,src FROM edges UNION SELECT __path,dst FROM edges)")
     db.execute("CREATE UNIQUE INDEX reach_key_text ON reach_keys(__path,key)")
     db.execute("CREATE UNIQUE INDEX reach_key_int ON reach_keys(compact)")
-    db.execute("CREATE TEMP TABLE reach_edges AS SELECT a.compact AS src,b.compact AS dst FROM edges e JOIN reach_keys a ON a.__path=e.__path AND a.key=e.src JOIN reach_keys b ON b.__path=e.__path AND b.key=e.dst")
+    db.execute("CREATE TEMP TABLE reach_edges AS SELECT a.compact AS src,b.compact AS dst FROM edges e JOIN reach_keys a ON a.__path=e.__path AND a.key=+e.src JOIN reach_keys b ON b.__path=e.__path AND b.key=+e.dst")
     db.execute("CREATE INDEX reach_edges_forward ON reach_edges(src,dst)")
     db.execute("CREATE INDEX reach_edges_reverse ON reach_edges(dst,src)")
     db.execute("CREATE TEMP TABLE reach_requests(root INTEGER PRIMARY KEY)")
-    db.execute("INSERT INTO reach_requests SELECT DISTINCT k.compact FROM (" + roots + ") r JOIN reach_keys k ON k.__path=r.__path AND k.key=r.id")
+    db.execute("INSERT INTO reach_requests SELECT DISTINCT k.compact FROM (" + roots + ") r JOIN reach_keys k ON k.__path=r.__path AND k.key=+r.id")
     db.execute("CREATE TEMP TABLE reach_batch(root INTEGER PRIMARY KEY)")
     db.execute("CREATE TEMP TABLE reach_pairs(root INTEGER,node INTEGER,PRIMARY KEY(root,node)) WITHOUT ROWID")
     for table in ["reach_keys", "reach_edges", "reach_requests"]:

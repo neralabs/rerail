@@ -9,7 +9,7 @@ import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/profiling"))
-from reachability_sql import connect, materialize, requested_roots
+from reachability_sql import connect, materialize, requested_roots, prepare
 
 EXTENSION = os.environ.get("RERAIL_REACH_EXTENSION")
 
@@ -27,6 +27,18 @@ def expected(db, roots):
       SELECT id,id FROM nodes WHERE id IN (SELECT value FROM json_each(?))
       UNION SELECT w.root,e.dst FROM walk w JOIN edges e ON e.src=w.node)
       SELECT root,node FROM walk ORDER BY root,node""", (json.dumps([str(root) for root in roots]),)).fetchall()
+
+
+class SqlPreparationTests(unittest.TestCase):
+    def test_typed_integer_identities_keep_indexed_normalization(self):
+        db = connect(None, seconds=10, work=300_000)
+        db.executescript("CREATE TABLE nodes(__path TEXT,id INTEGER); CREATE TABLE edges(__path TEXT,src INTEGER,dst INTEGER)")
+        db.executemany("INSERT INTO nodes VALUES('a.py',?)", [(n,) for n in range(1000)])
+        db.executemany("INSERT INTO edges VALUES('a.py',?,?)", [(n,n+1) for n in range(999)])
+        roots = prepare(db, "SELECT __path,id FROM nodes WHERE id%100=0")
+        self.assertEqual(roots, [n+1 for n in range(0,1000,100)])
+        self.assertEqual(db.execute("SELECT typeof(+'001'),+'001'").fetchone(), ('text','001'))
+        db.close()
 
 
 @unittest.skipUnless(EXTENSION, "Set RERAIL_REACH_EXTENSION to the compiled SQLite extension")

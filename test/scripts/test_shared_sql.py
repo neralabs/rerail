@@ -6,7 +6,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "dsl"))
-from data_layer_six.ast_relations import grouped_relations, relational, defer_node_text, typed_input_partitions, narrow_deferred_windows
+from data_layer_six.ast_relations import grouped_relations, relational, defer_node_text, typed_input_partitions, narrow_deferred_windows, shared_syntax_relations
 from data_layer_six.common import E, K, S
 
 
@@ -22,6 +22,22 @@ def resolve(value, entry, oracle=False):
 
 
 class SharedSqlTests(unittest.TestCase):
+    def test_shared_syntax_eliminates_reconstruction_and_preserves_gates(self):
+        clause = relational("quality-contracts-1", [S("calls", "SELECT n.*,f.id AS callee FROM nodes n JOIN nodes f ON f.id=n.function_kind||':'||n.function_start||':'||n.function_end"), S("descendants", "unused")], "SELECT * FROM calls")
+        clause["relational"]["inputs"]["raw_nodes"]["evidence"]["query"]["ast"]["rule"]["all"].append({"filePath": {"regex": "^eligible/"}})
+        defer_node_text(clause)
+        self.assertTrue(shared_syntax_relations(clause))
+        plan = clause["relational"]
+        self.assertEqual(list(plan["inputs"]), ["syntax_gate"])
+        self.assertFalse({"nodes", "edges", "ownership"} & {s["name"] for s in plan["stages"]})
+        self.assertIn("n.function_id", next(s for s in plan["stages"] if s["name"]=="calls")["query"])
+        self.assertNotIn("||':'||", next(s for s in plan["stages"] if s["name"]=="calls")["query"])
+        self.assertEqual(next(s for s in plan["stages"] if s["name"]=="descendants")["reachability"]["syntax"], "nodes")
+        self.assertIn("type_id", next(s for s in plan["stages"] if s["name"]=="descendants")["reachability"]["roots"])
+        gate = plan["inputs"]["syntax_gate"]["evidence"]["query"]["ast"]["rule"]
+        self.assertIn({"filePath": {"regex": "^eligible/"}}, gate["all"])
+        self.assertIn({"kind": "module"}, gate["all"])
+
     def test_window_inputs_do_not_compute_unused_deferred_text(self):
         stage = S("last_methods", "SELECT * FROM (SELECT *,row_number() OVER(PARTITION BY __path,cls,name ORDER BY __start DESC) AS chosen FROM methods) WHERE chosen=1")
         clause = relational("quality-contracts-1", [stage], "SELECT * FROM last_methods")

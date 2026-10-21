@@ -15,6 +15,8 @@ mod forest;
 mod insert;
 mod reachability;
 mod source;
+pub(super) mod syntax;
+mod table;
 pub(super) use reachability::Reachability;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -50,6 +52,7 @@ pub(super) const REFERENCE_FIELDS: &[&str] = &[
 
 #[derive(Clone)]
 pub(super) struct Plan {
+    pub(super) syntax: Option<Arc<syntax::Spec>>,
     pub(super) per_file: bool,
     pub(super) references: Option<References>,
     pub(super) locations: BTreeSet<String>,
@@ -334,6 +337,8 @@ pub(super) fn create_stage(
     }
     #[cfg(feature = "code-rule-profile")]
     let mut span = super::profile::trace::Span::start("sql-materialize", &stage.name);
+    #[cfg(feature = "code-rule-profile")]
+    let work_before = work.load(Ordering::Relaxed);
     let physical = if materialize {
         deferred::physical_name(stage)
     } else {
@@ -373,7 +378,7 @@ pub(super) fn create_stage(
         span.detail(|| json!({"vmSteps":statement.get_status(StatementStatus::VmStep),
             "fullscanSteps":statement.get_status(StatementStatus::FullscanStep),
             "sorts":statement.get_status(StatementStatus::Sort),
-            "autoIndexRows":statement.get_status(StatementStatus::AutoIndex),"failed":executed.is_err()}));
+            "workBefore":work_before,"workAfter":work.load(Ordering::Relaxed),"autoIndexRows":statement.get_status(StatementStatus::AutoIndex),"failed":executed.is_err()}));
         drop(span);
     }
     executed?;
@@ -489,7 +494,38 @@ pub(super) fn evaluate(
         ));
         return result;
     }
-    let count = rows.iter().map(|rows| rows.witnesses.len()).sum();
+    let syntax_files = (|| -> Result<syntax::Files> {
+        let Some(spec) = &plan.syntax else {
+            return Ok(Vec::new());
+        };
+        let gate = plan
+            .inputs
+            .iter()
+            .position(|(name, _)| name == &spec.gate)
+            .ok_or_else(|| invalid("missing syntax gate"))?;
+        let paths = rows[gate]
+            .witnesses
+            .iter()
+            .map(|w| w.path.as_str())
+            .collect::<BTreeSet<_>>();
+        snapshot
+            .files
+            .iter()
+            .filter(|f| code_rule.scope.matches(&f.path) && paths.contains(f.path.as_str()))
+            .map(|f| Ok((f.path.clone(), syntax::Pool::get(f)?)))
+            .collect()
+    })();
+    let syntax_files = match syntax_files {
+        Ok(files) => files,
+        Err(e) => {
+            result
+                .failures
+                .push(failure(&clause.id, "source-incomplete", &e.reason, None));
+            return result;
+        }
+    };
+    let count: usize = rows.iter().map(|rows| rows.witnesses.len()).sum::<usize>()
+        + syntax_files.iter().map(|(_, f)| f.len()).sum::<usize>();
     let work = Arc::new(AtomicUsize::new(0));
     work.store(
         code_rule.capabilities.limits.visits_for(count),
@@ -520,6 +556,9 @@ pub(super) fn evaluate(
         }
         db.execute_batch("BEGIN").map_err(sql_error)?;
         let mut tables = BTreeSet::new();
+        if let Some(spec) = &plan.syntax {
+            tables.extend(syntax::load(&db, spec, &syntax_files, Arc::clone(&work))?);
+        }
         for ((name, input), rows) in plan.inputs.iter().zip(rows) {
             #[cfg(feature = "code-rule-profile")]
             if std::env::var_os("RERAIL_CODE_RULE_RELATIONAL_PROFILE").is_some() {
@@ -653,7 +692,21 @@ pub(super) fn evaluate(
             }
             #[cfg(feature = "code-rule-profile")]
             let started = std::time::Instant::now();
-            let materialized = create_stage(&db, stage, true, &work);
+            let materialized =
+                if let Some(spec) = stage.reachability.as_ref().filter(|s| s.syntax.is_some()) {
+                    syntax::closure(
+                        &db,
+                        stage,
+                        spec,
+                        plan.syntax
+                            .as_ref()
+                            .ok_or_else(|| invalid("missing syntax source"))?,
+                        &syntax_files,
+                        &work,
+                    )
+                } else {
+                    create_stage(&db, stage, true, &work)
+                };
             #[cfg(feature = "code-rule-profile")]
             if std::env::var_os("RERAIL_CODE_RULE_RELATIONAL_PROFILE").is_some() {
                 super::profile::trace::emit(
@@ -683,6 +736,7 @@ pub(super) fn evaluate(
         let mut query = statement.query([]).map_err(sql_error)?;
         let mut findings = Vec::new();
         let mut identities = BTreeSet::new();
+        let mut syntax_ignores = HashMap::new();
         while let Some(row) = query.next().map_err(sql_error)? {
             if findings.len() >= code_rule.capabilities.limits.max_witnesses {
                 return Err(invalid("relational witness budget exceeded"));
@@ -716,13 +770,31 @@ pub(super) fn evaluate(
                 .and_then(|by_span| by_span.get(&(start, end)))
                 .copied()
                 .or_else(|| {
+                    syntax_files
+                        .iter()
+                        .find(|(p, _)| p == path)
+                        .and_then(|(_, f)| f.span(start, end, &plan.syntax.as_ref()?.exclude_kinds))
+                        .map(|s| (s, false))
+                })
+                .or_else(|| {
                     (start == 0 && end == 0 && plan.locations.contains(path))
                         .then_some((super::violations::Span::default(), false))
                 })
                 .ok_or_else(|| {
                     invalid("relational results must anchor to an input witness span")
                 })?;
-            if ignored {
+            let syntax_ignored = clause.violation.ignored_by.as_deref().is_some_and(|rule| {
+                syntax_files
+                    .iter()
+                    .find(|(p, _)| p == path)
+                    .is_some_and(|(path, facts)| {
+                        syntax_ignores
+                            .entry(path.clone())
+                            .or_insert_with(|| facts.read_ignores())
+                            .ignores(rule, start)
+                    })
+            });
+            if ignored || syntax_ignored {
                 continue;
             }
             let mut output_clause = clause.clone();

@@ -63,6 +63,12 @@ pub(super) struct Grammar {
 }
 
 impl Grammar {
+    pub(super) fn field_code(&self, name: &str) -> Option<u16> {
+        self.kinds.field_id(name)
+    }
+    pub(super) fn has_field(&self, name: &str) -> bool {
+        self.kinds.field_id(name).is_some()
+    }
     pub(super) fn new(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         let kinds = lang.kinds();
         if kinds.kind_count() > KIND_LIMIT || kinds.field_count() >= FIELD_LIMIT {
@@ -1492,7 +1498,6 @@ impl TapeDoc {
         self.data[node as usize].kind
     }
 
-    #[cfg(any(test, feature = "code-rule-profile"))]
     fn kind_alias(&self, node: u32) -> Option<&(String, bool)> {
         self.kind_overrides
             .binary_search_by_key(&node, |&(index, _)| index)
@@ -1500,7 +1505,6 @@ impl TapeDoc {
             .map(|slot| &self.kind_aliases[self.kind_overrides[slot].1 as usize])
     }
 
-    #[cfg(any(test, feature = "code-rule-profile"))]
     fn node_is_named(&self, node: u32) -> bool {
         self.kind_alias(node).map_or_else(
             || self.grammar.kind_is_named(self.data[node as usize].kind),
@@ -1508,12 +1512,10 @@ impl TapeDoc {
         )
     }
 
-    #[cfg(any(test, feature = "code-rule-profile"))]
     pub(super) fn transducer_field(&self, node: u32) -> u16 {
         self.data[node as usize].field
     }
 
-    #[cfg(any(test, feature = "code-rule-profile"))]
     pub(super) fn transducer_flags(&self, node: u32) -> u8 {
         let rec = &self.data[node as usize];
         u8::from(self.node_is_named(node))
@@ -1527,7 +1529,6 @@ impl TapeDoc {
         rec.start as usize..rec.end as usize
     }
 
-    #[cfg(any(test, feature = "code-rule-profile"))]
     pub(super) fn transducer_parent(&self, node: u32) -> Option<u32> {
         let parent = self.data[node as usize].parent;
         (parent != NONE).then_some(parent)

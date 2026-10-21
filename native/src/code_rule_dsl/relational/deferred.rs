@@ -72,12 +72,19 @@ pub(super) fn view(db: &Connection, stage: &Stage) -> Result<()> {
 pub(super) fn release(db: &Connection, name: &str, stages: &[Stage]) -> Result<()> {
     let stage = stages.iter().find(|s| s.name == name);
     match stage {
-        Some(stage) if stage.reachability.is_some() => db.execute_batch(&format!(
-            "DROP VIEW {};DROP TABLE {};DROP TABLE {}",
-            quote(name),
-            quote(&format!("__reach_{name}_keys")),
-            quote(&format!("__reach_{name}_pairs"))
-        )),
+        Some(stage)
+            if stage
+                .reachability
+                .as_ref()
+                .is_some_and(|s| s.syntax.is_none()) =>
+        {
+            db.execute_batch(&format!(
+                "DROP VIEW {};DROP TABLE {};DROP TABLE {}",
+                quote(name),
+                quote(&format!("__reach_{name}_keys")),
+                quote(&format!("__reach_{name}_pairs"))
+            ))
+        }
         Some(stage) if !stage.deferred.is_empty() => db.execute_batch(&format!(
             "DROP VIEW {};DROP TABLE {}",
             quote(name),

@@ -46,6 +46,7 @@ pub(super) fn compile(
             "references",
             "locations",
             "partitionBy",
+            "syntax",
         ],
         path,
     )?;
@@ -139,6 +140,79 @@ pub(super) fn compile(
         tables.insert(name.clone());
         inputs.push((name.clone(), input));
     }
+    let syntax = spec
+        .get("syntax")
+        .map(|value| -> Result<relational::syntax::Spec> {
+            let mut syntax: relational::syntax::Spec =
+                serde_json::from_value(value.clone()).map_err(|e| invalid(e.to_string()))?;
+            if !inputs.iter().any(|(name, _)| name == &syntax.gate) {
+                return Err(invalid("syntax gate must name an input"));
+            }
+            if syntax.fields.len() > 32
+                || syntax.exclude_kinds.len() > 32
+                || syntax.empty_text_kinds.len() > 32
+                || syntax.columns.len() > 256
+                || syntax.owners.len() > 8
+            {
+                return Err(invalid(
+                    "syntax declaration exceeds its field or owner bound",
+                ));
+            }
+            let gate = inputs
+                .iter()
+                .find(|(name, _)| name == &syntax.gate)
+                .unwrap();
+            let crate::code_rule_dsl::model::Query::Ast { matchers, .. } = &gate.1.ast.query else {
+                return Err(invalid("syntax gate requires one AST grammar"));
+            };
+            let language = matchers
+                .first()
+                .ok_or_else(|| invalid("syntax gate has no grammar"))?
+                .language;
+            if matchers.iter().any(|m| m.language != language) {
+                return Err(invalid("syntax gate must select one grammar"));
+            }
+            let grammar = crate::code_rule_dsl::tape::Grammar::new(language).map_err(invalid)?;
+            for kind in syntax.exclude_kinds.iter().chain(&syntax.empty_text_kinds) {
+                if kind.is_empty() || kind.len() > 128 {
+                    return Err(invalid("invalid syntax kind"));
+                }
+            }
+            let mut fields = BTreeSet::new();
+            for field in &syntax.fields {
+                if !fields.insert(field) || !grammar.has_field(field) {
+                    return Err(invalid("syntax field is unknown or repeated"));
+                }
+            }
+            let mut declared = vec![&syntax.name];
+            declared.extend(syntax.edges.iter());
+            declared.extend(syntax.ownership.iter());
+            for name in declared {
+                if !relational::identifier(name)
+                    || tables.iter().any(|n| n.eq_ignore_ascii_case(name))
+                {
+                    return Err(invalid("syntax relations must have distinct names"));
+                }
+                tables.insert(name.clone());
+            }
+            for (name, owner) in &syntax.owners {
+                if !relational::identifier(name)
+                    || matches!(name.as_str(), "id" | "__path")
+                    || owner.kind.is_empty()
+                    || owner.kind.len() > 128
+                {
+                    return Err(invalid("invalid syntax owner declaration"));
+                }
+            }
+            for field in &syntax.fields {
+                syntax
+                    .field_codes
+                    .insert(field.clone(), grammar.field_code(field).unwrap_or(0));
+            }
+            relational::syntax::schema(&db, &syntax)?;
+            Ok(syntax)
+        })
+        .transpose()?;
     let references = spec.get("references").map(|value| -> Result<_> {
         let at = format!("{path}/references");
         let spec = object(value,&at)?;
@@ -158,7 +232,7 @@ pub(super) fn compile(
     }).transpose()?;
     let mut stages = Vec::new();
     let mut last_uses = BTreeMap::new();
-    let mut reads_source = false;
+    let mut reads_source = syntax.is_some();
     if let Some(value) = spec.get("stages") {
         let values = value
             .as_array()
@@ -192,7 +266,9 @@ pub(super) fn compile(
                         )));
                     }
                     let shape = object(value, &format!("{at}/reachability"))?;
-                    reject_unknown(shape, &["roots", "edges", "batchSize", "graph"], &at)?;
+                    reject_unknown(shape, &["roots", "edges", "batchSize", "graph", "syntax"], &at)?;
+                    let syntax_source=shape.get("syntax").map(|v|non_empty_str(Some(v),&at).map(str::to_owned)).transpose()?;
+                    if let Some(name)=&syntax_source && (syntax.as_ref().is_none_or(|s| &s.name!=name) || shape.contains_key("edges") || shape.contains_key("graph")) {return Err(invalid("syntax reachability must name the declared syntax source and cannot declare edges or graph"));}
                     let forest = match shape.get("graph").and_then(Value::as_str) {
                         None if !shape.contains_key("graph") => false,
                         Some("directed") => false,
@@ -208,6 +284,7 @@ pub(super) fn compile(
                         ("roots", vec!["__path", "id"]),
                         ("edges", vec!["__path", "src", "dst"]),
                     ] {
+                        if field=="edges" && syntax_source.is_some() { queries.push(String::new());continue; }
                         let query = text(
                             shape.get(field),
                             &format!("{at}/reachability/{field}"),
@@ -240,6 +317,7 @@ pub(super) fn compile(
                         edges: queries.remove(0),
                         batch_size,
                         forest,
+                        syntax: syntax_source,
                     })
                 })
                 .transpose()?;
@@ -369,6 +447,7 @@ pub(super) fn compile(
         }
     }
     Ok(Plan {
+        syntax: syntax.map(Arc::new),
         per_file,
         references,
         locations,
