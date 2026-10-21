@@ -169,31 +169,24 @@ pack's README, under "Rule details". For example: `Avoid dd() and dump() calls; 
 
 ### Message
 
-The message tells the agent what to change in this code and, where the change can be wrong, when to leave it alone.
+The message tells the agent what to change and, when the change could be wrong, when not to.
 
-1. It says what to change in this code: the replacement, or what to remove. A fact or a ban that names no change ("Use
-   of the insecure ECB cipher mode.", "Do not use bare except") is not advice.
-2. If you can write code this rule matches where following the message would be wrong (the matcher can't see the
-   intent, or the change alters what the code does when it runs), the message says when to leave the code alone or what
-   the change trades off ("…`strict=False` if truncation is intended").
-3. Its tone matches what the rule can confirm. It doesn't soften the advice ("consider", "you might want to"), doesn't
-   shout (NEVER, MUST, ALWAYS in capitals), and states a risk only as far as the rule can confirm it ("can run arbitrary
-   code if the input is untrusted", not "is vulnerable").
-4. Its advice is right for every match of its clause, counting the exception rule 2 names, and agrees with the clause's
-   `fix` when it has one. It names what the clause captured (`$NAME`, `$CCN`) where that makes clear which code it
-   means; it can only use captures the clause defines.
-5. It leaves out what the block adds (the rule id, the location, "Rerail", "fix it or explain") and the rule's origin and
-   internals: no upstream tool name, rule code ("B113", "PIE810") or tool version, and no matcher terms (AST node kinds,
-   regexes). Quoting the code the finding is about is fine, even when it names a tool (`# noqa`, `// eslint-disable`).
-6. Each text it can show is at most 200 characters, counting placeholders as written (`$NAME` counts as 5). It may open
-   with what was found and run to more than one sentence.
-7. When the right advice differs between things the rule matches (`x == None` and `x != None`), the message differs
-   too: give each its own clause and message, or build the difference into the message from a capture. One message
-   telling both to "use `is None`" gives the opposite advice for `!=`.
+1. It names the change: a replacement or what to remove. A fact or a ban alone isn't advice.
+2. If following it would be wrong for some code it matches, it says when to leave the code alone or what the change
+   trades off.
+3. It states a risk only as far as the rule can confirm it, without softening ("consider") or shouting (NEVER, MUST).
+4. It is right for every match it doesn't exempt, agrees with the clause's `fix`, and names captures (`$NAME`) where
+   that shows which code it means.
+5. It leaves out the rule id, location, "Rerail" and "fix it or explain", and names no tool, rule code, tool version or
+   matcher term outside quoted code.
+6. Each text it can show is at most 200 characters (placeholders as written), in any number of sentences.
+7. Matches that need different advice get different messages (`x == None` and `x != None`).
 
-For example: `This exception is silently discarded with pass. Handle or log it, or catch a specific expected exception when
-suppression is intentional.`, or `` `$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller
-functions. ``
+| Instead of | Write |
+|---|---|
+| `Bandit B113 (request-without-timeout)` | `Pass a finite timeout to this HTTP call; without one a slow server can hang the program.` |
+| `zip() without an explicit strict= parameter` | ``Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended.`` |
+| ``Comparison to `None` should be `cond is None` ``, one clause for `==` and `!=` | One clause each: ``Use `is None` instead of `== None` for this comparison.`` and ``Use `is not None` instead of `!= None` for this comparison.`` |
 
 These criteria are for reviewers and never block a merge: no check reads a message's text.
 

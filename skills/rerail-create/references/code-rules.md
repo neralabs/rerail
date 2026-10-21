@@ -109,28 +109,25 @@ Rerail found 1 problem in your last edit:
 Fix it, or tell the user in one line why you won't.
 ```
 
-So the message tells the agent what to change in this code and, where the change can be wrong, when to leave it alone.
+So the message tells the agent what to change and, when the change could be wrong, when not to.
 
-1. **Say what to change:** the replacement, or what to remove: "Log through `logger.info` (src/log.ts) instead of
-   console.log." A fact or a ban that names no change is not advice. Where a helper exists, point to it rather than
-   saying "remove" or "delete": a steer to delete is the most common harmful steer.
-2. **Say when to leave it alone** if you can write code this rule matches where following the message would be wrong
-   (the matcher can't see the intent, or the change alters what the code does when it runs): "…; keep it if this call
-   can fail in normal operation."
-3. **Match the tone to what the rule can confirm:** don't soften the advice ("consider", "you might want to"), don't
-   shout (NEVER, MUST, ALWAYS in capitals), and state a risk only as far as the rule can confirm it ("can run arbitrary
-   code if the input is untrusted", not "is vulnerable").
-4. **Be right for every match** of the clause, counting the exception rule 2 names, and agree with its `fix` when it has
-   one. Name what the clause captured (`$M`, `$NAME`) where that makes clear which code you mean; only metavariables the
-   clause defines can be used.
-5. **Leave out what the block adds and the rule's origin and internals:** no rule id, location, "Rerail" or "fix it or
-   explain", and no linter names, rule codes ("B113", "no-console"), tool versions or matcher terms (AST node kinds,
-   regexes). Quoting the code the finding is about is fine, even when it names a tool (`# noqa`, `// eslint-disable`).
-6. **At most 200 characters for each text it can show,** counting metavariables as written (`$NAME` counts as 5). It may
-   open with what was found and take more than one sentence.
-7. **Let the message differ when the right advice does:** when the rule matches things that need different advice
-   (`x == None` and `x != None`), give each its own clause and message, or build the difference into the message from a
-   capture. One message telling both to "use `is None`" gives the opposite advice for `!=`.
+1. **Name the change:** a replacement or what to remove. A fact or a ban alone isn't advice. Where a helper exists,
+   point to it rather than saying "remove" or "delete": a steer to delete is the most common harmful steer.
+2. **Say when to leave it alone** if following it would be wrong for some code it matches, or what the change trades
+   off.
+3. **State a risk only as far as the rule can confirm it,** without softening ("consider") or shouting (NEVER, MUST).
+4. **Be right for every match you don't exempt,** agree with the clause's `fix`, and name captures (`$NAME`) where that
+   shows which code you mean.
+5. **Leave out the rule id, location, "Rerail" and "fix it or explain",** and name no linter, rule code, tool version
+   or matcher term outside quoted code.
+6. **At most 200 characters for each text it can show** (metavariables as written), in any number of sentences.
+7. **Give matches that need different advice different messages** (`x == None` and `x != None`).
+
+| Instead of | Write |
+|---|---|
+| `Bandit B113 (request-without-timeout)` | `Pass a finite timeout to this HTTP call; without one a slow server can hang the program.` |
+| `zip() without an explicit strict= parameter` | ``Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended.`` |
+| ``Comparison to `None` should be `cond is None` ``, one clause for `==` and `!=` | One clause each: ``Use `is None` instead of `== None` for this comparison.`` and ``Use `is not None` instead of `!= None` for this comparison.`` |
 
 Also:
 
