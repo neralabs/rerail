@@ -58,7 +58,8 @@ The workspace driver collects dirty relational work across policies, clauses, an
 Stateless evaluation collects all relational partitions in the requested policy.
 SQL sessions retain their connections, stage positions, work counters, and diagnostic anchors across suspension.
 Existing file-local result caches retain their exact document-version keys.
-Workspace eligibility witnesses remain gates rather than projected input relations.
+Workspace eligibility witnesses remain gates for native syntax inputs.
+Global clauses can retain selective projected evidence when a file gate cannot express their row selection.
 Preparation extracts the full declared inputs before consumers run.
 
 The syntax backing uses fixed-width node columns, field ranges, owner columns, and CSR postings.
@@ -75,8 +76,16 @@ Only a successful token permits the dependent SQL stages to advance.
 
 The producer arena permits 64 MiB of packed input and 256 MiB of result columns.
 The complete batch permits 100 producer passes across dependent waves.
-Oversized waves currently fail explicitly. Automatic memory partitioning is not implemented.
-SQL session memory remains separate from the producer arena and existing document-cache reservations.
+The driver admits suspended consumers by packed input capacity and a 256 MiB SQLite storage target.
+It runs broad producer waves within each admitted capacity partition, then closes completed SQL sessions.
+Admission measures SQLite cache, schema, and statement storage without scanning relation rows.
+It measures each consumer at its first producer suspension; subsequent SQL stages can increase that storage.
+One prepared candidate can cross the target while the previous partition drains.
+A single SQL consumer can exceed this scheduling target under its existing work and output limits.
+Projected evidence, prepared syntax facts, publication indexes, and document caches remain outside this target.
+This admission target is not a process memory bound.
+An individually oversized producer relation fails explicitly without rejecting fitting peers.
+Capacity partitions release packed input without resetting the complete evaluation's 100-pass allowance.
 These limits describe the CPU reference boundary, not measured GPU allocations or kernel launches.
 
 ## Required check
@@ -89,6 +98,7 @@ A dependent wave must reuse all resident document input.
 The normal native suite also checks complete descendant rows against the SQL forest oracle.
 Empty completion, peer failures, Unicode, exclusions, edits, and source gates retain their existing contracts.
 Failed or interrupted outputs never enter the file-result cache.
+Rust capacity tests also cover admission, original result order, peer isolation, and the shared stage allowance across partitions.
 
 ## Recorded results
 

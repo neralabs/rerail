@@ -9,6 +9,35 @@ pub(in crate::code_rule_dsl) struct Database {
 }
 
 impl Database {
+    /// SQLite-owned storage held by a suspended consumer, without scanning rows.
+    pub(super) fn resident_bytes(&self) -> rusqlite::Result<usize> {
+        let mut total = 0usize;
+        for kind in [
+            rusqlite::ffi::SQLITE_DBSTATUS_CACHE_USED,
+            rusqlite::ffi::SQLITE_DBSTATUS_SCHEMA_USED,
+            rusqlite::ffi::SQLITE_DBSTATUS_STMT_USED,
+        ] {
+            let (mut current, mut high) = (0i64, 0i64);
+            // SAFETY: this owned connection stays live and is used only on its evaluating thread.
+            let code = unsafe {
+                rusqlite::ffi::sqlite3_db_status64(
+                    self.connection.handle(),
+                    kind,
+                    &mut current,
+                    &mut high,
+                    0,
+                )
+            };
+            if code != rusqlite::ffi::SQLITE_OK {
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(code),
+                    None,
+                ));
+            }
+            total = total.saturating_add(usize::try_from(current.max(0)).unwrap_or(usize::MAX));
+        }
+        Ok(total)
+    }
     pub(super) fn open() -> rusqlite::Result<Self> {
         let connection = Connection::open_in_memory()?;
         #[cfg(feature = "code-rule-profile")]

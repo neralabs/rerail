@@ -37,11 +37,10 @@ pub(super) fn create(
     db.execute_batch(&format!(
         "CREATE TEMP TABLE {roots} AS SELECT DISTINCT __path,+id AS id FROM ({root_query}) WHERE __path IS NOT NULL AND id IS NOT NULL;
          CREATE TEMP TABLE {edges} AS SELECT DISTINCT __path,+src AS src,+dst AS dst FROM ({edge_query}) WHERE __path IS NOT NULL AND src IS NOT NULL AND dst IS NOT NULL;
-         CREATE TEMP TABLE {keys}(__path TEXT NOT NULL,key,compact INTEGER NOT NULL);
-         INSERT INTO {keys} SELECT __path,key,row_number() OVER(ORDER BY __path,key) FROM (
-           SELECT __path,id AS key FROM {roots} UNION SELECT __path,src FROM {edges} UNION SELECT __path,dst FROM {edges});
+         CREATE TEMP TABLE {keys}(__path TEXT NOT NULL,key,compact INTEGER PRIMARY KEY);
+         INSERT INTO {keys}(__path,key)
+           SELECT __path,id AS key FROM {roots} UNION SELECT __path,src FROM {edges} UNION SELECT __path,dst FROM {edges};
          CREATE UNIQUE INDEX {key_text} ON {keys}(__path,key);
-         CREATE UNIQUE INDEX {key_int} ON {keys}(compact);
          CREATE TEMP TABLE {compact} AS SELECT a.compact AS src,b.compact AS dst FROM {edges} e
            JOIN {keys} a ON a.__path=e.__path AND a.key=e.src JOIN {keys} b ON b.__path=e.__path AND b.key=e.dst;
          CREATE INDEX {forward} ON {compact}(src,dst);
@@ -52,7 +51,7 @@ pub(super) fn create(
          CREATE TEMP TABLE {pairs}(root INTEGER,node INTEGER,PRIMARY KEY(root,node)) WITHOUT ROWID;
          ANALYZE temp.{keys}; ANALYZE temp.{compact}; ANALYZE temp.{requests};",
         root_query = spec.roots, edge_query = spec.edges,
-        key_text = name("key_text"), key_int = name("key_int"), forward = name("forward"),
+        key_text = name("key_text"), forward = name("forward"),
     )).map_err(sql_error)?;
     #[cfg(feature = "code-rule-profile")]
     drop(span);

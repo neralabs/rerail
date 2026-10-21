@@ -10,6 +10,7 @@ use rusqlite::functions::FunctionFlags;
 use rusqlite::hooks::{AuthAction, Authorization};
 
 mod anchors;
+mod batch;
 mod database;
 use database::Database;
 pub(super) mod deferred;
@@ -920,113 +921,7 @@ pub(super) fn evaluate(
     .unwrap_or_default()
 }
 
-/// SQL sessions yield producer demands. Only this driver can execute a producer wave.
+/// SQL remains the consumer; capacity partitions bound suspended sessions.
 pub(super) fn evaluate_batch(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
-    #[cfg(feature = "code-rule-profile")]
-    let prepare = super::profile::trace::Span::start("producer-prepare", "documents");
-    let mut contexts = Vec::new();
-    let mut clauses = Vec::new();
-    let mut sessions = Vec::new();
-    let mut results = Vec::new();
-    let mut prepared = HashMap::new();
-    for mut job in jobs {
-        clauses.push(job.clause);
-        let result = job.budget.run(|| {
-            Session::new(
-                job.code_rule,
-                job.clause,
-                job.rows,
-                &job.snapshot,
-                job.facts,
-                &mut prepared,
-            )
-        });
-        contexts.push(job.budget);
-        let error = result.as_ref().err().map(|e| e.reason.clone());
-        sessions.push(result.ok());
-        results.push(Evaluation::default());
-        if sessions.last().unwrap().is_none() {
-            results.last_mut().unwrap().failures.push(failure(
-                &job.clause.id,
-                "source-incomplete",
-                error.as_deref().unwrap_or("Relational preparation failed"),
-                None,
-            ));
-        }
-    }
-    #[cfg(feature = "code-rule-profile")]
-    drop(prepare);
-    let mut allowance = producer::Allowance::default();
-    loop {
-        let mut pending = Vec::new();
-        for i in 0..sessions.len() {
-            let Some(session) = sessions[i].as_mut() else {
-                continue;
-            };
-            #[cfg(feature = "code-rule-profile")]
-            let _context = super::profile::trace::Context::enter(
-                &session.code_rule.id,
-                &clauses[i].id,
-                (session.syntax_files.len() == 1).then(|| session.syntax_files[0].0.as_str()),
-            );
-            match contexts[i].run(|| session.advance()) {
-                Ok(Some(demand)) => pending.push((i, demand)),
-                Ok(None) => {
-                    match contexts[i].run(|| session.finish()) {
-                        Ok(findings) => {
-                            results[i].metrics.witnesses = findings.len();
-                            results[i].violations = findings;
-                        }
-                        Err(e) => results[i].failures.push(failure(
-                            &clauses[i].id,
-                            "relational-failed",
-                            &e.reason,
-                            None,
-                        )),
-                    };
-                    sessions[i] = None;
-                }
-                Err(e) => {
-                    results[i].failures.push(failure(
-                        &clauses[i].id,
-                        "relational-failed",
-                        &e.reason,
-                        None,
-                    ));
-                    sessions[i] = None;
-                }
-            }
-        }
-        if pending.is_empty() {
-            break;
-        }
-        let indices = pending.iter().map(|(i, _)| *i).collect::<Vec<_>>();
-        let output = producer::execute(pending, &mut contexts, &mut allowance);
-        for (i, output) in indices.into_iter().zip(output) {
-            let result = output
-                .and_then(|out| contexts[i].run(|| sessions[i].as_mut().unwrap().publish(out)));
-            if let Err(e) = result {
-                results[i].failures.push(failure(
-                    &clauses[i].id,
-                    "relational-failed",
-                    &e.reason,
-                    None,
-                ));
-                sessions[i] = None;
-            }
-        }
-    }
-    for (i, context) in contexts.iter().enumerate() {
-        if context.observed() {
-            results[i].violations.clear();
-            results[i].metrics.witnesses = 0;
-            results[i].failures.push(failure(
-                &clauses[i].id,
-                "budget-exceeded",
-                "relational work budget exceeded",
-                None,
-            ));
-        }
-    }
-    results
+    batch::evaluate(jobs)
 }
