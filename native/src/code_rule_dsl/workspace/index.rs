@@ -13,7 +13,7 @@ use super::api::{WorkspaceApplyTask, cpu_slot};
 use super::crossfile::CrossFileScheduler;
 use super::global::record_evidence;
 use super::ingest::{Request, WireFile, make_file};
-use super::persisted::{candidate_catalog, file_context, restore_complete_results};
+use super::persisted::{file_context, restore_complete_results, result_keys};
 use super::storage::StorageContext;
 use super::{
     Candidates, REUSE_DIRECTORY_RESULTS, REUSE_LOCAL_RESULTS, WorkspaceState, check_closed,
@@ -398,11 +398,11 @@ impl WorkspaceIndexTask {
             &mut failures,
         )?;
         let directories = reusable_directories(repository, prefix);
-        let catalog = candidate_catalog(&code_rules)?;
+        let result_keys = result_keys(&code_rules)?;
         let reusable_prefixes = if REUSE_DIRECTORY_RESULTS {
             storage
                 .store
-                .reusable_directory_prefixes(catalog, &directories)
+                .reusable_directory_prefixes(result_keys.catalog, &directories)
                 .map_err(|error| invalid(error.to_string()))?
         } else {
             HashSet::new()
@@ -412,7 +412,13 @@ impl WorkspaceIndexTask {
             gate();
         }
         let restored = if REUSE_LOCAL_RESULTS {
-            self.restore(storage, repository, &accepted, &reusable_prefixes, catalog)?
+            self.restore(
+                storage,
+                repository,
+                &accepted,
+                &reusable_prefixes,
+                result_keys.domain,
+            )?
         } else {
             HashSet::new()
         };
@@ -441,7 +447,7 @@ impl WorkspaceIndexTask {
         repository: &git_workspace::GitWorkspace,
         accepted: &[PendingFile],
         reusable_prefixes: &HashSet<String>,
-        catalog: CandidateCatalogIdentity,
+        domain: CandidateCatalogIdentity,
     ) -> Result<HashSet<String>> {
         let aliases = accepted
             .iter()
@@ -481,7 +487,7 @@ impl WorkspaceIndexTask {
             .collect::<Vec<_>>();
         let result_manifest = storage
             .store
-            .local_check_results_by_key(&keys, catalog)
+            .local_check_results_by_key(&keys, domain)
             .map_err(|error| invalid(error.to_string()))?;
         // Discovery found these files clean at scan start, but a file may change after it, and a
         // checkout conversion keeps a file clean in Git while its bytes differ from the blob's

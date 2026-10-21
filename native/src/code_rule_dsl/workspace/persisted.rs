@@ -60,16 +60,12 @@ pub(super) fn restore_complete_results(
         .chain(&file.candidates.ast)
         .copied()
         .collect::<HashSet<_>>();
-    let identities = candidate_identities(code_rules);
+    let (selected, undecodable) =
+        result_keys(code_rules)
+            .ok()?
+            .select(persisted, &expected, &file.input.path);
     let mut restored = HashSet::new();
-    for result in persisted {
-        let Some(&id) = identities.get(&result.candidate) else {
-            continue;
-        };
-        if !expected.contains(&id) {
-            continue;
-        }
-        let (witnesses, failure, syntax) = decode_local_result(&result.bytes, &file.input.path)?;
+    for (id, (witnesses, failure, syntax)) in selected {
         file.witnesses.insert(id, witnesses);
         if let Some(failure) = failure {
             file.failures.insert(id, failure);
@@ -79,7 +75,7 @@ pub(super) fn restore_complete_results(
         }
         restored.insert(id);
     }
-    (restored == expected).then_some(restored)
+    (!undecodable && restored == expected).then_some(restored)
 }
 
 /// The stored per-file result encoding. A stored result of any other version is a cache miss.
@@ -236,7 +232,6 @@ pub(super) fn restore_persisted_file(
     };
     let source_id = stored.source;
 
-    let identities = candidate_identities(code_rules);
     let eligible = file
         .candidates
         .regex
@@ -244,19 +239,13 @@ pub(super) fn restore_persisted_file(
         .chain(&file.candidates.ast)
         .copied()
         .collect::<HashSet<_>>();
+    let (selected, _) = result_keys(code_rules)?.select(
+        persisted_results.into_iter().flatten(),
+        &eligible,
+        &file.input.path,
+    );
     let mut restored = HashSet::new();
-    for result in persisted_results.into_iter().flatten() {
-        let Some(&id) = identities.get(&result.candidate) else {
-            continue;
-        };
-        if !eligible.contains(&id) {
-            continue;
-        }
-        let Some((witnesses, failure, syntax)) =
-            decode_local_result(&result.bytes, &file.input.path)
-        else {
-            continue;
-        };
+    for (id, (witnesses, failure, syntax)) in selected {
         file.witnesses.insert(id, witnesses);
         if let Some(failure) = failure {
             file.failures.insert(id, failure);
@@ -390,32 +379,6 @@ fn candidate_clause(
     }
 }
 
-/// Each code rule's stored identity, by code rule index.
-fn rule_hashes(code_rules: &[Arc<CompiledCodeRule>]) -> Vec<HashKey> {
-    code_rules
-        .iter()
-        .map(|code_rule| HashKey::sha256(code_rule.id.as_bytes()))
-        .collect()
-}
-
-fn candidate_identities(
-    code_rules: &[Arc<CompiledCodeRule>],
-) -> HashMap<CandidateClause, ClauseId> {
-    code_rules
-        .iter()
-        .zip(rule_hashes(code_rules))
-        .enumerate()
-        .flat_map(|(code_rule_index, (code_rule, rule_hash))| {
-            (0..code_rule.clauses.len()).map(move |clause_index| {
-                (
-                    candidate_clause(rule_hash, code_rule, clause_index),
-                    (code_rule_index, clause_index),
-                )
-            })
-        })
-        .collect()
-}
-
 /// The engine build a stored clause result was computed by (see `build.rs`): any engine source or
 /// dependency change can change a clause's violations, so it changes the result catalog.
 fn engine_build_id() -> &'static str {
@@ -455,22 +418,183 @@ pub(super) fn file_context(input: &FileInput) -> HashKey {
     )
 }
 
-/// Recent code rule sets' catalogs, by their code rules' allocations: a code rule is not changed in place
-/// while a weak reference to it is held (`Arc::make_mut` moves it), so a set whose every code rule is
-/// still the one recorded has the recorded catalog.
-type CatalogMemo = (
-    &'static str,
-    Vec<Weak<CompiledCodeRule>>,
-    CandidateCatalogIdentity,
-);
-static CATALOGS: LazyLock<parking_lot::Mutex<Vec<CatalogMemo>>> = LazyLock::new(Default::default);
+/// The identities a code-rule set's stored results are kept under. A clause result depends on the
+/// source, the file context (`file_context`), its own code rule and the engine, never on the other
+/// code rules of the set: each is keyed by its check, `(rule, clause)` of its own code rule's
+/// identity, under the set-independent result `domain`. Editing, adding or removing a code rule
+/// therefore leaves every other code rule's results reusable.
+///
+/// The one exception is a `budget-exceeded` verdict. Native budgets are order- and memo-dependent
+/// (docs/sql-set-composition-design.md §Budgets): a clause is charged for the file tables no clause
+/// before it in the pass built, so whether it runs out of its own allowance depends on the set.
+/// Such a verdict is kept under the code rule's identity within this set (`set_rules`), so only
+/// the set that reached it reuses it, and that check is preferred to the code rule's own.
+pub(super) struct ResultKeys {
+    /// What every result is stored under besides its check: the engine build, the result
+    /// encoding, the grammar set, scanner and tape format, and no code rule.
+    pub(super) domain: CandidateCatalogIdentity,
+    /// The whole set's identity: what a completion marker (`complete_directories`,
+    /// `complete_workspace_revision`) records as evaluated.
+    pub(super) catalog: CandidateCatalogIdentity,
+    /// Each code rule's identity, by code rule index: its id, document digest (which covers its
+    /// defines), capabilities, clause ids and placement.
+    pub(super) rules: Vec<HashKey>,
+    /// Each code rule's identity within this set, by code rule index: its identity and the set's.
+    set_rules: Vec<HashKey>,
+    /// Every stored check of the set's clauses: the clause, and whether it is the set-scoped one.
+    identities: HashMap<CandidateClause, (ClauseId, bool)>,
+}
 
-/// The result catalog of `code_rules`: every apply reads it, so it is hashed once per code-rule set.
-pub(super) fn candidate_catalog(
-    code_rules: &[Arc<CompiledCodeRule>],
-) -> Result<CandidateCatalogIdentity> {
+impl ResultKeys {
+    fn new(engine: &str, code_rules: &[Arc<CompiledCodeRule>]) -> Result<Self> {
+        let identity = |code_rule_catalog| {
+            CandidateCatalogIdentity::new(
+                code_rule_catalog,
+                grammar_set(),
+                3,
+                i64::from(tape::TAPE_FORMAT_VERSION),
+            )
+            .map_err(|error| invalid(error.to_string()))
+        };
+        let domain = identity(HashKey::sha256(
+            format!("rerail-result-domain-v1\0{LOCAL_RESULT_VERSION}\0{engine}\0").as_bytes(),
+        ))?;
+        let rules = code_rules
+            .iter()
+            .map(|code_rule| rule_identity(code_rule))
+            .collect::<Vec<_>>();
+        let mut set =
+            format!("rerail-local-result-v{LOCAL_RESULT_VERSION}\0{engine}\0").into_bytes();
+        for rule in &rules {
+            set.extend_from_slice(&sha256_bytes(*rule));
+        }
+        let set = HashKey::sha256(&set);
+        let set_rules = rules
+            .iter()
+            .map(|rule| {
+                let mut bytes = b"rerail-set-rule-v1\0".to_vec();
+                bytes.extend_from_slice(&sha256_bytes(*rule));
+                bytes.extend_from_slice(&sha256_bytes(set));
+                HashKey::sha256(&bytes)
+            })
+            .collect::<Vec<_>>();
+        let mut identities = HashMap::new();
+        for (code_rule_index, code_rule) in code_rules.iter().enumerate() {
+            for clause_index in 0..code_rule.clauses.len() {
+                let id = (code_rule_index, clause_index);
+                for (rule, scoped) in [
+                    (rules[code_rule_index], false),
+                    (set_rules[code_rule_index], true),
+                ] {
+                    identities.insert(
+                        candidate_clause(rule, code_rule, clause_index),
+                        (id, scoped),
+                    );
+                }
+            }
+        }
+        Ok(Self {
+            domain,
+            catalog: identity(set)?,
+            rules,
+            set_rules,
+            identities,
+        })
+    }
+
+    /// The check a clause's result is stored under: the set-scoped one for a budget verdict.
+    pub(super) fn candidate(
+        &self,
+        code_rules: &[Arc<CompiledCodeRule>],
+        (code_rule_index, clause_index): ClauseId,
+        failure: Option<LocalFailure>,
+    ) -> CandidateClause {
+        let rule = if failure.is_some_and(|(code, _)| code == "budget-exceeded") {
+            self.set_rules[code_rule_index]
+        } else {
+            self.rules[code_rule_index]
+        };
+        candidate_clause(rule, &code_rules[code_rule_index], clause_index)
+    }
+
+    /// The clauses `persisted` answers among `expected`, each with its decoded result: a
+    /// set-scoped result is preferred to the code rule's own, and among equals the later one is
+    /// taken. Also whether some answering result did not decode (another encoding: a miss).
+    pub(super) fn select<'a>(
+        &self,
+        persisted: impl IntoIterator<Item = &'a crate::content_store::StoredLocalResult>,
+        expected: &HashSet<ClauseId>,
+        path: &str,
+    ) -> (HashMap<ClauseId, DecodedResult>, bool) {
+        let mut selected = HashMap::<ClauseId, (bool, DecodedResult)>::new();
+        let mut undecodable = false;
+        for result in persisted {
+            let Some(&(id, scoped)) = self.identities.get(&result.candidate) else {
+                continue;
+            };
+            if !expected.contains(&id)
+                || selected
+                    .get(&id)
+                    .is_some_and(|(chosen, _)| *chosen && !scoped)
+            {
+                continue;
+            }
+            match decode_local_result(&result.bytes, path) {
+                Some(decoded) => {
+                    selected.insert(id, (scoped, decoded));
+                }
+                None => undecodable = true,
+            }
+        }
+        let selected = selected
+            .into_iter()
+            .map(|(id, (_, decoded))| (id, decoded))
+            .collect();
+        (selected, undecodable)
+    }
+}
+
+type DecodedResult = (Vec<Witness>, Option<LocalFailure>, Option<String>);
+
+fn sha256_bytes(key: HashKey) -> [u8; 32] {
+    key.sha256_bytes().expect("result identities are sha-256")
+}
+
+/// A code rule's result identity: everything its clauses' results depend on besides the source,
+/// the file context and the engine.
+fn rule_identity(code_rule: &CompiledCodeRule) -> HashKey {
+    let mut bytes = b"rerail-rule-result-v1\0".to_vec();
+    bytes.extend_from_slice(code_rule.id.as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(code_rule.digest.as_bytes());
+    bytes.push(0xfe);
+    bytes.extend_from_slice(code_rule.capabilities.raw.to_string().as_bytes());
+    bytes.push(0xfd);
+    for clause in &code_rule.clauses {
+        bytes.extend_from_slice(clause.id.as_bytes());
+        bytes.push(0xff);
+    }
+    // Results under one placement carry its modes and folders; another placement never reuses
+    // them.
+    if let Some(placement) = &code_rule.scope.placement {
+        bytes.push(0xfc);
+        bytes.extend_from_slice(&placement_identity(placement));
+    }
+    HashKey::sha256(&bytes)
+}
+
+/// Recent code rule sets' result keys, by their code rules' allocations: a code rule is not
+/// changed in place while a weak reference to it is held (`Arc::make_mut` moves it), so a set
+/// whose every code rule is still the one recorded has the recorded keys.
+type ResultKeysMemo = (&'static str, Vec<Weak<CompiledCodeRule>>, Arc<ResultKeys>);
+static RESULT_KEYS: LazyLock<parking_lot::Mutex<Vec<ResultKeysMemo>>> =
+    LazyLock::new(Default::default);
+
+/// The result keys of `code_rules`: every apply and restore reads them, so they are built once
+/// per code-rule set.
+pub(super) fn result_keys(code_rules: &[Arc<CompiledCodeRule>]) -> Result<Arc<ResultKeys>> {
     let engine = engine_build_id();
-    let same = |(known_engine, known, _): &CatalogMemo| {
+    let same = |(known_engine, known, _): &ResultKeysMemo| {
         *known_engine == engine
             && known.len() == code_rules.len()
             && known
@@ -479,53 +603,21 @@ pub(super) fn candidate_catalog(
                 .all(|(known, code_rule)| std::ptr::eq(known.as_ptr(), Arc::as_ptr(code_rule)))
             && known.iter().all(|known| known.strong_count() > 0)
     };
-    if let Some((_, _, catalog)) = CATALOGS.lock().iter().find(|memo| same(memo)) {
-        return Ok(*catalog);
+    if let Some((_, _, keys)) = RESULT_KEYS.lock().iter().find(|memo| same(memo)) {
+        return Ok(Arc::clone(keys));
     }
-    let catalog = hash_candidate_catalog(engine, code_rules)?;
-    let mut catalogs = CATALOGS.lock();
-    catalogs.retain(|(_, known, _)| known.iter().all(|known| known.strong_count() > 0));
-    if catalogs.len() >= 16 {
-        catalogs.remove(0);
+    let keys = Arc::new(ResultKeys::new(engine, code_rules)?);
+    let mut memo = RESULT_KEYS.lock();
+    memo.retain(|(_, known, _)| known.iter().all(|known| known.strong_count() > 0));
+    if memo.len() >= 16 {
+        memo.remove(0);
     }
-    catalogs.push((
+    memo.push((
         engine,
         code_rules.iter().map(Arc::downgrade).collect(),
-        catalog,
+        Arc::clone(&keys),
     ));
-    Ok(catalog)
-}
-
-fn hash_candidate_catalog(
-    engine: &str,
-    code_rules: &[Arc<CompiledCodeRule>],
-) -> Result<CandidateCatalogIdentity> {
-    let mut bytes = format!("rerail-local-result-v{LOCAL_RESULT_VERSION}\0{engine}\0").into_bytes();
-    for code_rule in code_rules {
-        bytes.extend_from_slice(code_rule.id.as_bytes());
-        bytes.push(0);
-        bytes.extend_from_slice(code_rule.digest.as_bytes());
-        bytes.push(0xfe);
-        bytes.extend_from_slice(code_rule.capabilities.raw.to_string().as_bytes());
-        bytes.push(0xfd);
-        for clause in &code_rule.clauses {
-            bytes.extend_from_slice(clause.id.as_bytes());
-            bytes.push(0xff);
-        }
-        // Results under one placement carry its modes and folders; another placement never
-        // reuses them. An unplaced code rule keeps its earlier identity.
-        if let Some(placement) = &code_rule.scope.placement {
-            bytes.push(0xfc);
-            bytes.extend_from_slice(&placement_identity(placement));
-        }
-    }
-    CandidateCatalogIdentity::new(
-        HashKey::sha256(&bytes),
-        grammar_set(),
-        3,
-        i64::from(tape::TAPE_FORMAT_VERSION),
-    )
-    .map_err(|error| invalid(error.to_string()))
+    Ok(keys)
 }
 
 /// What publishing a chunk of files did.
@@ -554,15 +646,9 @@ pub(super) fn persist_files(
     consumers: &Consumers,
     closed: &AtomicBool,
 ) -> Result<Persisted> {
-    let catalog = candidate_catalog(code_rules)?;
-    let rule_hashes = rule_hashes(code_rules);
-    let candidate = |&(code_rule_index, clause_index): &ClauseId| {
-        candidate_clause(
-            rule_hashes[code_rule_index],
-            &code_rules[code_rule_index],
-            clause_index,
-        )
-    };
+    let keys = result_keys(code_rules)?;
+    let candidate =
+        |&id: &ClauseId, failure: Option<LocalFailure>| keys.candidate(code_rules, id, failure);
     // Each file's payloads (tape bytes, encoded and compressed local results, blob alias) are
     // independent of every other file's, so they are built on the worker pool.
     let prepared = WORK_POOL.install(|| {
@@ -577,7 +663,7 @@ pub(super) fn persist_files(
                     .regex
                     .iter()
                     .chain(&file.candidates.ast)
-                    .map(candidate)
+                    .map(|id| candidate(id, None))
                     .collect::<Vec<_>>();
                 let tape_bytes = {
                     #[cfg(feature = "code-rule-profile")]
@@ -615,15 +701,13 @@ pub(super) fn persist_files(
                     })
                     .map(|(id, context)| {
                         let witnesses = file.witnesses.get(id).map(Vec::as_slice).unwrap_or(&[]);
-                        let bytes = encode_local_result(
-                            witnesses,
-                            file.failures.get(id).copied(),
-                            file.syntax.as_deref(),
-                        )?;
+                        let failure = file.failures.get(id).copied();
+                        let bytes =
+                            encode_local_result(witnesses, failure, file.syntax.as_deref())?;
                         let frame =
                             compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
                         Ok(LocalResultPublication {
-                            candidate: candidate(id),
+                            candidate: candidate(id, failure),
                             context,
                             raw_length: bytes.len(),
                             frame,
@@ -663,7 +747,7 @@ pub(super) fn persist_files(
                         tape_format_version: i64::from(tape::TAPE_FORMAT_VERSION),
                         bytes,
                     }),
-                    catalog,
+                    catalog: keys.domain,
                     candidates,
                     local_results,
                     candidates_current: false,

@@ -3133,3 +3133,179 @@ fn selector_indexes_skip_only_error_free_tapes_that_cannot_match() {
     assert!(!skipped(&narrowed, "lambda.py"));
     narrowed.close();
 }
+
+/// Stored results are keyed per code rule, not per set: editing one code rule re-evaluates only
+/// its clauses, the others' results are restored, and the findings are a cold evaluation's. The
+/// edited code rule's earlier results stay reusable by a set that still holds it.
+#[test]
+fn editing_one_code_rule_re_evaluates_only_its_clauses() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("per-rule-results");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let prints = compile(
+        "prints",
+        json!([
+            { "id": "print", "violation": { "anchor": "witness.span", "code": "P",
+                "message": "print" },
+              "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } } },
+            { "id": "todo", "violation": { "anchor": "witness.span", "code": "T",
+                "message": "todo" },
+              "forbid": { "regex": { "source": "file.content", "pattern": "TODO" } } }
+        ]),
+    );
+    let lambdas = |message: &str| {
+        compile(
+            "lambdas",
+            json!([{
+                "id": "lambda",
+                "violation": { "anchor": "witness.span", "code": "L", "message": message },
+                "forbid": { "ast": { "language": "python", "rule": { "kind": "lambda" } } }
+            }]),
+        )
+    };
+    let file =
+        |path: &str, source: &str| json!({ "path": path, "language": "python", "source": source });
+    let files = json!([
+        file("a.py", "print(1)\nf = lambda: 2\n"),
+        file("b.py", "print(2)  # TODO\n"),
+        file("c.py", "g = lambda: 3\n"),
+    ]);
+    let stored = |root: &str, second: &CompiledCodeRuleDsl| {
+        let mut workspace = stored_workspace(&store, root, &prints);
+        workspace.add_code_rule(second, None).unwrap();
+        workspace
+    };
+    let cold = |second: &CompiledCodeRuleDsl| {
+        let mut workspace = CodeRuleDslWorkspace::new();
+        workspace.add_code_rule(&prints, None).unwrap();
+        workspace.add_code_rule(second, None).unwrap();
+        let applied = apply_json(&workspace, 1, files.clone());
+        workspace.close();
+        applied
+    };
+    // Each file's restored clauses, by code rule index (`prints` is 0).
+    let restored = |workspace: &CodeRuleDslWorkspace| {
+        let state = workspace.state.lock().unwrap();
+        ["a.py", "b.py", "c.py"].map(|path| {
+            let mut ids = state.files[path]
+                .restored_result_ids
+                .iter()
+                .copied()
+                .collect::<Vec<_>>();
+            ids.sort_unstable();
+            ids
+        })
+    };
+    let same_findings = |applied: &Value, fresh: &Value, label: &str| {
+        for key in ["violations", "failures"] {
+            assert_eq!(
+                applied["evaluation"][key], fresh["evaluation"][key],
+                "{label}: {key}"
+            );
+        }
+    };
+
+    let first = stored("/per-rule-first", &lambdas("lambda"));
+    apply_json(&first, 1, files.clone());
+    first.close();
+
+    // The set as it was restores every clause it evaluated.
+    let again = stored("/per-rule-again", &lambdas("lambda"));
+    let applied = apply_json(&again, 1, files.clone());
+    same_findings(&applied, &cold(&lambdas("lambda")), "again");
+    let everything = restored(&again);
+    // Both code rules' clauses were stored: `print` and `lambda` on every file, `todo` where it
+    // is a candidate.
+    for ids in &everything {
+        assert!(
+            ids.contains(&(0, 0)) && ids.contains(&(1, 0)),
+            "{everything:?}"
+        );
+    }
+    again.close();
+
+    // `lambdas` edited: its results are another code rule's, `prints`' are restored.
+    let edited = stored("/per-rule-edited", &lambdas("a lambda"));
+    let applied = apply_json(&edited, 1, files.clone());
+    same_findings(&applied, &cold(&lambdas("a lambda")), "edited");
+    assert_eq!(
+        restored(&edited),
+        everything.clone().map(|ids| ids
+            .into_iter()
+            .filter(|(code_rule, _)| *code_rule == 0)
+            .collect::<Vec<_>>())
+    );
+    let messages = applied["evaluation"]["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|violation| violation["code"] == "L")
+        .map(|violation| violation["message"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(messages, ["a lambda", "a lambda"], "{applied}");
+    edited.close();
+
+    // The original set again: the edit left the unedited code rule's results, and its own.
+    let restored_again = stored("/per-rule-restored", &lambdas("lambda"));
+    let applied = apply_json(&restored_again, 1, files.clone());
+    same_findings(&applied, &cold(&lambdas("lambda")), "restored");
+    assert_eq!(restored(&restored_again), everything);
+    restored_again.close();
+}
+
+/// A clause's result is kept under its own code rule's identity, whatever else the set holds,
+/// except a budget verdict: native budgets depend on what the clauses before it built, so that is
+/// kept under the code rule's identity within the set, and preferred where both are stored.
+#[test]
+fn budget_verdicts_are_kept_per_set_and_preferred() {
+    let rule = |id: &str, message: &str| {
+        compile(
+            id,
+            json!([{
+                "id": "lambda",
+                "violation": { "anchor": "witness.span", "code": "L", "message": message },
+                "forbid": { "ast": { "language": "python", "rule": { "kind": "lambda" } } }
+            }]),
+        )
+        .inner
+    };
+    let kept = rule("kept", "kept");
+    let set = [StdArc::clone(&kept), rule("other", "one")];
+    let edited = [StdArc::clone(&kept), rule("other", "two")];
+    let (keys, edited_keys) = (
+        super::persisted::result_keys(&set).unwrap(),
+        super::persisted::result_keys(&edited).unwrap(),
+    );
+    let budget = Some(("budget-exceeded", CLAUSE_WORK_BUDGET_EXCEEDED));
+    let own = keys.candidate(&set, (0, 0), None);
+    assert_eq!(own, edited_keys.candidate(&edited, (0, 0), None));
+    assert_eq!(
+        own,
+        keys.candidate(&set, (0, 0), Some(("witness-limit", "x")))
+    );
+    assert_ne!(keys.domain, keys.catalog);
+    assert_eq!(keys.domain, edited_keys.domain);
+    assert_ne!(keys.catalog, edited_keys.catalog);
+    let scoped = keys.candidate(&set, (0, 0), budget);
+    assert_ne!(scoped, own);
+    assert_ne!(scoped, edited_keys.candidate(&edited, (0, 0), budget));
+
+    let stored = |candidate: &crate::content_store::CandidateClause, failure| {
+        crate::content_store::StoredLocalResult {
+            candidate: candidate.clone(),
+            bytes: encode_local_result(&[], failure, None).unwrap(),
+        }
+    };
+    let expected = std::collections::HashSet::from([(0, 0)]);
+    for results in [
+        [stored(&own, None), stored(&scoped, budget)],
+        [stored(&scoped, budget), stored(&own, None)],
+    ] {
+        let (selected, undecodable) = keys.select(&results, &expected, "a.py");
+        assert!(!undecodable);
+        assert_eq!(selected[&(0, 0)].1, budget);
+        // Another set does not read this set's budget verdict.
+        let (selected, _) = edited_keys.select(&results, &expected, "a.py");
+        assert_eq!(selected[&(0, 0)].1, None);
+    }
+}
