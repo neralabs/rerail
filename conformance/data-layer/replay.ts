@@ -1,10 +1,10 @@
-/** Replay the unchanged data-layer tests' recorded inputs through the native engine. */
+/** Replay the unchanged data-layer tests' recorded inputs through the native addon, its AST clauses matched by the selected engine. */
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { parseArgs } from "node:util";
 import { z } from "zod";
-import { codeRuleSchema, loadNativeBinding, resolveNativeBindingPath, RESULT_PAGE_BYTES, type NativeCompiledCodeRuleDsl } from "../../src/engine/index.js";
+import { codeRuleSchema, loadNativeBinding, resolveNativeBindingPath, RESULT_PAGE_BYTES, type CodeRuleDslEngine, type NativeCompiledCodeRuleDsl } from "../../src/engine/index.js";
 import { capabilitiesJson } from "../engine.js";
 import { escapeHatchSignatureFailure } from "./signed-allowlist.js";
 
@@ -57,8 +57,8 @@ function subtract(left: string[], right: string[]): string[] {
   });
 }
 
-async function workspaceEvaluation(compiled: NativeCompiledCodeRuleDsl, event: Event): Promise<Result> {
-  const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
+async function workspaceEvaluation(compiled: NativeCompiledCodeRuleDsl, event: Event, engine: CodeRuleDslEngine): Promise<Result> {
+  const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)({ engine });
   try {
     workspace.addCodeRule(compiled);
     await workspace.applyAsync(JSON.stringify({ revision: 1, files: event.files!.map(file => ({ ...file, language: file.path.endsWith(".rs") ? "rust" : "python" })), removed: [], quiet: true }));
@@ -74,7 +74,7 @@ async function workspaceEvaluation(compiled: NativeCompiledCodeRuleDsl, event: E
   } finally { workspace.close(); }
 }
 
-export async function replay(recordingPath: string | string[], outputPath: string, policies = "packs/data-layer/candidates/rules"): Promise<boolean> {
+export async function replay(recordingPath: string | string[], outputPath: string, policies = "packs/data-layer/candidates/rules", engine: CodeRuleDslEngine = "native"): Promise<boolean> {
   const paths = typeof recordingPath === "string" ? [recordingPath] : recordingPath;
   if (paths.length === 0) throw new Error("At least one recording is required");
   const inputs = paths.map(path => recordingSchema.parse(JSON.parse(readFileSync(path, "utf8"))));
@@ -168,10 +168,10 @@ export async function replay(recordingPath: string | string[], outputPath: strin
     const before = performance.now();
     const signatureFailure = event.check === "sql_grammar_escape_hatches" && event.entry === "plugin.reporter"
       ? escapeHatchSignatureFailure(policy, event.oracle_config?.allowlist_signature) : undefined;
-    const stateless = signatureFailure ?? resultSchema.parse(JSON.parse(rule.evaluate(input, "report")));
+    const stateless = signatureFailure ?? resultSchema.parse(JSON.parse(rule.evaluate(input, "report", engine)));
     const statelessMs = performance.now() - before;
     const workspaceStarted = performance.now();
-    const result = signatureFailure ?? await workspaceEvaluation(rule, event);
+    const result = signatureFailure ?? await workspaceEvaluation(rule, event, engine);
     const workspaceMs = performance.now() - workspaceStarted;
     const columns = event.check === "backend_type_strings";
     const expected = event.findings.map(finding => {
@@ -199,6 +199,17 @@ export async function replay(recordingPath: string | string[], outputPath: strin
     clean: rows.filter(row => row.check === check && !row.positive).length,
   }));
   const missingCoverage = coverage.filter(row => row.positive === 0 || row.clean === 0);
+  // A construct the SQL engine does not lower fails its clause (`sql-unsupported` in a workspace,
+  // `SQL engine: …` statelessly); it is never answered natively instead.
+  const refusals = new Map<string, number>();
+  for (const row of rows) {
+    for (const failure of [...row.engineFailures, ...row.statelessFailures]) {
+      if (failure.code !== "sql-unsupported" && !failure.message.includes("SQL engine")) continue;
+      const key = `${row.check}\u0000${failure.message}`;
+      refusals.set(key, (refusals.get(key) ?? 0) + 1);
+    }
+  }
+  const sqlUnsupported = [...refusals].map(([key, failures]) => { const [check, message] = key.split("\u0000"); return { check, message, failures }; });
   const report = { coverage, missingCoverage,
     nativeCalls: rows.filter(row => row.execution === "native").length,
     hostGuardCalls: rows.filter(row => row.execution === "host-signature-guard").length,
@@ -206,7 +217,7 @@ export async function replay(recordingPath: string | string[], outputPath: strin
       positive: rows.filter(row => row.check === check && row.execution === "native" && row.positive).length,
       clean: rows.filter(row => row.check === check && row.execution === "native" && !row.positive).length,
     })),
-    nativeSha256, dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded"],
+    nativeSha256, engine, sqlUnsupported, dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded"],
     format: "rerail.data-layer-parity/v1", commit: recording.commit, recordings: paths,
     collectedTests: recording.collected_tests, replayedCalls: rows.length,
     positiveCalls: rows.filter(row => row.positive).length, cleanCalls: rows.filter(row => !row.positive).length,
@@ -223,7 +234,8 @@ export async function replay(recordingPath: string | string[], outputPath: strin
 }
 
 if (process.argv[1]?.endsWith("/replay.ts")) {
-  const { values } = parseArgs({ options: { recording: { type: "string", multiple: true }, output: { type: "string" }, policies: { type: "string" } } });
-  if (values.recording === undefined || values.output === undefined) throw new Error("Usage: replay.ts --recording <json> --output <json> [--policies <directory>]");
-  if (!await replay(values.recording, values.output, values.policies)) process.exitCode = 1;
+  const { values } = parseArgs({ options: { recording: { type: "string", multiple: true }, output: { type: "string" }, policies: { type: "string" }, engine: { type: "string", default: "native" } } });
+  if (values.recording === undefined || values.output === undefined) throw new Error("Usage: replay.ts --recording <json> --output <json> [--policies <directory>] [--engine native|sql]");
+  if (values.engine !== "native" && values.engine !== "sql") throw new Error("--engine must be native or sql");
+  if (!await replay(values.recording, values.output, values.policies, values.engine)) process.exitCode = 1;
 }

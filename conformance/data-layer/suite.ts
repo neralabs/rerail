@@ -1,4 +1,4 @@
-/** Measure all selected ports together against the upstream shared fact engine's repository snapshot. */
+/** Measure all selected ports together against the upstream shared fact engine's repository snapshot, their AST clauses matched by the selected engine. */
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { parseArgs } from "node:util";
@@ -16,9 +16,13 @@ const pageSchema = z.object({ done: z.boolean(), cursor: z.number(),
   violations: z.array(z.object({ ruleId: z.string(), path: z.string(), code: z.string(), span: z.object({ startLine: z.number() }) })),
   failures: z.array(z.unknown()),
 });
+const applyResponseSchema = z.object({ evaluation: z.object({ profile: z.record(z.string(), z.number()).optional() }).optional() });
 const { values } = parseArgs({ options: { recording: { type: "string" }, output: { type: "string" }, allocator: { type: "string", default: "unspecified" },
-  policies: { type: "string", default: "packs/data-layer/candidates/rules" }, progress: { type: "boolean", default: false }, "cold-only": { type: "boolean", default: false }, "memory-census": { type: "boolean", default: false }, "batch-files": { type: "string", default: "32" } } });
-if (values.recording === undefined || values.output === undefined) throw new Error("Usage: suite.ts --recording <json> --output <json>");
+  policies: { type: "string", default: "packs/data-layer/candidates/rules" }, progress: { type: "boolean", default: false }, "cold-only": { type: "boolean", default: false }, "memory-census": { type: "boolean", default: false }, "batch-files": { type: "string", default: "32" },
+  engine: { type: "string", default: "native" } } });
+if (values.recording === undefined || values.output === undefined) throw new Error("Usage: suite.ts --recording <json> --output <json> [--engine native|sql]");
+const engine = values.engine;
+if (engine !== "native" && engine !== "sql") throw new Error("--engine must be native or sql");
 const batchFiles = Number(values["batch-files"]);
 if (!Number.isInteger(batchFiles) || batchFiles < 1 || batchFiles > 2048) throw new Error("--batch-files must be an integer between 1 and 2048");
 const recording = recordingSchema.parse(JSON.parse(readFileSync(values.recording, "utf8")));
@@ -26,12 +30,12 @@ const workloadSha256 = createHash("sha256").update(JSON.stringify({ commit: reco
 if (recording.source_mismatches.length !== 0) throw new Error("Pinned source verification failed");
 const native = loadNativeBinding();
 const nativeSha256 = createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex");
-const workspace = new native.CodeRuleDslWorkspace();
+const workspace = new native.CodeRuleDslWorkspace({ engine });
 const policyDigests: Record<string, string> = {};
 const policyCompilationMs: Record<string, number> = {};
 const phaseCpuMs: Record<string, { userMs: number; systemMs: number }> = {};
 const memoryCheckpoints: unknown[] = [];
-const applies: { revision: number; phase: string; files: number; sourceBytes: number; wallMs: number; cpuMs: number; rssBytes: number; heapUsed: number; external: number; arrayBuffers: number }[] = [];
+const applies: { revision: number; phase: string; files: number; sourceBytes: number; wallMs: number; cpuMs: number; rssBytes: number; heapUsed: number; external: number; arrayBuffers: number; profile?: unknown }[] = [];
 const memoryCheckpoint = (phase: string): void => {
   if (!values["memory-census"]) return;
   const cpu = process.cpuUsage(), started = performance.now();
@@ -52,13 +56,15 @@ let revision = 0;
 let loadedFiles = 0;
 const send = async (batchFiles: typeof files, deferGlobal: boolean): Promise<void> => {
   const cpu = process.cpuUsage(), started = performance.now();
-  await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: ++revision, files: batchFiles, removed: [], quiet: true, deferGlobal }));
+  const response = await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: ++revision, files: batchFiles, removed: [], quiet: true, deferGlobal }));
   loadedFiles += batchFiles.length;
   const elapsed = process.cpuUsage(cpu), memory = process.memoryUsage();
   applies.push({ revision, phase: deferGlobal ? "file-inputs" : "global-results", files: batchFiles.length,
     sourceBytes: batchFiles.reduce((sum, file) => sum + Buffer.byteLength(file.source), 0),
     wallMs: performance.now() - started, cpuMs: (elapsed.user + elapsed.system) / 1000,
-    rssBytes: memory.rss, heapUsed: memory.heapUsed, external: memory.external, arrayBuffers: memory.arrayBuffers });
+    rssBytes: memory.rss, heapUsed: memory.heapUsed, external: memory.external, arrayBuffers: memory.arrayBuffers,
+    // The engine's own timers, with RERAIL_CODE_RULE_PROFILE set (`eval::output`).
+    profile: process.env.RERAIL_CODE_RULE_PROFILE === undefined ? undefined : applyResponseSchema.parse(JSON.parse(response)).evaluation?.profile });
   if (values.progress) console.error(JSON.stringify({ phase: deferGlobal ? "file-inputs" : "global-results", loadedFiles, revision, rssBytes: process.memoryUsage().rss }));
 };
 const collect = async (): Promise<{ violations: z.infer<typeof pageSchema>["violations"]; failures: unknown[] }> => {
@@ -127,6 +133,8 @@ try {
     incrementalResults.push({ phase: "trailing-newline-edit", result: editedResult });
   }
   markPhase("report");
+  // On SQL, the program's statement counters and the clauses it refused (`workspace::sql`).
+  const engineReport: unknown = JSON.parse(workspace.engineReport());
   if (values["memory-census"]) { workspace.close(); memoryCheckpoint("workspace-closed"); }
   const expected = recording.events.flatMap(event => event.findings.map(f => JSON.stringify([`data-layer-${event.check.replaceAll("_", "-")}`, f.path, f.line, f.code]))).sort();
   const actual = findingKeys(violations);
@@ -142,7 +150,7 @@ try {
     incrementalDifferences, phaseCpuMs, measuredPhases: Object.keys(phaseCpuMs), workloadSha256,
     expected: expected.length, actual: actual.length, falsePositives: difference(actual, expected), falseNegatives: difference(expected, actual), failures,
     peakRssBytes: process.resourceUsage().maxRSS * 1024,
-    allocator: values.allocator, policies: values.policies, nativeSha256, nativeWorkers: 4,
+    allocator: values.allocator, policies: values.policies, nativeSha256, nativeWorkers: 4, engine, engineReport,
     batchFiles, applies, memoryCheckpoints, measurementNote: "Phase CPU includes explicit census overhead when --memory-census is supplied. Reference timings must omit this option." };
   writeFileSync(values.output, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ...report, falsePositives: report.falsePositives.length, falseNegatives: report.falseNegatives.length, failures: failures.length, incrementalDifferences: incrementalDifferences.length }, null, 2));

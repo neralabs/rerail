@@ -1,4 +1,4 @@
-/** Replay original positive/clean analyzer inputs as edits in one resident workspace. */
+/** Replay original positive/clean analyzer inputs as edits in one resident workspace, its AST clauses matched by the selected engine. */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
@@ -16,8 +16,10 @@ const eventSchema = z.object({
 const recordingSchema = z.object({ commit: z.string(), pytest_exit_code: z.literal(0), source_mismatches: z.array(z.string()).max(0), events: z.array(eventSchema) });
 const pageSchema = z.object({ done: z.boolean(), cursor: z.number(), failures: z.array(z.unknown()), violations: z.array(z.object({ path: z.string(), code: z.string(), span: z.object({ startLine: z.number() }) })) });
 const authoredSchema = z.object({ clauses: z.array(z.object({ define: z.object({ options: z.record(z.string(), z.unknown()).optional(), config: z.record(z.string(), z.unknown()).optional() }).passthrough().optional() }).passthrough()) }).passthrough();
-const { values } = parseArgs({ options: { recording: { type: "string", multiple: true }, output: { type: "string" }, policies: { type: "string", default: "packs/data-layer/candidates/rules" } } });
-if (values.recording === undefined || values.output === undefined) throw new Error("Usage: incremental.ts --recording <json> --output <json>");
+const { values } = parseArgs({ options: { recording: { type: "string", multiple: true }, output: { type: "string" }, policies: { type: "string", default: "packs/data-layer/candidates/rules" }, engine: { type: "string", default: "native" } } });
+if (values.recording === undefined || values.output === undefined) throw new Error("Usage: incremental.ts --recording <json> --output <json> [--engine native|sql]");
+const engine = values.engine;
+if (engine !== "native" && engine !== "sql") throw new Error("--engine must be native or sql");
 const recordings = values.recording.map(path => recordingSchema.parse(JSON.parse(readFileSync(path, "utf8"))));
 const commit = recordings[0]!.commit;
 if (recordings.some(recording => recording.commit !== commit)) throw new Error("Recordings must share a source pin");
@@ -45,7 +47,7 @@ for (const check of checks) {
   if (pair.positive.scope === undefined) throw new Error(`${check} has no recorded source scope`);
   policy.scope = pair.positive.scope;
   const rule = native.CodeRuleDslRuntime.compile(JSON.stringify(policy), "json", capabilitiesJson());
-  const workspace = new native.CodeRuleDslWorkspace();
+  const workspace = new native.CodeRuleDslWorkspace({ engine });
   const transitions = [];
   let paths = new Set<string>();
   try {
@@ -72,7 +74,7 @@ for (const check of checks) {
   } finally { workspace.close(); }
   rows.push({ check, cleanTest: pair.clean.test, positiveTest: pair.positive.test, transitions });
 }
-const report = { format: "rerail.data-layer-incremental-parity/v1", commit, nativeSha256, checks: rows.length, transitions: rows.length * 4, differences: failed, elapsedMs: performance.now() - started, rows };
+const report = { format: "rerail.data-layer-incremental-parity/v1", commit, nativeSha256, engine, checks: rows.length, transitions: rows.length * 4, differences: failed, elapsedMs: performance.now() - started, rows };
 writeFileSync(values.output, JSON.stringify(report, null, 2) + "\n");
 console.log(JSON.stringify({ ...report, rows: undefined }, null, 2));
 if (failed !== 0) process.exitCode = 1;
