@@ -179,12 +179,14 @@ break working code.
    to leave the code alone or what the fix trades off ("…`strict=False` if truncation is intended").
 3. It is calibrated: no hedging ("Consider maybe…", "may not be"), no shouting (NEVER, MUST, ALWAYS), and no alarm the
    finding doesn't warrant.
-4. It is right for every match of its clause, agrees with the clause's `fix` when it has one, and uses only bindings the
-   clause defines.
-5. It leaves out what the block adds: no rule id, location, "Rerail" or "fix it or explain". It names no upstream tool
-   or rule code ("B113", "PIE810").
+4. It is right for every match of its clause and agrees with the clause's `fix` when it has one. It uses the values the
+   clause captures where they help (`$NAME`, `$CCN`, thresholds), never a binding the clause doesn't define.
+5. It leaves out what the block adds: no rule id, location, "Rerail" or "fix it or explain". It names no upstream tool,
+   rule code ("B113", "PIE810") or version, and no implementation text (AST node kinds, regexes).
 6. At most 200 characters, counting placeholders as written. It may open with what was found and run to more than one
    sentence.
+7. Where a rule's clauses match different things, each clause has its own message. One message for `x == None` and
+   `x != None` that says "use `is None`" gives the opposite advice for `!=`.
 
 For example: `This exception is silently discarded with pass. Handle or log it, or catch a specific expected exception when
 suppression is intentional.`, or `` `$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller

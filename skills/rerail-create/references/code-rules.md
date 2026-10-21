@@ -119,12 +119,14 @@ judgement breaks working code, and a steer that only states a fact or a ban give
    behaviour: "…; keep it if this call can fail in normal operation."
 3. **Be calibrated:** no hedging ("Consider maybe…", "may not be"), no shouting (NEVER, MUST, ALWAYS), and no alarm the
    finding doesn't warrant.
-4. **Be right for every match** of the clause, agree with its `fix` when it has one, and use only metavariables the
-   clause defines (`$M`, `$NAME`); give each clause its own message.
-5. **Leave out what the block adds:** no rule id, location, "Rerail" or "fix it or explain", and no linter names or rule
-   codes ("B113", "no-console").
+4. **Be right for every match** of the clause and agree with its `fix` when it has one. Use what the clause captured
+   (`$M`, `$NAME`) where it helps, and never a metavariable the clause doesn't define.
+5. **Leave out what the block adds:** no rule id, location, "Rerail" or "fix it or explain", and no linter names, rule
+   codes ("B113", "no-console"), versions or implementation text (AST node kinds, regexes).
 6. **At most 200 characters,** counting metavariables as written. It may open with what was found and take more than one
    sentence.
+7. **Give each clause its own message** when the clauses match different things. One message for `x == None` and
+   `x != None` that says "use `is None`" gives the opposite advice for `!=`.
 
 Also:
 
