@@ -144,7 +144,7 @@ describe("Rerail steer text", () => {
     const steer = steerBlock({ kind: "edit" }, [finding({ location: "api/a.py:1:1" })]);
     const content = rewoundSteer(steer, { restored: ["api/a.py"], deleted: ["api/new.py", "api/other.py"] });
     expect(content).toBe([
-      "Rerail rolled back this edit because it breaks the rule below: `api/a.py` is back as before the edit; "
+      "Rerail rolled back these files because the edit breaks the rule below: `api/a.py` is back as before the edit; "
         + "`api/new.py`, `api/other.py`, which the edit created, are deleted. Redo it so it follows the rule; if you decide "
         + "the rule does not apply, redo it as it was and tell the user in one line why.",
       "",

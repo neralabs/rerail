@@ -4,6 +4,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { z } from "zod/v4";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import { SqliteSessionStore } from "../../../src/runtime/index.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
@@ -47,6 +49,24 @@ describe("audit controls", () => {
     expect(controls.getSettings("a").settings).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "message" });
     controls.updateSettings("a", { steerStrategy: "subagent" });
     expect(controls.getSettings("a").settings).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "subagent" });
+    controls.close(); sessionStore.close();
+  });
+
+  it("saves the default strategy as rows saved before it existed, which a release that reads only scope and mode still reads", async () => {
+    const { root, controls, sessionStore } = await fixture();
+    const previousRelease = z.strictObject({ scope: z.enum(["repository", "touched-files", "ai-output"]), mode: z.enum(["log", "steer"]) });
+    const row = () => {
+      const database = openRerailDatabase(sessionStore.path);
+      try {
+        return database.select().from(auditSettings).where(eq(auditSettings.workspaceRoot, realpathSync(root))).get()!.settings;
+      } finally { database.$client.close(); }
+    };
+    controls.updateSettings("a", { mode: "log" });
+    expect(previousRelease.safeParse(row()).success).toBe(true);
+    controls.updateSettings("a", { steerStrategy: "rewind" });
+    expect(row()).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "rewind" });
+    controls.updateSettings("a", { steerStrategy: "message" });
+    expect(previousRelease.safeParse(row()).success).toBe(true);
     controls.close(); sessionStore.close();
   });
 

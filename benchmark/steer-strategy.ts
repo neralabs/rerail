@@ -231,18 +231,28 @@ async function pythonFiles(directory: string): Promise<string[]> {
   const names = await readdir(directory, { recursive: true }).catch(() => []);
   return names.filter((name) => name.endsWith(".py")).map((name) => join(directory, name));
 }
-/** The task's own acceptance, judged by the runner: the unit tests pass, README usage is written, no violation is left. */
+/** How many tests the fixture's own suite runs; a run that reports another count did not run that suite. */
+const FIXTURE_TESTS = 11;
+
+/**
+ * The task's own acceptance, judged by the runner: the unit tests pass, README usage is written, no violation is left.
+ * The suite it runs is the fixture's, copied back over whatever the agent left in `tests/`, so an agent that edits or
+ * deletes a test cannot score as done.
+ */
 async function inspectProject(
   project: string,
   profile: string,
   env: NodeJS.ProcessEnv,
 ): Promise<{ testsPassed: boolean; readmeUpdated: boolean; violationRemaining: boolean }> {
+  await rm(join(project, "tests"), { recursive: true, force: true });
+  await cp(join(FIXTURE, "project", "tests"), join(project, "tests"), { recursive: true });
   const tests = await run("sandbox-exec", ["-f", profile, "python3", "-m", "unittest", "discover", "-s", "tests"], { cwd: project, env, timeout: 120_000 });
+  const ran = /^Ran (\d+) tests? in /mu.exec(tests.stderr)?.[1];
   const readme = await readFile(join(project, "README.md"), "utf8").catch(() => "");
   const usageSection = readme.split(/^## Usage\s*$/mu)[1]?.split(/^## /mu)[0] ?? "";
   const sources = await Promise.all((await pythonFiles(join(project, "api"))).map((path) => readFile(path, "utf8")));
   return {
-    testsPassed: tests.exitCode === 0,
+    testsPassed: tests.exitCode === 0 && Number(ran) === FIXTURE_TESTS,
     readmeUpdated: !/TODO/u.test(usageSection) && /Inventory\(/u.test(usageSection) && /add_item/u.test(usageSection),
     violationRemaining: sources.some((source) => VIOLATION.test(source)),
   };
@@ -637,7 +647,7 @@ async function runTrial(host: RerailHost, strategy: SteerStrategy, trial: number
     // strategy with the switch on.
     process.env.RERAIL_EXPERIMENTAL_STEER_STRATEGIES = "1";
     env.RERAIL_EXPERIMENTAL_STEER_STRATEGIES = "1";
-    const profile = await sandboxProfile(sandbox);
+    const profile = await sandboxProfile(sandbox, host);
     if (await sandboxLeaks(sandbox, profile, project, env)) throw new Error("Sandbox did not enforce write isolation");
     await configureHostAuth(host, sandbox, profile, env, options.timeoutMs);
     const databasePath = defaultRerailDatabasePath();

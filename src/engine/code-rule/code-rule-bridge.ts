@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, rm, unlink } from "node:fs/promises";
+import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, rename, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   AuditorCloseOptions,
   CodeRuleEdit,
@@ -165,6 +165,9 @@ function sameSource(left: ObservedSource | undefined, right: Source | undefined)
 }
 function emptyResponse(revision: number): CodeRuleResponse {
   return { revision, disposition: "continue", violations: [], failures: [] };
+}
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 function underBaselineRoot(roots: ReadonlySet<string>, path: string): boolean {
   for (const root of roots) if (root === "" || path.startsWith(`${root}/`)) return true;
@@ -357,9 +360,12 @@ export class CodeRuleBridge {
   /**
    * Rolls a finished, still rewindable edit back to its captured preimages, every file or none: a file that did not
    * exist is deleted. Only for a steer at the revision its finish audited whose `scope` lies within the captured
-   * paths, while every preimage was read and every file still holds what the edit left. The rollback is observed as
-   * Rerail's own write, so no walk reports it as an uncaptured edit, and audited in `log` mode, so the evaluator holds
-   * the restored source without a steer for it. Undefined when nothing was rolled back.
+   * paths, while every preimage was read, every file still holds what the edit left, and no other call begun and
+   * unfinished, or still rewindable, covers any of them (rolling back over its write would undo it). Each file is
+   * replaced whole, so a failed write leaves it as it was; when putting already rolled-back files back fails too, those
+   * files stay rolled back and are reported. The rollback is observed as Rerail's own write, so no walk reports it as an
+   * uncaptured edit, and audited in `log` mode, so the evaluator holds the restored source without a steer for it; that
+   * audit failing is logged, never a reason to lose what was rolled back. Undefined when nothing was rolled back.
    */
   async rewind(toolCallId: string, revision: number, scope: readonly string[]): Promise<RewoundEdit | undefined> {
     const rewindable = this.#rewindable.get(toolCallId);
@@ -372,6 +378,7 @@ export class CodeRuleBridge {
     if (discovery === undefined || discovery.cancelled) return undefined;
     return await this.#enqueue(async () => {
       if (this.#discovery !== discovery || discovery.cancelled) return undefined;
+      if (this.#shared(toolCallId, preimages.keys())) return undefined;
       const root = await realpath(this.#cwd);
       const targets: Array<{ location: SourceLocation; preimage: Preimage; current: Source }> = [];
       for (const [path, preimage] of preimages) {
@@ -382,35 +389,58 @@ export class CodeRuleBridge {
         if (current.deleted && preimage.text !== undefined && !await this.#ownsFolder(root, location)) return undefined;
         targets.push({ location, preimage, current });
       }
-      const written: typeof targets = [];
+      let written: typeof targets = [];
       try {
         for (const target of targets) {
           if (target.current.text === target.preimage.text) continue;
           await this.#writeSource(target.location, target.preimage.text);
           written.push(target);
         }
-      } catch {
+      } catch (error) {
         // Every file or none: what was already put back takes the edit's text again.
-        for (const target of written) await this.#writeSource(target.location, target.current.text).catch(() => undefined);
-        return undefined;
+        const stuck: typeof targets = [];
+        let undoError: unknown;
+        for (const target of written) {
+          await this.#writeSource(target.location, target.current.text).catch((failure: unknown) => {
+            stuck.push(target);
+            undoError ??= failure;
+          });
+        }
+        const kept = stuck.length === 0
+          ? ""
+          : `; ${stuck.map(target => target.location.path).join(", ")} stay rolled back: ${errorMessage(undoError)}`;
+        process.stderr.write(`rerail: could not roll back tool call ${toolCallId}: ${errorMessage(error)}${kept}\n`);
+        if (stuck.length === 0) return undefined;
+        written = stuck;
       }
-      const edits: CodeRuleEdit[] = [];
-      for (const { location, current } of written) {
-        const source = await this.#readSource(root, location.path);
-        this.#touchSource(discovery, location.path);
-        if (source === undefined) continue;
-        this.#updateObservedSource(source);
-        const edit = this.#editFromToolSource(source, current.text === undefined ? {} : { text: current.text });
-        if (edit !== undefined) edits.push(edit);
+      try {
+        const edits: CodeRuleEdit[] = [];
+        for (const { location, current } of written) {
+          const source = await this.#readSource(root, location.path);
+          this.#touchSource(discovery, location.path);
+          if (source === undefined) continue;
+          this.#updateObservedSource(source);
+          const edit = this.#editFromToolSource(source, current.text === undefined ? {} : { text: current.text });
+          if (edit !== undefined) edits.push(edit);
+        }
+        // Every rolled-back file has its preimage (the edit's text), so nothing is left to recover.
+        if (edits.length > 0) await this.#auditEdits(discovery, edits, ["edit", "function"], new Map(), "log");
+      } catch (error) {
+        process.stderr.write(`rerail: could not audit the rollback of tool call ${toolCallId}: ${errorMessage(error)}\n`);
       }
-      // Every rolled-back file has its preimage (the edit's text), so nothing is left to recover.
-      if (edits.length > 0) await this.#auditEdits(discovery, edits, ["edit", "function"], new Map(), "log");
       return {
         revision: this.#revision,
         restored: written.filter(target => target.preimage.text !== undefined).map(target => target.location.path),
         deleted: written.filter(target => target.preimage.text === undefined).map(target => target.location.path),
       };
     });
+  }
+
+  /** Whether a call other than `toolCallId`, begun and unfinished or still rewindable, covers any of `paths`. */
+  #shared(toolCallId: string, paths: Iterable<string>): boolean {
+    const others = [...this.#pending, ...this.#rewindable].flatMap(([id, edit]) => (id === toolCallId ? [] : [edit.preimages]));
+    for (const path of paths) if (others.some(preimages => preimages.has(path))) return true;
+    return false;
   }
 
   /** Whether the folder a file is to be created in lies in the checkout that owns the file. */
@@ -421,7 +451,11 @@ export class CodeRuleBridge {
     return folder !== undefined && (folder === owner || folder.startsWith(`${owner}${sep}`));
   }
 
-  /** Writes `text` to the file without following a final symlink; without text the file is removed. */
+  /**
+   * Replaces the file whole with `text`, written to a temporary file beside it and renamed over it, so a failed write
+   * leaves the file as it was; a symlink or other non-regular file there is refused, never followed or replaced. An
+   * existing file keeps its permissions. Without text the file is removed.
+   */
   async #writeSource(location: SourceLocation, text: string | undefined): Promise<void> {
     if (text === undefined) {
       await unlink(location.absolute).catch((error: unknown) => {
@@ -429,11 +463,24 @@ export class CodeRuleBridge {
       });
       return;
     }
-    const handle = await open(location.absolute, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o666);
+    const existing = await lstat(location.absolute).catch((error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (existing !== undefined && !existing.isFile()) throw new Error(`${location.path} is not a regular file`);
+    const temporary = join(dirname(location.absolute), `.${basename(location.absolute)}.rerail-${randomBytes(6).toString("hex")}.tmp`);
+    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o666);
     try {
-      await handle.writeFile(text, "utf8");
-    } finally {
-      await handle.close();
+      try {
+        if (existing !== undefined) await handle.chmod(existing.mode & 0o7777);
+        await handle.writeFile(text, "utf8");
+      } finally {
+        await handle.close();
+      }
+      await rename(temporary, location.absolute);
+    } catch (error) {
+      await unlink(temporary).catch(() => undefined);
+      throw error;
     }
   }
 

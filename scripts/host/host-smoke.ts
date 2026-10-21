@@ -396,7 +396,7 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
       : "Controlled Rerail acceptance exercise. Read only api/route.py. Using an edit/write/apply_patch tool, replace its transaction.fetch_value call with cursor.execute('SELECT 1') exactly once. Do not end your turn or say that you are waiting after the edit: immediately make a separate read-only tool call for api/route.py so the edit's PostToolUse diagnostic is incorporated. Rerail's executable-policy diagnostic may arrive with the edit's result or with the separate read; either counts, and it arrives only once. As soon as you have it, restore the original transaction helper. Only if you have received no such diagnostic by the end of that separate read, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Do not read or edit any other file or run git commands. Preserve database transaction atomicity.";
     await createProject(project, host);
     const env = await sandboxEnvironment(sandbox, project, rerailHome);
-    const profile = await sandboxProfile(sandbox);
+    const profile = await sandboxProfile(sandbox, host);
     await enforceSandboxIsolation(sandbox, profile, project, env, assertions);
     await configureHostAuth(host, sandbox, profile, env, TIMEOUT_MS);
     seedSmokeRules(rerailHome, project, smokeConversationRule(prompt, nonce));

@@ -150,15 +150,16 @@ export interface RewoundPaths {
 const quoted = (paths: readonly string[]): string => paths.map(path => `\`${path}\``).join(", ");
 
 /**
- * A `rewind` steer, which the coding agent reads in the result of the edit it rolled back: what Rerail put back, that
- * the edit is to be redone following the rule, then the steer block.
+ * A `rewind` steer, which the coding agent reads in the result of the edit it rolled back: which files Rerail put back
+ * (only those, so a multi-file edit's other files keep it), that the edit is to be redone following the rule, then the
+ * steer block.
  */
 export function rewoundSteer(content: string, { restored, deleted }: RewoundPaths): string {
   const undone = [
     ...(restored.length === 0 ? [] : [`${quoted(restored)} ${restored.length === 1 ? "is" : "are"} back as before the edit`]),
     ...(deleted.length === 0 ? [] : [`${quoted(deleted)}, which the edit created, ${deleted.length === 1 ? "is" : "are"} deleted`]),
   ].join("; ");
-  return `Rerail rolled back this edit because it breaks the rule below: ${undone}. Redo it so it follows the rule; `
+  return `Rerail rolled back these files because the edit breaks the rule below: ${undone}. Redo it so it follows the rule; `
     + "if you decide the rule does not apply, redo it as it was and tell the user in one line why.\n\n"
     + content;
 }

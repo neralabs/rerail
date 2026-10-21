@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile, realpath, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   codeRuleSchema,
@@ -36,8 +36,8 @@ function needleCatalog() {
 
 /**
  * A session in a fresh checkout whose saved steer strategy is `strategy` (none saved when undefined), with `files`
- * there before it starts, and the experimental switch on unless `experimental` is false. `edit` writes a file through
- * a tool call and answers with the result's deliveries.
+ * there before it starts, and the experimental switch on unless `experimental` is false. `call` begins a write of one
+ * file or several, and `edit` writes a file through a tool call and answers with the result's deliveries.
  */
 async function strategySession(options: {
   strategy?: SteerStrategy;
@@ -48,7 +48,10 @@ async function strategySession(options: {
 }) {
   vi.stubEnv("RERAIL_EXPERIMENTAL_STEER_STRATEGIES", options.experimental === false ? "" : "1");
   const root = await realpath(await temporaryDirectory());
-  for (const [path, text] of Object.entries(options.files ?? {})) await writeFile(join(root, path), text);
+  for (const [path, text] of Object.entries(options.files ?? {})) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), text);
+  }
   const databasePath = join(root, "rerail.sqlite");
   if (options.strategy !== undefined) {
     // Saved before any session exists there, as the benchmark seeds a checkout.
@@ -65,8 +68,9 @@ async function strategySession(options: {
   // A boundary reached while the evaluator is still opening goes on without code rules.
   await runtime.codeRulesOpened(sessionId);
   let event = 0;
-  const call = (toolCallId: string, path: string) => runtime.ingest({
-    kind: "call", eventId: `call-${++event}`, sessionId, toolCallId, toolName: "write", input: { path, content: "" },
+  const call = (toolCallId: string, path: string | readonly string[]) => runtime.ingest({
+    kind: "call", eventId: `call-${++event}`, sessionId, toolCallId, toolName: "write",
+    input: typeof path === "string" ? { path, content: "" } : { paths: path },
   });
   const result = (toolCallId: string) => runtime.ingest({
     kind: "result", eventId: `result-${++event}`, sessionId, toolCallId, toolName: "write", output: "written",
@@ -104,7 +108,7 @@ describe("The rewind steer strategy", () => {
           toolCallId: "w1",
           rewound: ["created.py"],
           ruleIds: ["test:needle"],
-          content: expect.stringMatching(/^Rerail rolled back this edit because it breaks the rule below: `created\.py`, which the edit created, is deleted\. Redo it so it follows the rule; if you decide the rule does not apply, redo it as it was and tell the user in one line why\.\n\nRerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't\.$/u),
+          content: expect.stringMatching(/^Rerail rolled back these files because the edit breaks the rule below: `created\.py`, which the edit created, is deleted\. Redo it so it follows the rule; if you decide the rule does not apply, redo it as it was and tell the user in one line why\.\n\nRerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't\.$/u),
         })]);
         await expect(readFile(join(session.root, "created.py"))).rejects.toThrow(/ENOENT/u);
         expect(await session.turnEnd()).toEqual([]);
@@ -122,7 +126,7 @@ describe("The rewind steer strategy", () => {
       const deliveries = await session.edit("w1", "existing.py", `${before}NEEDLE = 1\n`);
       expect(deliveries).toEqual([expect.objectContaining({
         strategy: "rewind", toolCallId: "w1", rewound: ["existing.py"],
-        content: expect.stringContaining("Rerail rolled back this edit because it breaks the rule below: `existing.py` is back as before the edit."),
+        content: expect.stringContaining("Rerail rolled back these files because the edit breaks the rule below: `existing.py` is back as before the edit."),
       })]);
       expect(await readFile(join(session.root, "existing.py"), "utf8")).toBe(before);
       // The turn's walk sees Rerail's own write, not an uncaptured edit, and the restored file's own violation is not steered.
@@ -132,6 +136,74 @@ describe("The rewind steer strategy", () => {
       expect(await session.edit("w2", "existing.py", `${before}NEEDLE = 2\n`)).toEqual([expect.objectContaining({ toolCallId: "w2", rewound: ["existing.py"] })]);
       expect(await readFile(join(session.root, "existing.py"), "utf8")).toBe(before);
     } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  it("leaves every file with the edit's text, and steers as a message, when one of them cannot be put back", async () => {
+    const session = await strategySession({ strategy: "rewind", host: "omp", files: { "a/x.py": "X = 0\n", "b/y.py": "Y = 0\n" } });
+    const locked = join(session.root, "b");
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      await session.call("w1", ["a/x.py", "b/y.py"]);
+      await writeFile(join(session.root, "a/x.py"), "X = NEEDLE\n");
+      await writeFile(join(session.root, "b/y.py"), "Y = NEEDLE\n");
+      // Nothing can be created in `b`, so `b/y.py` cannot be put back once `a/x.py` has been.
+      await chmod(locked, 0o555);
+      const deliveries = await session.result("w1");
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", content: expect.stringContaining("No needle") })]);
+      expect(deliveries[0]).not.toHaveProperty("rewound");
+      expect(await readFile(join(session.root, "a/x.py"), "utf8")).toBe("X = NEEDLE\n");
+      expect(await readFile(join(session.root, "b/y.py"), "utf8")).toBe("Y = NEEDLE\n");
+      expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/^rerail: could not roll back tool call w1: /u));
+    } finally {
+      stderr.mockRestore();
+      await chmod(locked, 0o755);
+      await session.runtime.dispose();
+    }
+  });
+
+  it("leaves the edit in place, and steers as a message, while another call still covers its file", async () => {
+    const session = await strategySession({ strategy: "rewind", host: "omp", files: { "shared.py": "S = 0\n" } });
+    try {
+      await session.call("a", "shared.py");
+      await session.call("b", "shared.py");
+      await writeFile(join(session.root, "shared.py"), "S = NEEDLE\n");
+      await writeFile(join(session.root, "shared.py"), "S = NEEDLE + 1\n");
+      const deliveries = await session.result("a");
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "a", content: expect.stringContaining("No needle") })]);
+      expect(deliveries[0]).not.toHaveProperty("rewound");
+      expect(await readFile(join(session.root, "shared.py"), "utf8")).toBe("S = NEEDLE + 1\n");
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  it("still steers in the edit's result with what was rolled back when auditing the rollback fails", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const session = await strategySession({
+      strategy: "rewind",
+      host: "omp",
+      createAuditor: auditorOptions => {
+        const enforcer = new NativeCodeRuleEnforcer(needleCatalog(), auditorOptions);
+        const audit = enforcer.auditGeneratedEdits.bind(enforcer);
+        enforcer.auditGeneratedEdits = async (sessionId, batch) => {
+          if (batch.mode === "log") throw new Error("evaluator closed");
+          return await audit(sessionId, batch);
+        };
+        return enforcer;
+      },
+    });
+    try {
+      const deliveries = await session.edit("w1", "created.py", "NEEDLE = 1\n");
+      expect(deliveries).toEqual([expect.objectContaining({
+        strategy: "rewind", toolCallId: "w1", rewound: ["created.py"],
+        content: expect.stringContaining("`created.py`, which the edit created, is deleted."),
+      })]);
+      await expect(readFile(join(session.root, "created.py"))).rejects.toThrow(/ENOENT/u);
+      expect(stderr).toHaveBeenCalledWith("rerail: could not audit the rollback of tool call w1: evaluator closed\n");
+    } finally {
+      stderr.mockRestore();
       await session.runtime.dispose();
     }
   });

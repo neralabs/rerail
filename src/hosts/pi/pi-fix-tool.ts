@@ -11,8 +11,14 @@ export const PI_FIX_TOOL = "rerail_fix";
 
 /** Grace a child gets after SIGTERM before it is killed. */
 const KILL_GRACE_MS = 5_000;
-/** How much of a failed child's stderr the tool result carries. */
-const STDERR_TAIL_CHARS = 2_000;
+/** How long a child may run before it is stopped and the fix fails. */
+export const PI_FIX_TIMEOUT_MS = 10 * 60_000;
+/** How much of a child's stderr is kept, and so how much a failed fix's result carries. */
+export const STDERR_TAIL_CHARS = 2_000;
+/** The longest stdout line read as an event; a longer one (a whole-session `agent_end`) is skipped unparsed. */
+const MAX_EVENT_CHARS = 8 * 1024 * 1024;
+/** The child's only tools: Pi's file tools, so it cannot run shell commands. */
+export const PI_FIX_CHILD_TOOLS = ["read", "edit", "write", "grep", "find", "ls"] as const;
 
 export interface PiFixUsage {
   input: number;
@@ -56,14 +62,17 @@ const FIX_PROMPT = [
   "Do not touch unrelated code. When done, reply with one sentence describing the change.",
 ].join("\n");
 
-/** The child `pi` command line for `task`: Pi's own entry point when there is one, the `pi` on PATH otherwise. */
+/**
+ * The child `pi` command line for `task`: Pi's own entry point when there is one, the `pi` on PATH otherwise. The child
+ * loads no extensions (neither Rerail again nor the user's, headless) and has only Pi's file tools.
+ */
 export function piFixInvocation(
   task: string,
   parent: PiFixParent,
   execPath: string = process.execPath,
   script: string | undefined = process.argv[1],
 ): { command: string; args: string[] } {
-  const args = ["--mode", "json", "-p", "--no-session", "--no-extensions"];
+  const args = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--tools", PI_FIX_CHILD_TOOLS.join(",")];
   if (parent.provider !== undefined) args.push("--provider", parent.provider);
   if (parent.model !== undefined) args.push("--model", parent.model);
   if (parent.thinkingLevel !== undefined) args.push("--thinking", parent.thinkingLevel);
@@ -93,84 +102,128 @@ const assistantEnd = z.object({
   }),
 });
 
-/** What a child's `--mode json` stdout says: its last assistant text, and usage summed over its assistant messages. */
-export function readPiFixRun(stdout: string, exitCode: number, model?: string): PiFixRun {
-  const usage: PiFixUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
-  let text = "";
-  let reportedModel: string | undefined;
-  let stopReason: string | undefined;
-  let errorMessage: string | undefined;
-  for (const line of stdout.split("\n")) {
-    if (line.trim() === "") continue;
+/**
+ * Reads a child's `--mode json` stdout as it streams, keeping only what a fix reports: its last assistant text, the
+ * model it ran on, and usage summed over its assistant messages.
+ */
+export class PiFixReader {
+  readonly #usage: PiFixUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+  #text = "";
+  #model: string | undefined;
+  #stopReason: string | undefined;
+  #errorMessage: string | undefined;
+  /** The unfinished line the last chunk ended with. */
+  #partial = "";
+  /** Whether the unfinished line passed `MAX_EVENT_CHARS` and is being skipped to its end. */
+  #skipping = false;
+
+  write(chunk: string): void {
+    let start = 0;
+    for (let end = chunk.indexOf("\n"); end !== -1; end = chunk.indexOf("\n", start)) {
+      if (!this.#skipping) this.#read(this.#partial + chunk.slice(start, end));
+      this.#partial = "";
+      this.#skipping = false;
+      start = end + 1;
+    }
+    if (this.#skipping) return;
+    this.#partial += chunk.slice(start);
+    if (this.#partial.length > MAX_EVENT_CHARS) {
+      this.#partial = "";
+      this.#skipping = true;
+    }
+  }
+
+  /** The run the child's stdout described, once it exited with `exitCode`; `model` stands in when it named none. */
+  finish(exitCode: number, model?: string): PiFixRun {
+    if (!this.#skipping) this.#read(this.#partial);
+    this.#partial = "";
+    const resolvedModel = this.#model ?? model;
+    return {
+      text: this.#text,
+      failed: exitCode !== 0 || this.#stopReason === "error" || this.#stopReason === "aborted",
+      ...(this.#errorMessage === undefined ? {} : { errorMessage: this.#errorMessage }),
+      details: { exitCode, ...(resolvedModel === undefined ? {} : { model: resolvedModel }), usage: { ...this.#usage } },
+    };
+  }
+
+  #read(line: string): void {
+    if (!line.includes("\"message_end\"")) return;
     let event: unknown;
     try {
       event = JSON.parse(line);
     } catch {
-      continue;
+      return;
     }
     const parsed = assistantEnd.safeParse(event);
-    if (!parsed.success) continue;
+    if (!parsed.success) return;
     const { message } = parsed.data;
-    usage.turns += 1;
+    this.#usage.turns += 1;
     if (message.usage !== undefined) {
-      usage.input += message.usage.input;
-      usage.output += message.usage.output;
-      usage.cacheRead += message.usage.cacheRead;
-      usage.cacheWrite += message.usage.cacheWrite;
-      usage.cost += message.usage.cost.total;
+      this.#usage.input += message.usage.input;
+      this.#usage.output += message.usage.output;
+      this.#usage.cacheRead += message.usage.cacheRead;
+      this.#usage.cacheWrite += message.usage.cacheWrite;
+      this.#usage.cost += message.usage.cost.total;
     }
-    reportedModel ??= message.model;
-    stopReason = message.stopReason;
-    errorMessage = message.errorMessage;
+    this.#model ??= message.model;
+    this.#stopReason = message.stopReason;
+    this.#errorMessage = message.errorMessage;
     const texts = typeof message.content === "string"
       ? [message.content]
       : message.content.flatMap(part => part.type === "text" && typeof part.text === "string" ? [part.text] : []);
-    if (texts.length > 0) text = texts.join("\n");
+    if (texts.length > 0) this.#text = texts.join("\n");
   }
-  const resolvedModel = reportedModel ?? model;
-  return {
-    text,
-    failed: exitCode !== 0 || stopReason === "error" || stopReason === "aborted",
-    ...(errorMessage === undefined ? {} : { errorMessage }),
-    details: { exitCode, ...(resolvedModel === undefined ? {} : { model: resolvedModel }), usage },
-  };
 }
 
-/** Runs one child `pi` to completion; an abort stops it with SIGTERM, then SIGKILL. */
-function runChild(
+/**
+ * Runs one child `pi` to completion and returns its answer and details. An abort, or `timeoutMs` passing, stops it with
+ * SIGTERM, then SIGKILL, and fails the fix, as does a failed run; only a tail of its stderr is kept.
+ */
+export async function runPiFix(
   invocation: { command: string; args: string[] },
   cwd: string,
   signal: AbortSignal | undefined,
-): Promise<{ stdout: string; stderr: string; exitCode: number; aborted: boolean }> {
-  const { promise, resolve } = Promise.withResolvers<{ stdout: string; stderr: string; exitCode: number; aborted: boolean }>();
+  options: { model?: string; timeoutMs?: number } = {},
+): Promise<{ text: string; details: PiFixDetails }> {
+  const timeoutMs = options.timeoutMs ?? PI_FIX_TIMEOUT_MS;
+  const { promise, resolve } = Promise.withResolvers<number>();
   const child = spawn(invocation.command, invocation.args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
-  let stdout = "";
+  const stdout = new PiFixReader();
   let stderr = "";
-  let aborted = false;
+  let stopped: "aborted" | "timeout" | undefined;
   let killer: NodeJS.Timeout | undefined;
-  const stop = (): void => {
-    aborted = true;
+  const stop = (reason: "aborted" | "timeout"): void => {
+    if (stopped !== undefined) return;
+    stopped = reason;
     child.kill("SIGTERM");
     killer = setTimeout(() => {
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     }, KILL_GRACE_MS);
     killer.unref();
   };
-  child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
-  child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
-  const settle = (exitCode: number): void => {
-    clearTimeout(killer);
-    signal?.removeEventListener("abort", stop);
-    resolve({ stdout, stderr, exitCode, aborted });
-  };
-  child.on("close", code => settle(code ?? 1));
+  const abort = (): void => stop("aborted");
+  const timer = setTimeout(() => stop("timeout"), timeoutMs);
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => stdout.write(chunk));
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-STDERR_TAIL_CHARS); });
+  child.on("close", code => resolve(code ?? 1));
   child.on("error", error => {
-    stderr += error.message;
-    settle(1);
+    stderr = (stderr + error.message).slice(-STDERR_TAIL_CHARS);
+    resolve(1);
   });
-  if (signal?.aborted === true) stop();
-  else signal?.addEventListener("abort", stop, { once: true });
-  return promise;
+  if (signal?.aborted === true) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  const exitCode = await promise;
+  clearTimeout(timer);
+  clearTimeout(killer);
+  signal?.removeEventListener("abort", abort);
+  if (stopped === "aborted") throw new Error(`${PI_FIX_TOOL} was aborted`);
+  if (stopped === "timeout") throw new Error(`${PI_FIX_TOOL} timed out after ${timeoutMs / 1000}s and was stopped`);
+  const run = stdout.finish(exitCode, options.model);
+  if (run.failed) {
+    const reason = run.errorMessage ?? (stderr.trim() === "" ? run.text : stderr.trim());
+    throw new Error(`${PI_FIX_TOOL} failed (exit ${run.details.exitCode}): ${reason === "" ? "(no output)" : reason}`);
+  }
+  return { text: run.text === "" ? "(no output)" : run.text, details: run.details };
 }
 
 /**
@@ -193,14 +246,13 @@ export function registerPiFixTool(pi: Pick<ExtensionAPI, "registerTool">): void 
         ...(ctx.model === undefined ? {} : { provider: ctx.model.provider, model: ctx.model.id }),
         ...(ctx.thinkingLevel === undefined ? {} : { thinkingLevel: ctx.thinkingLevel }),
       };
-      const child = await runChild(piFixInvocation(input.task, parent), ctx.cwd, signal);
-      if (child.aborted) throw new Error(`${PI_FIX_TOOL} was aborted`);
-      const run = readPiFixRun(child.stdout, child.exitCode, ctx.model?.id);
-      if (run.failed) {
-        const reason = run.errorMessage ?? (child.stderr.trim() === "" ? run.text : child.stderr.trim().slice(-STDERR_TAIL_CHARS));
-        throw new Error(`${PI_FIX_TOOL} failed (exit ${run.details.exitCode}): ${reason === "" ? "(no output)" : reason}`);
-      }
-      return { content: [{ type: "text", text: run.text === "" ? "(no output)" : run.text }], details: run.details };
+      const { text, details } = await runPiFix(
+        piFixInvocation(input.task, parent),
+        ctx.cwd,
+        signal,
+        ctx.model === undefined ? {} : { model: ctx.model.id },
+      );
+      return { content: [{ type: "text", text }], details };
     },
   });
 }

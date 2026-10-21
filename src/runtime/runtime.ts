@@ -1606,13 +1606,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  /** Whether a steer, or a held finding, still speaks for the current revision of every source it names. */
-  #isCurrentSteer(state: RuntimeSessionState, pending: Pick<PendingSteer, "revision" | "scope">): boolean {
+  /**
+   * Whether a steer, or a held finding, still speaks for the current revision of every source it names. A steer whose
+   * edit was rolled back always does: it is the agent's only word that its edit is gone.
+   */
+  #isCurrentSteer(state: RuntimeSessionState, pending: Pick<PendingSteer, "revision" | "scope"> & { delivery?: AdapterDelivery }): boolean {
     return !state.closed
       && this.#sessions.get(state.descriptor.sessionId) === state
-      && (pending.scope.length === 0
-        ? pending.revision >= state.codeRuleRevision
-        : pending.scope.every(path => (state.codeRuleSourceVersions.get(path) ?? 0) <= pending.revision));
+      && (pending.delivery?.rewound !== undefined
+        || (pending.scope.length === 0
+          ? pending.revision >= state.codeRuleRevision
+          : pending.scope.every(path => (state.codeRuleSourceVersions.get(path) ?? 0) <= pending.revision)));
   }
 
   /**

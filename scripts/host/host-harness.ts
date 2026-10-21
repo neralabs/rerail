@@ -186,7 +186,8 @@ export async function jsonlFiles(directory: string): Promise<string[]> {
   return files.flat();
 }
 
-export async function sandboxProfile(sandbox: string): Promise<string> {
+/** The Seatbelt profile `host` runs under: writes only inside `sandbox`. */
+export async function sandboxProfile(sandbox: string, host: RerailHost): Promise<string> {
   const path = join(sandbox, "rerail.sb");
   await writeFile(
     path,
@@ -197,7 +198,7 @@ export async function sandboxProfile(sandbox: string): Promise<string> {
       "(allow sysctl-read)",
       "(allow mach-lookup)",
       // Codex 0.158 cannot synchronize its managed preferences without IPC, and then fails every thread start.
-      "(allow ipc*)",
+      ...(host === "codex" ? ["(allow ipc*)"] : []),
       "(allow network*)",
       "(allow file-read*)",
       `(allow file-write* (subpath ${literal(sandbox)}))`,

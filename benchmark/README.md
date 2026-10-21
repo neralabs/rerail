@@ -51,7 +51,8 @@ A missing credential (`FAILED prerequisite`) skips the rest of that harness's tr
 
 Metrics per trial, printed as a mean per host × strategy (`--json` also writes every raw trial):
 
-- **task done**: the runner's own check after the harness exits. The unit tests must pass, run inside the sandbox.
+- **task done**: the runner's own check after the harness exits. The fixture's unit tests, copied back over the agent's
+  `tests/` so an edited or deleted test cannot pass, must all run (11) and pass, inside the sandbox.
   README's Usage section must have lost its TODO and must show `Inventory(` and `add_item`.
 - **steers**, **in result** and **rewound**: the rule's `steer` deliveries in Rerail's ledger
   (`.rerail/sessions/*/events.jsonl`), how many carry a `toolCallId` (they rode their edit's tool result, in OMP and
