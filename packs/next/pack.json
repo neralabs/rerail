@@ -22,6 +22,7 @@
       "id": "next-no-img-element",
       "document": "rules/next-no-img-element.json",
       "title": "No img element",
+      "mode": "log",
       "group": "Next.js",
       "examples": {
         "caught": {
@@ -38,12 +39,14 @@
       "id": "next-no-head-element",
       "document": "rules/next-no-head-element.json",
       "title": "No head element",
+      "mode": "log",
       "group": "Next.js"
     },
     {
       "id": "next-no-sync-scripts",
       "document": "rules/next-no-sync-scripts.json",
       "title": "No sync scripts",
+      "mode": "log",
       "group": "Next.js",
       "examples": {
         "caught": {
@@ -60,30 +63,35 @@
       "id": "next-no-css-tags",
       "document": "rules/next-no-css-tags.json",
       "title": "No css tags",
+      "mode": "log",
       "group": "Next.js"
     },
     {
       "id": "next-google-font-display",
       "document": "rules/next-google-font-display.json",
       "title": "Google font display",
+      "mode": "log",
       "group": "Next.js"
     },
     {
       "id": "next-google-font-preconnect",
       "document": "rules/next-google-font-preconnect.json",
       "title": "Google font preconnect",
+      "mode": "log",
       "group": "Next.js"
     },
     {
       "id": "next-next-script-for-ga",
       "document": "rules/next-next-script-for-ga.json",
       "title": "Next script for ga",
+      "mode": "log",
       "group": "Next.js"
     },
     {
       "id": "next-no-unwanted-polyfillio",
       "document": "rules/next-no-unwanted-polyfillio.json",
       "title": "No unwanted polyfillio",
+      "mode": "log",
       "group": "Next.js"
     },
     {
@@ -118,6 +126,7 @@
       "id": "next-no-styled-jsx-in-document",
       "document": "rules/next-no-styled-jsx-in-document.json",
       "title": "No styled jsx in document",
+      "mode": "log",
       "group": "Next.js",
       "examples": {
         "caught": {
@@ -134,6 +143,7 @@
       "id": "next-no-title-in-document-head",
       "document": "rules/next-no-title-in-document-head.json",
       "title": "No title in document head",
+      "mode": "log",
       "group": "Next.js",
       "examples": {
         "caught": {
@@ -172,12 +182,14 @@
       "id": "next-no-async-client-component",
       "document": "rules/next-no-async-client-component.json",
       "title": "No async client component",
+      "mode": "log",
       "group": "Next.js"
     },
     {
       "id": "next-no-before-interactive-script-outside-document",
       "document": "rules/next-no-before-interactive-script-outside-document.json",
       "title": "No before interactive script outside document",
+      "mode": "log",
       "group": "Next.js"
     },
     {
@@ -190,18 +202,21 @@
       "id": "next-no-typos",
       "document": "rules/next-no-typos.json",
       "title": "No typos",
+      "mode": "log",
       "group": "Next.js"
     },
     {
       "id": "next-no-page-custom-font",
       "document": "rules/next-no-page-custom-font.json",
       "title": "No page custom font",
+      "mode": "log",
       "group": "Next.js"
     },
     {
       "id": "next-no-location-assign-relative-destination",
       "document": "rules/next-no-location-assign-relative-destination.json",
       "title": "No location assign relative destination",
+      "mode": "log",
       "group": "Next.js"
     }
   ]
