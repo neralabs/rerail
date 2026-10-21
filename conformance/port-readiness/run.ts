@@ -242,7 +242,7 @@ export function packDocuments(root: string, pack: string): { path: string; locat
   ].sort((a, b) => byText(a.path, b.path));
 }
 
-function readRule(root: string, path: string, rule: string): PackRule {
+export function readRule(root: string, path: string, rule: string): PackRule {
   const buffer = readFileSync(join(root, path));
   const text = buffer.toString("utf8");
   let id: string | null = null;

@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { afterAll, describe, it } from "vitest";
 import { parse } from "yaml";
 
-import { changedPaths, gatedToolPacks, legsOf, plan, REPORT_ONLY, ROOT, ROOTS, SHARDS, writeOutputs, type Leg } from "../../../conformance/port-readiness/plan.mjs";
+import { changedPaths, gatedToolPacks, legsOf, movesConformance, plan, REPORT_ONLY, ROOT, ROOTS, SHARDS, writeOutputs, type Leg } from "../../../conformance/port-readiness/plan.mjs";
 import { GATE_CODE } from "../../../conformance/port-readiness/cache.js";
 import { gatedToolPacks as runGatedToolPacks } from "../../../conformance/port-readiness/run.js";
 
@@ -107,6 +107,8 @@ describe("the legs a changed path selects", () => {
     ["conformance/languages/runner.ts", EVERY_LEG],
     ["conformance/port-readiness/ungated-rules.json", []],
     ["conformance/port-readiness/ungated.ts", []],
+    ["conformance/port-readiness/conformance-gates.ts", []],
+    ["packs/complexity/rules/complexity-cyclomatic-python.json", []],
     // Out of the key, but the report job's merge and summary should run on real reports.
     ["conformance/port-readiness/summary.ts", EVERY_LEG],
     ["conformance/port-readiness/merge.ts", EVERY_LEG],
@@ -118,6 +120,16 @@ describe("the legs a changed path selects", () => {
     });
   }
 
+  it("the conformance gates read every path a leg reads, the report-only files, and no file at the top of packs/", () => {
+    for (const path of ["packs/complexity/rules/complexity-cyclomatic-python.json", "packs/node/README.md", "conformance/port-readiness/conformance-gates.ts", "conformance/port-readiness/ungated.ts", "native/src/x.rs"]) {
+      assert.equal(movesConformance(path), true, path);
+    }
+    for (const path of ["packs/README.md", "docs/port-readiness.md", "README.md"]) assert.equal(movesConformance(path), false, path);
+    assert.equal(plan(TOOL_PACKS, ["docs/port-readiness.md"]).conformance, false);
+    assert.equal(plan(TOOL_PACKS, ["docs/port-readiness.md", "packs/complexity/rules/x.json"]).conformance, true);
+    assert.equal(plan(TOOL_PACKS).conformance, true);
+  });
+
   it("a pack that gains a gates.yaml gets one unsharded leg", () => {
     const root = tempRoot();
     write(root, "packs/node/upstream/eslint-plugin-n/gates.yaml");
@@ -127,11 +139,11 @@ describe("the legs a changed path selects", () => {
     assert.deepEqual(planned.lines, ["node/eslint-plugin-n (1 leg): packs/node/rules/no-sync.json changed"]);
   });
 
-  it("writes exactly `legs=` and `tool-packs=` lines, empty lists included", () => {
+  it("writes exactly `legs=`, `tool-packs=` and `conformance=` lines, empty lists included", () => {
     const out = join(tempRoot(), "github-output");
     writeOutputs(out, plan(TOOL_PACKS, ["docs/port-readiness.md"]));
-    writeOutputs(out, { legs: legsOf([{ pack: "python", tool: "bandit" }]), toolPacks: ["python/bandit"] });
-    assert.equal(readFileSync(out, "utf8"), 'legs=[]\ntool-packs=[]\nlegs=[{"pack":"python","tool":"bandit"}]\ntool-packs=["python/bandit"]\n');
+    writeOutputs(out, { legs: legsOf([{ pack: "python", tool: "bandit" }]), toolPacks: ["python/bandit"], conformance: true });
+    assert.equal(readFileSync(out, "utf8"), 'legs=[]\ntool-packs=[]\nconformance=false\nlegs=[{"pack":"python","tool":"bandit"}]\ntool-packs=["python/bandit"]\nconformance=true\n');
   });
 });
 
@@ -166,19 +178,19 @@ describe("the command", () => {
     assert.deepEqual(git("diff", "-M", "--name-only", "HEAD~2", "HEAD~1").trim().split("\n"), ["packs/javascript/candidates/rules/bandit-b101.json"]);
     assert.deepEqual(changedPaths("HEAD~2", "HEAD~1", root), ["packs/javascript/candidates/rules/bandit-b101.json", "packs/python/candidates/rules/bandit-b101.json"]);
     const { stdout, output } = run("--diff", "HEAD~2", "HEAD~1");
-    assert.equal(output, 'legs=[{"pack":"javascript","tool":"eslint-plugin-unicorn"},{"pack":"python","tool":"bandit"}]\ntool-packs=["javascript/eslint-plugin-unicorn","python/bandit"]\n');
+    assert.equal(output, 'legs=[{"pack":"javascript","tool":"eslint-plugin-unicorn"},{"pack":"python","tool":"bandit"}]\ntool-packs=["javascript/eslint-plugin-unicorn","python/bandit"]\nconformance=true\n');
     assert.match(stdout, /^python\/bandit \(1 leg\): packs\/python\/candidates\/rules\/bandit-b101\.json changed$/mu);
   });
 
   it("plans no leg for a change no leg reads, and says so", () => {
     const { stdout, output } = run("--diff", "HEAD~1", "HEAD");
-    assert.equal(output, "legs=[]\ntool-packs=[]\n");
+    assert.equal(output, "legs=[]\ntool-packs=[]\nconformance=false\n");
     assert.match(stdout, /no leg runs/u);
   });
 
   it("plans every leg when git cannot diff, with a warning", () => {
     const { stdout, output } = run("--diff", "no-such-commit", "HEAD");
     assert.match(stdout, /^::warning title=Port readiness plan::git diff no-such-commit HEAD failed, so every leg runs: /mu);
-    assert.equal(output, 'legs=[{"pack":"javascript","tool":"eslint-plugin-unicorn"},{"pack":"python","tool":"bandit"}]\ntool-packs=["javascript/eslint-plugin-unicorn","python/bandit"]\n');
+    assert.equal(output, 'legs=[{"pack":"javascript","tool":"eslint-plugin-unicorn"},{"pack":"python","tool":"bandit"}]\ntool-packs=["javascript/eslint-plugin-unicorn","python/bandit"]\nconformance=true\n');
   });
 });

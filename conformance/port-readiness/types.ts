@@ -8,14 +8,18 @@ export type { EslintUpstream, KnownGap, RealCodeGap } from "./manifest.js";
  * `upstream-status` only decides whether it ships on or off. `passes-conformance` is the pack contract's own check
  * (`test:conformance`), so the gates are a superset of it; it comes last, after V1's gates. V1's Gate 6 (real code) is
  * NRV's alone: rerail judges the goldens it imports from NRV, in `matches-upstream-tests`.
+ *
+ * `section` says which rules a gate is for. The `conformance` gates hold for every rule document of every pack, ported
+ * or not (conformance-gates.ts judges the rules no gated tool-pack does); the `port` gates judge a port against the
+ * upstream linter it ports, so only a gated tool-pack's rules meet them.
  */
 export const GATES = [
-  { id: "upstream-status", title: "Upstream status (decides on or off)", blocking: false },
-  { id: "loads", title: "Compiles and loads on this engine", blocking: true },
-  { id: "not-overfit", title: "Not overfit to upstream's tests", blocking: true },
-  { id: "compact", title: "Compact (no written-out expansion)", blocking: true },
-  { id: "matches-upstream-tests", title: "Matches upstream on its own tests", blocking: true },
-  { id: "passes-conformance", title: "Passes the pack's conformance check", blocking: true },
+  { id: "upstream-status", title: "Upstream status (decides on or off)", blocking: false, section: "port" },
+  { id: "loads", title: "Compiles and loads on this engine", blocking: true, section: "conformance" },
+  { id: "not-overfit", title: "Not overfit to upstream's tests", blocking: true, section: "port" },
+  { id: "compact", title: "Compact (no written-out expansion)", blocking: true, section: "conformance" },
+  { id: "matches-upstream-tests", title: "Matches upstream on its own tests", blocking: true, section: "port" },
+  { id: "passes-conformance", title: "Passes the pack's conformance check", blocking: true, section: "conformance" },
 ] as const;
 
 type BlockingGate = Extract<(typeof GATES)[number], { blocking: true }>;
@@ -25,6 +29,18 @@ export const BLOCKING_GATES = GATES.filter((gate): gate is BlockingGate => gate.
 
 export type GateId = (typeof GATES)[number]["id"];
 export type BlockingGateId = BlockingGate["id"];
+export type GateSection = (typeof GATES)[number]["section"];
+
+type ConformanceGate = Extract<BlockingGate, { section: "conformance" }>;
+type PortGate = Extract<BlockingGate, { section: "port" }>;
+
+/** The blocking gates every rule meets, ported or not: `loads`, `compact`, `passes-conformance`. */
+export const CONFORMANCE_GATES = BLOCKING_GATES.filter((gate): gate is ConformanceGate => gate.section === "conformance");
+/** The blocking gates only a gated tool-pack's rules meet: `not-overfit`, `matches-upstream-tests`. */
+export const PORT_GATES = BLOCKING_GATES.filter((gate): gate is PortGate => gate.section === "port");
+
+export type ConformanceGateId = ConformanceGate["id"];
+export type PortGateId = PortGate["id"];
 
 /** One deterministic check. `detail` says what was compared, so a failure explains itself. */
 /**

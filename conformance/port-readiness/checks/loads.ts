@@ -68,9 +68,10 @@ export function loadAsBundled(engine: Engine, scratch: string, packId: string, r
 /**
  * loads: the shipped bytes parse, pass rerail's own schema, compile on this checkout's engine both as written and in
  * the stable form the rule catalog compiles, load through rerail's bundled-rule loader, and apply to the files upstream
- * lints.
+ * lints. `inScopeSamples` is null for a rule no gated tool-pack judges: no upstream says which files it must apply to,
+ * so `in-scope` says it was not checked.
  */
-export function loadsGate(engine: Engine, rule: PackRule, packId: string, scratch: string, inScopeSamples: string[]): LoadsResult {
+export function loadsGate(engine: Engine, rule: PackRule, packId: string, scratch: string, inScopeSamples: string[] | null): LoadsResult {
   const checks: Check[] = [];
   let document: Record<string, unknown>;
   try {
@@ -122,11 +123,15 @@ export function loadsGate(engine: Engine, rule: PackRule, packId: string, scratc
     checks.push({ id: "bundled-load", ok: false, detail: message(error) });
   }
 
-  const outOfScope = inScopeSamples.filter((path) => !compiled.inScope(path));
-  checks.push({
-    id: "in-scope",
-    ok: outOfScope.length === 0,
-    detail: outOfScope.length === 0 ? `applies to ${inScopeSamples.join(", ")}` : `does not apply to ${outOfScope.join(", ")}`,
-  });
+  if (inScopeSamples === null) {
+    checks.push({ id: "in-scope", ok: true, detail: "not checked: no gated tool-pack ports it, so no upstream names the files it must apply to" });
+  } else {
+    const outOfScope = inScopeSamples.filter((path) => !compiled.inScope(path));
+    checks.push({
+      id: "in-scope",
+      ok: outOfScope.length === 0,
+      detail: outOfScope.length === 0 ? `applies to ${inScopeSamples.join(", ")}` : `does not apply to ${outOfScope.join(", ")}`,
+    });
+  }
   return { checks, compiled, document, ...(schema.success ? { resolved: schema.data as Record<string, unknown> } : {}) };
 }

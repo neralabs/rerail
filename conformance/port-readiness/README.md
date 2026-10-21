@@ -8,15 +8,21 @@ conformance check, and a superset of the check: its verdict is the `passes-confo
 a failing one fails CI. Documents under `packs/<pack>/candidates/**` (except `candidates/probes/**`) go through the same
 gates and are only reported.
 
-| V1 gate | Gate id | Blocking |
-| --- | --- | --- |
-| 1 | `upstream-status` (decides on or off) | no |
-| 2 | `loads` | yes |
-| 3 | `not-overfit` | yes |
-| 4 | `compact` | yes |
-| 5 | `matches-upstream-tests` | yes |
-| 6 | none: real code runs in NRV only; `matches-upstream-tests` judges the goldens imported from it | — |
-| — | `passes-conformance` (the pack's `test:conformance` verdict on the rule, judged after V1's gates; never cached) | yes |
+Each gate has a section (`GATES` in types.ts). The conformance gates hold for every rule document of every pack: a
+tool-pack's run judges its own rules on them, and `conformance-gates.ts` (`npm run port-readiness -- conformance`, its
+own CI job) judges every rule no gated tool-pack does, with no recording and no cache. The port gates judge a port
+against its upstream, so only a gated tool-pack's rules meet them. The summary and the pull request comment report the
+two sections apart (summary.ts, comment.ts).
+
+| V1 gate | Gate id | Section | Blocking |
+| --- | --- | --- | --- |
+| 1 | `upstream-status` (decides on or off) | port | no |
+| 2 | `loads` | conformance | yes |
+| 3 | `not-overfit` | port | yes |
+| 4 | `compact` | conformance | yes |
+| 5 | `matches-upstream-tests` | port | yes |
+| 6 | none: real code runs in NRV only; `matches-upstream-tests` judges the goldens imported from it | — | — |
+| — | `passes-conformance` (the pack's `test:conformance` verdict on the rule, judged after V1's gates; never cached; not applicable to a rule conformance.json does not map) | conformance | yes |
 
 A rule's verdict is the first blocking gate it fails. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
 that differs where the engine reported `source-partial`, `source-incomplete` or `budget-exceeded` fails the rule; the
@@ -65,6 +71,7 @@ npm run port-readiness -- --pack python --tool bandit    # one tool-pack
 npm run port-readiness -- --no-cache                     # judge every rule again; read and save no results
 npm run port-readiness -- --refresh-cache                # judge every rule again and save the fresh results (the nightly)
 npm run port-readiness -- --pack javascript --tool eslint --shard 2/4   # one shard: rules with sha256(id) mod 4 = 1
+npm run port-readiness -- conformance                     # the conformance gates on every rule no tool-pack judges
 npm run port-readiness -- merge .rerail/reports/port-readiness    # join each tool-pack's shard-<i>of<n>/ reports (shard.ts, merge.ts)
 npm run port-readiness -- summary .rerail/reports/port-readiness --base <sha>
 npm run port-readiness -- summary .rerail/reports/port-readiness --planned '["python/ruff"]'   # the others: not judged
@@ -119,7 +126,8 @@ complete. The report's method text says so.
 tool-pack listed there is still validated in nera-rule-validation until its recordings land, is reported as pending
 and is not frozen.
 
-`ungated-rules.json` freezes the shipped rules of every pack that has no gated or pending tool-pack (complexity).
+`ungated-rules.json` freezes the shipped rules of every pack that has no gated or pending tool-pack (complexity): the
+port gates cannot judge them. The conformance gates still do (`conformance-gates.ts`).
 It was derived once, on branch `ggiangi/ner-1699-rule-gates-in-ci` from main `d81f2749`, as the sorted `rules[].id` of
 each of those packs' `pack.json`; php and blade left it when main moved all their rules to `candidates/`, node when its
 22 rules moved there too (NER-1897), and sql and vue

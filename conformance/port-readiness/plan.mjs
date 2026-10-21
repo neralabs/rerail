@@ -8,7 +8,9 @@
 //   node conformance/port-readiness/plan.mjs --diff <from> <to>   the legs the paths changed from <from> to <to> select
 //
 // Prints one line per planned tool-pack and why. When $GITHUB_OUTPUT is set, appends `legs` (the gates job's matrix
-// include list) and `tool-packs` ("<pack>/<tool>" strings), each as compact JSON.
+// include list) and `tool-packs` ("<pack>/<tool>" strings), each as compact JSON, and `conformance` (true or false):
+// whether the change can move a verdict of the conformance gates, which judge every rule (the report job posts the
+// comment when it can).
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -44,7 +46,8 @@ export const ROOTS = Object.freeze([
 
 /**
  * What no leg reads and the report job reads whatever the plan: the not-gated and pending lists and their checks run on
- * the tree in every report job, the recording diff only in the recorder. A change to one plans no leg. The shard merge,
+ * the tree in every report job, the recording diff only in the recorder, and the conformance gates of the rules no
+ * tool-pack judges in their own job on every run. A change to one plans no leg. The shard merge,
  * the summary and the comment move no leg's verdict either, but a change to them should run on real reports, so it
  * plans every leg; each replays main's results, since they are out of the key.
  */
@@ -54,6 +57,7 @@ export const REPORT_ONLY = Object.freeze([
   "conformance/port-readiness/ungated-rules.json",
   "conformance/port-readiness/pending.json",
   "conformance/port-readiness/recording/diff.ts",
+  "conformance/port-readiness/conformance-gates.ts",
 ]);
 
 const nameOf = ({ pack, tool }) => `${pack}/${tool}`;
@@ -95,8 +99,20 @@ export function classify(path, toolPacks) {
 }
 
 /**
+ * Whether a change to `path` can move a verdict of the conformance gates: anything a leg reads, the report-only files
+ * included (conformance-gates.ts runs in the report's own job), except a file at the top of packs/. The conformance
+ * job judges every rule no tool-pack does on every run, so this decides only whether the change is worth a comment.
+ */
+export function movesConformance(path) {
+  if (!ROOTS.some((glob) => matches(path, glob))) return false;
+  const [top, , ...rest] = path.split("/");
+  return top !== "packs" || rest.length > 0;
+}
+
+/**
  * The legs to run, the tool-packs they judge and one line per tool-pack saying why: every gated tool-pack when `paths`
- * is undefined (no diff), otherwise the ones the changed paths select.
+ * is undefined (no diff), otherwise the ones the changed paths select. `conformance` is whether the change can move a
+ * conformance verdict (movesConformance): always, with no diff.
  */
 export function plan(toolPacks, paths) {
   const why = new Map();
@@ -113,6 +129,7 @@ export function plan(toolPacks, paths) {
   return {
     legs: legsOf(selected),
     toolPacks: selected.map(nameOf),
+    conformance: paths === undefined || paths.some(movesConformance),
     lines: selected.map((toolPack) => {
       const legs = legsOf([toolPack]).length;
       return `${nameOf(toolPack)} (${legs} leg${legs === 1 ? "" : "s"}): ${why.get(nameOf(toolPack))}`;
@@ -131,9 +148,9 @@ export function changedPaths(from, to, root = ROOT) {
   return output.split("\0").filter((path) => path !== "");
 }
 
-/** Appends the plan to a GitHub Actions output file: exactly `legs=<json>` and `tool-packs=<json>`. */
+/** Appends the plan to a GitHub Actions output file: exactly `legs=<json>`, `tool-packs=<json>` and `conformance=<bool>`. */
 export function writeOutputs(file, planned) {
-  appendFileSync(file, `legs=${JSON.stringify(planned.legs)}\ntool-packs=${JSON.stringify(planned.toolPacks)}\n`);
+  appendFileSync(file, `legs=${JSON.stringify(planned.legs)}\ntool-packs=${JSON.stringify(planned.toolPacks)}\nconformance=${planned.conformance}\n`);
 }
 
 function main(args) {
@@ -154,6 +171,7 @@ function main(args) {
   const planned = plan(gatedToolPacks(), paths);
   for (const line of planned.lines) console.log(line);
   if (planned.legs.length === 0) console.log("No gated tool-pack reads a changed path: no leg runs.");
+  console.log(planned.conformance ? "The conformance gates read a changed path." : "The conformance gates read no changed path.");
   if (process.env.GITHUB_OUTPUT !== undefined && process.env.GITHUB_OUTPUT !== "") writeOutputs(process.env.GITHUB_OUTPUT, planned);
   return 0;
 }

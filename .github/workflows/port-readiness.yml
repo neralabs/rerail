@@ -9,6 +9,10 @@ name: Port readiness
 # the commit has. No rule runs over the real-code corpus (that is NRV's real-code gate): only the pinned corpus files
 # the goldens name and upstream's pinned test files are fetched, and they are cached by their pins.
 #
+# The conformance job runs the conformance gates (loads, compact, passes-conformance) on every rule no gated tool-pack
+# judges (complexity, the packs whose tools have no gates.yaml, unmapped documents), on every run: the legs run the same
+# gates on their own rules, so together they cover every rule of every pack. It reads no recording and takes seconds.
+#
 # The plan job builds the legs (conformance/port-readiness/plan.mjs, which also holds the shard counts). A pull request
 # (`select`) judges only the tool-packs of the packs it touches, and every one when it touches the engine, the gate
 # code, the package files or the workflows; a tool-pack it leaves out keeps main's verdict. Pushes to main and the
@@ -51,6 +55,7 @@ jobs:
     outputs:
       legs: ${{ steps.plan.outputs.legs }}
       tool-packs: ${{ steps.plan.outputs.tool-packs }}
+      conformance: ${{ steps.plan.outputs.conformance }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -364,9 +369,53 @@ jobs:
           STATUS: ${{ steps.gates.outputs.status }}
         run: exit "$STATUS"
 
+  # The conformance gates on every rule document no gated tool-pack judges (conformance-gates.ts), from the built
+  # engine and the tree alone: no recording, corpus or upstream runtime, so nothing to fetch or cache.
+  conformance:
+    name: Conformance gates (every rule no tool-pack judges)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      - id: conformance
+        name: Run the conformance gates
+        run: |
+          set +e
+          npm run port-readiness -- conformance --out "$RUNNER_TEMP/gates"
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: port-readiness-conformance
+          path: ${{ runner.temp }}/gates/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # 1: a shipped rule failed a conformance gate, or a pack check failed (the report job says which and why).
+      - name: Fail when a shipped rule failed
+        if: steps.conformance.outputs.status != '0'
+        env:
+          STATUS: ${{ steps.conformance.outputs.status }}
+        run: exit "$STATUS"
+
   report:
     name: Port readiness report
-    needs: [plan, gates]
+    needs: [plan, gates, conformance]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -384,9 +433,8 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
-      # No leg ran when the plan selected none (or failed), so there is nothing to download.
+      # The conformance job always uploads one; the legs none when the plan selected none (or failed).
       - name: Download the reports
-        if: needs.gates.result != 'skipped'
         uses: actions/download-artifact@v8
         with:
           pattern: port-readiness-*
@@ -426,10 +474,11 @@ jobs:
           npm run port-readiness -- summary "$RUNNER_TEMP/gates" ${BASE:+--base "$BASE"} ${PLANNED:+--planned "$PLANNED"}
           echo "status=$?" >> "$GITHUB_OUTPUT"
 
-      # One results comment per run: the earlier ones are minimized as outdated (collapsed, still there to compare), and
-      # the new one goes last. Fork pull requests get a read-only token, so they read the job summary instead. A pull
-      # request that judged no tool-pack gets a new comment only when a not-gated check fails, but its earlier comments
-      # are still collapsed, so an earlier push's verdict does not read as this run's.
+      # One results comment per run, its conformance and port readiness sections together: the earlier ones are
+      # minimized as outdated (collapsed, still there to compare), and the new one goes last. Fork pull requests get a
+      # read-only token, so they read the job summary instead. A pull request that judged no tool-pack and touched
+      # nothing the conformance gates read gets a new comment only when a check fails, but its earlier comments are
+      # still collapsed, so an earlier push's verdict does not read as this run's.
       - name: Post the results on the pull request
         if: >-
           ${{
@@ -443,7 +492,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          POST: ${{ needs.plan.outputs.legs != '[]' || steps.summary.outputs.status != '0' }}
+          POST: ${{ needs.plan.outputs.legs != '[]' || needs.plan.outputs.conformance != 'false' || steps.summary.outputs.status != '0' }}
         run: |
           set -euo pipefail
           marker='<!-- rerail-port-readiness -->'
@@ -459,7 +508,7 @@ jobs:
           if [ "$POST" = "true" ]; then
             body="$RUNNER_TEMP/gates/comment.md"
             if [ ! -s "$body" ]; then
-              printf '%s\n## Port readiness: the run produced no summary\n\nSee the [workflow run](%s).\n' "$marker" "$RUN_URL" > "$body"
+              printf '%s\n## Conformance and port readiness: the run produced no summary\n\nSee the [workflow run](%s).\n' "$marker" "$RUN_URL" > "$body"
             fi
             gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body" > /dev/null
           fi
@@ -480,11 +529,12 @@ jobs:
       - name: Fail when anything blocking failed
         if: >-
           steps.summary.outputs.status != '0' || needs.plan.result != 'success' ||
-          (needs.gates.result != 'success' && needs.gates.result != 'skipped')
+          (needs.gates.result != 'success' && needs.gates.result != 'skipped') || needs.conformance.result != 'success'
         env:
           STATUS: ${{ steps.summary.outputs.status }}
           PLAN: ${{ needs.plan.result }}
           GATES: ${{ needs.gates.result }}
+          CONFORMANCE: ${{ needs.conformance.result }}
         run: |
-          echo "::error::Port readiness failed (summary exit ${STATUS}, plan ${PLAN}, gate jobs ${GATES}). The job summary lists each rule, the gate it stopped at and why."
+          echo "::error::Port readiness failed (summary exit ${STATUS}, plan ${PLAN}, gate jobs ${GATES}, conformance job ${CONFORMANCE}). The job summary lists each rule, the gate it stopped at and why."
           exit 1

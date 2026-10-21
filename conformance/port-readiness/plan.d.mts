@@ -12,6 +12,7 @@ export interface Leg extends ToolPack {
 export interface Plan {
   legs: Leg[];
   toolPacks: string[];
+  conformance: boolean;
   lines: string[];
 }
 
@@ -22,6 +23,7 @@ export const REPORT_ONLY: readonly string[];
 export function gatedToolPacks(root?: string): ToolPack[];
 export function legsOf(toolPacks: readonly ToolPack[]): Leg[];
 export function classify(path: string, toolPacks: readonly ToolPack[]): ToolPack[];
+export function movesConformance(path: string): boolean;
 export function plan(toolPacks: readonly ToolPack[], paths?: readonly string[]): Plan;
 export function changedPaths(from: string, to: string, root?: string): string[];
-export function writeOutputs(file: string, planned: Pick<Plan, "legs" | "toolPacks">): void;
+export function writeOutputs(file: string, planned: Pick<Plan, "legs" | "toolPacks" | "conformance">): void;
