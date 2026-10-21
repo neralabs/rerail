@@ -3,7 +3,7 @@
   "id": "bandit-b704-markupsafe-markup-xss",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect dynamic content passed directly to Markup",
+  "description": "Escape dynamic content before wrapping it in Markup from markupsafe or Flask; Markup marks it safe and skips escaping, opening XSS.",
   "scope": {
     "include": [
       "**/*.py"

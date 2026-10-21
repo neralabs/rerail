@@ -3,7 +3,7 @@
   "id": "complexity-cyclomatic-javascript",
   "revision": 1,
   "mode": "steer",
-  "description": "Cyclomatic complexity of JavaScript functions (.js, .jsx, .mjs, .cjs), with lizard 1.24.0's decision points. Each function declaration, function expression, arrow function, method, getter, setter, constructor and generator function is scored on its own: decisions inside a nested one do not count for the function around it, and a class is not scored itself. Decision points: if (else if included), for, for-in, for-of, while, do...while, catch, each case of a switch (default does not count), &&, ||, ||=, &&= and the ?: conditional. Optional parameters and properties, optional chaining (?.), ??, ??= and default parameters do not count. Deviations from lizard 1.24.0, each a defect of its tokenizer: lizard counts ?? and ??= as 2, and a ? inside a regex literal or a ?. right after ) or ] as a conditional; and it adds the conditions of an arrow function whose expression body starts on a later line to the enclosing function. A function fails when its cyclomatic complexity, 1 + its decision points, exceeds 6 (7 or more); the finding spans the whole function and its message gives the computed number. Test files and dependency, build-output and generated directories are out of scope.",
+  "description": "Keep JavaScript functions at cyclomatic complexity 6 or below, counting each if, loop, catch, case, ternary and && or ||; branch-heavy functions are hard to follow and test.",
   "scope": {
     "include": [
       "**/*.js",

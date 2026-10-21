@@ -3,7 +3,7 @@
   "id": "sqlfluff-st08-structure-distinct",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's ST08 (structure.distinct): in a SELECT DISTINCT whose first selected expression is parenthesized alone, report the parentheses; where the parentheses start an arithmetic expression right after DISTINCT with no space, report DISTINCT; and report DISTINCT written as a function, DISTINCT(x), as an aggregate's lone argument (not around a subquery).",
+  "description": "Don't put parentheses after DISTINCT in SQL as if it were a function; DISTINCT is a keyword, and the parentheses mislead about what it applies to.",
   "scope": {
     "include": [
       "**/*.sql"

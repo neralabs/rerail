@@ -3,7 +3,7 @@
   "id": "blade-parser-debug-directive",
   "revision": 2,
   "mode": "steer",
-  "description": "stillat/blade-parser 2.1.0 DebugDirectiveValidator: a @dd or @dump directive (CoreDirectiveRetriever::getDebugDirectiveNames).",
+  "description": "Remove @dd and @dump directives from Blade templates; they stop rendering or leak debug output to users.",
   "scope": {
     "include": [
       "**/*.blade.php"
@@ -25,7 +25,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "DebugDirectiveValidator",
-        "message": "Debug directive detected"
+        "message": "Remove this @dd or @dump directive; it stops rendering or shows debug output to users."
       }
     }
   ]

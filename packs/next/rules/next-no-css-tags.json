@@ -3,7 +3,7 @@
   "id": "next-no-css-tags",
   "revision": 2,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-css-tags: a <link> with rel=\"stylesheet\" and a string href that does not start with http(s).",
+  "description": "Import local stylesheets instead of adding them with link tags, so Next.js can bundle and optimize the CSS; links to external stylesheet URLs are allowed.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -93,7 +93,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-css-tags",
-        "message": "Do not include stylesheets manually. See: https://nextjs.org/docs/messages/no-css-tags",
+        "message": "Import this local stylesheet from the component (import './styles.css') instead of adding it with a link tag.",
         "suppress": {
           "eslint": {
             "rules": [

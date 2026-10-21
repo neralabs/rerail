@@ -3,7 +3,7 @@
   "id": "ruff-f707-default-except-not-last",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F707 (default-except-not-last) with default settings: a bare `except:` handler followed by another handler of the same `try`. Reported on the `except` keyword.",
+  "description": "Put a bare except handler last in its try statement; Python rejects any handler after it.",
   "scope": {
     "include": [
       "**/*"

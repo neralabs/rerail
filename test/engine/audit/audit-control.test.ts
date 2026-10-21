@@ -31,7 +31,7 @@ describe("audit controls", () => {
     const { controls, sessionStore: sessionStore } = await fixture();
     controls.updateSettings("a", { scope: "repository", mode: "log" });
     expect(controls.getSettings("a").settings).toEqual({ scope: "repository", mode: "log", steerStrategy: "message" });
-    expect(controls.getSettings("b").settings).toEqual({ scope: "touched-files", mode: "steer", steerStrategy: "message" });
+    expect(controls.getSettings("b").settings).toEqual({ scope: "ai-output", mode: "steer", steerStrategy: "message" });
     controls.close();
     const reopened = new SqliteAuditControlStore(sessionStore.path);
     expect(reopened.getSettings("a").settings).toEqual({ scope: "repository", mode: "log", steerStrategy: "message" });
@@ -54,10 +54,10 @@ describe("audit controls", () => {
     const { root, controls, sessionStore } = await fixture();
     const unseen = join(root, "unseen");
     await mkdir(unseen);
-    expect(controls.updateWorkspaceSettings(unseen, { steerStrategy: "rewind" })).toEqual({ scope: "touched-files", mode: "steer", steerStrategy: "rewind" });
-    expect(controls.getWorkspaceSettings(unseen)).toEqual({ scope: "touched-files", mode: "steer", steerStrategy: "rewind" });
+    expect(controls.updateWorkspaceSettings(unseen, { steerStrategy: "rewind" })).toEqual({ scope: "ai-output", mode: "steer", steerStrategy: "rewind" });
+    expect(controls.getWorkspaceSettings(unseen)).toEqual({ scope: "ai-output", mode: "steer", steerStrategy: "rewind" });
     sessionStore.openSession({ host: "pi", sessionId: "c", cwd: unseen });
-    expect(controls.updateSettings("c", { mode: "log" }).settings).toEqual({ scope: "touched-files", mode: "log", steerStrategy: "rewind" });
+    expect(controls.updateSettings("c", { mode: "log" }).settings).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "rewind" });
     expect(() => controls.updateWorkspaceSettings(unseen, { steerStrategy: "undo" as never })).toThrow();
     controls.close(); sessionStore.close();
   });

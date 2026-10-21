@@ -50,6 +50,10 @@ rerail-command *args:
 rerail-smoke:
     @bash scripts/dev/rerail-smoke.sh
 
+# Review every rule pack rule's steer guidance in the browser: approve it or request changes, with comments (--refresh reruns the rules on their cases; decisions are kept in .rerail/guidance-review/).
+rerail-guidance-review *args:
+    @node --import tsx scripts/review/guidance-review.ts {{ args }}
+
 # Language-pack rule conformance: --pack <name> [--rule <id>] [--fixtures] [--corpus <name>] [--write] | --check.
 rerail-language-conformance *args:
     @node --import tsx conformance/languages/cli.ts {{ args }}

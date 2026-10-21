@@ -3,7 +3,7 @@
   "id": "ruff-sim300-yoda-conditions",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM300 (yoda-conditions): a comparison with one `==`, `!=`, `<`, `<=`, `>` or `>=` whose left operand is more constant-like than its right, on Ruff's three levels (`ConstantLikelihood`, flake8_simplify/rules/yoda_conditions.rs:76-136): literals (not f- or t-strings) are definite; a name or attribute whose name is cased uppercase is probable; tuples, lists and dicts (keys and values, `**` values), binary operations and unary `+`/`-`/`~` take the least of their parts (empty is definite); everything else, sets included, is unlikely. Reported on the comparison.",
+  "description": "Put the variable first and the constant or literal second in comparisons, avoiding Yoda conditions; it reads the way you would say it.",
   "scope": {
     "include": [
       "**/*"
@@ -473,7 +473,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM300",
-        "message": "Yoda condition detected",
+        "message": "Swap the comparison so the variable comes first and the constant second, as in `x == 1`.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Writable } from "node:stream";
-import type { AdapterDelivery, RerailHost } from "../engine/adapter-contract.js";
+import { isSteerRule, type AdapterDelivery, type RerailHost, type SteerRule } from "../engine/adapter-contract.js";
 import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 
 export type HookInput = Record<string, unknown>;
@@ -44,6 +44,11 @@ export function deliveryText(deliveries: readonly AdapterDelivery[]): string | u
   return content === "" ? undefined : content;
 }
 
+/** The rules behind the deliveries `deliveryText` rendered, in order: what the person's lines are built from. */
+export function deliveryRules(deliveries: readonly AdapterDelivery[]): SteerRule[] {
+  return deliveries.filter(carriesText).flatMap(delivery => [...delivery.rules]);
+}
+
 /** Distinct rule ids behind the deliveries `deliveryText` rendered, so the hook's receipt can credit them. */
 export function deliveryRuleIds(deliveries: readonly AdapterDelivery[]): string[] {
   return [...new Set(deliveries.filter(carriesText).flatMap(delivery => [...delivery.ruleIds]))];
@@ -66,7 +71,7 @@ export async function readPending(path: string): Promise<AdapterDelivery[]> {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
     if (!Array.isArray(parsed)) throw new Error("Pending delivery state must be an array");
     return parsed
-      .filter((value): value is AdapterDelivery => {
+      .filter((value): value is Omit<AdapterDelivery, "rules"> & { rules?: unknown } => {
         if (value === null || typeof value !== "object") return false;
         const delivery = value as Partial<AdapterDelivery>;
         return typeof delivery.sessionId === "string"
@@ -77,7 +82,9 @@ export async function readPending(path: string): Promise<AdapterDelivery[]> {
           && typeof delivery.content === "string"
           && Array.isArray(delivery.ruleIds)
           && delivery.ruleIds.every(id => typeof id === "string");
-      });
+      })
+      // A steer held before deliveries carried their rules, or with rules that are not, shows no line.
+      .map(delivery => ({ ...delivery, rules: Array.isArray(delivery.rules) ? delivery.rules.filter(isSteerRule) : [] }));
   } catch (error) {
     if (errno(error, "ENOENT")) return [];
     throw error;

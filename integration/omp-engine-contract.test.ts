@@ -29,7 +29,7 @@ describe("OMP native code rule contract", () => {
       expect(JSON.stringify(firstPostToolCall?.context.messages)).toContain(CONTRACT_CURSOR_EXECUTE_MESSAGE);
       // The OMP adapter links against the daemon of the host's Rerail home, not this process's.
       vi.stubEnv("RERAIL_HOME", join(cwd, "home"));
-      const steer = await steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, `${CONTRACT_CURSOR_EXECUTE_MESSAGE} (api/route.py:2:5)`, cwd, "From your rule library.");
+      const steer = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5");
       vi.unstubAllEnvs();
       expect(evidence.branch).toEqual(expect.arrayContaining([
         expect.objectContaining({ type: "custom_message", content: expect.stringContaining(steer) }),

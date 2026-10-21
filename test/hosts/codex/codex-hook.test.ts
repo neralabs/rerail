@@ -1,18 +1,19 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { type AdapterDelivery, sessionStartNote, steerBlock } from "../../../src/engine/index.js";
+import { type AdapterDelivery, sessionStartNote } from "../../../src/engine/index.js";
 import { codexHookOutput, handleCodexEvent } from "../../../src/hosts/codex/codex-hook-adapter.js";
 import { runCodexHook } from "../../../src/hosts/codex/codex-hook.js";
 import type { HookOptions } from "../../../src/harness/index.js";
 import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/presentation/index.js";
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
+import { editSteer, steeredRules } from "../../support/steers.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-codex-hook-");
 
-function delivery(requested: AdapterDelivery["requested"], content: string, ruleIds: readonly string[] = []): AdapterDelivery {
-  return { sessionId: "codex-session", requested, mechanism: "additional-context", content, ruleIds };
+function delivery(requested: AdapterDelivery["requested"], content: string, ruleIds: readonly string[] = [], rules = steeredRules(ruleIds)): AdapterDelivery {
+  return { sessionId: "codex-session", requested, mechanism: "additional-context", content, ruleIds, rules };
 }
 
 describe("Codex one-shot hook", () => {
@@ -102,12 +103,12 @@ describe("Codex one-shot hook", () => {
   });
 
   it("shows one plain line per steered rule with the link printed, and holds Stop on the block alone", () => {
-    const linked = (id: string) => steerBlock(id, `Fix ${id}.`, { mode: "steer" }).replace("#rule/", "http://127.0.0.1:4791/#rule/");
-    const steers = [delivery("steer", linked("a"), ["a"]), delivery("steer", linked("b"), ["b"])];
+    const linked = (id: string) => delivery("steer", editSteer(id, `Fix ${id}.`), [id], steeredRules([id], "http://127.0.0.1:4791/"));
+    const steers = [linked("a"), linked("b")];
     expect(codexHookOutput("PostToolUse", steers)).toMatchObject({
       systemMessage: "◆ Rerail · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a\n◆ Rerail · b  steered  ·  why? → http://127.0.0.1:4791/#rule/b",
     });
-    expect(codexHookOutput("Stop", steers)).toEqual({ decision: "block", reason: `${linked("a")}\n\n${linked("b")}` });
+    expect(codexHookOutput("Stop", steers)).toEqual({ decision: "block", reason: `${editSteer("a", "Fix a.")}\n\n${editSteer("b", "Fix b.")}` });
   });
 
   it("routes steer and block deliveries through additionalContext, Stop continuation, or the pending file", async () => {

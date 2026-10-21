@@ -3,7 +3,7 @@
   "id": "blade-parser-for-else-structure",
   "revision": 2,
   "mode": "steer",
-  "description": "stillat/blade-parser 2.1.0 ForElseStructureValidator: a @forelse loop with no @empty directive of its own, or more than one.",
+  "description": "Give every Blade @forelse loop exactly one @empty directive; it holds what renders when the list is empty.",
   "scope": {
     "include": [
       "**/*.blade.php"

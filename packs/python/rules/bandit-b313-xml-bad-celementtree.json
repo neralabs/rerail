@@ -3,7 +3,7 @@
   "id": "bandit-b313-xml-bad-celementtree",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect vulnerable xml.etree.cElementTree parsing calls",
+  "description": "Use defusedxml instead of xml.etree.cElementTree to parse XML; the standard parser is open to entity-expansion and other XML attacks on untrusted input.",
   "scope": {
     "include": [
       "**/*.py"

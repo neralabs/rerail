@@ -3,7 +3,7 @@
   "id": "ruff-f811-redefined-while-unused",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F811 (redefined-while-unused) with default settings, on the engine's shadowed-binding pairs (M10a `binds.redefines`): a binding (not a loop variable) whose shadowed binding is unused, on the same fork, where Ruff's Binding::redefines allows the pair (an import redefines an import, a definition or an assignment; a submodule import only the same qualified name, `sameImport`; an assignment only an import or a definition; any other binding an import, a definition or an assignment). Same scope: a dummy name is exempt unless the shadowed binding is an import, and a `def` decorated with an `overload` that resolves to `typing`, `_typeshed` or `typing_extensions` is never redefined. Across scopes: only a shadowed import that is no explicit re-export, and not from a class body. Reported on the redefining name. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F811.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Remove or rename an import or definition that is redefined before it is ever used; the first one is dead and often a mistake.",
   "scope": {
     "include": [
       "**/*"

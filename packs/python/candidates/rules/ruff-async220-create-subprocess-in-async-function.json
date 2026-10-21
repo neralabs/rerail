@@ -3,7 +3,7 @@
  "id": "ruff-async220-create-subprocess-in-async-function",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's ASYNC220 (create-subprocess-in-async-function): a call to `subprocess.Popen`, `os.popen`, or an `os.spawn*` function whose mode (Ruff's find_argument_value(\"mode\", 0): `arguments` in syntactic mode) is given and is not `os.P_WAIT` (directly, or through a name whose value, read as find_assigned_value's lookup_symbol does (`resolves.binding` with `stopAtGlobal`), is `os.P_WAIT`) inside an `async def` body whose function is the nearest enclosing function, lambda body or class, reported on the callee. Names resolve as in Ruff's resolve_qualified_name, through the engine's `resolves` (M7).",
+ "description": "Don't start subprocesses with subprocess.Popen, os.popen or non-waiting os.spawn calls inside async functions; use the async framework's subprocess API.",
  "scope": {
   "include": [
    "**/*"
@@ -302,7 +302,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC220",
-    "message": "Async functions should not create subprocesses with blocking methods",
+    "message": "Start this subprocess with the async library's API, such as `asyncio.create_subprocess_exec()` or `anyio.open_process()`.",
     "suppress": {
       "noqa": {
         "codes": [

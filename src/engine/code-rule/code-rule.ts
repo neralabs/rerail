@@ -1,8 +1,9 @@
+import type { SteerRule } from "../adapter-contract.js";
 import type { AuditFailure, AuditMode, AuditScope } from "../audit/audit.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
-import { steerBlock } from "./rerail-steer.js";
+import { steerBlock, steerRules, type SteerFinding, type SteerTrigger } from "./rerail-steer.js";
 import { steerOrigin, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
@@ -1345,6 +1346,8 @@ export interface SteerMetadata {
   scope: string[];
   /** Rule ids rendered into the delivered content; absent for deliveries that carry no code-rule violations. */
   ruleIds?: readonly string[];
+  /** The rules behind the content, for the person's line (`buildSteer`); absent with `ruleIds`. */
+  rules?: readonly SteerRule[];
   background?: boolean;
   /** Marks a steer produced by the session's generated edits settling, with the findings it renders. */
   generatedEdit?: GeneratedEditFindings;
@@ -1364,6 +1367,11 @@ export interface RuleSteerDelivery {
    * whose findings the auditor steers again.
    */
   revised?(sessionId: string, revision: number, paths: readonly string[]): readonly string[];
+  /**
+   * Whether a newer revision of `path` dropped a steer for it before the agent received it since the last call; the
+   * answer is consumed. An ai-output auditor then reports that steer's lines again with the source's next edit.
+   */
+  undelivered?(sessionId: string, path: string): boolean;
 }
 export interface AuditSettings {
   scope?: AuditScope;
@@ -1423,44 +1431,55 @@ export interface AuditorCloseOptions {
   readonly interruptAudits?: boolean;
 }
 
-function violationLocation(violation: CodeRuleViolation): string {
-  if (violation.path === undefined) return "";
-  if (violation.span === undefined) return ` (${violation.path})`;
+/** `path:line:col`, or `path` alone for a finding about a whole file; undefined when the finding has no path. */
+function violationLocation(violation: CodeRuleViolation): string | undefined {
+  if (violation.path === undefined) return undefined;
+  if (violation.span === undefined) return violation.path;
   const { startColumn, startLine } = violation.span;
-  return ` (${violation.path}:${startLine + 1}:${startColumn + 1})`;
+  return `${violation.path}:${startLine + 1}:${startColumn + 1}`;
 }
 
 /** Longest fix text rendered inline in a steer; a longer fix is cut with a note. */
 export const STEER_FIX_CHARS = 240;
 
+/** `text` as CommonMark inline code: a backtick fence longer than any backtick run in it, padded where it starts or ends with one. */
+function inlineCode(text: string): string {
+  const longest = Math.max(0, ...[...text.matchAll(/`+/gu)].map(([run]) => run.length));
+  const fence = "`".repeat(longest + 1);
+  const padding = text.startsWith("`") || text.endsWith("`") ? " " : "";
+  return `${fence}${padding}${text}${padding}${fence}`;
+}
+
+/** The fix's lines under its finding: a deletion, a one-line replacement inline, or a longer one in a `~~~` fence. */
 function suggestedFix(fix: CodeRuleViolationFix): string {
   const { startLine, startColumn, endLine, endColumn } = fix.span;
-  const range = `${startLine + 1}:${startColumn + 1}-${endLine + 1}:${endColumn + 1}`;
+  const range = `${startLine + 1}:${startColumn + 1}–${endLine + 1}:${endColumn + 1}`;
   if (fix.text === "") return `  Suggested fix: delete ${range}`;
   const text = fix.text.length > STEER_FIX_CHARS ? `${fix.text.slice(0, STEER_FIX_CHARS)}… (truncated)` : fix.text;
-  if (!text.includes("\n")) return `  Suggested fix: replace ${range} with \`${text}\``;
-  const indented = text.split("\n").map(line => `    ${line}`).join("\n");
-  return `  Suggested fix: replace ${range} with:\n${indented}`;
+  if (!text.includes("\n")) return `  Suggested fix: replace ${range} with ${inlineCode(text)}`;
+  const longest = Math.max(0, ...[...text.matchAll(/^ *(~{3,})/gmu)].map(([, run]) => run!.length));
+  const fence = `  ${"~".repeat(Math.max(3, longest + 1))}`;
+  const lines = text.split("\n").map(line => (line === "" ? "" : `  ${line}`));
+  return [`  Suggested fix, replacing ${range}:`, fence, ...lines, fence].join("\n");
 }
 
 /** Where each rule a steer names was added from; undefined when the rule's provenance is not recorded. */
 export type SteerSourceOf = (ruleId: string) => SteerRuleSource | undefined;
 
-/**
- * One block per rule (`steerBlock`), its violations in first-seen order, each with its location and any fix. The block
- * names the rule's pack (or library) and its mode, from the first violation of that rule.
- */
-export function renderSteer(violations: readonly CodeRuleViolation[], sourceOf: SteerSourceOf = () => undefined): string {
-  const byRule = new Map<string, { mode: RuleMode; lines: string[] }>();
-  for (const violation of violations) {
-    const line = `${violation.message}${violationLocation(violation)}`;
-    const entry = byRule.get(violation.ruleId) ?? { mode: violation.mode, lines: [] };
-    entry.lines.push(violation.fix === undefined ? line : `${line}\n${suggestedFix(violation.fix)}`);
-    byRule.set(violation.ruleId, entry);
-  }
-  return [...byRule]
-    .map(([ruleId, { mode, lines }]) => steerBlock(ruleId, lines.join("\n"), { mode, origin: steerOrigin(ruleId, sourceOf(ruleId)) }))
-    .join("\n\n");
+/** Each violation as a steer finding, in the order given: its location, message and any fix. */
+function steerFindings(violations: readonly CodeRuleViolation[]): SteerFinding[] {
+  return violations.map(violation => ({
+    ruleId: violation.ruleId,
+    mode: violation.mode,
+    message: violation.message,
+    location: violationLocation(violation),
+    fix: violation.fix === undefined ? undefined : suggestedFix(violation.fix),
+  }));
+}
+
+/** The steer block (`steerBlock`) for `violations`, in first-seen order, led as `trigger` says (an edit's by default). */
+export function renderSteer(violations: readonly CodeRuleViolation[], trigger: SteerTrigger = { kind: "edit" }): string {
+  return steerBlock(trigger, steerFindings(violations));
 }
 
 /** Rule ids credited with a steer: the distinct `ruleId`s of the rendered violations, in first-seen order. */
@@ -1468,13 +1487,19 @@ export function steerRuleIds(violations: readonly CodeRuleViolation[]): string[]
   return [...new Set(violations.map((violation) => violation.ruleId))];
 }
 
-/** The rendered steer text with its contributing rule ids; the text is byte-identical to `renderSteer`. */
+/**
+ * The rendered steer text with its contributing rule ids and rules (`steerRules`, each naming where it comes from);
+ * the text is byte-identical to `renderSteer`.
+ */
 export function buildSteer(
   violations: readonly CodeRuleViolation[],
-  sourceOf?: SteerSourceOf,
-): { content: string; ruleIds: string[] } {
+  trigger: SteerTrigger,
+  sourceOf: SteerSourceOf = () => undefined,
+): { content: string; ruleIds: string[]; rules: SteerRule[] } {
+  const findings = steerFindings(violations);
   return {
-    content: renderSteer(violations, sourceOf),
+    content: steerBlock(trigger, findings),
     ruleIds: steerRuleIds(violations),
+    rules: steerRules(findings, ruleId => steerOrigin(ruleId, sourceOf(ruleId))),
   };
 }

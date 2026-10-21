@@ -3,7 +3,7 @@
   "id": "sqlfluff-al08-aliasing-unique-column",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0 AL08: in each SELECT list, report each later reused explicit alias or column-reference name, case-insensitively with identifier quote delimiters ignored.",
+  "description": "Keep column names and aliases unique within a SQL SELECT list, ignoring case and quotes; duplicate output columns are ambiguous.",
   "scope": {
     "include": [
       "**/*.sql"

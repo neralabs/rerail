@@ -3,7 +3,7 @@
   "id": "sqlfluff-rf05-references-special-chars",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's RF05 (references.special_chars) with its defaults (both identifier policies all, no space or additional characters allowed): report a naked or quoted identifier whose name, without its quotes and underscores, holds a character other than a Unicode letter or digit (a doubled quote included). A name in a SELECT element that has an alias is not read (only the alias is), and neither is a PostgreSQL extension name.",
+  "description": "Use only letters, digits and underscores in SQL identifiers, quoted or not; other characters make names hard to use.",
   "scope": {
     "include": [
       "**/*.sql"

@@ -181,7 +181,7 @@ describe("rerail scan and settings CLI", () => {
     });
     expect(automaticAuditRequests).toEqual([{ sessionId: "s1", scope: "repository", mode: "log" }]);
     expect(await (await fetch(new URL("/api/sessions/s2/audit-settings", daemon.url))).json()).toMatchObject({
-      settings: { scope: "touched-files", mode: "steer" },
+      settings: { scope: "ai-output", mode: "steer" },
       repositoryAudit: { status: "completed" },
       repositoryAuditRecord: { sessionId: "s1", scope: "repository", mode: "log" },
     });
@@ -212,12 +212,12 @@ describe("rerail scan and settings CLI", () => {
     expect(await runAuditCommand("settings", ["--session", "s1", "--steer-strategy", "rewind"], {
       home, stdout: { write: text => { output += text; return true; } },
     })).toBe(0);
-    expect(output).toMatch(/^Ongoing settings for .+: touched-files\/steer, steer strategy rewind \(/u);
+    expect(output).toMatch(/^Ongoing settings for .+: ai-output\/steer, steer strategy rewind \(/u);
     output = "";
     expect(await runAuditCommand("settings", ["--session", "s1", "--mode", "log", "--json"], {
       home, stdout: { write: text => { output += text; return true; } },
     })).toBe(0);
-    expect(auditControlsResponseSchema.parse(JSON.parse(output)).settings).toEqual({ scope: "touched-files", mode: "log", steerStrategy: "rewind" });
+    expect(auditControlsResponseSchema.parse(JSON.parse(output)).settings).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "rewind" });
   });
 
   it("reports an empty Git diff without starting an audit", async () => {
@@ -292,7 +292,11 @@ describe("rerail scan and settings CLI", () => {
   }, 30_000);
 
   it("fails a repository scan where a rule finds more than it may report on a file, which is no coverage gap", async () => {
-    const { root, home, daemon } = await fixture();
+    const { root, home, daemon, runtime } = await fixture();
+    // The session's first walk is done before the writes, so it audits neither file on its own: the scan stays the
+    // session's latest audit.
+    await runtime.codeRulesOpened("s1");
+    await runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId: "s1", text: "" });
     // More matches than the engine's 10,000-witness budget: an output cap, not running out of work.
     await writeFile(join(root, "api/generated.py"), "print(1)\n".repeat(10_001));
     await writeFile(join(root, "api/noisy.py"), "print('checked')\n");
@@ -318,8 +322,8 @@ describe("rerail scan and settings CLI", () => {
 
   it("keeps how many failures a scan had past the 20 it lists, and reports them with the session", async () => {
     // An AST rule on files with syntax errors fails on each (`source-partial`), while the regex rule reads them, so
-    // no file is blind: 25 files read in part, five past the list's 20. A touched-files audit fails on them; a
-    // repository scan lists them and completes.
+    // no file is blind: 25 files read in part, five past the list's 20. The session's own audit of them fails on them;
+    // a repository scan lists them and completes.
     const PRINT_CALL = codeRuleSchema.parse({
       format: "rerail.policy/v1", id: "test:print-call", revision: 1, mode: "log",
       scope: { include: ["api/**/*.py"], exclude: [] },
@@ -337,7 +341,7 @@ describe("rerail scan and settings CLI", () => {
     // The session audits the 25 edits on its own; the scan must come after them to be the session's latest audit.
     await vi.waitFor(async () => {
       const { audits } = await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json();
-      expect(audits[0]).toMatchObject({ scope: "touched-files", status: "failed", failureCount: 25 });
+      expect(audits[0]).toMatchObject({ scope: "ai-output", status: "failed", failureCount: 25 });
     }, { timeout: 20_000, interval: 50 });
     let output = "";
     expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
@@ -389,7 +393,7 @@ describe("rerail scan and settings CLI", () => {
       expect(delivered).toEqual([]);
       expect(await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json()).toMatchObject({
         audits: expect.arrayContaining([expect.objectContaining({
-          scope: "touched-files", mode: "log", violations: expect.arrayContaining([expect.objectContaining({ code: "PRINT" })]),
+          scope: "ai-output", mode: "log", violations: expect.arrayContaining([expect.objectContaining({ code: "PRINT" })]),
         })]),
       });
     } finally {

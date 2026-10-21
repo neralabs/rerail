@@ -3,7 +3,7 @@
   "id": "next-no-typos",
   "revision": 2,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-typos: an exported function or variable whose name is one edit away from getStaticProps, getStaticPaths or getServerSideProps, in a file whose segment after the first `pages` is non-empty and not under /api.",
+  "description": "Spell getStaticProps, getStaticPaths and getServerSideProps exactly in page files; an export one letter off is silently ignored by Next.js.",
   "scope": {
     "include": [
       "**/*.ts",

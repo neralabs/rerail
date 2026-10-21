@@ -3,7 +3,7 @@
   "id": "sqlfluff-rf06-references-quoting",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's RF06 (references.quoting) with its defaults (prefer_quoted_identifiers and prefer_quoted_keywords false, case_sensitive true), under SQLFluff's postgres dialect, the reading the engine gives every .sql file: report a double-quoted identifier that would mean the same unquoted, because its name has no upper-case letter (PostgreSQL folds unquoted names to lower case), matches the postgres dialect's naked-identifier template [\\p{L}_][\\p{L}\\p{N}_$]* and is none of the dialect's reserved words (its anti-template, embedded here). A routine body (dollar-quoted, a string to SQLFluff) is not read.",
+  "description": "Remove double quotes from SQL identifiers that mean the same unquoted; PostgreSQL folds unquoted names to lower case anyway.",
   "scope": {
     "include": [
       "**/*.sql"

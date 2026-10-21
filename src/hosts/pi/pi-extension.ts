@@ -162,7 +162,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
     /** The tool results being ingested, each with the steers placed in it so far. */
     const openResults = new Map<string, string[]>();
     let fixToolRegistered = false;
-    // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
+    // The runtime records no links; the rules point at this checkout's dashboard only here.
     const sendDeliveries = async (current: RerailRuntime | NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> => {
       // A `subagent` steer names `rerail_fix`, so the tool is there before the first one is.
       if (!fixToolRegistered && deliveries.some(delivery => delivery.strategy === "subagent")) {

@@ -1,6 +1,6 @@
 # Rule pack structure and validation contract
 
-Status: the layout and the validation contract (checks 1 to 7) are implemented. `test/engine/catalog/packs.test.ts` validates every
+Status: the layout and the validation contract (checks 1 to 8) are implemented. `test/engine/catalog/packs.test.ts` validates every
 `packs/*` directory: `python`, `php`, `blade`, `rust`, `typescript`, `javascript`, `react`, `vue`, `node`, `next`, `sql` and `complexity`. Core
 ships none of them: set-up and `rerail packs add` install them from npm into `$RERAIL_HOME/packs`, and core reads them
 from there; it lists them by name only, in `src/engine/catalog/pack-list.generated.ts` ([rule packs](rule-packs.md#installing-packs)).
@@ -125,10 +125,74 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
 - `divergences.json`: each place Rerail and the tool disagree, with its kind (`upstream-wrong`, `not-comparable`,
   `rerail-unknown`) and the evidence checked.
 
+## Rule text
+
+A rule document carries two kinds of text, for two readers. Its `description` is for people browsing the dashboard and
+the rule catalog; the coding agent never reads it. Each clause's `violation.message` is for the agent, which reads it in
+the steer block Rerail writes around it:
+
+```
+Rerail found 2 problems in your last edit:
+- src/grade.js:1:8 — <message> [complexity-cyclomatic-javascript]
+  Suggested fix: delete 14:3–14:12
+- src/api.py:42:5 — <message> [bandit-b113-request-without-timeout]
+Fix these, or tell the user in one line why you won't.
+```
+
+The block already gives the location, the rule id, the lead and the latitude ("fix or explain"), so the message only
+says what to change in this code. Check 8 enforces the criteria a machine can check; review covers the rest
+(`just rerail-guidance-review` shows every rule's description, messages and the block for each of its cases).
+
+### Description
+
+1. Readable at a glance by a developer, in plain English.
+2. States the intent: what the rule wants the developer to do or avoid.
+3. No code or source material: no snippets, regexes, AST node kinds, globs, JSON, config keys, token lists or
+   backticks. Naming the API or construct the rule is about is fine when the intent needs it ("dd() and dump() calls",
+   "mutable default arguments", "useEffect").
+4. No origin or source: no upstream tool or rule names, no versions, no "port of", no conformance or divergence notes.
+5. Clear and concise.
+6. Accurate: it matches what the clauses and scope actually catch. It doesn't overpromise (if tests are excluded and
+   that matters, don't claim "everywhere") or underdescribe.
+7. One voice for the whole repository: one imperative sentence that starts with a verb (Avoid, Use, Prefer, Keep,
+   Remove, Add, Declare, Close, Handle, Don't…) and ends with a period, optionally followed by `; <short reason>`.
+8. At most 200 characters, a hard cap.
+9. A reason after the semicolon only when it isn't obvious and still fits.
+10. Siblings are told apart: when similar rules exist for several languages or file types, name the language or file
+    type (`complexity-cyclomatic-python`, `-typescript`, `-javascript`).
+11. Meaningful thresholds stay ("above 6", "more than 5 parameters"); implementation trivia goes.
+12. It doesn't just repeat the rule's title or its message.
+
+Detail a description leaves out (exact counting rules, edge cases, deviations from upstream, scope detail) goes in the
+pack's README, under "Rule details". For example: `Avoid dd() and dump() calls; they leak debug output to users.`
+
+### Message
+
+1. An imperative action: it starts with a verb saying what to change ("Pass a timeout…", "Split this function…"), not
+   what was detected.
+2. Specific to the finding: it uses the values the clause captures where they help (`$CCN`, `$NAME`, thresholds), and
+   never a binding the clause doesn't define.
+3. A concrete fix direction: it names the replacement, so the agent can act without reading the rule's docs.
+4. Correct for every match of its clause; a rule with several clauses has a fitting message for each.
+5. Agrees with the clause's suggested `fix`, when it has one.
+6. A short reason only when it changes the decision, where the agent might otherwise reasonably decline.
+7. No Rerail or upstream vocabulary: no tool names, rule codes, versions or implementation text, and no "steer", "rule
+   pack" or "mode".
+8. Nothing the block adds: no location, no rule id, no "Rerail", no "fix it or explain".
+9. A calibrated tone: no hedging ("Consider maybe…"), no shouting (NEVER, MUST, ALWAYS).
+10. One action.
+11. It stands alone as one line in a list of findings.
+12. One sentence, ending with a period, at most 140 characters, counting placeholders as written.
+13. The description's voice without copying it: the description is the intent, for a person; the message is the
+    action for this instance.
+
+For example, `Bandit B113 (request_without_timeout)` becomes
+`Pass a timeout to this requests call; without one a slow server can hang the program.`
+
 ## The validation contract
 
 Implemented: `validatePack(directory, { corpora?, corpusRoot?, listed? })` in `conformance/pack-validation.ts` runs
-checks 1 to 7 over one pack and returns each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`).
+checks 1 to 8 over one pack and returns each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`).
 `test/engine/catalog/packs.test.ts` calls it for every directory under `packs/`, with one test per check and one per rule, and has
 the validator's own tests over the fixture packs in `fixtures/packs/`. `npm test` runs it with the local core.
 Running it against the newest published core inside each pack's range is for pack CI, which does not exist yet.
@@ -138,7 +202,7 @@ they compare it with its upstream on start and end positions, on real code, and 
 CI for shipped rules and only report candidates.
 
 ```sh
-npx vitest run test/engine/catalog/packs.test.ts                         # every pack: checks 1 to 7, each rule's status
+npx vitest run test/engine/catalog/packs.test.ts                         # every pack: checks 1 to 8, each rule's status
 npx vitest run test/engine/catalog/packs.test.ts -t "pack python"        # one pack
 RERAIL_PACK_CORPORA=1 npx vitest run test/engine/catalog/packs.test.ts   # check 4 on every pinned corpus too
 ```
@@ -233,6 +297,11 @@ Precisely:
 7. `match` must be present: without it set-up never recommends the pack. For a directory under `packs/`,
    `src/engine/catalog/pack-list.generated.ts` must list the pack's id and equal what `npm run generate:packs` writes.
    Fixture packs elsewhere are not published, so no list names them; `listed: true` checks the list for them too.
+8. Every rule document's text, shipped and candidate (not probes), meets the parts of the [rule text](#rule-text)
+   criteria a machine can check (`textFailures`). The description is present, one sentence ending in a period, at most
+   200 characters, with no backticks. Each message, and each text a message an option chooses can be, is at most 140
+   characters and doesn't shout (NEVER, MUST, ALWAYS) or name Rerail or steering; its form is left to review.
+   Neither names an upstream tool outside quoted text (`'…'` or `` `…` ``). The rest of the criteria are for review.
 
 **Languages not supported yet.** A pack may hold code rules for a language core's
 [language registry](language-packs.md) lists as `planned`, or rules that read a capability their language has

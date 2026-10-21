@@ -3,7 +3,7 @@
   "id": "clippy-unusual-byte-groupings",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's unusual_byte_groupings: reports a binary, octal or hexadecimal literal whose digit groups after the first differ in size, or whose first group is longer than the rest. Literals Clippy reads as a mistyped suffix (an unsuffixed literal ending in `_8`, `_16`, `_32` or `_64`, the exponent's `_32` or `_64`) and hexadecimal UUIDs (8-4-4-4-12) are not reported, nor (as Clippy skips code from expansion) literals in a macro_rules! body; a macro invocation's arguments keep their own spans and are read.",
+  "description": "Split Rust binary, octal and hexadecimal literals into equal-size digit groups; uneven groups hide the bit layout.",
   "scope": {"include": ["**/*"], "exclude": []},
   "clauses": [
     {
@@ -21,7 +21,7 @@
           ] }
         ] }
       ] } } },
-      "violation": {"suppress": {"clippy": {"lints": ["clippy::unusual_byte_groupings", "clippy::all", "clippy::style", "warnings"]}}, "anchor": "witness.span", "code": "unusual_byte_groupings", "message": "Clippy unusual_byte_groupings: digits of hex, binary or octal literal not in groups of equal size"}
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::unusual_byte_groupings", "clippy::all", "clippy::style", "warnings"]}}, "anchor": "witness.span", "code": "unusual_byte_groupings", "message": "Regroup this literal's digits into equal-size groups, e.g. 0xFFFF_FFFF or 0b1010_1010."}
     }
   ]
 }

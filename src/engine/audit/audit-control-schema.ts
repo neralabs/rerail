@@ -12,6 +12,8 @@ export const auditSettingsSchema = z.strictObject({
   steerStrategy: auditSettingsShape.steerStrategy.default("message"),
 });
 export type AuditSettings = z.infer<typeof auditSettingsSchema>;
+/** Automatic audits report what an edit generated (`ai-output`), steer, and send the steer as its own message. */
+export const DEFAULT_AUDIT_SETTINGS: Readonly<AuditSettings> = { scope: "ai-output", mode: "steer", steerStrategy: "message" };
 /** Only the keys a patch names change: no default fills a key it leaves out. */
 export const auditSettingsPatchSchema = z.strictObject(auditSettingsShape).partial().strict();
 export type AuditSettingsPatch = z.infer<typeof auditSettingsPatchSchema>;

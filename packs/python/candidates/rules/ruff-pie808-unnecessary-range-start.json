@@ -3,7 +3,7 @@
   "id": "ruff-pie808-unnecessary-range-start",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PIE808 (unnecessary-range-start): `range(0, stop)` (an int literal zero, any spelling) with exactly two positional arguments and no keywords, where `range` resolves to the builtin (`match_builtin_expr`). Reported on the `0`.",
+  "description": "Drop the redundant 0 start argument from range(); it counts from 0 by default.",
   "scope": {
     "include": [
       "**/*"
@@ -118,7 +118,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PIE808",
-        "message": "Unnecessary `start` argument in `range`",
+        "message": "Remove the `0` start argument from this range() call.",
         "suppress": {
           "noqa": {
             "codes": [

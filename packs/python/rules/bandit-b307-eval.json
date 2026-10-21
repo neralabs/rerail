@@ -3,7 +3,7 @@
   "id": "bandit-b307-eval",
   "revision": 2,
   "mode": "steer",
-  "description": "Detect calls to Python's eval function, which evaluates supplied text as code and may be unsafe. Use ast.literal_eval when only Python literals need to be parsed.",
+  "description": "Avoid eval() calls in Python, including through import aliases; use ast.literal_eval() when you only need to parse literal values.",
   "scope": {
     "include": [
       "**/*.py"

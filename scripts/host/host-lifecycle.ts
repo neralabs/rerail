@@ -332,9 +332,6 @@ export async function readLedger(root: string, events: readonly SessionEventReco
   };
 }
 
-/** The adapter makes the runtime's relative `Why?` links absolute for the workspace's dashboard; compare without the origin. */
-const withoutDashboardOrigin = (text: string): string => text.replaceAll(/Why\? → \S*?#rule\//gu, "Why? → #rule/");
-
 /** The host's session jsonl under `sessionDir`: the steer entry, and the assistant messages around it. */
 async function readHostTranscript(sessionDir: string, steerContent: string): Promise<HostTranscript> {
   const files = await jsonlFiles(sessionDir);
@@ -342,7 +339,7 @@ async function readHostTranscript(sessionDir: string, steerContent: string): Pro
   const entries = lines.map((line) => HostEntry.parse(JSON.parse(line)));
   const steerEntries = entries.flatMap((entry, index) =>
     steerContent !== "" && entry.type === "custom_message" && entry.customType === RULE_MESSAGE_TYPE
-      && withoutDashboardOrigin(textOf(entry.content)) === withoutDashboardOrigin(steerContent) ? [index] : [],
+      && textOf(entry.content) === steerContent ? [index] : [],
   );
   const assistants = entries.flatMap((entry, index) => (entry.type === "message" && entry.message.role === "assistant" ? [index] : []));
   const steerEntry = steerEntries[0] ?? -1;

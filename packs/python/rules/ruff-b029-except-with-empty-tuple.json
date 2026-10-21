@@ -3,7 +3,7 @@
   "id": "ruff-b029-except-with-empty-tuple",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B029 (except-with-empty-tuple): an `except`/`except*` clause whose type is the empty tuple `()` (inside any parentheses, with or without `as`). Reported on the whole clause.",
+  "description": "Don't write an except clause with an empty tuple as its type; it catches nothing, so name the exceptions to handle.",
   "scope": {
     "include": [
       "**/*"

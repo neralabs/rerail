@@ -29,7 +29,7 @@ async function compile(): Promise<NativeCompiledCodeRuleDsl> {
   return runtime.compile(await readFile(RULE_PATH, "utf8"), "json", capabilities);
 }
 
-/** The names the rule reports in `source`, in order of the messages' text. */
+/** The names the rule reports in `source` (each message quotes its name), sorted. */
 function reported(compiled: NativeCompiledCodeRuleDsl, source: string): string[] {
   const input = JSON.stringify({
     format: "rerail.repository-snapshot/v1",
@@ -39,7 +39,7 @@ function reported(compiled: NativeCompiledCodeRuleDsl, source: string): string[]
   });
   const result = evaluationSchema.parse(JSON.parse(compiled.evaluate(input, "report")));
   expect(result.failures).toEqual([]);
-  return result.violations.map(violation => /^'([^']+)'/.exec(violation.message)?.[1] ?? violation.message).sort();
+  return result.violations.map(violation => /'([^']+)'/.exec(violation.message)?.[1] ?? violation.message).sort();
 }
 
 const CASES: ReadonlyArray<[string, string, string[]]> = [

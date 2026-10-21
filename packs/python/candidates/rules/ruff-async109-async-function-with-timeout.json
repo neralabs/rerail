@@ -3,7 +3,7 @@
  "id": "ruff-async109-async-function-with-timeout",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's ASYNC109 (async-function-with-timeout): a positional-only, positional or keyword-only parameter named `timeout` of an `async def` not decorated with `override` from `typing`, `_typeshed` or `typing_extensions` (resolved through imports), reported on the parameter. `asyncio.timeout` exists from 3.11, so below it (`when`) a parameter is flagged only after Ruff's traversal has visited an absolute import of `trio` or `anyio` (Ruff's seen_module, M10a `resolves.seenBefore`) (async_function_with_timeout.rs: `module == AsyncModule::AsyncIo && target_version < PY311`).",
+ "description": "Avoid timeout parameters on async functions; let callers wrap the call in an asyncio, anyio or trio timeout context instead.",
  "scope": {
   "include": [
    "**/*"
@@ -117,7 +117,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC109",
-    "message": "Async function definition with a `timeout` parameter",
+    "message": "Remove the `timeout` parameter and let callers wrap the call in a timeout context such as `asyncio.timeout()`.",
     "suppress": {
       "noqa": {
         "codes": [
@@ -221,7 +221,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC109",
-    "message": "Async function definition with a `timeout` parameter",
+    "message": "Remove the `timeout` parameter and let callers wrap the call in `trio.fail_after()` or `anyio.fail_after()`.",
     "suppress": {
       "noqa": {
         "codes": [

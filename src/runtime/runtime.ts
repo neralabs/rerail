@@ -15,6 +15,7 @@ import {
 } from "../engine/adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
+import { SteerRuleSchema } from "./event-protocol.js";
 import {
   CodeRuleBridge, generatedEditPaths, type RewoundEdit, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
@@ -26,7 +27,8 @@ import type { AuditSettings as CheckoutAuditSettings } from "../engine/audit/aud
 import { missedSteerDigestEnabled } from "../engine/experimental-features.js";
 import type { AuditRecorder, AuditRecord } from "../engine/audit/audit.js";
 import { SqliteAuditStore } from "../engine/audit/audit-store.js";
-import { DEFAULT_AUDIT_SETTINGS, SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
+import { SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
+import { DEFAULT_AUDIT_SETTINGS } from "../engine/audit/audit-control-schema.js";
 import { CheckoutCatalogs, configurationSignatureOf, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
 import { realpathSync } from "node:fs";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
@@ -41,7 +43,7 @@ import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-sch
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
-import { rewoundSteer, steerBlock, subagentSteer } from "../engine/code-rule/rerail-steer.js";
+import { rewoundSteer, steerBlock, steerRules, subagentSteer } from "../engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../engine/code-rule/steer-origin.js";
 import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
 import type {
@@ -83,9 +85,6 @@ const HOOK_EDIT_CHECK_MS = 1_000;
  */
 const NATIVE_EDIT_CHECK_MS = 10_000;
 
-/** The first line of the yield digest: its findings belong to steps the agent has already moved past. */
-const MISSED_STEERS_LEAD = "Rerail finished checking these edits only after the steps that made them had moved on:";
-
 /**
  * Waits for `work` up to `ms`, and says whether it finished; past the cap the work carries on in the background. The
  * wait only decides when the hook answers, so a failure of the check is not raised here: the check records its own
@@ -99,6 +98,11 @@ async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> 
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The tool a sample came from (`tool:<name>`); undefined for the conversation's own text. */
+function sampleTool(source: AdapterSample["source"]): string | undefined {
+  return source.startsWith("tool:") ? source.slice("tool:".length) : undefined;
 }
 
 function sampleOwner(source: AdapterSample["source"]): "user" | "assistant" | "tool" {
@@ -199,6 +203,8 @@ const LedgerEntrySchema = z.union([
       mechanism: z.enum(["observe", "native-queue", "additional-context", "deferred-context"]),
       content: z.string(),
       ruleIds: z.array(z.string()),
+      // Absent in a ledger written before deliveries carried their rules.
+      rules: z.array(SteerRuleSchema).default([]),
       strategy: z.enum(STEER_STRATEGIES).optional(),
       toolCallId: z.string().optional(),
       rewound: z.array(z.string()).optional(),
@@ -390,6 +396,8 @@ interface RuntimeSessionState {
   rewindWindow: RewindWindow | undefined;
   codeRuleRevision: number;
   codeRuleSourceVersions: Map<string, number>;
+  /** Sources whose queued steer a newer revision of them dropped before delivery, until the auditor asks (`undelivered`). */
+  undeliveredSources: Set<string>;
   /** The session's evaluator, opening or open; unset for good once it could not open. */
   codeRuleBridge?: CodeRuleBridge;
   /** Why the evaluator could not open, when it did not: a scan that waited for it reports this. */
@@ -865,13 +873,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       if (!sources.has(violation.ruleId)) sources.set(violation.ruleId, sourceOf);
     }
     if (violations.length === 0) return undefined;
-    const steer = buildSteer(violations, ruleId => sources.get(ruleId)?.(ruleId));
+    // Its lead says the findings belong to steps the agent has already moved past.
+    const steer = buildSteer(violations, { kind: "late" }, ruleId => sources.get(ruleId)?.(ruleId));
     const digest: AdapterDelivery = {
       sessionId: state.descriptor.sessionId,
       requested: "steer",
       mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery.steer,
-      content: `${MISSED_STEERS_LEAD}\n\n${steer.content}`,
+      content: steer.content,
       ruleIds: steer.ruleIds,
+      rules: steer.rules,
     };
     try {
       await this.persistDelivery(digest);
@@ -1102,6 +1112,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       rewindWindow: undefined,
       codeRuleRevision: 0,
       codeRuleSourceVersions: new Map(),
+      undeliveredSources: new Set(),
       ownerClaim: undefined,
       codeRuleWorkspace: Promise.resolve(undefined),
       codeRuleReady: false,
@@ -1130,12 +1141,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
             mechanism: ADAPTER_CAPABILITIES[activeState.descriptor.host].delivery[requested],
             content,
             ruleIds: metadata?.ruleIds ?? [],
+            rules: metadata?.rules ?? [],
             strategy: "message",
           },
           revision,
           scope: metadata?.scope ?? [],
         };
-        if (!this.#isCurrentSteer(activeState, pending)) return "discarded";
+        if (!this.#isCurrentSteer(activeState, pending)) {
+          this.#recordUndelivered(activeState, pending);
+          return "discarded";
+        }
         const strategy = activeState.steerStrategy;
         if (strategy === "subagent")
           pending.delivery = { ...pending.delivery, content: subagentSteer(content, activeState.descriptor.host), strategy };
@@ -1147,7 +1162,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           window.steers.push(queued.promise);
           try {
             await this.#rewind(activeState, window.toolCallId, pending, metadata!);
-            if (activeState.closed || retired || !this.#isCurrentSteer(activeState, pending)) return "discarded";
+            if (activeState.closed || retired) return "discarded";
+            if (!this.#isCurrentSteer(activeState, pending)) {
+              this.#recordUndelivered(activeState, pending);
+              return "discarded";
+            }
             activeState.pendingSteers.push(pending);
           } finally {
             queued.resolve();
@@ -1186,13 +1205,22 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         const surviving = new Set<string>();
         current.pendingSteers = current.pendingSteers.filter(pending => {
           if (this.#isCurrentSteer(current, pending)) return true;
+          this.#recordUndelivered(current, pending);
           for (const path of pending.scope)
             if ((current.codeRuleSourceVersions.get(path) ?? 0) <= pending.revision) surviving.add(path);
           return false;
         });
         // A held finding is its source's own, so only the revised sources' findings go.
-        current.missedFindings = current.missedFindings.filter(finding => this.#isCurrentSteer(current, finding));
+        current.missedFindings = current.missedFindings.filter(finding => {
+          if (this.#isCurrentSteer(current, finding)) return true;
+          this.#recordUndelivered(current, finding);
+          return false;
+        });
         return [...surviving];
+      },
+      undelivered: (sessionId, path) => {
+        const current = this.#sessions.get(sessionId);
+        return current === opened && current.undeliveredSources.delete(path);
       },
     };
     let auditor: CodeRuleAuditor | undefined;
@@ -1221,8 +1249,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           if (current !== opened || current.closed || paths.length === 0) return;
           current.codeRuleRevision = Math.max(current.codeRuleRevision, revision);
           for (const path of paths) current.codeRuleSourceVersions.set(path, revision);
-          current.pendingSteers = current.pendingSteers.filter(pending => this.#isCurrentSteer(current, pending));
-          current.missedFindings = current.missedFindings.filter(finding => this.#isCurrentSteer(current, finding));
+          current.pendingSteers = current.pendingSteers.filter(pending => {
+            if (this.#isCurrentSteer(current, pending)) return true;
+            this.#recordUndelivered(current, pending);
+            return false;
+          });
+          current.missedFindings = current.missedFindings.filter(finding => {
+            if (this.#isCurrentSteer(current, finding)) return true;
+            this.#recordUndelivered(current, finding);
+            return false;
+          });
         },
       });
       opened.codeRuleBridge = bridge;
@@ -1486,13 +1522,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       registry.markDelivered([match.ruleId], state.turn);
       await this.#append(state, { type: "rule-match", ruleId: match.ruleId, turn: state.turn });
       this.#nativeSession?.onMatch(match, sample, state.turn);
+      const findings = [{ ruleId: match.ruleId, mode: match.mode, message: match.action.content }];
       const delivery: AdapterDelivery = {
         sessionId: sample.sessionId,
         requested: match.mode,
         mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery[match.mode],
-        content: steerBlock(match.ruleId, match.action.content, { mode: match.mode, origin: steerOrigin(match.ruleId) }),
-        // Conversation rule matches are not code-rule steers, so they carry no code-rule ids.
-        ruleIds: [],
+        content: steerBlock({ kind: "tool", tool: sampleTool(sample.source) }, findings),
+        ruleIds: [match.ruleId],
+        rules: steerRules(findings, steerOrigin),
       };
       await this.#append(state, { type: "delivery", delivery });
       deliveries.push(delivery);
@@ -1594,6 +1631,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     };
   }
 
+  /** Marks the sources whose newer revision keeps a steer, or a held finding, from the agent (`undeliveredSources`). */
+  #recordUndelivered(state: RuntimeSessionState, pending: Pick<PendingSteer, "revision" | "scope">): void {
+    for (const path of pending.scope)
+      if ((state.codeRuleSourceVersions.get(path) ?? 0) > pending.revision) state.undeliveredSources.add(path);
+  }
+
   #deliverSteer(
     state: RuntimeSessionState,
     pending: PendingSteer,
@@ -1614,14 +1657,22 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const index = state.pendingSteers.indexOf(pending);
     if (index < 0) return undefined;
     state.pendingSteers.splice(index, 1);
-    if (!this.#isCurrentSteer(state, pending) || this.#stopped()) return undefined;
+    if (!this.#isCurrentSteer(state, pending)) {
+      this.#recordUndelivered(state, pending);
+      return undefined;
+    }
+    if (this.#stopped()) return undefined;
     try {
       await this.persistDelivery(pending.delivery);
     } catch (error) {
       process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
     }
     // A stop committed elsewhere while the ledger was written withholds the result.
-    if (!this.#isCurrentSteer(state, pending) || this.#stopped()) return undefined;
+    if (!this.#isCurrentSteer(state, pending)) {
+      this.#recordUndelivered(state, pending);
+      return undefined;
+    }
+    if (this.#stopped()) return undefined;
     if (!native) return pending.delivery;
     try {
       await this.#deliverBackground!(pending.delivery);

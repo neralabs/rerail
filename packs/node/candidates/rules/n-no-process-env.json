@@ -3,7 +3,7 @@
   "id": "n-no-process-env",
   "revision": 3,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/no-process-env: `process.env` / `process['env']` member reads on an identifier named process (upstream reads the name only, no scope); default options allow no variable.",
+  "description": "Avoid reading process.env directly; pass configuration in explicitly so dependencies on the environment stay visible and testable.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -73,7 +73,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/no-process-env",
-        "message": "Unexpected use of process.env.",
+        "message": "Pass this value in as configuration instead of reading process.env here.",
         "suppress": {
           "eslint": {
             "rules": [

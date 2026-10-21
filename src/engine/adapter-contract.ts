@@ -261,8 +261,10 @@ export interface AdapterDelivery {
   requested: RuleMode;
   mechanism: DeliveryMechanism;
   content: string;
-  /** Distinct rule ids whose violations were rendered into `content`, first-seen order; empty when the delivery is not a code-rule steer. */
+  /** Distinct rule ids whose violations (or guidance) were rendered into `content`, first-seen order; empty when none was. */
   ruleIds: readonly string[];
+  /** The rules behind `content`, first-seen order: what the person's one line per rule is built from, never the text. */
+  rules: readonly SteerRule[];
   /** The steer strategy that shaped a code-rule steer; absent for every other delivery. */
   strategy?: SteerStrategy;
   /**
@@ -273,6 +275,26 @@ export interface AdapterDelivery {
   rewound?: readonly string[];
 }
 
+/** One rule a delivery steered (or logged) about, for the person's line and the dashboard; the coding agent never reads it. */
+export interface SteerRule {
+  readonly id: string;
+  readonly state: "steered" | "logged";
+  /** Where the rule comes from (`steerOrigin`'s sentence); absent when unknown. */
+  readonly origin?: string | undefined;
+  /** The rule's dashboard page, once a coding agent's adapter knows the dashboard (`linkDeliveries`). */
+  readonly url?: string | undefined;
+}
+
+/** Whether `value`, read back from a file or a host's transcript, is a `SteerRule`. */
+export function isSteerRule(value: unknown): value is SteerRule {
+  if (value === null || typeof value !== "object") return false;
+  const rule = value as Partial<SteerRule>;
+  return typeof rule.id === "string"
+    && (rule.state === "steered" || rule.state === "logged")
+    && (rule.origin === undefined || typeof rule.origin === "string")
+    && (rule.url === undefined || typeof rule.url === "string");
+}
+
 /** The `customType` every host records Rerail rule guidance under in its own session transcript. */
 export const RULE_MESSAGE_TYPE = "rerail.rule" as const;
 
@@ -280,7 +302,7 @@ type NativeRuleMessage = {
   customType: typeof RULE_MESSAGE_TYPE;
   content: string;
   display: true;
-  details: Pick<AdapterDelivery, "requested" | "mechanism" | "sessionId">;
+  details: Pick<AdapterDelivery, "requested" | "mechanism" | "sessionId" | "rules">;
 };
 
 /**
@@ -306,6 +328,7 @@ export async function sendNativeDeliveries(
             requested: delivery.requested,
             mechanism: delivery.mechanism,
             sessionId: delivery.sessionId,
+            rules: delivery.rules,
           },
         },
         { deliverAs: "steer" },

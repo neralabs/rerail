@@ -3,7 +3,7 @@
   "id": "eslint-no-extra-label",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of ESLint's `no-extra-label` rule (https://eslint.org/docs/latest/rules/no-extra-label). Flags a labeled break/continue whose target is already the nearest enclosing loop or switch, and removes the label when the statement holds no comment.",
+  "description": "Remove labels from break and continue when they target the nearest enclosing loop or switch anyway.",
   "scope": {
     "include": [
       "**/*"

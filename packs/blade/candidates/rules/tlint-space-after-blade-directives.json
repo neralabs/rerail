@@ -3,7 +3,7 @@
   "id": "tlint-space-after-blade-directives",
   "revision": 1,
   "mode": "steer",
-  "description": "tlint 9.7.0 SpaceAfterBladeDirectives: a control structure directive (@if, @elseif, @unless, @for, @foreach, @forelse, @while) whose name the next character does not separate with a space or tab, where Blade compiles it to control flow. Read from the view's control flow (the if, elseif, for, foreach or while statement Blade compiles the directive to), whose host is the directive it compiles, not the `if` a @forelse's @empty compiles to; in an attribute value, whose directives Forte does not pair into a block, so that the statement's host is the whole value, from the directive itself where the view reads it as control flow.",
+  "description": "Put a space between Blade control directives (@if, @elseif, @unless, @for, @foreach, @forelse, @while) and their opening parenthesis.",
   "scope": {
     "include": [
       "**/*.blade.php"

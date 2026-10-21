@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-watch-after-await",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-watch-after-await` (default options): a call of `watch` or `watchEffect` (not `watchPostEffect`/`watchSyncEffect`) imported from `vue`, `@vue/composition-api`, `@nuxtjs/composition-api` or `#imports` (named or namespace import), made directly in the body of a Vue object's `setup` function (export default, component/mixin/extend/defineComponent/createApp definition, `new Vue`; not `<script setup>`), after an `await` expression of that same function in source order, whose result is not used as a stop handle (declarator, assignment, call argument or callee, object property value, array element). Reported at the call.",
+  "description": "Call watch and watchEffect before any await in a Vue setup() function, or keep their stop handle; a watcher made after an await is not tied to the component and leaks.",
   "scope": {
     "include": [
       "**/*.vue"
@@ -469,7 +469,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-watch-after-await",
-        "message": "`watch` is forbidden after an `await` expression.",
+        "message": "Move this watch call above the first await in setup(), or keep its stop handle and call it on unmount.",
         "suppress": {
           "eslint": {
             "rules": [

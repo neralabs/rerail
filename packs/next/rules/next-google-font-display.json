@@ -3,7 +3,7 @@
   "id": "next-google-font-display",
   "revision": 1,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/google-font-display: a <link> whose literal href is a Google Fonts CSS URL whose query has no display parameter, or display=auto|block|fallback.",
+  "description": "Add a display value of swap or optional to Google Fonts stylesheet links; a missing, auto, block or fallback value can hide or shift text while the font loads.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -111,7 +111,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/google-font-display",
-        "message": "A font-display parameter is missing or not recommended. See: https://nextjs.org/docs/messages/google-font-display",
+        "message": "Add display=swap or display=optional to this Google Fonts URL so text stays visible while the font loads.",
         "suppress": {
           "eslint": {
             "rules": [

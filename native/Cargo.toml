@@ -44,8 +44,8 @@ tree-sitter-language = "=0.1.9"
 tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }
 tree-sitter = "=0.27.1"
 # CPython's identifier normalization (NFKC, PEP 3131), which Ruff applies to Python names too.
-unicode-normalization = "=0.1.25"
-zstd = "=0.14.2"
+unicode-normalization = "=0.1.26"
+zstd = "=0.14.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.189"

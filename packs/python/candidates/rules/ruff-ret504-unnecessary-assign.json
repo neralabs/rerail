@@ -3,7 +3,7 @@
   "id": "ruff-ret504-unnecessary-assign",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's RET504 (unnecessary-assign): `return x` whose preceding statement (comments aside) is `x = value` with a single name target, or a `with` block (not using `contextlib.suppress`) whose last statement is such an assignment, reported on the returned name. Skipped when `x` is declared `global`/`nonlocal` or bare-annotated in the function, referenced in a `finally` enclosing the return (a read or `del` resolving to a binding in the function's scope), or when the function scope's latest binding of `x` has a reference from another scope (`binds` with `latest` and `nestedUse`, which inherits the references of the bindings it shadows); generators and functions whose body is a lone `return` are skipped.",
+  "description": "Return a value directly instead of assigning it to a local variable just to return that variable on the next line.",
   "scope": {
     "include": [
       "**/*"

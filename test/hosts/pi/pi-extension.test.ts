@@ -27,6 +27,7 @@ import {
   defaultRerailDatabasePath,
   steerBlock,
   steerOrigin,
+  steerRules,
   type ConversationRule,
   type AdapterDelivery,
   type AdapterEvent,
@@ -165,13 +166,14 @@ describe("Pi conversation-rules extension", () => {
     await harness.handlers.get("message_end")?.(event, harness.context);
     await harness.handlers.get("message_end")?.(event, harness.context);
 
+    const findings = [{ ruleId: "checkout", mode, message: "Check checkout requirements." }];
     expect(harness.messages).toEqual([
       {
         message: {
           customType: RULE_MESSAGE_TYPE,
-          content: steerBlock("checkout", "Check checkout requirements.", { mode, origin: steerOrigin("checkout") }),
+          content: steerBlock({ kind: "tool" }, findings),
           display: true,
-          details: { requested: mode, mechanism: "native-queue", sessionId: expect.any(String) },
+          details: { requested: mode, mechanism: "native-queue", sessionId: expect.any(String), rules: steerRules(findings, steerOrigin) },
         },
         options: { deliverAs: "steer" },
       },
@@ -285,6 +287,7 @@ describe("Pi conversation-rules extension", () => {
       mechanism: "native-queue",
       content: "Your edit of a.ts was rolled back. Redo it following the rule.",
       ruleIds: ["no-any"],
+      rules: [{ id: "no-any", state: "steered" }],
       strategy: "rewind",
       toolCallId,
       rewound: ["a.ts"],
@@ -318,7 +321,7 @@ describe("Pi conversation-rules extension", () => {
             customType: RULE_MESSAGE_TYPE,
             content: "Your edit of a.ts was rolled back. Redo it following the rule.",
             display: true,
-            details: { requested: "steer", mechanism: "native-queue", sessionId: "pi-test-session" },
+            details: { requested: "steer", mechanism: "native-queue", sessionId: "pi-test-session", rules: [{ id: "no-any", state: "steered" }] },
           },
           options: { deliverAs: "steer" },
         }]);
@@ -334,7 +337,7 @@ describe("Pi conversation-rules extension", () => {
       harness.pi.registerTool = ((tool: { name: string }) => { registered.push(tool.name); }) as ExtensionAPI["registerTool"];
       await install(harness);
       const subagent = (event: AdapterEvent): AdapterDelivery[] => event.kind === "turn-end"
-        ? [{ sessionId: "pi-test-session", requested: "steer", mechanism: "native-queue", content: "Delegate the fix with `rerail_fix`.", ruleIds: ["no-any"], strategy: "subagent" }]
+        ? [{ sessionId: "pi-test-session", requested: "steer", mechanism: "native-queue", content: "Delegate the fix with `rerail_fix`.", ruleIds: ["no-any"], rules: [{ id: "no-any", state: "steered" }], strategy: "subagent" }]
         : [];
       const spy = withDeliveries(subagent);
       try {

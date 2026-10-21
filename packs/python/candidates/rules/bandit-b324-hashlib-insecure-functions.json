@@ -3,7 +3,7 @@
   "id": "bandit-b324-hashlib-insecure-functions",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect weak hashlib algorithms and insecure crypt methods while allowing explicitly non-security hashlib use.",
+  "description": "Avoid MD4, MD5, and SHA1 from hashlib unless marked as not for security, and crypt calls without a strong method; use SHA-256 or a modern password hash.",
   "scope": {
     "include": [
       "**/*.py"
@@ -45,7 +45,7 @@
       "violation": {
         "code": "B324",
         "anchor": "witness.span",
-        "message": "A weak hash algorithm is being used for a security-sensitive operation.",
+        "message": "Replace this hash with hashlib.sha256, or pass usedforsecurity=False if it isn't used for security.",
         "suppress": {
           "nosec": {
             "codes": [
@@ -99,7 +99,7 @@
       "violation": {
         "code": "B324",
         "anchor": "witness.span",
-        "message": "A weak hash algorithm is being used for a security-sensitive operation.",
+        "message": "Use \"sha256\" in this hashlib.new call, or pass usedforsecurity=False if it isn't used for security.",
         "suppress": {
           "nosec": {
             "codes": [
@@ -147,7 +147,7 @@
       "violation": {
         "code": "B324",
         "anchor": "witness.span",
-        "message": "An insecure crypt method is being used.",
+        "message": "Pass crypt.METHOD_SHA512 as the salt method instead of this weak crypt method.",
         "suppress": {
           "nosec": {
             "codes": [
@@ -179,7 +179,7 @@
       "violation": {
         "code": "B324",
         "anchor": "witness.span",
-        "message": "An insecure crypt method is being used.",
+        "message": "Pass a salt from crypt.mksalt(crypt.METHOD_SHA512) to this crypt call instead of relying on the default.",
         "suppress": {
           "nosec": {
             "codes": [
@@ -227,7 +227,7 @@
       "violation": {
         "code": "B324",
         "anchor": "witness.span",
-        "message": "An insecure crypt method is being used.",
+        "message": "Pass crypt.METHOD_SHA512 to this mksalt call instead of this weak crypt method.",
         "suppress": {
           "nosec": {
             "codes": [
@@ -259,7 +259,7 @@
       "violation": {
         "code": "B324",
         "anchor": "witness.span",
-        "message": "An insecure crypt method is being used.",
+        "message": "Pass crypt.METHOD_SHA512 to this mksalt call instead of relying on the default method.",
         "suppress": {
           "nosec": {
             "codes": [

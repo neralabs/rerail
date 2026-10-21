@@ -3,7 +3,7 @@
   "id": "ruff-sim905-split-static-string",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM905 (split-static-string): `.split(...)` or `.rsplit(...)` called on a str literal (implicit concatenations included; not bytes, f- or t-strings), where `sep` (keyword, else first positional argument) is absent, `None` or a str literal, and `maxsplit` (keyword, else second positional argument) is absent or an integer literal, optionally negated, that fits in an i32 (`get_maxsplit_value`). Reported on the call.",
+  "description": "Use a list literal instead of calling split() or rsplit() on a string literal; the result is known in advance.",
   "scope": {
     "include": [
       "**/*"

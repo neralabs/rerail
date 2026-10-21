@@ -3,7 +3,7 @@
   "id": "ruff-b905-zip-without-explicit-strict",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B905 (zip-without-explicit-strict), from target version 3.10 (`when`; `expression.rs:792`): a call to builtin `zip` (bare `zip`, or `zip` from `builtins`) with no `strict=` keyword (find_keyword, through `arguments` in syntactic mode), at least two positional arguments or a `*` argument, and no infinite iterator argument (`itertools.cycle`/`count`, `repeat` without a finite `times`). `zip` and the itertools names resolve with `resolves`, so a shadowed `zip` is not reported. Reported on the call. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/B905.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Pass strict= explicitly to zip() over two or more iterables on Python 3.10+; otherwise mismatched lengths are truncated silently.",
   "scope": {
     "include": [
       "**/*"

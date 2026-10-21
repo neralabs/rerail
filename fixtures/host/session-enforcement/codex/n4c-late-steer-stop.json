@@ -1,4 +1,4 @@
 {
   "decision": "block",
-  "reason": "◆ Rerail · typescript-eslint-no-explicit-any  steered\nFrom the TypeScript rule pack. Set to Steer: fix it, or tell the person in one line why you won't.\nUse unknown or a real type in exported signatures. (web/src/features/orders/useOrders.ts:1:33)\nWhy? → http://127.0.0.1:4737/#rule/typescript-eslint-no-explicit-any"
+  "reason": "Rerail found 1 problem in your last edit:\n- web/src/features/orders/useOrders.ts:1:33 — Use unknown or a real type in exported signatures. [typescript-eslint-no-explicit-any]\nFix it, or tell the user in one line why you won't."
 }

@@ -3,7 +3,7 @@
   "id": "bandit-b406-import-xml-sax",
   "revision": 2,
   "mode": "steer",
-  "description": "Detect direct imports of xml.sax. Port of Bandit 1.9.4's B406 import_xml_sax. Divergence: an import of only xml.sax.saxutils (`from xml.sax.saxutils import ...`, `from xml.sax import saxutils`, aliased or parenthesised) is not reported. saxutils holds XML writing and escaping helpers (escape, quoteattr, unescape, XMLGenerator) and no parser, so defusedxml, which the steer points to, has nothing to replace it with. `import xml.sax.saxutils` is still reported, since it also binds xml.sax and its parse functions (NER-1827).",
+  "description": "Avoid parsing XML with xml.sax (importing only its saxutils helpers is fine); it is open to XML attacks, so use defusedxml.",
   "scope": {
     "include": [
       "**/*.py"

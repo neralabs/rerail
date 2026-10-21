@@ -97,7 +97,7 @@ describe("The rewind steer strategy", () => {
           toolCallId: "w1",
           rewound: ["created.py"],
           ruleIds: ["test:needle"],
-          content: expect.stringMatching(/^Rerail rolled back this edit because it breaks the rule below: `created\.py`, which the edit created, is deleted\. Redo it so it follows the rule; if you decide the rule does not apply, redo it as it was and tell the person in one line why\.\n\n◆ Rerail · test:needle {2}steered\n[^]*No needle \(created\.py:1:1\)/u),
+          content: expect.stringMatching(/^Rerail rolled back this edit because it breaks the rule below: `created\.py`, which the edit created, is deleted\. Redo it so it follows the rule; if you decide the rule does not apply, redo it as it was and tell the user in one line why\.\n\nRerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't\.$/u),
         })]);
         await expect(readFile(join(session.root, "created.py"))).rejects.toThrow(/ENOENT/u);
         expect(await session.turnEnd()).toEqual([]);
@@ -198,7 +198,7 @@ describe("The rewind steer strategy", () => {
         await session.steered.promise;
         const next = await session.prompt();
         expect(next).toEqual([{
-          sessionId: "strategy", requested: "steer", mechanism: "additional-context", content: "Checked the edit.", ruleIds: [], strategy: "message",
+          sessionId: "strategy", requested: "steer", mechanism: "additional-context", content: "Checked the edit.", ruleIds: [], rules: [], strategy: "message",
         }]);
         expect(await readFile(join(session.root, "a.ts"), "utf8")).toBe("export const a: any = 1;\n");
       } finally {
@@ -217,7 +217,8 @@ describe("The message steer strategy", () => {
       const deliveries = await session.edit("w1", "created.py", "NEEDLE = 1\n");
       expect(deliveries).toEqual([{
         sessionId: "strategy", requested: "steer", mechanism: "native-queue", ruleIds: ["test:needle"], strategy: "message",
-        content: expect.stringMatching(/^◆ Rerail · test:needle {2}steered\n[^]*No needle \(created\.py:1:1\)\nWhy\? → #rule\/test%3Aneedle$/u),
+        rules: [{ id: "test:needle", state: "steered", origin: "From your rule library." }],
+        content: expect.stringMatching(/^Rerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't\.$/u),
       }]);
       expect(await readFile(join(session.root, "created.py"), "utf8")).toBe("NEEDLE = 1\n");
     } finally {
@@ -233,7 +234,7 @@ describe("The subagent steer strategy", () => {
       const deliveries = await session.edit("w1", "created.py", "NEEDLE = 1\n");
       expect(deliveries).toEqual([expect.objectContaining({
         strategy: "subagent",
-        content: expect.stringMatching(/No needle \(created\.py:1:1\)\nWhy\? → #rule\/test%3Aneedle\n\nThis note comes from Rerail, not the person, and your task is unchanged\. Hand the fix to a subagent with the `rerail_fix` tool/u),
+        content: expect.stringMatching(/^Rerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't\.\n\nThis note comes from Rerail, not the user, and your task is unchanged\. Hand the fix to a subagent with the `rerail_fix` tool/u),
       })]);
       expect(deliveries[0]).not.toHaveProperty("toolCallId");
       expect(await readFile(join(session.root, "created.py"), "utf8")).toBe("NEEDLE = 1\n");

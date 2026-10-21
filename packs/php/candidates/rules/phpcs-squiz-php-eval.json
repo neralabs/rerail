@@ -3,7 +3,7 @@
   "id": "phpcs-squiz-php-eval",
   "revision": 1,
   "mode": "steer",
-  "description": "PHP_CodeSniffer 4.0.4 Squiz.PHP.Eval: every eval construct.",
+  "description": "Avoid eval() in PHP; running strings as code is a security risk and hard to debug.",
   "scope": {
     "include": [
       "**/*.php"
@@ -31,7 +31,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "Squiz.PHP.Eval",
-        "message": "eval() is discouraged",
+        "message": "Replace this eval() with direct PHP code, such as a callable or a lookup array; evaluating strings invites code injection.",
         "suppress": {
           "phpcs": {
             "sniffs": [

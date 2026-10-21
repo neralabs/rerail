@@ -13,13 +13,13 @@ example on this page is a complete draft for `rerail rules test`, and Rerail's t
     "id": "local:<short-kebab-name>",
     "revision": 1,
     "mode": "steer",
-    "description": "What it forbids, why, and what it deliberately lets through.",
+    "description": "One imperative sentence: what the rule wants; a short reason if it isn't obvious.",
     "scope": { "include": ["src/**/*.ts"], "exclude": ["**/*.test.ts"] },
     "clauses": [
       {
         "id": "<clause-name>",
         "forbid": { "regex": { "pattern": "…", "source": "file.content" } },
-        "violation": { "code": "UPPER_SNAKE", "anchor": "witness.span", "message": "What is wrong. What to do instead." }
+        "violation": { "code": "UPPER_SNAKE", "anchor": "witness.span", "message": "One sentence: what to change in this code." }
       }
     ]
   },
@@ -35,7 +35,7 @@ example on this page is a complete draft for `rerail rules test`, and Rerail's t
   rule covers" and passes: use one to show the scope works, but never as a caught case.
 - **`folder`** (optional, at the top level of the draft beside `kind`) adds the rule at one folder of the repository instead of
   at the whole of it.
-- **`description`** is for people reading the rule later. Say what it lets through on purpose.
+- **`description`** is for people reading the rule later in the dashboard. See [Writing the description](#writing-the-description).
 - **`violation.message`** is the steer the agent reads. See [Writing the message](#writing-the-message).
 - **Raise `revision`** every time you change a rule that has been added.
 
@@ -76,14 +76,63 @@ The `ast` query is an [ast-grep](https://ast-grep.github.io) rule with `language
 
 When a case does not parse, `rules test` reports it as `not checked`, never as passed. Fix the case's code or switch to `regex`.
 
+## Writing the description
+
+The description is for people browsing the rules in the dashboard. The agent never reads it.
+
+1. Readable at a glance by a developer, in plain English.
+2. States the intent: what the rule wants the developer to do or avoid.
+3. No code or source material: no snippets, regexes, AST node kinds, globs, JSON, config keys or backticks. Naming the API
+   or construct the rule is about is fine when the intent needs it ("console.log", "time.sleep", "useEffect").
+4. No origin: no linter or rule names it was taken from, no versions.
+5. Clear and concise.
+6. Accurate: it matches what the clauses and scope catch, no more and no less.
+7. One imperative sentence that starts with a verb (Avoid, Use, Prefer, Keep, Remove, Add, Don't…) and ends with a
+   period, optionally followed by `; <short reason>`.
+8. At most 200 characters.
+9. A reason only when it isn't obvious.
+10. Name the language or file type when a sibling rule covers another one.
+11. Keep thresholds that matter ("more than 5 parameters"); drop implementation trivia.
+12. Don't just repeat the message.
+
+What it deliberately lets through can go after the semicolon when it fits and matters to a reader: `Log through logger in
+application code, not console.log; scripts and tests may print.`
+
 ## Writing the message
 
-The message is what the agent acts on. It must be right every time it fires, or say when it might not be.
+The message is what the agent acts on. Rerail shows it as one line in a block that already gives the location, the rule
+id and "fix it, or tell the user why you won't":
 
-- **Say what is wrong and what to do instead.** "Use `logger.info` (src/log.ts), not `console.log`."
-- **Prefer pointing to the right helper over "remove" or "delete".** A steer to delete is the most common harmful steer.
-- **Say when to leave it alone,** if a legitimate exception exists that the matcher cannot see. "If this call can fail in normal
-  operation, keep it."
+```
+Rerail found 1 problem in your last edit:
+- src/api/orders.ts:2:3 — <message> [local:use-the-logger]
+Fix it, or tell the user in one line why you won't.
+```
+
+So the message only says what to change in this code. It must be right every time it fires, or say when it might not be.
+
+1. **Start with a verb saying what to change,** not what was detected: "Log through `logger.info` (src/log.ts) instead of
+   console.log."
+2. **Be specific to the finding:** use what the clause captured (`$M`, `$NAME`) where it helps, and never a metavariable
+   the clause doesn't define.
+3. **Name the replacement,** so the agent can act without reading anything else. Prefer pointing to the right helper over
+   "remove" or "delete": a steer to delete is the most common harmful steer.
+4. **Be right for every match** of the clause; give each clause its own message.
+5. **Agree with the clause's `fix`,** when it has one.
+6. **Give a reason only when it changes the decision,** where the agent might otherwise reasonably decline. Say when to
+   leave it alone, if a legitimate exception exists that the matcher cannot see: "…; keep it if this call can fail in
+   normal operation."
+7. **No tool or Rerail vocabulary:** no linter names, rule codes or versions, and no "steer", "rule pack" or "mode".
+8. **Nothing the block adds:** no location, no rule id, no "Rerail", no "fix it or explain".
+9. **A calibrated tone:** no hedging ("Consider maybe…"), no shouting (NEVER, MUST, ALWAYS).
+10. **One action.**
+11. **It stands alone** as one line in a list of findings.
+12. **One sentence,** ending with a period, at most 140 characters, counting metavariables as written.
+13. **Not the description again:** the description is the intent, for a person; the message is the action for this
+    instance.
+
+Also:
+
 - **Do not word it around one literal variant.** Write "with or without `override`", not "`override get`".
 - **Do not claim what the rule did not check.** Write "this rule found no write to `$V` in the loop", not "`$V` never changes".
 
@@ -101,13 +150,13 @@ UI components must not reach into the database layer.
     "id": "local:no-db-imports-in-components",
     "revision": 1,
     "mode": "steer",
-    "description": "Components under src/components must not import from src/db; data comes through the hooks in src/data. Type-only imports are allowed.",
+    "description": "Read data in components under src/components through the hooks in src/data, not by importing src/db; type-only imports are fine.",
     "scope": { "include": ["src/components/**/*.ts", "src/components/**/*.tsx"], "exclude": ["**/*.test.*"] },
     "clauses": [
       {
         "id": "db-import",
         "forbid": { "regex": { "pattern": "(?m)^import\\s+(?:\\{[^}]*\\}|\\*\\s+as\\s+[\\w$]+|[A-Za-z_$][\\w$]*(?:\\s*,\\s*\\{[^}]*\\})?)\\s+from\\s+['\"](?:@/db|(?:\\.\\./)+db)(?:/[^'\"]*)?['\"]", "source": "file.content" } },
-        "violation": { "code": "DB_IMPORT_IN_COMPONENT", "anchor": "witness.span", "message": "Components do not import from src/db. Read the data through a hook in src/data (add one if none fits)." }
+        "violation": { "code": "DB_IMPORT_IN_COMPONENT", "anchor": "witness.span", "message": "Read this data through a hook in src/data instead of importing src/db, adding a hook if none fits." }
       }
     ]
   },
@@ -144,13 +193,13 @@ The repo logs through its logger; agents reach for `console.log`.
     "id": "local:use-the-logger",
     "revision": 1,
     "mode": "steer",
-    "description": "Application code logs through logger (src/log.ts), not console.log. Scripts and tests may print.",
+    "description": "Log through logger in application code, not console.log; scripts and tests may print.",
     "scope": { "include": ["src/**/*.ts", "src/**/*.tsx"], "exclude": ["**/*.test.*", "src/scripts/**"] },
     "clauses": [
       {
         "id": "console-log",
         "forbid": { "ast": { "language": "typescript", "rule": { "pattern": "console.log($$$ARGS)" } } },
-        "violation": { "code": "CONSOLE_LOG", "anchor": "witness.span", "message": "Log through `logger` from src/log.ts (`logger.info`, `logger.debug`), not console.log." }
+        "violation": { "code": "CONSOLE_LOG", "anchor": "witness.span", "message": "Log through `logger` from src/log.ts (`logger.info`, `logger.debug`) instead of console.log." }
       }
     ]
   },
@@ -181,7 +230,7 @@ The string mentioning `console.log(x)` passes. A regex would have caught it.
     "id": "local:no-blocking-sleep-in-async",
     "revision": 1,
     "mode": "steer",
-    "description": "time.sleep inside an async def blocks the event loop; use await asyncio.sleep. A sync function nested in the async one is not flagged.",
+    "description": "Use await asyncio.sleep instead of time.sleep inside async functions; time.sleep blocks the event loop.",
     "scope": { "include": ["**/*.py"], "exclude": ["**/.venv/**"] },
     "clauses": [
       {
@@ -196,7 +245,7 @@ The string mentioning `console.log(x)` passes. A regex would have caught it.
             }
           }
         },
-        "violation": { "code": "BLOCKING_SLEEP_IN_ASYNC", "anchor": "witness.span", "message": "time.sleep blocks the event loop inside async code. Use `await asyncio.sleep(...)`." }
+        "violation": { "code": "BLOCKING_SLEEP_IN_ASYNC", "anchor": "witness.span", "message": "Replace time.sleep with `await asyncio.sleep(...)`; it blocks the event loop inside async code." }
       }
     ]
   },

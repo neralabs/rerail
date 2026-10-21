@@ -3,7 +3,7 @@
   "id": "bandit-b304-ciphers",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect insecure cipher algorithm calls",
+  "description": "Avoid weak ciphers such as DES, TripleDES, ARC2, ARC4, Blowfish, CAST5, IDEA, SEED, and XOR; use a modern cipher such as AES.",
   "scope": {
     "include": [
       "**/*.py"
@@ -48,7 +48,7 @@
       "violation": {
         "code": "B304",
         "anchor": "witness.span",
-        "message": "Use of an insecure cipher. Replace it with a known secure cipher such as AES.",
+        "message": "Replace this weak cipher with AES in an authenticated mode such as GCM.",
         "suppress": {
           "nosec": {
             "codes": [

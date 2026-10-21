@@ -3,7 +3,7 @@
   "id": "ruff-pie794-duplicate-class-field-definition",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PIE794 (duplicate-class-field-definition): in a class body, an assignment or annotated assignment to a name `N` whose value does not mention `N`, after an earlier such definition of `N` in the same body.",
+  "description": "Define each class field once; a later definition silently replaces the earlier one.",
   "scope": {
     "include": [
       "**/*"

@@ -59,7 +59,7 @@ async function shellWriteFindings(followGitignore: boolean): Promise<string[]> {
     await writeFile(join(root, "kept.py"), "NEEDLE\n");
     await runtime.ingest({ kind: "result", eventId: "shell-result", sessionId, toolCallId: "shell-1", toolName: "shell", output: "" });
     const findings = (): string[] => audits.list({ sessionId }).audits
-      .filter(audit => audit.scope === "touched-files" && audit.status === "completed")
+      .filter(audit => audit.scope === "ai-output" && audit.status === "completed")
       .flatMap(audit => audits.get(audit.auditId)?.violations ?? [])
       .map(violation => violation.path ?? "")
       .toSorted();

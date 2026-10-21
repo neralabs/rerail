@@ -11,11 +11,9 @@ import { isOmittedFailuresSummary, isSourceGap } from "./audit.js";
 
 import {
   auditSettingsSchema, auditSettingsPatchSchema, repositoryAuditSchema, auditRequestInputSchema, auditRequestSchema,
-  type AuditSettings, type AuditSettingsPatch, type RepositoryAudit, type AuditControls, type AuditRequest,
+  DEFAULT_AUDIT_SETTINGS, type AuditSettings, type AuditSettingsPatch, type RepositoryAudit, type AuditControls, type AuditRequest,
 } from "./audit-control-schema.js";
 export interface PolicyOwnerClaim { readonly token: string; }
-
-export const DEFAULT_AUDIT_SETTINGS: Readonly<AuditSettings> = { scope: "touched-files", mode: "steer", steerStrategy: "message" };
 const GIT_OUTPUT_LIMIT = 10 * 1024 * 1024;
 
 /**

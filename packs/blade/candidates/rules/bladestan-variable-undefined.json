@@ -3,7 +3,7 @@
   "id": "bladestan-variable-undefined",
   "revision": 1,
   "mode": "steer",
-  "description": "Bladestan 0.11.7 variable.undefined (PHPStan 2.2.16 DefinedVariableRule over the compiled template): a variable read no path of the template defines (\"Undefined variable: $x\"). A read at the template's top level that the template does not define is view data, which Bladestan reads as \"might not be defined\" when the render passes none; neither side claims it.",
+  "description": "Avoid reading variables in Blade templates that no code path defines, such as a closure variable missing from its use list; data passed to the view is not flagged.",
   "scope": {
     "include": [
       "**/*.blade.php"
@@ -28,7 +28,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "variable.undefined",
-        "message": "Undefined variable"
+        "message": "Define this variable before reading it, or add it to the closure's use list if it comes from outside."
       }
     }
   ]

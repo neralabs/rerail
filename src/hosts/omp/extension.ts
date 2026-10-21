@@ -191,7 +191,7 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
 
     /** The tool results being ingested, each with the steers placed in it so far. */
     const openResults = new Map<string, string[]>();
-    // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
+    // The runtime records no links; the rules point at this checkout's dashboard only here.
     const sendDeliveries = async (current: NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
       sendNativeDeliveries(await linkDeliveries(deliveries, currentContext?.cwd), async (message, options_) => {
         const context = currentContext;

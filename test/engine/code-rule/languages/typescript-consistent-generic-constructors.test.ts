@@ -49,7 +49,7 @@ describe("typescript-eslint-consistent-generic-constructors and isolatedDeclarat
     const reported = findings(await compile(), source);
     expect(reported).toHaveLength(1);
     expect(reported[0]?.line).toBe(1);
-    expect(reported[0]?.message).toMatch(/^The generic type arguments should be specified as part of the constructor type arguments\./);
+    expect(reported[0]?.message).toMatch(/^Move the type arguments from the annotation onto the `new` call/);
     expect(reported[0]?.message).toContain("isolatedDeclarations");
   });
 });

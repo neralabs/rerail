@@ -3,7 +3,7 @@
   "id": "ruff-sim114-if-with-same-arms",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM114 (if-with-same-arms): two consecutive `if`/`elif` branches whose bodies are equal as Ruff's ComparableStmt (`text: \"structure\"`; names without NFKC normalization) and whose body ranges hold the same comment texts in the same order, reported at the first branch. A branch's body range runs from the end of its test's line to the end of its last statement's line (M12a `layout`): a comment on the test's line or after the last statement's line is left out. Up to 3 comments per branch are compared; a branch with more is not reported.",
+  "description": "Combine consecutive if/elif branches with identical bodies into one branch whose conditions are joined with or.",
   "scope": {
     "include": [
       "**/*"
