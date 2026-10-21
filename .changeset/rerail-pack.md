@@ -2,4 +2,4 @@
 "@neralabs/rerail-pack-rerail": patch
 ---
 
-Rerail pack: three rules for a repository that holds Rerail rule packs. They steer when a rule's violation message names an upstream tool (`rerail-message-tool-names`), names Rerail (`rerail-message-rerail-name`), or writes NEVER, MUST or ALWAYS in capitals (`rerail-message-shouting`); quoted code may hold any word.
+Rerail pack: two rules for a repository that holds Rerail rule packs. They steer when a rule's violation message names an upstream tool (`rerail-message-tool-names`) or Rerail (`rerail-message-rerail-name`), which the message criteria leave out: a message names the change, and the block around it already shows where the finding came from. Quoted code may hold any word.

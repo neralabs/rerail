@@ -3,7 +3,7 @@
   "id": "rerail-message-rerail-name",
   "revision": 1,
   "mode": "steer",
-  "description": "Keep the name Rerail out of rule pack messages, which already show it beside every finding; quoted code may hold it.",
+  "description": "Leave the name Rerail out of rule pack messages, since the block around each one already shows it; quoted code may hold it.",
   "scope": {
     "include": [
       "packs/*/rules/*.json",
@@ -23,7 +23,7 @@
       "violation": {
         "code": "MESSAGE_NAMES_RERAIL",
         "anchor": "capture.HIT",
-        "message": "Reword this message without `$HIT`, which the reader already sees with every message; backtick only code to write."
+        "message": "Leave `$HIT` out of this message and say only the change; the block around it already shows where the finding came from. Backtick it only in code to write."
       }
     }
   ]

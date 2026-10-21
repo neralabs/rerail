@@ -1,6 +1,6 @@
 /**
- * The rerail pack (packs/rerail/): its three rules over rule pack messages, each on the messages it must catch, with the
- * word its steer names, and the near misses it must let through. pack.json's examples, which the pack tests prove, give
+ * The rerail pack (packs/rerail/): its rules over rule pack messages, each on the messages it must catch, with the word
+ * its steer names, and the near misses it must let through. pack.json's examples, which the pack tests prove, give
  * one of each; these are the rest: quoted code, option names, the rest of a document, nesting, minified ports, probes.
  */
 import { readFileSync } from "node:fs";
@@ -154,27 +154,6 @@ const RULES: Record<string, { caught: [string, string, string][]; passed: [strin
         })],
       // A probe is not a rule people read.
       ["packs/python/candidates/probes/rules/ruff-s113-request-without-timeout.json", document("ruff-s113-request-without-timeout", "Rerail found a request without a timeout.")],
-    ],
-  },
-  "rerail-message-shouting": {
-    caught: [
-      ["packs/python/rules/ruff-s501-request-with-no-cert-validation.json",
-        document("ruff-s501-request-with-no-cert-validation", "Keep `verify=True`; you MUST NOT turn off certificate checks."), "MUST"],
-      ["packs/php/candidates/rules/phpstan-no-debug.json",
-        document("phpstan-no-debug", { $option: "functions", cases: { '["dd"]': "Remove this dd() call." }, default: "NEVER leave dump() in committed code; log through the logger instead." }),
-        "NEVER"],
-      ["packs/python/rules/bandit-b113-request-without-timeout.json",
-        document("bandit-b113-request-without-timeout", "ALWAYS pass a timeout to this requests call.", { minified: true }), "ALWAYS"],
-    ],
-    passed: [
-      // Lower case is no shouting, nor is a SQL keyword in capitals, nor quoted code.
-      ["packs/python/rules/bandit-b108-hardcoded-tmp-directory.json",
-        document("bandit-b108-hardcoded-tmp-directory", "Use `tempfile.mkdtemp()`; a fixed /tmp path must never be shared between runs.")],
-      ["packs/sql/candidates/rules/sqlfluff-identity-column.json", document("sqlfluff-identity-column", "Declare this column GENERATED ALWAYS AS IDENTITY instead of SERIAL.")],
-      ["packs/python/rules/ruff-s501-request-with-no-cert-validation.json",
-        document("ruff-s501-request-with-no-cert-validation", "Keep `verify=True` where the spec says `MUST NOT skip` certificate checks.")],
-      // A probe is not a rule people read.
-      ["packs/php/candidates/probes/rules/phpstan-no-debug.json", document("phpstan-no-debug", "NEVER leave dump() in committed code.")],
     ],
   },
 };

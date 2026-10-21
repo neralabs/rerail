@@ -22,7 +22,7 @@ Every pack lives under `packs/` in this repository and is published from there (
 | Next.js | framework | 17 (17) | a `next` dependency |
 | Node.js | framework | 22 (22) | an `@types/node` dependency, or `*.mjs`/`*.cjs` files |
 | React, Vue | framework | 0 | never yet, as above |
-| Rerail rule packs | repository | 3 (3) | a repository that holds Rerail rule packs: `packs/*/pack.json` files. See `packs/rerail/README.md`. |
+| Rerail rule packs | repository | 2 (2) | a repository that holds Rerail rule packs: `packs/*/pack.json` files. See `packs/rerail/README.md`. |
 
 A pack for a project's own conventions is made the same way: a `repository` pack directory with its rule documents in `rules/`, a `pack.json` that lists them with a match definition naming the files or dependencies that identify the project, and a `package.json` named `@neralabs/rerail-pack-<id>` with core's range under `peerDependencies`. It is installed from its folder with `rerail packs add <folder>`.
 
