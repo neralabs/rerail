@@ -12,30 +12,47 @@ use super::{
 use rusqlite::Transaction;
 use rusqlite::types::{ToSqlOutput, ValueRef};
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 
 pub(super) struct PreparedSqlStatement {
     sql: String,
     values: Vec<rusqlite::types::Value>,
 }
 
-pub(super) struct PreparedRelationshipPass<'a> {
+pub(super) struct PreparedRelationshipPass {
     statements: Vec<PreparedSqlStatement>,
     /// The distinct contexts of `results`, as the JSON array of their hash parameters.
     contexts: Option<String>,
-    /// Each local result as its source, the index of its context in `contexts`, its clause, its
-    /// raw length, and its frame.
-    results: Vec<(SourceId, usize, i64, i64, &'a [u8])>,
-    results_per_statement: usize,
+    /// Each local result as its source, the index of its context in `contexts`, its check, its
+    /// raw length, and its frame's offset and length in `frames`.
+    results: Vec<(SourceId, usize, i64, i64, usize, usize)>,
+    /// Every local result's frame, concatenated in `results` order: the one BLOB parameter of the
+    /// result insert, which `substr` slices, so the insert's parameter count is independent of
+    /// how many results a publication carries.
+    frames: Vec<u8>,
 }
 
-impl PreparedRelationshipPass<'_> {
-    /// The data statements `execute_relationship_pass` runs.
+impl PreparedRelationshipPass {
+    /// The data statements `execute_relationship_pass` runs: the overlay upsert, the context
+    /// intern and lookup, and one insert of every local result: at most four, however many
+    /// results the publication carries (the design's ten-statement bound per pass).
     pub(super) fn statement_count(&self) -> usize {
         self.statements.len()
             + usize::from(self.contexts.is_some())
-            + self.results.len().div_ceil(self.results_per_statement)
+            + usize::from(!self.results.is_empty())
     }
 }
+
+/// The one statement that inserts a publication's local results. `?1` is the JSON array of
+/// `[source, context hash id, check, raw length, frame offset, frame length]` rows; `?2` holds
+/// every frame, concatenated, which `substr` slices (byte-indexed on a BLOB, from 1); `?3` is the
+/// codec.
+const INSERT_LOCAL_RESULTS: &str = "INSERT OR IGNORE INTO context_check_results(source_id,\
+     context_hash_id,check_id,codec_id,raw_length,frame) \
+     SELECT CAST(json_extract(value,'$[0]') AS INTEGER),CAST(json_extract(value,'$[1]') AS INTEGER),\
+     CAST(json_extract(value,'$[2]') AS INTEGER),?3,CAST(json_extract(value,'$[3]') AS INTEGER),\
+     substr(?2,CAST(json_extract(value,'$[4]') AS INTEGER)+1,CAST(json_extract(value,'$[5]') AS INTEGER)) \
+     FROM json_each(?1)";
 
 pub(super) fn prepare_relationship_pass<'a>(
     workspace_id: WorkspaceId,
@@ -47,8 +64,8 @@ pub(super) fn prepare_relationship_pass<'a>(
         OverlayFilePublication<'a>,
     )],
     interned: &PublicationInternCache,
-    variable_limit: usize,
-) -> StoreResult<PreparedRelationshipPass<'a>> {
+    length_limit: usize,
+) -> StoreResult<PreparedRelationshipPass> {
     let mut statements = Vec::new();
     let mut overlay_sql = String::from(
         "INSERT INTO workspace_overlay(workspace_id,path_id,state_id,source_id,tape_id) VALUES ",
@@ -134,34 +151,43 @@ pub(super) fn prepare_relationship_pass<'a>(
         });
         Some(contexts)
     };
+    let mut frames = Vec::with_capacity(
+        local_results
+            .iter()
+            .map(|(.., frame)| frame.len())
+            .sum::<usize>(),
+    );
     let results = local_results
         .into_iter()
         .map(|(source_id, context, check_id, raw_length, frame)| {
             let context = contexts
                 .binary_search(&context)
                 .expect("every result context is collected");
-            (source_id, context, check_id, raw_length, frame)
+            let offset = frames.len();
+            frames.extend_from_slice(frame);
+            (
+                source_id,
+                context,
+                check_id,
+                raw_length,
+                offset,
+                frame.len(),
+            )
         })
         .collect::<Vec<_>>();
-
-    let results_per_statement = Some(variable_limit / 6)
-        .filter(|&rows| rows > 0)
-        .ok_or_else(|| {
-            StoreError::Invalid("SQLite variable limit cannot hold a context result".to_owned())
-        })?;
-    let pass = PreparedRelationshipPass {
+    // The frames travel as one BLOB, so they must fit one SQLite value.
+    if frames.len() > length_limit {
+        return Err(StoreError::Invalid(format!(
+            "local results of one publication hold {} frame bytes; SQLite's value limit is {length_limit}",
+            frames.len()
+        )));
+    }
+    Ok(PreparedRelationshipPass {
         statements,
         contexts: contexts_json,
         results,
-        results_per_statement,
-    };
-    if pass.statement_count() > 10 {
-        return Err(StoreError::Invalid(format!(
-            "relationship publication prepared {} statements; maximum is 10",
-            pass.statement_count()
-        )));
-    }
-    Ok(pass)
+        frames,
+    })
 }
 
 pub(super) fn relationship_references_current(
@@ -210,7 +236,7 @@ pub(super) fn relationship_references_current(
 
 pub(super) fn execute_relationship_pass(
     transaction: &Transaction<'_>,
-    pass: &PreparedRelationshipPass<'_>,
+    pass: &PreparedRelationshipPass,
 ) -> StoreResult<()> {
     for statement in &pass.statements {
         transaction
@@ -240,30 +266,32 @@ pub(super) fn execute_relationship_pass(
             }
         }
     }
-    for chunk in pass.results.chunks(pass.results_per_statement) {
-        let mut sql = String::with_capacity(120 + chunk.len() * 14);
-        sql.push_str(
-            "INSERT OR IGNORE INTO context_check_results(source_id,context_hash_id,check_id,\
-             codec_id,raw_length,frame) VALUES ",
-        );
-        let mut values = Vec::with_capacity(chunk.len() * 6);
-        for (index, (source_id, context, check_id, raw_length, frame)) in chunk.iter().enumerate() {
-            if index != 0 {
-                sql.push(',');
-            }
-            sql.push_str("(?,?,?,?,?,?)");
-            let context_id = context_ids[*context].ok_or_else(|| {
-                StoreError::Corrupt("a local result context was not interned".to_owned())
-            })?;
-            values.extend(
-                [source_id.0, context_id, *check_id, CODEC_ZSTD, *raw_length]
-                    .map(|value| ToSqlOutput::Borrowed(ValueRef::Integer(value))),
-            );
-            values.push(ToSqlOutput::Borrowed(ValueRef::Blob(frame)));
-        }
-        transaction
-            .prepare_cached(&sql)?
-            .execute(rusqlite::params_from_iter(values.iter()))?;
+    if pass.results.is_empty() {
+        return Ok(());
     }
+    let mut rows = String::with_capacity(2 + pass.results.len() * 48);
+    rows.push('[');
+    for (index, (source_id, context, check_id, raw_length, offset, length)) in
+        pass.results.iter().enumerate()
+    {
+        let context_id = context_ids[*context].ok_or_else(|| {
+            StoreError::Corrupt("a local result context was not interned".to_owned())
+        })?;
+        if index != 0 {
+            rows.push(',');
+        }
+        write!(
+            rows,
+            "[{},{context_id},{check_id},{raw_length},{offset},{length}]",
+            source_id.0
+        )
+        .expect("writing to a String cannot fail");
+    }
+    rows.push(']');
+    transaction.prepare_cached(INSERT_LOCAL_RESULTS)?.execute((
+        rows,
+        ToSqlOutput::Borrowed(ValueRef::Blob(&pass.frames)),
+        CODEC_ZSTD,
+    ))?;
     Ok(())
 }

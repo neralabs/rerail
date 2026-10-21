@@ -363,19 +363,15 @@ impl ContentStore {
             });
         }
 
-        let variable_limit = usize::try_from(
+        let length_limit = usize::try_from(
             self.connection
                 .lock()
                 .expect("content store connection unavailable")
-                .limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER)?,
+                .limit(Limit::SQLITE_LIMIT_LENGTH)?,
         )
-        .map_err(|_| StoreError::Invalid("SQLite variable limit is negative".to_owned()))?;
-        let relationship_pass = prepare_relationship_pass(
-            workspace_id,
-            &overlay_rows,
-            &known_interned,
-            variable_limit,
-        )?;
+        .map_err(|_| StoreError::Invalid("SQLite length limit is negative".to_owned()))?;
+        let relationship_pass =
+            prepare_relationship_pass(workspace_id, &overlay_rows, &known_interned, length_limit)?;
         #[cfg(test)]
         run_publication_test_hook(&BEFORE_RELATIONSHIP_WRITE_HOOK);
         let (elapsed, statement_count, current) = retry_busy(busy, || {
