@@ -12,20 +12,22 @@ impl Emitter<'_> {
         first: bool,
         live: &Live,
     ) -> Option<String> {
-        let (joined, condition) = match op {
-            Op::Kinds(kinds) if kinds.is_empty() => ("", "0".into()),
+        let (with, joined, condition) = match op {
+            Op::Kinds(kinds) if kinds.is_empty() => (String::new(), "", "0".into()),
             Op::Kinds(kinds) => (
+                String::new(),
                 " JOIN node n ON n.file = f.file AND n.id = f.node",
                 format!("n.kind IN ({})", list(kinds)),
             ),
             Op::Regex(term) => (
-                "",
                 format!(
-                    "(f.file * 4294967296 + f.node) IN (SELECT ek FROM text_match \
-                 WHERE term = {term} AND ek IN (SELECT file * 4294967296 + node FROM {input}))"
+                    "WITH t AS MATERIALIZED (SELECT ek FROM text_match \
+                 WHERE term = {term} AND ek IN (SELECT file * 4294967296 + node FROM {input})) "
                 ),
+                " CROSS JOIN t ON t.ek = f.file * 4294967296 + f.node",
+                "1".into(),
             ),
-            Op::Never => ("", "0".into()),
+            Op::Never => (String::new(), "", "0".into()),
             _ => return None,
         };
         Some(self.within(live, |this| {
@@ -41,7 +43,7 @@ impl Emitter<'_> {
             };
             this.frame(
                 "v",
-                &format!("SELECT {selected} FROM {input} f{joined} WHERE {condition}"),
+                &format!("{with}SELECT {selected} FROM {input} f{joined} WHERE {condition}"),
                 Reads::join(&[input]),
             )
         }))

@@ -373,8 +373,11 @@ impl SqlEngine {
         let report = json!({
             "engine": "sql",
             "batchSize": self.batch_size,
+            "compilerBatchHint": self.batch_size,
+            "filePartitioning": "whole job into at most four SQL partitions",
             "relational": self.compiled.relational_plan(),
             "clauses": self.clauses.len(),
+            "compiledClauseNames": self.names.iter().enumerate().map(|(statement,(rule,clause))|json!({"statement":statement,"ruleId":rule,"clauseId":clause})).collect::<Vec<_>>(),
             "compiled": self.ran.len(),
             "ran": self.ran.iter().filter(|ran| ran.load(Ordering::Relaxed)).count(),
             "refused": self.refusals.iter().map(|refusal| json!({

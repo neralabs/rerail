@@ -738,7 +738,8 @@ impl FrameStore {
         let Some(shared) = self.frames.lock().get(name).cloned() else {
             return false;
         };
-        // SAFETY: the connection's thread runs every statement and clear; no statement runs now.
+        // SAFETY: the connection thread serializes clear with cursor methods. No borrowed
+        // frame data is live here; publication callbacks finish consuming their inputs first.
         let frame = unsafe { shared.get_mut() };
         self.live.fetch_sub(frame.len, Atomic::Relaxed);
         frame.clear();
@@ -749,6 +750,27 @@ impl FrameStore {
     /// `None` where no frame has that name.
     pub(super) fn rows(&self, name: &str) -> Option<usize> {
         self.frames.lock().get(name).map(|shared| shared.get().len)
+    }
+
+    /// End a statement-local producer's lifetime. Its schema remains registered, while its
+    /// buffers can no longer retain a whole prior operator's intermediate rows.
+    pub(super) fn program_release(&self, name: &str) -> bool {
+        if !self.clear(name) {
+            return false;
+        }
+        let shared = self
+            .frames
+            .lock()
+            .get(name)
+            .cloned()
+            .expect("a cleared relation");
+        // SAFETY: the generated consumer has completed before the release instruction.
+        let frame = unsafe { shared.get_mut() };
+        for column in &mut frame.columns {
+            column.data = Data::Narrow(Vec::new());
+            column.nulls = Vec::new();
+        }
+        true
     }
 
     /// Publish an aggregate's completed input batch, with no nested SQL. Experiments register
@@ -805,6 +827,133 @@ impl FrameStore {
         frame.dense = false;
         frame.largest = keys.into_iter().max().unwrap_or(0);
         Ok(())
+    }
+
+    /// SQL-program storage boundary. The SELECT has consumed its inputs before its aggregate
+    /// calls this method. No rule or SQL is evaluated here; it implements table append/replace.
+    pub(super) fn program_rows(
+        &self,
+        name: &str,
+        rows: Vec<Vec<Value>>,
+        replace: bool,
+        ignore: bool,
+    ) -> Result<usize> {
+        let shared = self
+            .frames
+            .lock()
+            .get(name)
+            .cloned()
+            .ok_or_else(|| Error::ModuleError(format!("unknown program relation {name}")))?;
+        let width = shared.get().columns.len();
+        if rows.iter().any(|row| row.len() != width) {
+            return Err(Error::ModuleError(format!(
+                "program relation {name}: wrong row width"
+            )));
+        }
+        if replace {
+            self.clear(name);
+        }
+        // SAFETY: the publication aggregate owns all producer values before finalize. Source
+        // cursors reached EOF; no read method is active, including at loop back-edges.
+        let frame = unsafe { shared.get_mut() };
+        let keys: Vec<usize> = match &frame.key {
+            Key::Position => Vec::new(),
+            Key::Rowid(at) => vec![*at],
+            Key::Primary(columns) => columns.clone(),
+        };
+        let encode = |values: &[Value]| -> Vec<u8> {
+            let mut out = Vec::new();
+            for &at in &keys {
+                let value = &values[at];
+                let value = Probe::of(value.into());
+                match value {
+                    Probe::Null => out.push(0),
+                    Probe::Integer(n) => {
+                        out.push(1);
+                        out.extend(n.to_le_bytes());
+                    }
+                    Probe::Real(n)
+                        if n.fract() == 0.0 && n >= i64::MIN as f64 && n < i64::MAX as f64 =>
+                    {
+                        out.push(1);
+                        out.extend((n as i64).to_le_bytes());
+                    }
+                    Probe::Real(n) => {
+                        out.push(2);
+                        out.extend(n.to_bits().to_le_bytes());
+                    }
+                    Probe::Text(s) | Probe::Blob(s) => {
+                        out.push(if matches!(value, Probe::Text(_)) {
+                            3
+                        } else {
+                            4
+                        });
+                        out.extend((s.len() as u64).to_le_bytes());
+                        out.extend(s);
+                    }
+                }
+            }
+            out
+        };
+        let mut seen = std::collections::HashSet::new();
+        if ignore && !keys.is_empty() {
+            for row in 0..frame.len {
+                let values: Vec<Value> = frame
+                    .columns
+                    .iter()
+                    .map(|c| Value::try_from(c.get(row)))
+                    .collect::<std::result::Result<_, _>>()?;
+                seen.insert(encode(&values));
+            }
+        }
+        let mut inserted = 0;
+        for mut values in rows {
+            if let Key::Rowid(at) = frame.key {
+                if values[at] == Value::Null {
+                    values[at] = Value::Integer(
+                        frame
+                            .largest
+                            .checked_add(1)
+                            .ok_or_else(|| Error::ModuleError("program rowid overflow".into()))?,
+                    );
+                }
+                if let Probe::Integer(id) = Probe::of((&values[at]).into()).numeric() {
+                    values[at] = Value::Integer(id);
+                } else {
+                    return Err(Error::ModuleError(
+                        "program rowid must be an integer".into(),
+                    ));
+                }
+            }
+            if ignore && !keys.is_empty() && !seen.insert(encode(&values)) {
+                continue;
+            }
+            let live = self.live.fetch_add(1, Atomic::Relaxed) + 1;
+            if live > BUDGET {
+                self.live.fetch_sub(1, Atomic::Relaxed);
+                return Err(Error::ModuleError("program relation row budget".into()));
+            }
+            self.peak.fetch_max(live, Atomic::Relaxed);
+            let row = frame.len;
+            if let Key::Rowid(at) = frame.key {
+                let Value::Integer(id) = values[at] else {
+                    unreachable!()
+                };
+                frame.ascending &= row == 0 || id > frame.largest;
+                frame.dense &= row == 0 || Some(id) == frame.largest.checked_add(1);
+                frame.largest = if row == 0 { id } else { frame.largest.max(id) };
+            }
+            for (column, value) in frame.columns.iter_mut().zip(&values) {
+                column.push(row, value.into());
+            }
+            frame.len += 1;
+            inserted += 1;
+        }
+        frame.lookups.get_mut().clear();
+        *frame.order.get_mut() = None;
+        #[cfg(any(test, feature = "unbounded-work"))]
+        super::profiling::frame(super::profiling::FrameEvent::Insert, inserted);
+        Ok(inserted)
     }
 
     /// Frees what emptied frames keep beyond `RETAIN` rows: a large batch does not keep its

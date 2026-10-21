@@ -1531,3 +1531,151 @@ Both ordinary and profiling builds pass library Clippy.
 
 The current compiler remains a failing implementation under this acceptance test.
 No SQL generation change in this step claims to meet the 100-execution requirement.
+
+## Compile the scheduler into SQL — 2026-10-21
+
+The next implementation changes plan execution itself.
+Eligible immutable components retain their shared relation graph.
+The remaining plan instructions now compile into materialized set producers and a recursive SQL control relation.
+This includes utility fixed points, candidate frontiers, recursion checks, and enumeration rounds.
+The batch driver executes the resulting programs, rather than their individual instructions.
+
+Native callbacks only publish, append, replace, or clear relation buffers.
+They do not receive an AST operator, interpret a plan, or execute nested SQL.
+The existing reached-read graph check remains a structural validator over an aggregate's rows.
+SQL contains the loop conditions, candidate decisions, ordering, and enumeration transitions.
+
+Mutable demand tables also become native relation registrations.
+Their DML becomes SELECT producers and set publication boundaries.
+The schema expansion distinguishes omitted defaults from explicit NULL values.
+Candidate prefixes use SQL ranks and per-parent limits instead of a native frontier scheduler.
+
+SQLite does not automatically refresh an independent materialized CTE inside a correlated recursive step.
+A small experiment repeated a stale value through five iterations.
+The compiler therefore gives every mutable input an explicit dependency on the current SQL iteration.
+A regression must demonstrate fresh results across a recursive back-edge.
+
+The physical generator uses balanced dispatch expressions instead of a linear CASE over thousands of instructions.
+It bounds the number of matching programs per worker and reserves job capacity for setup and policy composition.
+File partitioning uses the complete job and worker count, rather than multiplying programs through small file batches.
+The budget test and full native output comparison remain acceptance requirements.
+
+This construction initially preserves the former operator granularity inside SQL.
+It is not evidence that all intermediate work disappears.
+SQL instructions, frame visits, CPU, and memory still need complete measurements after statement-count acceptance.
+Validation results and any rejected implementation will follow here.
+
+### SQL shape corrections
+
+The first recursive prototype did not meet the performance requirements.
+Independent materialized CTEs kept stale values across recursive iterations.
+Adding iteration dependencies fixed freshness but caused repeated membership scans and repeated CTE construction inside data-row loops.
+These candidates timed out and remain rejected experiments.
+
+The compiler now publishes shared producers before their consumers.
+This includes nested CTEs and closed membership queries.
+Consumers use indexed probes into those published sets.
+The membership transformation preserves NULL values, empty sets, and negation.
+Terminal demand lists retain their batched virtual-table contract.
+
+Shared utility bodies compile once and use a SQL return stack.
+Textual expansion of every call site caused excessive compilation and failed the utility-chain test.
+SQL stage markers prevent repeated publication during enumeration.
+Enumeration counters now live in the SQL control row.
+Fresh-witness checks probe both root columns through EXISTS.
+
+Stage membership lists remain stable after their guarded publication.
+They can stay cached across control iterations within one SQL execution.
+Mutable relations retain explicit iteration dependencies.
+The compiler also emits SQL guards from the existing emptiness proofs.
+Empty demand sets therefore avoid their producers and full-table update copies.
+
+Temporary relations reuse compatible schemas after their last consumer.
+This reduced the stateful compiler's registered schemas from 10,060 to 3,922 on the catalogue workload.
+The publication aggregate owns producer values before replacement.
+This permits streamed SQLite producers without a second materialized copy.
+Schema inference also stopped copying the complete schema catalogue for each CTE.
+
+### Profiling and interpretation
+
+Every executed program retains its complete query plan and bytecode.
+Internal set-step records expose producer SQL, control transitions, CPU, wall time, and incomplete steps.
+These times belong to their enclosing SQL execution.
+They must not enter the execution budget or the CPU total a second time.
+The summary treats whole programs as programs instead of assigning their entire cost to an embedded operator keyword.
+
+The first step logger used an unbuffered file writer.
+Its many small writes inflated the instrumented candidate times.
+Those times do not establish an unprofiled speedup from temporary relation reuse.
+The final logger buffers its records and flushes at each completed program boundary.
+Unprofiled comparisons remain the performance evidence.
+
+Large EXPLAIN catalogues exceeded JavaScript's maximum string length during report generation.
+The reporter now writes complete records in chunks.
+It stores bytecode once per physical plan and groups variants that differ only in connection addresses.
+Every grouped variant retains references to all original raw captures.
+HTML keeps plan data in separate embedded records and parses a query's plans on demand.
+
+The plan audit now examines actual compiled programs.
+It distinguishes control-row correlation and batched terminal demand from correlation over data rows.
+This exposed repeated witness membership scans and enumeration counter reads.
+The complete audit passes after the SQL shape corrections.
+
+Internal step records also identify their source clause or shared stage.
+Clause records include the rule and clause names from the compiled catalogue.
+The summary therefore links a costly producer to a policy, its SQL body, and its next control transition.
+Shared utility bodies retain their owning clause or stage attribution.
+
+### Complete-job acceptance results
+
+The final engine passes the unchanged 100-execution acceptance gate on all three catalogue runs.
+Each run compiles all 141 matchers from the same 135 policies as the failing baseline.
+The three pre-existing policy exclusions remain identical between engines.
+The complete native outcome digests match, with no failures or blind files.
+
+| Files | Compiler batch hint | Previous executions | New executions | Findings |
+|---:|---:|---:|---:|---:|
+| 32 | 2 | 42,495 | 72 | 33 |
+| 32 | 64 | 23,561 | 72 | 33 |
+| 138 | 2 | Not traced | 72 | 580 |
+
+Each new job contains four setup statements, eight transaction statements, and 60 matching statements.
+Four immutable programs and eleven stateful programs run on each of four whole-job partitions.
+The statement count stays constant across these file counts and compiler hints.
+No enumeration round, utility iteration, or candidate frontier launches another SQL statement.
+
+The caller executes the physical programs produced by compilation.
+Every clause belongs to the immutable relation graph or the stateful programs.
+A coverage assertion rejects an uncovered clause during compilation.
+Native storage callbacks execute no nested SQL and interpret no rule operators.
+
+The compact evidence is `benchmark/sql-large-plans-evidence.json`.
+It records workload hashes, outcome digests, execution coverage, build settings, and measured CPU and memory.
+Complete query plans, bytecode, traces, and interactive reports remain under `/tmp/rerail-sql-large-20261021/`.
+The final captures use the `catalogue-attributed-*-profile` directories.
+The build manifest is `build-attributed.json` in the same directory.
+
+### Performance remains open
+
+The execution budget now passes, but cold CPU and memory regress against commit `c109a915`.
+These are single unprofiled diagnostic samples under shared machine load.
+Both builds use the same diagnostic allocator override and four workers.
+
+| Files | Hint | Previous apply CPU, seconds | New apply CPU, seconds | Previous peak RSS, GB | New peak RSS, GB |
+|---:|---:|---:|---:|---:|---:|
+| 32 | 64 | 5.09 | 14.86 | 0.49 | 1.39 |
+| 138 | 2 | 29.02 | 51.74 | 0.73 | 2.76 |
+
+The stateful SQL totals about 11.5 MB before SQLite prepares its programs.
+Preparation and handling are the largest recorded bucket on the 32-file workload.
+SQL execution dominates on the 138-file workload.
+The larger programs still publish many intermediate frames and retain substantial prepared-statement memory.
+The next performance work must compact straight-line regions and reduce intermediate frame copies.
+The execution-budget result does not close the performance gap.
+
+The complete code-rule suite passes 1,488 tests, including generated differential cases and the actual-program plan audit.
+The suite retains its 44 existing ignored tests.
+Seven compiler regressions cover iteration freshness, defaults, mutation predicates, NULL membership, indexed probes, and temporary schema reuse.
+The profiling and query-shape scripts pass 18 tests.
+Library Clippy passes with and without `unbounded-work`.
+Formatting and whitespace checks pass.

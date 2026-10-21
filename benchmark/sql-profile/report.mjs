@@ -4,6 +4,7 @@ import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { actionableSummary, summaryMarkdown } from "./summary.mjs";
 import { executionBudget, JOB_SQL_EXECUTION_LIMIT } from "./execution-budget.mjs";
+import { controlStages } from "./cte-steps.mjs";
 
 export const thresholds = Object.freeze({ highVmPerRow: 1000, minimumVm: 100_000, emptyVm: 10_000,
   repeatedRuns: 100, smallCpuNs: 1_000_000, expansion: 10, expandedRows: 1000, indexBuilds: 10,
@@ -17,8 +18,9 @@ const ms = ns => (ns / 1e6).toFixed(3);
 export function flags(query) {
   const out = [];
   const add = (code, certainty, evidence, action) => out.push({ code, certainty, evidence, action });
-  const details = Array.isArray(query.plan) ? query.plan.map(row => row[3]).join("\n") : "";
-  if (query.kind === "sql" && (!Array.isArray(query.plan) || !Array.isArray(query.bytecode))) {
+  const plan = query.plan ?? query.plans?.[0]?.plan, bytecode = query.bytecode ?? query.plans?.[0]?.bytecode;
+  const details = Array.isArray(plan) ? plan.map(row => row[3]).join("\n") : "";
+  if (query.kind === "sql" && (!Array.isArray(plan) || !Array.isArray(bytecode))) {
     add("explain-unavailable", "observed", query.plan?.error ?? query.bytecode?.error ?? "Missing EXPLAIN", "Inspect the raw SQL and schema lifetime.");
   }
   if (/USE TEMP B-TREE/i.test(details)) add("temporary-btree", "potential", details.split("\n").filter(s => /TEMP B-TREE/i.test(s)), "Inspect ordering, grouping, and deduplication before materialization.");
@@ -47,7 +49,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
   const contexts = new Map();
   const relationalStages = new Map();
   const executionCoverage = [], firstExecutions = [];
-  const clauseNames = new Map((workload.results?.sql?.report?.profile?.clauses ?? []).map(clause => [clause.statement, clause]));
+  const clauseNames = new Map((workload.results?.sql?.report?.compiledClauseNames ?? workload.results?.sql?.report?.profile?.clauses ?? []).map(clause => [clause.statement, clause]));
   const trace = openSync(join(outputDirectory, "trace.json"), "w");
   writeSync(trace, '{"displayTimeUnit":"ms","traceEvents":[');
   let first = true, eventCount = 0;
@@ -73,14 +75,17 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
         const key = `${query.kind}:${query.sql}`;
         let combined = byText.get(key);
         if (!combined) {
-          combined = { ...query, id: queries.length, ...Object.fromEntries(fields.map(f => [f, 0])), maxExpansion: 0, incomplete: 0, contexts: new Set(), plans: [] };
+          combined = { ...query, bytecode: undefined, id: queries.length, ...Object.fromEntries(fields.map(f => [f, 0])), maxExpansion: 0, incomplete: 0, contexts: new Set(), plans: [] };
           queries.push(combined); byText.set(key, combined);
         }
         if (query.kind === "sql") {
-          // Keep different plans across sessions, rather than silently retaining the first.
-          if (!combined.plans.some(p => JSON.stringify(p.plan) === JSON.stringify(query.plan) && JSON.stringify(p.bytecode) === JSON.stringify(query.bytecode))) {
-            combined.plans.push({ plan: query.plan, bytecode: query.bytecode });
-          }
+          // VOpen embeds connection pointers. Those addresses do not define a different
+          // physical plan. Keep genuine variants and reference every original raw capture.
+          const identity = createHash("sha256").update(JSON.stringify(query.plan) ?? "null").update(JSON.stringify(query.bytecode,
+            (_, value) => typeof value === "string" && /^vtab:[0-9a-f]+$/i.test(value) ? "vtab:connection-address" : value) ?? "null").digest("hex");
+          let variant = combined.plans.find(p => p.identity === identity);
+          if (!variant) { variant = { identity, plan: query.plan, bytecode: query.bytecode, captures: [] }; combined.plans.push(variant); }
+          variant.captures.push({ catalogue: `raw/${name}`, query: query.id });
         }
         return [query.id, combined];
       }));
@@ -141,7 +146,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
   const report = { version: 1, workload, thresholds, eventCount, sessions: files.length, summary,
     executionCoverage, firstOverBudget: firstExecutions[JOB_SQL_EXECUTION_LIMIT] ?? null,
     accounting: "Ranked CPU uses SQL CPU plus operator CPU excluding child SQL. SQL spans exclude preparation; operator spans include preparation. Parsing and other pipeline phases outside these spans are not attributed. Inclusive operator times overlap SQL. Aggregate wall time sums worker spans, not workload latency. Profiling callback and serialization overhead affect timings. EXPLAIN uses unbound NULL parameters after execution. Query plans describe SQLite choices, not actual loop counts. Frame counters cover frame tables; terminal internals are included in SQL time but have no callback breakdown. Rows are returned, changed, or published rows; shared rows are not copies. Summed row counts include operator and SQL observations of the same rows. Threshold flags are review candidates, not correctness failures.",
-    relationalStages: [...relationalStages.values()].sort((a, b) => b.cpuNs - a.cpuNs),
+    relationalStages: [...relationalStages.values(), ...await controlStages(rawDirectory,clauseNames)].sort((a, b) => b.cpuNs - a.cpuNs),
     contexts: [...contexts.values()].sort((a, b) => b.selfCpuNs - a.selfCpuNs), queries };
   return writeReport(report, outputDirectory);
 }
@@ -156,10 +161,11 @@ export function writeReport(report, outputDirectory) {
   const hash = path => createHash("sha256").update(readFileSync(path)).digest("hex");
   report.analysis = { version: 1, reporterSha256: hash(new URL(import.meta.url)),
     executionBudgetSha256: hash(new URL("./execution-budget.mjs", import.meta.url)),
+    controlStageReporterSha256: hash(new URL("./cte-steps.mjs", import.meta.url)),
     summarySha256: hash(new URL("./summary.mjs", import.meta.url)) };
   writeFileSync(join(outputDirectory, "summary.md"), summaryMarkdown(report));
   writeFileSync(join(outputDirectory, "execution-budget.json"), JSON.stringify(report.executionBudget, null, 2) + "\n");
-  writeFileSync(join(outputDirectory, "profile.json"), JSON.stringify(report, null, 2) + "\n");
+  writeJsonReport(join(outputDirectory, "profile.json"), report);
   const lines = [summaryMarkdown(report), "", "# Complete query catalogue", "", `Output parity: ${report.workload?.results?.parity ?? "unavailable"}.`, "", report.accounting, "",
     `Events: ${report.eventCount}. Sessions: ${report.sessions}. Accounted CPU: ${ms(report.summary.selfCpuNs)} ms.`, "",
     "| Query | Kind | Self CPU ms | Runs | Rows | VM steps | Flags |", "|---|---|---:|---:|---:|---:|---|"];
@@ -170,24 +176,51 @@ export function writeReport(report, outputDirectory) {
     if (q.kind === "sql") lines.push("", "```json", JSON.stringify(q.plans.map(p => p.plan), null, 2), "```");
   }
   writeFileSync(join(outputDirectory, "profile.md"), lines.join("\n") + "\n");
-  writeFileSync(join(outputDirectory, "profile.html"), html(report));
+  const page = openSync(join(outputDirectory, "profile.html"), "w");
+  try { for (const chunk of html(report)) writeSync(page, chunk); } finally { closeSync(page); }
   return report;
 }
 
-function html(report) {
-  const payload = JSON.stringify(report).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>SQL workload profile</title>
+// A complete EXPLAIN catalogue can exceed V8's maximum string length. Write independent
+// top-level records without constructing one string for the entire report.
+function writeJsonReport(path, report) {
+  const file = openSync(path, "w");
+  try {
+    writeSync(file, "{");
+    let first = true;
+    for (const [key, value] of Object.entries(report)) {
+      writeSync(file, `${first ? "" : ","}\n${JSON.stringify(key)}:`); first = false;
+      if (Array.isArray(value)) {
+        writeSync(file, "[");
+        for (let i = 0; i < value.length; i++) writeSync(file, `${i ? "," : ""}\n${JSON.stringify(value[i])}`);
+        writeSync(file, "]");
+      } else writeSync(file, JSON.stringify(value));
+    }
+    writeSync(file, "\n}\n");
+  } finally { closeSync(file); }
+}
+
+function* html(report) {
+  const overview = { ...report, workload: { results: { parity: report.workload?.results?.parity } },
+    queries: report.queries.map(({plan,bytecode,plans,...query}) => query) };
+  const payload = JSON.stringify(overview).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+  yield `<!doctype html><html lang="en"><meta charset="utf-8"><title>SQL workload profile</title>
 <style>body{font:14px system-ui;margin:24px;color:#17202a}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd}th{cursor:pointer}tr:hover{background:#eef5ff}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6f8;padding:12px}.flag{color:#934500}input{padding:8px;width:70%}#detail{border-top:2px solid #aaa;margin-top:24px}button{margin:8px;padding:6px}.action{border:1px solid #ccd4de;border-radius:8px;padding:12px;margin:12px 0}.cost{font-weight:600}.muted{color:#52606d}#priorities table{margin:12px 0}details{margin:12px 0}</style>
 <h1>SQL workload profile</h1><p id="summary"></p><section id="priorities"></section><details><summary>Measurement limits</summary><p id="accounting"></p></details><details><summary>Work inside fused SQL</summary><p>These stage times are included in SQL CPU. Select a stage to inspect its SQL.</p><div id="relational"></div></details><h2>All queries</h2><input id="filter" aria-label="Filter queries" placeholder="Filter SQL, scope, or flag"><button id="flagged">Flagged only</button><table><thead><tr><th data-sort="id">Query</th><th data-sort="selfCpuNs">Self CPU ms ↓</th><th data-sort="runs">Runs</th><th data-sort="rows">Rows</th><th data-sort="vmSteps">VM steps</th><th>Flags</th></tr></thead><tbody id="rows"></tbody></table><section id="detail"></section>
-<script type="application/json" id="data">${payload}</script><script>
+<script type="application/json" id="data">${payload}</script>`;
+  for (const query of report.queries) {
+    const plans = JSON.stringify(query.plans).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+    yield `<script type="application/json" id="plans-${query.id}">${plans}</script>`;
+  }
+  yield `<script>
 const report=JSON.parse(document.getElementById('data').textContent);let sort='selfCpuNs',direction=-1,flagged=false;
 const el=id=>document.getElementById(id),ms=n=>(n/1e6).toFixed(3),text=(tag,value)=>{const e=document.createElement(tag);e.textContent=value;return e};
 el('summary').textContent=report.eventCount+' events · '+report.sessions+' sessions · '+ms(report.summary.selfCpuNs)+' ms accounted CPU · output parity: '+(report.workload.results?.parity??'unavailable');el('accounting').textContent=report.accounting;
 if(report.executionBudget){const b=report.executionBudget;el('summary').prepend(text('strong','SQL job budget: '+b.status+' ('+b.observed+'/'+b.limit+'). '));}
-function detail(q){const d=el('detail');d.replaceChildren(text('h2','Q'+q.id+' · '+q.kind),text('p',q.contexts.join(', ')),text('pre',q.sql));for(const f of q.flags)d.append(text('p',f.code+' ('+f.certainty+'): '+JSON.stringify(f.evidence)+' '+f.action));d.append(text('h3','Metrics'),text('pre',JSON.stringify({...q,sql:undefined,plans:undefined,bytecode:undefined,plan:undefined},null,2)));if(q.kind==='sql')d.append(text('h3','EXPLAIN QUERY PLAN and bytecode'),text('pre',JSON.stringify(q.plans,null,2)));d.scrollIntoView({block:'start'});}
+function detail(q){const d=el('detail');d.replaceChildren(text('h2','Q'+q.id+' · '+q.kind),text('p',q.contexts.join(', ')),text('pre',q.sql));for(const f of q.flags)d.append(text('p',f.code+' ('+f.certainty+'): '+JSON.stringify(f.evidence)+' '+f.action));d.append(text('h3','Metrics'),text('pre',JSON.stringify({...q,sql:undefined,plans:undefined,bytecode:undefined,plan:undefined},null,2)));if(q.kind==='sql')d.append(text('h3','EXPLAIN QUERY PLAN and bytecode'),text('pre',JSON.stringify(JSON.parse(el('plans-'+q.id).textContent),null,2)));d.scrollIntoView({block:'start'});}
 function render(){const filter=el('filter').value.toLowerCase();el('rows').replaceChildren();for(const q of [...report.queries].filter(q=>(!flagged||q.flags.length)&&JSON.stringify([q.sql,q.contexts,q.flags]).toLowerCase().includes(filter)).sort((a,b)=>direction*(a[sort]-b[sort]))){const r=document.createElement('tr');for(const value of ['Q'+q.id+' '+q.kind,ms(q.selfCpuNs),q.runs,q.rows+q.changes,q.vmSteps,q.flags.map(f=>f.code).join(', ')])r.append(text('td',value));r.onclick=()=>detail(q);el('rows').append(r);}}
 const a=report.actionableSummary,p=el('priorities'),fmt=n=>n.toLocaleString('en-US',{maximumFractionDigits:n>0&&n<1?3:1});
-for(const [i,s] of (report.relationalStages??[]).slice(0,20).entries()){const d=document.createElement('details'),h=document.createElement('summary'),b=document.createElement('pre');h.textContent='S'+i+': '+fmt(s.cpuNs/1e6)+' ms, '+s.runs+' runs, '+s.columns.length+' columns'+(s.incomplete?' (incomplete)':'');b.textContent=s.sql;d.append(h,b);el('relational').append(d);}
+for(const [i,s] of (report.relationalStages??[]).slice(0,20).entries()){const d=document.createElement('details'),h=document.createElement('summary'),b=document.createElement('pre');h.textContent='S'+i+(s.source?' · '+(s.source.ruleId?s.source.ruleId+'/'+s.source.clauseId:s.source.scope+':'+s.source.statement):'')+': '+fmt(s.cpuNs/1e6)+' ms, '+s.runs+' runs, '+s.columns.length+' columns'+(s.incomplete?' (incomplete)':'');b.textContent=s.sql+(s.nextSql?'\\n\\n-- Next control state:\\n'+s.nextSql:'');d.append(h,b);el('relational').append(d);}
 p.append(text('p',a.nextStep),text('p',a.budget.interpretation),text('h2','Where recorded CPU goes'));
 const costs=document.createElement('table');for(const c of a.costBreakdown){const row=document.createElement('tr');for(const v of [c.label,fmt(c.cpuMs)+' ms',fmt(c.measuredCpuPercent)+'%',fmt(c.executions)+' executions'])row.append(text('td',v));costs.append(row);}p.append(costs,text('p',a.budget.frameIndexCpuMs===null?'Frame index construction was not timed in this capture. Re-run with the current profiler.':'Frame index construction: '+fmt(a.budget.frameIndexCpuMs)+' ms across '+fmt(a.budget.frameIndexTimedBuilds)+' timed builds ('+fmt(a.budget.frameIndexBuilds)+' total), including scan-order preparation on cache misses. Already included in SQL CPU.'),text('h2','Priority actions'),text('p',a.interpretation));
 if(!a.actions.length)p.append(text('p','No action group reaches both 10 ms and 1% of recorded CPU. Use a larger representative capture.'));

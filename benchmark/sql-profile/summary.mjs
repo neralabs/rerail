@@ -23,6 +23,21 @@ export function sqlShape(sql) {
 }
 
 function recommendation(query) {
+  if (query.sql.startsWith("WITH RECURSIVE driver(pc,tick,token,loops,stack)")) return query.kind === "operator" ? {
+    key: "cte-program-preparation", title: "Reduce compiled-program preparation and handling",
+    certainty: "observed CPU outside SQL execution; preparation is a candidate",
+    reason: "This span excludes child SQL execution. It includes preparation, result decoding, and instrumentation.",
+    change: "Inspect generated SQL size, statement memory, physical phase boundaries, and prepared-program reuse.",
+    source: "native/src/code_rule_dsl/sql/large/mod.rs; native/src/code_rule_dsl/sql/exec.rs",
+    verify: "Compare cold and repeated calls with full output parity and the complete-job execution budget.",
+  } : {
+    key: "cte-program-execution", title: "Tune the measured set steps inside compiled programs",
+    certainty: "observed whole-program cost; individual causes need step measurements",
+    reason: "Each execution contains many operators. A keyword inside the program does not attribute its whole CPU cost to that operator.",
+    change: "Inspect the hottest internal set steps and their next-state expressions. Use the complete query plans and frame counters to test restrictions, probes, and materialization changes.",
+    source: "native/src/code_rule_dsl/sql/large/; native/src/code_rule_dsl/sql/emit/",
+    verify: "Compare internal step CPU, total unprofiled CPU, memory, complete outcomes, and actual job SQL executions.",
+  };
   if (query.kind === "operator" && query.sql.includes("schedule(step,token) AS MATERIALIZED")) return {
     key: "fused-operator-overhead", title: "Reduce fused-program preparation and handling",
     certainty: "observed CPU outside SQL execution; preparation is a candidate",
@@ -230,11 +245,12 @@ export function summaryMarkdown(report) {
     `${summary.quality.expectedSetupExplainFailures} expected setup explanation failures, ${summary.quality.unexpectedExplainFailures} unexpected explanation failures, and ${summary.quality.incompleteOperations} incomplete operations.`, "",
     "Expected setup failures occur because deferred EXPLAIN sees a table that setup already created. They do not outrank expensive runtime queries.", "");
   if (report.relationalStages?.length) {
-    lines.push("", "## Work inside fused SQL", "",
+    lines.push("", "## Work inside SQL programs", "",
       "These stage times are included in SQL CPU above. Do not add them to the recorded budget.", "",
-      "| Stage | CPU ms | Runs | Columns | Incomplete |", "|---|---:|---:|---:|---:|");
+      "| Stage | Source | CPU ms | Runs | Columns | Incomplete |", "|---|---|---:|---:|---:|---:|");
     for (const [index, stage] of report.relationalStages.slice(0, 10).entries()) {
-      lines.push(`| S${index} | ${fmt(stage.cpuNs / 1e6)} | ${stage.runs} | ${stage.columns.length} | ${stage.incomplete} |`);
+      const source=stage.source?.ruleId ? `${stage.source.ruleId}/${stage.source.clauseId}` : stage.source ? `${stage.source.scope}:${stage.source.statement}` : "shared relation";
+      lines.push(`| S${index} | ${source.replaceAll("|","\\|").replaceAll("\n"," ")} | ${fmt(stage.cpuNs / 1e6)} | ${stage.runs} | ${stage.columns.length} | ${stage.incomplete} |`);
     }
     lines.push("", "Inspect the hottest stage bodies in profile.json. Restrict their input grain and capture width before changing materialization boundaries.");
   }

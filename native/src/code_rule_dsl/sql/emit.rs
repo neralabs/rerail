@@ -423,7 +423,9 @@ pub(super) fn clause_each(statement: &Statement, name: Option<SlotId>) -> Emitte
     let reported = if super::mutant(10) {
         "e.es IS NOT NULL".to_owned()
     } else {
-        format!("(e.file, e.node) IN (SELECT file, node FROM {ef})")
+        // Final witness roots always have a file and node. Probe both root columns rather
+        // than rebuilding a tuple membership list for every returned witness.
+        format!("EXISTS (SELECT 1 FROM {ef} fresh WHERE fresh.file=e.file AND fresh.node=e.node)")
     };
     emitter.push(
         format!(
@@ -1059,8 +1061,9 @@ impl<'s> Emitter<'s> {
             Op::Regex(term) => self.frame(
                 "x",
                 &format!(
-                    "SELECT {} FROM {input} f WHERE (f.file * 4294967296 + f.node) IN \
-                     (SELECT ek FROM text_match WHERE term = {term} AND ek IN (SELECT file * 4294967296 + node FROM {input}))",
+                    "WITH t AS MATERIALIZED (SELECT ek FROM text_match WHERE term = {term} \
+                     AND ek IN (SELECT file * 4294967296 + node FROM {input})) \
+                     SELECT {} FROM {input} f CROSS JOIN t ON t.ek = f.file * 4294967296 + f.node",
                     self.cols("f")
                 ),
                 Reads::join(&[input]),

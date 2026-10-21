@@ -34,6 +34,8 @@ use rusqlite::vtab::Module;
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+#[path = "large/mod.rs"]
+mod large;
 
 /// One file of a batch.
 pub(in crate::code_rule_dsl) struct BatchFile {
@@ -394,7 +396,9 @@ impl std::fmt::Display for SqlError {
 impl From<rusqlite::Error> for SqlError {
     fn from(error: rusqlite::Error) -> Self {
         let message = error.to_string();
-        if message.contains("rerail: recursion deeper than 256 levels") {
+        if message.contains("recursion whose reads loop back") {
+            Self::unsupported("recursion whose reads loop back")
+        } else if message.contains("rerail: recursion deeper than 256 levels") {
             Self::unsupported("recursion deeper than 256 levels")
         } else {
             Self::Sql(message)
@@ -608,6 +612,16 @@ const MAX_LEVELS: usize = 256;
 /// limit. A key they do not reach is read by no row the matcher evaluates: its answer decides
 /// nothing, so it is not checked.
 fn acyclic(connection: &Connection, query: &str) -> Result<(), SqlError> {
+    let mut prepared = connection.prepare(query)?;
+    let rows = prepared
+        .query_map([], |r| {
+            Ok([r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?])
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    acyclic_rows(rows)
+}
+
+fn acyclic_rows(rows: Vec<[i64; 5]>) -> Result<(), SqlError> {
     let mut nodes: HashMap<(i64, i64), usize> = HashMap::new();
     // Every read, and the inner reads alone.
     let mut reads: Vec<Vec<usize>> = Vec::new();
@@ -620,13 +634,11 @@ fn acyclic(connection: &Connection, query: &str) -> Result<(), SqlError> {
         })
     };
     let start = node((-1, 0), &mut reads, &mut edges);
-    let mut prepared = connection.prepare(query)?;
-    let mut rows = prepared.query([])?;
-    while let Some(row) = rows.next()? {
-        let from = node((row.get(0)?, row.get(1)?), &mut reads, &mut edges);
-        let to = node((row.get(2)?, row.get(3)?), &mut reads, &mut edges);
+    for row in rows {
+        let from = node((row[0], row[1]), &mut reads, &mut edges);
+        let to = node((row[2], row[3]), &mut reads, &mut edges);
         reads[from].push(to);
-        if row.get::<_, i64>(4)? != 0 {
+        if row[4] != 0 {
             edges[from].push(to);
         }
     }
@@ -832,15 +844,36 @@ impl Compiled {
 
     /// The selected relational component, including its admitted clauses and physical costs.
     pub(in crate::code_rule_dsl) fn relational_plan(&self) -> serde_json::Value {
-        self.plan
+        let Ok(plan) = &self.plan else {
+            return serde_json::Value::Null;
+        };
+        let mut metadata = plan
+            .fused
             .as_ref()
-            .ok()
-            .and_then(|p| p.fused.as_ref())
-            .map_or(serde_json::Value::Null, |f| {
-                let mut metadata = f.plan.metadata.clone();
-                metadata["clauses"] = serde_json::json!(f.clauses);
-                metadata
-            })
+            .map_or_else(|| serde_json::json!({}), |f| f.plan.metadata.clone());
+        let mut clauses = plan
+            .fused
+            .as_ref()
+            .map_or_else(Vec::new, |f| f.clauses.clone());
+        metadata["acyclicClauses"] = serde_json::json!(clauses);
+        if let Some(program) = &plan.large {
+            clauses.extend(&program.clauses);
+            clauses.sort_unstable();
+            metadata["cteClauses"] = serde_json::json!(program.clauses);
+            metadata["ctePrograms"] = serde_json::json!(program.queries.len());
+            metadata["cteProgramBytes"] =
+                serde_json::json!(program.queries.iter().map(String::len).sum::<usize>());
+            metadata["cteLoweringReasons"] = metadata["scheduledClauses"].take();
+            metadata["scheduledClauses"] = serde_json::json!([]);
+        }
+        metadata["clauses"] = serde_json::json!(clauses);
+        metadata["filePartitioning"] = serde_json::json!("one complete-job partition per worker");
+        metadata["maxMatchingStatementsPerPartition"] = serde_json::json!(18);
+        metadata["sqlStatements"] = serde_json::json!(
+            plan.large.as_ref().map_or(0, |p| p.queries.len())
+                + plan.fused.as_ref().map_or(0, |f| f.plan.queries.len())
+        );
+        metadata
     }
 
     /// What the program's plan holds; nothing where it has none.
@@ -1072,6 +1105,7 @@ impl Catalog {
 /// are registers (`registers`), so clauses that differ only in their frames' names run the same
 /// statement texts.
 struct Plan {
+    large: Option<large::Program>,
     fused: Option<super::fused::Program>,
     tables: Vec<Table>,
     shapes: Shapes,
@@ -1275,7 +1309,8 @@ impl Planner {
             .into_iter()
             .map(|(count, clause)| clause.filter(|_| count == 1))
             .collect();
-        Ok(Plan {
+        let mut plan = Plan {
+            large: None,
             fused: self.fused.finish(&sole, batch_size),
             tables: self.catalog.tables,
             shapes,
@@ -1286,7 +1321,14 @@ impl Planner {
             census,
             #[cfg(test)]
             verified,
-        })
+        };
+        plan.large = large::compile(&plan)?;
+        let covered = plan.fused.as_ref().map_or(0, |f| f.clauses.len())
+            + plan.large.as_ref().map_or(0, |p| p.clauses.len());
+        if covered != plan.clauses.len() {
+            return Err("SQL compiler left an unscheduled clause".into());
+        }
+        Ok(plan)
     }
 }
 
@@ -1302,8 +1344,12 @@ impl Plan {
             steps: census.steps,
             texts: census.texts,
             bytes: census.bytes,
-            frames,
-            btrees: self.tables.len() - frames,
+            frames: self.large.as_ref().map_or(frames, |p| p.table_count()),
+            btrees: if self.large.is_some() {
+                0
+            } else {
+                self.tables.len() - frames
+            },
             shapes: census.shapes,
             skeletons: census.skeletons,
             stored: census.stored,
@@ -2033,6 +2079,9 @@ impl Session {
         if let Some(fused) = &plan.fused {
             fused.register(&connection, &frames)?;
         }
+        if let Some(large) = &plan.large {
+            large.register(&connection, &frames)?;
+        }
         #[cfg(feature = "unbounded-work")]
         super::diagnostics::configure(&connection)?;
         #[cfg(any(test, feature = "unbounded-work"))]
@@ -2043,7 +2092,8 @@ impl Session {
         } else {
             None
         };
-        let fused_texts = plan.fused.as_ref().map_or(0, |f| f.plan.queries.len());
+        let fused_texts = plan.fused.as_ref().map_or(0, |f| f.plan.queries.len())
+            + plan.large.as_ref().map_or(0, |p| p.queries.len());
         connection.set_prepared_statement_cache_capacity(BATCH_STATEMENTS + fused_texts);
         let names = plan
             .tables
@@ -2071,7 +2121,8 @@ impl Session {
                 tables: plan
                     .fused
                     .as_ref()
-                    .map_or(0, |f| f.plan.graph.handles.len()),
+                    .map_or(0, |f| f.plan.graph.handles.len())
+                    + plan.large.as_ref().map_or(0, |p| p.table_count()),
                 setup: started.elapsed(),
                 ..Stats::default()
             },
@@ -2161,49 +2212,22 @@ impl Session {
     /// rows `(id, parent, detail)`, planned as the session prepares it: on its tables, empty.
     #[cfg(test)]
     pub(in crate::code_rule_dsl) fn plans(&mut self) -> Result<Vec<(String, QueryPlan)>, SqlError> {
-        self.activate((0..self.active.len()).collect())?;
+        let queries = self
+            .plan
+            .fused
+            .as_ref()
+            .map(|f| f.plan.queries.as_slice())
+            .into_iter()
+            .chain(self.plan.large.as_ref().map(|p| p.queries.as_slice()));
         let mut plans = Vec::new();
-        let mut text = String::new();
-        for index in 0..self.active.len() {
-            let bound = self.plan.prepared(index);
-            let blocks = bound.shape.blocks.iter().flat_map(|block| &block.steps);
-            for step in bound
-                .shape
-                .steps
-                .iter()
-                .chain(blocks)
-                .chain([&bound.shape.last])
-            {
-                let prefix = match bound.action(step).kind {
-                    Kind::Loop | Kind::Frontier | Kind::Run(_) | Kind::Clear(_) => continue,
-                    Kind::Until => emit::UNTIL,
-                    Kind::Acyclic => emit::ACYCLIC,
-                    Kind::Statement => "",
-                };
-                bound.text(step, &mut text);
-                let sql = &text[prefix.len()..];
-                if sql.starts_with(emit::FRONTIER) {
-                    continue;
-                }
-                let mut statement = self
-                    .connection
-                    .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
-                let rows = statement
-                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(3)?)))?
-                    .collect::<Result<Vec<_>, _>>()?;
-                plans.push((sql.to_owned(), rows));
-            }
-        }
-        if let Some(fused) = &self.plan.fused {
-            for sql in &fused.plan.queries {
-                let mut statement = self
-                    .connection
-                    .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
-                let rows = statement
-                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(3)?)))?
-                    .collect::<Result<Vec<_>, _>>()?;
-                plans.push((sql.clone(), rows));
-            }
+        for sql in queries.flatten() {
+            let mut statement = self
+                .connection
+                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+            let rows = statement
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(3)?)))?
+                .collect::<Result<Vec<_>, _>>()?;
+            plans.push((sql.clone(), rows));
         }
         Ok(plans)
     }
@@ -2238,7 +2262,9 @@ impl Session {
                 .map(|r| stages + r.statement)
                 .collect()
         };
-        self.activate(pending)?;
+        if self.plan.large.is_none() {
+            self.activate(pending)?;
+        }
         let started = Started::now();
         let batch = Batch::of(docs, Arc::clone(&self.program));
         self.stats.node_facts.add(started.elapsed());
@@ -2266,7 +2292,10 @@ impl Session {
         drop(scopes);
         *self.slot.current.write() = None;
         self.roots.clear();
-        if result.is_err() {
+        if let Some(large) = &self.plan.large {
+            large.clear(&self.frames);
+        }
+        if result.is_err() && self.plan.large.is_none() {
             for (table, made) in self.plan.tables.iter().zip(&self.made) {
                 if !made {
                     continue;
@@ -2403,19 +2432,36 @@ impl Session {
             roots.install_runs(memberships);
         }
         runner.stats.input.add(inputs.elapsed());
-        let mut fused_found: HashMap<usize, Vec<(usize, SqlMatch)>> = HashMap::new();
-        if let Some(fused) = &plan.fused
-            && runs
-                .iter()
-                .any(|r| !r.files.is_empty() && fused.contains(r.statement))
-        {
-            for sql in &fused.plan.queries {
+        let mut fused_found: HashMap<usize, Vec<(usize, i64, SqlMatch)>> = HashMap::new();
+        let query_plans = plan
+            .fused
+            .as_ref()
+            .filter(|f| {
+                runs.iter()
+                    .any(|r| !r.files.is_empty() && f.contains(r.statement))
+            })
+            .map(|f| ("fused", f.plan.queries.as_slice()))
+            .into_iter()
+            .chain(
+                plan.large
+                    .as_ref()
+                    .filter(|p| {
+                        runs.iter()
+                            .any(|r| !r.files.is_empty() && p.contains(r.statement))
+                    })
+                    .map(|p| ("cte-program", p.queries.as_slice())),
+            );
+        for (_scope, queries) in query_plans {
+            // Physical phase IDs belong to the optional instrumentation context.
+            #[cfg_attr(not(feature = "unbounded-work"), allow(clippy::unused_enumerate_index))]
+            for (_phase, sql) in queries.iter().enumerate() {
                 #[cfg(any(test, feature = "unbounded-work"))]
                 let operation = profiling
                     .as_deref()
-                    .map(|p| p.operation(sql, ("fused", 0), 0, Vec::new()));
+                    .map(|p| p.operation(sql, (_scope, _phase), 0, Vec::new()));
                 let started = Started::now();
                 let mut statement = connection.prepare_cached(sql)?;
+                let has_round = statement.column_count() > 4;
                 let mut rows = statement.query([])?;
                 let mut count = 0;
                 while let Some(row) = rows.next()? {
@@ -2438,10 +2484,11 @@ impl Session {
                             _ => Value::Null,
                         })
                     })?;
-                    fused_found
-                        .entry(clause as usize)
-                        .or_default()
-                        .push((file, SqlMatch { root, captures }));
+                    fused_found.entry(clause as usize).or_default().push((
+                        file,
+                        if has_round { row.get(4)? } else { 0 },
+                        SqlMatch { root, captures },
+                    ));
                     count += 1;
                 }
                 drop(rows);
@@ -2462,7 +2509,11 @@ impl Session {
         // Stages in index order: a stage only reads stages made before it. A stage with one
         // consumer runs in its clause's run instead (`Plan::sole`).
         let started = Started::now();
-        for (stage, files) in stage_files.iter().enumerate() {
+        for (stage, files) in stage_files
+            .iter()
+            .enumerate()
+            .filter(|_| plan.large.is_none())
+        {
             if files.is_empty() || sole[stage].is_some() || !scheduled_stage[stage] {
                 continue;
             }
@@ -2482,9 +2533,15 @@ impl Session {
                 .fused
                 .as_ref()
                 .is_some_and(|f| f.contains(run.statement))
+                || plan
+                    .large
+                    .as_ref()
+                    .is_some_and(|p| p.contains(run.statement))
             {
                 let mut found = vec![Vec::new(); run.files.len()];
-                for (file, hit) in fused_found.remove(&run.statement).unwrap_or_default() {
+                let mut matches = fused_found.remove(&run.statement).unwrap_or_default();
+                matches.sort_by_key(|(file, round, hit)| (*file, hit.root, *round));
+                for (file, _, hit) in matches {
                     for (at, (selected_file, _)) in run.files.iter().enumerate() {
                         if *selected_file == file {
                             found[at].push(hit.clone());
@@ -2627,7 +2684,11 @@ impl Session {
             );
         }
         let started = Started::now();
-        for (stage, files) in stage_files.iter().enumerate() {
+        for (stage, files) in stage_files
+            .iter()
+            .enumerate()
+            .filter(|_| plan.large.is_none())
+        {
             if !files.is_empty() && plan.prepared(stage).tables().all(|id| self.made[id]) {
                 runner.at = ("stage", stage);
                 runner.clear(plan.prepared(stage))?;

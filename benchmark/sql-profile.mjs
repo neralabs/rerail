@@ -25,6 +25,7 @@ const runner = fileURLToPath(new URL("./sql-set-investigation.mjs", import.meta.
 const sha256 = path => createHash("sha256").update(readFileSync(path)).digest("hex");
 const workload = { configPath, config,
   profilerDriverSha256: sha256(fileURLToPath(import.meta.url)),
+  controlStageReporterSha256: sha256(fileURLToPath(new URL("./sql-profile/cte-steps.mjs", import.meta.url))),
   reporterSha256: sha256(fileURLToPath(new URL("./sql-profile/report.mjs", import.meta.url))),
   summarySha256: sha256(fileURLToPath(new URL("./sql-profile/summary.mjs", import.meta.url))),
   addonSha256: sha256(config.addon), runnerSha256: sha256(runner),

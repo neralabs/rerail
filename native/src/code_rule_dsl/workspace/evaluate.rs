@@ -195,11 +195,9 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
         Ok(metrics)
     };
     if let Some(sql) = context.sql {
-        // Batches small enough that an apply of a few files still runs on every worker.
-        let size = sql
-            .batch_size
-            .min(jobs.len().div_ceil(WORKER_THREADS))
-            .max(1);
+        // At most one whole-job partition per production worker. File count must not
+        // multiply matching-program executions through small file batches.
+        let size = jobs.len().div_ceil(WORKER_THREADS).max(1);
         let mut jobs = jobs.into_iter().peekable();
         let mut batches = Vec::new();
         while jobs.peek().is_some() {

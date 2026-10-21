@@ -9,6 +9,44 @@ import { execFileSync } from "node:child_process";
 import { actionableSummary, sqlShape } from "../../benchmark/sql-profile/summary.mjs";
 import { buildReport, flags } from "../../benchmark/sql-profile/report.mjs";
 import { executionBudget, requireExecutionBudget, sqlCategory } from "../../benchmark/sql-profile/execution-budget.mjs";
+import { controlStages } from "../../benchmark/sql-profile/cte-steps.mjs";
+
+test("CTE set-step times stay inside SQL and preserve unfinished steps", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rerail-cte-profile-"));
+  try {
+    writeFileSync(join(directory,"cte-program-9-4.json"),JSON.stringify([{pc:0,sql:"WITH payload(k) AS (SELECT 1)",next:"1",source:{scope:"clause",statement:7}},{pc:1,sql:"0",next:"-1"}]));
+    writeFileSync(join(directory,"cte-control-9-0.jsonl"),[
+      {phase:4,pc:0,tick:0,started:true},{phase:4,pc:0,tick:0,cpuNs:50,wallNs:100},
+      {phase:4,pc:1,tick:1,started:true},
+    ].map(JSON.stringify).join("\n")+"\n");
+    const stages=await controlStages(directory,new Map([[7,{ruleId:"example",clauseId:"clause"}]]));
+    assert.deepEqual(stages.map(s=>[s.cpuNs,s.runs,s.incomplete]),[[50,1,0],[0,0,1]]);
+    assert.deepEqual(stages[0].columns,["k"]);
+    assert.equal(stages[0].kind,"cte-set-step");
+    assert.deepEqual(stages[0].source,{scope:"clause",statement:7,ruleId:"example",clauseId:"clause"});
+  } finally { rmSync(directory,{recursive:true,force:true}); }
+});
+
+test("plan variants ignore connection addresses and retain every raw capture", async () => {
+  const directory=mkdtempSync(join(tmpdir(),"rerail-plan-variants-")),raw=join(directory,"raw");mkdirSync(raw);
+  try {
+    for (const [i,address,index] of [[0,"AA",1],[1,"BB",1],[2,"CC",2]]) {
+      const catalogue={version:1,pid:9,events:1,queries:[{id:0,kind:"sql",sql:"SELECT k FROM data",
+        plan:[[0,0,0,`SCAN data VIRTUAL TABLE INDEX ${index}:`]],
+        bytecode:[[0,"VOpen",0,0,0,`vtab:${address}`,0,null],[1,"VFilter",0,index,0,null,0,null]]}],
+        executionCoverage:{source:"ast-session",fromSessionStart:true,started:1,completed:1,running:0}};
+      writeFileSync(join(raw,`profile-9-${i}.json`),JSON.stringify(catalogue));
+      writeFileSync(join(raw,`profile-9-${i}.jsonl`),JSON.stringify({kind:"sql",query:0,startNs:i*10,cpuNs:1,wallNs:1,selfCpuNs:1,selfWallNs:1,rows:1,changes:0,counters:[1,0,0,0],frame:[],context:{scope:"test",statement:0,inputs:[]},thread:"test"})+"\n");
+    }
+    const report=await buildReport(raw,directory);
+    assert.equal(report.queries.length,1);
+    assert.deepEqual(report.queries[0].plans.map(p=>p.captures.length),[2,1]);
+    assert.equal(report.queries[0].plans[0].bytecode[0][5],"vtab:AA");
+    assert.equal(report.queries[0].bytecode,undefined);
+    const saved=JSON.parse(readFileSync(join(directory,"profile.json"),"utf8"));
+    assert.equal(saved.queries[0].plans[1].captures[0].catalogue,"raw/profile-9-2.json");
+  } finally {rmSync(directory,{recursive:true,force:true});}
+});
 
 const capturedJob = (counts = [25, 25, 25, 25]) => ({
   sessions: counts.length,

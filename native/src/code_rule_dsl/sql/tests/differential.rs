@@ -1975,7 +1975,31 @@ pub(super) fn inner_scans(plan: &[(i64, i64, String)]) -> Vec<String> {
             {
                 break;
             }
-            correlated |= text.starts_with("CORRELATED ");
+            // The outer scalar executes one whole set for a SQL control row. Correlation
+            // inside that producer still counts, as do its inner sibling joins.
+            let parent = parent_of.get(&at).copied();
+            let control = parent.and_then(|p| detail_of.get(&p)) == Some(&"RECURSIVE STEP")
+                && parent
+                    .and_then(|p| parent_of.get(&p))
+                    .and_then(|p| detail_of.get(p))
+                    == Some(&"CO-ROUTINE driver");
+            // A terminal consumes this IN list once through sqlite3_vtab_in, before its
+            // result rows. Keep lists in joins with another data source as hazards.
+            let scans = plan
+                .iter()
+                .filter(|(_, up, text)| Some(*up) == parent && is_loop(text))
+                .map(|(_, _, text)| text.as_str())
+                .collect::<Vec<_>>();
+            let terminal_batch = text.starts_with("CORRELATED LIST SUBQUERY")
+                && scans.len() == 1
+                && [
+                    "SCAN fact VIRTUAL TABLE",
+                    "SCAN pattern VIRTUAL TABLE",
+                    "SCAN text_match VIRTUAL TABLE",
+                ]
+                .iter()
+                .any(|prefix| scans[0].starts_with(prefix));
+            correlated |= text.starts_with("CORRELATED ") && !control && !terminal_batch;
             at = parent_of[&at];
         }
         if !after_another && !correlated {
@@ -2064,7 +2088,8 @@ fn emitted_joins_never_scan_a_whole_table_on_the_inner_side() {
             let mut inner = inner_scans(&plan);
             if sql.ends_with(
                 "FROM ready_final ready CROSS JOIN whole_result r ORDER BY r.clause,r.file,r.node",
-            ) {
+            ) || sql.ends_with("FROM ready CROSS JOIN p_results r WHERE ready.token IS NOT NULL")
+            {
                 // The finite linear dispatcher emits exactly one ready_final row. Its
                 // result scan runs once, rather than once per data row.
                 inner.retain(|detail| detail != "SCAN r VIRTUAL TABLE INDEX 0:");
