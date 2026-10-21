@@ -78,6 +78,8 @@ pub(super) enum Kind {
     Run(u32),
     /// Opens a loop (`emit::LOOP`).
     Loop,
+    /// Opens a candidate loop that runs at least one phase (`emit::FRONTIER`).
+    Frontier,
     /// Ends a loop with its dirty-key query (`emit::UNTIL`).
     Until,
     /// Accepts a loop's last pass by its recursive reads (`emit::ACYCLIC`).
@@ -618,6 +620,8 @@ impl Binder<'_> {
             )
         } else if sql == emit::LOOP {
             Kind::Loop
+        } else if sql == emit::FRONTIER {
+            Kind::Frontier
         } else if sql.starts_with(emit::UNTIL) {
             Kind::Until
         } else if sql.starts_with(emit::ACYCLIC) {

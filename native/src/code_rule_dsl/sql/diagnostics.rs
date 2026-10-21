@@ -109,6 +109,10 @@ pub(super) fn record<'a>(
     }
     RECORDS.with_borrow_mut(|records| {
         let entry = records.entry(sql.to_owned()).or_insert_with(|| {
+            if sql.starts_with(super::emit::FRONTIER) {
+                return json!({"sql":sql,"plan":[{"native":"shared frame frontier"}],"runs":0,"rows":0,"wallNs":0,"cpuNs":0,
+                    "vmSteps":0,"fullscanSteps":0,"sorts":0,"autoIndexRows":0,"inputPeakRows":{}});
+            }
             let plan = connection
                 .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
                 .and_then(|mut statement| {

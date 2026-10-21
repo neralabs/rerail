@@ -3,6 +3,7 @@
 mod census;
 mod compiler;
 pub(super) mod differential;
+mod frontier;
 mod hard_cases;
 mod keyed;
 mod leaves;

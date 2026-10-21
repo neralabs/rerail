@@ -536,7 +536,7 @@ Unknown-producing bodies, recursive reads, semantic effects, field walks, and ru
 These operations require its complete dependency and unknown-stop logic.
 The compiler proof prevents the packed cursor from bypassing those contracts.
 The existing three-valued and recursive comparisons exercise both sides of that boundary.
-The general recursive frontier spike remains a design experiment.
+At that revision, the general recursive frontier remains a design experiment.
 A full integration needs persistent lineage snapshots for each request phase.
 Reusing temporary frames can otherwise erase earlier failed or unknown reads before the driver records their dependency edges.
 The selected compiler keeps those operations in the existing driver.
@@ -676,7 +676,7 @@ A reused session agrees with fresh native and SQL sessions after an unsupported 
 
 The selected code includes narrow shared selections, progressive packed pattern walks, proved producer sharing, integer capture-free fact keys, and immutable compiler artifacts.
 The existing nearest-node index already supplies reverse owner groups.
-General recursive scheduling remains a test-only spike because request phases need persistent lineage and atomic dependency publication.
+At that revision, general recursive scheduling remains a test-only spike because request phases need persistent lineage and atomic dependency publication.
 The compiler retains the existing recursive driver for those operations.
 No opt-in or opt-out setting selects these compiler paths.
 
@@ -690,3 +690,181 @@ The final artifacts use the `uniform-` prefix.
 The five-round timing confirmation is `uniform-confirmation.json`.
 The final compiler still takes roughly four times the native CPU time on this catalog.
 These spikes reduce specific costs and establish their semantic contracts, but they do not close the complete SQL performance gap.
+
+## Shared projections and recursive scheduling, 20 October 2026
+
+This section supersedes the integration limits in the preceding report.
+The compiler now includes broader shared projections and a general candidate scheduler.
+Both operate automatically within the existing SQL engine configuration.
+The earlier B-tree frame-storage diagnostic override is removed because the scheduler requires frame ownership.
+
+### Shared projections with computed captures
+
+A projection can share direct columns through joined filters and constant metadata.
+It can also compute capture columns while sharing the remaining columns.
+SQLite evaluates the predicate and computed expressions in one query.
+Rust installs the direct columns as views over immutable pages.
+Computed columns retain SQLite's returned value types.
+The projection parser respects nested expressions, quoted commas, escaped quotes, and clause names inside literals.
+
+A complete identity projection needs no SQLite query or row mapping.
+Dense integer keys map directly to source rows.
+Other selected keys use the existing ordered lookup.
+Composed views share one row mapping across their columns.
+Integer comparisons follow the underlying page directly.
+
+Shared pages contain typed buffers, which remove a second storage dispatch from each read.
+When the final reader clears a shared `i32` page, the register reuses its buffer.
+Other readers retain their own immutable page references.
+
+Publication clears the destination's lookup indexes and scan order.
+A source clear or register reuse does not invalidate a destination page.
+Appending to a shared column first creates an owned copy.
+The retained-page budget remains 512 MiB, and the logical row budget still applies.
+Selections outside the supported shape retain ordinary insertion semantics.
+These include duplicate output keys, generated keys, aggregates, scalar subqueries, and changed affinity.
+
+### Candidate ownership and recursive dependencies
+
+The compiler schedules relation searches and predicate counts when their bodies contain recursive or semantic demands.
+The operation supports nested compiler operators, parameterized utilities, field walks, and rule stops.
+Single-candidate walks need no scheduler.
+Simple pattern walks retain the existing packed kernel.
+Set-only bodies retain their direct SQL evaluation.
+An exact returned count still consumes its complete domain.
+
+Each invocation owns its candidate order, parent cursors, and immutable source pages.
+The driver groups stable candidate keys by parent and walk order.
+It publishes each candidate prefix directly into a shared frame.
+This operation uses no SQL ranking table, cursor-state updates, or per-cell `xUpdate` calls.
+Nested invocations own separate cursors.
+An empty domain still runs one phase, which clears temporary results from an earlier invocation.
+
+A phase evaluates the complete retained prefix.
+The final phase therefore leaves coherent intermediate frames for deferred dependency tracking.
+Earlier failed and unknown candidates remain in that evaluation.
+The existing lineage logic cuts recursive reads after the deciding candidate.
+No dependency refers to temporary keys from a discarded phase.
+
+When a recursive answer changes, the existing dependency worklist marks its readers dirty.
+A dirty member starts new candidate cursors and evaluates its earlier candidates again.
+An earlier candidate can replace a later winner and return its own capture occurrence.
+The scheduler does not preserve a stale winner between recursive passes.
+
+Strict searches stop on true or unknown candidate events.
+Non-strict searches stop on true events and preserve unknown evidence otherwise.
+Unknown stop events can close a strict prefix only after every earlier candidate has been evaluated.
+Count predicates stop only when their true lower bound proves a minimum success or an over-maximum failure.
+Otherwise the cursor exhausts its domain.
+
+### Prefix growth and remaining costs
+
+The initial prefix contains up to eight candidates per parent.
+An unresolved parent doubles its prefix.
+If its domain fits within four times the current prefix, the next phase consumes the remainder.
+This rule avoids replaying an almost complete domain before the final phase.
+A growing parent evaluates fewer than twice its domain's candidates before exhaustion.
+
+A decided parent's prefix stops growing.
+Its retained prefix can still be evaluated while another parent advances.
+This replay preserves coherent lineage without per-phase dependency snapshots.
+Recursive demand keys and pattern results remain cached across phases.
+The initial candidate relation still contains the complete narrowed domain.
+These costs remain visible in the benchmark; this implementation does not claim a delta-only scheduler.
+
+The first native scheduler prototype passes 3,000 generated comparisons with zero differences.
+Its initial three-round 32-file comparison uses 5.522 CPU seconds against 5.263 seconds for the published branch.
+Maximum RSS decreases from 425 MB to 393 MB in that comparison.
+That prototype precedes computed-capture sharing and the final prefix-growth tuning.
+Its artifacts use the `native-prefix-` prefix in `/tmp/rerail-general-sharing-20261020`.
+
+
+### Configuration comparison
+
+Both prefix configurations use the same typed pages and final-reader buffer reuse.
+Their source manifests differ only in the initial prefix constant.
+The three-round 32-file comparison gives:
+
+| Configuration | Median application CPU seconds | Maximum RSS MB |
+| --- | ---: | ---: |
+| Published `1124b629` | 5.509 | 429 |
+| Initial prefix 8 | 5.466 | 392 |
+| Initial prefix 32 | 5.525 | 397 |
+
+The timing difference between prefix sizes is small on this shared host.
+The selected configuration uses eight because it reduces first-phase overfetch.
+No environment setting selects a prefix configuration.
+
+The selected implementation passes 1,434 code-rule tests, including 3,000 generated comparisons with zero differences.
+The skip-count check passes 150 SQL tests with 500 generated comparisons.
+Clippy passes with warnings denied, and the production library check passes without warnings.
+The SQL plan audit covers 722 clauses and 33,039 statements.
+New cases check phase boundaries, unknown events, counts, multiple files, and capture byte ranges.
+They also check that recursive changes reopen earlier candidates and that closed parents retain their prefixes.
+
+Application artifacts remain under `/tmp/rerail-general-sharing-20261020`.
+The selected binary and its source manifest use the `selected` prefix.
+
+
+### Application results and limits
+
+The five-round 32-file confirmation preserves all 33 findings.
+The three-round 138-file confirmation preserves all 580 findings.
+Every run reports zero failures and zero blind files.
+Both engines use the same allocator shim, four workers, and two-file SQL batches.
+
+| Corpus | Published CPU seconds | Selected CPU seconds | Published RSS MB | Selected RSS MB |
+| --- | ---: | ---: | ---: | ---: |
+| 32 files, five rounds | 5.523 | 5.507 | 426 | 391 |
+| 138 files, three rounds | 31.063 | 31.469 | 756 | 628 |
+
+The 32-file CPU result is effectively unchanged.
+The 138-file confirmation uses 1.3 percent more CPU, with 17 percent lower peak memory.
+An earlier 138-file comparison gives 31.839 versus 30.557 CPU seconds, a 4.0 percent improvement.
+That timing gain does not reproduce in the confirmation.
+Large wall-time variation on the shared host prevents a reliable latency claim.
+
+The complete 32-file trace explains the remaining gap:
+
+| Counter | Published `1124b629` | Selected configuration |
+| --- | ---: | ---: |
+| Executed operations | 29,417 | 33,210 |
+| Logical affected rows | 6,790,242 | 7,156,019 |
+| SQLite VM steps | 265,045,566 | 246,714,372 |
+| Recursive demand rows | 406,898 | 406,550 |
+| Capture-bearing demand rows | 98,620 | 98,277 |
+
+The selected trace shares 2,371,528 rows through projections and 297,832 rows through candidate prefixes.
+The native scheduler uses about 42 milliseconds of thread CPU across 2,988 phases.
+Logical affected rows include shared views; they do not measure copied cells.
+
+VM work falls by 6.9 percent, but demand volume falls by less than 0.1 percent.
+Most demands in this catalog still require a complete search or fit inside the first prefix.
+The scheduler therefore removes little recursive work here.
+Prefix replay and shared-page reads offset the saved SQL work.
+These changes complete the ownership and scheduling implementation, but they do not close the catalog's native-engine performance gap.
+
+A separate case evaluates 64 roots with 512 candidates each:
+
+| Winner position | Native CPU ms | Published SQL CPU ms | Selected SQL CPU ms |
+| --- | ---: | ---: | ---: |
+| First | 49.9 | 146.8 | 65.0 |
+| Last | 73.6 | 169.4 | 176.4 |
+| Missing | 69.2 | 153.4 | 164.0 |
+
+All synthetic runs preserve complete output parity.
+Early matches benefit from smaller demand sets.
+Late and missing matches pay the prefix replay cost.
+The named production tests bound early demand volume and check complete exhaustion for late and missing matches.
+
+The timing artifacts use the `selected-` prefix.
+They precede final storage corrections for negative row keys and projection-source parsing.
+Compiler-generated row keys in these benchmarks are nonnegative.
+Separate storage tests check SQLite's next-row-key behavior and projection sources inside quoted text or subqueries.
+
+The final source and binary use the `complete` prefix.
+Their patch includes the new compiler, scheduler, and storage source files.
+The earlier timing sources also retain hash-checked copies of their new source files.
+
+The final binary also preserves all 33 and 580 findings after both storage corrections.
+Its trace retains the same VM, demand, and logical-row counters as the timing build.

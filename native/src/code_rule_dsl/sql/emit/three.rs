@@ -291,12 +291,14 @@ impl Emitter<'_> {
         };
         let held = self.live_before(op, &back);
         let narrowed = self.capture_need(&self.narrowed(walk, need), sub);
-        let candidates = self.candidates(walk, &narrowed, input, &held);
+        let all = self.candidates(walk, &narrowed, input, &held);
+        let opened = self.opened(walk, input, &all);
+        let (candidates, frontier) = self.frontier(walk, sub, &all, &held);
         // A non-strict search passes over unknown candidates: only a true one ends it.
         self.first_match(&candidates, walk, !strict);
         let matched = self.op(sub, &candidates, &back);
+        self.frontier_search(frontier, &candidates, &matched, strict, opened.as_deref());
         self.first_matched(&candidates, &matched);
-        let opened = self.opened(walk, input, &candidates);
         // Every event is a matched candidate's or an unknown stop's.
         let reads = match &opened {
             Some(opened) => Reads::union(&[&matched, opened]),
@@ -455,9 +457,15 @@ impl Emitter<'_> {
     ) -> String {
         let held = self.live_before(op, &Live::default());
         let narrowed = self.capture_need(&self.narrowed(walk, need), sub);
-        let candidates = self.candidates(walk, &narrowed, input, &held);
+        let all = self.candidates(walk, &narrowed, input, &held);
+        let opened = self.opened(walk, input, &all);
+        let (candidates, frontier) = if bind.is_none() {
+            self.frontier(walk, sub, &all, &held)
+        } else {
+            (all, None)
+        };
         let matched = self.op(sub, &candidates, &Live::default());
-        let opened = self.opened(walk, input, &candidates);
+        self.frontier_count(frontier, &matched, min, max);
         let open = opened.map_or("0".to_owned(), |opened| {
             format!("(f.k IN (SELECT pk FROM {opened}))")
         });

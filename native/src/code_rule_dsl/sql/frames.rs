@@ -25,6 +25,8 @@
 //! Only tables that statements append to and empty whole are frames (`exec`): a table some
 //! statement updates or deletes from by a condition stays a B-tree.
 
+mod frontier;
+
 use super::nodes::integer;
 use rusqlite::types::{ToSqlOutput, Value, ValueRef};
 use rusqlite::vtab::{
@@ -83,10 +85,6 @@ fn table_after<'s>(sql: &'s str, prefix: &str) -> Option<&'s str> {
 /// `INDEX (…)` entries of its declaration (the plans weigh them as before; a frame builds an
 /// index on its first read on those columns), and emptying it whole becomes a `CLEAR` step.
 pub(super) fn rewrite(statements: Vec<String>) -> Vec<String> {
-    #[cfg(feature = "unbounded-work")]
-    if std::env::var("RERAIL_SQL_FRAME_STORAGE").is_ok_and(|value| value == "btree") {
-        return statements;
-    }
     let mut mutated: std::collections::HashSet<String> = std::collections::HashSet::new();
     // Each table's indexed columns, as `INDEX (…)` arguments.
     let mut indexes: HashMap<String, String> = HashMap::new();
@@ -170,22 +168,54 @@ pub(super) struct FrameAux {
     schema: CString,
 }
 
-/// `text` split at its top-level commas (none inside parentheses or quotes), as SQLite splits a
-/// virtual table's arguments.
+/// Positions outside parentheses and quoted SQL tokens. Clause and argument splitting must
+/// use the same scope rules: a FROM inside a literal or subquery is not the projection's source.
+fn top_level(text: &str) -> impl Iterator<Item = usize> + '_ {
+    let (mut depth, mut quote, mut escaped) = (0usize, 0u8, false);
+    text.bytes().enumerate().filter_map(move |(at, byte)| {
+        if escaped {
+            escaped = false;
+            return None;
+        }
+        if quote != 0 {
+            if byte == quote {
+                if text.as_bytes().get(at + 1) == Some(&quote) {
+                    escaped = true;
+                } else {
+                    quote = 0;
+                }
+            }
+            return None;
+        }
+        match byte {
+            b'\'' | b'"' | b'`' => {
+                quote = byte;
+                None
+            }
+            b'[' => {
+                quote = b']';
+                None
+            }
+            b'(' => {
+                depth += 1;
+                None
+            }
+            b')' => {
+                depth = depth.saturating_sub(1);
+                None
+            }
+            _ => (depth == 0).then_some(at),
+        }
+    })
+}
+
+/// `text` split at top-level commas, as SQLite splits a virtual table's arguments.
 fn arguments(text: &str) -> Vec<&str> {
     let mut parts = Vec::new();
-    let (mut depth, mut quoted, mut from) = (0usize, false, 0);
-    for (at, byte) in text.bytes().enumerate() {
-        match byte {
-            b'"' => quoted = !quoted,
-            b'(' if !quoted => depth += 1,
-            b')' if !quoted => depth = depth.saturating_sub(1),
-            b',' if !quoted && depth == 0 => {
-                parts.push(text[from..at].trim());
-                from = at + 1;
-            }
-            _ => {}
-        }
+    let mut from = 0;
+    for at in top_level(text).filter(|&at| text.as_bytes()[at] == b',') {
+        parts.push(text[from..at].trim());
+        from = at + 1;
     }
     parts.push(text[from..].trim());
     parts.retain(|part| !part.is_empty());
@@ -193,47 +223,92 @@ fn arguments(text: &str) -> Vec<&str> {
 }
 
 /// A projection that preserves source row keys. SQLite still evaluates the predicate.
-/// No joins, expressions, generated keys, affinity changes, or duplicate rows enter this path.
+/// Joined filters and computed captures share the direct columns; SQLite evaluates expressions.
+/// Generated keys and affinity changes retain ordinary insertion.
+/// Duplicate keys retain ordinary insertion semantics.
+enum Projection<T> {
+    Column(T),
+    Constant(Option<i64>),
+    Expression(usize),
+}
+
 struct Selection {
     target: String,
     source: String,
-    columns: Vec<String>,
+    columns: Vec<Projection<String>>,
     query: String,
+    identity: bool,
 }
 impl Selection {
     fn parse(sql: &str) -> Option<Self> {
         let (target, select) = sql.strip_prefix("INSERT INTO ")?.split_once(" SELECT ")?;
-        let (columns, from) = select.split_once(" FROM ")?;
+        let at = top_level(select).find(|&at| select.as_bytes()[at..].starts_with(b" FROM "))?;
+        let (columns, from) = (&select[..at], &select[at + " FROM ".len()..]);
         let (source, tail) = from.split_once(' ')?;
         let alias = tail.split_whitespace().next()?;
-        if !tail[alias.len()..].is_empty() && !tail[alias.len()..].starts_with(" WHERE ") {
-            return None;
-        }
+        let projection_upper = columns.to_ascii_uppercase();
         if [
-            " JOIN ", " UNION ", " GROUP ", " ORDER ", " LIMIT ", "SELECT ",
+            " UNION ",
+            " GROUP ",
+            " ORDER ",
+            " LIMIT ",
+            " RIGHT JOIN ",
+            " FULL JOIN ",
         ]
         .iter()
         .any(|part| from.contains(part))
         {
             return None;
         }
-        let columns = columns
-            .split(", ")
+        if [
+            "DISTINCT ",
+            "SELECT ",
+            " OVER ",
+            "COUNT(",
+            "SUM(",
+            "MIN(",
+            "MAX(",
+            "AVG(",
+            "TOTAL(",
+            "GROUP_CONCAT(",
+        ]
+        .iter()
+        .any(|part| projection_upper.contains(part))
+        {
+            return None;
+        }
+        let mut expressions = String::new();
+        let mut expression_index = 0;
+        let columns = arguments(columns)
+            .into_iter()
             .map(|column| {
-                let name = column.strip_prefix(&format!("{alias}."))?;
-                name.bytes()
-                    .all(|c| c.is_ascii_alphanumeric() || c == b'_')
-                    .then(|| name.to_owned())
+                if column == "NULL" {
+                    return Projection::Constant(None);
+                }
+                if let Ok(value) = column.parse::<i64>() {
+                    return Projection::Constant(Some(value));
+                }
+                if let Some(name) = column.strip_prefix(&format!("{alias}."))
+                    && !name.is_empty()
+                    && name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+                {
+                    return Projection::Column(name.to_owned());
+                }
+                expression_index += 1;
+                expressions.push_str(", ");
+                expressions.push_str(column);
+                Projection::Expression(expression_index)
             })
-            .collect::<Option<Vec<_>>>()?;
-        if columns.first().map(String::as_str) != Some("k") {
+            .collect::<Vec<_>>();
+        if !matches!(columns.first(), Some(Projection::Column(name)) if name == "k") {
             return None;
         }
         Some(Self {
             target: target.into(),
             source: source.into(),
             columns,
-            query: format!("SELECT {alias}.rowid FROM {from}"),
+            query: format!("SELECT {alias}.rowid{expressions} FROM {from}"),
+            identity: tail == alias && expressions.is_empty(),
         })
     }
 }
@@ -241,11 +316,11 @@ impl Selection {
 impl Column {
     fn view(
         &mut self,
-        selected: &Arc<[u32]>,
+        selected: Option<&Arc<[u32]>>,
         retained: &Arc<AtomicUsize>,
         composed: &mut HashMap<usize, Arc<[u32]>>,
     ) -> Option<Self> {
-        if !matches!(self.data, Data::View(..)) {
+        if !self.data.is_shared() {
             let bytes = self.nulls.capacity() * 8
                 + match &self.data {
                     Data::Narrow(v) => v.capacity() * 4,
@@ -260,31 +335,50 @@ impl Column {
                                 })
                                 .sum::<usize>()
                     }
-                    Data::View(..) => unreachable!(),
+                    _ => unreachable!(),
                 };
-            // Bound pages retained by selections after the producing register is cleared.
             retained
                 .fetch_update(Atomic::Relaxed, Atomic::Relaxed, |n| {
                     n.checked_add(bytes).filter(|n| *n <= BUDGET * 8)
                 })
                 .ok()?;
-            let empty = Self::new(self.integer, self.default);
-            let column = std::mem::replace(self, empty);
-            self.data = Data::View(
-                Arc::new(Page {
-                    column,
-                    retained: Arc::clone(retained),
-                    bytes,
-                }),
-                None,
-            );
+            let data = std::mem::replace(&mut self.data, Data::Narrow(Vec::new()));
+            let nulls = std::mem::take(&mut self.nulls);
+            self.data = match data {
+                Data::Narrow(values) => Data::SharedNarrow(
+                    Arc::new(Page {
+                        values,
+                        nulls,
+                        retained: Arc::clone(retained),
+                        bytes,
+                    }),
+                    None,
+                ),
+                Data::Wide(values) => Data::SharedWide(
+                    Arc::new(Page {
+                        values,
+                        nulls,
+                        retained: Arc::clone(retained),
+                        bytes,
+                    }),
+                    None,
+                ),
+                Data::Any(values) => Data::SharedAny(
+                    Arc::new(Page {
+                        values,
+                        nulls,
+                        retained: Arc::clone(retained),
+                        bytes,
+                    }),
+                    None,
+                ),
+                _ => unreachable!(),
+            };
         }
-        let Data::View(page, rows) = &self.data else {
-            unreachable!()
-        };
-        let rows = match rows {
-            None => Arc::clone(selected),
-            Some(rows) => Arc::clone(
+        let mut selected_rows = |rows: &Option<Arc<[u32]>>| match (selected, rows) {
+            (None, rows) => rows.clone(),
+            (Some(selected), None) => Some(Arc::clone(selected)),
+            (Some(selected), Some(rows)) => Some(Arc::clone(
                 composed
                     .entry(Arc::as_ptr(rows) as *const u32 as usize)
                     .or_insert_with(|| {
@@ -294,10 +388,18 @@ impl Column {
                             .collect::<Vec<_>>()
                             .into()
                     }),
-            ),
+            )),
+        };
+        let data = match &self.data {
+            Data::SharedNarrow(page, rows) => {
+                Data::SharedNarrow(Arc::clone(page), selected_rows(rows))
+            }
+            Data::SharedWide(page, rows) => Data::SharedWide(Arc::clone(page), selected_rows(rows)),
+            Data::SharedAny(page, rows) => Data::SharedAny(Arc::clone(page), selected_rows(rows)),
+            _ => unreachable!(),
         };
         Some(Self {
-            data: Data::View(Arc::clone(page), Some(rows)),
+            data,
             nulls: Vec::new(),
             integer: self.integer,
             default: self.default,
@@ -342,52 +444,139 @@ impl FrameStore {
         let Some(columns) = selection
             .columns
             .iter()
-            .map(|name| input.names.iter().position(|c| c == name))
+            .map(|column| match column {
+                Projection::Column(name) => input
+                    .names
+                    .iter()
+                    .position(|c| c == name)
+                    .map(Projection::Column),
+                Projection::Constant(value) => Some(Projection::Constant(*value)),
+                Projection::Expression(index) => Some(Projection::Expression(*index)),
+            })
             .collect::<Option<Vec<_>>>()
         else {
             return Ok(None);
         };
-        if columns.iter().zip(&output.columns).any(|(&i, out)| {
-            input.columns[i].integer != out.integer || input.columns[i].default != out.default
-        }) {
+        if columns
+            .iter()
+            .zip(&output.columns)
+            .any(|(column, out)| match column {
+                Projection::Column(i) => {
+                    input.columns[*i].integer != out.integer
+                        || input.columns[*i].default != out.default
+                }
+                Projection::Constant(_) => false,
+                Projection::Expression(_) => out.integer || out.default.is_some(),
+            })
+        {
             return Ok(None);
         }
-        let mut statement = connection.prepare_cached(&selection.query)?;
-        let keys = statement
-            .query_map([], |row| row.get::<_, i64>(0))?
-            .collect::<Result<Vec<_>>>()?;
-        #[cfg(feature = "unbounded-work")]
-        if super::diagnostics::enabled(sql) {
-            SELECTION_TRACE.set(Some((
-                selection.query.clone(),
-                super::diagnostics::counters(&statement),
-            )));
-        }
-        drop(statement);
+        let mut computed: Vec<_> = columns
+            .iter()
+            .zip(&output.columns)
+            .map(|(column, schema)| {
+                matches!(column, Projection::Expression(_))
+                    .then(|| Column::new(schema.integer, schema.default))
+            })
+            .collect();
+        let keys = if selection.identity {
+            (0..input.len)
+                .map(|row| input.columns[0].integer(row))
+                .collect::<Vec<_>>()
+        } else {
+            let mut statement = connection.prepare_cached(&selection.query)?;
+            let mut keys = Vec::new();
+            {
+                let mut result = statement.query([])?;
+                while let Some(row) = result.next()? {
+                    for (column, computed) in columns.iter().zip(&mut computed) {
+                        if let Projection::Expression(index) = column {
+                            computed
+                                .as_mut()
+                                .unwrap()
+                                .push(keys.len(), row.get_ref(*index)?);
+                        }
+                    }
+                    keys.push(row.get::<_, i64>(0)?);
+                }
+            }
+            #[cfg(feature = "unbounded-work")]
+            if super::diagnostics::enabled(sql) {
+                SELECTION_TRACE.set(Some((
+                    selection.query.clone(),
+                    super::diagnostics::counters(&statement),
+                )));
+            }
+            drop(statement);
+            keys
+        };
         if keys.is_empty() {
             return Ok(Some(0));
         }
         if self.live.load(Atomic::Relaxed).saturating_add(keys.len()) > BUDGET {
             return Err(Error::ModuleError("frame: row budget exceeded".into()));
         }
-        let rows: Arc<[u32]> = keys
-            .iter()
-            .map(|&key| partition(input.len, |row| input.columns[0].integer(row) < key) as u32)
-            .collect::<Vec<_>>()
-            .into();
-        if rows.iter().any(|&row| row as usize >= input.len) {
+        if !keys.windows(2).all(|p| p[0] < p[1]) {
+            let mut sorted = keys.clone();
+            sorted.sort_unstable();
+            if sorted.windows(2).any(|p| p[0] == p[1]) {
+                return Ok(None);
+            }
+        }
+        let identity = keys.len() == input.len && keys.windows(2).all(|p| p[0] < p[1]);
+        let rows: Option<Arc<[u32]>> = if identity {
+            None
+        } else {
+            Some(
+                keys.iter()
+                    .map(|&key| {
+                        if input.dense {
+                            key.wrapping_sub(input.columns[0].integer(0)) as u32
+                        } else {
+                            partition(input.len, |row| input.columns[0].integer(row) < key) as u32
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+            )
+        };
+        if rows
+            .as_ref()
+            .is_some_and(|rows| rows.iter().any(|&row| row as usize >= input.len))
+        {
             return Err(Error::ModuleError("frame: invalid selection key".into()));
         }
         // SAFETY: the SELECT and all its cursors have completed. The frames differ.
         let input = unsafe { source.get_mut() };
         let mut projected = Vec::with_capacity(columns.len());
         let mut composed = HashMap::new();
-        for column in columns {
-            let Some(view) = input.columns[column].view(&rows, &self.retained, &mut composed)
-            else {
-                return Ok(None);
+        for ((column, schema), computed) in
+            columns.into_iter().zip(&target.get().columns).zip(computed)
+        {
+            let projected_column = match column {
+                Projection::Column(column) => {
+                    match input.columns[column].view(rows.as_ref(), &self.retained, &mut composed) {
+                        Some(view) => view,
+                        None => return Ok(None),
+                    }
+                }
+                Projection::Constant(value) => {
+                    let mut column = Column::new(schema.integer, schema.default);
+                    let value = value.or(schema.default);
+                    column.data = match value {
+                        Some(value) if i32::try_from(value).is_err() => {
+                            Data::Wide(vec![value; keys.len()])
+                        }
+                        _ => Data::Narrow(vec![value.unwrap_or(0) as i32; keys.len()]),
+                    };
+                    if value.is_none() {
+                        column.nulls = vec![u64::MAX; keys.len().div_ceil(64)];
+                    }
+                    column
+                }
+                Projection::Expression(_) => computed.unwrap(),
             };
-            projected.push(view);
+            projected.push(projected_column);
         }
         let output = unsafe { target.get_mut() };
         output.lookups.get_mut().clear();
@@ -396,7 +585,7 @@ impl FrameStore {
         output.len = keys.len();
         output.ascending = keys.windows(2).all(|p| p[0] < p[1]);
         output.dense = keys.windows(2).all(|p| p[1].checked_sub(p[0]) == Some(1));
-        output.largest = keys.iter().copied().max().unwrap_or(0).max(0);
+        output.largest = keys.iter().copied().max().unwrap_or(0);
         let live = self.live.fetch_add(keys.len(), Atomic::Relaxed) + keys.len();
         self.peak.fetch_max(live, Atomic::Relaxed);
         Ok(Some(keys.len()))
@@ -819,21 +1008,46 @@ fn compare_mixed(integer: i64, real: f64) -> Ordering {
 
 /// One column's values: integers packed while they fit, any value once one does not.
 enum Data {
-    View(Arc<Page>, Option<Arc<[u32]>>),
+    SharedNarrow(Arc<Page<i32>>, Option<Arc<[u32]>>),
+    SharedWide(Arc<Page<i64>>, Option<Arc<[u32]>>),
+    SharedAny(Arc<Page<Value>>, Option<Arc<[u32]>>),
     Narrow(Vec<i32>),
     Wide(Vec<i64>),
     Any(Vec<Value>),
 }
 
-struct Page {
-    column: Column,
+struct Page<T> {
+    values: Vec<T>,
+    nulls: Vec<u64>,
     retained: Arc<AtomicUsize>,
     bytes: usize,
 }
-impl Drop for Page {
+impl<T> Drop for Page<T> {
     fn drop(&mut self) {
         self.retained.fetch_sub(self.bytes, Atomic::Relaxed);
     }
+}
+
+impl Data {
+    fn is_shared(&self) -> bool {
+        matches!(
+            self,
+            Self::SharedNarrow(..) | Self::SharedWide(..) | Self::SharedAny(..)
+        )
+    }
+}
+
+impl<T> Page<T> {
+    fn is_null(&self, row: usize) -> bool {
+        self.nulls
+            .get(row / 64)
+            .is_some_and(|word| word >> (row % 64) & 1 == 1)
+    }
+}
+
+#[inline]
+fn mapped(rows: &Option<Arc<[u32]>>, row: usize) -> usize {
+    rows.as_ref().map_or(row, |rows| rows[row] as usize)
 }
 
 struct Column {
@@ -863,11 +1077,26 @@ impl Column {
             .is_some_and(|word| word >> (row % 64) & 1 == 1)
     }
 
+    #[inline]
     fn get(&self, row: usize) -> ValueRef<'_> {
         match &self.data {
-            Data::View(page, rows) => page
-                .column
-                .get(rows.as_ref().map_or(row, |rows| rows[row] as usize)),
+            Data::SharedNarrow(page, rows) => {
+                let row = mapped(rows, row);
+                if page.is_null(row) {
+                    ValueRef::Null
+                } else {
+                    ValueRef::Integer(page.values[row].into())
+                }
+            }
+            Data::SharedWide(page, rows) => {
+                let row = mapped(rows, row);
+                if page.is_null(row) {
+                    ValueRef::Null
+                } else {
+                    ValueRef::Integer(page.values[row])
+                }
+            }
+            Data::SharedAny(page, rows) => ValueRef::from(&page.values[mapped(rows, row)]),
             Data::Narrow(values) if !self.is_null(row) => ValueRef::Integer(values[row].into()),
             Data::Wide(values) if !self.is_null(row) => ValueRef::Integer(values[row]),
             Data::Any(values) => ValueRef::from(&values[row]),
@@ -876,6 +1105,7 @@ impl Column {
     }
 
     /// Row `row`'s value as an integer (a key column holds integers only).
+    #[inline]
     fn integer(&self, row: usize) -> i64 {
         match self.get(row) {
             ValueRef::Integer(value) => value,
@@ -884,12 +1114,16 @@ impl Column {
     }
 
     fn compare_rows(&self, a: usize, b: usize) -> Ordering {
-        if self.nulls.is_empty() {
-            match &self.data {
-                Data::Narrow(values) => return values[a].cmp(&values[b]),
-                Data::Wide(values) => return values[a].cmp(&values[b]),
-                Data::Any(_) | Data::View(..) => {}
+        match &self.data {
+            Data::SharedNarrow(page, rows) if page.nulls.is_empty() => {
+                return page.values[mapped(rows, a)].cmp(&page.values[mapped(rows, b)]);
             }
+            Data::SharedWide(page, rows) if page.nulls.is_empty() => {
+                return page.values[mapped(rows, a)].cmp(&page.values[mapped(rows, b)]);
+            }
+            Data::Narrow(values) if self.nulls.is_empty() => return values[a].cmp(&values[b]),
+            Data::Wide(values) if self.nulls.is_empty() => return values[a].cmp(&values[b]),
+            _ => {}
         }
         Probe::of(self.get(a)).compare(Probe::of(self.get(b)))
     }
@@ -905,7 +1139,7 @@ fn owned(value: ValueRef<'_>) -> Value {
 
 impl Column {
     fn push(&mut self, row: usize, value: ValueRef<'_>) {
-        if matches!(self.data, Data::View(..)) {
+        if self.data.is_shared() {
             let mut owned = Self::new(self.integer, self.default);
             for at in 0..row {
                 owned.push(at, self.get(at));
@@ -927,7 +1161,10 @@ impl Column {
                 match data {
                     Data::Narrow(values) => values.push(0),
                     Data::Wide(values) => values.push(0),
-                    Data::Any(_) | Data::View(..) => unreachable!("matched above or materialized"),
+                    Data::Any(_)
+                    | Data::SharedNarrow(..)
+                    | Data::SharedWide(..)
+                    | Data::SharedAny(..) => unreachable!("matched above or materialized"),
                 }
             }
             (ValueRef::Integer(value), Data::Narrow(values)) => match i32::try_from(value) {
@@ -950,10 +1187,24 @@ impl Column {
     }
 
     fn clear(&mut self) {
-        match &mut self.data {
-            Data::Narrow(values) => values.clear(),
-            _ => self.data = Data::Narrow(Vec::new()),
-        }
+        self.data = match std::mem::replace(&mut self.data, Data::Narrow(Vec::new())) {
+            Data::Narrow(mut values) => {
+                values.clear();
+                Data::Narrow(values)
+            }
+            Data::SharedNarrow(page, _) => match Arc::try_unwrap(page) {
+                Ok(mut page) => {
+                    // The final consumer returns its page's buffer to a register. Otherwise
+                    // sharing would discard the allocation that ordinary clears retain.
+                    let mut values = std::mem::take(&mut page.values);
+                    values.clear();
+                    self.nulls = std::mem::take(&mut page.nulls);
+                    Data::Narrow(values)
+                }
+                Err(_) => Data::Narrow(Vec::new()),
+            },
+            _ => Data::Narrow(Vec::new()),
+        };
         self.nulls.clear();
     }
 
@@ -1860,5 +2111,115 @@ mod tests {
             rows(&connection, "SELECT count(*) FROM f"),
             rows(&connection, "SELECT count(*) FROM s")
         );
+    }
+    #[test]
+    fn joined_selections_keep_constants_types_and_duplicate_key_semantics() {
+        let (db, store) = connection(
+            "/*FRAME*/a(k INTEGER PRIMARY KEY, x); /*FRAME*/b(k INTEGER PRIMARY KEY, x, unk); CREATE TABLE accept(k); INSERT INTO a VALUES (1, NULL), (2, 'text'), (3, 9223372036854775807); INSERT INTO accept VALUES(2), (3)",
+        );
+        assert!(rows(&db, "SELECT * FROM b WHERE x = 7").is_empty());
+        let sql = "INSERT INTO b SELECT f.k, f.x, 0 FROM a f JOIN accept p ON p.k = f.k";
+        assert_eq!(store.select(&db, sql).unwrap(), Some(2));
+        assert_eq!(
+            rows(&db, "SELECT * FROM b"),
+            rows(
+                &db,
+                "SELECT f.k, f.x, 0 FROM a f JOIN accept p ON p.k = f.k"
+            )
+        );
+        assert_eq!(
+            rows(&db, "SELECT k FROM b WHERE x = 'text'"),
+            vec![vec![Value::Integer(2)]]
+        );
+        store.clear("b");
+        db.execute_batch("INSERT INTO accept VALUES (2)").unwrap();
+        assert_eq!(store.select(&db, sql).unwrap(), None);
+        assert_eq!(store.rows("b"), Some(0));
+        assert_eq!(rows(&db, "SELECT * FROM a").len(), 3);
+    }
+
+    #[test]
+    fn computed_captures_share_metadata_and_keep_sqlite_value_types() {
+        let (db, store) = connection(
+            "/*FRAME*/a(k INTEGER PRIMARY KEY, x); /*FRAME*/b(k INTEGER PRIMARY KEY, x, capture, literal); CREATE TABLE captures(k, value); INSERT INTO a VALUES (1, NULL), (2, 'text'), (3, 9223372036854775807); INSERT INTO captures VALUES(1, X'0102'), (2, 3.5), (3, NULL)",
+        );
+        let select = "SELECT f.k, f.x, COALESCE(p.value, f.x), 'a,b)''c' FROM a f JOIN captures p ON p.k = f.k";
+        let expected = rows(&db, select);
+        assert_eq!(
+            store
+                .select(&db, &format!("INSERT INTO b {select}"))
+                .unwrap(),
+            Some(3)
+        );
+        assert_eq!(rows(&db, "SELECT * FROM b"), expected);
+        {
+            let frames = store.frames.lock();
+            let frame = frames.get("b").unwrap().get();
+            assert!(frame.columns[1].data.is_shared());
+            assert!(matches!(frame.columns[2].data, Data::Any(..)));
+        }
+        store.clear("a");
+        assert_eq!(rows(&db, "SELECT * FROM b"), expected);
+        store
+            .register(&db, "c(k INTEGER PRIMARY KEY, x INTEGER)")
+            .unwrap();
+        assert_eq!(
+            store
+                .select(&db, "INSERT INTO c SELECT f.k, '12' FROM b f")
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store
+                .select(&db, "INSERT INTO c SELECT f.k, count(*) FROM b f")
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn shared_negative_row_keys_append_as_sqlite_does() {
+        let (db, store) = connection(
+            "/*FRAME*/a(k INTEGER PRIMARY KEY, x); /*FRAME*/b(k INTEGER PRIMARY KEY, x); CREATE TABLE expected(k INTEGER PRIMARY KEY, x); INSERT INTO a VALUES(-3, 'first'), (-2, 'second'); INSERT INTO expected SELECT * FROM a",
+        );
+        assert_eq!(
+            store
+                .select(&db, "INSERT INTO b SELECT f.k, f.x FROM a f")
+                .unwrap(),
+            Some(2)
+        );
+        store.clear("a");
+        db.execute_batch(
+            "INSERT INTO b(x) VALUES('appended'); INSERT INTO expected(x) VALUES('appended')",
+        )
+        .unwrap();
+        assert_eq!(
+            rows(&db, "SELECT * FROM b"),
+            rows(&db, "SELECT * FROM expected")
+        );
+    }
+
+    #[test]
+    fn projection_sources_respect_subqueries_and_quoted_clauses() {
+        let (db, store) = connection(
+            "/*FRAME*/a(k INTEGER PRIMARY KEY, x); /*FRAME*/q(k INTEGER PRIMARY KEY, x); /*FRAME*/b(k INTEGER PRIMARY KEY, x, capture); INSERT INTO a VALUES(10, 'inner'), (20, 'inner2'); INSERT INTO q VALUES(1, 'outer'), (2, 'outer2')",
+        );
+        let select = "SELECT f.k, f.x, (SELECT f.x FROM a f WHERE f.k = 10) FROM q f";
+        let expected = rows(&db, select);
+        let sql = format!("INSERT INTO b {select}");
+        assert_eq!(store.select(&db, &sql).unwrap(), None);
+        assert_eq!(store.rows("b"), Some(0));
+        db.execute_batch(&sql).unwrap();
+        assert_eq!(rows(&db, "SELECT * FROM b"), expected);
+        store.clear("b");
+        let select = "SELECT f.k, f.x, 'literal FROM a f WHERE ignored' FROM q f";
+        let expected = rows(&db, select);
+        assert_eq!(
+            store
+                .select(&db, &format!("INSERT INTO b {select}"))
+                .unwrap(),
+            Some(2)
+        );
+        assert_eq!(rows(&db, "SELECT * FROM b"), expected);
     }
 }

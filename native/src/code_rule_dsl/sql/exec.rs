@@ -603,7 +603,7 @@ impl Compiled {
             // Per open loop: its statements so far.
             let mut open: Vec<usize> = Vec::new();
             for statement in statements {
-                if statement == emit::LOOP {
+                if emit::loop_start(statement) {
                     open.push(0);
                 } else if statement.starts_with(emit::UNTIL) {
                     passes.push(open.pop().expect("an open loop") + 1);
@@ -1346,7 +1346,7 @@ fn registers(
     let mut loops = Vec::new();
     let mut open = Vec::new();
     for (at, item) in items.iter().enumerate() {
-        if item == emit::LOOP {
+        if emit::loop_start(item) {
             open.push(at);
         } else if item.starts_with(emit::UNTIL) {
             loops.push((open.pop().expect("an open loop"), at));
@@ -1981,13 +1981,16 @@ impl Session {
                 .chain([&bound.shape.last])
             {
                 let prefix = match bound.action(step).kind {
-                    Kind::Loop | Kind::Run(_) | Kind::Clear(_) => continue,
+                    Kind::Loop | Kind::Frontier | Kind::Run(_) | Kind::Clear(_) => continue,
                     Kind::Until => emit::UNTIL,
                     Kind::Acyclic => emit::ACYCLIC,
                     Kind::Statement => "",
                 };
                 bound.text(step, &mut text);
                 let sql = &text[prefix.len()..];
+                if sql.starts_with(emit::FRONTIER) {
+                    continue;
+                }
                 let mut statement = self
                     .connection
                     .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
@@ -2443,13 +2446,13 @@ impl Runner<'_> {
                     at += 1;
                     continue;
                 }
-                Kind::Loop => {}
+                Kind::Loop | Kind::Frontier => {}
             }
             let mut depth = 0;
             let end = (at..steps.len())
                 .find(|&index| {
                     match bound.action(&steps[index]).kind {
-                        Kind::Loop => depth += 1,
+                        Kind::Loop | Kind::Frontier => depth += 1,
                         Kind::Until => depth -= 1,
                         _ => {}
                     }
@@ -2459,6 +2462,61 @@ impl Runner<'_> {
             let mut text = self.buffer();
             bound.text(&steps[end], &mut text);
             let until = &text[emit::UNTIL.len()..];
+            if bound.action(step).kind == Kind::Frontier {
+                let description = until
+                    .strip_prefix(emit::FRONTIER)
+                    .expect("a frontier descriptor");
+                let started = Started::now();
+                let mut frontier = self.frames.frontier(description)?;
+                let mut initialized = started.elapsed();
+                #[cfg(any(test, feature = "unbounded-work"))]
+                let mut passes = 0;
+                self.depth += 1;
+                loop {
+                    let started = Started::now();
+                    let rows = self.frames.frontier_fill(&mut frontier)?;
+                    let mut elapsed = started.elapsed().plus(initialized);
+                    initialized = Timing::ZERO;
+                    self.steps(bound, &steps[at + 1..end], known_empty)?;
+                    let advanced = Started::now();
+                    let more = frontier.advance()?;
+                    elapsed.add(advanced.elapsed());
+                    self.stats.statements += 1;
+                    self.stats.rows += rows;
+                    self.stats.time.add(elapsed);
+                    #[cfg(feature = "unbounded-work")]
+                    if super::diagnostics::enabled(until) {
+                        super::diagnostics::record(
+                            self.connection,
+                            until,
+                            elapsed,
+                            rows,
+                            [0; 4],
+                            bound
+                                .inputs(bound.action(&steps[end]))
+                                .map(|table| (self.counts.name(table), self.counts.rows(table))),
+                        );
+                    }
+                    #[cfg(any(test, feature = "unbounded-work"))]
+                    {
+                        record(until, elapsed.wall, rows);
+                        record_looped(until, elapsed.wall, rows);
+                    }
+                    #[cfg(any(test, feature = "unbounded-work"))]
+                    {
+                        passes += 1;
+                    }
+                    if !more {
+                        break;
+                    }
+                }
+                self.depth -= 1;
+                #[cfg(any(test, feature = "unbounded-work"))]
+                record_loop(until, passes, end - at - 1);
+                self.release(text);
+                at = end + 1;
+                continue;
+            }
             // A loop's pass evaluates the dirty keys of its units: with none (the site demanded
             // no new key), it would change nothing, and the units it reaches would be run for
             // nothing again, at every site of every pass above them.

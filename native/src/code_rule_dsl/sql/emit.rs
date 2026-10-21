@@ -17,6 +17,7 @@
 mod demand;
 mod each;
 mod following;
+mod frontier;
 mod fusion;
 mod guards;
 mod inline;
@@ -57,6 +58,12 @@ pub(super) const EACH: &str = "/*EACH*/";
 /// A statement that opens a loop: the statements up to the matching `UNTIL` run while its query
 /// (the rest of the `UNTIL` statement) counts a dirty key, checked before every pass (`exec`).
 pub(super) const LOOP: &str = "/*LOOP*/";
+/// A candidate phase loop runs once even when its domain is empty, clearing stale frames.
+pub(super) const FRONTIER: &str = "/*FRONTIER*/";
+
+pub(super) fn loop_start(sql: &str) -> bool {
+    sql == LOOP || sql == FRONTIER
+}
 pub(super) const UNTIL: &str = "/*UNTIL*/";
 /// A query after a statement's operator: the recursive reads every loop's last pass and the
 /// statement's own rows recorded from their needed rows, `(unit, key, unit, key, inner)`, which
@@ -1146,9 +1153,11 @@ impl<'s> Emitter<'s> {
                 };
                 let held = self.live_before(op, &back);
                 let narrowed = self.capture_need(need, sub);
-                let candidates = self.candidates(*walk, &narrowed, input, &held);
+                let all = self.candidates(*walk, &narrowed, input, &held);
+                let (candidates, frontier) = self.frontier(*walk, sub, &all, &held);
                 self.first_match(&candidates, *walk, false);
                 let matched = self.on_candidates(sub, *walk, &candidates, need, &back);
+                self.frontier_search(frontier, &candidates, &matched, false, None);
                 self.first_matched(&candidates, &matched);
                 if *binds {
                     // `ord` is the walk order (negated ids for descending walks): its minimum
@@ -1186,8 +1195,14 @@ impl<'s> Emitter<'s> {
             } => {
                 let held = self.live_before(op, &Live::default());
                 let narrowed = self.capture_need(need, sub);
-                let candidates = self.candidates(*walk, &narrowed, input, &held);
+                let all = self.candidates(*walk, &narrowed, input, &held);
+                let (candidates, frontier) = if bind.is_none() {
+                    self.frontier(*walk, sub, &all, &held)
+                } else {
+                    (all, None)
+                };
                 let matched = self.op(sub, &candidates, &Live::default());
+                self.frontier_count(frontier, &matched, *min, *max);
                 let counts = self.grouped(
                     "n",
                     &format!(
