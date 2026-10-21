@@ -7,6 +7,9 @@ use std::sync::LazyLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 static ENABLED: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_PROFILE").is_some());
+pub(super) fn enabled() -> bool {
+    *ENABLED
+}
 
 #[derive(Clone, Default)]
 struct Attribution {

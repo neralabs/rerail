@@ -1,6 +1,7 @@
 //! Benchmark-only attribution for the existing workspace evaluator.
 //! Disabled in production builds. Reports worker CPU separately from wall time.
 
+pub(super) mod navigation;
 mod semantic;
 pub(super) mod sql;
 pub(crate) mod trace;
@@ -130,6 +131,7 @@ pub(super) fn record_query(
 
 #[derive(Default)]
 struct Profile {
+    field_lookups: navigation::Counters,
     revision: u32,
     regex_ns: u128,
     parse_ns: u128,
@@ -152,11 +154,6 @@ struct Profile {
     active_line_bytes: usize,
     active_navigation_line_bytes: usize,
     peak_transient_bytes: Option<usize>,
-    retained_source_bytes: Option<usize>,
-    retained_tape_bytes: Option<usize>,
-    retained_grammar_bytes: Option<usize>,
-    retained_dispatch_bytes: Option<usize>,
-    retained_result_bytes: Option<usize>,
     native_acquisitions: usize,
     native_active: usize,
     native_peak: usize,
@@ -279,6 +276,7 @@ impl WorkerProfile {
             .expect("profile session mutex poisoned")
             .clone();
         PROFILE.with(|profile| *profile.borrow_mut() = session);
+        navigation::reset();
         PHASE_STACK.with(|stack| {
             let mut stack = stack.borrow_mut();
             stack.clear();
@@ -300,6 +298,7 @@ impl Drop for WorkerProfile {
                 with_profile(|profile| *phase_total(profile, phase) += now.saturating_sub(started));
             });
         }
+        navigation::flush();
         PROFILE.with(|profile| *profile.borrow_mut() = None);
     }
 }
@@ -354,22 +353,6 @@ pub(super) fn record_transient(navigation_bytes: usize) {
         let bytes = navigation_bytes + profile.active_line_bytes;
         profile.active_navigation_line_bytes = bytes;
         profile.peak_transient_bytes = Some(profile.peak_transient_bytes.unwrap_or(0).max(bytes));
-    });
-}
-
-pub(super) fn record_retained(
-    source: usize,
-    tape: usize,
-    grammar: usize,
-    dispatch: usize,
-    results: usize,
-) {
-    with_profile(|profile| {
-        profile.retained_source_bytes = Some(source);
-        profile.retained_tape_bytes = Some(tape);
-        profile.retained_grammar_bytes = Some(grammar);
-        profile.retained_dispatch_bytes = Some(dispatch);
-        profile.retained_result_bytes = Some(results);
     });
 }
 
@@ -440,6 +423,7 @@ pub(super) fn thread_cpu_ns() -> Option<u128> {
 
 impl ApplyProfile {
     pub(super) fn start(revision: u32, cpu_started: Option<u128>) -> Self {
+        navigation::reset();
         let _ = Phase::Other;
         let session = Arc::new(Mutex::new(Profile {
             revision,
@@ -476,6 +460,7 @@ impl Drop for ApplyProfile {
                 with_profile(|profile| *phase_total(profile, phase) += now.saturating_sub(started));
             });
         }
+        navigation::flush();
         let session = PROFILE.with(|profile| profile.borrow_mut().take());
         *ACTIVE_SESSION
             .lock()
@@ -500,6 +485,7 @@ impl Drop for ApplyProfile {
                 "RERAIL_CODE_RULE_PROFILE",
                 serde_json::json!({
                     "revision": profile.revision,
+                    "fieldLookups": profile.field_lookups,
                     "applyNs": elapsed,
                     "workerCpuNs": worker_cpu_ns,
                     "totalWorkerCpuNs": total_worker_cpu_ns,
@@ -517,11 +503,6 @@ impl Drop for ApplyProfile {
                     "astMatchNs": profile.dispatch_ns,
                     "serializationNs": profile.serialization_ns,
                     "otherNs": profile.other_ns,
-                    "retainedSourceBytesEstimate": profile.retained_source_bytes,
-                    "retainedTapeBytesEstimate": profile.retained_tape_bytes,
-                    "retainedGrammarBytesEstimate": profile.retained_grammar_bytes,
-                    "retainedDispatchBytesEstimate": profile.retained_dispatch_bytes,
-                    "retainedResultBytesEstimate": profile.retained_result_bytes,
                     "peakTransientNavigationLineIndexBytesEstimate": profile.peak_transient_bytes,
                     "visitedNodes": profile.visited_nodes,
                     "indexedFiles": profile.indexed_files,

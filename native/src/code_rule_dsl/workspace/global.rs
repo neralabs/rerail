@@ -486,6 +486,11 @@ pub(super) fn evaluate_batched_relations(
             )
         })
         .collect::<Vec<_>>();
+    #[cfg(feature = "code-rule-profile")]
+    let mut preparation = crate::code_rule_dsl::profile::trace::Span::start(
+        "input-preparation",
+        "queued-relational-inputs",
+    );
     let mut jobs = Vec::new();
     let mut keys = Vec::new();
     let mut results = BTreeMap::new();
@@ -647,6 +652,43 @@ pub(super) fn evaluate_batched_relations(
                 keys.push((index, clause.id.clone(), None));
             }
         }
+    }
+    #[cfg(feature = "code-rule-profile")]
+    {
+        preparation.detail(|| {
+            let mut memory = super::memory::census::WitnessMemory::default();
+            let mut syntax_seen = std::collections::HashSet::new();
+            let mut source_seen = std::collections::HashSet::new();
+            let mut syntax_bytes = 0usize;
+            let mut source_bytes = 0usize;
+            let mut by_clause = BTreeMap::<_, (usize, usize)>::new();
+            for job in &jobs {
+                for (_, facts) in &job.facts {
+                    if syntax_seen.insert(std::sync::Arc::as_ptr(facts) as usize) {
+                        syntax_bytes += facts.estimated_bytes();
+                    }
+                }
+                for file in &job.snapshot.files {
+                    if source_seen.insert(std::sync::Arc::as_ptr(&file.source) as usize) {
+                        source_bytes += file.source.capacity();
+                    }
+                }
+                let counts = by_clause.entry((&job.code_rule.id, &job.clause.id)).or_default();
+                counts.0 += 1;
+                for rows in &job.rows {
+                    counts.1 += rows.witnesses.len();
+                    for witness in &rows.witnesses { memory.visit(witness); }
+                }
+            }
+            serde_json::json!({"jobs": jobs.len(), "ownership": memory,
+                "suppliedSyntaxVersions": syntax_seen.len(), "suppliedSyntaxBytesEstimate": syntax_bytes,
+                "snapshotSourceBytesUnique": source_bytes,
+                "byClause": by_clause.into_iter().map(|((rule, clause), (jobs, rows))|
+                    serde_json::json!({"rule": rule, "clause": clause, "jobs": jobs, "rows": rows}))
+                    .collect::<Vec<_>>(),
+                "accounting": "Inputs coexist before SQL admission. Referenced Arc payloads can also belong to the workspace/document cache; do not sum these categories as exclusive RSS. Syntax size uses the existing cache estimate. Census work is included in this diagnostic span."})
+        });
+        drop(preparation);
     }
     for ((index, name, key), evaluation) in keys.into_iter().zip(relational::evaluate_batch(jobs)) {
         if let Some((key, version, _path)) = key

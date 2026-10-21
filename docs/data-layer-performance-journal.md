@@ -5,6 +5,150 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## CPU and memory attribution: 2026-10-21, after `4def200d`
+
+**The remaining problem is large fact construction, repeated AST navigation, and large SQL intermediates.**
+The earlier 1,114.637-second reference also contains substantial profiling work.
+Removing that measurement flaw does not remove the engine's preparation costs.
+The [evidence](../fixtures/host/data-layer-port/profiling/cpu-memory-attribution-20261021.json) records controls, ownership counts, samples, and validation.
+The [profiling guide](code-rule-profiling.md#measure-cpu-and-memory) describes the new tools.
+
+### Matched Python comparison
+
+Both engines evaluate the same ten sixth-batch rules on 12 files containing 1,984,216 source bytes.
+The source pin remains `2b1504adc4291daaf080b2e932962b134da1a69a`.
+Both produce the same 61 source findings, including multiplicity.
+Thirty findings report required files absent from this restricted snapshot; 31 are detections from the repository recording.
+
+| Control | Analysis CPU | Peak process RSS |
+| --- | ---: | ---: |
+| Upstream shared Python fact engine, one worker | **4.320 s** | **196.70 MiB** |
+| Rerail, automatic residency scans removed | **37.237 s** | **1.681 GiB** |
+| Rerail / Python | **8.62×** | **8.75×** |
+
+Native CPU excludes 0.714 seconds of policy compilation.
+Python CPU includes `run_plugins`, waited-for child CPU, and the source comparison adapter.
+Peak RSS includes process setup for both engines.
+The native reference uses engine optimization level 1, dependency level 3, thin LTO, 256 codegen units, and the system-malloc shim.
+It is not a production optimization-level-3 benchmark.
+Tracing, SQL capture, external sampling, and explicit censuses are off for both timing controls.
+The profiling feature remains compiled into the native reference, with aggregate CPU accounting enabled.
+
+The native driver attributes 7.558 seconds to ingestion and 29.675 seconds to global preparation and SQL.
+These are disjoint process CPU measurements from the completed control.
+The host is heavily shared; CPU comparisons are more useful than elapsed-time comparisons here.
+All new commands remain bounded below two minutes.
+Larger captures and a later twelve-file repetition hit their deadline and remain partial evidence, not completed benchmarks.
+
+The initial subset incorrectly filters expectations from the full repository.
+That loses the 30 required-file findings and marks correct detections as extra findings.
+The corrected upstream snapshot oracle retains those findings.
+The cross-runtime tool verifies file hashes and reconstructs the timed run's complete finding multiset from its original expectations and differences.
+The resulting comparison passes; the original timing report remains unchanged.
+Generated-file freshness remains a separately recorded upstream integration contract, as established in the sixth-batch port.
+The restricted state oracle uses unchanged upstream source conversion and signed allowlist functions.
+It preserves the freshness reporter observation instead of counting it as a native source finding.
+
+### The queue exists before memory admission
+
+A diagnostic capture reaches SQL admission with 80 jobs and 577,199 projected rows already constructed.
+Those rows contain 9,833,801 JSON object fields.
+Their referenced heap estimate is **1,256,398,807 bytes**, excluding supplied syntax, snapshots, and allocator overhead.
+This estimate is not an exclusive RSS measurement.
+The native timing control peaks at 1,805,041,664 RSS bytes.
+
+| Consumer | Queued rows |
+| --- | ---: |
+| State flow | 196,089 |
+| Legacy execution graphs | 162,195 |
+| State signatures | 118,589 |
+| Remaining consumers | 100,326 |
+
+The first three consumers account for 82.6 percent of rows.
+Projected field names alone contain 103,706,252 bytes; projected string values contain another 82,247,225 bytes.
+Maps, row metadata, capture spans, paths, and allocation capacity dominate the representation.
+All 577,199 projection references identify different row objects within the queue.
+Shared SQL stages and the packed producer arena do not eliminate these upstream objects.
+
+The 256 MiB SQL admission target starts after this queue exists.
+It therefore cannot bound this preparation peak.
+The 64 MiB document cache also cannot release syntax objects retained by queued jobs.
+On the separate 64-file quality capture, the queue references 57 syntax objects with a 247,446,912-byte cache estimate.
+That estimate can overlap document storage and uses the existing syntax-cache heuristic.
+It is not another independent RSS category.
+
+### Field navigation performs hundreds of millions of scans
+
+The 64-file quality capture records:
+
+- 16,140,707 field lookups.
+- 427,807,885 child examinations.
+- 423,856,845 examinations inside failed lookups: **99.08 percent**.
+- A maximum scan of 400 children for one lookup.
+
+`TapeNode::child_by_field_id` searches the sibling list for every request.
+Many requests name fields absent from that node.
+Two external ingestion windows attribute 43.0 and 63.7 percent of self samples to this function.
+These percentages describe sample windows, not the entire run.
+The broader source capture also shows repeated anchor selection, sorting, projection, and allocation work during input construction.
+Python's fact engine shares one AST traversal across collectors and accesses AST fields directly.
+
+The next navigation change needs an indexed field lookup or a grammar-aware rejection before scanning children.
+It must preserve first-child order, repeated fields, aliases, anonymous nodes, and existing tape parity.
+The ownership postings fixed earlier are a separate interface; these measurements concern the AST matcher adapter.
+
+### Profiling was adding quadratic work
+
+The previous profiling feature serializes all resident witness payloads after every ingestion request, even with tracing disabled.
+The large reference has 288 ingestion revisions.
+Its retained-result estimates sum to approximately 316 GB across those repeated scans.
+That sum is neither resident memory nor an exact serialized-byte count.
+An earlier external sample places 74 of 96 active native samples inside this accounting routine.
+The old 1,114.637-second result consequently cannot establish clean production execution time.
+
+Automatic residency scans are removed.
+An explicit census now counts shared projections once and reports its own CPU cost.
+The normal apply path no longer performs a complete residency traversal for profiling.
+On the small 64-file control, cold CPU decreases from 7.630 to 7.245 seconds.
+This single shared-host comparison establishes neither a repository speedup nor the full profiling overhead.
+
+### SQL remains a substantial second cost
+
+The completed twelve-file control spends 29.675 seconds in global preparation and SQL together.
+The separate diagnostic records 7.797 seconds of queue preparation, including its ownership census.
+These measurements use different observation modes and must not be subtracted to estimate SQL CPU.
+Its largest SQL stages include state and legacy descendant tables and their indexes.
+One state-signature descendant materialization alone executes 23,860,081 VM instructions in an observed partition.
+The detailed evidence ranks the measured stages and preserves their rule, clause, and file context.
+
+The small forest kernel optimized earlier does not account for these broad input tables or repeated descendant materializations.
+Optimizing that kernel again would leave the main allocation and preparation costs intact.
+
+### Required implementation order
+
+1. Queue versioned descriptors before construction; admit capture and syntax leases within the same memory boundary as SQL consumers.
+2. Build shared capture columns per file version, with row-selection views and a union of demanded columns across consumers.
+3. Keep source text as bounded references until SQL requests it; avoid repeated field-name strings and unused capture-span maps.
+4. Index AST field access and reject impossible fields before sibling scans.
+5. Reduce demanded descendant roots and repeated SQL intermediates after the input representation changes.
+
+Admission must retain broad producer waves and the existing shared pass allowance.
+SQL continues to own rule semantics.
+These requirements do not justify a rule-specific Rust evaluator or another optional execution backend.
+No Linear tickets are created.
+
+### Validation
+
+The focused native suites pass 67 distinct checks, including shared projection accounting through edits, removal, and workspace closure.
+The mandatory producer-shape gate passes all five checks.
+Twenty recorded source observations cover one positive and one clean case for each linter.
+All twenty match on both stateless and workspace execution, with zero engine failures or finding differences.
+The complete profiling checks, typecheck, repository checks, formatting, and production and profiling Clippy checks pass.
+
+Two bounded attempts to build the full Rust unit binary stop before test execution.
+The memory invariant instead has a public binding regression, which verifies actual evidence sharing and invalidation.
+No Rust unit execution pass or new full-repository benchmark is claimed.
+
 ## Batch six diagnosis: 2026-10-21, after `71ea1606`
 
 **All 60 rules now pass together over 9,021 files: 24,993 findings and zero engine failures.**

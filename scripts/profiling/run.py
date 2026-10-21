@@ -13,6 +13,7 @@ import time
 
 from report import LEAF_PHASES, aggregate, chrome_trace, summary, phase_overlap
 from sample import bottom_up
+from process import ProcessMonitor, memory_snapshot
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -29,12 +30,16 @@ def select_recording(recording, selection):
     for file in files:
         if hashlib.sha256(file["source"].encode()).hexdigest() != wanted[file["path"]]:
             raise ValueError(f"Profile source hash mismatch: {file['path']}")
-    events = [{**event, "findings": [row for row in event["findings"] if row["path"] in wanted]}
+    expectations = selection.get("expectations")
+    if expectations is not None and set(expectations) != set(selection["checks"]):
+        raise ValueError("Snapshot expectations must cover exactly the selected checks")
+    events = [{**event, "findings": expectations[event["check"]] if expectations is not None
+               else [row for row in event["findings"] if row["path"] in wanted]}
               for event in recording["events"] if event["check"] in selection["checks"]]
     if {event["check"] for event in events} != set(selection["checks"]):
         raise ValueError("Profile selection has missing checks")
     return {**recording, "files": files, "events": events, "oracle_ms": None,
-            "profileNote": "Oracle timing omitted: selected findings come from the pinned full recording."}
+            "profileNote": "Oracle timing omitted. Explicit snapshot expectations preserve diagnostics for absent files; filtered full-repository findings require a closed source selection."}
 
 
 def recording_from_source(source, selection):
@@ -75,10 +80,14 @@ def execute(args, command, output, deadline):
     if args.trace == "on":
         env["RERAIL_PROFILE"] = "1"
     samples = []
+    memory = []
     timed_out = False
     with (output / "stdout.log").open("w") as stdout, (output / "stderr.log").open("w") as stderr:
         process = subprocess.Popen(command, cwd=ROOT, stdout=stdout, stderr=stderr,
                                    env=env, start_new_session=os.name == "posix")
+        monitor = ProcessMonitor(process.pid, output / "process.jsonl")
+        next_process_sample = time.monotonic()
+        next_memory = time.monotonic() + args.memory_every
         next_sample = time.monotonic() + args.sample_every
         try:
             while process.poll() is None:
@@ -87,6 +96,14 @@ def execute(args, command, output, deadline):
                     timed_out = True
                     kill_group(process)
                     break
+                if time.monotonic() >= next_process_sample:
+                    monitor.sample(remaining)
+                    next_process_sample = time.monotonic() + args.process_every
+                if args.memory_tool != "none" and len(memory) < args.memory_count and time.monotonic() >= next_memory and remaining > 12:
+                    memory.append(memory_snapshot(process.pid, args.memory_tool,
+                        output / f"{args.memory_tool}-{len(memory) + 1}.txt", remaining))
+                    next_memory = time.monotonic() + args.memory_every
+                    remaining = deadline - time.monotonic()
                 if args.external == "sample" and len(samples) < args.sample_count and time.monotonic() >= next_sample and remaining > args.sample_seconds + 8:
                     raw = output / f"sample-{len(samples) + 1}.txt"
                     started = time.time()
@@ -110,7 +127,7 @@ def execute(args, command, output, deadline):
                 time.sleep(min(0.05, max(0, remaining - 3)))
         finally:
             kill_group(process)
-    return process.returncode, timed_out, samples
+    return process.returncode, timed_out, samples, monitor.report(), memory
 
 
 def main():
@@ -131,6 +148,12 @@ def main():
     parser.add_argument("--sample-count", type=int, default=4)
     parser.add_argument("--sample-seconds", type=int, default=1)
     parser.add_argument("--sample-module", action="append", help="Include stacks with this module or symbol substring; repeat, or use '*' for all active stacks")
+    parser.add_argument("--process-every", type=float, default=0.5, help="Process-tree CPU/RSS sampling interval in seconds")
+    parser.add_argument("--memory-tool", choices=["none", "vmmap", "heap"], default="none", help="External macOS memory snapshots; target may pause during collection")
+    parser.add_argument("--memory-every", type=float, default=6)
+    parser.add_argument("--memory-count", type=int, default=2)
+    parser.add_argument("--memory-census", action="store_true", help="Explicit workspace ownership census at driver boundaries; diagnostic runs only")
+    parser.add_argument("--batch-files", type=int, default=32, help="Files per ingestion request (1–2048); source-byte ceiling remains 1 MiB")
     parser.add_argument("--allocator", default="unspecified")
     parser.add_argument("--policies", default="packs/data-layer/candidates/rules")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="Optional command after --, instead of a data-layer recording")
@@ -139,6 +162,12 @@ def main():
         parser.error("Invalid budget or sampling bounds; --deadline must be between 5 and 115 seconds")
     if args.external == "sample" and sys.platform != "darwin":
         parser.error("--external sample requires macOS; use --external none with another external profiler")
+    if args.process_every < 0.1 or args.memory_every < 0.1 or not 0 <= args.memory_count <= 10:
+        parser.error("Invalid memory/process sampling bounds")
+    if not 1 <= args.batch_files <= 2048:
+        parser.error("--batch-files must be between 1 and 2048")
+    if args.memory_tool != "none" and sys.platform != "darwin":
+        parser.error("External memory snapshots currently require macOS")
     if args.query_plans and args.trace != "on":
         parser.error("--query-plans requires --trace on")
     output = args.output.resolve()
@@ -161,12 +190,22 @@ def main():
             recording = output / "selected-recording.json"
             recording.write_text(json.dumps(selected))
         command = ["node", "--import", "tsx", "conformance/data-layer/suite.ts", "--recording", str(recording),
-                   "--output", str(output / "parity.json"), "--allocator", args.allocator, "--policies", args.policies]
+                   "--output", str(output / "parity.json"), "--allocator", args.allocator, "--policies", args.policies,
+                   "--batch-files", str(args.batch_files)]
         if args.cold_only:
             command.append("--cold-only")
+        if args.memory_census:
+            command.append("--memory-census")
     if not command:
         parser.error("Supply --recording or a command after --")
-    code, timed_out, samples = execute(args, command, output, started + args.deadline)
+    git_env = {key: value for key, value in os.environ.items() if key not in {"GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE"}}
+    source = {"commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, env=git_env, text=True, timeout=2).strip(),
+              "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, env=git_env, text=True, timeout=2).strip())}
+    engine = os.environ.get("RERAIL_ENGINE_PATH")
+    if engine:
+        source["nativePath"] = str(Path(engine).resolve())
+        source["nativeSha256"] = hashlib.sha256(Path(engine).read_bytes()).hexdigest()
+    code, timed_out, samples, processes, memory = execute(args, command, output, started + args.deadline)
     native, events = aggregate((output / "stderr.log").read_text())
     for sample in samples:
         start = sample["startUnixUs"]
@@ -182,15 +221,19 @@ def main():
                                  "clause": event["clause"], "path": event["path"], "overlapMs": overlap / 1000})
         sample["approximateSpanOverlap"] = sorted(overlaps, key=lambda row: -row["overlapMs"])[:10]
     (output / "trace.jsonl").write_text("".join(json.dumps(event) + "\n" for event in events))
-    (output / "trace.chrome.json").write_text(json.dumps(chrome_trace(events)) + "\n")
+    process_rows = [json.loads(line) for line in (output / "process.jsonl").read_text().splitlines()] if (output / "process.jsonl").exists() else []
+    (output / "trace.chrome.json").write_text(json.dumps(chrome_trace(events, process_rows)) + "\n")
     report = {"version": 1, "command": command, "elapsedSeconds": time.monotonic() - started,
               "exitCode": code, "timedOut": timed_out, "deadlineSeconds": args.deadline,
               "trace": args.trace, "external": args.external, "queryPlans": args.query_plans, "sqlProfile":args.sql_profile,
+              "memoryCensus": args.memory_census, "memoryTool": args.memory_tool, "batchFiles": args.batch_files,
               "sampleModules":args.sample_module or ["rerail_engine"],
               "host": {"platform": platform.platform(), "cpu": platform.processor(), "python": platform.python_version(),
                        "logicalCpus": os.cpu_count(), "loadAverageStart": load_start,
                        "loadAverageEnd": os.getloadavg() if hasattr(os, "getloadavg") else None},
-              "native": native, "samples": samples}
+              "native": native, "samples": samples, "process": processes, "memorySnapshots": memory}
+    # Record source identity at launch, not the historical origin of the profiling tools.
+    report["source"] = source
     if (output / "parity.json").exists():
         report["parity"] = json.loads((output / "parity.json").read_text())
     (output / "profile.json").write_text(json.dumps(report, indent=2) + "\n")

@@ -19,6 +19,31 @@ const query = `SELECT f.__path AS path, f.__start AS start_byte, f.__end AS end_
   WHERE f.name NOT LIKE '%_async' AND g.name IS NULL`;
 const compile = (document: unknown) => native.CodeRuleDslRuntime.compile(JSON.stringify(document), "json", capabilities);
 
+it("counts shared projected evidence once and releases its census on edits and removal", async () => {
+  const base = policy("SELECT __path AS path,__start AS start_byte,__end AS end_byte,name AS family,'unused' AS issue FROM functions WHERE 0");
+  const document = { ...base, clauses: [{ ...base.clauses[0], relational: { ...base.clauses[0]!.relational, partitionBy: "repository" } }] };
+  const workspace = new native.CodeRuleDslWorkspace();
+  const memory = () => JSON.parse(workspace.memoryProfile()).ownership;
+  const apply = async (revision: number, name?: string) => {
+    const result = JSON.parse(await workspace.applyAsync(JSON.stringify({ revision,
+      files: name === undefined ? [] : [{ path: "a.py", language: "python", source: `def ${name}(): pass\n` }],
+      removed: name === undefined ? ["a.py"] : [], quiet: true })));
+    expect(result.evaluation.failures).toEqual([]);
+  };
+  try {
+    workspace.addCodeRule(compile(document));
+    await apply(1, "x".repeat(2048));
+    expect(memory()).toMatchObject({ witnesses: 2, projectionReferences: 2, uniqueProjections: 1,
+      projection: { objectEntries: 1, stringBytes: 2048 } });
+    await apply(2, "short");
+    expect(memory()).toMatchObject({ projectionReferences: 2, uniqueProjections: 1, projection: { stringBytes: 5 } });
+    await apply(3);
+    expect(memory()).toMatchObject({ witnesses: 0, uniqueProjections: 0, projection: { stringBytes: 0 } });
+    workspace.close();
+    expect(memory().uniqueProjections).toBe(0);
+  } finally { workspace.close(); }
+});
+
 it("preserves nullable and numeric projections across SQLite insertion batches and tails", () => {
   const document = policy("SELECT __path AS path,__start AS start_byte,__end AS end_byte,name AS family,'batch' AS issue,annotation,offset FROM functions");
   const evidence = { as: "f", query: { ast: { language: "python", rule: { all: [

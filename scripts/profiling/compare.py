@@ -9,9 +9,13 @@ def compare(baseline, experiment, allow_policy_changes=False, allow_engine_chang
     before, after = baseline["parity"], experiment["parity"]
     if set(baseline.get("sampleModules", ["rerail_engine"])) != set(experiment.get("sampleModules", ["rerail_engine"])):
         raise ValueError("Profiler modes do not match: sampleModules")
-    for key in ["trace", "external", "queryPlans", "sqlProfile"]:
+    for key in ["trace", "external", "queryPlans", "sqlProfile", "memoryCensus"]:
         if baseline.get(key, False) != experiment.get(key, False):
             raise ValueError(f"Profiling modes do not match: {key}")
+    if baseline.get("memoryTool", "none") != experiment.get("memoryTool", "none"):
+        raise ValueError("Profiling modes do not match: memoryTool")
+    if before.get("batchFiles", 32) != after.get("batchFiles", 32):
+        raise ValueError("Ingestion batch sizes do not match")
     if before.get("measuredPhases") != after.get("measuredPhases"):
         raise ValueError("Measured phases do not match")
     if not before.get("workloadSha256") or not after.get("workloadSha256"):

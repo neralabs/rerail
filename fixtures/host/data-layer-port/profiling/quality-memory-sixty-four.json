@@ -1,0 +1,268 @@
+{
+  "format": "rerail.profile-selection/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "serverplan_quality"
+  ],
+  "files": [
+    {
+      "path": "impl/common/l2070_server_plan/__init__.py",
+      "sha256": "5f3da467e52b0b90e4af7d8c772ca5b065f5476b458beeac87779ffb97ad5808"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/backend_profiles.py",
+      "sha256": "b10042cf70d7b40ad0dc1760723b70bfbeed0954cdbbea12a05482f508547d63"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/backend_traits.py",
+      "sha256": "b5a8e38d4223f1adc8daa876bf3ad7b9acc8d3837b8f6fae22b90e9a65426864"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/base_server_plan.py",
+      "sha256": "f49015339b02b0cdebcd8f9477140a8d4e0d82d62af26ceb38b226028e8f6444"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/bounded_async_gather.py",
+      "sha256": "893da6d224d3b26ef84917c8740d5573bbeba77fbdc2a1d8022ae20ac73a3395"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/branch_read_hint_effects.py",
+      "sha256": "cecd54a3cd58b5a88ce5557590cdcf38f32bb5a24a31cebad6fd38baba69ead7"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/branch_route_correction.py",
+      "sha256": "5dd9132ae9ffd62cee139d5753bcf6369494b27336adecf74b82d63dd5f3bff7"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/branch_route_speculation.py",
+      "sha256": "0d3ad7fe3ee211ce47c63e4943ca3f39f1a4c6424812cd5b07afbc2bf1e28e1a"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/coalesced_lowering.py",
+      "sha256": "9b2957297559b1a44fa082e33299380c726c46989e950cf5c60b80452a0404e1"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/__init__.py",
+      "sha256": "85e6faa5891031f0d21b05900513c4124ad64aafc50bd320f8eb595578e622e1"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/candidate_dependencies.py",
+      "sha256": "c625a58a0712a33d0109e7a1fe905ba746ff61f2f360f939565d4699fe55aa51"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/compound_sequence.py",
+      "sha256": "bbe96fe6b73ddeaebaeed59a71fae07de6bdb16573d4532172c9526331ac7408"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/compound_write.py",
+      "sha256": "297d4237d091c7446f625af0d6825bb1e895585c329686603ba65a6bd690d16b"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/data_modifying_cte.py",
+      "sha256": "14d442d2f59596c05ed90fe9b1fbea6489d67cd45f6f5e128611e6b107b1b3e4"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/data_modifying_cte_analysis.py",
+      "sha256": "838e22c7987b7eb2abb5f159965513abf2fe687677fb19834a13db527ba855d8"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/data_modifying_cte_child_analysis.py",
+      "sha256": "708def7377c221cb55d8a7fd20160acbd05f0c6cbebfcfa5606e1ed188bbc64b"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/data_modifying_cte_child_policy.py",
+      "sha256": "4ae719c6f5b1644dac910b322b246d48e6d18362cf3b9a72d51307a19b871a3b"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/data_modifying_cte_contracts.py",
+      "sha256": "03e5136d72832d8c65600fe700ebbccf5998f93d7bd7af93996fd356b8106372"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/data_modifying_cte_grammar_analysis.py",
+      "sha256": "29058926ce8a2ce8a7e05219aa83a18e7fc942cfd187bababd17bdbf9e92e484"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/data_modifying_cte_lowering.py",
+      "sha256": "c16ce2711e0763fd429f87a8d381b961f24c7f2ad69f99cd0adff9a8d832fabf"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/data_modifying_cte_ordering.py",
+      "sha256": "f39384a8acd9366ca7f19a244560f78a75d9953d9a15a26cd7374c4c5eb474af"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/data_modifying_cte_overlay.py",
+      "sha256": "588474838782c3815101cecbca5a977f91face9c93f78f8d57e041ebbff0729c"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/data_modifying_cte_projection.py",
+      "sha256": "9a95425d8ca6701ee9fe3be58420c30d83754f8541a9ad3a0453a53115d41fc2"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/data_modifying_cte_results.py",
+      "sha256": "cbc4b84a6a98b1c4d099861f48c71d68c48f4d97b8b581d1b06357770094497e"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/data_modifying_cte_returning.py",
+      "sha256": "45cce9a9c5563f4fad12c7d0a779f85b53365b96086c5eea8302d09dd2f65f74"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/data_modifying_cte_state.py",
+      "sha256": "837ed960541f824476c86c861d1ed3bb6cb557c54a24084fe79ba1c829445e12"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/dependent_read_cte.py",
+      "sha256": "ccedb5ad0fe249ec2b286fe1bc434079a9943696bf3a9c2fa02336d7dc17b893"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/homogeneous_cte.py",
+      "sha256": "fe46aee3724ae111baf73cec7646e54f52645abf942d6d3b1dd716ccd9e1fd71"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/json_aggregation.py",
+      "sha256": "998ef98d2f652ca7d0f07c39232abdb87849bae4c93aa187dfa0de7b28bb3c8a"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/postgres_ddl_batch.py",
+      "sha256": "0cbeae5e6de962031d5f6f0bf62641322eb4932f821a4f53133d065e8216fc14"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/request_value_storage.py",
+      "sha256": "69a6882ac83173b2d0c1544c0533e34680c46cf926606c36d3838a5b5425a22b"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/sqlite_independent_read_fusion.py",
+      "sha256": "e4d50280c404f2a079ad6b855793918ab4b0504cba4ec2b3f1325b788fc988fc"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen/sqlite_read_sibling_batch.py",
+      "sha256": "01c82f5c2b8edbe62b6f0c39f43f3d6a7e7bf6745834514c3351b32fb4638586"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/codegen_provider.py",
+      "sha256": "b5260800c45ef9d9412a358f5890ba662551d72e0a758991248b15e31a74fe21"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/cooperative_async_poll_loop.py",
+      "sha256": "4f66dac7e7ac6bb2eedc2284a533ab2811d16246cc9deb7bd533e7a005586a6f"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/embedding_plan_helpers.py",
+      "sha256": "36eba5ba15d6bbd4b6ed46bd5f5f4b5afc5011459ab2e264b88a000c59f7d8b5"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/embedding_store_scope.py",
+      "sha256": "85e6f4364a6d9981cf60f42814b5247f4ceb59edbcc466a447f2ce284d9ea088"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/execution_context.py",
+      "sha256": "911aedcd349eea0059206df81fe688d80e60b6c885734ad93a0dda36cf43e6f6"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/execution_guard.py",
+      "sha256": "af828d0f04bb5be1e1f92be8d212349759b944c0825d8904816547443ede0dca"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/grammar_plan_types.py",
+      "sha256": "f2214b57076bb5870d7ca82d35aef259159a012511f2b3e6c4bc48dfbae87659"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/grammar_stmt_tables.py",
+      "sha256": "acae679a90654c2980100767b9b4cbd1389c7be9c6bfb11980e5e45d2d5e36a2"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+      "sha256": "b9633d8ce7a0590dc92e57d316748608d749b3643f96c1a75c7366b7ce30af6e"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/hnsw_content_stores.py",
+      "sha256": "ea8a8f5c95cab3c46902ec7ee91c418184c22708e1e1f513a5671a525d3090c6"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/intent_registry.py",
+      "sha256": "04a02abb10fc74525264cf3cf64dd18f7552ad98a91a51ee0570fac0774511e4"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/intent_vector_index_maintenance.py",
+      "sha256": "fecfa90f56990b15b6456a779e177a68ece1e04b318d147ccce2da9fee01ff82"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/lifecycle_effect_dispatch.py",
+      "sha256": "7e31211365cf4b2b0b2ec467128ee2aea5d69267ac600a143b7aa5576e8881d4"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/optimizers/__init__.py",
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/optimizers/dead_branch_elimination.py",
+      "sha256": "f02143d721874101673e9cbd4928fdea7090dc4ec0689bc9e23692ae2ece748d"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/optimizers/dependency_order.py",
+      "sha256": "aba261870236d013ec387f30d1468bdb925aa974e8a99213be16205e955ff910"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/optimizers/inline_staged_commit.py",
+      "sha256": "3144f2293e42d13ed887e12905f6c023ec606f23a29ff562da9adaa3aca4bce0"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/optimizers/inline_staged_delete.py",
+      "sha256": "1b7dd241c4a0a07e29577c939f8975ccd558466df87ffe4e91ec28b2a392f6e8"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/optimizers/native_assertions.py",
+      "sha256": "4b37d7b9553cae75dccd0f0a9734f470c0ddf2da82aa32567b5e91e94ecc2fb7"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/optimizers/permission.py",
+      "sha256": "7d72bbee8ce2a84b659b1b0b532acd5e73bddaf46eb1c726eb42abe62d3f8048"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/optimizers/seeded_constant_facts.py",
+      "sha256": "59db7a17799f59325a4302094165037ba32cdcfa4752a825da4b2fd022202f2e"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/optimizers/session_validation.py",
+      "sha256": "63e821cba8553a06e8bfe690fa08e09580c27653505c48fa5bd7d78071334db7"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/optimizers/staging_bypass.py",
+      "sha256": "512b805094b736981bcdf308597141fed5c1cabe4da06054777b098308d6bb37"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/order_by_ir.py",
+      "sha256": "0193f87a4b889008855f8dd315e5cfea104b50e22fccc4916355e3a16928fbe7"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/order_by_resolver.py",
+      "sha256": "df62e6e5085b3f0391677ced604e9aa95b996cc7c5f630b0926543549a618e34"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/overlay_policy.py",
+      "sha256": "8104599b3fbcbd98dfb3813a83d0475104a48f0bb87638accb4eead63fbf5e80"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+      "sha256": "bc621190321d665710266fdffc395d13684184090f82b063e125c89a464be8e6"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+      "sha256": "f5aa852c8d3879e8b4d6a59947e3c0ffd659fedf555f9cc9037e8a535f6d4481"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+      "sha256": "e77cbf987025c65e8145ebecfe07a6809f652a34b32ce131e04c3b793e9f7f0f"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+      "sha256": "bf01f26b2b566ab77068f7d8191e3752d06c3bab5d9faf97f21dffcc99ea78e4"
+    },
+    {
+      "path": "l2070_batching/conditional_step.py",
+      "sha256": "95b865f2a295007d49ffeff4dfde373850a86a56099b7dc24e0eb7922f25dc65"
+    }
+  ],
+  "expectations": {
+    "serverplan_quality": []
+  }
+}
