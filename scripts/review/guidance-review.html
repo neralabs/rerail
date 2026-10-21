@@ -259,6 +259,7 @@ function sourceHtml(c) {
 function visibleList() { return state.rules.filter(visible); }
 
 function renderReview(id, keepFocus) {
+  const sideTop = document.querySelector(".side")?.scrollTop ?? 0;
   const list = visibleList();
   const rule = state.byId.get(id) ?? list[0] ?? state.rules[0];
   if (!rule) return;
@@ -316,7 +317,7 @@ function renderReview(id, keepFocus) {
     </section></div>`;
   wireControls(focus => renderReview(rule.id, focus));
   if (keepFocus) { const q = $("#q"); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
-  document.querySelector(".side a.cur")?.scrollIntoView({ block: "nearest" });
+  keepInSide(sideTop);
   const save = status => saveDecision(rule, status ?? decisionOf(rule).status);
   $("#approve").addEventListener("click", () => { save("approved"); next(1); });
   document.querySelectorAll(".tagchip").forEach(b => b.addEventListener("click", () => {
@@ -330,6 +331,19 @@ function renderReview(id, keepFocus) {
   $("#comment").addEventListener("input", later);
   document.querySelectorAll("textarea[data-case]").forEach(t => t.addEventListener("input", later));
   window.scrollTo(0, 0);
+}
+
+// The list is rebuilt on every render: put it back where it was, and move it only as far as it takes to show the
+// current rule, inside the list (scrollIntoView would also scroll the page).
+function keepInSide(top) {
+  const side = document.querySelector(".side"), cur = side?.querySelector("a.cur");
+  if (!side) return;
+  side.scrollTop = top;
+  if (!cur) return;
+  const head = side.querySelector(".grp")?.offsetHeight ?? 0;
+  const y = cur.getBoundingClientRect().top - side.getBoundingClientRect().top + side.scrollTop;
+  if (y - head < side.scrollTop) side.scrollTop = y - head;
+  else if (y + cur.offsetHeight > side.scrollTop + side.clientHeight) side.scrollTop = y + cur.offsetHeight - side.clientHeight;
 }
 
 function pickedTags() { return [...document.querySelectorAll(".tagchip[aria-pressed=true]")].map(b => b.dataset.tag); }
