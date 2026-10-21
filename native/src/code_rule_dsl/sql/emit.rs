@@ -1842,7 +1842,10 @@ impl<'s> Emitter<'s> {
             Walk::FieldInside(_, stop) if super::mutant(15) => Walk::Inside(stop),
             walk => walk,
         };
-        let at = "JOIN node fn ON fn.file = f.file AND fn.id = f.node";
+        // Candidate bounds depend on the anchor. Keep frame -> anchor -> candidate order
+        // so the node cursor receives parent and range constraints when it opens. Ordinary
+        // joins can start at global kind postings and revisit every frame in the file.
+        let at = "CROSS JOIN node fn ON fn.file = f.file AND fn.id = f.node";
         let direct = matches!(
             walk,
             Walk::Has(Stop::Neighbor | Stop::End)
@@ -1891,7 +1894,7 @@ impl<'s> Emitter<'s> {
                 }
             )),
             Walk::Has(Stop::End) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.id > f.node AND c.id <= fn.\"last\"{c}"
+                "{at} CROSS JOIN node c ON c.file = f.file AND c.id > f.node AND c.id <= fn.\"last\"{c}"
             )),
             // A rule stop's walks read the stop set `S` through `nearest` (no recursion). `has`
             // visits a descendant `c` of `f` where no node strictly between them is in `S`: where
@@ -1912,7 +1915,7 @@ impl<'s> Emitter<'s> {
                 nearest::set_of("c", stage, "f.file")
             )),
             Walk::Inside(Stop::Neighbor) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.id = fn.parent{c}"
+                "{at} CROSS JOIN node c ON c.file = f.file AND c.id = fn.parent{c}"
             )),
             Walk::Inside(Stop::End) => simple(&format!(
                 "JOIN node c ON c.file = f.file AND c.id < f.node AND c.\"last\" >= f.node{c}"
@@ -1924,10 +1927,10 @@ impl<'s> Emitter<'s> {
                 nearest::set_of("nf", stage, "f.file")
             )),
             Walk::Precedes(Stop::Neighbor) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.id = fn.next{c}"
+                "{at} CROSS JOIN node c ON c.file = f.file AND c.id = fn.next{c}"
             )),
             Walk::Precedes(Stop::End) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id >= fn.anext{c}"
+                "{at} CROSS JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id >= fn.anext{c}"
             )),
             // The sibling walks end at the first node in `S` of their chain, inclusive.
             Walk::Precedes(Stop::Rule(stage)) => simple(&format!(
@@ -1937,10 +1940,10 @@ impl<'s> Emitter<'s> {
                 nearest::set_of("na", stage, "f.file")
             )),
             Walk::Follows(Stop::Neighbor) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.id = fn.prev{c}"
+                "{at} CROSS JOIN node c ON c.file = f.file AND c.id = fn.prev{c}"
             )),
             Walk::Follows(Stop::End) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id <= fn.aprev{c}"
+                "{at} CROSS JOIN node c ON c.file = f.file AND c.parent = fn.wpar AND c.id <= fn.aprev{c}"
             )),
             Walk::Follows(Stop::Rule(stage)) => simple(&format!(
                 "{at} CROSS JOIN nearest na ON {} AND na.id = fn.aprev \
@@ -1976,7 +1979,7 @@ impl<'s> Emitter<'s> {
                 )
             }
             Walk::FieldInside(field, Stop::Neighbor) => simple(&format!(
-                "{at} JOIN node c ON c.file = f.file AND c.id = fn.parent{c} WHERE fn.field = {field} AND fn.ffirst = 1"
+                "{at} CROSS JOIN node c ON c.file = f.file AND c.id = fn.parent{c} WHERE fn.field = {field} AND fn.ffirst = 1"
             )),
             Walk::FieldInside(field, Stop::End) => simple(&format!(
                 "JOIN node w ON w.file = f.file AND w.id <= f.node AND w.\"last\" >= f.node \

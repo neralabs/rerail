@@ -5,7 +5,9 @@ The clearest improvement is a bounded, anchor-first join for the expensive sibli
 Additional CTE materialization and frame copies usually cost more than they save.
 `ANALYZE` does not correct the virtual-input plans in these captures.
 
-All alternatives are under `cfg(test)`.
+The comparison alternatives remain under `cfg(test)`.
+The compiler now adopts anchor-first cross joins for dependent candidate walks.
+The [addon results](sql-anchor-first-results.md) report the implementation and whole-workload comparison.
 The addon retains one SQL implementation and gains no runtime switches.
 The statement hook is also absent from production builds.
 

@@ -1054,4 +1054,6 @@ It includes live-frame replay and 51 fresh-process workspace runs with complete 
 Explicit dependency order gives the hot sibling walk a bounded parent/range plan.
 The broader prototype reduces median apply CPU by approximately 3% on both tested corpora.
 Additional materialization and statistics do not close the remaining performance gap.
-All alternatives remain test-only experiments, with no new addon switches.
+The comparison alternatives remain test-only experiments.
+The compiler now adopts the preferred join order, with no new addon switches.
+The [addon results](sql-anchor-first-results.md) report its effect on total workload CPU and the remaining engine gap.

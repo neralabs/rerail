@@ -10,6 +10,41 @@ use crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE;
 use serde_json::json;
 
 #[test]
+fn sibling_candidates_read_the_anchor_before_the_candidate_postings() {
+    use crate::code_rule_dsl::sql::profiling::frame_counts;
+
+    let blocks = 64;
+    let source =
+        format!("{{ marker(a); target(a); {} }}\n", "decoy(a); ".repeat(12)).repeat(blocks);
+    for axis in ["precedes", "follows"] {
+        for three in [false, true] {
+            let mut rule = json!({
+                "kind": "expression_statement", "regex": "^target",
+                axis: { "stopBy": "end", "kind": "expression_statement", "pattern": "$X" }
+            });
+            if three {
+                rule["all"] = json!([{ "testUnknown": "^never$" }]);
+            }
+            let (found, work) =
+                frame_counts(|| agreed("typescript", json!({ "rule": rule }), &source));
+            let capture = if axis == "follows" {
+                "marker(a);"
+            } else {
+                "decoy(a);"
+            };
+            assert_eq!(found, vec![format!("target(a); X={capture}"); blocks]);
+            // The file contains many candidates with other parents. Starting with global
+            // candidate postings would revisit the anchor frames for every such candidate.
+            assert!(
+                work[2] > 0 && work[2] < (blocks * 80) as u64,
+                "{axis}, three={three}: {} frame advances for {blocks} anchors",
+                work[2]
+            );
+        }
+    }
+}
+
+#[test]
 fn shared_search_preserves_outer_captures_and_commits_the_first_inner_capture() {
     for three in [false, true] {
         let mut ast = json!({ "rule": {
