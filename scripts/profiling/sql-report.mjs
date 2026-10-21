@@ -14,7 +14,7 @@ const applyCpuMs = parity?.phaseCpuMs ? Object.entries(parity.phaseCpuMs)
 const passed = profile.exitCode !== 0 || profile.timedOut ? false : parity ?
   ["falsePositives", "falseNegatives", "failures", "incrementalDifferences"].every(key => Array.isArray(parity[key]) && parity[key].length === 0) : undefined;
 const workload = {
-  source: { branch: "jeremy/sql-capture-demand-spikes", commit: "5efcb830dcc2b75eb05f803ef9e7082f0e29d603" },
+  source: profile.source ?? { note: "Source identity was not captured by this historical run." },
   executor: "relational", command: profile.command, nativeSha256: parity?.nativeSha256,
   workloadSha256: parity?.workloadSha256, policyDigests: parity?.policyDigests,
   allocator: parity?.allocator, phaseCpuMs: parity?.phaseCpuMs,

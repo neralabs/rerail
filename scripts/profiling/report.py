@@ -39,6 +39,9 @@ def aggregate(log):
                 if isinstance(value, (int, float)):
                     row["counters"][name] += value
     return {"traceEvents": len(events), "applies": applies, "parseErrors": parse_errors, "phaseMarkers": markers,
+            "inputQueues": [{"runPhase": event["runPhase"], "cpuMs": (event.get("cpuNs") or 0) / 1e6,
+                             "startUnixUs": event["startUnixUs"], **(event.get("detail") or {})}
+                            for event in events if event["phase"] == "input-preparation"],
             "spans": sorted(grouped.values(), key=lambda row: -row["wallMs"])}, events
 
 
@@ -54,16 +57,32 @@ def phase_overlap(markers, start_us, end_us):
     return rows
 
 
-def chrome_trace(events):
+def chrome_trace(events, process_rows=()):
     threads = {name: index + 1 for index, name in enumerate(sorted({event["thread"] for event in events}))}
     return {"traceEvents": [{"name": event["name"], "cat": event["phase"], "ph": "X", "pid": 1,
                             "tid": threads[event["thread"]], "ts": event["startUnixUs"], "dur": event["wallNs"] / 1000,
                             "args": {key: event.get(key) for key in ["rule", "clause", "path", "runPhase", "cpuNs", "detail"]}}
-                           for event in events], "displayTimeUnit": "ms"}
+                           for event in events] + [
+        {"name": "Process tree", "ph": "C", "pid": 1, "tid": 0, "ts": row["unixUs"],
+         "args": {"rootRssMiB": row["rootRssBytes"] / 1048576, "treeRssMiB": row["treeRssBytes"] / 1048576,
+                  "treeCpuSecondsLowerBound": row["treeCpuSecondsLowerBound"]}} for row in process_rows], "displayTimeUnit": "ms"}
 
 
 def summary(report):
     lines = [f"Elapsed: {report['elapsedSeconds']:.3f}s; exit: {report['exitCode']}; timeout: {report['timedOut']}"]
+    if "process" in report:
+        process = report["process"]
+        lines += [f"Sampled process tree: CPU >= {process['treeCpuSecondsLowerBound']:.3f}s; peak summed RSS {process['peakTreeRssBytes']} bytes; {process['samples']} samples.", process["note"]]
+    fields = [row["fieldLookups"] for row in report["native"].get("applies", []) if row.get("fieldLookups", {}).get("calls", 0)]
+    if fields:
+        lines += [f"Field navigation: {sum(row['calls'] for row in fields)} lookups; {sum(row['childrenExamined'] for row in fields)} child examinations; {sum(row['missChildrenExamined'] for row in fields)} examinations in failed lookups; maximum scan {max(row['maxScan'] for row in fields)}."]
+    for queue in report["native"].get("inputQueues", []):
+        memory = queue.get("ownership")
+        if memory is None:
+            continue
+        lines += [f"Input queue ({queue['runPhase']}): {queue['jobs']} jobs; {memory['witnesses']} rows; {memory['projection']['objectEntries']} JSON fields; {memory['ownedBytesEstimate'] + memory['projection']['heapBytesEstimate']} referenced bytes estimated before SQL admission."]
+    for snapshot in report.get("memorySnapshots", []):
+        lines += [f"Memory snapshot: {snapshot['file']}; exit={snapshot.get('exitCode')}; error={snapshot.get('error')}"]
     if report["native"].get("parseErrors"):
         lines += [f"Warning: {len(report['native']['parseErrors'])} malformed or interleaved profiling lines; see stderr.log."]
     if "parity" in report:
@@ -71,6 +90,13 @@ def summary(report):
         lines += [f"Files: {parity['files']}; bytes: {parity['bytes']}; peak RSS: {parity['peakRssBytes']}"]
         lines += [" / ".join(f"{key}={parity[key]:.3f}ms" if parity[key] is not None else f"{key}=not measured" for key in ["compilationMs", "coldMs", "unchangedFileMs", "editedFileMs"])]
         lines += [f"Process CPU per phase (ms): {parity.get('phaseCpuMs', 'unavailable')}"]
+        for phase in ["file-inputs", "global-results"]:
+            rows = [row for row in parity.get("applies", []) if row["phase"] == phase]
+            if rows:
+                lines += [f"  {phase}: {sum(row['cpuMs'] for row in rows):.3f}ms CPU across {len(rows)} applies; peak boundary RSS {max(row['rssBytes'] for row in rows)} bytes."]
+        for checkpoint in parity.get("memoryCheckpoints", []):
+            ownership = checkpoint["workspace"].get("ownership", {})
+            lines += [f"  Census {checkpoint['phase']}: {ownership.get('witnesses')} witness references; {ownership.get('uniqueProjections')} unique projections; {ownership.get('projection', {}).get('objectEntries')} JSON fields; census CPU {checkpoint['censusCpuMs']:.3f}ms."]
         lines += [f"Parity: expected={parity['expected']} actual={parity['actual']} FP={len(parity['falsePositives'])} FN={len(parity['falseNegatives'])} failures={len(parity['failures'])} incremental differences={len(parity['incrementalDifferences'])}"]
     lines += ["", "Leaf span totals (worker wall sums; exclude parent spans; can overlap across threads):"]
     totals = collections.defaultdict(float)

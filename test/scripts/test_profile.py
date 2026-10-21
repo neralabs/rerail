@@ -14,9 +14,59 @@ from report import aggregate, chrome_trace, phase_overlap
 from run import recording_from_source, select_recording
 from sample import bottom_up
 from compare import compare
+from process import cpu_seconds, parse_ps, ProcessMonitor
+from oracle import compare_snapshot, workload_digest
+from unittest.mock import patch
 
 
 class ProfileTests(unittest.TestCase):
+    def test_cross_runtime_comparison_preserves_missing_files_and_duplicate_findings(self):
+        from copy import deepcopy
+        rows = [{"path": "a.py", "source": "pass"}]
+        recording = {"commit": "pin", "files": rows, "events": [{"check": "required", "findings": []}]}
+        key = '["data-layer-required","absent.py",1,"missing"]'
+        profile = {"exitCode": 1, "timedOut": False, "parity": {"commit": "pin", "expected": 0, "actual": 2,
+                   "falsePositives": [key, key], "falseNegatives": [], "failures": [], "incrementalDifferences": [],
+                   "phaseCpuMs": {"cold": {"userMs": 20, "systemMs": 1}}, "peakRssBytes": 2000, "nativeSha256": "binary"}}
+        profile["parity"]["workloadSha256"] = workload_digest(recording)
+        oracle = {"commit": "pin", "source_mismatches": [], "files": rows, "workers": 1, "oracle_cpu_ms": 3,
+                  "peak_rss_bytes": 1000, "events": [{"check": "required", "findings": [{"path": "absent.py", "line": 1, "code": "missing"}] * 2}]}
+        result = compare_snapshot(profile, recording, oracle)
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["nativeToPythonCpuRatio"], 7)
+        different = deepcopy(oracle)
+        different["files"] = [{"path": "a.py", "source": "different"}]
+        with self.assertRaisesRegex(ValueError, "Source files differ"): compare_snapshot(profile, recording, different)
+        different = deepcopy(oracle)
+        different["events"][0]["findings"].pop()
+        self.assertEqual(len(compare_snapshot(profile, recording, different)["falsePositives"]), 1)
+
+    def test_process_cpu_and_rss_units(self):
+        self.assertEqual(cpu_seconds("2-03:04:05.50"), 183845.5)
+        self.assertAlmostEqual(cpu_seconds("01:02.03"), 62.03)
+        rows = parse_ps(" 10 1 2048 4096 00:01.50 /path with spaces/node\n")
+        self.assertEqual(rows[10]["rssBytes"], 2097152)
+        self.assertEqual(rows[10]["command"], "/path with spaces/node")
+
+    def test_chrome_trace_adds_memory_counters_at_process_sample_times(self):
+        result = chrome_trace([], [{"unixUs": 123, "rootRssBytes": 1048576, "treeRssBytes": 2097152,
+                                    "treeCpuSecondsLowerBound": 2.5}])
+        event = result["traceEvents"][0]
+        self.assertEqual((event["ts"], event["ph"], event["args"]["treeRssMiB"]), (123, "C", 2))
+
+    def test_process_tree_keeps_exited_worker_cpu_without_counting_unrelated_tasks(self):
+        from types import SimpleNamespace
+        snapshots = ["10 1 100 200 00:01 node\n12 11 30 40 00:03 child\n11 10 20 30 00:02 worker\n99 1 90 100 00:50 other\n",
+                     "10 1 110 200 00:02 node\n"]
+        with tempfile.TemporaryDirectory() as directory, patch("process.subprocess.run", side_effect=[SimpleNamespace(stdout=row) for row in snapshots]):
+            monitor = ProcessMonitor(10, Path(directory) / "process.jsonl")
+            monitor.sample(10)
+            monitor.sample(10)
+            report = monitor.report()
+        self.assertEqual(report["treeCpuSecondsLowerBound"], 7)
+        self.assertEqual(report["peakTreeRssBytes"], 150 * 1024)
+        self.assertEqual(report["processesSeen"], 3)
+
     def test_comparison_rejects_a_different_binary_or_failed_parity(self):
         import copy
         parity = {"commit":"pin", "files":1, "bytes":10, "workloadSha256":"workload", "nativeSha256":"binary", "policyDigests":{}, "allocator":"system",
@@ -155,6 +205,15 @@ Total number in stack (recursive counted multiple, when >=5):
         selection["files"][0]["sha256"] = "wrong"
         with self.assertRaisesRegex(ValueError, "hash mismatch"):
             select_recording(recording, selection)
+
+    def test_snapshot_expectations_keep_missing_file_diagnostics(self):
+        recording = {"commit": "pin", "source_mismatches": [], "files": [{"path": "a.py", "source": "pass"}],
+                     "events": [{"check": "required", "findings": []}]}
+        expected = [{"path": "missing.py", "line": 1, "code": "required-file"}]
+        selection = {"commit": "pin", "checks": ["required"],
+                     "files": [{"path": "a.py", "sha256": hashlib.sha256(b"pass").hexdigest()}],
+                     "expectations": {"required": expected}}
+        self.assertEqual(select_recording(recording, selection)["events"][0]["findings"], expected)
 
     def test_deadline_kills_worker_and_retains_report(self):
         with tempfile.TemporaryDirectory() as temporary:

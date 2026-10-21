@@ -17,8 +17,10 @@ const pageSchema = z.object({ done: z.boolean(), cursor: z.number(),
   failures: z.array(z.unknown()),
 });
 const { values } = parseArgs({ options: { recording: { type: "string" }, output: { type: "string" }, allocator: { type: "string", default: "unspecified" },
-  policies: { type: "string", default: "packs/data-layer/candidates/rules" }, progress: { type: "boolean", default: false }, "cold-only": { type: "boolean", default: false } } });
+  policies: { type: "string", default: "packs/data-layer/candidates/rules" }, progress: { type: "boolean", default: false }, "cold-only": { type: "boolean", default: false }, "memory-census": { type: "boolean", default: false }, "batch-files": { type: "string", default: "32" } } });
 if (values.recording === undefined || values.output === undefined) throw new Error("Usage: suite.ts --recording <json> --output <json>");
+const batchFiles = Number(values["batch-files"]);
+if (!Number.isInteger(batchFiles) || batchFiles < 1 || batchFiles > 2048) throw new Error("--batch-files must be an integer between 1 and 2048");
 const recording = recordingSchema.parse(JSON.parse(readFileSync(values.recording, "utf8")));
 const workloadSha256 = createHash("sha256").update(JSON.stringify({ commit: recording.commit, files: recording.files, events: recording.events })).digest("hex");
 if (recording.source_mismatches.length !== 0) throw new Error("Pinned source verification failed");
@@ -28,6 +30,16 @@ const workspace = new native.CodeRuleDslWorkspace();
 const policyDigests: Record<string, string> = {};
 const policyCompilationMs: Record<string, number> = {};
 const phaseCpuMs: Record<string, { userMs: number; systemMs: number }> = {};
+const memoryCheckpoints: unknown[] = [];
+const applies: { revision: number; phase: string; files: number; sourceBytes: number; wallMs: number; cpuMs: number; rssBytes: number; heapUsed: number; external: number; arrayBuffers: number }[] = [];
+const memoryCheckpoint = (phase: string): void => {
+  if (!values["memory-census"]) return;
+  const cpu = process.cpuUsage(), started = performance.now();
+  const workspaceMemory: unknown = JSON.parse(workspace.memoryProfile());
+  const elapsed = process.cpuUsage(cpu);
+  memoryCheckpoints.push({ phase, revision, process: process.memoryUsage(), workspace: workspaceMemory,
+    censusWallMs: performance.now() - started, censusCpuMs: (elapsed.user + elapsed.system) / 1000 });
+};
 const finishCpu = (phase: string, started: NodeJS.CpuUsage): void => {
   const elapsed = process.cpuUsage(started);
   phaseCpuMs[phase] = { userMs: elapsed.user / 1000, systemMs: elapsed.system / 1000 };
@@ -39,8 +51,14 @@ const files = recording.files.map(file => ({ ...file, language: file.path.endsWi
 let revision = 0;
 let loadedFiles = 0;
 const send = async (batchFiles: typeof files, deferGlobal: boolean): Promise<void> => {
+  const cpu = process.cpuUsage(), started = performance.now();
   await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: ++revision, files: batchFiles, removed: [], quiet: true, deferGlobal }));
   loadedFiles += batchFiles.length;
+  const elapsed = process.cpuUsage(cpu), memory = process.memoryUsage();
+  applies.push({ revision, phase: deferGlobal ? "file-inputs" : "global-results", files: batchFiles.length,
+    sourceBytes: batchFiles.reduce((sum, file) => sum + Buffer.byteLength(file.source), 0),
+    wallMs: performance.now() - started, cpuMs: (elapsed.user + elapsed.system) / 1000,
+    rssBytes: memory.rss, heapUsed: memory.heapUsed, external: memory.external, arrayBuffers: memory.arrayBuffers });
   if (values.progress) console.error(JSON.stringify({ phase: deferGlobal ? "file-inputs" : "global-results", loadedFiles, revision, rssBytes: process.memoryUsage().rss }));
 };
 const collect = async (): Promise<{ violations: z.infer<typeof pageSchema>["violations"]; failures: unknown[] }> => {
@@ -79,11 +97,14 @@ try {
   for (const file of files) {
     batch.push(file);
     bytes += Buffer.byteLength(file.source);
-    if (batch.length >= 32 || bytes >= 1024 * 1024) { await send(batch, true); batch = []; bytes = 0; }
+    if (batch.length >= batchFiles || bytes >= 1024 * 1024) { await send(batch, true); batch = []; bytes = 0; }
   }
   if (batch.length > 0) await send(batch, true);
+  memoryCheckpoint("inputs-retained");
   await send([], false);
+  memoryCheckpoint("global-complete");
   const { violations, failures } = await collect();
+  memoryCheckpoint("results-paged");
   const coldMs = performance.now() - started;
   finishCpu("cold", coldCpu);
   const file = files.find(file => file.path === "impl/common/l2200_sql_dialect/sql_connection.py") ?? files[0]!;
@@ -106,6 +127,7 @@ try {
     incrementalResults.push({ phase: "trailing-newline-edit", result: editedResult });
   }
   markPhase("report");
+  if (values["memory-census"]) { workspace.close(); memoryCheckpoint("workspace-closed"); }
   const expected = recording.events.flatMap(event => event.findings.map(f => JSON.stringify([`data-layer-${event.check.replaceAll("_", "-")}`, f.path, f.line, f.code]))).sort();
   const actual = findingKeys(violations);
   const difference = (a: string[], b: string[]) => { const rest = [...b]; return a.filter(key => { const at = rest.indexOf(key); if (at < 0) return true; rest.splice(at, 1); return false; }); };
@@ -120,7 +142,8 @@ try {
     incrementalDifferences, phaseCpuMs, measuredPhases: Object.keys(phaseCpuMs), workloadSha256,
     expected: expected.length, actual: actual.length, falsePositives: difference(actual, expected), falseNegatives: difference(expected, actual), failures,
     peakRssBytes: process.resourceUsage().maxRSS * 1024,
-    allocator: values.allocator, policies: values.policies, nativeSha256, nativeWorkers: 4 };
+    allocator: values.allocator, policies: values.policies, nativeSha256, nativeWorkers: 4,
+    batchFiles, applies, memoryCheckpoints, measurementNote: "Phase CPU includes explicit census overhead when --memory-census is supplied. Reference timings must omit this option." };
   writeFileSync(values.output, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ...report, falsePositives: report.falsePositives.length, falseNegatives: report.falseNegatives.length, failures: failures.length, incrementalDifferences: incrementalDifferences.length }, null, 2));
   if (report.falsePositives.length + report.falseNegatives.length + failures.length + incrementalDifferences.length !== 0) process.exitCode = 1;

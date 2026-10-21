@@ -12,8 +12,6 @@ use super::ingest::{
     Request, apply_request, decode_buffer_request, file_needs_update, inline_input, is_cheap,
     is_file_local, make_file, reclaim_candidate_sets,
 };
-#[cfg(feature = "code-rule-profile")]
-use super::memory::record_workspace_residency;
 use super::memory::workspace_memory_profile;
 use super::persisted::{Persisted, candidate_catalog, persist_files};
 use super::results::{
@@ -1161,8 +1159,6 @@ impl WorkspaceApplyTask {
             }
         }
         check_closed(&self.closed)?;
-        #[cfg(feature = "code-rule-profile")]
-        record_workspace_residency(&state);
         if quiet {
             let profile = metrics.clone();
             let serialization_started = Instant::now();

@@ -3,8 +3,9 @@
 The [performance journal](data-layer-performance-journal.md) records the current baseline and the experiment decisions.
 The measured-results section in this document preserves the original profiling investigation.
 
-Rerail's data-layer workload spends most evaluation time constructing SQL relations and indexes.
-The same relations recur across clauses. File partitions also execute serially in the global evaluator.
+The original investigation identified repeated SQL relations and indexes.
+The latest CPU and memory investigation also identifies large input queues and repeated AST field scans.
+The journal distinguishes these measurements and their build conditions.
 
 The profiling command records these costs by rule, clause, file, input, and stage.
 It can attach macOS `sample` and produce a bottom-up report from the captured call trees.
@@ -32,7 +33,9 @@ npm run profile:code-rule-dsl -- \
 
 The selections require source commit `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The harness checks every selected source hash before evaluation.
-The selection contains findings filtered mechanically from the verified repository recording.
+An explicit selection contains findings for that exact snapshot.
+Missing required files can produce diagnostics outside the input file list; these diagnostics remain in the comparison.
+Filtering repository findings cannot establish parity for a smaller project snapshot.
 Source construction therefore needs no full recording or Python environment.
 Alternatively, pass `--recording <repository-recording.json>` with the selection.
 
@@ -109,6 +112,90 @@ Other drivers can emit `RERAIL_PROFILE_PHASE {"phase":"cold"}` on stderr to sepa
 Use `--cold-only` to omit incremental phases. Their timings then remain null.
 Use `--trace off` to disable attributed spans on the same binary.
 This switch retains existing aggregate instrumentation in a profiling build.
+Automatic workspace residency scans have been removed.
+Use an explicit census when ownership estimates are needed.
+
+## Measure CPU and memory
+
+Every run writes process-tree samples to `process.jsonl`.
+Samples include RSS, virtual size, cumulative CPU, and worker identities.
+`--process-every` sets the sampling interval; its default is 0.5 seconds.
+Sampled CPU is a lower bound because short worker lifetimes and final intervals can be missed.
+Summed RSS counts shared pages in each process.
+Driver CPU and peak RSS remain the reference measurements for a single process.
+
+The driver also records CPU, elapsed time, RSS, JavaScript heap, and external buffers after each apply.
+These records distinguish file ingestion from global preparation and SQL execution.
+The Chrome trace includes process CPU and RSS counters alongside native spans.
+
+Run a diagnostic capture:
+
+```sh
+npm run profile:code-rule-dsl -- \
+  --source /path/to/pinned/nera-data-layer \
+  --selection fixtures/host/data-layer-port/profiling/quality-memory-sixty-four.json \
+  --cold-only --memory-census --memory-tool vmmap \
+  --external sample --sample-every 2 --sample-count 3 \
+  --output .rerail/profiles/quality-memory
+```
+
+`--memory-tool heap` records allocation size distributions instead.
+Both tools require macOS and can pause the target during capture.
+Each snapshot has an eight-second limit.
+`--memory-every` and `--memory-count` bound snapshot frequency and count.
+Large virtual mappings do not establish physical memory consumption.
+
+`--memory-census` records ownership before global evaluation, after evaluation, after paging, and after workspace closure.
+It counts shared projection values once across file results and evidence partitions.
+JSON field counts and string lengths are exact traversal counts.
+Heap sizes are estimates; map capacity and allocator overhead remain unmeasured.
+Legacy serialized-size estimates remain available and can count shared payloads repeatedly.
+Census CPU appears separately in each checkpoint and is included in the diagnostic cold phase.
+
+Tracing records the complete projected input queue before SQL admission.
+Its counters include rows, unique projections, JSON fields, referenced syntax objects, and estimated payload sizes.
+These categories can share storage with the workspace and document cache.
+Their sum is not exclusive process RSS.
+Tracing also counts AST field lookups, child examinations, failed lookups, and maximum scan length.
+Counters use thread-local storage and merge at existing worker boundaries.
+
+For timing controls, omit census, external snapshots, and SQL capture; set `--trace off`.
+`--batch-files` varies ingestion request size without changing the engine algorithm.
+The default remains 32 files, with the existing 1 MiB source ceiling.
+Comparisons reject different ingestion sizes and diagnostic modes.
+
+## Compare the Python oracle
+
+The upstream recorder supports restricted sixth-batch plans through `--selection`.
+It verifies source hashes and retains project-fact metadata files.
+Include those files in the native snapshot for an identical-input comparison.
+The twelve-file memory selection already includes its metadata file.
+
+The recorder reports process CPU, waited-for child CPU, peak parent RSS, and upstream extractor metrics.
+Use one Python worker for the cross-runtime RSS comparison.
+`--cpu-profile` writes a diagnostic cProfile file for the calling thread; collector worker CPU remains in upstream metrics.
+The comparison command rejects cProfile runs and native diagnostic captures.
+
+```sh
+/path/to/data-layer/.venv/bin/python scripts/dsl/data_layer_suite_record.py \
+  --source /path/to/pinned/nera-data-layer \
+  --repo /path/to/pinned/nera-data-layer --batches 6 --workers 1 \
+  --selection fixtures/host/data-layer-port/profiling/batch-six-memory-twelve.json \
+  --output .rerail/profiles/python-oracle.json
+
+python3 scripts/profiling/oracle.py .rerail/profiles/native-control \
+  .rerail/profiles/python-oracle.json \
+  --output .rerail/profiles/cross-runtime.json
+```
+
+Run the recorder through the bounded controller when a command deadline is required.
+Use a clean pinned checkout: repository fingerprinting includes staged and working-tree differences, even when the fact cache is disabled.
+For restricted state plans, generated-file freshness remains a separately recorded upstream integration contract.
+The source comparison uses the unchanged upstream fact conversion and signed allowlist functions.
+This preserves the [existing sixth-batch boundary](data-layer-batch-six.md#corpus-and-comparison).
+
+The comparison verifies exact file hashes, rule sets, finding multiplicity, and missing-file diagnostics.
+It can reconcile a timed native run against a corrected snapshot oracle without modifying the original timing report.
 
 SQLite input insertion uses batches of up to 32 rows in ordinary builds.
 AST evidence and reference edges use the same insertion helper.

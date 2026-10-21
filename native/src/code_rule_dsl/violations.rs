@@ -959,6 +959,15 @@ pub(crate) struct Captures {
 }
 
 impl Captures {
+    pub(crate) fn owned_heap_bytes(&self) -> usize {
+        self.spans.capacity() * std::mem::size_of::<(Box<str>, Vec<Span>)>()
+            + self
+                .spans
+                .iter()
+                .map(|(name, spans)| name.len() + spans.capacity() * std::mem::size_of::<Span>())
+                .sum::<usize>()
+    }
+
     pub(crate) fn from_spans(spans: BTreeMap<String, Vec<Span>>) -> Self {
         Self {
             spans: spans

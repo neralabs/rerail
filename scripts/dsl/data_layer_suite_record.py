@@ -11,6 +11,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import resource
+import hashlib
+from dataclasses import replace
 
 from data_layer_record import BATCH_ONE, blob_id
 from data_layer_batch_two import BATCH_TWO
@@ -29,6 +32,8 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--batches", default="1", help="Comma-separated batch numbers, currently 1 through 6.")
     parser.add_argument("--checks", help="Optional comma-separated subset of the selected batches")
+    parser.add_argument("--selection", type=Path, help="Pinned profiling file/check selection; preserve project-fact metadata sentinels")
+    parser.add_argument("--cpu-profile", type=Path, help="Optional cProfile output for oracle execution; adds measurement overhead")
     args = parser.parse_args()
     root = args.source.resolve()
     sys.path.insert(0, str(root))
@@ -68,6 +73,27 @@ def main() -> None:
             extractors.update(factory(root))
     engine = FactEngine(root=root, fact_store=JsonFactStore(Path(tempfile.mkdtemp(prefix="rerail-dl-facts-"))),
                         extractors=extractors, enable_fact_cache=False)
+    selection = json.loads(args.selection.read_text()) if args.selection else None
+    metadata_files = set()
+    if selection is not None:
+        if any(name not in BATCH_SIX for name in names):
+            parser.error('Restricted profiling plans currently support batch-six plugins only; other project extractors can read outside the plan')
+        if selection['commit'] != args.revision or set(selection['checks']) != set(names):
+            parser.error('Selection commit/checks must match the oracle invocation')
+        selected_paths = {(root / item['path']).resolve() for item in selection['files']}
+        if not selected_paths or len(selected_paths) != len(selection['files']) or any(not path.is_relative_to(root) for path in selected_paths):
+            parser.error('Selection requires distinct files within the source root')
+        for item in selection['files']:
+            if hashlib.sha256((root / item['path']).read_bytes()).hexdigest() != item['sha256']:
+                raise ValueError('Selection source hash mismatch: ' + item['path'])
+        original_plan = engine.plan
+        def selected_plan(selected_plugins):
+            plan = original_plan(selected_plugins)
+            sentinels = {path for path, specs in plan.facts_by_file.items() if any(spec.project_input_facts for spec in specs)}
+            metadata_files.update(sentinels - selected_paths)
+            paths = tuple(path for path in plan.files if path in selected_paths or path in sentinels)
+            return replace(plan, files=paths, facts_by_file={path: plan.facts_by_file[path] for path in paths})
+        engine.plan = selected_plan
     plans = {plugin.name: engine.plan([plugin]) for plugin in plugins}
     missing = {spec.extractor_id for plan in plans.values() for spec in plan.required_facts
                if spec.extractor_id.split(".")[0] in (*BATCH_THREE, *BATCH_FOUR) and spec.extractor_id not in extractors}
@@ -103,12 +129,43 @@ def main() -> None:
         captured.append(view)
         return view
     engine.materialize = observe
+    profiler = None
+    if args.cpu_profile:
+        import cProfile
+        profiler = cProfile.Profile()
+        profiler.enable()
     started = time.perf_counter()
+    cpu_started = time.process_time()
+    children_started = resource.getrusage(resource.RUSAGE_CHILDREN)
     results = engine.run_plugins(plugins, max_workers=args.workers)
     oracle_ms = (time.perf_counter() - started) * 1000
+    children_finished = resource.getrusage(resource.RUSAGE_CHILDREN)
+    oracle_cpu_ms = (time.process_time() - cpu_started + children_finished.ru_utime + children_finished.ru_stime
+                     - children_started.ru_utime - children_started.ru_stime) * 1000
+    if profiler:
+        profiler.disable()
+        profiler.dump_stats(str(args.cpu_profile))
     events = []
     reporter_results = []
     for result in results:
+        if selection is not None and result.name == 'serverplan_state_tripwires':
+            # Generated-file freshness is an upstream integration contract, as documented in
+            # docs/data-layer-batch-six.md. A restricted view necessarily changes that digest.
+            # Keep the reporter observation and compare its unchanged source/allowlist path.
+            module = importlib.import_module('scripts.lint_serverplan_state_tripwires')
+            reporter_results.append({'check': result.name, 'contract': 'generated-artifact freshness and aggregate reporters remain upstream integration contracts',
+                'findings': [{'path': v.path.as_posix(), 'line': v.line, 'code': v.code, 'message': v.message} for v in result.violations]})
+            spec = module._serverplan_state_tripwire_spec(root)
+            violations = [violation for bundle in captured[0].files.values()
+                          for raw in bundle.facts.get(spec.extractor_id, [])
+                          if (violation := module._violation_from_fact(raw)) is not None]
+            violations = module._filter_signed_python_work_allowlist(violations)
+            current, _stale = module._evaluate_against_allowlist(violations, module._load_allowlist())
+            events.append({'test': 'suite:' + result.name, 'call': 1, 'check': result.name,
+                           'entry': 'source-facts-and-upstream-signed-allowlists', 'input_mode': 'suite',
+                           'findings': [{'path': v.file.relative_to(root).as_posix() if v.file.is_absolute() else v.file.as_posix(),
+                                         'line': v.line, 'code': v.code, 'message': v.message} for v in current]})
+            continue
         if result.name == 'public_api_triples':
             reporter_results.append({'check':result.name, 'contract':'signed total baseline reporter; retained upstream',
                 'findings':[{'path':v.path.as_posix(),'line':v.line,'code':v.code,'message':v.message} for v in result.violations]})
@@ -152,7 +209,13 @@ def main() -> None:
     output = {"format": "rerail.data-layer-recording/v1", "commit": args.revision, "source_mismatches": mismatches,
               "checks": names, "batches": batch_ids, "retained_reporter_contracts": reporter_results,
               "pytest_exit_code": 0, "collected_tests": 0, "uncaptured_tests": [], "events": events,
-              "oracle_ms": (time.perf_counter() - started) * 1000, "oracle_profile": engine.last_profile_metrics,
+              "oracle_ms": oracle_ms, "oracle_cpu_ms": oracle_cpu_ms, "oracle_profile": engine.last_profile_metrics,
+              "oracle_total_cpu_ms": (time.process_time() - cpu_started + resource.getrusage(resource.RUSAGE_CHILDREN).ru_utime
+                                      + resource.getrusage(resource.RUSAGE_CHILDREN).ru_stime - children_started.ru_utime - children_started.ru_stime) * 1000,
+              "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == 'darwin' else 1024),
+              "profiled": profiler is not None, "selection": selection,
+              "metadata_files": sorted(path.relative_to(root).as_posix() for path in metadata_files),
+              "measurement_note": "Oracle CPU covers run_plugins including waited-for child workers. Peak RSS covers this process only. Restricted plans retain project-fact metadata sentinels; process-tree sampling supplies concurrent worker RSS.",
               "files": files, "file_count": len(files), "bytes": sum(len(file["source"].encode()) for file in files), "workers": args.workers}
     args.output.write_text(json.dumps(output) + "\n")
     print(json.dumps({key: value for key, value in output.items() if key not in ("events", "oracle_profile", "files")}, indent=2))
