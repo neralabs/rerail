@@ -181,6 +181,18 @@ Total number in stack (recursive counted multiple, when >=5):
                 report = json.loads((output / "profile.json").read_text())
                 self.assertEqual([str(report["insertBatch"]), "1" if report["sharedInputIndex"] else None], expected)
 
+    def test_completed_output_adapter_is_explicit_and_inherited_flags_are_cleared(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            for mode in ["table", "virtual"]:
+                output = Path(temporary) / mode
+                result = subprocess.run([sys.executable, str(PROFILING / "run.py"), "--output", str(output),
+                    "--deadline", "5", "--trace", "off", "--completed-output", mode, "--", sys.executable,
+                    "-c", "import json,os;print(json.dumps(os.getenv('RERAIL_SQL_COMPLETED_OUTPUT')))"],
+                    env={**os.environ, "RERAIL_SQL_COMPLETED_OUTPUT": "virtual"}, capture_output=True, timeout=8)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads((output / "stdout.log").read_text()), "virtual" if mode == "virtual" else None)
+                self.assertEqual(json.loads((output / "profile.json").read_text())["completedOutput"], mode)
+
     def test_sql_capture_requires_instrumented_execution_and_clears_inherited_capture(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

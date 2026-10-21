@@ -12,7 +12,7 @@ def quote(value):
     return '"' + value.replace('"', '""') + '"'
 
 
-def reads(db, query, schemas):
+def reads(db, query, schemas, conservative_rowid=True):
     dependencies = set()
     def authorize(action, table, column, database, trigger):
         if action == 20 and table in schemas:  # SQLITE_READ
@@ -38,6 +38,8 @@ def reads(db, query, schemas):
                 cursors[p1].update(cursors[p2])
     demand = defaultdict(set)
     for _, op, p1, p2, *_ in program:
+        if op == "Rowid" and not conservative_rowid:
+            continue
         if op in ("Column", "Rowid"):
             for table in cursors[p1]:
                 if op == "Rowid" or p2 >= len(schemas[table]):

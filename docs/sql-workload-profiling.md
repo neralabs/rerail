@@ -17,6 +17,8 @@ Set `RERAIL_ENGINE_PATH` to that addon.
 Use the existing [bounded profiling workflow](code-rule-profiling.md) to build and select it.
 Production builds exclude this instrumentation.
 
+The [SQL shape experiments](sql-shape-spikes.md) record isolated changes, CPU results, parity checks, and reproduction commands.
+
 Run the pinned five-file workload in a new output directory:
 
 ```sh
